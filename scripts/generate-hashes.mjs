@@ -4,16 +4,16 @@
  * Generates skill-hashes.json for the dispatch skill.
  * Run after modifying any skill file to update the integrity manifest.
  *
- * Usage: node dispatch/scripts/generate-hashes.mjs
+ * Usage: node scripts/generate-hashes.mjs
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateSkillHashes } from './common.mjs';
+import { generateSkillHashes } from '../dispatch/scripts/common.mjs';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const skillDir = path.resolve(currentDir, '..');
+const skillDir = path.resolve(currentDir, '..', 'dispatch');
 const manifest = generateSkillHashes(skillDir);
 const manifestPath = path.join(skillDir, 'skill-hashes.json');
 
