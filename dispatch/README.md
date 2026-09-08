@@ -41,26 +41,24 @@ node .agents/skills/dispatch/scripts/dispatch.mjs \
   "Explain how discount stacking is applied in the attached file, and flag any order-dependence."
 ```
 
-Pin a provider and let it write:
+Pin a provider:
 
 ```bash
-node .agents/skills/dispatch/scripts/dispatch.mjs --provider agy --allow-write \
-  "Add a failing test reproducing the off-by-one in src/lib/pagination.ts."
+node .agents/skills/dispatch/scripts/dispatch.mjs --provider agy \
+  "Trace the off-by-one through src/lib/pagination.ts and describe the fix."
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-f <path>` | Attach a context file (repeatable; 128 KB per file, 512 KB total) |
-| `--allow-write` | Permit workspace modification (read-only otherwise) |
 | `-m <model>` | Override the model identifier |
 | `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`) |
 | `-t <sec>` | Override timeout in seconds (default 1800) |
 | `--provider <name>` | Pin a provider and disable cascading |
 | `--orchestrator <name>` | Override detected orchestrator platform |
 | `--allow-same-agent` | Permit falling back to the orchestrator's own CLI |
-| `-i` | Launch interactively in a visible terminal |
-| `-w`, `--watch-terminal` | Watch live log trace in external GUI terminal (default: disabled) |
-| `--headless`, `--no-watch` | Run headless without opening external terminal window |
+| `--json` | Request structured JSON output (local provider only) |
+| `-a <name>` | Override agent name (local provider only) |
 | `-v` | Stream a live trace to an attached terminal |
 
 Run any provider directly for debugging — each runner is its own CLI:
@@ -71,7 +69,7 @@ node .agents/skills/dispatch/scripts/claude-run.mjs --help
 
 ## Design invariants
 
-- **Read-only by default.** Writes require an explicit `--allow-write`.
+- **Always read-only.** Delegates cannot modify the workspace; writes belong to the orchestrator or its native subagent.
 - **Context hygiene.** Execution logs stream to an OS temp file; the caller receives only the banner, log path, and final answer.
 - **Bounded attachments.** Oversized prompts spill to a brief file rather than overflowing argv or the delegate's context.
 - **Write safety.** If an `--allow-write` delegate fails after modifying the workspace, the cascade halts immediately to protect working tree integrity.

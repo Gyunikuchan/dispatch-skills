@@ -102,13 +102,13 @@ Adjudicate returned claims per that skill's adjudication step — the requiremen
 
 ### 4. Implement
 
-Implement the plan's Change Set yourself — you hold the requirement context, ambiguities, and plan rationale. **Do not dispatch writes to external CLIs** — only the orchestrator or a native in-process subagent may modify the workspace.
+Implement the plan's Change Set yourself — you hold the requirement context, ambiguities, and plan rationale. Only the orchestrator or a native in-process subagent may modify the workspace.
 
 - Work **test-first**: write a failing test before a fix or domain logic.
 - Record any Change Set deviations and reasons for the walkthrough.
 - Run the host verify command and iterate until green.
 
-Delegate to a write-capable **native** in-process subagent (`general-purpose` in Claude Code, `self` in Antigravity) only on explicit user request or when the Change Set splits into file-disjoint chunks suitable for parallel execution. Require files changed, deviations with reasons, and verify output. External `dispatch` delegates are read-only and must not be used for implementation.
+Delegate to a write-capable **native** in-process subagent (`general-purpose` in Claude Code, `self` in Antigravity) only on explicit user request or when the Change Set splits into file-disjoint chunks suitable for parallel execution. Require files changed, deviations with reasons, and verify output.
 
 **Done when:** the host verify command passes and you have read the raw output yourself.
 
@@ -144,7 +144,7 @@ Resolve ambiguity or deadlock by asking the user (`ask_question` / `AskUserQuest
 
 ## Handoff
 
-Conclude per the host repository's handoff contract, specifying: reviewing delegates, failed delegates, absent optional skills, and rejected or downgraded findings.
+Conclude specifying: reviewing delegates, failed delegates, absent optional skills, and rejected or downgraded findings.
 
 **Prune** `.scratch/plan/` artifacts upon reaching consensus; durable knowledge belongs in code, tests, decision records, or the repository's observation log. Preserve plan artifacts only for **unresolved** runs (re-review cap hit, open dispute, or user halt) as resumption points, noting why in the handoff.
 

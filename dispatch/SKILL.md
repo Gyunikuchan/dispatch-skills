@@ -23,7 +23,7 @@ The orchestrator's own platform is skipped (tried last only with `--allow-same-a
 - **Structurally read-only**: delegates run with structural enforcement — `--mode plan` (Antigravity, Copilot), `--allowedTools` restricted to read operations (Claude Code) — plus a prompt-level safety guardrail. Dispatch has no write mode; writes belong to the orchestrator or its native subagent.
 - **Context hygiene**: execution logs stream to an OS temp log file; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to stderr when it is a terminal).
 - **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total) and wrapped in data delimiters to resist prompt injection; oversized prompts spill to a temp brief file to prevent context or argument-length overflow.
-- **Git integrity check**: workspace `git status --porcelain` is compared before and after every delegate run; a mismatch is flagged as a warning. False positives are possible when concurrent processes (IDE auto-save, file watchers, background builds) modify the workspace during the run.
+- **Git integrity check**: workspace `git status --porcelain` is compared before and after every delegate run; a mismatch is flagged as a warning. False positives are possible from concurrent IDE/build activity.
 
 ---
 

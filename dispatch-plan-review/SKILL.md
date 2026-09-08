@@ -5,8 +5,6 @@ description: Review an implementation plan through external agent CLIs before co
 
 # dispatch-plan-review
 
-6-axis review of an implementation plan **before** any code is written, executed by an external agent CLI through the `dispatch` skill.
-
 The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the requirement and the host repository's rules before it reaches the user or the plan.
 
 ## Process

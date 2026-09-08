@@ -55,7 +55,7 @@ Run the whole loop with two reviewers:
 
 ## Design
 
-- **Read-only by default.** Reviews never write. Delegation writes only with an explicit `--allow-write`.
+- **Always read-only.** Reviews and delegation never write — delegates are structurally read-only. Workspace writes belong to the orchestrator.
 - **Context hygiene.** Execution traces stream to a temp log; the orchestrator receives the banner, the log path, and the final answer.
 - **Evidence over votes.** A finding the code confirms is accepted however few delegates raised it; one the code refutes is rejected even if every delegate raised it.
 - **Host-neutral.** No opinions about your codebase are baked in. The delegate reads your project's conventions directly from `AGENTS.md` / `CLAUDE.md` in the workspace and falls back to industry best practices.

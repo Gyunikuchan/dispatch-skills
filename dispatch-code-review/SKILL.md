@@ -5,8 +5,6 @@ description: Review session changes through external agent CLIs across architect
 
 # dispatch-code-review
 
-5-axis review (Architecture, Domain, Simplicity, Security, UI) of recent session changes, executed by an external agent CLI through the `dispatch` skill.
-
 The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the active codebase before it reaches the user.
 
 ## Process

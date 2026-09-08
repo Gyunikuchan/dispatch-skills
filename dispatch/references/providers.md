@@ -63,10 +63,17 @@ This is a known limitation of prompt-level path enforcement — it relies on the
 - **Default Model**: `gemini-3.8-flash` (override via `-m <model>`)
 - **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`)
 
-### Discovery Paths
-1. System `$PATH`
-2. `~/.gemini/bin/agy`
-3. Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`
+### Order of Preference
+1. **Antigravity 2.0 (Desktop app)**:
+   - macOS: `~/.gemini/antigravity/bin/agy`, `/Applications/Antigravity.app/Contents/Resources/bin/agy`
+   - Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`, `%APPDATA%\Google\Antigravity\bin\agy.exe`, `%ProgramFiles%\Antigravity\bin\agy.exe`
+   - Linux: `~/.gemini/antigravity/bin/agy`, `/opt/Antigravity/agy`
+2. **Antigravity VS Code Extension**:
+   - macOS: `~/.gemini/antigravity-ide/bin/agy`, `~/Library/Application Support/Code/User/globalStorage/google.google-antigravity/bin/agy`
+   - Windows: `%APPDATA%\Code\User\globalStorage\google.google-antigravity\bin\agy.exe`
+   - Linux: `~/.gemini/antigravity-ide/bin/agy`, `~/.config/Code/User/globalStorage/google.google-antigravity/bin/agy`
+3. **Antigravity CLI (standalone)**:
+   - Cross-platform: `~/.gemini/bin/agy`, `~/.local/bin/agy`, system `$PATH`
 
 ### Headless Permissions
 Read-only headless runs pass `--mode plan`. `plan` mode forbids edits; some read tools may be auto-denied in headless mode when no human is present to approve them. Interactive runs (`-i`) allow a human to answer permission prompts directly.
