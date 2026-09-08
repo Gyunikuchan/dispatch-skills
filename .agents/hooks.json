@@ -1,0 +1,10 @@
+{
+  "post-tool-use": {
+    "PostToolUse": [
+      {
+        "matcher": "replace_file_content|write_to_file|multi_replace_file_content|edit_file|create_file|delete_file|apply_patch|ApplyPatch",
+        "hooks": []
+      }
+    ]
+  }
+}
