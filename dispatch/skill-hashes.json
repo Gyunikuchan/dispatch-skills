@@ -1,0 +1,11 @@
+{
+  "SKILL.md": "979a464876e0fdcb723403101c04489c8aab5dcbf0f5e438c50a651c14a7e9fd",
+  "scripts/agy-run.mjs": "93fdac97399069060e40aca9ec407a15e087f64c0fda72f5612cc8a72acbb408",
+  "scripts/claude-run.mjs": "a74a6ca2b493460a31d23569cdb4936c3db8ef9a53014cfd9c6b567238781f4f",
+  "scripts/common.mjs": "b551387d92dfa8909d4abee91cf53a8a8c2d0616b03796be564bd59e9fefeba0",
+  "scripts/copilot-run.mjs": "4fab681412e907018ff882dca82dbf94265c0d8a61a83070565a475e967142b9",
+  "scripts/dispatch.mjs": "2c77483e2de057cdfd1ad9c5a9f00827c10d5e882ba758bc67a29295783ca2f0",
+  "scripts/generate-hashes.mjs": "1a6212c5a95f402cd2bb269995da46ed996a3f6a0a105a3d6012a02aa953e2f2",
+  "scripts/local-llm-run.mjs": "f12ecc2d207e97ee088f0798765a98d05d1194ed9e62d09b2b9d91ebed573be5",
+  "scripts/local-run.mjs": "29ce05173e65e828b95043dcf908ee1bb2ebcc37e51a0bfaff26c46dc9dd37b9"
+}

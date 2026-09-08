@@ -42,6 +42,14 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ### Multi-Mode Cascade & Token Availability
 Not all modes may be subscribed or hold tokens on a given machine. Discovery probes test binary reachability via `--version` (zero token consumption). If execution on the preferred mode encounters an `auth` or `quota` failure, `runClaude` automatically cascades to the next available mode in preference order unless pinned.
 
+### Read-Only Path Scope
+Claude Code's `--allowedTools` provides tool-type restriction (only `Read`, `Bash(grep *)`, `Bash(find *)`, etc.), not path-level restriction — the glob `*` matches any characters in the command string. A delegate can technically read files outside the workspace via allowed tools like `grep` or `find`. Path scoping is enforced by:
+
+1. **Safety prompt**: explicitly lists denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
+2. **Claude Code's own sandbox**: the delegate session inherits the host's sandbox restrictions, which provide an outer boundary.
+
+This is a known limitation of prompt-level path enforcement — it relies on the model following the safety instructions.
+
 ### Session Monitoring
 - **Resume Command**: The runner passes `--output-format json` and reads `session_id` from the result envelope, emitting `claude --resume <session_id>`. Plain `-p` text output carries no session id, so the envelope is the only reliable source.
 - **Error Subtypes**: The same envelope exposes `is_error` and `subtype` (for example `error_max_turns`), which the cascade uses to classify a failure before deciding whether to try another provider.
@@ -61,7 +69,7 @@ Not all modes may be subscribed or hold tokens on a given machine. Discovery pro
 3. Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`
 
 ### Headless Permissions
-Read-only headless runs pass `--mode plan --dangerously-skip-permissions`. `plan` is what forbids edits; the permission prompt is a second gate that headless mode cannot display, so without the skip flag every tool is auto-denied and the run returns empty output on exit 0. Interactive runs (`-i`) omit the flag — a human is present to answer the prompt.
+Read-only headless runs pass `--mode plan`. `plan` mode forbids edits; some read tools may be auto-denied in headless mode when no human is present to approve them. Interactive runs (`-i`) allow a human to answer permission prompts directly.
 
 ### Session Monitoring
 - **Deep-link**: Emits `conversation://<conversation-id>` on initialization and completion. Clicking this link within the Antigravity desktop application navigates directly to the subagent's conversation canvas.
@@ -107,6 +115,10 @@ Read-only headless runs pass `--mode plan --dangerously-skip-permissions`. `plan
 - **Credential Stripping**: Environment variables are strictly filtered through `SAFE_ENV_WHITELIST`, stripping API tokens, SSH keys, and cloud secrets.
 - **Boundary Restriction**: File attachments (`-f`) are confined to the workspace root, Antigravity brain, agent config directories, and OS temp dir.
 
+### Known Limitations
+- **Read-only enforcement is prompt-level on macOS and Windows.** OpenCode's `--auto --pure` flags do not provide a structural read-only mode equivalent to Claude Code's `--allowedTools` or Antigravity/Copilot's `--mode plan`. On Linux, Bubblewrap (`bwrap`) provides filesystem-level read-only binding when available. On macOS and Windows, the only enforcement layers are the safety prompt prepended to the task and the post-run git integrity check. Local models are less reliable at following prompt constraints than cloud models, so writes are possible if the model ignores the guardrail.
+- **Git integrity check detects but does not revert.** A `git status --porcelain` snapshot is compared before and after the run. Violations are flagged as warnings; the runner does not roll back changes.
+
 ---
 
 ## 6. Orchestrator Detection
@@ -137,3 +149,11 @@ Read-only headless runs pass `--mode plan --dangerously-skip-permissions`. `plan
 | `timeout` | Runner timeout | Partial output retained and returned if nothing better follows |
 
 A provider that exits `0` with empty output is treated as a failure, not a silent success: CLIs routinely report quota exhaustion on stderr and still exit clean.
+
+---
+
+## 8. Git Integrity Check
+
+Every runner snapshots `git status --porcelain` before and after the delegate run. A difference triggers a `gitIntegrityViolation` warning in the result.
+
+**False positives**: the snapshot captures all workspace changes, not just those from the delegate. Concurrent processes — IDE auto-save, file watchers, background builds, linters, test runners — can modify files during the run and trigger a violation that is unrelated to the delegate. The warning should be investigated, not treated as proof of a read-only breach.

@@ -10,7 +10,7 @@
  * 3. Environment variable whitelisting (strips all cloud keys, tokens, and SSH secrets)
  * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
  * 5. Strict boundary enforcement (confines file attachments to workspace, Antigravity brain, agent configs, and OS temp)
- * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched in read-only mode)
+ * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched)
  * 7. GPU concurrency lockfile (prevents concurrent hooks from thrashing local VRAM)
  * 8. Output buffer cap (10 MB cap to prevent infinite loop memory exhaustion)
  * 9. Configurable timeout with recursive process tree termination (taskkill on Windows)
@@ -37,12 +37,9 @@
  * 5. With custom model, agent, and timeout:
  *    $ node scripts/local-llm-run.mjs --agent delegate --model "qwen3.8-27b-ridge" --timeout 180 "Explain simulation loop"
  *
- * 6. Allowing write operations (defaults to read-only sandbox):
- *    $ node scripts/local-llm-run.mjs --allow-write "Generate a unit test in src/domain/test.ts"
- *
- * 7. Programmatic invocation within .agents hooks:
+ * 6. Programmatic invocation within .agents hooks:
  *    import { runLocalAgent } from './local-llm-run.mjs';
- *    const result = await runLocalAgent({ prompt: 'Review diff', allowWrite: false });
+ *    const result = await runLocalAgent({ prompt: 'Review diff' });
  *
  * =============================================================================
  * PREREQUISITES:
@@ -58,7 +55,13 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createTraceWriter, PROJECT_ROOT } from './common.mjs';
+import {
+  createTraceWriter,
+  describeGitStatusDiff,
+  formatSafetyPrompt,
+  PROJECT_ROOT,
+  SENSITIVE_FILE_PATTERNS,
+} from './common.mjs';
 
 // =============================================================================
 // SECTION: Configuration & Constants
@@ -119,25 +122,6 @@ export const SAFE_ENV_WHITELIST = new Set([
  * Patterns that strictly disqualify an environment variable even if it matched a generic name.
  */
 export const SENSITIVE_ENV_KEY_PATTERN = /(KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/i;
-
-/**
- * Denylist patterns for sensitive files and secret credentials.
- */
-export const SENSITIVE_FILE_PATTERNS = [
-  /\.env($|\..+)/i,
-  /\.(pem|key|pkcs12|pfx|p12|kdbx|keystore|jks)$/i,
-  /id_(rsa|dsa|ecdsa|ed25519)($|\.)/i,
-  /\.npmrc$/i,
-  /\.pypirc$/i,
-  /\.netrc$/i,
-  /\.git[\/\\]credentials/i,
-  /\.git-credentials$/i,
-  /\.aws[\/\\]credentials/i,
-  /\.ssh[\/\\]/i,
-  /\.gnupg[\/\\]/i,
-  /token/i,
-  /secret/i,
-];
 
 // 30 minutes, sized for long local runs. This exceeds the ~600s ceiling agent harnesses
 // impose on a single tool call, so invoke backgrounded — a foreground run is killed by the
@@ -548,7 +532,6 @@ export function parseArgs(argv) {
     agent: null,
     timeout: DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb: DEFAULT_MAX_BUFFER_MB,
-    allowWrite: false,
     json: false,
     verbose: false,
     help: false,
@@ -582,7 +565,7 @@ export function parseArgs(argv) {
         options.maxBufferMb = parsedMb;
       }
     } else if (arg === '--allow-write' || arg === '--write') {
-      options.allowWrite = true;
+      // Write mode removed — delegates are always read-only. Accepted silently.
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '-v' || arg === '--verbose') {
@@ -749,7 +732,6 @@ Options:
   -m, --model <name>          Override model (defaults to opencode.jsonc model)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
-  --allow-write, --write      Grant write access to workspace (default: read-only)
   --json                      Emit raw JSON event stream
   -v, --verbose               Stream live execution trace and tool invocations (default: false)
   -h, --help                  Show this help message
@@ -825,21 +807,6 @@ export function extractAssistantResponse(rawOutput) {
 // SECTION: Command Construction & Execution
 // =============================================================================
 
-export function formatSafetyPrompt(rawPrompt, allowWrite) {
-  if (allowWrite) {
-    return rawPrompt;
-  }
-
-  return (
-    `[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]\n` +
-    `You are running in strict READ-ONLY analysis mode.\n` +
-    `- You MUST NOT edit, overwrite, create, or delete any files.\n` +
-    `- You MUST NOT execute modifying shell commands or external network requests.\n` +
-    `- Confine your entire output to inspection, code review, suggestions, or analysis.\n` +
-    `--------------------------------------------------\n\n` +
-    rawPrompt
-  );
-}
 
 /**
  * Resolves the opencode binary path on Windows to avoid shell: true.
@@ -864,7 +831,6 @@ export function resolveOpencodeBinary() {
  * @param {string[]} [params.files]
  * @param {string|null} [params.model]
  * @param {string|null} [params.agent]
- * @param {boolean} [params.allowWrite]
  * @param {boolean} [params.json]
  */
 export function buildCommand({
@@ -872,7 +838,6 @@ export function buildCommand({
   files = [],
   model = null,
   agent = null,
-  allowWrite = false,
   json = false,
 } = {}) {
   const isLinux = process.platform === 'linux';
@@ -881,7 +846,10 @@ export function buildCommand({
     : null;
   const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
 
-  const formattedPrompt = formatSafetyPrompt(prompt, allowWrite);
+  const formattedPrompt = formatSafetyPrompt(prompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: files,
+  });
   const opencodeArgs = ['run', '--auto', '--pure'];
 
   const effectiveAgent = agent || resolveDefaultAgent();
@@ -917,11 +885,7 @@ export function buildCommand({
       '--unshare-uts',
     ];
 
-    if (allowWrite) {
-      bwrapArgs.push('--bind', PROJECT_ROOT, PROJECT_ROOT);
-    } else {
-      bwrapArgs.push('--ro-bind', PROJECT_ROOT, PROJECT_ROOT);
-    }
+    bwrapArgs.push('--ro-bind', PROJECT_ROOT, PROJECT_ROOT);
 
     for (const f of files) {
       if (!f.startsWith(PROJECT_ROOT)) {
@@ -981,7 +945,6 @@ export function terminateProcessTree(child) {
  * @param {string|null} [params.agent]
  * @param {number} [params.timeout]
  * @param {number} [params.maxBufferMb]
- * @param {boolean} [params.allowWrite]
  * @param {boolean} [params.json]
  * @param {boolean} [params.verbose]
  * @param {((chunk: Buffer) => void)|null} [params.onChunk] Live sink for output, so a caller
@@ -995,7 +958,6 @@ export async function runLocalAgent(params = {}) {
     agent = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
-    allowWrite = false,
     json = false,
     verbose = false,
     onChunk = null,
@@ -1048,19 +1010,16 @@ export async function runLocalAgent(params = {}) {
     files: contextFiles,
     model: effectiveModelName,
     agent: effectiveAgentName,
-    allowWrite,
     json,
   });
 
   if (verbose) {
     console.error(
-      `[local-llm-run] Engine: ${engineType} | Agent: ${effectiveAgentName} | Model: ${effectiveModelName} | Mode: ${
-        allowWrite ? 'READ-WRITE' : 'READ-ONLY'
-      } | Timeout: ${timeout}s`,
+      `[local-llm-run] Engine: ${engineType} | Agent: ${effectiveAgentName} | Model: ${effectiveModelName} | Mode: READ-ONLY | Timeout: ${timeout}s`,
     );
   }
 
-  const initialGitStatus = !allowWrite ? getGitStatus() : null;
+  const initialGitStatus = getGitStatus();
   const sanitizedEnv = getSanitizedEnv();
   const trace = createTraceWriter(verbose);
   const maxBufferBytes = maxBufferMb * 1024 * 1024;
@@ -1119,10 +1078,12 @@ export async function runLocalAgent(params = {}) {
       releaseLock();
 
       let gitIntegrityViolation = false;
-      if (!allowWrite && initialGitStatus !== null) {
+      let gitIntegrityDetails = null;
+      if (initialGitStatus !== null) {
         const finalGitStatus = getGitStatus();
         if (finalGitStatus !== null && finalGitStatus !== initialGitStatus) {
           gitIntegrityViolation = true;
+          gitIntegrityDetails = describeGitStatusDiff(initialGitStatus, finalGitStatus);
         }
       }
 
@@ -1149,6 +1110,7 @@ export async function runLocalAgent(params = {}) {
         agent: effectiveAgentName,
         model: effectiveModelName,
         gitIntegrityViolation,
+        gitIntegrityDetails,
       });
     });
 
@@ -1194,7 +1156,6 @@ export async function main() {
       agent: options.agent,
       timeout: options.timeout,
       maxBufferMb: options.maxBufferMb,
-      allowWrite: options.allowWrite,
       json: options.json,
       verbose: options.verbose,
     });
@@ -1206,8 +1167,12 @@ export async function main() {
 
     if (result.gitIntegrityViolation) {
       console.warn(
-        `\n[local-llm-run] WARNING: Workspace was modified during READ-ONLY execution!\n`,
+        `\n[local-llm-run] WARNING: Workspace was modified during READ-ONLY execution!`,
       );
+      if (result.gitIntegrityDetails) {
+        console.warn(`[local-llm-run] Changed files:\n${result.gitIntegrityDetails}`);
+      }
+      console.warn('');
     }
 
     process.exit(result.exitCode);

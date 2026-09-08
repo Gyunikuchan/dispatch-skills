@@ -65,7 +65,7 @@ node .claude/skills/dispatch/scripts/dispatch.mjs --provider <key> -f "<plan>" -
 node ~/.agents/skills/dispatch/scripts/dispatch.mjs --provider <key> -f "<plan>" -f "<walkthrough>" "<populated prompt>"
 ```
 
-Reviews run strictly read-only (`--allow-write` omitted). Pass `--allow-same-agent` only when pinning the orchestrator's own platform, and note this in the handoff — a reviewer sharing the orchestrator's platform shares its blind spots.
+Dispatch is structurally read-only — delegates cannot modify the workspace. Pass `--allow-same-agent` only when pinning the orchestrator's own platform, and note this in the handoff — a reviewer sharing the orchestrator's platform shares its blind spots.
 
 **Best-effort fan-out**: adjudicate returning reports and record failed delegates. If none return or a pinned provider fails, route directly to an in-process read-only subagent (`Explore` in Claude Code, `research` in Antigravity) with the same prompt to preserve provider provenance.
 
@@ -102,13 +102,13 @@ Adjudicate returned claims per that skill's adjudication step — the requiremen
 
 ### 4. Implement
 
-Implement the plan's Change Set yourself — you hold the requirement context, ambiguities, and plan rationale.
+Implement the plan's Change Set yourself — you hold the requirement context, ambiguities, and plan rationale. **Do not dispatch writes to external CLIs** — only the orchestrator or a native in-process subagent may modify the workspace.
 
 - Work **test-first**: write a failing test before a fix or domain logic.
 - Record any Change Set deviations and reasons for the walkthrough.
 - Run the host verify command and iterate until green.
 
-Delegate to a write-capable in-process subagent (`general-purpose` in Claude Code, `self` in Antigravity) only on explicit user request or when the Change Set splits into file-disjoint chunks suitable for parallel execution. Require files changed, deviations with reasons, and verify output.
+Delegate to a write-capable **native** in-process subagent (`general-purpose` in Claude Code, `self` in Antigravity) only on explicit user request or when the Change Set splits into file-disjoint chunks suitable for parallel execution. Require files changed, deviations with reasons, and verify output. External `dispatch` delegates are read-only and must not be used for implementation.
 
 **Done when:** the host verify command passes and you have read the raw output yourself.
 

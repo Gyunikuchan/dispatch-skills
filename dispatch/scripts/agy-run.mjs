@@ -27,17 +27,18 @@ import {
   DEFAULT_TIMEOUT_SECONDS,
   emitCompletionBanner,
   emitInitBanner,
+  describeGitStatusDiff,
   extractCleanResponse,
   findBinary,
   formatSafetyPrompt,
   getGitStatus,
+  getSanitizedEnv,
   parseCommonArgs,
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
   spawnCli,
   spawnCliSync,
-  spawnLogTerminal,
   terminateProcessTree,
 } from './common.mjs';
 
@@ -332,7 +333,7 @@ export function testAgyBinaryReachability(binPath, mode = AGY_MODES.ANTIGRAVITY_
       encoding: 'utf8',
       timeout: 3000,
       env: {
-        ...process.env,
+        ...getSanitizedEnv(),
         JETSKI_APP_DATA_DIR: dataDir,
       },
     });
@@ -587,7 +588,7 @@ export async function isAgyModeAvailable(mode) {
       encoding: 'utf8',
       timeout: 3000,
       env: {
-        ...process.env,
+        ...getSanitizedEnv(),
         JETSKI_APP_DATA_DIR: dataDir,
       },
     });
@@ -733,9 +734,7 @@ async function executeAgyInMode(mode, options) {
     effort = DEFAULT_AGY_EFFORT,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
-    allowWrite = false,
     verbose = false,
-    interactive = false,
     sessionLogger,
     initialGitStatus,
     formattedPrompt,
@@ -758,56 +757,11 @@ async function executeAgyInMode(mode, options) {
   const providerLabel = AGY_MODE_LABELS[mode] || 'Antigravity 2.0 (agy)';
 
   const modeEnv = {
-    ...process.env,
+    ...getSanitizedEnv(),
     JETSKI_APP_DATA_DIR: dataDir,
   };
 
-  // --------------------------------------------------------------------------
-  // BRANCH: Interactive Terminal Session
-  // --------------------------------------------------------------------------
-  if (interactive) {
-    emitInitBanner({
-      provider: providerLabel,
-      sessionLink: 'Interactive Terminal',
-      logFile: sessionLogger.logFile,
-      mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
-    });
-
-    const { prompt: argvPrompt } = preparePromptForArgv(formattedPrompt, 'agy');
-    const agyArgs = ['--prompt-interactive', argvPrompt];
-    if (effectiveModel) agyArgs.push('--model', effectiveModel);
-    if (effectiveEffort) agyArgs.push('--effort', effectiveEffort);
-    if (!allowWrite) agyArgs.push('--mode', 'plan');
-
-    return new Promise((resolve, reject) => {
-      const child = spawnCli(bin, agyArgs, {
-        cwd: PROJECT_ROOT,
-        stdio: 'inherit',
-        shell: false,
-        env: modeEnv,
-      });
-
-      child.on('close', (code) => {
-        sessionLogger.close();
-        resolve({
-          provider: 'agy',
-          mode,
-          stdout: '(Interactive session ended)',
-          exitCode: code ?? 0,
-          logFile: sessionLogger.logFile,
-        });
-      });
-
-      child.on('error', (err) => {
-        sessionLogger.close();
-        reject(err);
-      });
-    });
-  }
-
-  // --------------------------------------------------------------------------
-  // BRANCH: Headless Execution Session
-  // --------------------------------------------------------------------------
+  // Headless execution (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'agy');
   const agyArgs = ['--print', argvPrompt, `--print-timeout=${timeout}s`];
 
@@ -819,17 +773,12 @@ async function executeAgyInMode(mode, options) {
     agyArgs.push('--effort', effectiveEffort);
   }
 
-  if (allowWrite) {
-    agyArgs.push('--mode', 'accept-edits', '--dangerously-skip-permissions');
-  } else {
-    // Plan mode forbids edits; skipping permissions unblocks read tools in headless mode
-    agyArgs.push('--mode', 'plan', '--dangerously-skip-permissions');
-  }
+  agyArgs.push('--mode', 'plan');
 
   emitInitBanner({
     provider: providerLabel,
     logFile: sessionLogger.logFile,
-    mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
+    mode: 'READ-ONLY',
   });
 
   const trace = createTraceWriter(verbose);
@@ -888,10 +837,12 @@ async function executeAgyInMode(mode, options) {
       const sessionLink = conversationId ? `conversation://${conversationId}` : null;
 
       let gitIntegrityViolation = false;
-      if (!allowWrite && initialGitStatus !== null) {
+      let gitIntegrityDetails = null;
+      if (initialGitStatus !== null) {
         const finalGitStatus = getGitStatus();
         if (finalGitStatus !== null && finalGitStatus !== initialGitStatus) {
           gitIntegrityViolation = true;
+          gitIntegrityDetails = describeGitStatusDiff(initialGitStatus, finalGitStatus);
         }
       }
 
@@ -919,6 +870,7 @@ async function executeAgyInMode(mode, options) {
         truncated,
         failureKind: classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated,
         gitIntegrityViolation,
+        gitIntegrityDetails,
       });
     });
 
@@ -949,10 +901,7 @@ export async function runAgy(options = {}) {
     effort = DEFAULT_AGY_EFFORT,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
-    allowWrite = false,
     verbose = false,
-    interactive = false,
-    watchTerminal = false,
     modeVariant = null,
     agyMode = null,
   } = options;
@@ -985,8 +934,11 @@ export async function runAgy(options = {}) {
   }
 
   const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
-  const formattedPrompt = formatSafetyPrompt(fullPrompt, allowWrite);
-  const initialGitStatus = !allowWrite ? getGitStatus() : null;
+  const formattedPrompt = formatSafetyPrompt(fullPrompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: files,
+  });
+  const initialGitStatus = getGitStatus();
 
   let lastResult = null;
   let lastError = null;
@@ -995,10 +947,6 @@ export async function runAgy(options = {}) {
     const currentMode = modesToTry[i];
     const sessionLogger = createSessionLogger('agy');
 
-    if (watchTerminal && !interactive) {
-      spawnLogTerminal(sessionLogger.logFile, { title: 'Antigravity Live Trace' });
-    }
-
     try {
       const result = await executeAgyInMode(currentMode, {
         prompt,
@@ -1006,9 +954,7 @@ export async function runAgy(options = {}) {
         effort,
         timeout,
         maxBufferMb,
-        allowWrite,
         verbose,
-        interactive,
         sessionLogger,
         initialGitStatus,
         formattedPrompt,
@@ -1024,8 +970,7 @@ export async function runAgy(options = {}) {
         result.failureKind === 'auth' ||
         isSubscriptionOrTokenIssue(combinedOutput);
 
-      // If successful or interactive, return immediately
-      if ((result.exitCode === 0 && hasOutput) || interactive) {
+      if (result.exitCode === 0 && hasOutput) {
         return result;
       }
 
@@ -1121,11 +1066,6 @@ Options:
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --agy-mode, --mode-variant    Force mode: antigravity-2.0 | antigravity-vscode | antigravity-cli | auto
   --test-reachability           Test and report reachability for all modes without consuming tokens
-  --allow-write, --write        Grant write access (default: read-only)
-  --read-only                   Enforce read-only analysis
-  -i, --interactive             Launch in interactive terminal mode
-  -w, --watch-terminal          Watch live log trace in external GUI terminal (default: disabled)
-  --headless, --no-watch        Run headless without opening an external terminal window
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 `);
@@ -1167,7 +1107,11 @@ Options:
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
     }
     if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!\n`);
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (res.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
+      }
+      console.warn('');
     }
     process.exit(res.exitCode);
   } catch (err) {

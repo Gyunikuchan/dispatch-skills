@@ -31,14 +31,15 @@ import {
   extractCleanResponse,
   findBinary,
   formatSafetyPrompt,
+  describeGitStatusDiff,
   getGitStatus,
+  getSanitizedEnv,
   parseCommonArgs,
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
   spawnCli,
   spawnCliSync,
-  spawnLogTerminal,
   terminateProcessTree,
 } from './common.mjs';
 
@@ -46,6 +47,53 @@ const currentFilePath = fileURLToPath(import.meta.url);
 
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5';
 export const DEFAULT_CLAUDE_EFFORT = 'medium';
+
+/**
+ * Structural read-only enforcement: only these tools are available to the delegate.
+ * Covers file reading, git inspection, and text search — no write, edit, or
+ * unrestricted shell access.
+ */
+export const READ_ONLY_ALLOWED_TOOLS = [
+  'Read',
+  'Glob',
+  'LS',
+  'Bash(git diff*)',
+  'Bash(git status*)',
+  'Bash(git log*)',
+  'Bash(git show*)',
+  'Bash(git blame*)',
+  'Bash(git rev-parse*)',
+  'Bash(git ls-files*)',
+  'Bash(grep *)',
+  'Bash(rg *)',
+  'Bash(find *)',
+  'Bash(ls *)',
+  'Bash(head *)',
+  'Bash(tail *)',
+  'Bash(wc *)',
+  'Bash(file *)',
+  'Bash(jq *)',
+  'Bash(awk *)',
+  'Bash(diff *)',
+  'Bash(sort *)',
+  'Bash(uniq *)',
+  'Bash(cut *)',
+  'Bash(tr *)',
+  'Bash(stat *)',
+  'Bash(which *)',
+  'Bash(type *)',
+  'Bash(date *)',
+  'Bash(basename *)',
+  'Bash(dirname *)',
+  'Bash(realpath *)',
+  'Bash(readlink *)',
+  'Bash(column *)',
+  'Bash(paste *)',
+  'Bash(npm ls*)',
+  'WebFetch',
+  'WebSearch',
+  'TodoWrite',
+];
 
 // SECTION: Directory & Version Scanning Helpers
 
@@ -580,10 +628,7 @@ export async function runClaude(options = {}) {
     effort = DEFAULT_CLAUDE_EFFORT,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
-    allowWrite = false,
     verbose = false,
-    interactive = false,
-    watchTerminal = false,
     claudeMode = null,
   } = options;
 
@@ -619,11 +664,7 @@ export async function runClaude(options = {}) {
   }
 
   const sessionLogger = createSessionLogger('claude');
-  const initialGitStatus = !allowWrite ? getGitStatus() : null;
-
-  if (watchTerminal && !interactive) {
-    spawnLogTerminal(sessionLogger.logFile, { title: 'Claude Code Live Trace' });
-  }
+  const initialGitStatus = getGitStatus();
 
   const attachments = buildAttachmentBlock(files);
   for (const note of attachments.notes) {
@@ -631,65 +672,30 @@ export async function runClaude(options = {}) {
   }
 
   const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
-  const formattedPrompt = formatSafetyPrompt(fullPrompt, allowWrite);
+  const formattedPrompt = formatSafetyPrompt(fullPrompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: files,
+  });
 
   const effectiveModel = model || DEFAULT_CLAUDE_MODEL;
   const effectiveEffort = effort || DEFAULT_CLAUDE_EFFORT;
 
   // Helper to execute on a specific target
   const executeOnTarget = async (target) => {
-    // Interactive mode
-    if (interactive) {
-      emitInitBanner({
-        provider: `Claude Code [${target.mode}] (claude)`,
-        sessionLink: 'Interactive Terminal',
-        logFile: sessionLogger.logFile,
-        mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
-      });
-
-      const { prompt: argvPrompt } = preparePromptForArgv(formattedPrompt, 'claude');
-      const claudeArgs = [argvPrompt];
-      if (effectiveModel) claudeArgs.push('--model', effectiveModel);
-      if (effectiveEffort) claudeArgs.push('--effort', effectiveEffort);
-
-      return new Promise((resolve, reject) => {
-        const child = spawnCli(target.bin, claudeArgs, {
-          cwd: PROJECT_ROOT,
-          stdio: 'inherit',
-          shell: false,
-        });
-
-        child.on('close', (code) => {
-          sessionLogger.close();
-          resolve({
-            provider: 'claude',
-            claudeMode: target.mode,
-            bin: target.bin,
-            stdout: '(Interactive session ended)',
-            exitCode: code ?? 0,
-            logFile: sessionLogger.logFile,
-          });
-        });
-
-        child.on('error', (err) => {
-          sessionLogger.close();
-          reject(err);
-        });
-      });
-    }
-
-    // Headless print mode
+    // Headless print mode (interactive mode removed — delegates are always headless)
     const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
     const claudeArgs = ['-p', argvPrompt, '--output-format', 'json'];
 
     if (effectiveModel) claudeArgs.push('--model', effectiveModel);
     if (effectiveEffort) claudeArgs.push('--effort', effectiveEffort);
-    if (allowWrite) claudeArgs.push('--dangerously-skip-permissions');
+    for (const tool of READ_ONLY_ALLOWED_TOOLS) {
+      claudeArgs.push('--allowedTools', tool);
+    }
 
     emitInitBanner({
       provider: `Claude Code [${target.mode}] (claude)`,
       logFile: sessionLogger.logFile,
-      mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
+      mode: 'READ-ONLY',
     });
 
     const trace = createTraceWriter(verbose);
@@ -704,7 +710,7 @@ export async function runClaude(options = {}) {
 
       const child = spawnCli(target.bin, claudeArgs, {
         cwd: PROJECT_ROOT,
-        env: process.env,
+        env: getSanitizedEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
       });
@@ -748,10 +754,12 @@ export async function runClaude(options = {}) {
         const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
 
         let gitIntegrityViolation = false;
-        if (!allowWrite && initialGitStatus !== null) {
+        let gitIntegrityDetails = null;
+        if (initialGitStatus !== null) {
           const finalGitStatus = getGitStatus();
           if (finalGitStatus !== null && finalGitStatus !== initialGitStatus) {
             gitIntegrityViolation = true;
+            gitIntegrityDetails = describeGitStatusDiff(initialGitStatus, finalGitStatus);
           }
         }
 
@@ -783,6 +791,7 @@ export async function runClaude(options = {}) {
             classifyFailure(`${stderrBuffer}\n${envelope.text}`) ||
             (truncated ? truncated : null),
           gitIntegrityViolation,
+          gitIntegrityDetails,
         });
       });
 
@@ -890,11 +899,6 @@ Options:
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --claude-mode <mode>          Select execution mode: desktop | vscode | cli
   --test-modes, --reachability  Test reachability of all modes (--version) without token consumption
-  --allow-write, --write        Grant write access (default: read-only)
-  --read-only                   Enforce read-only analysis
-  -i, --interactive             Launch in interactive terminal mode
-  -w, --watch-terminal          Watch live log trace in external GUI terminal (default: disabled)
-  --headless, --no-watch        Run headless without opening an external terminal window
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 
@@ -929,7 +933,11 @@ Preference Order:
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
     }
     if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!\n`);
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (res.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
+      }
+      console.warn('');
     }
     process.exit(res.exitCode);
   } catch (err) {

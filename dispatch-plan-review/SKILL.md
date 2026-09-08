@@ -21,7 +21,7 @@ Populate the template variables:
 - `<Requirement>` — the original user ask, verbatim.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
 
-**Dispatch**: when an orchestrating skill supplies the dispatch invocation, use it — it owns fan-out breadth and provider pinning. Otherwise dispatch yourself, **backgrounded**, and yield the turn; see the `dispatch` skill for the cascade, flags, and log monitoring. Reviews are read-only — omit `--allow-write`.
+**Dispatch**: when an orchestrating skill supplies the dispatch invocation, use it — it owns fan-out breadth and provider pinning. Otherwise dispatch yourself, **backgrounded**, and yield the turn; see the `dispatch` skill for the cascade, flags, and log monitoring. Dispatch is structurally read-only — delegates cannot modify the workspace.
 
 #### Prompt template
 

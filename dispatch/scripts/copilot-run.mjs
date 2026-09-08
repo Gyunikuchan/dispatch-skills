@@ -26,17 +26,18 @@ import {
   DEFAULT_TIMEOUT_SECONDS,
   emitCompletionBanner,
   emitInitBanner,
+  describeGitStatusDiff,
   extractCleanResponse,
   findBinary,
   formatSafetyPrompt,
   getGitStatus,
+  getSanitizedEnv,
   parseCommonArgs,
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
   spawnCli,
   spawnCliSync,
-  spawnLogTerminal,
   terminateProcessTree,
 } from './common.mjs';
 
@@ -497,9 +498,7 @@ export const DEFAULT_COPILOT_EFFORT = 'max';
  * @param {string} [options.effort]
  * @param {number} [options.timeout]
  * @param {number} [options.maxBufferMb]
- * @param {boolean} [options.allowWrite]
  * @param {boolean} [options.verbose]
- * @param {boolean} [options.interactive]
  * @param {'auto'|'vscode'|'cli'} [options.copilotMode]
  * @returns {Promise<Object>}
  */
@@ -511,10 +510,7 @@ export async function runCopilot(options = {}) {
     effort = DEFAULT_COPILOT_EFFORT,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
-    allowWrite = false,
     verbose = false,
-    interactive = false,
-    watchTerminal = false,
     copilotMode = 'auto',
   } = options;
 
@@ -534,11 +530,7 @@ export async function runCopilot(options = {}) {
   }
 
   const sessionLogger = createSessionLogger('copilot');
-  const initialGitStatus = !allowWrite ? getGitStatus() : null;
-
-  if (watchTerminal && !interactive) {
-    spawnLogTerminal(sessionLogger.logFile, { title: 'GitHub Copilot Live Trace' });
-  }
+  const initialGitStatus = getGitStatus();
 
   const attachments = buildAttachmentBlock(files);
   for (const note of attachments.notes) {
@@ -546,7 +538,10 @@ export async function runCopilot(options = {}) {
   }
 
   const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
-  const formattedPrompt = formatSafetyPrompt(fullPrompt, allowWrite);
+  const formattedPrompt = formatSafetyPrompt(fullPrompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: files,
+  });
 
   const effectiveModel = model || DEFAULT_COPILOT_MODEL;
   const effectiveEffort = effort || DEFAULT_COPILOT_EFFORT;
@@ -555,49 +550,7 @@ export async function runCopilot(options = {}) {
   const executeOnTarget = async (target) => {
     const bin = target.binary;
 
-    // --------------------------------------------------------------------------
-    // BRANCH: Interactive Terminal Mode
-    // --------------------------------------------------------------------------
-    if (interactive) {
-      emitInitBanner({
-        provider: `GitHub Copilot [${target.mode}] (${target.mode === 'vscode' ? 'copilot vscode' : 'copilot cli'})`,
-        sessionLink: 'Interactive Terminal',
-        logFile: sessionLogger.logFile,
-        mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
-      });
-
-      const { prompt: argvPrompt } = preparePromptForArgv(formattedPrompt, 'copilot');
-      const copilotArgs = [argvPrompt];
-      if (effectiveModel) copilotArgs.push('--model', effectiveModel);
-      if (effectiveEffort) copilotArgs.push('--effort', effectiveEffort);
-
-      return new Promise((resolve, reject) => {
-        const child = spawnCli(bin, copilotArgs, {
-          cwd: PROJECT_ROOT,
-          stdio: 'inherit',
-          shell: false,
-        });
-
-        child.on('close', (code) => {
-          resolve({
-            provider: 'copilot',
-            mode: target.mode,
-            binary: bin,
-            stdout: '(Interactive session ended)',
-            exitCode: code ?? 0,
-            logFile: sessionLogger.logFile,
-          });
-        });
-
-        child.on('error', (err) => {
-          reject(err);
-        });
-      });
-    }
-
-    // --------------------------------------------------------------------------
-    // BRANCH: Headless Print Mode
-    // --------------------------------------------------------------------------
+    // Headless print mode (interactive mode removed — delegates are always headless)
     const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot');
     const copilotArgs = ['-p', argvPrompt];
 
@@ -609,16 +562,12 @@ export async function runCopilot(options = {}) {
       copilotArgs.push('--effort', effectiveEffort);
     }
 
-    if (allowWrite) {
-      copilotArgs.push('--allow-all-tools');
-    } else {
-      copilotArgs.push('--mode', 'plan');
-    }
+    copilotArgs.push('--mode', 'plan');
 
     emitInitBanner({
       provider: `GitHub Copilot [${target.mode}] (${target.mode === 'vscode' ? 'copilot vscode' : 'copilot cli'})`,
       logFile: sessionLogger.logFile,
-      mode: allowWrite ? 'READ-WRITE' : 'READ-ONLY',
+      mode: 'READ-ONLY',
     });
 
     const trace = createTraceWriter(verbose);
@@ -633,7 +582,7 @@ export async function runCopilot(options = {}) {
 
       const child = spawnCli(bin, copilotArgs, {
         cwd: PROJECT_ROOT,
-        env: process.env,
+        env: getSanitizedEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
       });
@@ -676,10 +625,12 @@ export async function runCopilot(options = {}) {
         const sessionLink = sessionId ? `copilot --resume ${sessionId}` : null;
 
         let gitIntegrityViolation = false;
-        if (!allowWrite && initialGitStatus !== null) {
+        let gitIntegrityDetails = null;
+        if (initialGitStatus !== null) {
           const finalGitStatus = getGitStatus();
           if (finalGitStatus !== null && finalGitStatus !== initialGitStatus) {
             gitIntegrityViolation = true;
+            gitIntegrityDetails = describeGitStatusDiff(initialGitStatus, finalGitStatus);
           }
         }
 
@@ -711,6 +662,7 @@ export async function runCopilot(options = {}) {
           truncated,
           failureKind,
           gitIntegrityViolation,
+          gitIntegrityDetails,
         });
       });
 
@@ -816,11 +768,6 @@ Options:
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --copilot-mode <mode>         Explicit mode preference: 'vscode', 'cli', or 'auto' (default: auto)
   --test, --probe               Test reachability across modes without requiring tokens or prompt
-  --allow-write, --write        Grant write access (default: read-only)
-  --read-only                   Enforce read-only analysis
-  -i, --interactive             Launch in interactive terminal mode
-  -w, --watch-terminal          Watch live log trace in external GUI terminal (default: disabled)
-  --headless, --no-watch        Run headless without opening an external terminal window
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 `);
@@ -891,7 +838,11 @@ Options:
       );
     }
     if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!\n`);
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (res.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
+      }
+      console.warn('');
     }
     process.exit(res.stdout ? res.exitCode : (res.failureKind ? 1 : res.exitCode));
   } catch (err) {

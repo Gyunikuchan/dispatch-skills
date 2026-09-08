@@ -20,10 +20,10 @@ The orchestrator's own platform is skipped (tried last only with `--allow-same-a
 
 ## Operating Invariants
 
-- **Default read-only**: analysis runs read-only (`--mode plan` / prompt framing). Workspace modification requires explicit `--allow-write`.
-- **Context hygiene**: execution logs stream to an OS temp log file; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to an attached terminal).
-- **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total); oversized prompts spill to a temp brief file to prevent context or argument-length overflow.
-- **Write safety**: if an `--allow-write` delegate fails after modifying the workspace, the cascade halts immediately to protect working tree integrity.
+- **Structurally read-only**: delegates run with structural enforcement — `--mode plan` (Antigravity, Copilot), `--allowedTools` restricted to read operations (Claude Code) — plus a prompt-level safety guardrail. Dispatch has no write mode; writes belong to the orchestrator or its native subagent.
+- **Context hygiene**: execution logs stream to an OS temp log file; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to stderr when it is a terminal).
+- **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total) and wrapped in data delimiters to resist prompt injection; oversized prompts spill to a temp brief file to prevent context or argument-length overflow.
+- **Git integrity check**: workspace `git status --porcelain` is compared before and after every delegate run; a mismatch is flagged as a warning. False positives are possible when concurrent processes (IDE auto-save, file watchers, background builds) modify the workspace during the run.
 
 ---
 
@@ -87,8 +87,7 @@ Evaluate the dispatcher outcome:
 - **Success**: capture stdout and session handle, then proceed to Step 4.
 - **Truncated** (`WARNING: Output truncated`): the delegate hit its timeout or buffer cap and returned partial output. Use it if it satisfies the brief; otherwise re-dispatch a narrower task.
 - **`NO_DELEGATE_AVAILABLE`**: every local and external pass is exhausted. Fall back in-process:
-  - Read-only → invoke read-only subagent (`research` in Antigravity, `Explore` in Claude Code) with identical prompt and attachments.
-  - `--allow-write` → invoke write-capable subagent (`self` in Antigravity, `general-purpose` in Claude Code).
+  - Invoke a read-only subagent (`research` in Antigravity, `Explore` in Claude Code) with identical prompt and attachments.
   - Brief task, or subagents unavailable → execute directly in the current session.
 
 **Done when:** Complete output retrieved from delegate stdout, subagent response, or direct execution.
@@ -108,7 +107,6 @@ Relay the response to the user, prefixed by provider (`[Claude Code]`, `[Antigra
 | Flag | Description | Example |
 |------|-------------|---------|
 | `-f <path>` | Attach context file or artifact (repeatable, capped) | `-f "src/domain/types.ts"` |
-| `--allow-write` | Permit workspace file modifications (default: read-only) | `--allow-write` |
 | `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`local`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |
@@ -117,9 +115,6 @@ Relay the response to the user, prefixed by provider (`[Claude Code]`, `[Antigra
 | `--orchestrator <name>` | Override detected orchestrator platform | `--orchestrator claude` |
 | `--json` | Request structured JSON output (local provider only) | `--json` |
 | `-a <name>` | Override agent name (local provider only) | `-a delegate` |
-| `-i` | Launch interactively in a visible terminal | `-i` |
-| `-w`, `--watch-terminal` | Watch live log trace in external GUI terminal (default: disabled) | `-w` |
-| `--headless`, `--no-watch` | Run headless without opening external terminal window | `--headless` |
 | `-v` | Stream live trace (terminal debugging only; suppressed when piped) | `-v` |
 
 ---

@@ -26,6 +26,7 @@ import {
   isEmptyResult,
   parseCommonArgs,
   readStdin,
+  verifySkillIntegrity,
 } from './common.mjs';
 import { isLocalAvailable, runLocal } from './local-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
@@ -33,6 +34,7 @@ import { isClaudeAvailable, runClaude } from './claude-run.mjs';
 import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
+const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 
 /**
  * Detects the orchestrator runtime from environment variables.
@@ -175,15 +177,24 @@ export async function dispatchTask(options = {}) {
     agent = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
-    allowWrite = false,
     json = false,
     verbose = false,
-    interactive = false,
-    watchTerminal = false,
     orchestrator = null,
     provider = null,
     allowSameAgent = false,
   } = options;
+
+  const integrity = verifySkillIntegrity(SKILL_DIR);
+  if (!integrity.valid && !integrity.missing) {
+    process.stderr.write(
+      `[dispatch] WARNING: Skill file integrity check failed! Modified files:\n` +
+        integrity.violations.map((v) => `  - ${v}`).join('\n') + '\n' +
+        `[dispatch] This may indicate tampering. Aborting dispatch.\n`,
+    );
+    const err = new Error('Skill file integrity verification failed');
+    err.code = 'INTEGRITY_VIOLATION';
+    throw err;
+  }
 
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
@@ -210,11 +221,8 @@ export async function dispatchTask(options = {}) {
     agent,
     timeout,
     maxBufferMb,
-    allowWrite,
     json,
     verbose,
-    interactive,
-    watchTerminal,
   };
 
   const attemptFailures = [];
@@ -227,36 +235,16 @@ export async function dispatchTask(options = {}) {
     const currentProvider = candidates[i];
     const nextProvider = candidates[i + 1] ?? null;
 
-    // Scoped to this provider's own execution window rather than the whole cascade, so a
-    // background hook regenerating files does not read as a delegate having edited them.
-    const gitStatusBeforeProvider = allowWrite ? workspaceProbes.getGitStatus() : null;
-
     /** Records the failure and reports whether the cascade should continue. */
     const shouldCascade = (reason, kind) => {
       attemptFailures.push(`${currentProvider}: ${reason}${kind ? ` [${kind}]` : ''}`);
 
-      // A pinned provider is an instruction, not a preference. Say so on the way out:
-      // an empty or failed run is returned to the caller as-is, and without this line a
-      // delegate that produced nothing is indistinguishable from a clean success.
       if (provider) {
         process.stderr.write(
           `[dispatch] Provider '${currentProvider}' ${reason}${kind ? ` [${kind}]` : ''}. ` +
             `Pinned with --provider, so not cascading — see the session log.\n`,
         );
         return false;
-      }
-
-      // Cascading a write task onto a half-modified workspace would compound the damage:
-      // the next delegate would receive the same brief against files the first one changed.
-      if (allowWrite && gitStatusBeforeProvider !== null) {
-        const gitStatusNow = workspaceProbes.getGitStatus();
-        if (gitStatusNow !== null && gitStatusNow !== gitStatusBeforeProvider) {
-          process.stderr.write(
-            `[dispatch] Provider '${currentProvider}' ${reason} after modifying the workspace. ` +
-              `Halting cascade — review the working tree before retrying.\n`,
-          );
-          return false;
-        }
       }
 
       if (nextProvider) {
@@ -332,15 +320,10 @@ Options:
   -e, --effort <level>        Override reasoning effort (low, medium, high, max)
   -a, --agent <name>          Override agent name
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
-  --allow-write, --write      Grant write access (default: read-only)
-  --read-only                 Enforce read-only analysis
   --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
   --provider <name>           Force specific provider (local, agy, claude, copilot)
   --orchestrator <name>       Explicitly declare orchestrator (agy, claude, copilot, local)
   --json                      Request structured JSON output (local provider only)
-  -i, --interactive           Run interactively in a visible terminal
-  -w, --watch-terminal        Watch live log trace in external GUI terminal (default: disabled)
-  --headless, --no-watch      Run headless without opening an external terminal window
   -v, --verbose               Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
 `);
@@ -374,7 +357,11 @@ Options:
     }
 
     if (result.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!\n`);
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (result.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${result.gitIntegrityDetails}`);
+      }
+      console.warn('');
     }
 
     process.exit(result.exitCode ?? 0);
