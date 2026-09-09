@@ -91,15 +91,19 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 - **Default Model**: `gpt-5.6-luna` (override via `-m <model>`)
 - **Default Reasoning Effort**: `max` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
 - **Default Mode**: `--mode plan` (structural read-only)
-- **Mode Override**: `--copilot-mode <vscode|cli|auto>` (explicit execution mode)
+- **Mode Override**: `--copilot-mode <desktop|vscode|cli|auto>` (explicit execution mode)
 - **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
 
 ### Order of Preference
-1. **Copilot VS Code Extension (`vscode`)**:
+1. **GitHub Copilot Desktop (`desktop`)**:
+   - macOS: `~/Library/Caches/github-copilot-sdk/cli/<version>/copilot`, `~/Library/Caches/copilot/pkg/darwin-*/<version>/copilot`, `~/Library/Application Support/GitHub Copilot`, `/Applications/GitHub Copilot.app`
+   - Windows: `%LOCALAPPDATA%\github-copilot-sdk\cli\<version>\copilot.exe`, `%LOCALAPPDATA%\github-copilot\cli`, `%LOCALAPPDATA%\Programs\GitHub Copilot\resources\bin\copilot.exe`, `%ProgramFiles%\GitHub Copilot`
+   - Linux: `~/.cache/github-copilot-sdk/cli/<version>/copilot`, `~/.cache/copilot/pkg/linux-*/<version>/copilot`, `~/.local/share/github-copilot-sdk`, `/opt/GitHub Copilot`
+2. **Copilot VS Code Extension (`vscode`)**:
    - macOS: `~/Library/Application Support/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, `Cursor`
    - Windows: `%APPDATA%\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.{bat,cmd,exe,ps1}` (`Code - Insiders`, `VSCodium`, `%LOCALAPPDATA%`)
    - Linux: `~/.config/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, Flatpak, Snap
-2. **Copilot CLI (`cli`)**:
+3. **Copilot CLI (`cli`)**:
    - macOS: `/opt/homebrew/bin/copilot`, `/usr/local/bin/copilot`, `~/.local/bin/copilot`, `~/.npm-global/bin/copilot`, system `$PATH`
    - Windows: `%APPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\Programs\copilot\copilot.exe`, `%ProgramFiles%\GitHub Copilot\copilot.exe`, system `PATH`
    - Linux: `/usr/local/bin/copilot`, `/usr/bin/copilot`, `/home/linuxbrew/.linuxbrew/bin/copilot`, `~/.local/bin/copilot`, system `$PATH`

@@ -6,8 +6,9 @@
  *
  * Supports cross-platform execution (macOS / Windows / Linux, bash / zsh / PowerShell).
  * Implements strict order of preference:
- *   1. Copilot VS Code Extension (`copilot vscode`)
- *   2. Standalone GitHub Copilot CLI (`copilot cli`)
+ *   1. GitHub Copilot Desktop (`copilot desktop`)
+ *   2. Copilot VS Code Extension (`copilot vscode`)
+ *   3. Standalone GitHub Copilot CLI (`copilot cli`)
  *
  * Reaches and tests each mode up to executable launch (e.g. `--version`) so
  * environments without active Copilot tokens or subscriptions can still verify
@@ -75,6 +76,178 @@ export function isExecutableFile(targetPath) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Scans a directory for subdirectories, sorted in descending order (newest version first).
+ * Used across macOS, Windows, and Linux for version-stamped application caches.
+ *
+ * @param {string} baseDir
+ * @returns {string[]}
+ */
+function scanVersionDirs(baseDir) {
+  if (!fs.existsSync(baseDir)) return [];
+  try {
+    const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Gathers candidate executable paths for the GitHub Copilot Desktop application.
+ *
+ * Mode: GitHub Copilot Desktop (`desktop`)
+ * Supported OS: macOS, Windows, Linux
+ *
+ * @returns {string[]} Ordered array of candidate paths
+ */
+export function getCopilotDesktopCandidates() {
+  const homeDir = os.homedir();
+  const candidates = [];
+
+  // --------------------------------------------------------------------------
+  // BRANCH: macOS (darwin) | Mode: GitHub Copilot Desktop
+  // Probes versioned SDK caches (~/Library/Caches/github-copilot-sdk/cli/<version>/copilot),
+  // copilot pkg caches (~/Library/Caches/copilot/pkg/darwin-*),
+  // and native application bundle directories (/Applications/GitHub Copilot.app).
+  // --------------------------------------------------------------------------
+  if (process.platform === 'darwin') {
+    const sdkCacheDir = path.join(homeDir, 'Library/Caches/github-copilot-sdk/cli');
+    const sdkVersions = scanVersionDirs(sdkCacheDir);
+    for (const ver of sdkVersions) {
+      candidates.push(path.join(sdkCacheDir, ver, 'copilot'));
+    }
+
+    const copilotPkgArmDir = path.join(homeDir, 'Library/Caches/copilot/pkg/darwin-arm64');
+    const copilotPkgArmVersions = scanVersionDirs(copilotPkgArmDir);
+    for (const ver of copilotPkgArmVersions) {
+      candidates.push(path.join(copilotPkgArmDir, ver, 'copilot'));
+    }
+
+    const copilotPkgX64Dir = path.join(homeDir, 'Library/Caches/copilot/pkg/darwin-x64');
+    const copilotPkgX64Versions = scanVersionDirs(copilotPkgX64Dir);
+    for (const ver of copilotPkgX64Versions) {
+      candidates.push(path.join(copilotPkgX64Dir, ver, 'copilot'));
+    }
+
+    const appSupportCopilot = path.join(homeDir, 'Library/Application Support/GitHub Copilot');
+    const appSupportVersions = scanVersionDirs(appSupportCopilot);
+    for (const ver of appSupportVersions) {
+      candidates.push(
+        path.join(appSupportCopilot, ver, 'copilot'),
+        path.join(appSupportCopilot, ver, 'bin/copilot'),
+      );
+    }
+
+    candidates.push(
+      '/Applications/GitHub Copilot.app/Contents/Resources/bin/copilot',
+      '/Applications/GitHub Copilot.app/Contents/MacOS/copilot',
+      path.join(homeDir, 'Applications/GitHub Copilot.app/Contents/Resources/bin/copilot'),
+      path.join(homeDir, 'Applications/GitHub Copilot.app/Contents/MacOS/copilot'),
+    );
+  }
+
+  // --------------------------------------------------------------------------
+  // BRANCH: Windows (win32) | Mode: GitHub Copilot Desktop
+  // Probes %LOCALAPPDATA%\github-copilot-sdk\cli\<version>\copilot.exe,
+  // %LOCALAPPDATA%\Programs\GitHub Copilot, %APPDATA%\GitHub Copilot, %ProgramFiles%\GitHub Copilot.
+  // --------------------------------------------------------------------------
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
+    const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
+    const progFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const progFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+
+    const winSdkDirs = [
+      path.join(localAppData, 'github-copilot-sdk', 'cli'),
+      path.join(localAppData, 'github-copilot', 'cli'),
+      path.join(appData, 'github-copilot-sdk', 'cli'),
+    ];
+
+    const winExecs = ['copilot.exe', 'copilot.cmd', 'copilot.bat', 'copilot'];
+
+    for (const sdkDir of winSdkDirs) {
+      const versions = scanVersionDirs(sdkDir);
+      for (const ver of versions) {
+        for (const exec of winExecs) {
+          candidates.push(path.join(sdkDir, ver, exec));
+        }
+      }
+    }
+
+    for (const exec of winExecs) {
+      candidates.push(
+        path.join(localAppData, 'Programs', 'GitHub Copilot', 'resources', 'bin', exec),
+        path.join(localAppData, 'Programs', 'GitHub Copilot', 'bin', exec),
+        path.join(localAppData, 'Programs', 'GitHub Copilot', exec),
+        path.join(localAppData, 'GitHub Copilot', 'bin', exec),
+        path.join(localAppData, 'GitHub Copilot', exec),
+        path.join(appData, 'GitHub Copilot', 'bin', exec),
+        path.join(appData, 'GitHub Copilot', exec),
+        path.join(progFiles, 'GitHub Copilot', 'bin', exec),
+        path.join(progFiles, 'GitHub Copilot', exec),
+        path.join(progFilesX86, 'GitHub Copilot', 'bin', exec),
+        path.join(progFilesX86, 'GitHub Copilot', exec),
+      );
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // BRANCH: Linux | Mode: GitHub Copilot Desktop
+  // Probes ~/.cache/github-copilot-sdk/cli/<version>/copilot, XDG cache/data dirs,
+  // and /opt/GitHub Copilot installations.
+  // --------------------------------------------------------------------------
+  if (process.platform === 'linux') {
+    const cacheDir = process.env.XDG_CACHE_HOME || path.join(homeDir, '.cache');
+    const dataDir = process.env.XDG_DATA_HOME || path.join(homeDir, '.local/share');
+
+    const linuxSdkDirs = [
+      path.join(cacheDir, 'github-copilot-sdk/cli'),
+      path.join(homeDir, '.cache/github-copilot-sdk/cli'),
+      path.join(cacheDir, 'copilot/pkg/linux-x64'),
+      path.join(cacheDir, 'copilot/pkg/linux-arm64'),
+      path.join(dataDir, 'github-copilot-sdk/cli'),
+    ];
+
+    for (const sdkDir of linuxSdkDirs) {
+      const versions = scanVersionDirs(sdkDir);
+      for (const ver of versions) {
+        candidates.push(path.join(sdkDir, ver, 'copilot'));
+      }
+    }
+
+    candidates.push(
+      path.join(homeDir, '.config/GitHub Copilot/bin/copilot'),
+      '/opt/GitHub Copilot/resources/bin/copilot',
+      '/opt/GitHub Copilot/bin/copilot',
+      '/opt/GitHub Copilot/copilot',
+    );
+  }
+
+  return candidates;
+}
+
+/**
+ * Locates the GitHub Copilot Desktop application binary.
+ *
+ * Mode: GitHub Copilot Desktop (`desktop`)
+ * Cross-platform (macOS / Windows / Linux).
+ *
+ * @returns {string|null} Path to executable or null if not found
+ */
+export function getCopilotDesktopBinary() {
+  const candidates = getCopilotDesktopCandidates();
+  for (const candidate of candidates) {
+    if (isExecutableFile(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 /**
@@ -318,23 +491,27 @@ export function testCopilotReachability(binary) {
 
 /**
  * Returns all viable Copilot targets in order of preference:
- *   1. Copilot VS Code Extension (`vscode`)
- *   2. Standalone Copilot CLI (`cli`)
+ *   1. GitHub Copilot Desktop (`desktop`)
+ *   2. Copilot VS Code Extension (`vscode`)
+ *   3. Standalone Copilot CLI (`cli`)
  *
  * Each target is probed up to executable reachability.
  *
- * @param {'auto'|'vscode'|'cli'} [preferredMode='auto']
- * @returns {Array<{ mode: 'vscode'|'cli', name: string, binary: string, version: string|null }>}
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [preferredMode='auto']
+ * @returns {Array<{ mode: 'desktop'|'vscode'|'cli', name: string, binary: string, version: string|null }>}
  */
 export function getViableCopilotTargets(preferredMode = 'auto') {
   const norm = String(preferredMode || 'auto').toLowerCase();
   const modes = [
+    { mode: 'desktop', name: 'GitHub Copilot Desktop', fn: getCopilotDesktopBinary },
     { mode: 'vscode', name: 'Copilot VS Code Extension', fn: getCopilotVscodeBinary },
     { mode: 'cli', name: 'Standalone Copilot CLI', fn: getCopilotCliBinary },
   ];
 
   const ordered =
-    norm === 'vscode' || norm === 'cli' ? modes.filter((m) => m.mode === norm) : modes;
+    norm === 'desktop' || norm === 'vscode' || norm === 'cli'
+      ? modes.filter((m) => m.mode === norm)
+      : modes;
 
   const viable = [];
   for (const item of ordered) {
@@ -364,11 +541,12 @@ export function getViableCopilotTargets(preferredMode = 'auto') {
  * Resolves the active Copilot binary and execution mode.
  *
  * Order of Preference:
- *   1. Copilot VS Code Extension (`vscode`) - highest priority
- *   2. Standalone Copilot CLI (`cli`) - fallback
+ *   1. GitHub Copilot Desktop (`desktop`) - highest priority
+ *   2. Copilot VS Code Extension (`vscode`) - secondary
+ *   3. Standalone Copilot CLI (`cli`) - fallback
  *
- * @param {'auto'|'vscode'|'cli'} [preferredMode='auto'] Desired mode selection
- * @returns {{ binary: string, mode: 'vscode'|'cli', name: string } | null}
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [preferredMode='auto'] Desired mode selection
+ * @returns {{ binary: string, mode: 'desktop'|'vscode'|'cli', name: string } | null}
  */
 export function resolveCopilotTarget(preferredMode = 'auto') {
   const viable = getViableCopilotTargets(preferredMode);
@@ -381,9 +559,9 @@ export function resolveCopilotTarget(preferredMode = 'auto') {
 /**
  * Returns the path to the preferred Copilot executable.
  *
- * Preserves preference: copilot vscode > copilot cli.
+ * Preserves preference: copilot desktop > copilot vscode > copilot cli.
  *
- * @param {'auto'|'vscode'|'cli'} [preferredMode='auto']
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [preferredMode='auto']
  * @returns {string|null}
  */
 export function getCopilotBinary(preferredMode = 'auto') {
@@ -392,27 +570,32 @@ export function getCopilotBinary(preferredMode = 'auto') {
 }
 
 /**
- * Probes availability and reachability across both Copilot modes.
+ * Probes availability and reachability across all three Copilot modes.
  *
  * Allows users and tests to inspect which modes are installed and reachable
  * without requiring subscriptions or active tokens.
  *
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [preferredMode='auto']
  * @returns {{
+ *   desktop: { binary: string|null, reachable: boolean, version: string|null, error: string|null },
  *   vscode: { binary: string|null, reachable: boolean, version: string|null, error: string|null },
  *   cli: { binary: string|null, reachable: boolean, version: string|null, error: string|null },
- *   preferred: { mode: 'vscode'|'cli', binary: string, name: string } | null
+ *   preferred: { mode: 'desktop'|'vscode'|'cli', binary: string, name: string } | null
  * }}
  */
-export function probeCopilotModes() {
+export function probeCopilotModes(preferredMode = 'auto') {
+  const desktopBin = getCopilotDesktopBinary();
   const vscodeBin = getCopilotVscodeBinary();
   const cliBin = getCopilotCliBinary();
 
+  const desktopProbe = testCopilotReachability(desktopBin);
   const vscodeProbe = testCopilotReachability(vscodeBin);
   const cliProbe = testCopilotReachability(cliBin);
 
-  const target = resolveCopilotTarget('auto');
+  const target = resolveCopilotTarget(preferredMode);
 
   return {
+    desktop: { binary: desktopBin, ...desktopProbe },
     vscode: { binary: vscodeBin, ...vscodeProbe },
     cli: { binary: cliBin, ...cliProbe },
     preferred: target,
@@ -425,7 +608,7 @@ export function probeCopilotModes() {
  * Tests reachability (via `--version`) up to the resolved mode.
  * Does not require an active subscription or token.
  *
- * @param {'auto'|'vscode'|'cli'} [preferredMode='auto']
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [preferredMode='auto']
  * @returns {Promise<boolean>}
  */
 export async function isCopilotAvailable(preferredMode = 'auto') {
@@ -486,7 +669,7 @@ export const DEFAULT_COPILOT_EFFORT = 'max';
 /**
  * Runs a prompt through GitHub Copilot.
  *
- * Respects order of preference: copilot vscode > copilot cli.
+ * Respects order of preference: copilot desktop > copilot vscode > copilot cli.
  * Supports cross-platform execution (macOS / Windows / Linux).
  * If a mode is reachable but lacks subscription/tokens, cascades to the next
  * available mode when running in auto mode.
@@ -499,7 +682,7 @@ export const DEFAULT_COPILOT_EFFORT = 'max';
  * @param {number} [options.timeout]
  * @param {number} [options.maxBufferMb]
  * @param {boolean} [options.verbose]
- * @param {'auto'|'vscode'|'cli'} [options.copilotMode]
+ * @param {'auto'|'desktop'|'vscode'|'cli'} [options.copilotMode]
  * @returns {Promise<Object>}
  */
 export async function runCopilot(options = {}) {
@@ -514,15 +697,16 @@ export async function runCopilot(options = {}) {
     copilotMode = 'auto',
   } = options;
 
-  // Resolve viable targets following preference: copilot vscode > copilot cli
+  // Resolve viable targets following preference: copilot desktop > copilot vscode > copilot cli
   const viableTargets = getViableCopilotTargets(copilotMode);
 
   if (viableTargets.length === 0) {
     const err = new Error(
-      'GitHub Copilot was not found in VS Code extension storage or system PATH.\n' +
-        'Preference order: Copilot VS Code extension > Standalone Copilot CLI.\n' +
-        '- Mode [copilot vscode]: Install GitHub Copilot Chat extension in VS Code.\n' +
-        '- Mode [copilot cli]: npm install -g @github/copilot (or brew install copilot)',
+      'GitHub Copilot was not found in Copilot Desktop cache, VS Code extension storage, or system PATH.\n' +
+        'Preference order: GitHub Copilot Desktop > Copilot VS Code Extension > Standalone Copilot CLI.\n' +
+        '- Mode [copilot desktop]: Install GitHub Copilot Desktop app.\n' +
+        '- Mode [copilot vscode]:  Install GitHub Copilot Chat extension in VS Code.\n' +
+        '- Mode [copilot cli]:     npm install -g @github/copilot (or brew install copilot)',
     );
     err.code = 'CLI_NOT_FOUND';
     err.failureKind = 'not-found';
@@ -564,8 +748,15 @@ export async function runCopilot(options = {}) {
 
     copilotArgs.push('--mode', 'plan');
 
+    const modeLabel =
+      target.mode === 'desktop'
+        ? 'copilot desktop'
+        : target.mode === 'vscode'
+        ? 'copilot vscode'
+        : 'copilot cli';
+
     emitInitBanner({
-      provider: `GitHub Copilot [${target.mode}] (${target.mode === 'vscode' ? 'copilot vscode' : 'copilot cli'})`,
+      provider: `GitHub Copilot [${target.mode}] (${modeLabel})`,
       logFile: sessionLogger.logFile,
       mode: 'READ-ONLY',
     });
@@ -641,7 +832,7 @@ export async function runCopilot(options = {}) {
           classifyCopilotFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
 
         emitCompletionBanner({
-          provider: `GitHub Copilot [${target.mode}] (${target.mode === 'vscode' ? 'copilot vscode' : 'copilot cli'})`,
+          provider: `GitHub Copilot [${target.mode}] (${modeLabel})`,
           sessionLink,
           exitCode,
           truncated,
@@ -749,13 +940,14 @@ export async function main() {
 GitHub Copilot Runner (copilot)
 
 Order of Preference:
-  1. Copilot VS Code Extension ('vscode')
-  2. Standalone Copilot CLI ('cli')
+  1. GitHub Copilot Desktop ('desktop')
+  2. Copilot VS Code Extension ('vscode')
+  3. Standalone Copilot CLI ('cli')
 
 Cross-Platform Support:
-  - macOS: VS Code globalStorage probe, Homebrew, user binaries
-  - Windows: %APPDATA% / %LOCALAPPDATA% globalStorage (.bat/.cmd/.exe/.ps1), npm global
-  - Linux: XDG config (~/.config), Flatpak, Snap, /usr/local/bin, /usr/bin
+  - macOS: Copilot Desktop SDK cache (~/Library/Caches/github-copilot-sdk), VS Code globalStorage, Homebrew, user binaries
+  - Windows: %LOCALAPPDATA%\\github-copilot-sdk, %APPDATA% / %LOCALAPPDATA% globalStorage (.bat/.cmd/.exe/.ps1), npm global
+  - Linux: ~/.cache/github-copilot-sdk, XDG config (~/.config), Flatpak, Snap, /usr/local/bin, /usr/bin
 
 Usage:
   node scripts/copilot-run.mjs [options] [prompt]
@@ -766,7 +958,7 @@ Options:
   -m, --model <name>            Override Copilot model (default: ${DEFAULT_COPILOT_MODEL})
   -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_COPILOT_EFFORT})
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
-  --copilot-mode <mode>         Explicit mode preference: 'vscode', 'cli', or 'auto' (default: auto)
+  --copilot-mode <mode>         Explicit mode preference: 'desktop', 'vscode', 'cli', or 'auto' (default: auto)
   --test, --probe               Test reachability across modes without requiring tokens or prompt
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
@@ -779,10 +971,19 @@ Options:
   // Validates execution up to --version without requiring token or subscription.
   // --------------------------------------------------------------------------
   if (options.probeOnly) {
-    const probe = probeCopilotModes();
+    const probe = probeCopilotModes(options.copilotMode);
     console.log('[dispatch] GitHub Copilot Reachability Status:');
     console.log(
-      `  - Mode [copilot vscode] (priority 1): ${
+      `  - Mode [copilot desktop] (priority 1): ${
+        probe.desktop.reachable
+          ? `REACHABLE (${probe.desktop.binary}) [${probe.desktop.version}]`
+          : probe.desktop.binary
+          ? `FOUND BUT UNREACHABLE (${probe.desktop.binary}: ${probe.desktop.error})`
+          : 'NOT FOUND'
+      }`,
+    );
+    console.log(
+      `  - Mode [copilot vscode]  (priority 2): ${
         probe.vscode.reachable
           ? `REACHABLE (${probe.vscode.binary}) [${probe.vscode.version}]`
           : probe.vscode.binary
@@ -791,7 +992,7 @@ Options:
       }`,
     );
     console.log(
-      `  - Mode [copilot cli]    (priority 2): ${
+      `  - Mode [copilot cli]     (priority 3): ${
         probe.cli.reachable
           ? `REACHABLE (${probe.cli.binary}) [${probe.cli.version}]`
           : probe.cli.binary
@@ -809,7 +1010,9 @@ Options:
       );
       process.exit(0);
     } else {
-      console.error('\n  -> Error: Neither VS Code Copilot extension nor Standalone Copilot CLI is reachable.');
+      console.error(
+        '\n  -> Error: Neither Copilot Desktop, VS Code Copilot extension, nor Standalone Copilot CLI is reachable.',
+      );
       process.exit(1);
     }
   }

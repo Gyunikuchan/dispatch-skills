@@ -50,8 +50,10 @@ import {
 } from '../../dispatch/scripts/claude-run.mjs';
 
 import {
+  getCopilotDesktopCandidates,
   getCopilotVscodeCandidates,
   getCopilotCliCandidates,
+  getCopilotDesktopBinary,
   getCopilotVscodeBinary,
   getCopilotCliBinary,
   getCopilotBinary,
@@ -600,12 +602,15 @@ describe('claude multi-mode resolution & reachability', () => {
 // ---------------------------------------------------------------------------
 
 describe('copilot runner discovery & reachability', () => {
-  it('gathers candidate paths for current platform', () => {
+  it('gathers candidate paths for current platform across all modes', () => {
+    const desktopCandidates = getCopilotDesktopCandidates();
     const vscodeCandidates = getCopilotVscodeCandidates();
     const cliCandidates = getCopilotCliCandidates();
 
+    assert.ok(Array.isArray(desktopCandidates));
     assert.ok(Array.isArray(vscodeCandidates));
     assert.ok(Array.isArray(cliCandidates));
+    assert.ok(desktopCandidates.length > 0);
     assert.ok(vscodeCandidates.length > 0);
     assert.ok(cliCandidates.length > 0);
   });
@@ -625,6 +630,11 @@ describe('copilot runner discovery & reachability', () => {
   });
 
   it('supports explicit mode override in resolution', () => {
+    const targetDesktop = resolveCopilotTarget('desktop');
+    if (targetDesktop) {
+      assert.equal(targetDesktop.mode, 'desktop');
+    }
+
     const targetVscode = resolveCopilotTarget('vscode');
     if (targetVscode) {
       assert.equal(targetVscode.mode, 'vscode');
@@ -636,12 +646,16 @@ describe('copilot runner discovery & reachability', () => {
     }
   });
 
-  it('follows preference order: copilot vscode > copilot cli', () => {
+  it('follows preference order: copilot desktop > copilot vscode > copilot cli', () => {
+    const desktopBin = getCopilotDesktopBinary();
     const vscodeBin = getCopilotVscodeBinary();
     const cliBin = getCopilotCliBinary();
     const resolved = resolveCopilotTarget();
 
-    if (vscodeBin && testCopilotReachability(vscodeBin).reachable) {
+    if (desktopBin && testCopilotReachability(desktopBin).reachable) {
+      assert.equal(resolved?.mode, 'desktop');
+      assert.equal(getCopilotBinary(), desktopBin);
+    } else if (vscodeBin && testCopilotReachability(vscodeBin).reachable) {
       assert.equal(resolved?.mode, 'vscode');
       assert.equal(getCopilotBinary(), vscodeBin);
     } else if (cliBin && testCopilotReachability(cliBin).reachable) {
@@ -652,8 +666,10 @@ describe('copilot runner discovery & reachability', () => {
 
   it('probes all copilot modes without consuming tokens', () => {
     const probe = probeCopilotModes();
+    assert.ok('desktop' in probe);
     assert.ok('vscode' in probe);
     assert.ok('cli' in probe);
+    assert.equal(typeof probe.desktop.reachable, 'boolean');
     assert.equal(typeof probe.vscode.reachable, 'boolean');
     assert.equal(typeof probe.cli.reachable, 'boolean');
   });
