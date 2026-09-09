@@ -1,11 +1,11 @@
 ---
 name: dispatch
-description: Dispatch a bounded task across local and external agent CLIs (Claude Code, Antigravity, Copilot, OpenCode) with fallback. Use when delegating work to another agent CLI.
+description: Dispatch a bounded read-only task across local and external agent CLIs (Claude Code, Antigravity, Copilot, OpenCode) with fallback. Use when delegating investigation, research, or review to another agent CLI.
 ---
 
 # Dispatch
 
-Dispatch a bounded task through the agent **cascade**. The orchestrator owns the brief, judgment, and commit; the implementer CLI executes.
+Dispatch a bounded **read-only** task through the agent **cascade** (investigation, research, plan/code reviews). The orchestrator owns the brief, judgment, edits, and commit; the delegate CLI inspects and analyzes.
 
 The cascade, in order — this file is the single source of truth for it:
 
@@ -14,7 +14,7 @@ The cascade, in order — this file is the single source of truth for it:
 3. **GitHub Copilot** (`copilot`).
 4. **Local OpenCode** (`local`) when LM Studio is up.
 
-The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DELEGATE_AVAILABLE`).
+The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
@@ -31,21 +31,19 @@ The orchestrator's own platform is skipped (tried last only with `--allow-same-a
 
 ### 1. Formulate task and bound context
 
-1. Draft the prompt text.
-2. Identify context files or artifacts to attach via `-f "<path>"`.
-3. Choose flags from [Runner Flags Reference](#runner-flags-reference).
+1. Draft prompt text.
+2. Identify context files or artifacts to attach via `-f "<path>"` (forward slashes only).
+3. Select flags from [Runner Flags Reference](#runner-flags-reference).
 
-Format all paths with forward slashes (`/`) — on Windows, the runner argument parser requires them (macOS and Linux use them natively).
-
-**Done when:** Prompt drafted, `-f` attachment paths validated, and command string constructed.
+**Done when:** Prompt drafted, `-f` paths validated, and command string constructed.
 
 ---
 
 ### 2. Dispatch in the background and yield
 
-Run the dispatcher **backgrounded**, then yield the turn. The 1800s (30m) default timeout deliberately outlasts the ~600s ceiling a harness puts on one tool call, so a foreground dispatch risks mid-run termination with output lost. Backgrounding makes the full timeout usable.
+Run the dispatcher **backgrounded**, then yield the turn. Backgrounding allows the 1800s default timeout to complete safely beyond harness tool-call limits.
 
-**Rely on platform defaults**: Execute with default model, reasoning effort, and timeout. Pass override flags (`-m`, `-e`, `-t`, `--provider`, `-a`) only when the user explicitly requests them.
+Rely on platform defaults (model, reasoning effort, timeout). Pass override flags (`-m`, `-e`, `-t`, `--provider`, `-a`) only when explicitly requested.
 
 ```bash
 # Antigravity (project-local)
@@ -56,51 +54,37 @@ node .claude/skills/dispatch/scripts/dispatch.mjs [flags] "<prompt>"
 node ~/.agents/skills/dispatch/scripts/dispatch.mjs [flags] "<prompt>"
 ```
 
-Use the path that matches where the skill was installed. Pick exactly one line — do not run all three.
+Pick the single line matching the skill installation location.
 
-**Claude Code**: run with `dangerouslyDisableSandbox: true`. Antigravity requires binding a local TCP socket to start its language server; this conflicts with the Claude Code Bash sandbox and the run fails. The dispatch runner enforces read-only structurally (`--mode plan`, restricted `--allowedTools`), so disabling the sandbox does not weaken safety.
+**Claude Code**: execute with `dangerouslyDisableSandbox: true` (Antigravity's language server TCP socket binding conflicts with the Bash sandbox; read-only safety is structurally enforced by `--mode plan` and restricted `--allowedTools`).
 
-Pin a provider with `--provider <name>` (`local`, `agy`, `claude`, `copilot`) only when requested by the user. A pinned provider disables cascading — its failure returns as-is.
+**Pinned provider**: `--provider <name>` (`local`, `agy`, `claude`, `copilot`) pins execution and disables cascading on failure.
 
-#### Monitoring in flight
+Yield the turn and await the completion notification.
 
-The launch banner identifies the session log:
-
-```
-[dispatch] Provider: Claude Code (claude) | Mode: READ-ONLY | Log: /tmp/agent-dispatch-logs/claude-<ts>-<pid>.log
-```
-
-Read the **tail** of that log to inspect progress:
-
-```bash
-tail -n 30 "<logFile>"
-```
-
-Yield and await the reactive completion notification.
-
-**Done when:** Dispatch command launched in the background and the turn is yielded.
+**Done when:** Dispatch process launched in the background and the turn is yielded.
 
 ---
 
 ### 3. Fallback gate
 
-Evaluate the dispatcher outcome:
+Evaluate runner outcome:
 
 - **Success**: capture stdout and session handle, then proceed to Step 4.
-- **Truncated** (`WARNING: Output truncated`): the delegate hit its timeout or buffer cap and returned partial output. Use it if it satisfies the brief; otherwise re-dispatch a narrower task.
-- **`NO_DELEGATE_AVAILABLE`**: every local and external pass is exhausted. Fall back in-process:
-  - Invoke a read-only subagent (`research` in Antigravity, `Explore` in Claude Code) with identical prompt and attachments.
-  - Brief task, or subagents unavailable → execute directly in the current session.
+- **Truncated** (`WARNING: Output truncated`): use partial output if it fulfills the brief; otherwise re-dispatch a narrowed task.
+- **`NO_DISPATCH_AVAILABLE`**: all cascade passes exhausted. Fall back in-process:
+  - Invoke read-only subagent (`research` in Antigravity, `Explore` in Claude Code) with identical prompt and attachments.
+  - For brief tasks or when subagents are unavailable, execute directly in the current session.
 
-**Done when:** Complete output retrieved from delegate stdout, subagent response, or direct execution.
+**Done when:** Complete output obtained from delegate stdout, subagent response, or direct execution.
 
 ---
 
 ### 4. Relay and synthesis
 
-Relay the response to the user, prefixed by provider (`[Claude Code]`, `[Antigravity 2.0]`, `[GitHub Copilot]`, `[Local OpenCode]`, `[Subagent Fallback]`, or `[Direct Execution]`), including the captured session deep-link or resume command when available.
+Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravity 2.0]`, `[GitHub Copilot]`, `[Local OpenCode]`, `[Subagent Fallback]`, or `[Direct Execution]`), including captured session deep-link (`conversation://<id>`) or resume command (`claude --resume <id>`, `copilot --resume <id>`) when present.
 
-**Done when:** Output delivered with the provider prefix.
+**Done when:** Output delivered to the user with the appropriate provider prefix.
 
 ---
 
@@ -131,3 +115,13 @@ Relay the response to the user, prefixed by provider (`[Claude Code]`, `[Antigra
 | **Local OpenCode** | `local` | `opencode` | Local server logs |
 
 Technical specifications, discovery paths, default models, sandboxing boundaries, and failure classification live in [references/providers.md](references/providers.md).
+
+---
+
+## Troubleshooting
+
+- **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner:
+  ```bash
+  tail -n 30 "<logFile>"
+  ```
+- **Direct runner execution**: Execute a provider runner directly to diagnose binary discovery, authentication, or environment issues (e.g. `node <skill-path>/scripts/claude-run.mjs --help`).

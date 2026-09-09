@@ -204,6 +204,8 @@ describe('common utilities', () => {
   it('creates dedicated session log file without errors', () => {
     const logger = createSessionLogger('test-provider');
     assert.ok(logger.logFile.includes('test-provider'));
+    assert.ok(logger.logFile.startsWith(os.tmpdir()), `expected logFile ${logger.logFile} to be within os.tmpdir()`);
+    assert.ok(!logger.logFile.includes('.scratch'), `expected logFile ${logger.logFile} to never contain .scratch`);
     logger.write('Sample log line\n');
     logger.close();
 

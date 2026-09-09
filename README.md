@@ -25,7 +25,7 @@ Add `-g` for a user-level install.
 | [`dispatch`](dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only by default, execution logs kept out of your context. | nothing |
 | [`dispatch-plan-review`](dispatch-plan-review) | 6-axis review of an implementation plan **before** code exists; folds accepted findings into the plan on disk. | `dispatch` |
 | [`dispatch-code-review`](dispatch-code-review) | 5-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
-| [`implement-dispatch`](implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three (reviews optional) |
+| [`implement-dispatch`](implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
 
 Dependencies point one way and never back. `dispatch` references nothing; the review skills reference only `dispatch`; `implement-dispatch` references all three **by skill name**, so nothing breaks when they install to different paths. Install only what you want.
 

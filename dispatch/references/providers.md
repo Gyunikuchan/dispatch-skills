@@ -20,8 +20,9 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ### Defaults & Overrides
 - **Default Model**: `claude-opus-5` (override via `-m <model>`)
 - **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
+- **Default Mode**: Read-only (`--allowedTools`)
 - **Mode Override**: `--claude-mode <desktop|vscode|cli>` (explicit execution mode)
-- **Reachability Probe**: `--test-modes` (tests reachability up to `--version` across all modes without token consumption)
+- **Reachability Probe**: `--test-modes` (tests reachability via `--version` across all modes without token consumption)
 
 ### Order of Preference
 1. **Claude Desktop (`desktop`)**:
@@ -30,7 +31,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
    - Linux: `~/.config/Claude/claude-code/<version>/claude`, `~/.local/share/Claude/...`
 2. **Claude VS Code Extension (`vscode`)**:
    - Cross-platform: `CLAUDE_CODE_EXECPATH` environment variable
-   - Extensions scan: `~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude` (`claude.exe` on Windows)
+   - Extension scan: `~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude` (`claude.exe` on Windows)
    - Agent-host SDK cache:
      - macOS: `~/Library/Application Support/Code/agent-host/sdk-cache/claude/**/claude`
      - Windows: `%APPDATA%\Code\agent-host\sdk-cache\claude\**\claude.exe`
@@ -39,21 +40,16 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
    - macOS / Linux: `~/.local/bin/claude`, `/usr/local/bin/claude`, `/opt/homebrew/bin/claude`, NVM / global npm, system `$PATH`
    - Windows: `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, system `PATH` (`where.exe`)
 
-### Multi-Mode Cascade & Token Availability
-Not all modes may be subscribed or hold tokens on a given machine. Discovery probes test binary reachability via `--version` (zero token consumption). If execution on the preferred mode encounters an `auth` or `quota` failure, `runClaude` automatically cascades to the next available mode in preference order unless pinned.
-
-### Read-Only Path Scope
-Claude Code's `--allowedTools` provides tool-type restriction (only `Read`, `Bash(grep *)`, `Bash(find *)`, etc.), not path-level restriction — the glob `*` matches any characters in the command string. A delegate can technically read files outside the workspace via allowed tools like `grep` or `find`. Path scoping is enforced by:
-
-1. **Safety prompt**: explicitly lists denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
-2. **Claude Code's own sandbox**: the delegate session inherits the host's sandbox restrictions, which provide an outer boundary.
-
-This is a known limitation of prompt-level path enforcement — it relies on the model following the safety instructions.
+### Sandboxing & Isolation
+- **Tool Restriction**: Passed `--allowedTools` restricts tool types (`Read`, `Bash(grep *)`, `Bash(find *)`), not individual filesystem paths.
+- **Safety Prompt**: Restricts denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
+- **Sandbox Boundary**: Delegate session inherits the host process sandbox boundaries.
+- **Mode Cascade**: Discovery probes test `--version` without token spend. On `auth` or `quota` failure, `runClaude` cascades to the next available mode unless pinned.
 
 ### Session Monitoring
-- **Resume Command**: The runner passes `--output-format json` and reads `session_id` from the result envelope, emitting `claude --resume <session_id>`. Plain `-p` text output carries no session id, so the envelope is the only reliable source.
-- **Error Subtypes**: The same envelope exposes `is_error` and `subtype` (for example `error_max_turns`), which the cascade uses to classify a failure before deciding whether to try another provider.
-- **Session History**: Persisted in `~/.claude/projects/` and can be resumed in terminal or IDE terminal tabs.
+- **Resume Command**: Captured `session_id` from JSON envelope (`--output-format json`) emits `claude --resume <session_id>`.
+- **Error Classification**: JSON envelope exposes `is_error` and `subtype` (e.g. `error_max_turns`) for cascade routing.
+- **Session History**: Stored in `~/.claude/projects/`; resumable in terminal or IDE tabs.
 
 ---
 
@@ -62,78 +58,91 @@ This is a known limitation of prompt-level path enforcement — it relies on the
 ### Defaults & Overrides
 - **Default Model**: `gemini-3.8-flash` (override via `-m <model>`)
 - **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`)
+- **Default Mode**: `--mode plan` (structural read-only)
+- **Mode Override**: `--agy-mode <antigravity-2.0|antigravity-vscode|antigravity-cli|auto>`
+- **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
 
 ### Order of Preference
-1. **Antigravity 2.0 (Desktop app)**:
+1. **Antigravity Desktop (`desktop`)**:
    - macOS: `~/.gemini/antigravity/bin/agy`, `/Applications/Antigravity.app/Contents/Resources/bin/agy`
    - Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`, `%APPDATA%\Google\Antigravity\bin\agy.exe`, `%ProgramFiles%\Antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity/bin/agy`, `/opt/Antigravity/agy`
-2. **Antigravity VS Code Extension**:
+2. **Antigravity VS Code Extension (`vscode`)**:
    - macOS: `~/.gemini/antigravity-ide/bin/agy`, `~/Library/Application Support/Code/User/globalStorage/google.google-antigravity/bin/agy`
    - Windows: `%APPDATA%\Code\User\globalStorage\google.google-antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity-ide/bin/agy`, `~/.config/Code/User/globalStorage/google.google-antigravity/bin/agy`
-3. **Antigravity CLI (standalone)**:
+3. **Antigravity CLI (`cli`)**:
    - Cross-platform: `~/.gemini/bin/agy`, `~/.local/bin/agy`, system `$PATH`
 
-### Claude Code Sandbox Constraint
-Antigravity requires binding a local TCP socket to start its language server. When dispatched from Claude Code, this conflicts with the Bash tool sandbox and the run fails with `listen tcp 127.0.0.1:0: bind: operation not permitted`. Run the dispatch command with `dangerouslyDisableSandbox: true`. The runner enforces read-only structurally (`--mode plan`), so disabling the sandbox does not weaken safety.
-
-### Headless Permissions
-Read-only headless runs pass `--mode plan`. `plan` mode forbids edits; some read tools may be auto-denied in headless mode when no human is present to approve them. Interactive runs (`-i`) allow a human to answer permission prompts directly.
+### Sandboxing & Isolation
+- **Structural Read-Only**: Enforced via `--mode plan`. Edits are blocked at the runtime level.
+- **Claude Code Sandbox Constraint**: Antigravity binds a local TCP socket for its language server, conflicting with Claude Code's Bash tool sandbox (`bind: operation not permitted`). Runs pass `dangerouslyDisableSandbox: true`; safety is maintained structurally via `--mode plan`.
+- **Headless Permissions**: Runs are strictly headless; unapproved interactive tools are auto-denied.
 
 ### Session Monitoring
-- **Deep-link**: Emits `conversation://<conversation-id>` on initialization and completion. Clicking this link within the Antigravity desktop application navigates directly to the subagent's conversation canvas.
-- **Transcript Logs**: Full trajectory JSONL logs are stored in `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`.
-- **Interactive Mode**: Pass `-i` or `--interactive` to spawn an interactive Antigravity CLI session in the current terminal.
+- **Deep-Link**: Emits `conversation://<conversation-id>` on init and completion for direct canvas navigation in the Antigravity desktop app.
+- **Transcript Logs**: Trajectory JSONL logs stored in `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`.
 
 ---
 
-## 4. GitHub Copilot CLI (`copilot`)
+## 4. GitHub Copilot (`copilot`)
 
 ### Defaults & Overrides
 - **Default Model**: `gpt-5.6-luna` (override via `-m <model>`)
 - **Default Reasoning Effort**: `max` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
+- **Default Mode**: `--mode plan` (structural read-only)
+- **Mode Override**: `--copilot-mode <vscode|cli|auto>` (explicit execution mode)
+- **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
 
-### Execution Modes & Preference Order
-1. **Copilot VS Code Extension (`vscode`)** (Priority 1)
+### Order of Preference
+1. **Copilot VS Code Extension (`vscode`)**:
    - macOS: `~/Library/Application Support/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, `Cursor`
-   - Windows: `%APPDATA%\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.{bat,cmd,exe,ps1}` (and `Code - Insiders`, `VSCodium`, `%LOCALAPPDATA%`)
+   - Windows: `%APPDATA%\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.{bat,cmd,exe,ps1}` (`Code - Insiders`, `VSCodium`, `%LOCALAPPDATA%`)
    - Linux: `~/.config/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, Flatpak, Snap
-2. **Standalone Copilot CLI (`cli`)** (Priority 2 / Fallback)
-   - System `$PATH` (`copilot` / `copilot.cmd`)
-   - macOS: `/opt/homebrew/bin/copilot`, `/usr/local/bin/copilot`, `~/.local/bin/copilot`, `~/.npm-global/bin/copilot`
-   - Windows: `%APPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\Programs\copilot\copilot.exe`, `%ProgramFiles%\GitHub Copilot\copilot.exe`
-   - Linux: `/usr/local/bin/copilot`, `/usr/bin/copilot`, `/home/linuxbrew/.linuxbrew/bin/copilot`, `~/.local/bin/copilot`
+2. **Copilot CLI (`cli`)**:
+   - macOS: `/opt/homebrew/bin/copilot`, `/usr/local/bin/copilot`, `~/.local/bin/copilot`, `~/.npm-global/bin/copilot`, system `$PATH`
+   - Windows: `%APPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\Programs\copilot\copilot.exe`, `%ProgramFiles%\GitHub Copilot\copilot.exe`, system `PATH`
+   - Linux: `/usr/local/bin/copilot`, `/usr/bin/copilot`, `/home/linuxbrew/.linuxbrew/bin/copilot`, `~/.local/bin/copilot`, system `$PATH`
 
-### Reachability Testing
-- Probed via `--version` (`testCopilotReachability` / `probeCopilotModes` / `node scripts/copilot-run.mjs --test`).
-- Does **not** require active Copilot subscriptions or tokens: reachability validates binary execution so environments without tokens still detect and fall back cleanly.
+### Sandboxing & Isolation
+- **Structural Read-Only**: Enforced via `--mode plan`.
+- **Safety Prompt & Integrity Check**: Prepends standard denied path rules; tracks workspace mutations via pre/post git status checks.
+- **Token Independence**: Reachability probes validate binary launch without requiring active tokens or subscriptions.
 
 ### Session Monitoring
-- **Resume Command**: Captures session ID from output and emits `copilot --resume <session_id>`. Absent when the CLI prints no id.
+- **Resume Command**: Emits `copilot --resume <session_id>` when session ID is present in CLI output.
+- **Session Logs**: Persisted via runner session loggers in the OS temp directory (`agent-dispatch-logs`).
 
 ---
 
-## 5. Local OpenCode + LM Studio
+## 5. Local OpenCode (`local`)
 
-### Prerequisites
-- LM Studio running with local server started on `http://127.0.0.1:1234/v1`.
-- `opencode` CLI installed and reachable.
+### Defaults & Overrides
+- **Default Model**: `lmstudio/qwen3.8-27b-ridge` (override via `-m <model>`)
+- **Default Reasoning Effort**: `null` (server default)
+- **Default Mode**: Read-only prompt + network isolation
+- **Reachability Probe**: Preflight HTTP probe against `http://127.0.0.1:1234/v1`
 
-### Sandboxing Guarantee
-- **WAN Confinement**: Proxies outbound network traffic to `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY` while keeping `NO_PROXY=127.0.0.1,localhost` for LM Studio.
-- **Credential Stripping**: Environment variables are strictly filtered through `SAFE_ENV_WHITELIST`, stripping API tokens, SSH keys, and cloud secrets.
-- **Boundary Restriction**: File attachments (`-f`) are confined to the workspace root, Antigravity brain, agent config directories, and OS temp dir.
+### Order of Preference
+1. **Local OpenCode (`opencode`)**:
+   - Cross-platform: `opencode` binary on system `$PATH` connecting to local LM Studio server at `http://127.0.0.1:1234/v1`
 
-### Known Limitations
-- **Read-only enforcement is prompt-level on macOS and Windows.** OpenCode's `--auto --pure` flags do not provide a structural read-only mode equivalent to Claude Code's `--allowedTools` or Antigravity/Copilot's `--mode plan`. On Linux, Bubblewrap (`bwrap`) provides filesystem-level read-only binding when available. On macOS and Windows, the only enforcement layers are the safety prompt prepended to the task and the post-run git integrity check. Local models are less reliable at following prompt constraints than cloud models, so writes are possible if the model ignores the guardrail.
-- **Git integrity check detects but does not revert.** A `git status --porcelain` snapshot is compared before and after the run. Violations are flagged as warnings; the runner does not roll back changes.
+### Sandboxing & Isolation
+- **WAN Confinement**: Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local LM Studio communication.
+- **Credential Stripping**: Environment variables are filtered through `SAFE_ENV_WHITELIST`, removing API tokens, SSH keys, and cloud credentials.
+- **Attachment Boundary**: File attachments (`-f`) are confined to workspace root, Antigravity brain, agent config directories, and OS temp dir.
+- **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS and Windows enforce read-only boundaries through prompt guardrails and pre/post git integrity checks.
+
+### Session Monitoring
+- **Server Endpoint**: Monitored via local server endpoint at `http://127.0.0.1:1234`.
+- **Session Logs**: Stored via runner session loggers in the OS temp directory (`agent-dispatch-logs`).
+- **Git Integrity**: Detects workspace changes across runs via `git status --porcelain` diffs.
 
 ---
 
 ## 6. Orchestrator Detection
 
-`detectOrchestrator()` in [`scripts/dispatch.mjs`](../scripts/dispatch.mjs) reads the markers each host CLI exports, so the cascade can skip the orchestrator's own platform:
+`detectOrchestrator()` in [`scripts/dispatch.mjs`](../scripts/dispatch.mjs) inspects host CLI environment markers to skip dispatching back to the orchestrator's own platform:
 
 | Orchestrator | Markers |
 |--------------|---------|
@@ -142,28 +151,28 @@ Read-only headless runs pass `--mode plan`. `plan` mode forbids edits; some read
 | Copilot CLI | `COPILOT_AGENT`, `COPILOT_CLI_SESSION_ID` |
 | OpenCode | `OPENCODE_PORT`, `OPENCODE_AGENT` |
 
-`VSCODE_PID` is deliberately not a marker: it is set in any VS Code terminal regardless of which agent is driving it. Pass `--orchestrator <name>` when detection cannot see the host.
+`VSCODE_PID` is excluded from detection as it is set across all VS Code terminals regardless of driving agent. Pass `--orchestrator <name>` to override detection.
 
 ---
 
 ## 7. Failure Classification
 
-`classifyFailure()` in [`scripts/common.mjs`](../scripts/common.mjs) tags a failed run so the cascade knows what it is looking at:
+`classifyFailure()` in [`scripts/common.mjs`](../scripts/common.mjs) classifies execution errors to guide cascade routing:
 
-| Kind | Trigger | Cascade behaviour |
+| Kind | Trigger | Cascade Behaviour |
 |------|---------|-------------------|
-| `quota` | Usage limit, rate limit, credit balance, HTTP 429 | Try the next provider — a different vendor has separate limits |
-| `context-overflow` | Prompt too long, context length exceeded | Try the next provider; shrink attachments if it repeats |
-| `auth` | 401/403, invalid key, not signed in | Reported as not retryable, then cascades |
-| `not-found` | Binary missing, ENOENT | Reported as not retryable, then cascades |
-| `timeout` | Runner timeout | Partial output retained and returned if nothing better follows |
+| `quota` | Usage limit, rate limit, credit balance, HTTP 429 | Cascade to next provider with independent limits |
+| `context-overflow` | Prompt too long, context length exceeded | Cascade to next provider; shrink attachments on repeat |
+| `auth` | 401/403, invalid key, unauthenticated session | Report non-retryable error, cascade |
+| `not-found` | Missing binary, `ENOENT` | Report non-retryable error, cascade |
+| `timeout` | Execution timeout | Retain and return partial output if no fallback succeeds |
 
-A provider that exits `0` with empty output is treated as a failure, not a silent success: CLIs routinely report quota exhaustion on stderr and still exit clean.
+Exit code `0` with empty output is classified as a failure, capturing CLIs that exit clean while logging quota exhaustion to stderr.
 
 ---
 
 ## 8. Git Integrity Check
 
-Every runner snapshots `git status --porcelain` before and after the delegate run. A difference triggers a `gitIntegrityViolation` warning in the result.
+Every runner snapshots `git status --porcelain` before and after execution. Any detected difference triggers a `gitIntegrityViolation` warning.
 
-**False positives**: the snapshot captures all workspace changes, not just those from the delegate. Concurrent processes — IDE auto-save, file watchers, background builds, linters, test runners — can modify files during the run and trigger a violation that is unrelated to the delegate. The warning should be investigated, not treated as proof of a read-only breach.
+- **False Positives**: Snapshots capture all workspace changes. Concurrent processes (IDE auto-save, file watchers, linters, background builds) may trigger warnings unrelated to delegate actions. Investigate warnings before treating them as security breaches.

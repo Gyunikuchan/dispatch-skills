@@ -32,6 +32,7 @@ dispatch → (nothing)
 ```
 
 - **Reference by skill name, never by path.**
+- **Assume dependencies are installed**: Downstream skills (e.g. `implement-dispatch`) assume upstream dependencies are present and reference them directly rather than duplicating instructions.
 - **Downstream skills never name upstream skills** in prose or frontmatter.
 - **Optional dependencies degrade gracefully**: state absence and run the reduced flow.
 
@@ -61,6 +62,8 @@ Review skills share the severity ladder (`MUST-FIX` / `SHOULD-FIX` / `CONSIDER`)
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`) following `writing-for-agents`. Prune duplicate meaning, maintain single sources of truth, and phrase instructions positively.
 
+- **Plans & walkthroughs**: Follow Antigravity markdown format for implementation plans and run walkthroughs.
+
 ## Code Standards & Cross-Platform
 
 Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, and Copilot:
@@ -69,5 +72,6 @@ Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and
 - **Paths**: Node `path` utilities and forward slashes only.
 - **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Use universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
+- **Scratch directory**: Store temporary state and run artifacts in `.scratch/` to support resuming interrupted processes; clean up temporary files upon completion.
 - **Docs**: Every skill README must include install and usage examples.
 
