@@ -1,91 +1,163 @@
 # dispatch
 
-Hand a bounded task to another coding-agent CLI, and get back only the answer.
+Hand bounded, read-only tasks to external coding-agent CLIs and receive clean, synthesized results without polluting your primary agent's context window.
 
-An orchestrating agent keeps the brief, the judgment, and the commit. `dispatch` picks an available implementer CLI, runs it read-only by default, streams the full execution trace to a temp log, and returns the final answer plus a session handle. Nothing else reaches the orchestrator's context.
+---
 
-This skill stands alone — it references no other skill and needs no host configuration.
+## What It Does
 
-## Install
+When working with an AI coding assistant (the **orchestrator**—like Claude Code, Antigravity, or GitHub Copilot), complex investigations, code trace requests, or plan reviews can flood the context window with hundreds of lines of raw search outputs and intermediate tool calls.
+
+`dispatch` solves this by acting as a **cross-agent delegation bridge**:
+1. **Delegates bounded read-only work** to an external agent CLI (Claude Code, Antigravity 2.0, Copilot, or Local OpenCode).
+2. **Runs in isolation** in the background, redirecting verbose execution traces to OS temp logs.
+3. **Returns only the synthesized answer** along with a persistent session handle or canvas deep-link.
+4. **Preserves the orchestrator's role**: The orchestrator keeps the user brief, judgment, workspace file edits, and git commits.
+
+```mermaid
+flowchart TD
+    User(["👤 User Prompt"]) --> Orchestrator["🤖 Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
+    Orchestrator -->|"Delegates read-only task"| Dispatch["⚡ dispatch"]
+    
+    Dispatch -->|"Selects available CLI"| Delegate["🔍 External Delegate CLI<br/>(Claude Code / Antigravity / Copilot / Local)"]
+    
+    Delegate -.->|"Streams raw tool traces"| Logs[("📝 OS Temp Logs<br/>(Keeps context clean)")]
+    Delegate -->|"Returns clean answer & session link"| Orchestrator
+    
+    Orchestrator -->|"Presents synthesized result"| User
+```
+
+---
+
+## Prerequisites & Installation
+
+### Prerequisites
+- **Node.js**: `v18.0.0` or higher.
+- **At least one agent CLI** installed or reachable on your system:
+  - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
+  - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
+  - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
+  - **Local OpenCode**: `opencode` binary with a running LM Studio server at `http://127.0.0.1:1234/v1`.
+
+### Installation
+
+Install `dispatch` into your current project workspace:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 ```
 
-Installs to `.agents/skills/dispatch/` and symlinks into `.claude/skills/` (and any other detected agent directory). Add `-g` for a user-level install under `~/.agents/skills/`.
-
-## The cascade
-
-Providers are tried in order, skipping the orchestrator's own platform so a task is not handed back to the agent that delegated it:
-
-1. **Claude Code** (`claude`).
-2. **Antigravity** (`agy`).
-3. **GitHub Copilot** (`copilot`).
-4. **Local OpenCode** (`local`) — `opencode` against LM Studio, when the local server is up.
-
-The orchestrator's own CLI is tried as a last resort only with `--allow-same-agent`.
-
-Pin one with `--provider <name>`; a pinned provider never cascades, and its failure is returned as-is.
-
-## Usage
+To install globally for all projects:
 
 ```bash
-node .agents/skills/dispatch/scripts/dispatch.mjs [flags] "<prompt>"
+npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch
 ```
 
-Delegate a bounded question, read-only, letting the cascade choose:
+To install all skills in the suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
 
 ```bash
-node .agents/skills/dispatch/scripts/dispatch.mjs \
-  -f "src/domain/pricing.ts" \
-  "Explain how discount stacking is applied in the attached file, and flag any order-dependence."
+npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
-Pin a provider:
+---
 
+## How to Use
+
+Interact with `dispatch` naturally through your orchestrating AI agent in your regular chat or IDE session. You do not need to invoke lower-level scripts manually.
+
+### 1. Basic Invocations
+
+Prompt your agent to delegate an investigation or analysis:
+
+```markdown
+Dispatch an investigation on why token refreshes fail silently in src/auth/session.ts
+```
+
+```markdown
+Use dispatch to trace how discount stacking is calculated in src/domain/pricing.ts
+```
+
+### 2. Attaching Files & Context (`-f`)
+
+Direct your agent to include specific files as bounded attachments:
+
+```markdown
+Dispatch a review of src/services/payment.ts and src/types/billing.ts to check for race conditions
+```
+
+### 3. Pinning a Specific Provider (`--provider`)
+
+Force delegation to a specific provider and bypass the automatic fallback cascade:
+
+```markdown
+Dispatch this inquiry to Antigravity: "Analyze the state transitions in src/workflow/engine.ts"
+```
+
+```markdown
+Dispatch with provider claude: "Review our GraphQL schema definition for N+1 vulnerabilities"
+```
+
+### 4. Overriding Model & Reasoning Effort (`-m`, `-e`)
+
+Specify custom models or higher reasoning effort when needed:
+
+```markdown
+Dispatch to copilot using model gpt-5.6-luna and max effort: "Audit src/crypto/tokens.ts for timing attacks"
+```
+
+---
+
+## Options & Flags Reference
+
+When instructing your agent (or reviewing its execution plan), the following flags are supported:
+
+| Option / Flag | Description | Example Prompt / Usage |
+|---|---|---|
+| `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `"Dispatch with -f src/api.ts ..."` |
+| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `local`); disables cascading. | `"Dispatch to agy ..."` |
+| `-m <model>` | Override the default delegate model. | `"Dispatch using model claude-opus-5 ..."` |
+| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `"Dispatch with max effort ..."` |
+| `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `"Dispatch with a 300s timeout ..."` |
+| `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `"Dispatch allowing same-agent fallback ..."` |
+| `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `"Set orchestrator to claude ..."` |
+| `--json` | Request structured JSON output (Local OpenCode provider only). | `"Dispatch with --json ..."` |
+| `-v` | Stream live verbose execution traces to the active terminal. | `"Dispatch with verbose output ..."` |
+
+---
+
+## High-Level Behavior & Invariants
+
+- **Automatic Self-Skipping**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It skips delegating to the host platform by default to engage a differentiated platform/model for a different opinion and behavior, unless explicitly permitted via `--allow-same-agent`.
+- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; read-only tool whitelists on Claude Code; dead-end WAN proxies and credential stripping on Local OpenCode). Delegates **cannot** modify project files or make git commits.
+- **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (`.system_generated/logs` / OS temp). The orchestrating agent receives only the final synthesized summary and session link.
+- **Session Continuity & Deep-Links**: When supported, `dispatch` captures and returns session identifiers:
+  - **Antigravity 2.0**: `conversation://<id>` deep-links that open directly in the Antigravity desktop canvas.
+  - **Claude Code**: `claude --resume <session_id>` command handles.
+  - **GitHub Copilot**: `copilot --resume <session_id>` command handles.
+- **Pre/Post Git Integrity Checks**: A `git status --porcelain` snapshot is taken before and after every dispatch. Any file modifications created during the run are immediately flagged as integrity warnings.
+- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner falls back seamlessly to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code) or local direct execution without crashing the workflow.
+
+---
+
+## Nuances, Quirks & Troubleshooting
+
+### Binary Auto-Discovery
+`dispatch` automatically searches known standard locations across macOS, Linux, and Windows for Desktop applications, VS Code extension bundles, and standalone CLI binaries. You do not need to configure explicit binary paths in your environment.
+
+### Claude Code Sandbox Behavior
+When Claude Code dispatches a task to Antigravity, it executes the runner with `dangerouslyDisableSandbox: true`. This is required because Antigravity's local language server binds to a local TCP socket, which is blocked by Claude Code's restricted bash sandbox (`bind: operation not permitted`). Safety remains guaranteed through Antigravity's structural `--mode plan` flag.
+
+### Inspecting In-Flight Progress
+If a complex dispatch is taking several minutes, you can inspect the real-time activity log emitted in the launch banner:
 ```bash
-node .agents/skills/dispatch/scripts/dispatch.mjs --provider agy \
-  "Trace the off-by-one through src/lib/pagination.ts and describe the fix."
+tail -n 30 "<logFilePath>"
 ```
 
-| Flag | Description |
-|------|-------------|
-| `-f <path>` | Attach a context file (repeatable; 128 KB per file, 512 KB total) |
-| `-m <model>` | Override the model identifier |
-| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`) |
-| `-t <sec>` | Override timeout in seconds (default 1800) |
-| `--provider <name>` | Pin a provider and disable cascading |
-| `--orchestrator <name>` | Override detected orchestrator platform |
-| `--allow-same-agent` | Permit falling back to the orchestrator's own CLI |
-| `--json` | Request structured JSON output (local provider only) |
-| `-a <name>` | Override agent name (local provider only) |
-| `-v` | Stream a live trace to an attached terminal |
+### Git Integrity False Positives
+`dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
 
-Run any provider directly for debugging — each runner is its own CLI:
-
-```bash
-node .agents/skills/dispatch/scripts/claude-run.mjs --help
-```
-
-## Design invariants
-
-- **Always read-only.** Delegates cannot modify the workspace; writes belong to the orchestrator or its native subagent.
-- **Context hygiene.** Execution logs stream to an OS temp file; the caller receives only the banner, log path, and final answer.
-- **Bounded attachments.** Oversized prompts spill to a brief file rather than overflowing argv or the delegate's context.
-- **Sandboxing.** The local provider enforces WAN proxy-trapping, environment whitelisting, and workspace path boundaries (bubblewrap on Linux when present). External CLIs are bracketed by Git integrity checks.
-
-The workspace boundary is resolved from `git rev-parse --show-toplevel`, falling back to the current directory — so the runner acts on the repository it is invoked in, wherever it is installed.
-
-## Requirements
-
-Node >= 18, plus at least one provider CLI on `PATH`. No dependencies.
-
-## Layout
-
-```
-scripts/          runners: dispatch, common, and one per provider
-references/       provider mechanics and session handling
-SKILL.md          agent-facing operating instructions
-```
-
-`SKILL.md` is the contract an orchestrating agent reads; this README is for humans.
+### Local LM Studio / OpenCode Setup
+To use the `local` provider:
+1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
+2. Ensure the `opencode` CLI binary is present on your `PATH`.
+3. Dispatch with `--provider local` or allow the cascade to reach it.
