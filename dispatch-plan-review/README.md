@@ -12,7 +12,7 @@ The delegate's report is a **claim, not a verdict** — that separation is the p
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch-plan-review
 ```
 
-Requires the [`dispatch`](../dispatch) skill for the runner:
+Requires the `dispatch` skill for the runner:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch
@@ -87,12 +87,13 @@ Your orchestrator assigns one verdict per actionable claim:
 
 Accepted `MUST-FIX` items are **edited into the plan file**, not just reported — the plan on disk is what the implementer reads. Disputes go to you before anything is written.
 
+**Evidence over votes.** When several delegates review the same plan, findings dedupe to one per `## <Section>` + claim and each is judged against the requirement and repository rules. A finding confirmed by requirements or code is accepted however few delegates raised it; a finding refuted is rejected even if every delegate raised it. Provider agreement is context, never evidence.
+
 ## Project conventions
 
 The delegate reads your project's conventions directly from `AGENTS.md` / `CLAUDE.md` in the workspace and falls back to industry best practices. No setup needed — it reads your docs, not a variable you have to fill.
 
 ## Pairs with
 
-- [`dispatch`](../dispatch) — the runner. Required.
-- [`dispatch-code-review`](../dispatch-code-review) — the same loop, after the code exists.
-- [`implement-dispatch`](../implement-dispatch) — drives this as the plan-review step of a full implementation loop.
+- `dispatch` — the runner. Required.
+- `dispatch-code-review` — the same loop, after the code exists.

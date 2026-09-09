@@ -72,7 +72,6 @@ node .agents/skills/dispatch/scripts/claude-run.mjs --help
 - **Always read-only.** Delegates cannot modify the workspace; writes belong to the orchestrator or its native subagent.
 - **Context hygiene.** Execution logs stream to an OS temp file; the caller receives only the banner, log path, and final answer.
 - **Bounded attachments.** Oversized prompts spill to a brief file rather than overflowing argv or the delegate's context.
-- **Write safety.** If an `--allow-write` delegate fails after modifying the workspace, the cascade halts immediately to protect working tree integrity.
 - **Sandboxing.** The local provider enforces WAN proxy-trapping, environment whitelisting, and workspace path boundaries (bubblewrap on Linux when present). External CLIs are bracketed by Git integrity checks.
 
 The workspace boundary is resolved from `git rev-parse --show-toplevel`, falling back to the current directory — so the runner acts on the repository it is invoked in, wherever it is installed.

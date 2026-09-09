@@ -1189,7 +1189,12 @@ export async function main() {
 // Auto-run main only if invoked directly via CLI
 if (
   process.argv[1] &&
-  path.resolve(process.argv[1]) === path.resolve(currentFilePath)
+  (() => {
+    const a = path.resolve(process.argv[1]);
+    const b = path.resolve(currentFilePath);
+    if (a === b) return true;
+    try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return false; }
+  })()
 ) {
   main().catch((err) => {
     console.error(`Fatal error: ${err.message}`);

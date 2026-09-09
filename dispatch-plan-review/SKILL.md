@@ -86,6 +86,8 @@ Ground truth for a plan claim is the **requirement plus the host repository's ru
 
 Classify uncited, contradicted, or unverifiable claims as **Reject**.
 
+**Evidence over votes** when several delegates report on the same plan: dedupe to one finding per `## <Section>` + claim, then judge each against the requirement and repository rules. Accept a finding the requirement or code confirms regardless of how many delegates raised it; reject one refuted even if every delegate raised it. Provider agreement is context, never evidence.
+
 **Escalate disputes** via interactive question tool (`ask_question` / `AskUserQuestion`) before writing any **Disputed** finding into the plan. One question per dispute (batch up to 4); quote the plan section under dispute, state the delegate's claim and your counter-reading. Offer accept / reject / defer. Apply the user's decision verbatim; treat decided disputes as final.
 
 Escalate rather than guess when the dispute touches a domain authority the repository names as ground truth, persisted schema or shared URL state, or a change the user explicitly asked for.

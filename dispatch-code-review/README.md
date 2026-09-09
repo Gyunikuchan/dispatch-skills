@@ -12,7 +12,7 @@ The delegate's report is a **claim, not a verdict**. A reviewer reading a diff c
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch-code-review
 ```
 
-Requires the [`dispatch`](../dispatch) skill for the runner:
+Requires the `dispatch` skill for the runner:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch
@@ -96,6 +96,5 @@ The delegate reads your project's conventions directly from `AGENTS.md` / `CLAUD
 
 ## Pairs with
 
-- [`dispatch`](../dispatch) — the runner. Required.
-- [`dispatch-plan-review`](../dispatch-plan-review) — the same loop, before the code exists.
-- [`implement-dispatch`](../implement-dispatch) — drives this as the code-review and re-review steps of a full implementation loop.
+- `dispatch` — the runner. Required.
+- `dispatch-plan-review` — the same loop, before the code exists.

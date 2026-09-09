@@ -51,14 +51,18 @@ Both `<level>` and `(<pins>)` are optional; `<level>` defaults to `medium`, and 
 
 ## Levels
 
-| Level | Plan review | Code review | Re-review |
-|-------|-------------|-------------|-----------|
-| `low` | skip | 1 agent | skip |
-| `medium` | 1 agent | 1 agent | 1 agent, to consensus |
-| `high` | 1 agent | all agents | agents whose findings you accepted, to consensus |
-| `max` | all agents | all agents | agents whose findings you accepted, to consensus |
+| Level | Plan review | Code review | Re-review | Consensus |
+|-------|-------------|-------------|-----------|-----------|
+| `low` | skip | 1 agent, 1 round | skip | no |
+| `medium` | 1 agent, 1 round | 1 agent, 3 rounds total | up to 2 re-reviews | no |
+| `high` | 1 agent, 1 round | all agents, 3 rounds total | accepted agents, up to 2 re-reviews | required |
+| `max` | all agents + self, 3 rounds | all agents + self, 5 rounds total | accepted agents, up to 4 re-reviews | required |
 
-Unpinned, "all agents" is the `dispatch` cascade minus the orchestrator's own platform, and "1 agent" is the first of those.
+Unpinned, "all agents" is the `dispatch` cascade minus the orchestrator's own platform, and "1 agent" is the first of those. At `max`, "+ self" means the orchestrator's platform is added back, dispatched with `--allow-same-agent`.
+
+**Rounds** is the total number of dispatch calls before the user is pinged for feedback. After feedback, the counter resets and another full set of rounds may run. This caps how long the skill runs unattended, not how many times it can ultimately converge.
+
+**Consensus required** (high/max): the orchestrator cannot unilaterally dismiss a finding — every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in a re-dispatch.
 
 ## The loop
 
@@ -68,7 +72,7 @@ Unpinned, "all agents" is the `dispatch` cascade minus the orchestrator's own pl
 4. **Implement** — test-first, by the orchestrator itself, until the host verify command is green.
 5. **Code review** — write a walkthrough, fan out to `dispatch-code-review`, adjudicate every claim against the cited lines.
 6. **Apply or dispute** — apply what survives, escalate what does not, and record the round in the walkthrough.
-7. **Re-review** — re-dispatch to the delegates whose findings you accepted, until a round returns no new accepted findings. Capped at 2 rounds.
+7. **Re-review** — re-dispatch to the delegates whose findings you accepted, until a round returns no new accepted findings. Capped at the level's round budget before pinging the user.
 
 Every dispatch is pinned, read-only, backgrounded, and launched for the whole round in a single turn.
 

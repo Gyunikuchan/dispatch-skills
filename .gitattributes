@@ -1,0 +1,5 @@
+# Set default behavior to automatically normalize line endings to LF
+* text=auto eol=lf
+
+# Explicit text files
+*.{js,mjs,cjs,json,jsonc,md,sh} text eol=lf
