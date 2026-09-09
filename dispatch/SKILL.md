@@ -96,7 +96,7 @@ Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravit
 | `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`local`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |
-| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`; user-requested only) | `-e "max"` |
+| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`, plus any level the target platform accepts; user-requested only) | `-e "max"` |
 | `-t <sec>` | Override timeout in seconds (default: 1800; user-requested only) | `-t 2400` |
 | `--orchestrator <name>` | Override detected orchestrator platform | `--orchestrator claude` |
 | `--json` | Request structured JSON output (local provider only) | `--json` |

@@ -6,17 +6,47 @@
   * claude: https://code.claude.com/docs/en/model-config
   * agy: https://antigravity.google/docs/models/
   * copilot: https://docs.github.com/en/copilot/reference/ai-models/supported-models
+  *
+  * Every section may key model/effort by level (low, medium, high, max). Levels need not all be
+  * defined: the requested level is matched exactly, else the nearest level below it, else the
+  * lowest level above it. Flat model/effort keys alongside level keys act as defaults the
+  * matched level overrides. Because a level is only ever rounded down to, the lowest level key
+  * you define is the floor for every level beneath it — define `low` to set the base and a
+  * higher key to mark the boundary where the spend increases.
+  *
+  * Accepted effort values are platform-dependent: low, medium, high, and max are universal;
+  * Claude Code also accepts xhigh between high and max.
 */
 {
   // Ordered list of platforms to use for plan review
   "plan-review": {
     "claude": {
-      "model": "claude-opus-5",
-      "effort": "medium",
+      "low": {
+        "model": "claude-opus-5",
+        "effort": "low",
+      },
+      "medium": {
+        "model": "claude-opus-5",
+        "effort": "medium",
+      },
+      "high": {
+        "model": "claude-opus-5",
+        "effort": "high",
+      },
+      "max": {
+        "model": "claude-opus-5",
+        "effort": "xhigh",
+      },
     },
     "agy": {
-      "model": "gemini-3.8-flash",
-      "effort": "medium",
+      "low": {
+        "model": "gemini-3.8-flash",
+        "effort": "medium",
+      },
+      "medium": {
+        "model": "gemini-3.8-flash",
+        "effort": "high",
+      },
     },
     "copilot": {
       "model": "gpt-5.6-luna",
@@ -26,30 +56,62 @@
       "model": "lmstudio/qwen3.8-27b-ridge",
     }
   },
-  // Only native subagents can be used for implementation
+  // Only native subagents can be used for implementation.
+  // Implementation runs against an already-reviewed plan, so it is the cheaper half of the run:
+  // spend the reasoning budget on review above, not here.
   "implementation": {
     "claude": {
-      "model": "claude-opus-5",
-      "effort": "medium",
+      "low": {
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+      },
+      "high": {
+        "model": "claude-opus-5",
+        "effort": "low",
+      }
     },
     "agy": {
-      "model": "gemini-3.8-flash",
+      "model": "gemini-3.7-flash",
       "effort": "medium",
     },
     "copilot": {
       "model": "gpt-5.6-luna",
       "effort": "max",
-    }
+    },
   },
   // Ordered list of platforms to use for code review
   "code-review": {
     "claude": {
-      "model": "claude-opus-5",
-      "effort": "medium",
+      "low": {
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+      },
+      "medium": {
+        "model": "claude-opus-5",
+        "effort": "low",
+      },
+      "high": {
+        "model": "claude-opus-5",
+        "effort": "medium",
+      },
+      "max": {
+        "model": "claude-opus-5",
+        "effort": "high",
+      }
     },
     "agy": {
-      "model": "gemini-3.8-flash",
-      "effort": "medium",
+      "low": {
+        "model": "gemini-3.7-flash",
+        "effort": "medium",
+      },
+      "medium": {
+        "model": "gemini-3.7-flash",
+        "effort": "high",
+      },
+      "high": {
+        "model": "gemini-3.8-flash",
+        "effort": "high",
+      }
     },
     "copilot": {
       "model": "gpt-5.6-luna",

@@ -1,21 +1,21 @@
 ---
 name: implement-dispatch
-description: Implement features or fixes with cross-agent review loops across external CLIs (dispatch, adjudicate, re-review to consensus). Use on /implement-dispatch or when requested for multi-agent implementation or second-opinion reviews.
+description: Implement features or fixes with cross-agent review loops across external CLIs (dispatch, adjudicate, re-review to consensus). Use on /implement-dispatch, multi-agent implementation, or cross-agent review loops.
 ---
 
 # implement-dispatch
 
-Implement a feature or fix, then buy second opinions from other agent CLIs. This skill owns the **control flow** — fan-out breadth, re-review depth, and escalation gates. Three skills carry the rest:
+Implement a feature or fix with cross-agent review loops across external agent CLIs. This skill owns the **control flow** — fan-out breadth, re-review depth, consensus gates, and artifact cleanup. Upstream skills carry specific mechanics:
 
-| Skill | Owns | Required |
+| Skill | Role | Required |
 |-------|------|----------|
-| `dispatch` | The runners, the cascade, the flags | Yes |
-| `dispatch-plan-review` | Plan review criteria and adjudication | Optional — Step 3 skips without it |
-| `dispatch-code-review` | Code review criteria and adjudication | Optional — Steps 5–7 skip without it |
+| `dispatch` | Runner execution, provider cascade, CLI flags, sandboxing | Yes |
+| `dispatch-plan-review` | Plan template, 7 review axes, adjudication table, plan finding grammar | Optional (Step 3 skipped if absent) |
+| `dispatch-code-review` | Walkthrough template, 6 review axes, adjudication table, code finding grammar | Optional (Steps 5–7 skipped if absent) |
 
-Reach each by skill name. When an optional skill is absent, say so in the handoff and run the reduced flow.
+Reference each skill by name. If an optional skill is absent, name its absence in the handoff, author the artifact with standard headings, and proceed with the reduced flow.
 
-Delegates return **claims**; the orchestrator adjudicates, accepts, rejects, and applies them.
+Delegates return **claims**; the orchestrator adjudicates and applies them.
 
 ## Invocation
 
@@ -23,155 +23,149 @@ Delegates return **claims**; the orchestrator adjudicates, accepts, rejects, and
 /implement-dispatch <level> (<pins>): <feature | fix | ask>
 ```
 
-Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, the colon is optional.
+Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
 
-- `<level>` — `low`, `medium`, `high`, `max`. Controls **depth**: which steps run and how far re-review goes. See the [README](README.md) for level details.
-- `(<pins>)` — comma-separated dispatch provider keys (`claude`, `agy`, `copilot`, `local`). Controls **breadth**: the fan-out set becomes exactly these at every dispatch step. An unrecognised key stops the run and prompts the user with valid keys.
+- `<level>` — `low`, `medium`, `high`, `max`. Controls depth (round caps, consensus requirements), target breadth when unpinned (`none` / `one` / `all`), and model/effort configuration per phase.
+- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `local`). Controls breadth: fans out to exactly these providers.
 
-## Host conventions
+## Flow Plan
 
-Read the host repository's `AGENTS.md` / `CLAUDE.md` once at the start of the run and carry two things through it:
-
-- **Verify command** — the repository's lint + typecheck + test entry point, run at Steps 4, 6, and 7.
-- **Escalation triggers** — the repository's own "ask before you assume" list, which extends the Deadlock section below.
-
-Run artifacts live in `.scratch/plan/`, or the scratch location the repository documents.
-
-## Dispatch invariants
-
-### Resolve flow plan
-
-Before Step 1, resolve the execution flow plan. This outputs concrete targets, round counts, and consensus flags for every dispatch step — no further fan-out calculation is needed.
+Resolve the flow plan at the end of Step 1 once scope is classified, and store the output as `flow`:
 
 ```bash
-# Antigravity (project-local)
-node .agents/skills/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
-# Claude Code (project-local)
-node .claude/skills/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
-# Global install
-node ~/.agents/skills/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
+node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
 ```
 
-Store the JSON output as `flow`. `flow['plan-review']`, `flow['code-review']`, and `flow.implementation` drive every subsequent step. If the script fails (missing config, unrecognised pins, all pins unavailable), surface the error to the user and stop.
+Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `local`).
 
-### Dispatch calls
+| Field | Read at | Meaning |
+|-------|---------|---------|
+| `flow['plan-review'].targets` | Step 3 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
+| `flow['plan-review'].rounds` | Step 3 | Plan review round cap (`0` skips plan review) |
+| `flow['plan-review'].consensus` | Step 3 | Plan review consensus requirement (`true` / `false`) |
+| `flow.implementation` | Step 4 | Orchestrator platform plus model and effort hints for native subagents |
+| `flow['code-review'].targets` | Steps 5, 7 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
+| `flow['code-review'].rounds` | Steps 5, 7 | Code review round cap (`0` skips code review) |
+| `flow['code-review'].consensus` | Steps 6, 7 | Code review consensus requirement (`true` / `false`) |
 
-Every dispatch is a **pinned** run (`--provider <key>`), launched **backgrounded**, all round delegates launched in a single turn. Yield the turn and await reactive notification.
+A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. Plan review and code review track independent round counters.
 
-```bash
-# Antigravity (project-local)
-node .agents/skills/dispatch/scripts/dispatch.mjs --provider <key> -f "<plan>" -f "<walkthrough>" "<populated prompt>"
-# Claude Code (project-local)
-node .claude/skills/dispatch/scripts/dispatch.mjs --provider <key> -f "<plan>" -f "<walkthrough>" "<populated prompt>"
-# Global install
-node ~/.agents/skills/dispatch/scripts/dispatch.mjs --provider <key> -f "<plan>" -f "<walkthrough>" "<populated prompt>"
-```
+When `targets` is empty while `rounds > 0`, external platforms are unavailable: take the in-process subagent fallback below.
 
-Dispatch is structurally read-only — delegates cannot modify the workspace. Pass `--allow-same-agent` when a target in `flow` has `allowSameAgent: true` (always present at `max` level, where the orchestrator's platform is included as a reviewer), and note this in the handoff.
+## Operating Invariants
 
-**Best-effort fan-out**: adjudicate returning reports and record failed delegates. If none return or a pinned provider fails, route directly to an in-process read-only subagent (`Explore` in Claude Code, `research` in Antigravity) with the same prompt to preserve provider provenance.
+- **Execution boundaries**: External delegates run in structurally read-only mode (`--mode plan` or restricted `--allowedTools`). Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
+- **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
+- **Provider flags**: Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
+- **Fallback**: When a provider fails or no candidate is available, re-run the prompt and attachments through an in-process read-only subagent (`research` in Antigravity, `Explore` in Claude Code).
+- **Target affinity**: Route re-reviews and dispute rebuttals back to the specific delegate handles that raised or accepted them.
+- **Evidence over votes**: Deduplicate findings across delegate reports by target locus (`## <Section>` or `<file>:L<line>`). Ground truth is the requirement, active code, and repository rules.
+- **Consensus rule**: Under `consensus: true`, every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in re-dispatch. Under `consensus: false`, reject directly when verified counter-evidence exists.
+- **Round cap escalation**: Reaching a phase's round cap without consensus escalates remaining disputes to the user. User feedback resets that phase's counter.
 
-### Adjudication and consensus
+## Host Conventions
 
-Applies to both plan-review (Step 3) and code-review (Steps 5–7). Use the `consensus` field from the relevant `flow` section.
+Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start:
+- **Verify command**: Project test/lint command kept green across all code changes (Steps 4, 6, 7).
+- **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
 
-**`consensus: true`** (high/max): you cannot unilaterally dismiss a finding with your own judgment alone. For every finding you believe is wrong, you must either (a) accept it, (b) escalate to the user, or (c) re-dispatch with a rebuttal message stating your counter-evidence and asking the delegate to reconsider.
-
-**`consensus: false`** (low/medium): hard-evidence rejection is allowed — cite the specific line that directly contradicts the claim and reject it.
-
-### Round cap and user ping
-
-Both plan-review and code-review use a `rounds` field: the total number of dispatch calls before escalating to the user. After the user provides feedback, the counter resets and another `rounds` dispatches occur before the next ping.
-
-- `rounds: 0` — skip the phase entirely.
-- `rounds: 1` — one dispatch, no re-review; any unresolvable disputes escalate to the user immediately.
-- `rounds: N` — dispatch up to N times total; escalate after N dispatches without consensus.
+Scratch artifacts live in `.scratch/plan/` (or platform scratch).
 
 ## Process
 
-### 1. Understand the requirement
+### 1. Understand Requirement & Scope
 
-Restate the ask as checkable success criteria. Hunt contradictions, impossible states, and terms with more than one reading in this codebase.
+1. Restate the ask as checkable success criteria. Record settling assumptions directly in the plan; query the user only on unresolvable contradictions or repository escalation triggers.
+2. **Scope gate**: Classify the change to determine the level:
+   - `trivial` (single-file mechanical edit, rename, comment/typo fix, constant change) → downshift to `low`.
+   - `focused` (single component/contract) → requested level.
+   - `cross-cutting` (multiple components, schema, security boundary) → requested level.
+   *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
+3. Run `resolve-flow.mjs` to resolve `flow`.
 
-Proceed under **explicitly stated assumptions**, recorded in the plan, rather than interrogating the user. Stop and ask (`ask_question` / `AskUserQuestion`) only on the host repository's escalation triggers.
+**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, and `flow` is resolved.
 
-**Done when:** success criteria are checkable, and every ambiguity is either resolved by the user or written down as an assumption.
+---
 
-### 2. Write the plan
+### 2. Write the Plan
 
-Write `.scratch/plan/<yyyy-mm-dd>-<slug>.md`. External delegates read this file with no other context; each section stands alone:
+Write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
 
-- **Requirement** — the ask, restated.
-- **Ambiguities & Resolutions** — each ambiguity and the settling assumption or user answer.
-- **Success Criteria** — checkable tests that prove completion.
-- **Change Set** — per-file changes and rationale.
-- **Verification** — commands that must pass.
-- **Out of Scope** — explicitly unhandled aspects.
+**Done when:** Plan file exists on disk with all template sections populated.
 
-**Done when:** the plan file exists, every success criterion maps to a change, and every change maps to a requirement.
+---
 
-### 3. Plan review — skip if `flow['plan-review'].rounds === 0`
+### 3. Plan Review Loop
 
-Dispatch `dispatch-plan-review`'s prompt template to each platform in `flow['plan-review'].targets`, attaching the plan.
+*Runs when `flow['plan-review'].rounds > 0`.*
 
-Adjudicate returned claims per that skill's adjudication step — the requirement plus this repository's rules are ground truth. Fold accepted `MUST-FIX` items into the plan. Apply the **Adjudication and consensus** rules above using `flow['plan-review'].consensus`.
+1. **Dispatch**: Dispatch `dispatch-plan-review` prompt template in parallel to each target in `flow['plan-review'].targets` with attached plan (`-f`). Round 1 uses `Review Scope: Full review`.
+2. **Adjudicate**: Evaluate returned claims per `dispatch-plan-review`'s adjudication table. Discard passing axes.
+3. **Fold & Re-dispatch**: Apply accepted findings to the plan on disk and record outcomes under `## Review Findings & Resolutions`. When accepted changes modify sections and round count < `flow['plan-review'].rounds`, re-dispatch to reviewing delegates with `Review Scope: Re-review round <n>` naming changed sections.
+4. **Consensus & Cap**: Enforce `flow['plan-review'].consensus`. Escalate unresolved disputes to the user when cap is reached.
 
-Re-dispatch the updated plan to targets with unresolved disputes, up to `flow['plan-review'].rounds` total dispatches. After hitting the round cap without consensus, escalate remaining disputes to the user. After user feedback, the round counter resets and another `flow['plan-review'].rounds` dispatches may occur.
+**Done when:** Plan on disk reflects all accepted findings, and all disputes are resolved or user-ruled.
 
-**Done when:** the plan on disk reflects every accepted finding, and all disputes are resolved or user-escalated.
+---
 
 ### 4. Implement
 
-Implement the plan's Change Set yourself — you hold the requirement context, ambiguities, and plan rationale. Only the orchestrator or a native in-process subagent may modify the workspace.
+Dispatch implementation test-first to a native write-capable subagent (`self` in Antigravity, `general-purpose` in Claude Code) configured with `model` and `effort` from `flow.implementation`. For trivial single-file edits or when subagents are unavailable, execute directly.
 
-- Work **test-first**: write a failing test before a fix or domain logic.
-- Use `flow.implementation` for model and effort hints if your platform supports subagent configuration.
-- Record any Change Set deviations and reasons for the walkthrough.
-- Run the host verify command and iterate until green.
+Require the subagent to implement Proposed Changes, run the host verify command until green, and report back modified files, verification output, and any deviations.
 
-Delegate to a write-capable **native** in-process subagent (`general-purpose` in Claude Code, `self` in Antigravity) only on explicit user request or when the Change Set splits into file-disjoint chunks suitable for parallel execution. Require files changed, deviations with reasons, and verify output.
+**Done when:** Code changes are complete, raw verify output has been inspected, and tests are green.
 
-**Done when:** the host verify command passes and you have read the raw output yourself.
+---
 
-### 5. Code review
+### 5. Code Review
 
-Write the run walkthrough at `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`, covering the ask, changes, deviations from the Change Set, verification output, and focus areas. This is the orchestrator-supplied walkthrough `dispatch-code-review` resolves at its first tier.
+*Runs when `flow['code-review'].rounds > 0`.*
 
-Dispatch `dispatch-code-review`'s prompt template to each platform in `flow['code-review'].targets`, attaching the plan and walkthrough.
+1. Write `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` following `dispatch-code-review`'s walkthrough template.
+2. Dispatch `dispatch-code-review` prompt template in parallel to each target in `flow['code-review'].targets` with attached walkthrough and plan (`-f`), using `Review Scope: Full review`. (Consumes round 1 of code review).
+3. Adjudicate returned claims against cited `<file>:L<line>` per `dispatch-code-review`.
 
-Adjudicate every returned claim per that skill's adjudication step, including its dedupe and evidence-over-votes rules when more than one delegate reports.
+**Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
 
-**Done when:** every actionable claim carries a verdict.
+---
 
-### 6. Apply or dispute
+### 6. Apply Fixes & Settle Disputes
 
-Apply accepted findings, keeping the host verify command green. Apply the **Adjudication and consensus** rules above using `flow['code-review'].consensus`. Escalate contested findings to the user with the delegate's claim, your counter-reading, and cited lines. Apply user rulings verbatim.
+1. Apply accepted findings to the codebase directly as the orchestrator.
+2. Update the walkthrough (`## Changes Made`, `## Verification & Validation`, and append round adjudications under `## Review Findings & Resolutions`).
+3. Run the host verify command until green.
+4. Enforce `flow['code-review'].consensus`: escalate unresolvable disputes to the user via interactive questions with cited lines and counter-readings.
 
-Append the round's outcome to the walkthrough under `## Accepted findings — round <n>`, in the review skill's finding grammar. This is what Step 7 diffs against.
+**Done when:** Accepted fixes are applied, verify command is green, and round adjudications are recorded in the walkthrough.
 
-**Done when:** every accepted finding is applied and verified, every dispute is ruled on, and the round is recorded in the walkthrough.
+---
 
-### 7. Re-review — skip if `flow['code-review'].rounds === 1`
+### 7. Re-Review Loop
 
-Track total code-review dispatches across Steps 5 and 7. If Step 6 applied no changes, proceed to handoff without re-dispatching.
+While previous round modified code and code review round count < `flow['code-review'].rounds`:
+1. Re-dispatch to reviewing targets with updated walkthrough and `Review Scope: Re-review round <n>` naming modified lines.
+2. Adjudicate returned claims and apply fixes per Step 6.
 
-Otherwise re-dispatch `dispatch-code-review` to the delegates **whose findings you accepted** in the previous round, attaching the updated walkthrough.
+Proceed to Handoff when:
+- **Consensus**: Round returns no new accepted findings on modified code.
+- **No changes**: Step 6 applied no modifications.
+- **Round cap**: Escalate remaining disputes to the user; user feedback resets the counter.
 
-- **Consensus**: a round returns no new accepted findings on previously changed lines — proceed to handoff.
-- **Round cap**: when total dispatches reach `flow['code-review'].rounds` without consensus, escalate to the user with remaining disputes. After user provides feedback, reset the counter and dispatch another `flow['code-review'].rounds` rounds.
+**Done when:** Consensus is reached, no modifications remain, or user rules on deadlock.
 
-**Done when:** a round reaches consensus, or the user has ruled on the deadlock.
+---
 
-## Deadlock
+### 8. Handoff & Cleanup
 
-Resolve ambiguity or deadlock by asking the user (`ask_question` / `AskUserQuestion`). Trigger on: unresolvable contradictions after Step 1, claims unsettleable from code, conflicting delegate claims, or reaching the round cap. Present competing readings with cited code evidence.
+1. **Report to user**: Emit the completed walkthrough directly to the user (or format per host repository handoff conventions in `AGENTS.md` / `CLAUDE.md`), accompanied by run metadata:
+   - Scope classification and effective level.
+   - Rounds spent per phase against caps.
+   - Reviewing delegates (provider keys, session handles) and any failed delegates.
+   - Absent optional skills (if any).
+   - Summary of accepted fixes and rejected/downgraded findings.
+   - Verification command status.
+2. **Prune scratch artifacts**: Delete `.scratch/plan/` temporary plan and walkthrough files upon reaching consensus/completion. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files for resumption and state reasons in the handoff.
+3. Leave git operations (commit, push, PR) to the user.
 
-## Handoff
-
-Conclude specifying: reviewing delegates, failed delegates, absent optional skills, and rejected or downgraded findings.
-
-**Prune** `.scratch/plan/` artifacts upon reaching consensus; durable knowledge belongs in code, tests, decision records, or the repository's observation log. Preserve plan artifacts only for **unresolved** runs (re-review cap hit, open dispute, or user halt) as resumption points, noting why in the handoff.
-
-**Done when:** the plan and walkthrough are deleted, or explicitly retained with stated rationale in handoff.
-
-Leave git operations (branching, committing, PRs) to the user.
+**Done when:** Walkthrough and handoff delivered to user, and temporary scratch artifacts pruned (or retained with explicit reason).

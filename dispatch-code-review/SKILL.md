@@ -1,6 +1,6 @@
 ---
 name: dispatch-code-review
-description: Review session changes across architecture, domain, security, simplicity, compatibility, and test/UI quality through external agent CLIs, then adjudicate returned claims. Use when changes need a cross-agent second opinion or code review.
+description: Review session changes across 6 code axes through external agent CLIs, then adjudicate returned claims. Use when code changes need a cross-agent second opinion or review.
 ---
 
 # dispatch-code-review
@@ -11,7 +11,7 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 
 ### 1. Assemble context and dispatch
 
-Attach the walkthrough of the change and the implementation plan (if available), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
+Attach the change walkthrough and implementation plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
 
 Resolve context files in order:
 
@@ -24,7 +24,7 @@ Resolve context files in order:
 #### Walkthrough resolution
 1. **User- or orchestrator-supplied walkthrough** when an explicit path is passed or an orchestrating skill hands one over.
 2. **Platform-native walkthrough** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/walkthrough.md`).
-3. **Author walkthrough under `.scratch`** when no walkthrough exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` following the walkthrough template below before dispatching. External delegates read attached files with no other context.
+3. **Author walkthrough under `.scratch`** when no walkthrough exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` following the walkthrough template below before dispatching. External delegates read attached files as their primary task context.
 
 #### Walkthrough template
 
@@ -63,6 +63,7 @@ Populate the template variables:
 - `<Walkthrough Path>` — path to the attached walkthrough.
 - `<Plan Path>` — path to the attached plan, or `None`.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
+- `<Review Scope>` — `Full review` on a first review. On a re-review, `Re-review round <n> — verify the resolutions logged under ## Review Findings & Resolutions; raise new findings only on lines changed since round <n-1>: <changed paths>`.
 
 ````markdown
 Evaluate recent session changes across six axes.
@@ -72,6 +73,7 @@ Evaluate recent session changes across six axes.
 - Walkthrough: <Walkthrough Path>
 - Implementation Plan: <Plan Path>
 - Review Focus: <User Focus Areas>
+- Review Scope: <Review Scope>
 
 Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` from the workspace) and industry best practices for code quality.
 
@@ -81,12 +83,13 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
 1. Run `git status --short` to identify modified files. The changes under review are usually **uncommitted**: inspect both unstaged (`git diff`) and staged (`git diff --staged`) work. Fall back to `git diff HEAD~1` only when the working tree is clean.
 2. Cross-reference changes against the attached walkthrough and implementation plan (if provided) to verify intent fidelity, completeness, and test coverage.
 3. Targeted inspection: inspect targeted diffs (`git diff --staged -- <paths>` / `git diff -- <paths>`) and check adjacent call sites, interfaces, or tests to verify contracts and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Avoid full-file dumps or open-ended codebase exploration.
-4. Complete inspection quickly (typically 3–4 tool turns for focused tasks; up to 8 tool turns for broad refactors or cross-cutting changes), then emit the report immediately.
+4. Honour Review Scope: on a re-review round, confine the six axes to the paths it names plus their call sites, confirm each logged resolution actually landed, and treat lines settled in earlier rounds as closed.
+5. Complete inspection quickly (typically 3–4 tool turns for focused tasks; up to 8 tool turns for broad refactors or cross-cutting changes; fewer on a re-review round), then emit the report immediately.
 
 #### 2. Six-Axis Evaluation
 - **Architecture & Module Design** (`shallow`, `seam`, `adapter`, `coupling`):
   - *Depth & Leverage*: Small interfaces hiding deep logic vs shallow pass-through modules. High leverage for callers, locality for maintainers.
-  - *Seams & Dependencies*: One adapter = hypothetical seam; two adapters = real seam. Avoid premature ports/indirection. Internal seams stay private. Dependency tiers (in-process, local-substitutable, remote owned, external mock).
+  - *Seams & Dependencies*: One adapter = hypothetical seam; two adapters = real seam. Prefer direct implementations over speculative indirection. Internal seams stay private. Dependency tiers (in-process, local-substitutable, remote owned, external mock).
 - **Domain & Business Logic** (`domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type`):
   - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `.claude/CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, or skipped business prerequisites.
   - *Invariants & State Integrity*: Business rules preserved across mutations and lifecycles. Flag states representable in types but invalid in domain logic, or partial state updates leaving objects corrupted.
@@ -116,7 +119,7 @@ Write every finding as one line in this grammar:
 
 Structure your review as:
 - `## Verdict`: One line — ship readiness and overall health across the 6 axes.
-- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`; `<axis>: n/a` only for UI when no UI was touched. Explicitly list every axis.
+- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`; `<axis>: n/a` only for UI when no UI was touched, and on a re-review round `<axis>: out of scope` for an axis Review Scope excludes. Explicitly list every axis.
 - `## MUST-FIX`: Defects and vulnerabilities that block shipping, or "None."
 - `## SHOULD-FIX`: Real weaknesses worth correcting now, or "None."
 - `## CONSIDER`: Optional improvements and high-yield cuts, or "None."

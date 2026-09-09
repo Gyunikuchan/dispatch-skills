@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveFlow } from '../../implement-dispatch/scripts/resolve-flow.mjs';
+import { resolveFlow, resolveLevelEntry } from '../../implement-dispatch/scripts/resolve-flow.mjs';
+
+// Silence the default stderr warner in tests that don't assert on it
+const noWarn = () => {};
 
 // Stub liveness: all available except 'copilot'
 const LIVE_ALL = { claude: true, agy: true, copilot: false, local: true };
@@ -149,6 +152,112 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.model, undefined);
       assert.equal(out.implementation.effort, undefined);
     });
+
+    it('resolves level-keyed implementation config through resolveFlow', () => {
+      const config = {
+        ...BASE_CONFIG,
+        implementation: {
+          claude: {
+            medium: { model: 'claude-sonnet-5', effort: 'medium' },
+            high: { model: 'claude-opus-5', effort: 'medium' },
+          },
+        },
+      };
+      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, config, noWarn);
+      assert.equal(out.implementation.model, 'claude-opus-5');
+    });
+  });
+
+  describe('resolveLevelEntry', () => {
+    const LEVELED = {
+      medium: { model: 'claude-sonnet-5', effort: 'medium' },
+      high: { model: 'claude-opus-5', effort: 'high' },
+    };
+
+    it('matches the requested level exactly', () => {
+      assert.deepEqual(resolveLevelEntry(LEVELED, 'high', noWarn), {
+        model: 'claude-opus-5',
+        effort: 'high',
+      });
+    });
+
+    it('rounds down to the nearest defined level below', () => {
+      assert.deepEqual(resolveLevelEntry(LEVELED, 'max', noWarn), {
+        model: 'claude-opus-5',
+        effort: 'high',
+      });
+      assert.deepEqual(
+        resolveLevelEntry({ low: { model: 'a' }, max: { model: 'd' } }, 'medium', noWarn),
+        { model: 'a' }
+      );
+    });
+
+    it('rounds up to the lowest defined level when nothing is below', () => {
+      assert.deepEqual(resolveLevelEntry(LEVELED, 'low', noWarn), {
+        model: 'claude-sonnet-5',
+        effort: 'medium',
+      });
+      assert.deepEqual(resolveLevelEntry({ max: { model: 'd' } }, 'low', noWarn), { model: 'd' });
+    });
+
+    it('treats a flat entry as level-agnostic', () => {
+      const flat = { model: 'gemini-3.8-flash', effort: 'medium' };
+      for (const level of ['low', 'medium', 'high', 'max']) {
+        assert.deepEqual(resolveLevelEntry(flat, level, noWarn), flat);
+      }
+    });
+
+    it('lets level keys override flat keys, falling back to flat for unset fields', () => {
+      const mixed = { model: 'claude-opus-5', effort: 'medium', low: { model: 'claude-sonnet-5' } };
+      // effort is unset at the level, so the flat value carries through
+      assert.deepEqual(resolveLevelEntry(mixed, 'low', noWarn), {
+        model: 'claude-sonnet-5',
+        effort: 'medium',
+      });
+      // 'low' is the only defined level, so higher levels round down to it
+      assert.deepEqual(resolveLevelEntry(mixed, 'high', noWarn), {
+        model: 'claude-sonnet-5',
+        effort: 'medium',
+      });
+    });
+
+    it('accepts a level entry that overrides effort only', () => {
+      const entry = { model: 'claude-opus-5', high: { effort: 'max' } };
+      assert.deepEqual(resolveLevelEntry(entry, 'high', noWarn), {
+        model: 'claude-opus-5',
+        effort: 'max',
+      });
+    });
+
+    it('returns empty for a missing or empty entry', () => {
+      assert.deepEqual(resolveLevelEntry(undefined, 'medium', noWarn), {});
+      assert.deepEqual(resolveLevelEntry({}, 'medium', noWarn), {});
+    });
+
+    it('warns and skips an unrecognized level key', () => {
+      const warnings = [];
+      const out = resolveLevelEntry(
+        { medium: { model: 'ok' }, hgih: { model: 'typo' } },
+        'high',
+        m => warnings.push(m)
+      );
+      assert.deepEqual(out, { model: 'ok' });
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /hgih/);
+      assert.match(warnings[0], /low, medium, high, max/);
+    });
+
+    it('warns and skips a non-object level value', () => {
+      const warnings = [];
+      const out = resolveLevelEntry(
+        { medium: { model: 'ok' }, high: 'claude-opus-5' },
+        'high',
+        m => warnings.push(m)
+      );
+      assert.deepEqual(out, { model: 'ok' });
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /high/);
+    });
   });
 
   describe('targets include model/effort from config', () => {
@@ -165,6 +274,73 @@ describe('resolveFlow', () => {
       const target = out['code-review'].targets[0];
       assert.equal(target.platform, 'local');
       assert.equal(target.effort, undefined);
+    });
+  });
+
+  describe('review sections resolve level-keyed model/effort', () => {
+    const LEVELED_CONFIG = {
+      ...BASE_CONFIG,
+      'code-review': {
+        agy: {
+          model: 'gemini-3.8-flash',
+          low: { effort: 'high' },
+          max: { effort: 'max' },
+        },
+      },
+      'plan-review': {
+        agy: {
+          model: 'gemini-3.8-flash',
+          low: { effort: 'high' },
+          max: { effort: 'max' },
+        },
+      },
+    };
+
+    it('rounds down to the base level key below max', () => {
+      for (const level of ['low', 'medium', 'high']) {
+        const out = resolveFlow({ platform: 'claude', level }, LIVE_ALL, LEVELED_CONFIG, noWarn);
+        const target = out['code-review'].targets.find(t => t.platform === 'agy');
+        assert.equal(target.effort, 'high', `level ${level}`);
+        assert.equal(target.model, 'gemini-3.8-flash', `level ${level}`);
+      }
+    });
+
+    it('matches the max level key exactly', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, LEVELED_CONFIG, noWarn);
+      assert.equal(out['code-review'].targets.find(t => t.platform === 'agy').effort, 'max');
+      assert.equal(out['plan-review'].targets.find(t => t.platform === 'agy').effort, 'max');
+    });
+
+    it('names the section in a config-shape warning', () => {
+      const warnings = [];
+      const config = { ...BASE_CONFIG, 'code-review': { agy: { model: 'm', hgih: { effort: 'high' } } } };
+      resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config, m => warnings.push(m));
+      assert.equal(warnings.length, 1);
+      assert.match(warnings[0], /code-review/);
+      assert.match(warnings[0], /hgih/);
+    });
+  });
+
+  describe('rounds count waves, not dispatches', () => {
+    it('always reports rounds, including for multi-target levels', () => {
+      for (const level of ['low', 'medium', 'high', 'max']) {
+        const out = resolveFlow({ platform: 'claude', level }, LIVE_ALL, BASE_CONFIG);
+        assert.equal(typeof out['code-review'].rounds, 'number', `code-review rounds at ${level}`);
+        assert.equal(typeof out['plan-review'].rounds, 'number', `plan-review rounds at ${level}`);
+      }
+    });
+
+    it('leaves rounds independent of how many targets a wave dispatches', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);
+      // 2 live non-orchestrator targets, but the budget stays at 3 waves
+      assert.equal(out['code-review'].targets.length, 2);
+      assert.equal(out['code-review'].rounds, 3);
+    });
+
+    it('counts plan-review and code-review rounds separately', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out['plan-review'].rounds, 1);
+      assert.equal(out['code-review'].rounds, 3);
     });
   });
 

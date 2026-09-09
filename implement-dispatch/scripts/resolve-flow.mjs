@@ -20,9 +20,9 @@ const LEVELS = ['low', 'medium', 'high', 'max'];
 
 // Per-level config table
 //   planTargets: 'none' | 'one' | 'all'
-//   planRounds: number
+//   planRounds: number — fan-out waves for plan review, each wave dispatching every target
 //   codeTargets: 'one' | 'all'
-//   codeRounds: number
+//   codeRounds: number — fan-out waves for code review, counted independently of planRounds
 //   consensus: boolean
 const LEVEL_CONFIG = {
   low:    { planTargets: 'none', planRounds: 0, codeTargets: 'one', codeRounds: 1, consensus: false, includeSelf: false },
@@ -30,6 +30,59 @@ const LEVEL_CONFIG = {
   high:   { planTargets: 'one',  planRounds: 1, codeTargets: 'all', codeRounds: 3, consensus: true,  includeSelf: false },
   max:    { planTargets: 'all',  planRounds: 3, codeTargets: 'all', codeRounds: 5, consensus: true,  includeSelf: true  },
 };
+
+// --- Level resolution ---
+
+/**
+ * Resolves the model/effort hints for one platform's entry in any config section.
+ *
+ * An entry may carry flat `model`/`effort` keys (applying to every level), level keys
+ * (`low`/`medium`/`high`/`max`) overriding them, or both. Level selection is:
+ * exact match → nearest defined level below → lowest defined level above.
+ *
+ * @param {object} entry  - config[section][platform]
+ * @param {string} level  - requested level
+ * @param {(msg: string) => void} warn - receives config-shape warnings
+ * @param {string} section - config section name, for warning messages
+ * @returns {{ model?: string, effort?: string }}
+ */
+export function resolveLevelEntry(entry, level, warn = () => {}, section = 'flow') {
+  if (!entry || typeof entry !== 'object') return {};
+
+  const base = {};
+  if (entry.model !== undefined) base.model = entry.model;
+  if (entry.effort !== undefined) base.effort = entry.effort;
+
+  // Collect valid level overrides, warning on anything unrecognised or malformed
+  const overrides = {};
+  for (const [key, value] of Object.entries(entry)) {
+    if (key === 'model' || key === 'effort') continue;
+    if (!LEVELS.includes(key)) {
+      warn(`Ignoring unrecognized key "${key}" in ${section} config. Valid levels: ${LEVELS.join(', ')}`);
+      continue;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      warn(`Ignoring level "${key}" in ${section} config: expected an object with model/effort.`);
+      continue;
+    }
+    overrides[key] = value;
+  }
+
+  const defined = LEVELS.filter(l => overrides[l] !== undefined);
+  if (defined.length === 0) return base;
+
+  const requestedIndex = LEVELS.indexOf(level);
+  // Nearest at or below the requested level, else the lowest defined above it
+  const chosen =
+    [...defined].reverse().find(l => LEVELS.indexOf(l) <= requestedIndex) ??
+    defined.find(l => LEVELS.indexOf(l) > requestedIndex);
+
+  const override = overrides[chosen];
+  const resolved = { ...base };
+  if (override.model !== undefined) resolved.model = override.model;
+  if (override.effort !== undefined) resolved.effort = override.effort;
+  return resolved;
+}
 
 // --- JSONC parsing ---
 
@@ -119,9 +172,10 @@ export async function defaultLiveness() {
  * @param {{ platform: string, level?: string, pins?: string[] }} options
  * @param {Record<string, boolean>} liveness  - map of platform key → available
  * @param {object} config                     - parsed config object
+ * @param {(msg: string) => void} warn        - receives config-shape warnings
  * @returns {object} flow plan JSON
  */
-export function resolveFlow(options, liveness, config) {
+export function resolveFlow(options, liveness, config, warn = msg => process.stderr.write(`Warning: ${msg}\n`)) {
   const { platform, level = 'medium', pins } = options;
 
   if (!LEVELS.includes(level)) {
@@ -178,35 +232,34 @@ export function resolveFlow(options, liveness, config) {
     return keys;
   }
 
-  function buildTarget(sectionConfig, key) {
-    const entry = sectionConfig[key] ?? {};
+  function buildTarget(sectionConfig, key, sectionName) {
+    const hints = resolveLevelEntry(sectionConfig[key] ?? {}, level, warn, sectionName);
     const target = { platform: key };
-    if (entry.model !== undefined) target.model = entry.model;
-    if (entry.effort !== undefined) target.effort = entry.effort;
+    if (hints.model !== undefined) target.model = hints.model;
+    if (hints.effort !== undefined) target.effort = hints.effort;
     // Flag same-agent reviews (orchestrator pinned)
     if (key === platform) target.allowSameAgent = true;
     return target;
   }
 
-  function buildReviewSection(sectionConfig, targetCount, rounds, consensus, includeSelf = false) {
+  function buildReviewSection(sectionName, sectionConfig, targetCount, rounds, consensus, includeSelf = false) {
     // Skip candidate resolution (including the all-unavailable error) when the phase is skipped
     const targets = (targetCount === 'none' || targetCount === 0)
       ? []
       : (() => {
           const keys = getCandidates(sectionConfig, true, includeSelf);
           return targetCount === 'one'
-            ? (keys.length > 0 ? [buildTarget(sectionConfig, keys[0])] : [])
-            : keys.map(k => buildTarget(sectionConfig, k));
+            ? (keys.length > 0 ? [buildTarget(sectionConfig, keys[0], sectionName)] : [])
+            : keys.map(k => buildTarget(sectionConfig, k, sectionName));
         })();
 
-    const section = { targets, rounds: rounds === undefined ? undefined : rounds, consensus };
-    // Omit rounds when undefined (high/max code-review)
-    if (section.rounds === undefined) delete section.rounds;
-    return section;
+    // `rounds` counts fan-out waves; each wave dispatches every target in `targets`
+    return { targets, rounds, consensus };
   }
 
   // plan-review
   const planReview = buildReviewSection(
+    'plan-review',
     config['plan-review'] ?? {},
     levelCfg.planTargets,
     levelCfg.planRounds,
@@ -216,12 +269,14 @@ export function resolveFlow(options, liveness, config) {
 
   // implementation
   const implEntry = (config.implementation ?? {})[platform] ?? {};
+  const implHints = resolveLevelEntry(implEntry, level, warn, 'implementation');
   const implementation = { platform };
-  if (implEntry.model !== undefined) implementation.model = implEntry.model;
-  if (implEntry.effort !== undefined) implementation.effort = implEntry.effort;
+  if (implHints.model !== undefined) implementation.model = implHints.model;
+  if (implHints.effort !== undefined) implementation.effort = implHints.effort;
 
   // code-review
   const codeReview = buildReviewSection(
+    'code-review',
     config['code-review'] ?? {},
     levelCfg.codeTargets,
     levelCfg.codeRounds,
