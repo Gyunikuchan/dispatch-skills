@@ -1,8 +1,6 @@
-# dispatch-skills
+# dispatch-skills [![GitHub](https://img.shields.io/badge/GitHub-Gyunikuchan%2Fdispatch--skills-blue?logo=github)](https://github.com/Gyunikuchan/dispatch-skills)
 
-Four agent skills for handing work to other coding-agent CLIs — Claude Code, Antigravity, GitHub Copilot, OpenCode — and adjudicating what they send back.
-
-Delegates return **claims, not verdicts**. Every skill here draws the same line: the delegate reports, the orchestrator verifies against the code, and only what survives reaches you.
+Four agent skills for handing work to other coding-agent CLIs — Claude Code, Antigravity, GitHub Copilot, OpenCode — and adjudicating what they send back. Delegates return **claims, not verdicts**: the delegate reports, the orchestrator verifies against the code, and only what survives reaches you.
 
 ## Install
 
@@ -18,7 +16,7 @@ Or take the whole set:
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
-Skills land in `.agents/skills/` and symlink into `.claude/skills/` (and any other detected agent directory). Add `-g` for a user-level install.
+Add `-g` for a user-level install.
 
 ## The skills
 
@@ -35,19 +33,17 @@ Dependencies point one way and never back. `dispatch` references nothing; the re
 
 Delegate a question, read-only, letting the cascade pick a provider:
 
-```bash
-node .agents/skills/dispatch/scripts/dispatch.mjs \
-  -f "src/domain/pricing.ts" \
-  "Explain how discount stacking is applied here, and flag any order-dependence."
+```
+/dispatch -f "src/domain/pricing.ts" "Explain how discount stacking is applied here, and flag any order-dependence."
 ```
 
 Review what you just changed:
 
 ```
-dispatch-code-review the current changes, focus on the allocation math
+/dispatch-code-review the current changes, focus on the allocation math
 ```
 
-Run the whole loop with two reviewers:
+Run the whole development loop with two reviewers (`<effort> (<providers>): <task>`):
 
 ```
 /implement-dispatch high (claude,agy): migrate the persisted schema to v4
@@ -63,7 +59,7 @@ Run the whole loop with two reviewers:
 
 ## Requirements
 
-Node >= 24 and at least one provider CLI on `PATH` (`claude`, `agy`, `copilot`, or `opencode`). No dependencies.
+Node >= 18 and at least one provider CLI on `PATH` (`claude`, `agy`, `copilot`, or `opencode`). No dependencies. If no provider is reachable, `dispatch` exits with a clear error explaining why.
 
 ## License
 

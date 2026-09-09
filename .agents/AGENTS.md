@@ -57,7 +57,6 @@ Skills are Markdown with YAML frontmatter (`name`, `description`), written per t
 
 ## Code Standards
 
-- **Runtime**: Node >= 24, no dependencies. `dispatch/scripts/*.mjs` only.
 - **Naming**: skill identifiers and filenames kebab-case.
 - **Paths**: forward slashes and Node `path` utilities; nothing platform-specific.
 - **Docs**: every skill README carries install and usage examples.

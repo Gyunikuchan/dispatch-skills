@@ -79,7 +79,7 @@ The workspace boundary is resolved from `git rev-parse --show-toplevel`, falling
 
 ## Requirements
 
-Node >= 24, plus at least one provider CLI on `PATH`. No dependencies.
+Node >= 18, plus at least one provider CLI on `PATH`. No dependencies.
 
 ## Layout
 

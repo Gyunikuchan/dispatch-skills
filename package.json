@@ -2,7 +2,7 @@
   "name": "dispatch-skills",
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=18.0.0"
   },
   "scripts": {
     "pretest": "node scripts/generate-hashes.mjs",
