@@ -1,66 +1,170 @@
 # dispatch-code-review
 
-Get a cross-agent second opinion on the changes you just made.
+Get a rigorous cross-agent second opinion on code changes in your working tree, then adjudicate findings against project truth.
 
-An external agent CLI inspects your working-tree diff across five axes and returns findings. Your orchestrating agent then verifies every finding against the cited lines, keeps what the code confirms, drops what it refutes, and escalates what it cannot settle.
+---
 
-The delegate's report is a **claim, not a verdict**. A reviewer reading a diff cold will flag things your codebase already handles; adjudication is what stops those reaching you.
+## What It Does
 
-## Install
+Reviewing your own code or relying solely on a single agent often leaves blind spots in domain edge cases, security seams, and architectural drift. `dispatch-code-review` automates cross-agent code review by delegating inspection of recent session changes or working-tree diffs to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or Local OpenCode).
+
+The core philosophy is **claim vs. verdict**:
+1. **Delegate produces claims**: An external delegate CLI inspects uncommitted or recent git diffs, adjacent call sites, and attached walkthroughs/plans across six software engineering axes.
+2. **Orchestrator adjudicates**: Your primary orchestrator agent (who holds the full conversation context and tool access) verifies every claim against the cited `<file>:L<line>`, active codebase, and repository rules (`AGENTS.md` / `CLAUDE.md`).
+3. **Walkthrough & code updated**: Accepted findings are fixed or logged in the walkthrough file on disk under `## Review Findings & Resolutions`, while true ambiguities are escalated interactively to the user.
+
+```mermaid
+flowchart TD
+    User(["👤 User"]) -->|"1. Request code review"| Orchestrator["🤖 Orchestrator Agent"]
+    Orchestrator -->|"2. Dispatches read-only review"| Delegate["🔍 Delegate CLI (6 Axes)"]
+    Delegate -->|"3. Structured claims"| Orchestrator
+    Orchestrator -->|"4. Adjudicates against code lines"| Codebase[("💻 Active Code & Walkthrough")]
+    Orchestrator -->|"5. Final report & resolutions"| User
+```
+
+---
+
+## Prerequisites & Installation
+
+### Prerequisites
+- **Node.js**: `v18.0.0` or higher.
+- **`dispatch` skill installed**: Required for the cross-agent CLI runner.
+- **At least one agent CLI** installed or reachable on your system:
+  - **Claude Code**: Claude Desktop, VS Code extension, or standalone CLI (`claude`).
+  - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
+  - **GitHub Copilot**: Copilot CLI or VS Code extension CLI (`copilot`).
+  - **Local OpenCode**: `opencode` binary with a local LM Studio server at `http://127.0.0.1:1234/v1`.
+
+### Installation
+
+Install `dispatch-code-review` and its core runner into your project workspace:
 
 ```bash
+# Install both skills
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch-code-review
 ```
 
-Requires the `dispatch` skill for the runner:
+To install globally for all projects:
 
 ```bash
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch
+npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch dispatch-code-review
 ```
 
-## Usage
+To install the entire suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
 
-Ask your agent for a review once changes are in the working tree:
-
-```
-dispatch-code-review the current changes
+```bash
+npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
+---
+
+## How to Use
+
+Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, inspect diffs, dispatch the task, adjudicate the findings, and update the walkthrough.
+
+### 1. Basic Code Review
+
+Review current uncommitted working-tree changes (staged and unstaged):
+
+```markdown
+/dispatch-code-review
 ```
-Run dispatch-code-review, focus on the CPF allocation math and a11y
+
+```markdown
+/dispatch-code-review review recent changes
 ```
 
-The agent resolves a walkthrough (orchestrator-supplied, platform-native, or bare `git diff`), populates the prompt template, dispatches read-only in the background, and reports back. Trailing words become the review's focus areas.
+### 2. Targeting Specific Review Focus Areas
 
-## The five axes
+Pass focus areas directly after the command to steer delegate attention:
 
-| Axis | Tags | Asks |
-|------|------|------|
-| Architecture & Module Design | `shallow` `deepen` `seam` `adapter` `test-leak` | Deep interfaces or shallow pass-throughs? Real seams or premature ports? |
-| Correctness, Domain & Spec | `domain-drift` `unit` `math` `runtime` `type` `spec` | Sign conventions, unit alignment, unhandled branches, your repository's standards. |
-| Simplicity & Anti-Bloat | `delete` `reuse` `native` `stdlib` `yagni` `root-cause` | Delete → reuse → stdlib → shortest diff. Fixed at the source or patched at call sites? |
-| Security | `vuln` | High-confidence exploitable issues: injection, path traversal, escaping, secrets. |
-| Web & UI Design | `layout` `a11y` `token` | Visual hierarchy, responsive layout, accessibility — when UI is touched. |
+```markdown
+/dispatch-code-review focus on the CPF allocation math and a11y
+```
 
-## Report format
+```markdown
+/dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
+```
 
-The delegate returns a fixed skeleton, and every finding uses one grammar:
+### 3. Pinning a Reviewer Provider
+
+Guide the orchestrator to route the code review to a specific external CLI:
+
+```markdown
+/dispatch-code-review --provider claude
+```
+
+```markdown
+/dispatch-code-review --provider agy focus on resource lifecycle and memory leaks
+```
+
+### 4. Explicit Context or Walkthrough Targeting
+
+Pass explicit plan or walkthrough paths if you want the review anchored to specific design docs:
+
+```markdown
+/dispatch-code-review .scratch/plan/auth-v2-walkthrough.md
+```
+
+---
+
+## High-Level Behavior & Invariants
+
+- **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
+- **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
+- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff` and `git diff --staged`), falling back to `git diff HEAD~1` only when the working tree is clean.
+- **Walkthrough Resolution & Authoring**:
+  1. *Explicit user-provided walkthrough*.
+  2. *Platform-native walkthrough* (e.g. Antigravity's `walkthrough.md` artifact).
+  3. *Auto-authored walkthrough* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
+- **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
+- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
+- **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only modified files, adjacent call sites, and contracts via code graphs) rather than unbounded codebase scans.
+
+---
+
+## The Six Evaluation Axes
+
+Every code change is evaluated across six rigorous dimensions:
+
+| Axis | Focus Tags | What Is Evaluated |
+|---|---|---|
+| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Depth and leverage (small interfaces hiding deep logic vs. shallow pass-throughs); real seams vs. premature indirection; private internal seams; dependency tier separation. |
+| **Domain & Business Logic** | `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Domain rule adherence (`AGENTS.md` / `CLAUDE.md`); invariant preservation across mutations; unit/sign alignment (monthly vs. annual, inflow vs. outflow); formula accuracy; unguarded indexing (`arr[0]`); floating promises. |
+| **Security & Resource Safety** | `vuln`, `auth`, `leak`, `perf` | Vulnerabilities (injection, path traversal, escaping, secrets); auth/permission bypasses; unclosed handles/connections; memory/goroutine leaks; quadratic operations on hot paths. |
+| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Simplicity ladder (YAGNI/delete → reuse codebase helpers → stdlib/native platform → shortest diff); root-cause fixes at source over call-site patches. |
+| **Blast Radius & Compatibility** | `breaking`, `compat`, `migration`, `scope-creep` | Backwards compatibility for callers; schema/data migration safety; serialized format handling; unrequested changes or diffs exceeding task boundaries. |
+| **Test Quality & UI/UX** | `test-gap`, `test-leak`, `ui`, `a11y` | Observable outcome assertions at interface seams; missing failure-mode tests; leaky internal test coupling; visual hierarchy; responsive layout; a11y compliance; API ergonomics. |
+
+---
+
+## Finding Grammar & Adjudication Table
+
+### Standard Finding Grammar
+
+Every finding returned by the reviewer follows a strict single-line grammar citing an exact path and line number:
 
 ```
 <file>:L<line> — <tag>: <defect> → <required change>
 ```
 
+Example report:
 ```markdown
 ## Verdict
 Two blocking defects in the allocation path; the rest is sound.
 
 ## Axis Coverage
-architecture: clean · correctness: 2 findings · simplicity: 1 finding
-security: clean · ui: n/a
+Architecture & Module Design: clean
+Domain & Business Logic: 2 findings
+Security & Resource Safety: clean
+Simplicity & Anti-Bloat: 1 finding
+Blast Radius & Compatibility: clean
+Test Quality & UI/UX: n/a
 
 ## MUST-FIX
 src/domain/cpf.ts:L118 — unit: annual ceiling compared against a monthly wage → divide the ceiling by 12, or lift the wage to annual.
-src/domain/cpf.ts:L204 — runtime: `tiers[0]` unguarded when the age falls below the lowest tier → return the floor tier explicitly.
+src/domain/cpf.ts:L204 — runtime: `tiers[0]` unguarded when age falls below lowest tier → return floor tier explicitly.
 
 ## SHOULD-FIX
 None.
@@ -73,28 +177,37 @@ src/features/plan/allocation-panel.tsx:L62 — reuse: reimplements `formatSgd` f
 2. Guard the tier lookup at src/domain/cpf.ts:L204.
 ```
 
-`## Axis Coverage` exists so a skipped axis is visible: without it, "no security findings" and "never looked at security" read identically.
+### Adjudication Decision Table
 
-## Adjudication
+The orchestrator maps each claim to an adjudication action by inspecting the cited code:
 
-Your orchestrator reads the cited lines and assigns one verdict per actionable claim:
+| Verdict | Criterion | Orchestrator Action |
+|---|---|---|
+| **Accept** | Code confirms the defect and its stated impact. | Apply fix or report to user; log under `## Review Findings & Resolutions`. |
+| **Reject** | Cited code contradicts claim, line does not exist, or fix is already present. | Drop from changes; record rejection rationale in walkthrough resolutions log. |
+| **Downgrade** | Real but trivial (style, taste, or speculative). | Fold into next steps or drop; record in walkthrough resolutions log. |
+| **Disputed** | Unsettleable from code alone (intent, trade-offs, unverified figures). | Escalate to user via interactive prompt; apply user decision verbatim. |
 
-| Verdict | Criterion |
-|---------|-----------|
-| **Accept** | Code confirms the defect and its stated impact |
-| **Reject** | Cited code contradicts the claim, the line does not exist, or the fix is already present |
-| **Downgrade** | Real but trivial — style, taste, or speculative |
-| **Disputed** | Hinges on intent, an unverified external figure, or a convention cutting both ways |
+---
 
-Uncited, contradicted, or unverifiable claims are rejected.
+## Nuances, Quirks & Troubleshooting
 
-**Evidence over votes.** When several delegates review the same change, findings dedupe to one per `<file>:L<line>` + claim and each is judged against the code. A finding the code confirms is accepted however few delegates raised it; a finding the code refutes is rejected even if every delegate raised it. Provider agreement is context, never evidence.
+### Self-Skipping Runner Behavior
+By default, the underlying `dispatch` runner avoids delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) to ensure a genuinely independent second opinion. If only one CLI is installed, request `--allow-same-agent` or allow fallback to native subagents.
 
-## Project conventions
+### Inspecting Uncommitted Diffs
+Delegates run in a structurally read-only mode and inspect the current working tree (`git diff` and `git diff --staged`). Ensure your changes are saved to disk before triggering review.
 
-The delegate reads your project's conventions directly from `AGENTS.md` / `CLAUDE.md` in the workspace and falls back to industry best practices. No setup needed — it reads your docs, not a variable you have to fill.
+### Host Convention Reading
+Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `.claude/CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 
-## Pairs with
+### Reviewing Transient Antigravity Walkthroughs
+When running inside Antigravity, the orchestrator automatically detects the active `walkthrough.md` and `implementation_plan.md` artifacts from the session brain directory. You do not need to copy or export them manually.
 
-- `dispatch` — the runner. Required.
-- `dispatch-plan-review` — the same loop, before the code exists.
+---
+
+## Pairs With
+
+- **`dispatch`**: The core cross-agent execution bridge and CLI provider cascade (required).
+- **`dispatch-plan-review`**: The companion skill for cross-agent plan reviews before code is written.
+- **`implement-dispatch`**: Full automated workflow combining planning, plan review, execution, and code review into a single pipeline.

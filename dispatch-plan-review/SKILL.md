@@ -1,6 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Review an implementation plan through external agent CLIs before code is written, then adjudicate returned claims. Use when a plan needs a second opinion before implementation.
+description: Review an implementation plan through external agent CLIs before code is written, then adjudicate returned claims. Use when a plan needs a second opinion or pre-implementation review.
 ---
 
 # dispatch-plan-review
@@ -15,9 +15,9 @@ Attach the plan file plus any user-specified files with `-f "<path>"` (forward s
 
 1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
 2. **Platform-native plan** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/implementation_plan.md`).
-3. **Author plan under `.scratch`** when no plan exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following the plan format below before dispatching. External delegates read this file with no other context.
+3. **Author plan under `.scratch`** when no plan exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following the plan template below before dispatching. External delegates read this file with no other context.
 
-#### Plan format
+#### Plan template
 
 When authoring a plan, use this structure:
 
@@ -67,14 +67,12 @@ Downstream caller impacts, data migrations, and fallback/rollback paths (or "Non
 Explicitly unhandled features or deferred follow-ups.
 ````
 
+#### Prompt template
+
 Populate the template variables:
 - `<Plan Path>` — path to the attached plan.
 - `<Requirement>` — original user ask, verbatim.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
-
-**Dispatch**: use orchestrator-supplied dispatch invocations when present (retains fan-out breadth and provider pinning). Otherwise dispatch backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring. Dispatch runs structurally read-only.
-
-#### Prompt template
 
 ````markdown
 Review an implementation plan across seven axes. No code has been written yet — judge the plan, not a diff.
@@ -90,7 +88,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
 
 #### 1. Ground the Plan
 1. Read the attached plan in full.
-2. Targeted inspection: check files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts, patterns, and blast radius. Avoid full-file dumps or open-ended codebase exploration.
+2. Targeted inspection: inspect files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts, patterns, and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Avoid full-file dumps or open-ended codebase exploration.
 3. Complete grounding quickly (typically 3–4 tool turns for focused tasks; up to 8 tool turns for broad refactors or cross-cutting migrations), then emit the report immediately.
 
 #### 2. Seven-Axis Evaluation
@@ -99,9 +97,9 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
   - *Premise & User Gaps*: Challenge the premise. Flag flawed prompt assumptions, XY problems, conflicting constraints, or missing prerequisites.
   - *Scope Discipline*: Flag unrequested refactors, unnecessary feature additions, or gold-plating beyond the prompt.
 - **Domain & Business Logic** (`domain-logic`, `invariant`, `state-machine`):
-  - *Domain Realism & Rules*: Real-world validity and domain rule adherence. Flag missing domain citations, sign/unit discrepancies (monthly vs. annual, debit vs. credit), or logic gaps.
+  - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `.claude/CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, sign/unit discrepancies (monthly vs. annual, debit vs. credit), or skipped business prerequisites.
   - *Invariants & Integrity*: State consistency and business integrity rules. Ensure operations preserve domain invariants across multi-step mutations.
-  - *State Machines & Lifecycles*: Valid state transitions and lifecycle flows. Flag impossible states, unhandled transitions, or skipped prerequisites.
+  - *State Machines & Lifecycles*: Valid state transitions and lifecycle flows. Flag impossible states, unhandled transitions, or missing lifecycle steps.
 - **Plan Coherence & Architecture** (`coherence`, `approach`, `standards`):
   - *Internal Coherence*: Cross-section consistency. Flag producer-consumer contract mismatches (signature, type, or payload discrepancies), out-of-order sequencing, and self-contradictory steps.
   - *Architecture & Layering*: System design and module boundaries. Flag boundary leaks (UI querying storage), improper coupling, or patterns violating codebase idioms.
@@ -140,6 +138,8 @@ Structure your review as:
 - `## Shorter Path`: Materially simpler plan meeting all criteria, or "None — the plan is already minimal."
 ````
 
+**Dispatch**: use orchestrator-supplied dispatch invocations when present (retains fan-out breadth and provider pinning). Otherwise dispatch backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring. Dispatch runs structurally read-only.
+
 **Done when:** the plan is resolved (or authored), attached, the prompt is populated, and dispatch is launched backgrounded with the turn yielded.
 
 ---
@@ -161,7 +161,7 @@ Ground truth is the **requirement plus the host repository's rules**. Claims cit
 
 **Escalate disputes**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before modifying the plan for **Disputed** findings. Batch up to 4 questions per invocation (if more disputes exist, ask in successive batches); quote the section, state the delegate's claim, and provide your counter-reading with accept / reject / defer options. Apply user choices verbatim as final. Escalate whenever disputes involve repository-named domain authorities, persisted schema, shared URL state, or explicit user requests.
 
-**Done when:** every actionable claim has an assigned verdict and all disputes are resolved by the user.
+**Done when:** every actionable claim carries a verdict and all disputes are resolved by the user.
 
 ---
 
