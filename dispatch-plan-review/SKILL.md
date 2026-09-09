@@ -5,26 +5,79 @@ description: Review an implementation plan through external agent CLIs before co
 
 # dispatch-plan-review
 
-The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the requirement and the host repository's rules before it reaches the user or the plan.
+The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the requirement and host repository rules before editing the plan or reporting to the user.
 
 ## Process
 
 ### 1. Assemble context and dispatch
 
-Attach the plan file plus any user-specified files with `-f "<path>"`, forward slashes throughout.
+Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
+
+1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
+2. **Platform-native plan** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/implementation_plan.md`).
+3. **Author plan under `.scratch`** when no plan exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following the plan format below before dispatching. External delegates read this file with no other context.
+
+#### Plan format
+
+When authoring a plan, use this structure:
+
+````markdown
+# <Goal Description>
+
+Brief problem description, background context, and what the change accomplishes.
+
+## Key Decisions & Context
+Settled architectural choices, trade-offs, and rationale (e.g. from prior grilling or alignment sessions).
+
+## User Review Required
+Breaking changes, critical design decisions, or trade-offs requiring user attention.
+
+## Open Questions & Assumptions
+Clarifying questions, settling assumptions, or explicit defaults.
+
+## Proposed Changes
+
+### <Component Name>
+Summary of component changes, separated by files (use relative paths with forward slashes):
+
+#### [NEW] <relative-path>
+- Purpose, public interface, and rationale.
+
+#### [MODIFY] <relative-path>
+- Changes: Concrete symbol/signature changes and behavior updates.
+- Invariants: Pre/post-conditions or boundary validations preserved.
+
+#### [DELETE] <relative-path>
+- Deleted symbols and migration/cleanup steps.
+
+## Rollback & Blast Radius
+Downstream caller impacts, data migrations, and fallback/rollback paths (or "None").
+
+## Verification Plan
+### Automated Tests
+- Concrete test commands (`npm test`, targeted test files/suites).
+### Manual Verification
+- Concrete manual verification steps, edge cases, and failure scenarios.
+
+## Review Findings & Resolutions
+<!-- Populated during plan review cycles -->
+*No reviews conducted yet.*
+
+## Out of Scope
+Explicitly unhandled features or deferred follow-ups.
+````
 
 Populate the template variables:
-
 - `<Plan Path>` — path to the attached plan.
-- `<Requirement>` — the original user ask, verbatim.
+- `<Requirement>` — original user ask, verbatim.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
 
-**Dispatch**: when an orchestrating skill supplies the dispatch invocation, use it — it owns fan-out breadth and provider pinning. Otherwise dispatch yourself, **backgrounded**, and yield the turn; see the `dispatch` skill for the cascade, flags, and log monitoring. Dispatch is structurally read-only — delegates cannot modify the workspace.
+**Dispatch**: use orchestrator-supplied dispatch invocations when present (retains fan-out breadth and provider pinning). Otherwise dispatch backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring. Dispatch runs structurally read-only.
 
 #### Prompt template
 
 ````markdown
-Review an implementation plan across six axes. No code has been written yet — judge the plan, not a diff.
+Review an implementation plan across seven axes. No code has been written yet — judge the plan, not a diff.
 
 ### Context & Objective
 - Plan: <Plan Path>
@@ -37,16 +90,36 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
 
 #### 1. Ground the Plan
 1. Read the attached plan in full.
-2. Bounded reads: open only the files the plan's Change Set names, in targeted line ranges (`limit` < 80), to confirm the plan matches the code as it exists.
-3. Complete grounding within 4 tool turns, then emit the report immediately.
+2. Targeted inspection: check files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts, patterns, and blast radius. Avoid full-file dumps or open-ended codebase exploration.
+3. Complete grounding quickly (typically 3–4 tool turns for focused tasks; up to 8 tool turns for broad refactors or cross-cutting migrations), then emit the report immediately.
 
-#### 2. Six-Axis Evaluation
-- **Requirement Traceability** (`traceability`): Every stated requirement maps to a change in the Change Set, and every change maps back to a requirement. Flag unmet requirements and unrequested scope. Check the plan's stated assumptions against the requirement — an assumption that contradicts the ask is a defect.
-- **Approach Correctness** (`approach`): Does the plan respect the project's conventions (from `AGENTS.md` / `.claude/CLAUDE.md`) and industry best practices? Where the plan asserts an external rule, figure, or standard, does it cite an authority or silently invent one?
-- **Blast Radius & Reversibility** (`blast-radius`): What else touches the code being changed? Flag changes to persisted schema, serialization aliases, or shared URL state that lack a backward-compatibility story. Flag anything hard to undo once shipped.
-- **Testability & Success Criteria** (`testability`): Is each success criterion checkable, and does a named test prove it? Flag criteria that can only be confirmed by eyeballing, and criteria with no test.
-- **Simplicity & YAGNI** (`simplicity`): Is there a materially shorter plan that meets the same criteria? Prefer, in order: delete the need, reuse an existing helper, use stdlib or a native platform feature, then write new code. Flag speculative generality, premature abstraction, and new dependencies.
-- **Edge Cases & Failure Modes** (`edge-case`): Empty, zero, negative, and boundary inputs; unhandled union branches; partial failure and error propagation. Flag what the plan leaves unaddressed.
+#### 2. Seven-Axis Evaluation
+- **Requirement & Intent Fidelity** (`traceability`, `user-gap`, `scope-creep`):
+  - *Traceability*: Bidirectional mapping between requirements and proposed changes. Flag unmet requirements and unstated/undocumented assumptions.
+  - *Premise & User Gaps*: Challenge the premise. Flag flawed prompt assumptions, XY problems, conflicting constraints, or missing prerequisites.
+  - *Scope Discipline*: Flag unrequested refactors, unnecessary feature additions, or gold-plating beyond the prompt.
+- **Domain & Business Logic** (`domain-logic`, `invariant`, `state-machine`):
+  - *Domain Realism & Rules*: Real-world validity and domain rule adherence. Flag missing domain citations, sign/unit discrepancies (monthly vs. annual, debit vs. credit), or logic gaps.
+  - *Invariants & Integrity*: State consistency and business integrity rules. Ensure operations preserve domain invariants across multi-step mutations.
+  - *State Machines & Lifecycles*: Valid state transitions and lifecycle flows. Flag impossible states, unhandled transitions, or skipped prerequisites.
+- **Plan Coherence & Architecture** (`coherence`, `approach`, `standards`):
+  - *Internal Coherence*: Cross-section consistency. Flag producer-consumer contract mismatches (signature, type, or payload discrepancies), out-of-order sequencing, and self-contradictory steps.
+  - *Architecture & Layering*: System design and module boundaries. Flag boundary leaks (UI querying storage), improper coupling, or patterns violating codebase idioms.
+  - *Conventions & Specs*: Adherence to repository guidelines (`AGENTS.md` / `.claude/CLAUDE.md`), framework idioms, and authoritative specifications/RFCs.
+- **Security & Permissions** (`security`, `auth`, `validation`):
+  - *Trust Boundaries & Isolation*: Component trust boundaries, credential exposure, tenant/user data isolation, and least privilege.
+  - *Authentication & Authorization*: Role-based access control, permission checks, session validation, and unauthenticated access paths.
+  - *Input Validation & Sanitization*: Input boundaries, injection vectors (SQL/command/HTML), path traversal, and unvalidated payloads.
+- **Blast Radius & Reversibility** (`blast-radius`, `migration`, `compat`):
+  - *Blast Radius*: Cascading impact on adjacent modules, downstream services, client state, or shared URL parameters.
+  - *Data & Schema Migration*: Persisted schemas, data model migrations, serialization aliases, and multi-version compatibility. Flag missing migration paths.
+  - *Compatibility & Rollback*: Backward compatibility for callers/clients, graceful degradation, and reversibility/rollback paths for breaking changes.
+- **Testability & Success Criteria** (`testability`, `spec-gap`):
+  - *Verification & Test Surface*: Checkable criteria verified by named automated tests (unit, integration, e2e) or concrete verification steps. Flag subjective or untestable criteria.
+  - *Specification Gaps*: Ambiguous acceptance criteria, undefined edge expectations, or success conditions lacking pass/fail definitions.
+- **Simplicity & Failure Modes** (`simplicity`, `yagni`, `edge-case`):
+  - *Simplicity Ladder*: Prefer: delete requirement → reuse codebase helper/type → stdlib/platform native → new code. Flag speculative abstractions and unneeded dependencies.
+  - *Edge Cases & Failure Modes*: Empty, zero, boundary inputs; unhandled error states; partial failures; race conditions; and missing fallback behavior.
 
 #### 3. Report Output
 
@@ -56,55 +129,55 @@ Write every finding as one line in this grammar:
 ## <Section> — <tag>: <defect> → <required change>
 ```
 
-`<Section>` is the plan heading the finding lands on; `<tag>` is the axis tag above. Cite `path/to/file.ext:L<line>` inline when a finding rests on existing code.
+`<Section>` is the target plan heading; `<tag>` is the axis tag above. Cite `<file>:L<line>` inline for findings referencing existing code.
 
 Structure your review as:
-- `## Verdict`: One line — is this plan safe to implement as written?
-- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`. Every axis appears, so a skipped axis is visible.
-- `## MUST-FIX`: Findings that block implementation, or "None."
+- `## Verdict`: One line — safe to implement as written.
+- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`. Explicitly list every axis.
+- `## MUST-FIX`: Findings blocking implementation, or "None."
 - `## SHOULD-FIX`: Weaknesses worth correcting first, or "None."
 - `## CONSIDER`: Optional improvements, or "None."
-- `## Shorter Path`: The materially simpler plan if one exists, or "None — the plan is already minimal."
+- `## Shorter Path`: Materially simpler plan meeting all criteria, or "None — the plan is already minimal."
 ````
 
-**Done when:** the plan is attached, the prompt is populated, and the dispatch is launched backgrounded with the turn yielded.
+**Done when:** the plan is resolved (or authored), attached, the prompt is populated, and dispatch is launched backgrounded with the turn yielded.
 
 ---
 
 ### 2. Adjudicate each actionable claim
 
-Adjudicate only claims that ask for a change — defects, cuts, recommendations. Drop passing axes, clean verdicts, and praise on sight; verifying them costs tokens and they never reach the report.
+Adjudicate claims proposing concrete changes (defects, cuts, recommendations). Discard passing axes, clean verdicts, and praise immediately.
 
-Ground truth for a plan claim is the **requirement plus the host repository's rules**. A claim resting on existing code is additionally verified against the cited `<file>:L<line>`.
+Ground truth is the **requirement plus the host repository's rules**. Claims citing existing code are verified against the cited `<file>:L<line>`.
 
 | Verdict | Criterion | Action |
 |---------|-----------|--------|
-| **Accept** | The requirement or a repository rule confirms the defect | Fold into the plan per Step 3 |
-| **Reject** | The plan or the cited code contradicts the claim, the section does not exist, or the change is already planned | Drop silently; do not relay |
-| **Downgrade** | Real but trivial — style, taste, or speculative | Fold into Out of Scope or drop |
-| **Disputed** | Unsettleable from the plan alone: hinges on intent, an unverified external figure, or a deliberate trade-off | Escalate below |
+| **Accept** | Requirement or repository rule confirms the defect | Fold into the plan body and log per Step 3 |
+| **Reject** | Contradicted by plan/code, target section missing, already planned, or unverifiable | Drop from plan changes; log rejection in resolutions |
+| **Downgrade** | Real but trivial — style, taste, or speculative | Fold into Out of Scope or drop; log in resolutions |
+| **Disputed** | Unsettleable from plan alone (intent, unverified external figures, deliberate trade-offs) | Escalate to user |
 
-Classify uncited, contradicted, or unverifiable claims as **Reject**.
+**Evidence over votes**: when aggregating multi-delegate reports, dedupe duplicate claims pointing to the same defect under the same `## <Section>` into a single finding, then verify against requirements and code. Accept valid findings regardless of delegate count; reject refuted findings even if unanimous. Provider agreement is context, not evidence.
 
-**Evidence over votes** when several delegates report on the same plan: dedupe to one finding per `## <Section>` + claim, then judge each against the requirement and repository rules. Accept a finding the requirement or code confirms regardless of how many delegates raised it; reject one refuted even if every delegate raised it. Provider agreement is context, never evidence.
+**Escalate disputes**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before modifying the plan for **Disputed** findings. Batch up to 4 questions per invocation (if more disputes exist, ask in successive batches); quote the section, state the delegate's claim, and provide your counter-reading with accept / reject / defer options. Apply user choices verbatim as final. Escalate whenever disputes involve repository-named domain authorities, persisted schema, shared URL state, or explicit user requests.
 
-**Escalate disputes** via interactive question tool (`ask_question` / `AskUserQuestion`) before writing any **Disputed** finding into the plan. One question per dispute (batch up to 4); quote the plan section under dispute, state the delegate's claim and your counter-reading. Offer accept / reject / defer. Apply the user's decision verbatim; treat decided disputes as final.
-
-Escalate rather than guess when the dispute touches a domain authority the repository names as ground truth, persisted schema or shared URL state, or a change the user explicitly asked for.
-
-**Done when:** every actionable claim carries a verdict and every dispute is ruled on by the user.
+**Done when:** every actionable claim has an assigned verdict and all disputes are resolved by the user.
 
 ---
 
-### 3. Fold accepted findings into the plan and report
+### 3. Fold findings into the plan and report
 
-Accepted `MUST-FIX` items are **edited into the plan file** before implementation begins — the plan on disk is the artifact the implementer reads, so a finding that lives only in the report has not been applied. `SHOULD-FIX` and `CONSIDER` items are folded in, or recorded under the plan's **Out of Scope** section with a reason.
+1. **Update plan body**: Apply accepted `MUST-FIX` and approved modifications **directly to the target plan sections** on disk (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`, etc.). Fold accepted `SHOULD-FIX` / `CONSIDER` items into the plan body or record under **Out of Scope** with rationale.
+2. **Record review outcomes**: Append this round's complete adjudication log under `## Review Findings & Resolutions` in the plan file:
+   - `- **[Accepted]** ## <Section> — <tag>: <defect> → <resolution & where applied>`
+   - `- **[Resolved Dispute]** ## <Section> — <tag>: <defect> → <user ruling & action>`
+   - `- **[Rejected / Downgraded]** ## <Section> — <tag>: <defect> → <rejection rationale>`
 
-Report to the user, prefixed by provider (use the label from the dispatch result), including the session deep-link or resume command when available:
+Report to the user, prefixed by provider label from the dispatch result (including session deep-link or resume command when available):
 
-1. **Verdict**: one line — is the plan safe to implement as amended?
-2. **Accepted findings**: each in the delegate's grammar, with where it landed in the plan.
-3. **Next steps**: anything deferred to Out of Scope, prioritized.
-4. **Adjudication note**: one line — count of rejected or downgraded findings, plus how the user resolved any dispute. Include only when findings were rejected, downgraded, or disputed.
+1. **Verdict**: one line — implementation readiness as amended.
+2. **Accepted findings**: each in delegate grammar, indicating where it landed in the plan.
+3. **Next steps**: prioritized items deferred to Out of Scope.
+4. **Adjudication note**: one line summarizing rejected/downgraded counts and dispute resolutions (omit when all findings were accepted without dispute).
 
-**Done when:** the plan file reflects every accepted finding, and the report is delivered with the provider prefix.
+**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications, and the user report is delivered with provider prefix.

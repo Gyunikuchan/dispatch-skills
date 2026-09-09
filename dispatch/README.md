@@ -63,26 +63,26 @@ npx skills add Gyunikuchan/dispatch-skills --all
 
 ## How to Use
 
-Interact with `dispatch` naturally through your orchestrating AI agent in your regular chat or IDE session. You do not need to invoke lower-level scripts manually.
+Trigger `dispatch` directly via the slash command `/dispatch` (or natural language) in your agent chat session. You do not need to invoke lower-level scripts manually.
 
 ### 1. Basic Invocations
 
-Prompt your agent to delegate an investigation or analysis:
+Delegate an investigation or trace task:
 
 ```markdown
-Dispatch an investigation on why token refreshes fail silently in src/auth/session.ts
+/dispatch Investigate why token refreshes fail silently in src/auth/session.ts
 ```
 
 ```markdown
-Use dispatch to trace how discount stacking is calculated in src/domain/pricing.ts
+/dispatch Trace how discount stacking is calculated in src/domain/pricing.ts
 ```
 
 ### 2. Attaching Files & Context (`-f`)
 
-Direct your agent to include specific files as bounded attachments:
+Include specific files as bounded attachments:
 
 ```markdown
-Dispatch a review of src/services/payment.ts and src/types/billing.ts to check for race conditions
+/dispatch -f src/services/payment.ts -f src/types/billing.ts Check for race conditions in charge capture
 ```
 
 ### 3. Pinning a Specific Provider (`--provider`)
@@ -90,11 +90,11 @@ Dispatch a review of src/services/payment.ts and src/types/billing.ts to check f
 Force delegation to a specific provider and bypass the automatic fallback cascade:
 
 ```markdown
-Dispatch this inquiry to Antigravity: "Analyze the state transitions in src/workflow/engine.ts"
+/dispatch --provider agy Analyze the state transitions in src/workflow/engine.ts
 ```
 
 ```markdown
-Dispatch with provider claude: "Review our GraphQL schema definition for N+1 vulnerabilities"
+/dispatch --provider claude Review our GraphQL schema definition for N+1 vulnerabilities
 ```
 
 ### 4. Overriding Model & Reasoning Effort (`-m`, `-e`)
@@ -102,26 +102,26 @@ Dispatch with provider claude: "Review our GraphQL schema definition for N+1 vul
 Specify custom models or higher reasoning effort when needed:
 
 ```markdown
-Dispatch to copilot using model gpt-5.6-luna and max effort: "Audit src/crypto/tokens.ts for timing attacks"
+/dispatch --provider copilot -m gpt-5.6-luna -e max Audit src/crypto/tokens.ts for timing attacks
 ```
 
 ---
 
 ## Options & Flags Reference
 
-When instructing your agent (or reviewing its execution plan), the following flags are supported:
+When invoking `/dispatch` (or reviewing execution plans), the following flags are supported:
 
-| Option / Flag | Description | Example Prompt / Usage |
+| Option / Flag | Description | Example Slash Command / Usage |
 |---|---|---|
-| `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `"Dispatch with -f src/api.ts ..."` |
-| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `local`); disables cascading. | `"Dispatch to agy ..."` |
-| `-m <model>` | Override the default delegate model. | `"Dispatch using model claude-opus-5 ..."` |
-| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `"Dispatch with max effort ..."` |
-| `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `"Dispatch with a 300s timeout ..."` |
-| `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `"Dispatch allowing same-agent fallback ..."` |
-| `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `"Set orchestrator to claude ..."` |
-| `--json` | Request structured JSON output (Local OpenCode provider only). | `"Dispatch with --json ..."` |
-| `-v` | Stream live verbose execution traces to the active terminal. | `"Dispatch with verbose output ..."` |
+| `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
+| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `local`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
+| `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
+| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `/dispatch -e max Verify crypto primitives` |
+| `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `/dispatch -t 300 Quick dependency check` |
+| `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `/dispatch --allow-same-agent Analyze query plan` |
+| `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
+| `--json` | Request structured JSON output (Local OpenCode provider only). | `/dispatch --provider local --json Parse AST` |
+| `-v` | Stream live verbose execution traces to the active terminal. | `/dispatch -v Run complex benchmark trace` |
 
 ---
 

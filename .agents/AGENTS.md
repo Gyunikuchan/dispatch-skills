@@ -69,7 +69,7 @@ Format skills as Markdown with YAML frontmatter (`name`, `description`) followin
 Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, and Copilot:
 
 - **Naming**: kebab-case for skill identifiers and filenames.
-- **Paths**: Node `path` utilities and forward slashes only.
+- **Paths**: Always use relative paths with forward slashes instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Use universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
 - **Scratch directory**: Store temporary state and run artifacts in `.scratch/` to support resuming interrupted processes; clean up temporary files upon completion.
