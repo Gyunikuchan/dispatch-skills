@@ -8,7 +8,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 | Provider | Key | CLI Binary | Direct Runner | Default Model | Default Effort | Default Mode | Session Handle |
 |----------|-----|------------|---------------|---------------|----------------|--------------|----------------|
-| **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | `claude-opus-5` | `medium` | Read-only | `claude --resume <session_id>` |
+| **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | `claude-opus-5` (fallback: `bedrock.claude-opus-5`) | `medium` | Read-only | `claude --resume <session_id>` |
 | **Antigravity 2.0** | `agy` | `agy` | `scripts/agy-run.mjs` | `gemini-3.8-flash` | `medium` | `--mode plan` | `conversation://<id>` |
 | **GitHub Copilot** | `copilot` | `copilot` | `scripts/copilot-run.mjs` | `gpt-5.6-luna` | `max` | `--mode plan` | `copilot --resume <session_id>` |
 | **Local OpenCode** | `local` | `opencode` | `scripts/local-run.mjs` | `lmstudio/qwen3.8-27b-ridge` | `null` (server default) | Read-only | Local server logs |
@@ -18,7 +18,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ## 2. Claude Code (`claude`)
 
 ### Defaults & Overrides
-- **Default Model**: `claude-opus-5` (override via `-m <model>`)
+- **Default Model Priority**: `claude-opus-5` → `bedrock.claude-opus-5` (override via `-m <model>`)
 - **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
 - **Default Mode**: Read-only (`--allowedTools`)
 - **Mode Override**: `--claude-mode <desktop|vscode|cli>` (explicit execution mode)
@@ -44,7 +44,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 - **Tool Restriction**: Passed `--allowedTools` restricts tool types (`Read`, `Bash(grep *)`, `Bash(find *)`), not individual filesystem paths.
 - **Safety Prompt**: Restricts denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
 - **Sandbox Boundary**: Delegate session inherits the host process sandbox boundaries.
-- **Mode Cascade**: Discovery probes test `--version` without token spend. On `auth` or `quota` failure, `runClaude` cascades to the next available mode unless pinned.
+- **Model & Mode Cascade**: Discovery probes test `--version` without token spend. If a model is not available or fails, `runClaude` falls back across candidate models (`claude-opus-5` → `bedrock.claude-opus-5`). On `auth` or `quota` exhaustion across models, it cascades to the next available mode unless pinned.
 
 ### Session Monitoring
 - **Resume Command**: Captured `session_id` from JSON envelope (`--output-format json`) emits `claude --resume <session_id>`.

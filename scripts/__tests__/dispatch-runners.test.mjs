@@ -37,6 +37,8 @@ import {
 } from '../../dispatch/scripts/dispatch.mjs';
 
 import {
+  DEFAULT_CLAUDE_MODELS,
+  DEFAULT_CLAUDE_MODEL,
   extractClaudeSessionId,
   getClaudeBinary,
   getClaudeDesktopBinary,
@@ -589,6 +591,11 @@ describe('claude multi-mode resolution & reachability', () => {
       assert.equal(resolved?.mode, 'cli');
       assert.equal(getClaudeBinary(), cliBin);
     }
+  });
+
+  it('defines default candidate models in priority order (claude-opus-5 -> bedrock.claude-opus-5)', () => {
+    assert.deepEqual(DEFAULT_CLAUDE_MODELS, ['claude-opus-5', 'bedrock.claude-opus-5']);
+    assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5');
   });
 
   it('checks Claude availability without consuming tokens', async () => {

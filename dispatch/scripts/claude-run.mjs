@@ -45,7 +45,11 @@ import {
 
 const currentFilePath = fileURLToPath(import.meta.url);
 
-export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5';
+export const DEFAULT_CLAUDE_MODELS = [
+  'claude-opus-5',
+  'bedrock.claude-opus-5',
+];
+export const DEFAULT_CLAUDE_MODEL = DEFAULT_CLAUDE_MODELS[0];
 export const DEFAULT_CLAUDE_EFFORT = 'medium';
 
 /**
@@ -677,16 +681,37 @@ export async function runClaude(options = {}) {
     attachedFiles: files,
   });
 
-  const effectiveModel = model || DEFAULT_CLAUDE_MODEL;
   const effectiveEffort = effort || DEFAULT_CLAUDE_EFFORT;
 
-  // Helper to execute on a specific target
-  const executeOnTarget = async (target) => {
+  // Resolve models to try in priority order
+  let modelsToTry = [];
+  if (Array.isArray(model)) {
+    modelsToTry = model.filter(Boolean);
+  } else if (typeof model === 'string' && model.includes(',')) {
+    modelsToTry = model.split(',').map((m) => m.trim()).filter(Boolean);
+  } else if (typeof model === 'string' && model.trim()) {
+    const trimmed = model.trim();
+    if (trimmed === DEFAULT_CLAUDE_MODEL || trimmed === 'default') {
+      modelsToTry = [...DEFAULT_CLAUDE_MODELS];
+    } else {
+      modelsToTry = [trimmed];
+    }
+  } else {
+    modelsToTry = [...DEFAULT_CLAUDE_MODELS];
+  }
+
+  if (modelsToTry.length === 0) {
+    modelsToTry = [...DEFAULT_CLAUDE_MODELS];
+  }
+
+  // Helper to execute on a specific target and model
+  const executeOnTarget = async (target, targetModel = null) => {
+    const selectedModel = targetModel || modelsToTry[0] || DEFAULT_CLAUDE_MODEL;
     // Headless print mode (interactive mode removed — delegates are always headless)
     const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
     const claudeArgs = ['-p', argvPrompt, '--output-format', 'json'];
 
-    if (effectiveModel) claudeArgs.push('--model', effectiveModel);
+    if (selectedModel) claudeArgs.push('--model', selectedModel);
     if (effectiveEffort) claudeArgs.push('--effort', effectiveEffort);
     for (const tool of READ_ONLY_ALLOWED_TOOLS) {
       claudeArgs.push('--allowedTools', tool);
@@ -777,6 +802,7 @@ export async function runClaude(options = {}) {
           provider: 'claude',
           claudeMode: target.mode,
           bin: target.bin,
+          model: selectedModel,
           stdout: envelope.text,
           rawStdout: stdoutBuffer,
           stderr: stderrBuffer,
@@ -806,36 +832,64 @@ export async function runClaude(options = {}) {
 
   let lastResult = null;
 
-  // Execute across viable targets with fallback on auth/quota failure
+  // Execute across viable targets and candidate models in priority order
   for (let i = 0; i < viableTargets.length; i++) {
     const currentTarget = viableTargets[i];
     const isLastTarget = i === viableTargets.length - 1;
 
-    try {
-      const result = await executeOnTarget(currentTarget);
-      const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
+    for (let m = 0; m < modelsToTry.length; m++) {
+      const currentModel = modelsToTry[m];
+      const isLastModel = m === modelsToTry.length - 1;
 
-      // If this mode is not subscribed or lacks tokens, cascade to next available mode
-      if (isQuotaOrAuth && !isLastTarget && !claudeMode) {
-        process.stderr.write(
-          `[dispatch] Notice: ${currentTarget.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
-            `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
-        );
+      try {
+        const result = await executeOnTarget(currentTarget, currentModel);
         lastResult = result;
-        continue;
-      }
 
-      sessionLogger.close();
-      return result;
-    } catch (err) {
-      if (!isLastTarget && !claudeMode) {
-        process.stderr.write(
-          `[dispatch] Warning: ${currentTarget.name} execution failed (${err.message}). Cascading to next mode...\n`,
-        );
-        continue;
+        const isSuccess = result.exitCode === 0 && !result.failureKind;
+        if (isSuccess) {
+          sessionLogger.close();
+          return result;
+        }
+
+        // If this model run failed, try next fallback model if available
+        if (!isLastModel) {
+          const nextModel = modelsToTry[m + 1];
+          process.stderr.write(
+            `[dispatch] Notice: Model '${currentModel}' failed or not available on ${currentTarget.name} (exit ${result.exitCode}${result.failureKind ? `, failure: ${result.failureKind}` : ''}).\n` +
+              `[dispatch] Trying fallback model '${nextModel}'...\n`,
+          );
+          continue;
+        }
+
+        const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
+
+        // If all models failed on this target mode and it's out of quota/auth, cascade to next available mode
+        if (isQuotaOrAuth && !isLastTarget && !claudeMode) {
+          process.stderr.write(
+            `[dispatch] Notice: ${currentTarget.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
+              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
+          );
+          break;
+        }
+
+        sessionLogger.close();
+        return result;
+      } catch (err) {
+        if (!isLastModel) {
+          process.stderr.write(
+            `[dispatch] Warning: Model '${currentModel}' execution failed on ${currentTarget.name} (${err.message}). Trying fallback model '${modelsToTry[m + 1]}'...\n`,
+          );
+          continue;
+        }
+        if (!isLastTarget && !claudeMode) {
+          process.stderr.write(
+            `[dispatch] Warning: ${currentTarget.name} execution failed (${err.message}). Cascading to next mode...\n`,
+          );
+          break;
+        }
+        sessionLogger.close();
+        throw err;
       }
-      sessionLogger.close();
-      throw err;
     }
   }
 
@@ -894,7 +948,7 @@ Usage:
 Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Claude model (default: ${DEFAULT_CLAUDE_MODEL})
+  -m, --model <name>            Override Claude model (default: ${DEFAULT_CLAUDE_MODELS.join(', ')})
   -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_CLAUDE_EFFORT})
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --claude-mode <mode>          Select execution mode: desktop | vscode | cli
