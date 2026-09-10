@@ -6,7 +6,7 @@ Single source of truth for agent rules (`.claude/CLAUDE.md` symlinks here); edit
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Use relative repo paths for markdown links (never machine-specific `file:///`).
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Use relative repo paths for markdown links (never machine-specific `file:///`). Exception: a chat-only link to a session-convenience path outside the repo (e.g. an OS temp directory) is exempt, since it is never written into a repo file.
 
 ## Layout
 

@@ -49,8 +49,8 @@ Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, o
 | `flow['code-review'].maxRounds` | Steps 5, 7 | Code review wave cap; `0` means the phase is configured off |
 | `flow['code-review'].consensus` | Steps 6, 7 | Code review consensus requirement (`true` / `false`) |
 | `flow['code-review'].toolTurns` | Steps 5, 7 | Tool-turn budget handed to each code reviewer |
-| `flow.paths.plan` | Step 2 | Recommended plan artifact path |
-| `flow.paths.walkthrough` | Step 5 | Recommended walkthrough artifact path |
+| `flow.paths.plan` | Step 1 | Plan artifact path, scratch-fallback tier only (Host Conventions) |
+| `flow.paths.walkthrough` | Step 1 | Walkthrough artifact path, scratch-fallback tier only (Host Conventions) |
 | `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: number } }` — report as data |
 
 A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. `maxRounds` counts total waves **including the first review**. Plan review and code review track independent round counters.
@@ -68,7 +68,7 @@ When `targets` is empty and `maxRounds > 0`, external platforms are unavailable:
 
 ## Operating Invariants
 
-- **Execution boundaries**: External delegates run in structurally read-only mode (`--mode plan` or restricted `--allowedTools`). Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
+- **Execution boundaries**: External delegates run structurally read-only, per `dispatch`'s CLI mechanics. Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
 - **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
 - **Provider flags**: Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
 - **Fallback**: When a provider fails or no candidate is available, re-run the prompt and attachments through the in-process read-only subagent from the platform agent-mode table.
@@ -79,11 +79,17 @@ When `targets` is empty and `maxRounds > 0`, external platforms are unavailable:
 
 ## Host Conventions
 
-Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start:
+Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start for:
 - **Verify command**: Project test/lint command kept green across all code changes (Steps 4, 6, 7).
 - **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
+- **Artifact location convention**: An explicit plan/walkthrough path or directory the repo names, if any.
 
-Resolve each artifact location independently: take `flow.paths.plan` and `flow.paths.walkthrough` as the recommended locations, and when the host platform has already produced a native artifact of that kind, write into that one instead using the respective review skill's template.
+Resolve each artifact location once, at Step 1, in this order, and reuse it for every subsequent write — never author both multiple copies (e.g. a native and a scratch) of the same artifact:
+1. **Host convention**: the location named above, when the repo names one.
+2. **Native artifact**: otherwise, the orchestrator platform's own artifact of that kind (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`), written and updated directly with the respective review skill's template applied to its content.
+3. **Scratch fallback**: otherwise, `flow.paths.plan` / `flow.paths.walkthrough` under `.scratch`.
+
+Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the orchestrator-supplied artifact so they don't re-derive it.
 
 ## Process
 
@@ -97,14 +103,15 @@ Resolve each artifact location independently: take `flow.paths.plan` and `flow.p
    *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
 3. Choose a kebab-case slug naming the change.
 4. Run `resolve-flow.mjs` with that slug to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
+5. Resolve the plan and walkthrough artifact paths per Host Conventions and record them for reuse in Steps 2 and 5.
 
-**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, and `flow` is resolved without errors.
+**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, `flow` is resolved without errors, and artifact paths are resolved.
 
 ---
 
 ### 2. Write the Plan
 
-Write the plan at `flow.paths.plan` (or the native plan artifact, per Host Conventions) following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
+Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
 
 **Done when:** Plan file exists on disk with all template sections populated.
 
@@ -137,7 +144,7 @@ Require the subagent to implement Proposed Changes, run the host verify command 
 
 *Skipped when `flow['code-review'].maxRounds === 0`.*
 
-1. Write the walkthrough at `flow.paths.walkthrough` (or the native walkthrough artifact, per Host Conventions) following `dispatch-code-review`'s walkthrough template.
+1. Write the walkthrough at the path resolved in Step 1 following `dispatch-code-review`'s walkthrough template.
 2. Dispatch `dispatch-code-review` prompt template in parallel to each target in `flow['code-review'].targets` with attached walkthrough and plan (`-f`), populating `<Tool Turn Budget>` from `flow['code-review'].toolTurns` and using `Review Scope: Full review`. (Consumes round 1 of code review).
 3. Adjudicate returned claims against cited `<file>:L<line>` per `dispatch-code-review`.
 
@@ -173,7 +180,7 @@ Proceed to Handoff when:
 
 ### 8. Handoff & Cleanup
 
-1. **Report to user**: Emit the completed walkthrough directly to the user (or format per host repository handoff conventions in `AGENTS.md` / `CLAUDE.md`), accompanied by run metadata:
+1. **Record run diagnostics**: Append a `## Run Diagnostics` section — owned by `implement-dispatch`, not part of `dispatch-code-review`'s walkthrough template — to the walkthrough, covering:
    - Scope classification, plus `flow.diagnostics.effectiveLevel` and any scope downshift from Step 1.
    - Rounds spent per phase against `maxRounds`.
    - Reviewing delegates (provider keys, session handles) and any failed delegates.
@@ -181,7 +188,12 @@ Proceed to Handoff when:
    - Absent optional skills (if any).
    - Summary of accepted fixes and rejected/downgraded findings.
    - Verification command status.
-2. **Prune scratch artifacts**: Delete the scratch plan and walkthrough files this run created upon reaching consensus/completion, leaving platform-native artifacts in place. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files for resumption and state reasons in the handoff.
-3. Leave git operations (commit, push, PR) to the user.
 
-**Done when:** Walkthrough and handoff delivered to user, and temporary scratch artifacts pruned (or retained with explicit reason).
+   When Step 5 was skipped (no walkthrough exists), append this section to the plan instead.
+2. **Relocate scratch artifacts**: If Step 1 resolved the scratch-fallback tier, upon reaching consensus/completion move (never delete) the scratch plan and walkthrough files this run created into the OS temp directory (`os.tmpdir()` / `$TMPDIR`), preserving filenames. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files in place for resumption and state reasons in the handoff.
+3. **Report to user**: Report only diagnostics and a link to the artifact — its content stays on disk. Format the hand-off per host repository conventions in `AGENTS.md` / `CLAUDE.md`, including a link to the artifact from Step 1 above:
+   - Host-convention or native tier: a normal repo-relative markdown link.
+   - Scratch tier, post-relocation: a chat-only path to the OS temp location — exempt from the repo's relative-link rule since it is never written into a repo file (see `AGENTS.md` Communication section).
+4. Leave git operations (commit, push, PR) to the user.
+
+**Done when:** Run diagnostics are recorded in the walkthrough (or plan), scratch artifacts are relocated to the OS temp directory (or retained in place with explicit reason), and the handoff report links to the artifact without re-emitting its content.
