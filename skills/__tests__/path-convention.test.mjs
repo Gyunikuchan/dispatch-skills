@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { resolveFlow } from '../../implement-dispatch/scripts/resolve-flow.mjs';
+import { resolveFlow } from '../implement-dispatch/scripts/resolve-flow.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -38,18 +38,18 @@ const CANONICAL = [...PLAN_SHAPES, ...WALKTHROUGH_SHAPES];
  * shrinking its coverage.
  */
 const GUARDED = [
-  'dispatch/SKILL.md',
-  'dispatch/README.md',
-  'dispatch-plan-review/SKILL.md',
-  'dispatch-plan-review/README.md',
-  'dispatch-code-review/SKILL.md',
-  'dispatch-code-review/README.md',
-  'implement-dispatch/SKILL.md',
-  'implement-dispatch/README.md',
+  'skills/dispatch/SKILL.md',
+  'skills/dispatch/README.md',
+  'skills/dispatch-plan-review/SKILL.md',
+  'skills/dispatch-plan-review/README.md',
+  'skills/dispatch-code-review/SKILL.md',
+  'skills/dispatch-code-review/README.md',
+  'skills/implement-dispatch/SKILL.md',
+  'skills/implement-dispatch/README.md',
 ];
 
 /** The review skills must keep naming the convention; they cannot import the resolver. */
-const MUST_NAME_CONVENTION = ['dispatch-plan-review/SKILL.md', 'dispatch-code-review/SKILL.md'];
+const MUST_NAME_CONVENTION = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md'];
 
 /**
  * Mentions of the scratch directory that name no artifact: the bare directory and the
@@ -66,12 +66,13 @@ function trimTrailing(token) {
 }
 
 function skillMarkdownFiles() {
-  return readdirSync(REPO_ROOT, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules')
+  const skillsDir = path.join(REPO_ROOT, 'skills');
+  return readdirSync(skillsDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
     .flatMap(entry =>
       // Forward slashes, so the result compares against GUARDED on every platform.
       ['SKILL.md', 'README.md']
-        .map(name => `${entry.name}/${name}`)
+        .map(name => `skills/${entry.name}/${name}`)
         .filter(rel => {
           try {
             readFileSync(path.join(REPO_ROOT, rel), 'utf8');

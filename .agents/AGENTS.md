@@ -10,13 +10,13 @@ Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, cod
 
 ## Layout
 
-Each skill is a top-level directory containing `SKILL.md` (agent contract) and `README.md` (human documentation):
+Each skill lives under `skills/` and contains `SKILL.md` (agent contract) and `README.md` (human documentation):
 
 ```
-dispatch/                 runner + provider cascade; scripts/ and references/
-dispatch-plan-review/     plan review criteria and adjudication
-dispatch-code-review/     code review criteria and adjudication
-implement-dispatch/       control flow: plan → review → implement → review → consensus
+skills/dispatch/                 runner + provider cascade; scripts/ and references/
+skills/dispatch-plan-review/     plan review criteria and adjudication
+skills/dispatch-code-review/     code review criteria and adjudication
+skills/implement-dispatch/       control flow: plan → review → implement → review → consensus
 ```
 
 `npx skills add Gyunikuchan/dispatch-skills --skill <name>` installs one; `--all` installs every skill.

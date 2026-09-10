@@ -6,7 +6,7 @@ import {
   resolveLevelEntry,
   resolveLevelScalar,
   validateConfig,
-} from '../../implement-dispatch/scripts/resolve-flow.mjs';
+} from '../implement-dispatch/scripts/resolve-flow.mjs';
 
 // Stub liveness: all available except 'copilot'
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };

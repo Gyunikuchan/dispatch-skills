@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const SCRIPT = path.join(REPO_ROOT, 'implement-dispatch/scripts/resolve-flow.mjs');
+const SCRIPT = path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/resolve-flow.mjs');
 
 /**
  * Runs the resolver CLI and returns `{ status, stdout, stderr }`.

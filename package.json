@@ -6,6 +6,6 @@
   },
   "scripts": {
     "pretest": "node scripts/generate-hashes.mjs",
-    "test": "node --test 'scripts/__tests__/**/*.test.mjs'"
+    "test": "node --test 'skills/__tests__/**/*.test.mjs'"
   }
 }

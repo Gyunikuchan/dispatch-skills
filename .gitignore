@@ -4,4 +4,4 @@ dist/
 *.log
 .env
 .env.*
-implement-dispatch/config.jsonc
+skills/implement-dispatch/config.jsonc

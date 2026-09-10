@@ -17,7 +17,7 @@ import {
   PROJECT_ROOT,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_PATTERNS,
-} from '../../dispatch/scripts/common.mjs';
+} from '../dispatch/scripts/common.mjs';
 import {
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_FALLBACK_AGENT,
@@ -38,7 +38,7 @@ import {
   resolveOpencodeSettings,
   runOpencode,
   stripJsonComments,
-} from '../../dispatch/scripts/opencode-run.mjs';
+} from '../dispatch/scripts/opencode-run.mjs';
 
 describe('opencode-run', () => {
   describe('parseCommonArgs', () => {

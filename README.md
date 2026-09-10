@@ -22,10 +22,10 @@ Add `-g` for a user-level install.
 
 | Skill | What it does | Depends on |
 |-------|--------------|------------|
-| [`dispatch`](dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only by default, execution logs kept out of your context. | nothing |
-| [`dispatch-plan-review`](dispatch-plan-review) | 7-axis review of an implementation plan **before** code exists; folds accepted findings into the plan on disk. | `dispatch` |
-| [`dispatch-code-review`](dispatch-code-review) | 6-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
-| [`implement-dispatch`](implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
+| [`dispatch`](skills/dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only by default, execution logs kept out of your context. | nothing |
+| [`dispatch-plan-review`](skills/dispatch-plan-review) | 7-axis review of an implementation plan **before** code exists; folds accepted findings into the plan on disk. | `dispatch` |
+| [`dispatch-code-review`](skills/dispatch-code-review) | 6-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
+| [`implement-dispatch`](skills/implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
 
 Dependencies point one way and never back. `dispatch` references nothing; the review skills reference only `dispatch`; `implement-dispatch` references all three **by skill name**, so nothing breaks when they install to different paths. Install only what you want.
 

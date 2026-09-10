@@ -33,7 +33,7 @@ import {
   stripJsonComments,
   parseJsonc,
   isMainModule,
-} from '../../dispatch/scripts/common.mjs';
+} from '../dispatch/scripts/common.mjs';
 
 import {
   detectOrchestrator,
@@ -43,7 +43,7 @@ import {
   providerProbes,
   providerRunners,
   workspaceProbes,
-} from '../../dispatch/scripts/dispatch.mjs';
+} from '../dispatch/scripts/dispatch.mjs';
 
 import {
   DEFAULT_CLAUDE_MODELS,
@@ -58,7 +58,7 @@ import {
   probeAllClaudeModes,
   resolveClaudeTarget,
   testClaudeBinaryReachability,
-} from '../../dispatch/scripts/claude-run.mjs';
+} from '../dispatch/scripts/claude-run.mjs';
 
 import {
   getCopilotDesktopCandidates,
@@ -73,7 +73,7 @@ import {
   probeCopilotModes,
   isCopilotAvailable,
   classifyCopilotFailure,
-} from '../../dispatch/scripts/copilot-run.mjs';
+} from '../dispatch/scripts/copilot-run.mjs';
 
 import {
   AGY_MODES,
@@ -94,7 +94,7 @@ import {
   getNewestBrainConversationId,
   runAgy,
   buildAgyArgs,
-} from '../../dispatch/scripts/agy-run.mjs';
+} from '../dispatch/scripts/agy-run.mjs';
 
 // ---------------------------------------------------------------------------
 // SECTION: common utilities

@@ -8,7 +8,7 @@ import {
   loadConfig,
   resolveFlow,
   validateConfig,
-} from '../../implement-dispatch/scripts/resolve-flow.mjs';
+} from '../implement-dispatch/scripts/resolve-flow.mjs';
 
 // Liveness stub: claude is the orchestrator, copilot dead.
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };

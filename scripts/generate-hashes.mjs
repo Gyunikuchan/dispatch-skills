@@ -10,10 +10,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { generateSkillHashes } from '../dispatch/scripts/common.mjs';
+import { generateSkillHashes } from '../skills/dispatch/scripts/common.mjs';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const skillDir = path.resolve(currentDir, '..', 'dispatch');
+const skillDir = path.resolve(currentDir, '..', 'skills', 'dispatch');
 const manifest = generateSkillHashes(skillDir);
 const manifestPath = path.join(skillDir, 'skill-hashes.json');
 
