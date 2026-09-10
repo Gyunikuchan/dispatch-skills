@@ -86,7 +86,6 @@ export const PREFERENCE_ORDER = ['claude', 'agy', 'copilot', 'opencode'];
 /** Accepted `--provider` aliases, normalized to their canonical {@link Provider} name. */
 const PROVIDER_ALIASES = {
   opencode: 'opencode',
-  local: 'opencode',  // NOTE: back-compat alias for stale config.jsonc using the old key name
   agy: 'agy',
   antigravity: 'agy',
   claude: 'claude',

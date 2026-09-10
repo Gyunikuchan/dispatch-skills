@@ -1075,9 +1075,11 @@ describe('dispatch cascade & orchestrator detection', () => {
     assert.deepEqual(candidates, ['agy', 'copilot', 'opencode']);
   });
 
-  it('--provider local resolves to opencode through alias table', async () => {
-    const provider = await resolveProvider({ explicitProvider: 'local' });
-    assert.equal(provider, 'opencode');
+  it('--provider local is rejected as unknown after alias removal', async () => {
+    await assert.rejects(
+      resolveProvider({ explicitProvider: 'local' }),
+      /Unknown provider specified: local/,
+    );
   });
 
   it('cascades to next candidate when first candidate fails during execution', async () => {

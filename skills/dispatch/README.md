@@ -160,4 +160,4 @@ tail -n 30 "<logFilePath>"
 To use the `opencode` provider:
 1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
 2. Ensure the `opencode` CLI binary is present on your `PATH`.
-3. Dispatch with `--provider opencode` (or `--provider local` for back-compat) or allow the cascade to reach it.
+3. Dispatch with `--provider opencode` or allow the cascade to reach it.

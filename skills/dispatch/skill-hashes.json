@@ -4,6 +4,6 @@
   "scripts/claude-run.mjs": "5df13d7d15ce02aafbde203a446e2c8e5298ec1df563281e658c11a05fc1ecd6",
   "scripts/common.mjs": "c0deba6e746c1203304f6f6bea0cd34dca8966659ed450739c2a5b9057f4b071",
   "scripts/copilot-run.mjs": "ba50e89b115fceda435815685b1a68e7710dacf33ccbc6f775d35f7712e4b222",
-  "scripts/dispatch.mjs": "a7669fcbf2e306ed914c9ee97415850d89648bb0b6f56a271a91cf574cbf5d84",
+  "scripts/dispatch.mjs": "caeaa59100b0edf1ae5211ca0501e44ddada5ff77e095d0cae654b93f4247f3e",
   "scripts/opencode-run.mjs": "2714e3dd6234d191cec9a3993ae653fd50b0a596b438a7c1e47e04c9dd0a3411"
 }
