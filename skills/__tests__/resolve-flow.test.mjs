@@ -206,6 +206,33 @@ describe('resolveFlow', () => {
         /bogus/
       );
     });
+
+    it('dedupes repeated pins instead of dispatching duplicate targets', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['agy', 'agy'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+    });
+
+    it('normalizes a --provider-style alias (antigravity) to its canonical key', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['antigravity'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+    });
+
+    it('dedupes an alias and its canonical key given together', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['antigravity', 'agy'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+    });
   });
 
   describe('targetCount', () => {
@@ -266,14 +293,24 @@ describe('resolveFlow', () => {
       assert.equal(out['code-review'].maxRounds, 0);
     });
 
-    it('targetCount=0 skips without raising the all-pinned-unavailable error', () => {
+    it('targetCount=0 does not skip when pins are given — pins override breadth', () => {
       const config = withSections({ 'code-review': { targetCount: { low: 0 } } });
       const out = resolveFlow(
-        { platform: 'claude', level: 'low', pins: ['copilot'] },
+        { platform: 'claude', level: 'low', pins: ['agy'] },
         LIVE_ALL,
         config
       );
-      assert.deepEqual(out['code-review'].targets, []);
+      assert.equal(out['code-review'].targets.length, 1);
+      assert.equal(out['code-review'].targets[0].platform, 'agy');
+    });
+
+    it('targetCount=0 with an all-dead pin still raises the all-pinned-unavailable error', () => {
+      const config = withSections({ 'code-review': { targetCount: { low: 0 } } });
+      assert.throws(
+        () =>
+          resolveFlow({ platform: 'claude', level: 'low', pins: ['copilot'] }, LIVE_ALL, config),
+        /All pinned platforms unavailable: copilot/
+      );
     });
 
     it('skips a phase with zero live platforms without erroring', () => {
@@ -320,6 +357,17 @@ describe('resolveFlow', () => {
         config
       );
       assert.deepEqual(out.diagnostics.droppedPins['plan-review'], ['opencode']);
+    });
+
+    it('reports droppedPins for a pin that is configured but currently offline', () => {
+      // 'copilot' is configured in BASE_CONFIG but LIVE_ALL marks it offline — a pin can
+      // be dropped for being dead, not just for being absent from the section's config.
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['agy', 'copilot'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(out.diagnostics.droppedPins['code-review'], ['copilot']);
     });
 
     it('omits droppedPins when maxRounds is 0', () => {

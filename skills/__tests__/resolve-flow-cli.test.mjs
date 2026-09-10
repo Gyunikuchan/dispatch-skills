@@ -108,4 +108,33 @@ describe('resolve-flow CLI', () => {
     assert.equal(flow.paths.walkthrough, '.scratch/plan/2026-09-10-auth-v2-walkthrough.md');
     assert.equal(flow.diagnostics.effectiveLevel, 'low');
   });
+
+  it('accepts --flag=value form equivalently to space-separated flags', () => {
+    const { status, stdout } = run(
+      '--platform=claude',
+      '--slug=auth-v2',
+      '--date=2026-09-10',
+      '--level=low'
+    );
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.equal(flow.paths.plan, '.scratch/plan/2026-09-10-auth-v2.md');
+    assert.equal(flow.diagnostics.effectiveLevel, 'low');
+  });
+
+  it('parses --pins=key,key in --flag=value form (proven via the unrecognized-pin error path, to stay independent of real provider liveness)', () => {
+    const { status, stderr } = run(
+      '--platform=claude',
+      '--slug=auth-v2',
+      '--pins=bogus,alsobogus'
+    );
+    assert.equal(status, 1);
+    assert.match(stderr, /Unrecognized pin key\(s\): bogus, alsobogus/);
+  });
+
+  it('rejects an unrecognized --flag=value argument', () => {
+    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--rounds=3');
+    assert.equal(status, 1);
+    assert.match(stderr, /Unrecognized argument "--rounds"/);
+  });
 });

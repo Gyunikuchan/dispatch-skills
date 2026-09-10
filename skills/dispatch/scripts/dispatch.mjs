@@ -84,7 +84,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 export const PREFERENCE_ORDER = ['claude', 'agy', 'copilot', 'opencode'];
 
 /** Accepted `--provider` aliases, normalized to their canonical {@link Provider} name. */
-const PROVIDER_ALIASES = {
+export const PROVIDER_ALIASES = {
   opencode: 'opencode',
   agy: 'agy',
   antigravity: 'agy',

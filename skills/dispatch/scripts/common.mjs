@@ -1243,6 +1243,10 @@ export function stripJsonComments(jsonString) {
     }
   }
 
+  if (insideMultiComment) {
+    throw new SyntaxError('Unterminated block comment in JSONC');
+  }
+
   return result;
 }
 

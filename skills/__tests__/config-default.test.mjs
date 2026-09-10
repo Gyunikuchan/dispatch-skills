@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
+import { PROJECT_ROOT } from '../dispatch/scripts/common.mjs';
 import {
   loadConfig,
   resolveFlow,
@@ -125,5 +126,54 @@ describe('loadConfig', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  describe('project-root override', () => {
+    // `<PROJECT_ROOT>/.implement-dispatch/config.jsonc` lets a per-repo override reach a
+    // globally-installed skill (`~/.agents/skills`), which otherwise has one config.jsonc
+    // shared across every project. Exercised against the real PROJECT_ROOT since it's a
+    // module-level constant resolved once at import time.
+    const overrideDir = path.join(PROJECT_ROOT, '.implement-dispatch');
+    const overridePath = path.join(overrideDir, 'config.jsonc');
+
+    function withOverride(source, fn) {
+      mkdirSync(overrideDir, { recursive: true });
+      writeFileSync(overridePath, source, 'utf8');
+      try {
+        fn();
+      } finally {
+        rmSync(overrideDir, { recursive: true, force: true });
+      }
+    }
+
+    it('prefers the project-root override over a skill-local config.jsonc', () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
+      try {
+        mkdirSync(path.join(root, 'scripts'));
+        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        withOverride('{ "marker": "project-override" }', () => {
+          assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-override' });
+        });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to the skill-local config.jsonc when no project override exists', () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
+      try {
+        mkdirSync(path.join(root, 'scripts'));
+        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-local' });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('is ignored under defaultOnly', () => {
+      withOverride('{ "marker": "project-override" }', () => {
+        assert.deepEqual(validateConfig(loadConfig(undefined, { defaultOnly: true })), []);
+      });
+    });
   });
 });

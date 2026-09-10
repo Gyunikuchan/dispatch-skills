@@ -116,7 +116,7 @@ Tune review rigor, round budgets, and consensus requirements to match the scope 
 
 ### 3. Pinning Specific Reviewers (`(<pins>)`)
 
-Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`):
+Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`; the `dispatch` skill's `--provider` aliases, e.g. `antigravity` for `agy` or `claudecode` for `claude`, are also accepted and normalized to the canonical key):
 
 ```markdown
 /implement-dispatch (claude,agy): Implement OAuth2 PKCE authorization flow
@@ -155,6 +155,8 @@ Levels scale spend along four axes at once — how many agents review (`targetCo
 ## Configuration & Flow Policy
 
 `config.default.jsonc` holds the whole flow policy: the review knobs per phase plus the models and reasoning effort per platform. Customize it by creating a local `config.jsonc` alongside it, which **replaces** the default file wholly rather than merging into it — so copy the default as your starting point, and expect a clear validation error listing every problem if a section or knob is missing.
+
+When the skill is installed globally (`~/.agents/skills`), a skill-local `config.jsonc` is shared across every project. For a per-repo override instead, place `config.jsonc` at `<project-root>/.implement-dispatch/config.jsonc` — checked before the skill-local file, using the same replaces-wholly semantics.
 
 The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. The two review sections additionally carry five level-keyed knobs:
 

@@ -26,7 +26,7 @@ Delegates return **claims**; the orchestrator adjudicates and applies them.
 Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
 
 - `<level>` — `low`, `medium`, `high`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
-- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`). Overrides breadth: fans out to exactly these providers, whatever the level's count.
+- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), or `dispatch`'s `--provider` aliases (e.g. `antigravity`, `claudecode`), normalized to the canonical key. Overrides breadth: fans out to exactly these providers, whatever the level's count.
 
 ## Flow Plan
 
@@ -51,11 +51,13 @@ Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, o
 | `flow['code-review'].toolTurns` | Steps 5, 7 | Tool-turn budget handed to each code reviewer |
 | `flow.paths.plan` | Step 1 | Plan artifact path, scratch-fallback tier only (Host Conventions) |
 | `flow.paths.walkthrough` | Step 1 | Walkthrough artifact path, scratch-fallback tier only (Host Conventions) |
-| `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: number } }` — report as data |
+| `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: { requested: number, resolved: number } } }` — report as data |
 
 A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. `maxRounds` counts total waves **including the first review**. Plan review and code review track independent round counters.
 
 When `targets` is empty and `maxRounds > 0`, external platforms are unavailable: take the in-process subagent fallback below. When `maxRounds === 0` the phase is configured off — run neither the dispatch nor the fallback.
+
+An unpinned run with no live candidates degrades to the fallback (`targets: []`, `maxRounds > 0`); a pinned run where every named pin is unavailable is a hard `resolve-flow.mjs` error instead — a pin names a specific delegate the user asked for, so its absence is a failure worth surfacing rather than silently substituting.
 
 ## Platform Agent Modes
 

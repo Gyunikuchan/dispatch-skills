@@ -14,7 +14,10 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { parseJsonc, PROJECT_ROOT } from '../../dispatch/scripts/common.mjs';
+import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -107,58 +110,25 @@ export function resolveLevelScalar(knob, level) {
   return chosen === undefined ? undefined : knob[chosen];
 }
 
-// --- JSONC parsing ---
-
-function stripJsonComments(text) {
-  // Remove single-line comments (// ...) and block comments (/* ... */)
-  // Handles strings correctly by tracking quote state.
-  let result = '';
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === '"') {
-      // String literal — copy until closing unescaped quote
-      result += text[i++];
-      while (i < text.length) {
-        if (text[i] === '\\') {
-          result += text[i++];
-          if (i < text.length) result += text[i++];
-        } else if (text[i] === '"') {
-          result += text[i++];
-          break;
-        } else {
-          result += text[i++];
-        }
-      }
-    } else if (text[i] === '/' && text[i + 1] === '/') {
-      // Line comment
-      while (i < text.length && text[i] !== '\n') i++;
-    } else if (text[i] === '/' && text[i + 1] === '*') {
-      // Block comment
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      if (i >= text.length) throw new SyntaxError('Unterminated block comment in JSONC');
-      i += 2;
-    } else {
-      result += text[i++];
-    }
-  }
-  // Remove trailing commas before } or ]
-  return result.replace(/,(\s*[}\]])/g, '$1');
-}
-
-function parseJsonc(text) {
-  return JSON.parse(stripJsonComments(text));
-}
-
 // --- Config loading ---
 
 export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
   const root = path.resolve(scriptDir, '..');
+  // Checked before the skill-local `config.jsonc`: a globally-installed skill
+  // (`~/.agents/skills`) has one `config.jsonc` shared across every project, so a
+  // per-repo override needs a path rooted at the workspace, not the skill bundle.
+  const projectPath = path.join(PROJECT_ROOT, '.implement-dispatch', 'config.jsonc');
   const localPath = path.join(root, 'config.jsonc');
   const defaultPath = path.join(root, 'config.default.jsonc');
-  const configPath = !defaultOnly && existsSync(localPath) ? localPath : defaultPath;
+  const configPath = defaultOnly
+    ? defaultPath
+    : existsSync(projectPath)
+      ? projectPath
+      : existsSync(localPath)
+        ? localPath
+        : defaultPath;
   if (!existsSync(configPath)) {
-    throw new Error(`Config file not found: tried ${localPath} and ${defaultPath}`);
+    throw new Error(`Config file not found: tried ${projectPath}, ${localPath}, and ${defaultPath}`);
   }
   return parseJsonc(readFileSync(configPath, 'utf8'));
 }
@@ -346,7 +316,7 @@ export async function defaultLiveness() {
   await Promise.all(
     Object.entries(runners).map(async ([key, file]) => {
       try {
-        const mod = await import(path.join(DISPATCH_SCRIPTS, file));
+        const mod = await import(pathToFileURL(path.join(DISPATCH_SCRIPTS, file)).href);
         const fnName = `is${key.charAt(0).toUpperCase()}${key.slice(1)}Available`;
         results[key] = !!(await mod[fnName]?.());
       } catch {
@@ -398,7 +368,14 @@ function buildPaths(date, slug) {
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
-  const { platform, level = 'medium', pins, slug, date } = options;
+  const { platform, level = 'medium', pins: rawPins, slug, date } = options;
+  // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
+  // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
+  // to one target instead of being treated as unrecognized or as two separate targets.
+  const normalizedPins = rawPins?.map(p => PROVIDER_ALIASES[p.toLowerCase()] ?? p);
+  // Dedupe once at entry so a repeated `--pins x,x` cannot produce duplicate
+  // dispatch targets in the same wave.
+  const pins = normalizedPins ? [...new Set(normalizedPins)] : normalizedPins;
 
   if (!LEVELS.includes(level)) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
@@ -484,15 +461,10 @@ export function resolveFlow(options, liveness, config) {
     const toolTurns = resolveLevelScalar(section.toolTurns, level);
 
     // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
-    // does so callers have a single sentinel: `maxRounds === 0`.
-    if (targetCount === 0) maxRounds = 0;
-
-    // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
-    // every pin by construction, which is not a diagnostic worth reporting.
-    if (maxRounds > 0 && pins && pins.length > 0) {
-      const absent = pins.filter(p => !Object.keys(platformsOf(sectionName)).includes(p));
-      if (absent.length > 0) droppedPins[sectionName] = absent;
-    }
+    // does so callers have a single sentinel: `maxRounds === 0`. Pins override breadth
+    // entirely (per the Invocation grammar), so an explicit pin still runs the phase
+    // even when the level's targetCount is 0.
+    if ((!pins || pins.length === 0) && targetCount === 0) maxRounds = 0;
 
     // `maxRounds === 0` means the phase is configured off; `targets` empty with
     // `maxRounds > 0` means platforms are unavailable — the in-process fallback applies.
@@ -502,6 +474,16 @@ export function resolveFlow(options, liveness, config) {
       maxRounds === 0
         ? []
         : getCandidates(sectionName, targetCount, includeSelf).map(k => buildTarget(sectionName, k));
+
+    // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
+    // every pin by construction, which is not a diagnostic worth reporting. Covers
+    // both an unrecognized pin key and a pin that's configured but currently offline —
+    // either way it's absent from the resolved targets and worth surfacing.
+    if (maxRounds > 0 && pins && pins.length > 0) {
+      const liveKeys = new Set(targets.map(t => t.platform));
+      const dropped = pins.filter(p => !liveKeys.has(p));
+      if (dropped.length > 0) droppedPins[sectionName] = dropped;
+    }
 
     return { targets, maxRounds, consensus, toolTurns };
   }
@@ -545,19 +527,40 @@ function parseArgs(args) {
     return next;
   };
 
+  const setPins = raw => {
+    opts.pins = raw.split(',').map(s => s.trim()).filter(Boolean);
+  };
+
   for (let i = 0; i < args.length; i++) {
-    switch (args[i]) {
+    const arg = args[i];
+    const eq = arg.indexOf('=');
+    // `--flag=value` form, matching the `=`-form dispatch runners already accept
+    // (via common.mjs's parseCommonArgs) so CLI ergonomics are consistent across scripts.
+    if (arg.startsWith('--') && eq !== -1) {
+      const flag = arg.slice(0, eq);
+      const val = arg.slice(eq + 1);
+      switch (flag) {
+        case '--platform': opts.platform = val; continue;
+        case '--level':    opts.level = val; continue;
+        case '--slug':     opts.slug = val; continue;
+        case '--date':     opts.date = val; continue;
+        case '--pins':     setPins(val); continue;
+        default:
+          throw new Error(`Unrecognized argument "${flag}"`);
+      }
+    }
+    switch (arg) {
       case '--platform': opts.platform = value(i); i++; break;
       case '--level':    opts.level = value(i); i++; break;
       case '--slug':     opts.slug = value(i); i++; break;
       case '--date':     opts.date = value(i); i++; break;
       case '--pins':
-        opts.pins = value(i).split(',').map(s => s.trim()).filter(Boolean);
+        setPins(value(i));
         i++;
         break;
       case '--validate-only': opts.validateOnly = true; break;
       default:
-        throw new Error(`Unrecognized argument "${args[i]}"`);
+        throw new Error(`Unrecognized argument "${arg}"`);
     }
   }
   return opts;
