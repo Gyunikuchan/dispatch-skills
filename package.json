@@ -5,7 +5,11 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "prepare": "husky",
     "pretest": "node scripts/generate-hashes.mjs",
     "test": "node --test 'skills/__tests__/**/*.test.mjs'"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
   }
 }
