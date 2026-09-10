@@ -37,7 +37,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary with a running LM Studio server at `http://127.0.0.1:1234/v1`.
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). Local LM Studio at `http://127.0.0.1:1234/v1` is the zero-config default when no model is configured.
 
 ### Installation
 
@@ -156,8 +156,18 @@ tail -n 30 "<logFilePath>"
 ### Git Integrity False Positives
 `dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
 
-### OpenCode / LM Studio Setup
-To use the `opencode` provider:
+### OpenCode Provider Setup
+`opencode` is config-driven: it targets whatever `provider/model` `opencode.jsonc` resolves, local or remote.
+
+**Local LM Studio (zero-config default)** — used when `opencode.jsonc` sets no `model`:
 1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
 2. Ensure the `opencode` CLI binary is present on your `PATH`.
 3. Dispatch with `--provider opencode` or allow the cascade to reach it.
+
+**Any other provider** — point `opencode.jsonc`'s `model` at a `<provider>/<model>` pair (e.g.
+`anthropic/claude-opus-5`, `openrouter/...`); put that provider's credentials in its
+`provider.<name>.options.apiKey` entry in `opencode.jsonc` (resolved by `opencode`'s own
+subprocess), not in your shell environment — dispatch strips ambient cloud API keys before the
+delegate spawns. Preflight, the GPU concurrency lock, and WAN proxy-trapping only apply when the
+resolved endpoint is local; a remote provider's own `auth`/`quota`/`not-found` failures surface
+and cascade normally.

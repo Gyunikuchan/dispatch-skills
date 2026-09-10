@@ -12,7 +12,7 @@ The cascade, in order — this file is the single source of truth for it:
 1. **Claude Code** (`claude`).
 2. **Antigravity 2.0** (`agy`).
 3. **GitHub Copilot** (`copilot`).
-4. **OpenCode** (`opencode`) when LM Studio is up.
+4. **OpenCode** (`opencode`) against whatever provider/model `opencode.jsonc` configures — local LM Studio by default when unconfigured.
 
 The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 

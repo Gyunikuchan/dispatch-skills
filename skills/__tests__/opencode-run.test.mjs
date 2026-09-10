@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import cp from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -29,7 +30,9 @@ import {
   getAllowedBoundaryRoots,
   getLMStudioEndpoint,
   getOpencodeEnv,
+  isLocalEndpointHost,
   isOpencodeAvailable,
+  isOpencodeBinaryAvailable,
   loadConfigFile,
   mergeConfigDeep,
   preflightLMStudioCheck,
@@ -360,6 +363,216 @@ Everything looks great.`;
       } finally {
         process.env = oldEnv;
       }
+    });
+  });
+
+  describe('isLocalEndpointHost', () => {
+    it('recognizes localhost, the full 127.0.0.0/8 loopback block, ::1, and 0.0.0.0', () => {
+      assert.equal(isLocalEndpointHost('127.0.0.1'), true);
+      assert.equal(isLocalEndpointHost('127.0.0.53'), true);
+      assert.equal(isLocalEndpointHost('127.255.255.255'), true);
+      assert.equal(isLocalEndpointHost('localhost'), true);
+      assert.equal(isLocalEndpointHost('::1'), true);
+      assert.equal(isLocalEndpointHost('0.0.0.0'), true);
+    });
+
+    it('rejects an arbitrary remote host and empty/nullish input', () => {
+      assert.equal(isLocalEndpointHost('api.anthropic.com'), false);
+      assert.equal(isLocalEndpointHost('192.168.1.5'), false);
+      assert.equal(isLocalEndpointHost(''), false);
+      assert.equal(isLocalEndpointHost(null), false);
+      assert.equal(isLocalEndpointHost(undefined), false);
+    });
+
+    it('recognizes a bracketed IPv6 loopback literal as produced by new URL(...).hostname', () => {
+      assert.equal(isLocalEndpointHost('[::1]'), true);
+    });
+
+    it('does not treat a domain name merely starting with "127." as loopback', () => {
+      assert.equal(isLocalEndpointHost('127.example.com'), false);
+    });
+  });
+
+  describe('resolveOpencodeSettings — isLocal / explicitBaseURL branching', () => {
+    it('defaults to the local LM Studio endpoint (isLocal: true) with zero config', () => {
+      const settings = resolveOpencodeSettings(null);
+      assert.equal(settings.isLocal, true);
+      assert.equal(settings.host, DEFAULT_LM_STUDIO_HOST);
+      assert.equal(settings.port, DEFAULT_LM_STUDIO_PORT);
+    });
+
+    it('treats an explicit loopback baseURL under any provider name as local, not just "lmstudio"', () => {
+      const settings = resolveOpencodeSettings({
+        model: 'selfhosted/some-model',
+        provider: { selfhosted: { options: { baseURL: 'http://127.0.0.1:8080/v1' } } },
+      });
+      assert.equal(settings.providerName, 'selfhosted');
+      assert.equal(settings.isLocal, true);
+      assert.equal(settings.host, '127.0.0.1');
+      assert.equal(settings.port, 8080);
+    });
+
+    it('treats an explicit non-loopback baseURL under the "lmstudio" provider key as remote', () => {
+      const settings = resolveOpencodeSettings({
+        model: 'lmstudio/some-model',
+        provider: { lmstudio: { options: { baseURL: 'https://remote-lmstudio.example.com/v1' } } },
+      });
+      assert.equal(settings.isLocal, false);
+      assert.equal(settings.host, 'remote-lmstudio.example.com');
+    });
+
+    it('leaves host/port/pathname null and isLocal false for a cloud provider with no explicit baseURL', () => {
+      const settings = resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' });
+      assert.equal(settings.providerName, 'anthropic');
+      assert.equal(settings.modelId, 'claude-opus-5');
+      assert.equal(settings.isLocal, false);
+      assert.equal(settings.host, null);
+      assert.equal(settings.port, null);
+      assert.equal(settings.pathname, null);
+    });
+
+    it('LM_STUDIO_URL env override counts as an explicit baseURL, classified by its own host', () => {
+      const oldEnv = process.env;
+      try {
+        process.env = { ...oldEnv, LM_STUDIO_URL: 'https://cloud-lmstudio.example.com/v1' };
+        const settings = resolveOpencodeSettings({ model: 'lmstudio/some-model' });
+        assert.equal(settings.isLocal, false);
+        assert.equal(settings.host, 'cloud-lmstudio.example.com');
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('treats a bracketed IPv6 loopback baseURL as local', () => {
+      const settings = resolveOpencodeSettings({
+        model: 'selfhosted/some-model',
+        provider: { selfhosted: { options: { baseURL: 'http://[::1]:1234/v1' } } },
+      });
+      assert.equal(settings.isLocal, true);
+    });
+
+    it('defaults port to the scheme standard (443) for an explicit remote HTTPS baseURL with no port', () => {
+      const settings = resolveOpencodeSettings({
+        model: 'openaicompat/some-model',
+        provider: { openaicompat: { options: { baseURL: 'https://api.example.com/v1' } } },
+      });
+      assert.equal(settings.isLocal, false);
+      assert.equal(settings.protocol, 'https:');
+      assert.equal(settings.port, 443);
+    });
+  });
+
+  describe('getOpencodeEnv — WAN proxy trap gated on locality', () => {
+    it('omits NO_PROXY/HTTP_PROXY/HTTPS_PROXY entirely when settings.isLocal is false', () => {
+      const remoteSettings = resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' });
+      assert.equal(remoteSettings.isLocal, false);
+
+      const env = getOpencodeEnv(remoteSettings);
+
+      for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy']) {
+        assert.equal(key in env, false, `${key} must not be set for a remote/unknown-host provider`);
+      }
+    });
+
+    it('still applies the proxy trap for an explicit local baseURL under a non-lmstudio provider key', () => {
+      const settings = resolveOpencodeSettings({
+        model: 'selfhosted/some-model',
+        provider: { selfhosted: { options: { baseURL: 'http://127.0.0.1:9090/v1' } } },
+      });
+      assert.equal(settings.isLocal, true);
+
+      const env = getOpencodeEnv(settings);
+      assert.equal(env.HTTP_PROXY, 'http://127.0.0.1:0');
+      assert.ok(env.NO_PROXY.includes('9090'));
+    });
+  });
+
+  describe('isOpencodeAvailable — remote fallback to binary probe', () => {
+    afterEach(() => {
+      mock.restoreAll();
+    });
+
+    it('falls back to isOpencodeBinaryAvailable() instead of an HTTP preflight for a non-local endpoint', async () => {
+      const httpGet = mock.method(http, 'get', () => {
+        throw new Error('preflight must not run for a remote endpoint');
+      });
+      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
+
+      const available = await isOpencodeAvailable({ isLocal: false });
+
+      assert.equal(available, true);
+      assert.equal(httpGet.mock.callCount(), 0);
+    });
+
+    it('returns false when the opencode binary is not discoverable on PATH for a non-local endpoint', async () => {
+      mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
+
+      const available = await isOpencodeAvailable({ isLocal: false });
+      assert.equal(available, false);
+    });
+
+    it('isOpencodeBinaryAvailable() reflects the same discovery result directly', () => {
+      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
+      assert.equal(isOpencodeBinaryAvailable(), true);
+
+      mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
+      assert.equal(isOpencodeBinaryAvailable(), false);
+    });
+  });
+
+  describe('runOpencode — CLI -m override changes locality before preflight/lock', () => {
+    afterEach(() => {
+      mock.restoreAll();
+    });
+
+    function createImmediateChild(exitCode = 0) {
+      const child = new EventEmitter();
+      child.stdin = { end: () => {} };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      process.nextTick(() => child.emit('close', exitCode, null));
+      return child;
+    }
+
+    it('skips preflight and the GPU lock, and uses a non-URL sessionLink, for a remote -m override', async () => {
+      const httpGet = mock.method(http, 'get', () => {
+        throw new Error('preflight must not run for a remote endpoint');
+      });
+      mock.method(cp, 'spawn', () => createImmediateChild());
+
+      const lockFile = path.join(os.tmpdir(), GPU_LOCK_FILE_NAME);
+
+      const result = await runOpencode({
+        prompt: 'Review this diff',
+        model: 'anthropic/claude-opus-5',
+      });
+
+      assert.equal(httpGet.mock.callCount(), 0);
+      assert.ok(
+        !fs.existsSync(lockFile) || fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid),
+        'GPU lock must not be held for a remote endpoint',
+      );
+      assert.equal(result.sessionLink, 'opencode:anthropic/claude-opus-5');
+    });
+
+    it('still throws SERVER_OFFLINE with the existing exact message for the default local endpoint', async () => {
+      mock.method(http, 'get', () => {
+        const emitter = new EventEmitter();
+        Object.assign(emitter, { destroy: mock.fn() });
+        process.nextTick(() => emitter.emit('error', new Error('ECONNREFUSED')));
+        return emitter;
+      });
+
+      await assert.rejects(
+        runOpencode({ prompt: 'Test prompt when offline' }),
+        (err) => {
+          assert.ok(err.message.includes('LM Studio local server is not reachable'));
+          assert.ok(err.message.includes('127.0.0.1'));
+          assert.ok(err.message.includes('1234'));
+          assert.equal(err.code, 'SERVER_OFFLINE');
+          return true;
+        },
+      );
     });
   });
 

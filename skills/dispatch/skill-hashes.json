@@ -1,9 +1,9 @@
 {
-  "SKILL.md": "7bc7aadbe2e8b1b2a3ad7ccc445eef2420be0379ddbe89d35a3635b3e9a21e2f",
+  "SKILL.md": "cc034adcf2862c9b4f8fd13c8a0487b3ecc3f136d31a707d1e69c5bce4fe574d",
   "scripts/agy-run.mjs": "9eb38c13f74acdc9ce1485c7bd202e2d4356ff6cce793299936f06c1321d9051",
   "scripts/claude-run.mjs": "5df13d7d15ce02aafbde203a446e2c8e5298ec1df563281e658c11a05fc1ecd6",
   "scripts/common.mjs": "c0deba6e746c1203304f6f6bea0cd34dca8966659ed450739c2a5b9057f4b071",
   "scripts/copilot-run.mjs": "ba50e89b115fceda435815685b1a68e7710dacf33ccbc6f775d35f7712e4b222",
   "scripts/dispatch.mjs": "caeaa59100b0edf1ae5211ca0501e44ddada5ff77e095d0cae654b93f4247f3e",
-  "scripts/opencode-run.mjs": "ed02b345fe8acc9a324212f921e1529dd0da927469cf0d51d6b42a56bd662c0b"
+  "scripts/opencode-run.mjs": "52b82ba24f07185554643b7d47f6e724c813535b6d420940e3990fe75b0f0933"
 }

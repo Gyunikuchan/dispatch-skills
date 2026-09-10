@@ -122,21 +122,31 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Default Model**: `lmstudio/qwen3.8-27b-ridge` (override via `-m <model>`)
+- **Default Model**: `lmstudio/qwen3.8-27b-ridge` (override via `-m <provider>/<model>`)
 - **Default Reasoning Effort**: `null` (server default)
 - **Default Mode**: Read-only prompt + network isolation
-- **Reachability Probe**: Preflight HTTP probe against `http://127.0.0.1:1234/v1`
+- **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
+  (`isLocalEndpointHost`). Local (the LM Studio default, or any other loopback-bound backend):
+  preflight HTTP probe against the resolved `baseURL` (e.g. `http://127.0.0.1:1234/v1`) — fast,
+  free, and safe against a machine the user just started. Remote (a cloud provider resolved from
+  `opencode.jsonc`'s `model`): no live network probe — `isOpencodeAvailable()` degrades to a
+  binary-presence probe (`opencode` on `$PATH`), mirroring `isClaudeAvailable`/
+  `isCopilotAvailable`/`isAgyAvailable`; actual reachability is left to `opencode`'s own
+  execution, whose `auth`/`quota`/`not-found` failures are classified normally.
 - **Config**: merged across every locally-readable tier of opencode's own precedence order (https://opencode.ai/docs/config/#precedence-order): global (`~/.config/opencode/`, `XDG_CONFIG_HOME`-aware) → `OPENCODE_CONFIG` → project root → `.opencode/` directories → `OPENCODE_CONFIG_CONTENT` → OS-managed config dirs, for model, agent, and limit overrides. `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, and `XDG_CONFIG_HOME` also pass through to the spawned delegate's environment so it resolves the same config. Remote config and macOS MDM `.mobileconfig` are excluded — see `readOpencodeConfig` in `opencode-run.mjs`.
 
 ### Order of Preference
-1. **Local OpenCode (`opencode`)**:
-   - Cross-platform: `opencode` binary on system `$PATH` connecting to local LM Studio server at `http://127.0.0.1:1234/v1`
+1. **OpenCode (`opencode`)**:
+   - Cross-platform: `opencode` binary on system `$PATH`, connecting to the configured provider
+     endpoint (local or remote) — local LM Studio at `http://127.0.0.1:1234/v1` when
+     `opencode.jsonc` sets no `model`; any other `provider/model` string otherwise.
 
 ### Sandboxing & Isolation
-- **WAN Confinement**: Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local LM Studio communication.
-- **Credential Stripping**: Environment variables are filtered through `SAFE_ENV_WHITELIST`, removing API tokens, SSH keys, and cloud credentials.
+- **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.
+- **Credential Stripping**: Environment variables are filtered through `SAFE_ENV_WHITELIST`, removing API tokens, SSH keys, and cloud credentials, regardless of provider. A remote provider's own credentials belong in `opencode.jsonc`'s `provider.<name>.options.apiKey`, resolved by `opencode`'s own subprocess — not in this process's environment.
 - **Attachment Boundary**: File attachments (`-f`) are confined to workspace root, Antigravity brain, agent config directories, and OS temp dir.
 - **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS and Windows enforce read-only boundaries through prompt guardrails and pre/post git integrity checks.
+- **GPU Concurrency Lock**: only acquired when the resolved endpoint is local (prevents concurrent hooks from thrashing local VRAM); a remote API call has no such contention and is not serialized behind it.
 
 ### Session Monitoring
 - **Server Endpoint**: Monitored via local server endpoint at `http://127.0.0.1:1234`.

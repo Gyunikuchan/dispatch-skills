@@ -2,17 +2,26 @@
 
 /**
  * @file opencode-run.mjs
- * @description Hardened runner for offloading tasks to a local LLM agent via OpenCode + LM Studio.
+ * @description Config-driven runner for offloading tasks to OpenCode, against any
+ * `provider/model` pair resolvable from opencode.jsonc — local LM Studio is the zero-config
+ * default, not the only supported target.
  *
  * Defense-in-depth layers:
- * 1. Dynamic LM Studio endpoint & pre-flight health check (fast-fail if offline)
- * 2. WAN network confinement (proxy-traps outbound external HTTP/HTTPS, allows local LM Studio)
- * 3. Environment variable whitelisting (strips cloud keys, tokens, and SSH secrets)
+ * 1. Locality-branched preflight: a local endpoint gets a fast, free `/models` health check
+ *    (fast-fail if offline); a remote endpoint skips the live network probe (no unauthenticated
+ *    reachability call against a paid API) and leaves reachability to opencode's own execution.
+ * 2. WAN network confinement for local endpoints only (proxy-traps outbound external HTTP/HTTPS,
+ *    allows the local backend); a remote provider's entire purpose is reaching WAN, so the trap
+ *    does not apply there at all.
+ * 3. Environment variable whitelisting (strips cloud keys, tokens, and SSH secrets) — a remote
+ *    provider's credentials belong in opencode.jsonc's `provider.<name>.options.apiKey`, resolved
+ *    by opencode's own subprocess, not in the orchestrator's ambient environment.
  * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
  * 5. Strict boundary enforcement (confines attachments to workspace, Antigravity brain,
  *    agent configs, and OS temp)
  * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched)
- * 7. GPU concurrency lockfile (prevents concurrent hooks from thrashing local VRAM)
+ * 7. GPU concurrency lockfile for local backends only (prevents concurrent hooks from thrashing
+ *    local VRAM; a remote API call has no such contention and is not serialized behind it)
  * 8. Output buffer cap (10 MB default, prevents infinite-loop memory exhaustion)
  * 9. Configurable timeout with recursive process tree termination (taskkill on Windows)
  * 10. Dual interface: standalone CLI + programmatic API, silent by default
@@ -20,7 +29,11 @@
  * =============================================================================
  * PREREQUISITES:
  * =============================================================================
- * - LM Studio: Running locally with the local server started (http://127.0.0.1:1234/v1).
+ * - LM Studio (zero-config default): running locally with the local server started
+ *   (http://127.0.0.1:1234/v1). Point opencode.jsonc's `model` at any other `provider/model`
+ *   (e.g. `anthropic/claude-opus-5`, `openrouter/...`) to target a remote provider instead —
+ *   its credentials go in that provider's `provider.<name>.options.apiKey` in opencode.jsonc
+ *   (opencode resolves it itself), never in this process's environment.
  * - OpenCode: `opencode` CLI installed and available in PATH.
  * - Config: merged across every locally-readable tier from opencode's own precedence order
  *   (https://opencode.ai/docs/config/#precedence-order) — global (`~/.config/opencode/`),
@@ -50,9 +63,14 @@
  *    $ node scripts/opencode-run.mjs --agent delegate --model "qwen3.8-27b-ridge" --timeout 180 "Explain loop"
  */
 
-import { spawn, spawnSync } from 'node:child_process';
+// NOTE: imported as a namespace (not destructured) so tests can `mock.method(cp, 'spawn', ...)` /
+// `mock.method(cp, 'spawnSync', ...)` — a destructured named import snapshots the function
+// reference at module-load time for this builtin, so mutating the module's own `spawn`/
+// `spawnSync` property afterward would not be visible through a destructured binding.
+import cp from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -98,9 +116,13 @@ export { stripJsonComments } from './common.mjs';
  * @property {string|null} reasoningEffort
  * @property {string|null} agentPrompt
  * @property {string} agentKey Resolved default agent key from opencode.jsonc.
- * @property {string} host
- * @property {number} port
- * @property {string} pathname
+ * @property {string|null} host Null when the endpoint is a remote/unconfigured cloud provider
+ *   whose real address this script has no way to know.
+ * @property {number|null} port
+ * @property {string|null} pathname
+ * @property {string|null} protocol URL scheme (`'http:'`/`'https:'`) for `host`; null when `host`
+ *   is null.
+ * @property {boolean} isLocal True when the resolved endpoint host is a loopback address.
  */
 
 /**
@@ -153,8 +175,16 @@ export const DEFAULT_OUTPUT_LIMIT = 8192;
 export const DEFAULT_TEMPERATURE = 0.2;
 export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
 
-/** Human-readable name used in init and completion banners. */
-const PROVIDER_LABEL = 'OpenCode (LM Studio)';
+/**
+ * Human-readable name used in init and completion banners. Says "LM Studio" only when the
+ * resolved settings actually target it — a remote provider gets its own name instead, so logs
+ * stop claiming "LM Studio" for a dispatch that never touched it.
+ * @param {OpencodeSettings} settings
+ * @returns {string}
+ */
+function describeProvider(settings) {
+  return settings.isLocal ? 'OpenCode (LM Studio)' : `OpenCode (${settings.providerName})`;
+}
 
 /**
  * OpenCode-specific environment variables layered on top of the shared
@@ -185,7 +215,8 @@ export const GPU_LOCK_POLL_MS = 500;
 // ============================================================================
 
 /**
- * Executes a task using the local OpenCode + LM Studio runner.
+ * Executes a task using the OpenCode runner, against whatever `provider/model` opencode.jsonc
+ * resolves — local LM Studio is the zero-config default, not the only supported target.
  * Session logger and init banner are created before preflight so that an offline
  * LM Studio failure still produces a session log (mirrors the previous two-file
  * split's ordering from the pre-consolidation two-file architecture).
@@ -209,38 +240,59 @@ export async function runOpencode(options = {}) {
     throw new Error('No prompt provided for opencode agent execution.');
   }
 
-  // Step 1: one config parse, threaded through every step below.
+  // Step 1: one config parse, threaded through every step below. A CLI -m override is folded in
+  // before settings resolve, so it can change providerName/isLocal before the preflight/lock
+  // decision below — resolving from the bare config would decide locality on stale (pre-override)
+  // input.
   const rawConfig = readOpencodeConfig();
-  const settings = resolveOpencodeSettings(rawConfig);
-  const endpoint = getLMStudioEndpoint(settings);
-  const sessionLink = `http://${endpoint.host}:${endpoint.port}${endpoint.pathname}`;
+  const settings = resolveOpencodeSettings(model ? { ...rawConfig, model } : rawConfig);
+  const { isLocal } = settings;
+  const endpoint = isLocal ? getLMStudioEndpoint(settings) : null;
+  // A resolved host (local, or an explicit remote baseURL) still gets a real URL, built with its
+  // actual scheme/port so an HTTPS remote endpoint doesn't get relabeled as plain http://; a
+  // remote provider relying on opencode's own built-in endpoint registry has no host this script
+  // knows, so it gets a non-URL descriptor instead of a fabricated URL.
+  const isDefaultPort =
+    (settings.protocol === 'http:' && settings.port === 80) ||
+    (settings.protocol === 'https:' && settings.port === 443);
+  const sessionLink = settings.host
+    ? `${settings.protocol}//${settings.host}${isDefaultPort ? '' : `:${settings.port}`}${settings.pathname}`
+    : `opencode:${settings.providerName}/${settings.modelId}`;
 
   // Step 2: create logger + emit init banner before any preflight that could fail,
   // so offline runs still produce a session log.
   const sessionLogger = createSessionLogger('opencode');
   emitInitBanner({
-    provider: PROVIDER_LABEL,
+    provider: describeProvider(settings),
     sessionLink,
     logFile: sessionLogger.logFile,
     mode: 'READ-ONLY',
   });
 
-  // Step 3: preflight — if offline, log the reason, close the logger, throw SERVER_OFFLINE.
-  const isServerReady = await preflightLMStudioCheck(2000, endpoint);
-  if (!isServerReady) {
-    const offlineMessage =
-      `LM Studio local server is not reachable at http://${endpoint.host}:${endpoint.port}.\n` +
-      `Please ensure LM Studio is running and the local server is started.`;
-    failLogger(sessionLogger, offlineMessage);
-    const err = new Error(offlineMessage);
-    err.code = 'SERVER_OFFLINE';
-    throw err;
+  // Step 3: preflight — only meaningful for a local backend (fast, free, safe unauthenticated
+  // GET against a machine the user just started). A remote provider may require auth headers
+  // this script doesn't send and may not expose an unauthenticated /models route, so its
+  // reachability is left to opencode's own execution (classifyFailure() cascades normally).
+  if (isLocal) {
+    const isServerReady = await preflightLMStudioCheck(2000, endpoint);
+    if (!isServerReady) {
+      const offlineMessage =
+        `LM Studio local server is not reachable at http://${endpoint.host}:${endpoint.port}.\n` +
+        `Please ensure LM Studio is running and the local server is started.`;
+      failLogger(sessionLogger, offlineMessage);
+      const err = new Error(offlineMessage);
+      err.code = 'SERVER_OFFLINE';
+      throw err;
+    }
   }
 
-  // Step 4: GPU concurrency lock. Every path from here to the spawn handlers must release it —
-  // a stranded lockfile blocks all subsequent runs until GPU_LOCK_STALE_MS elapses — so the
-  // whole remainder is wrapped and the release is funnelled through releaseOnce().
-  const releaseLock = acquireLock();
+  // Step 4: GPU concurrency lock — only for a local backend (prevents concurrent hooks from
+  // thrashing local VRAM). A remote API call has no such contention, so it gets a no-op release
+  // instead, keeping the rest of the releaseOnce()-guarded flow identical for both paths.
+  // Every path from here to the spawn handlers must release it — a stranded lockfile blocks all
+  // subsequent local runs until GPU_LOCK_STALE_MS elapses — so the whole remainder is wrapped and
+  // the release is funnelled through releaseOnce().
+  const releaseLock = isLocal ? acquireLock() : () => {};
   let lockReleased = false;
   const releaseOnce = () => {
     if (lockReleased) return;
@@ -371,7 +423,7 @@ function spawnOpencode({
     let isTimedOut = false;
     let isBufferExceeded = false;
 
-    const child = spawn(command, args, {
+    const child = cp.spawn(command, args, {
       cwd: PROJECT_ROOT,
       env: getOpencodeEnv(settings),
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -430,7 +482,7 @@ function spawnOpencode({
       const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
 
       emitCompletionBanner({
-        provider: PROVIDER_LABEL,
+        provider: describeProvider(settings),
         sessionLink,
         exitCode,
         truncated,
@@ -476,12 +528,22 @@ function spawnOpencode({
 // ============================================================================
 
 /**
- * Checks if the local LM Studio / OpenCode service is available.
+ * Checks if the resolved OpenCode backend is available. A local endpoint (the LM Studio default,
+ * or any other loopback-bound backend) gets the existing live HTTP preflight — it stays the more
+ * precise probe when it's cheap and safe to run. A remote endpoint degrades to a binary-presence
+ * probe instead, mirroring how isClaudeAvailable/isCopilotAvailable/isAgyAvailable already probe
+ * reachability via binary discovery rather than an unauthenticated live network call against a
+ * paid API.
+ * @param {OpencodeSettings} [settings] Pre-resolved settings; defaults to a fresh resolve. Exposed
+ *   as a parameter so tests can force the remote branch without mutating global config state.
  * @returns {Promise<boolean>}
  */
-export async function isOpencodeAvailable() {
+export async function isOpencodeAvailable(settings = resolveOpencodeSettings()) {
   try {
-    return await preflightLMStudioCheck(1500);
+    if (settings.isLocal) {
+      return await preflightLMStudioCheck(1500, getLMStudioEndpoint(settings));
+    }
+    return isOpencodeBinaryAvailable();
   } catch {
     return false;
   }
@@ -738,8 +800,43 @@ export function resolveDefaultModel(config = readOpencodeConfig()) {
 }
 
 /**
+ * True when `host` is a loopback address the local machine binds a server to — the basis for
+ * every preflight/lock/WAN-confinement branch below. Covers the documented set (`localhost`,
+ * `::1`, `0.0.0.0`) plus the full IPv4 loopback block (127.0.0.0/8, not just `127.0.0.1`): RFC
+ * 3330 reserves all of `127.*.*.*` for loopback, and a self-hosted OpenAI-compatible server may
+ * bind any address in that range.
+ * @param {string|null|undefined} host
+ * @returns {boolean}
+ */
+export function isLocalEndpointHost(host) {
+  if (!host) return false;
+  // `new URL(...).hostname` keeps the brackets on an IPv6 literal (e.g. '[::1]'); strip them
+  // before comparing so 'http://[::1]:1234/v1' is recognized as loopback.
+  const unbracketed = host.replace(/^\[|\]$/g, '');
+  return (
+    unbracketed === 'localhost' ||
+    unbracketed === '::1' ||
+    unbracketed === '0.0.0.0' ||
+    // `startsWith('127.')` alone would also match a domain name like '127.example.com'; require
+    // a real dotted-quad IPv4 address in the loopback block, not just a matching string prefix.
+    (net.isIPv4(unbracketed) && unbracketed.startsWith('127.'))
+  );
+}
+
+/**
  * Resolves full settings from opencode.jsonc / opencode.json with environment variable overrides.
  * Pass a pre-read config to avoid re-parsing the file.
+ *
+ * Locality (`isLocal`) is decided by whether the resolved endpoint host is a loopback address,
+ * not by `providerName === 'lmstudio'` — a self-hosted OpenAI-compatible server behind a
+ * different provider key is still local, and a remote LM-Studio-labelled provider key pointed at
+ * a public host is still remote. The LM-Studio-shaped default (`host`/`port`/`pathname` filled
+ * in, `isLocal: true`) only applies when nothing explicit set a `baseURL` *and* the resolved
+ * provider is `lmstudio` — for any other provider with no explicit `baseURL` (a cloud provider
+ * relying on opencode's own built-in endpoint registry, e.g. `anthropic`, `openai`,
+ * `openrouter`), this script has no way to know that provider's real endpoint and must not guess
+ * `127.0.0.1`, so `host`/`port`/`pathname` stay `null` and `isLocal` is `false`.
+ *
  * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
  * @returns {OpencodeSettings}
  */
@@ -756,11 +853,16 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
   }
 
   const providerConfig = parsed.provider?.[providerName] || {};
-  const baseURL =
-    process.env.LM_STUDIO_URL ||
-    providerConfig.options?.baseURL ||
-    providerConfig.baseURL ||
-    `http://${DEFAULT_LM_STUDIO_HOST}:${DEFAULT_LM_STUDIO_PORT}/v1`;
+  const explicitBaseURLValue =
+    process.env.LM_STUDIO_URL || providerConfig.options?.baseURL || providerConfig.baseURL || null;
+  const explicitBaseURL = Boolean(explicitBaseURLValue);
+  const isLmStudioDefault = !explicitBaseURL && providerName === 'lmstudio';
+
+  const baseURL = explicitBaseURL
+    ? explicitBaseURLValue
+    : isLmStudioDefault
+      ? `http://${DEFAULT_LM_STUDIO_HOST}:${DEFAULT_LM_STUDIO_PORT}/v1`
+      : null;
 
   const apiKey =
     process.env.LM_STUDIO_API_KEY ||
@@ -779,16 +881,42 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
   const reasoningEffort =
     modelConfig.options?.reasoningEffort || modelConfig.options?.reasoning_effort || null;
 
-  let host = DEFAULT_LM_STUDIO_HOST;
-  let port = DEFAULT_LM_STUDIO_PORT;
-  let pathname = '/v1';
+  let host = null;
+  let port = null;
+  let pathname = null;
+  let protocol = null;
+  let isLocal = false;
 
-  try {
-    const parsedUrl = new URL(baseURL);
-    host = parsedUrl.hostname;
-    port = parseInt(parsedUrl.port || String(DEFAULT_LM_STUDIO_PORT), 10);
-    pathname = parsedUrl.pathname || '/v1';
-  } catch {}
+  if (isLmStudioDefault) {
+    host = DEFAULT_LM_STUDIO_HOST;
+    port = DEFAULT_LM_STUDIO_PORT;
+    pathname = '/v1';
+    protocol = 'http:';
+    isLocal = true;
+  } else if (explicitBaseURL) {
+    try {
+      const parsedUrl = new URL(baseURL);
+      host = parsedUrl.hostname;
+      protocol = parsedUrl.protocol;
+      // An explicit baseURL with no port (e.g. 'https://api.openai.com/v1') must default to the
+      // scheme's standard port, not the LM Studio port — 1234 is meaningless for a remote host.
+      port = parsedUrl.port
+        ? parseInt(parsedUrl.port, 10)
+        : protocol === 'https:'
+          ? 443
+          : 80;
+      pathname = parsedUrl.pathname || '/v1';
+      isLocal = isLocalEndpointHost(host);
+    } catch {
+      // Malformed explicit baseURL: treat like an unknown remote endpoint rather than guessing.
+      host = null;
+      port = null;
+      pathname = null;
+      isLocal = false;
+    }
+  }
+  // Else: cloud provider relying on opencode's own endpoint registry — host/port/pathname stay
+  // null, isLocal stays false.
 
   return {
     rawModel,
@@ -805,6 +933,8 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
     host,
     port,
     pathname,
+    protocol,
+    isLocal,
   };
 }
 
@@ -996,7 +1126,6 @@ export function acquireLock(maxWaitMs = GPU_LOCK_MAX_WAIT_MS, pollIntervalMs = G
  */
 export function getOpencodeEnv(settings) {
   const s = settings ?? resolveOpencodeSettings();
-  const endpoint = getLMStudioEndpoint(s);
 
   const cleanEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
@@ -1006,15 +1135,24 @@ export function getOpencodeEnv(settings) {
     }
   }
 
-  // Network proxy trapping: traps external WAN calls while allowing local LM Studio.
-  const localHosts = `127.0.0.1,localhost,127.0.0.1:${endpoint.port},localhost:${endpoint.port},${endpoint.host},${endpoint.host}:${endpoint.port},::1`;
+  // Network proxy trapping only applies to a local backend: local dispatch has no legitimate
+  // reason to reach WAN at all, so trapping it behind a dead 127.0.0.1:0 proxy (with only the
+  // local endpoint NO_PROXY-exempted) is safe. A remote provider's entire purpose is reaching
+  // WAN — trapping it behind a NO_PROXY exemption whose enforcement this script can't verify
+  // across every HTTP client opencode's provider SDKs use would be the wrong shape, so a remote/
+  // unknown-host provider gets no proxy variables at all, matching how claude-run.mjs/
+  // agy-run.mjs/copilot-run.mjs already let their delegates reach their own service unimpeded.
+  if (s.isLocal) {
+    const endpoint = getLMStudioEndpoint(s);
+    const localHosts = `127.0.0.1,localhost,127.0.0.1:${endpoint.port},localhost:${endpoint.port},${endpoint.host},${endpoint.host}:${endpoint.port},::1`;
 
-  cleanEnv.NO_PROXY = localHosts;
-  cleanEnv.no_proxy = localHosts;
-  cleanEnv.HTTP_PROXY = 'http://127.0.0.1:0';
-  cleanEnv.http_proxy = 'http://127.0.0.1:0';
-  cleanEnv.HTTPS_PROXY = 'http://127.0.0.1:0';
-  cleanEnv.https_proxy = 'http://127.0.0.1:0';
+    cleanEnv.NO_PROXY = localHosts;
+    cleanEnv.no_proxy = localHosts;
+    cleanEnv.HTTP_PROXY = 'http://127.0.0.1:0';
+    cleanEnv.http_proxy = 'http://127.0.0.1:0';
+    cleanEnv.HTTPS_PROXY = 'http://127.0.0.1:0';
+    cleanEnv.https_proxy = 'http://127.0.0.1:0';
+  }
 
   return cleanEnv;
 }
@@ -1024,20 +1162,40 @@ export function getOpencodeEnv(settings) {
 // ============================================================================
 
 /**
- * Resolves the opencode binary path on Windows to avoid shell: true.
+ * Probes for the opencode binary on PATH: `where.exe` on Windows, `which` elsewhere. Shared by
+ * {@link resolveOpencodeBinary} (needs the resolved path, to avoid `shell: true`) and
+ * {@link isOpencodeBinaryAvailable} (needs only a yes/no availability signal), so the two don't
+ * duplicate this discovery.
+ * @returns {string|null} The resolved absolute path, or null if not found.
+ */
+function probeOpencodeOnPath() {
+  const lookupCommand = process.platform === 'win32' ? 'where.exe' : 'which';
+  const res = cp.spawnSync(lookupCommand, ['opencode'], { encoding: 'utf8' });
+  if (res.status !== 0 || !res.stdout.trim()) return null;
+
+  const firstLine = res.stdout.trim().split(/\r?\n/)[0];
+  if (process.platform === 'win32' && !(firstLine && fs.existsSync(firstLine))) return null;
+  return firstLine || null;
+}
+
+/**
+ * Resolves the opencode binary's absolute path on PATH (any platform) to avoid shell: true;
+ * falls back to the bare command name when it can't be resolved.
  * @returns {string}
  */
 export function resolveOpencodeBinary() {
-  if (process.platform === 'win32') {
-    const res = spawnSync('where.exe', ['opencode'], { encoding: 'utf8' });
-    if (res.status === 0 && res.stdout.trim()) {
-      const firstLine = res.stdout.trim().split(/\r?\n/)[0];
-      if (firstLine && fs.existsSync(firstLine)) {
-        return firstLine;
-      }
-    }
-  }
-  return 'opencode';
+  return probeOpencodeOnPath() || 'opencode';
+}
+
+/**
+ * Cross-platform binary-presence probe: true when `opencode` is discoverable on PATH. Used to
+ * degrade {@link isOpencodeAvailable} for a remote provider, mirroring how
+ * isClaudeAvailable/isCopilotAvailable/isAgyAvailable already probe reachability via binary
+ * discovery rather than a live network call.
+ * @returns {boolean}
+ */
+export function isOpencodeBinaryAvailable() {
+  return probeOpencodeOnPath() !== null;
 }
 
 /**
@@ -1051,7 +1209,7 @@ export function resolveOpencodeBinary() {
  */
 export function buildCommand({ prompt = '', files = [], model = null, agent = null, json = false } = {}) {
   const isLinux = process.platform === 'linux';
-  const checkBwrap = isLinux ? spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
+  const checkBwrap = isLinux ? cp.spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
   const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
 
   const formattedPrompt = formatSafetyPrompt(prompt, {
@@ -1157,16 +1315,16 @@ export async function main() {
 
 function printHelp() {
   console.log(`
-OpenCode Runner (OpenCode + LM Studio, sandboxed + WAN proxy-trapped)
+OpenCode Runner (config-driven — any opencode.jsonc provider/model, sandboxed)
 
 Usage:
   node scripts/opencode-run.mjs [options] [prompt]
 
 Options:
-  -p, --prompt <string>       The prompt message to send to the local agent
+  -p, --prompt <string>       The prompt message to send to the agent
   -f, --file, --artifact      Attach a context file or Antigravity artifact path (can repeat)
   -a, --agent <name>          Override agent (defaults to 'delegate' from opencode.jsonc)
-  -m, --model <name>          Override model (defaults to opencode.jsonc model)
+  -m, --model <provider/name> Override model (defaults to opencode.jsonc model)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --json                      Emit raw JSON event stream
@@ -1174,10 +1332,16 @@ Options:
   -h, --help                  Show this help message
 
 Prerequisites:
-  - LM Studio running locally with server started (default: http://127.0.0.1:1234/v1)
   - opencode CLI installed and available in PATH
   - opencode.json(c) merged across opencode's own config precedence order — see
-    https://opencode.ai/docs/config/#precedence-order
+    https://opencode.ai/docs/config/#precedence-order — supplying model, agent, and optional
+    provider baseURL/apiKey. Local LM Studio (default: http://127.0.0.1:1234/v1) is the
+    zero-config default when opencode.jsonc sets no model; pointing 'model' at any other
+    provider/model (e.g. anthropic/claude-opus-5, openrouter/...) targets that provider instead —
+    WAN proxy-trapping and the local GPU lock only apply when the resolved endpoint is local.
+  - Remote-provider credentials belong in opencode.jsonc's provider.<name>.options.apiKey
+    (resolved by opencode's own subprocess), not in this process's environment — cloud API keys
+    and tokens are stripped before the delegate spawns regardless of provider.
 
 Examples:
   node scripts/opencode-run.mjs "Review git diff for bugs"
@@ -1185,6 +1349,7 @@ Examples:
   node scripts/opencode-run.mjs -v "Inspect codebase structure"
   git diff | node scripts/opencode-run.mjs "Analyze these changes"
   node scripts/opencode-run.mjs -f CONTEXT.md "Summarize invariants"
+  node scripts/opencode-run.mjs -m anthropic/claude-opus-5 "Review this diff"
 `);
 }
 
