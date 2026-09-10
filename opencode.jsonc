@@ -1,0 +1,38 @@
+{
+	"$schema": "https://opencode.ai/config.json",
+	"provider": {
+		"lmstudio": {
+			"npm": "@ai-sdk/openai-compatible",
+			"name": "LM Studio Local",
+			"options": {
+				"baseURL": "http://127.0.0.1:1234/v1",
+				"apiKey": "lm-studio"
+			},
+			"models": {
+				"qwen3.8-27b-ridge": {
+					"name": "Qwen 3.8 27B Local",
+					"limit": {
+						"context": 73728,
+						"output": 8192
+					},
+				}
+			}
+		}
+	},
+	"model": "lmstudio/qwen3.8-27b-ridge",
+	"compaction": {
+		"auto": true,
+		"buffer": 8192,
+		"keep": {
+			"tokens": 16384
+		}
+	},
+	"agent": {
+		"delegate": {
+			"mode": "primary",
+			"description": "Delegated LLM Agent",
+			"temperature": 0.2,
+			"prompt": "Autonomous execution engine for delegated tasks in an isolated sandbox.\n\n## Constraints & Shell\n- **Sandboxed Isolation**: Outbound WAN requests are trapped; only local resources are reachable. Secret files (.env*, keys, tokens) are excluded.\n- **Read-Only**: Strict inspection mode. No file mutations, deletions, or write operations.\n- **Host Shell**: Use native shell commands for host OS (on Windows PowerShell, use `Select-Object -First <N>` and avoid Unix pipes `head`/`tail`; on POSIX, use standard utilities).\n\n## Execution Principles\n- **Diff-First & Range Limits**: Rely on `git diff` with path filters or read bounded line ranges (`offset` and `limit` < 80). Never load entire files or multiple contiguous chunks into context.\n- **Decisive Economy**: Gather necessary context in 2-4 batched tool calls. Stop calling tools once sufficient signal is collected and synthesize findings immediately.\n- **Dense Markdown**: Report directly with concrete `path/to/file.ext:L<line>` citations."
+		}
+	}
+}

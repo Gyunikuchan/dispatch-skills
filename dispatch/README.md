@@ -37,7 +37,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **Local OpenCode**: `opencode` binary with a running LM Studio server at `http://127.0.0.1:1234/v1`.
+  - **OpenCode**: `opencode` binary with a running LM Studio server at `http://127.0.0.1:1234/v1`.
 
 ### Installation
 
@@ -114,13 +114,13 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | Option / Flag | Description | Example Slash Command / Usage |
 |---|---|---|
 | `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
-| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `local`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
+| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
 | `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
 | `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `/dispatch -e max Verify crypto primitives` |
 | `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `/dispatch -t 300 Quick dependency check` |
 | `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `/dispatch --allow-same-agent Analyze query plan` |
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
-| `--json` | Request structured JSON output (Local OpenCode provider only). | `/dispatch --provider local --json Parse AST` |
+| `--json` | Request structured JSON output (OpenCode provider only). | `/dispatch --provider opencode --json Parse AST` |
 | `-v` | Stream live verbose execution traces to the active terminal. | `/dispatch -v Run complex benchmark trace` |
 
 ---
@@ -156,8 +156,8 @@ tail -n 30 "<logFilePath>"
 ### Git Integrity False Positives
 `dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
 
-### Local LM Studio / OpenCode Setup
-To use the `local` provider:
+### OpenCode / LM Studio Setup
+To use the `opencode` provider:
 1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
 2. Ensure the `opencode` CLI binary is present on your `PATH`.
-3. Dispatch with `--provider local` or allow the cascade to reach it.
+3. Dispatch with `--provider opencode` (or `--provider local` for back-compat) or allow the cascade to reach it.

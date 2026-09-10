@@ -1,0 +1,15 @@
+{
+	"editor.formatOnSave": false,
+	"editor.tabSize": 2,
+	"editor.codeActionsOnSave": {
+		"source.fixAll.eslint": "always"
+	},
+	"eslint.validate": [
+		"javascript"
+	],
+	"jest.outputConfig": {
+		"revealOn": "run",
+		"revealWithFocus": "test-results",
+		"clearOnRun": "none"
+	}
+}

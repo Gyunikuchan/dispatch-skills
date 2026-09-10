@@ -1,0 +1,1017 @@
+#!/usr/bin/env node
+
+/**
+ * @file opencode-run.mjs
+ * @description Hardened runner for offloading tasks to a local LLM agent via OpenCode + LM Studio.
+ *
+ * Defense-in-depth layers:
+ * 1. Dynamic LM Studio endpoint & pre-flight health check (fast-fail if offline)
+ * 2. WAN network confinement (proxy-traps outbound external HTTP/HTTPS, allows local LM Studio)
+ * 3. Environment variable whitelisting (strips cloud keys, tokens, and SSH secrets)
+ * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
+ * 5. Strict boundary enforcement (confines attachments to workspace, Antigravity brain,
+ *    agent configs, and OS temp)
+ * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched)
+ * 7. GPU concurrency lockfile (prevents concurrent hooks from thrashing local VRAM)
+ * 8. Output buffer cap (10 MB default, prevents infinite-loop memory exhaustion)
+ * 9. Configurable timeout with recursive process tree termination (taskkill on Windows)
+ * 10. Dual interface: standalone CLI + programmatic API, silent by default
+ *
+ * =============================================================================
+ * PREREQUISITES:
+ * =============================================================================
+ * - LM Studio: Running locally with the local server started (http://127.0.0.1:1234/v1).
+ * - OpenCode: `opencode` CLI installed and available in PATH.
+ * - Config: `opencode.jsonc` (or `opencode.json`) at the repository root supplying model,
+ *   agent, context/output limits, and optional provider `baseURL`/`apiKey`.
+ * - Optional: `bwrap` (Bubblewrap) on Linux for filesystem-level read-only mounts.
+ *
+ * =============================================================================
+ * USAGE & EXAMPLES:
+ * =============================================================================
+ *
+ * 1. Simple prompt execution:
+ *    $ node scripts/opencode-run.mjs "Summarize recent project changes"
+ *
+ * 2. Verbose mode:
+ *    $ node scripts/opencode-run.mjs -v "Explain simulation loop"
+ *
+ * 3. Piped input:
+ *    $ git diff HEAD~1 | node scripts/opencode-run.mjs "Perform code review on this diff"
+ *
+ * 4. With attached context files:
+ *    $ node scripts/opencode-run.mjs --file CONTEXT.md "Check adherence"
+ *
+ * 5. With custom model, agent, and timeout:
+ *    $ node scripts/opencode-run.mjs --agent delegate --model "qwen3.8-27b-ridge" --timeout 180 "Explain loop"
+ */
+
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  checkGitIntegrity,
+  classifyFailure,
+  createSessionLogger,
+  createTraceWriter,
+  DEFAULT_MAX_BUFFER_MB,
+  DEFAULT_TIMEOUT_SECONDS,
+  emitCompletionBanner,
+  emitInitBanner,
+  extractCleanResponse,
+  formatSafetyPrompt,
+  getGitStatus,
+  isMainModule,
+  isPathInside,
+  parseCommonArgs,
+  parseJsonc,
+  PROJECT_ROOT,
+  readStdin,
+  SAFE_ENV_WHITELIST,
+  SENSITIVE_ENV_KEY_PATTERN,
+  SENSITIVE_FILE_PATTERNS,
+  terminateProcessTree,
+} from './common.mjs';
+
+export { stripJsonComments } from './common.mjs';
+
+// ============================================================================
+// SECTION: Types
+// ============================================================================
+
+/**
+ * @typedef {object} OpencodeSettings
+ * @property {string} rawModel
+ * @property {string} modelId
+ * @property {string} providerName
+ * @property {string} baseURL
+ * @property {string} apiKey
+ * @property {number} contextLimit
+ * @property {number} outputLimit
+ * @property {number} temperature
+ * @property {string|null} reasoningEffort
+ * @property {string|null} agentPrompt
+ * @property {string} agentKey Resolved default agent key from opencode.jsonc.
+ * @property {string} host
+ * @property {number} port
+ * @property {string} pathname
+ */
+
+/**
+ * @typedef {object} LMStudioEndpoint
+ * @property {string} host
+ * @property {number} port
+ * @property {string} pathname
+ */
+
+/**
+ * @typedef {object} RunOpencodeOptions
+ * @property {string} prompt
+ * @property {string[]} [files]
+ * @property {string|null} [model] Overrides opencode.jsonc's configured model.
+ * @property {string|null} [agent] Overrides opencode.jsonc's configured agent.
+ * @property {number} [timeout] Seconds before the delegate is killed.
+ * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
+ * @property {boolean} [json]
+ * @property {boolean} [verbose]
+ */
+
+/**
+ * @typedef {object} RunOpencodeResult
+ * @property {'opencode'} provider
+ * @property {string} model
+ * @property {string} agent
+ * @property {string} engineType
+ * @property {string} stdout Cleaned assistant response.
+ * @property {string} rawStdout Raw stdout, unparsed.
+ * @property {string} stderr
+ * @property {number} exitCode
+ * @property {string} logFile
+ * @property {string} sessionLink LM Studio endpoint URL.
+ * @property {'timeout'|'buffer'|null} truncated
+ * @property {string|null} failureKind
+ * @property {boolean} gitIntegrityViolation
+ * @property {string|null} gitIntegrityDetails
+ */
+
+// ============================================================================
+// SECTION: Constants (tweak these)
+// ============================================================================
+
+export const DEFAULT_FALLBACK_MODEL = 'lmstudio/qwen3.8-27b-ridge';
+export const DEFAULT_FALLBACK_AGENT = 'delegate';
+export const DEFAULT_LM_STUDIO_HOST = '127.0.0.1';
+export const DEFAULT_LM_STUDIO_PORT = 1234;
+export const DEFAULT_CONTEXT_LIMIT = 81920;
+export const DEFAULT_OUTPUT_LIMIT = 8192;
+export const DEFAULT_TEMPERATURE = 0.2;
+export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
+
+/** Human-readable name used in init and completion banners. */
+const PROVIDER_LABEL = 'OpenCode (LM Studio)';
+
+/**
+ * OpenCode-specific environment variables layered on top of the shared
+ * {@link SAFE_ENV_WHITELIST} — these only make sense for this runner and would
+ * be noise in every other delegate's environment.
+ */
+export const OPENCODE_EXTRA_ENV_ALLOWLIST = new Set([
+  'OPENCODE_CONFIG_DIR',
+  'OPENCODE_CACHE_DIR',
+  'OPENCODE_DISABLE_UPDATE_CHECK',
+  'OPENCODE_PORT',
+]);
+
+// NOTE: GPU lockfile name is pinned to this legacy value — os.tmpdir() is machine-global and
+// older installed copies of this skill in other repos still contend on the same file.
+// Renaming it would silently break mutual exclusion between old and new copies, defeating
+// the VRAM-thrashing prevention the lock exists to provide.
+export const GPU_LOCK_FILE_NAME = 'agent_dispatch_local_llm.lock';
+export const GPU_LOCK_STALE_MS = 360000;
+export const GPU_LOCK_MAX_WAIT_MS = 15000;
+export const GPU_LOCK_POLL_MS = 500;
+
+// ============================================================================
+// SECTION: Main API — runOpencode()
+// ============================================================================
+
+/**
+ * Executes a task using the local OpenCode + LM Studio runner.
+ * Session logger and init banner are created before preflight so that an offline
+ * LM Studio failure still produces a session log (mirrors the previous two-file
+ * split's ordering from the pre-consolidation two-file architecture).
+ *
+ * @param {RunOpencodeOptions} options
+ * @returns {Promise<RunOpencodeResult>}
+ */
+export async function runOpencode(options = {}) {
+  const {
+    prompt = '',
+    files = [],
+    model = null,
+    agent = null,
+    timeout = DEFAULT_TIMEOUT_SECONDS,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
+    json = false,
+    verbose = false,
+  } = options;
+
+  if (!prompt.trim()) {
+    throw new Error('No prompt provided for opencode agent execution.');
+  }
+
+  // Step 1: one config parse, threaded through every step below.
+  const rawConfig = readOpencodeConfig();
+  const settings = resolveOpencodeSettings(rawConfig);
+  const endpoint = getLMStudioEndpoint(settings);
+  const sessionLink = `http://${endpoint.host}:${endpoint.port}${endpoint.pathname}`;
+
+  // Step 2: create logger + emit init banner before any preflight that could fail,
+  // so offline runs still produce a session log.
+  const sessionLogger = createSessionLogger('opencode');
+  emitInitBanner({
+    provider: PROVIDER_LABEL,
+    sessionLink,
+    logFile: sessionLogger.logFile,
+    mode: 'READ-ONLY',
+  });
+
+  // Step 3: preflight — if offline, log the reason, close the logger, throw SERVER_OFFLINE.
+  const isServerReady = await preflightLMStudioCheck(2000, endpoint);
+  if (!isServerReady) {
+    const offlineMessage =
+      `LM Studio local server is not reachable at http://${endpoint.host}:${endpoint.port}.\n` +
+      `Please ensure LM Studio is running and the local server is started.`;
+    failLogger(sessionLogger, offlineMessage);
+    const err = new Error(offlineMessage);
+    err.code = 'SERVER_OFFLINE';
+    throw err;
+  }
+
+  // Step 4: GPU concurrency lock. Every path from here to the spawn handlers must release it —
+  // a stranded lockfile blocks all subsequent runs until GPU_LOCK_STALE_MS elapses — so the
+  // whole remainder is wrapped and the release is funnelled through releaseOnce().
+  const releaseLock = acquireLock();
+  let lockReleased = false;
+  const releaseOnce = () => {
+    if (lockReleased) return;
+    lockReleased = true;
+    releaseLock();
+  };
+
+  try {
+    // Step 5: resolve context files.
+    const contextFiles = resolveContextFiles(files);
+
+    // Step 6: prompt-budget check — ~3.5 chars/token, loose estimate to catch gross overruns.
+    // Fail before spawning rather than letting the model report a context overflow.
+    const promptBudgetChars = Math.floor(
+      (settings.contextLimit - settings.outputLimit) * CHARS_PER_TOKEN_ESTIMATE,
+    );
+    if (prompt.length > promptBudgetChars) {
+      const err = new Error(
+        `Prompt is ${prompt.length} chars, over the ~${promptBudgetChars} char budget for a ` +
+          `${settings.contextLimit}-token context reserving ${settings.outputLimit} tokens for output. ` +
+          `Shorten the prompt or attach fewer files.`,
+      );
+      err.code = 'CONTEXT_BUDGET_EXCEEDED';
+      throw err;
+    }
+
+    // Step 7: build the command, resolving model/agent from the pre-read config.
+    const effectiveModel = model || resolveDefaultModel(rawConfig);
+    const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
+    const { command, args, engineType } = buildCommand({
+      prompt,
+      files: contextFiles,
+      model: effectiveModel,
+      agent: effectiveAgent,
+      json,
+    });
+
+    if (verbose) {
+      process.stderr.write(
+        `[dispatch] Engine: ${engineType} | Agent: ${effectiveAgent} | Model: ${effectiveModel} | Mode: READ-ONLY | Timeout: ${timeout}s\n`,
+      );
+    }
+
+    const trace = createTraceWriter(verbose);
+    const maxBufferBytes = maxBufferMb * 1024 * 1024;
+
+    // Step 8: snapshot git state immediately before spawn so any delegate write falls inside
+    // the compared window.
+    const initialGitStatus = getGitStatus();
+
+    // Steps 9-11: spawn, stream into logger + trace, and resolve on close.
+    return await spawnOpencode({
+      command,
+      args,
+      settings,
+      timeout,
+      maxBufferBytes,
+      maxBufferMb,
+      json,
+      trace,
+      sessionLogger,
+      sessionLink,
+      initialGitStatus,
+      effectiveModel,
+      effectiveAgent,
+      engineType,
+      releaseOnce,
+    });
+  } catch (err) {
+    // Synchronous throws from Steps 5-8 (denylisted attachment, budget overrun, binary
+    // resolution) would otherwise strand both the lockfile and the log file handle.
+    releaseOnce();
+    failLogger(sessionLogger, err?.message ?? String(err));
+    throw err;
+  }
+}
+
+/**
+ * Records a terminal error in the session log before closing it, so a failed run leaves a log
+ * explaining itself rather than an empty file. Idempotent per logger: the spawn `error` handler
+ * and `runOpencode`'s outer catch both fire on a spawn failure, and only the first should write.
+ */
+const closedLoggers = new WeakSet();
+function failLogger(sessionLogger, message) {
+  if (closedLoggers.has(sessionLogger)) return;
+  try {
+    sessionLogger.write(`\n[dispatch] Error: ${message}\n`);
+  } finally {
+    closeLogger(sessionLogger);
+  }
+}
+
+/** Closes a session logger once, so no later path can write to a closed stream. */
+function closeLogger(sessionLogger) {
+  if (closedLoggers.has(sessionLogger)) return;
+  closedLoggers.add(sessionLogger);
+  sessionLogger.close();
+}
+
+/**
+ * Spawns the delegate and settles once — Node emits both `error` and `close` on a spawn
+ * failure, so a shared guard keeps the failure path from also emitting a success banner.
+ *
+ * @returns {Promise<RunOpencodeResult>}
+ */
+function spawnOpencode({
+  command,
+  args,
+  settings,
+  timeout,
+  maxBufferBytes,
+  maxBufferMb,
+  json,
+  trace,
+  sessionLogger,
+  sessionLink,
+  initialGitStatus,
+  effectiveModel,
+  effectiveAgent,
+  engineType,
+  releaseOnce,
+}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    let totalOutputBytes = 0;
+    let isTimedOut = false;
+    let isBufferExceeded = false;
+
+    const child = spawn(command, args, {
+      cwd: PROJECT_ROOT,
+      env: getOpencodeEnv(settings),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    // Close stdin at once — opencode reads from its flags, not stdin.
+    if (child.stdin) {
+      child.stdin.end();
+    }
+
+    const timer = setTimeout(() => {
+      isTimedOut = true;
+      terminateProcessTree(child);
+    }, timeout * 1000);
+
+    child.stdout.on('data', (chunk) => {
+      totalOutputBytes += chunk.length;
+      if (totalOutputBytes > maxBufferBytes) {
+        if (!isBufferExceeded) {
+          isBufferExceeded = true;
+          terminateProcessTree(child);
+        }
+        return;
+      }
+      stdoutBuffer += chunk.toString('utf8');
+      sessionLogger.write(chunk);
+      if (trace) trace(chunk);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderrBuffer += chunk.toString('utf8');
+      sessionLogger.write(chunk);
+      if (trace) trace(chunk);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      releaseOnce();
+
+      const gitIntegrity = checkGitIntegrity(initialGitStatus);
+
+      // A truncated run still carries most of its analysis; return captured output and let
+      // the caller decide whether to use it or cascade.
+      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
+      if (truncated) {
+        process.stderr.write(
+          isTimedOut
+            ? `[dispatch] Timed out after ${timeout}s; returning partial output.\n`
+            : `[dispatch] Output exceeded ${maxBufferMb}MB cap; returning partial output.\n`,
+        );
+      }
+
+      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+
+      emitCompletionBanner({
+        provider: PROVIDER_LABEL,
+        sessionLink,
+        exitCode,
+        truncated,
+      });
+
+      closeLogger(sessionLogger);
+
+      resolve({
+        provider: 'opencode',
+        model: effectiveModel,
+        agent: effectiveAgent,
+        engineType,
+        stdout: json ? stdoutBuffer : extractCleanResponse(stdoutBuffer),
+        rawStdout: stdoutBuffer,
+        stderr: stderrBuffer,
+        exitCode,
+        logFile: sessionLogger.logFile,
+        sessionLink,
+        truncated,
+        failureKind:
+          classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || (truncated ? truncated : null),
+        gitIntegrityViolation: gitIntegrity.violation,
+        gitIntegrityDetails: gitIntegrity.details,
+      });
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      terminateProcessTree(child);
+      releaseOnce();
+      failLogger(sessionLogger, err?.message ?? String(err));
+      err.code = 1;
+      err.stderr = stderrBuffer;
+      reject(err);
+    });
+  });
+}
+
+// ============================================================================
+// SECTION: Availability Probe
+// ============================================================================
+
+/**
+ * Checks if the local LM Studio / OpenCode service is available.
+ * @returns {Promise<boolean>}
+ */
+export async function isOpencodeAvailable() {
+  try {
+    return await preflightLMStudioCheck(1500);
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// SECTION: OpenCode Configuration (opencode.jsonc)
+// ============================================================================
+
+/**
+ * Reads and parses opencode configuration file (supporting JSON and JSONC with comments).
+ * @param {string} [projectRoot]
+ * @returns {object|null}
+ */
+export function readOpencodeConfig(projectRoot = PROJECT_ROOT) {
+  const candidateFiles = [
+    path.join(projectRoot, 'opencode.jsonc'),
+    path.join(projectRoot, 'opencode.json'),
+  ];
+
+  for (const configPath of candidateFiles) {
+    if (fs.existsSync(configPath)) {
+      try {
+        const raw = fs.readFileSync(configPath, 'utf8');
+        return parseJsonc(raw);
+      } catch {}
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolves the default agent identifier from opencode config or fallback.
+ * Returns `'local'` for `config.agent.local` — that is a user-owned opencode.jsonc
+ * agent key, not a provider key, and is intentionally outside the provider rename.
+ * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @returns {string}
+ */
+export function resolveDefaultAgent(config = readOpencodeConfig()) {
+  if (config && config.agent && typeof config.agent === 'object') {
+    if (config.agent.delegate) {
+      return 'delegate';
+    }
+    if (config.agent.local) {
+      return 'local';
+    }
+    const primaryKey = Object.keys(config.agent).find(
+      (key) => config.agent[key]?.mode === 'primary',
+    );
+    if (primaryKey) {
+      return primaryKey;
+    }
+    const firstKey = Object.keys(config.agent)[0];
+    if (firstKey) {
+      return firstKey;
+    }
+  }
+  return DEFAULT_FALLBACK_AGENT;
+}
+
+/**
+ * Resolves the default model identifier from opencode config or fallback.
+ * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @returns {string}
+ */
+export function resolveDefaultModel(config = readOpencodeConfig()) {
+  if (config && config.model) {
+    if (config.provider) {
+      for (const key of Object.keys(config.provider)) {
+        if (config.provider[key]?.models?.[config.model] && !config.model.startsWith(`${key}/`)) {
+          return `${key}/${config.model}`;
+        }
+      }
+    }
+    return config.model;
+  }
+  return DEFAULT_FALLBACK_MODEL;
+}
+
+/**
+ * Resolves full settings from opencode.jsonc / opencode.json with environment variable overrides.
+ * Pass a pre-read config to avoid re-parsing the file.
+ * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @returns {OpencodeSettings}
+ */
+export function resolveOpencodeSettings(config = readOpencodeConfig()) {
+  const parsed = config || {};
+  const rawModel = parsed.model || DEFAULT_FALLBACK_MODEL;
+  let providerName = 'lmstudio';
+  let modelKey = rawModel;
+
+  if (rawModel.includes('/')) {
+    const parts = rawModel.split('/');
+    providerName = parts[0];
+    modelKey = parts.slice(1).join('/');
+  }
+
+  const providerConfig = parsed.provider?.[providerName] || {};
+  const baseURL =
+    process.env.LM_STUDIO_URL ||
+    providerConfig.options?.baseURL ||
+    providerConfig.baseURL ||
+    `http://${DEFAULT_LM_STUDIO_HOST}:${DEFAULT_LM_STUDIO_PORT}/v1`;
+
+  const apiKey =
+    process.env.LM_STUDIO_API_KEY ||
+    providerConfig.options?.apiKey ||
+    providerConfig.apiKey ||
+    'lm-studio';
+
+  const modelConfig = providerConfig.models?.[modelKey] || {};
+  const contextLimit = modelConfig.limit?.context || DEFAULT_CONTEXT_LIMIT;
+  const outputLimit = modelConfig.limit?.output || DEFAULT_OUTPUT_LIMIT;
+
+  // Pass the already-read config to avoid re-reading the file.
+  const defaultAgentKey = resolveDefaultAgent(parsed);
+  const agentConfig = parsed.agent?.[defaultAgentKey] || {};
+  const temperature = agentConfig.temperature ?? modelConfig.options?.temperature ?? DEFAULT_TEMPERATURE;
+  const reasoningEffort =
+    modelConfig.options?.reasoningEffort || modelConfig.options?.reasoning_effort || null;
+
+  let host = DEFAULT_LM_STUDIO_HOST;
+  let port = DEFAULT_LM_STUDIO_PORT;
+  let pathname = '/v1';
+
+  try {
+    const parsedUrl = new URL(baseURL);
+    host = parsedUrl.hostname;
+    port = parseInt(parsedUrl.port || String(DEFAULT_LM_STUDIO_PORT), 10);
+    pathname = parsedUrl.pathname || '/v1';
+  } catch {}
+
+  return {
+    rawModel,
+    modelId: modelKey,
+    providerName,
+    baseURL,
+    apiKey,
+    contextLimit,
+    outputLimit,
+    temperature,
+    reasoningEffort,
+    agentPrompt: agentConfig.prompt || null,
+    agentKey: defaultAgentKey,
+    host,
+    port,
+    pathname,
+  };
+}
+
+/**
+ * Returns the LM Studio endpoint, preferring LM_STUDIO_HOST/PORT/PATH env overrides.
+ * Pass pre-resolved settings to avoid re-parsing the config file.
+ * @param {OpencodeSettings} [settings] Pre-resolved settings; defaults to a fresh resolve.
+ * @returns {LMStudioEndpoint}
+ */
+export function getLMStudioEndpoint(settings) {
+  // Direct env overrides take precedence over the URL parsed from opencode.jsonc.
+  if (process.env.LM_STUDIO_HOST && process.env.LM_STUDIO_PORT) {
+    return {
+      host: process.env.LM_STUDIO_HOST,
+      port: parseInt(process.env.LM_STUDIO_PORT, 10),
+      pathname: process.env.LM_STUDIO_PATH || '/v1',
+    };
+  }
+  const s = settings ?? resolveOpencodeSettings();
+  return { host: s.host, port: s.port, pathname: s.pathname };
+}
+
+/**
+ * Pings the LM Studio endpoint to verify the server is reachable.
+ * @param {number} [timeoutMs]
+ * @param {LMStudioEndpoint} [endpoint] Pre-resolved endpoint; defaults to a fresh resolve.
+ * @returns {Promise<boolean>}
+ */
+export async function preflightLMStudioCheck(timeoutMs = 2000, endpoint) {
+  const ep = endpoint ?? getLMStudioEndpoint();
+  const targetPath = ep.pathname.replace(/\/+$/, '') + '/models';
+
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        host: ep.host,
+        port: ep.port,
+        path: targetPath,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        resolve(res.statusCode >= 200 && res.statusCode < 300);
+      },
+    );
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+
+    req.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+// ============================================================================
+// SECTION: Path & Boundary Utilities
+// ============================================================================
+
+/**
+ * Returns allowed boundary root directories:
+ * - Project Workspace
+ * - Antigravity brain / artifacts (~/.gemini/antigravity and %APPDATA%/antigravity)
+ * - Agent configurations (~/.agents, ~/.claude)
+ * - OS Temp Directory
+ */
+export function getAllowedBoundaryRoots() {
+  const homeDir = os.homedir();
+  const roots = [
+    PROJECT_ROOT,
+    path.join(homeDir, '.gemini', 'antigravity'),
+    path.join(homeDir, '.agents'),
+    path.join(homeDir, '.claude'),
+    os.tmpdir(),
+  ];
+
+  if (process.env.APPDATA) {
+    roots.push(path.join(process.env.APPDATA, 'antigravity'));
+  }
+  if (process.env.LOCALAPPDATA) {
+    roots.push(path.join(process.env.LOCALAPPDATA, 'antigravity'));
+  }
+
+  return roots;
+}
+
+/**
+ * Validates and resolves context file paths against boundary and sensitive-file rules.
+ * @param {string[]} files
+ * @returns {string[]}
+ */
+export function resolveContextFiles(files) {
+  const resolved = [];
+  const allowedRoots = getAllowedBoundaryRoots();
+
+  for (const rawPath of files) {
+    const absPath = path.resolve(rawPath);
+    if (!fs.existsSync(absPath)) {
+      throw new Error(`Context file does not exist: ${rawPath} (resolved: ${absPath})`);
+    }
+
+    const baseName = path.basename(absPath);
+    for (const pattern of SENSITIVE_FILE_PATTERNS) {
+      if (pattern.test(absPath) || pattern.test(baseName)) {
+        throw new Error(
+          `Access rejected: Context file matches sensitive denylist pattern: ${rawPath}`,
+        );
+      }
+    }
+
+    const isInsideAllowedBoundary = allowedRoots.some((root) => isPathInside(absPath, root));
+    if (!isInsideAllowedBoundary) {
+      throw new Error(
+        `Access denied to path outside workspace / artifact boundaries: ${absPath}`,
+      );
+    }
+
+    resolved.push(absPath);
+  }
+
+  return resolved;
+}
+
+// ============================================================================
+// SECTION: Process Safety — GPU Lock & Sanitized Environment
+// ============================================================================
+
+/**
+ * Acquires a cross-process lock to prevent GPU memory thrashing from concurrent invocations.
+ * @param {number} [maxWaitMs]
+ * @param {number} [pollIntervalMs]
+ * @returns {() => void} Release function.
+ */
+export function acquireLock(maxWaitMs = GPU_LOCK_MAX_WAIT_MS, pollIntervalMs = GPU_LOCK_POLL_MS) {
+  const lockDir = os.tmpdir();
+  const lockFile = path.join(lockDir, GPU_LOCK_FILE_NAME);
+  const startTime = Date.now();
+
+  while (fs.existsSync(lockFile)) {
+    try {
+      const stats = fs.statSync(lockFile);
+      // Treat a lockfile older than GPU_LOCK_STALE_MS as stale from a crashed process.
+      if (Date.now() - stats.mtimeMs > GPU_LOCK_STALE_MS) {
+        fs.unlinkSync(lockFile);
+        break;
+      }
+    } catch {
+      break;
+    }
+
+    if (Date.now() - startTime > maxWaitMs) {
+      break;
+    }
+
+    const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+    Atomics.wait(waitBuffer, 0, 0, pollIntervalMs);
+  }
+
+  try {
+    fs.writeFileSync(lockFile, String(process.pid), { flag: 'wx' });
+  } catch {
+    // If creation failed due to a race, proceed anyway.
+  }
+
+  return () => {
+    try {
+      if (fs.existsSync(lockFile)) {
+        const content = fs.readFileSync(lockFile, 'utf8');
+        if (content.trim() === String(process.pid)) {
+          fs.unlinkSync(lockFile);
+        }
+      }
+    } catch {}
+  };
+}
+
+/**
+ * Builds the sanitized environment for the OpenCode delegate with proxy trapping and
+ * whitelist filtering.
+ *
+ * Extends the shared {@link SAFE_ENV_WHITELIST} with {@link OPENCODE_EXTRA_ENV_ALLOWLIST}
+ * and layers WAN proxy-trapping on top so the delegate can reach local LM Studio but
+ * nothing on the external network. The predicate is a rejection filter:
+ * `isWhitelisted && !SENSITIVE_ENV_KEY_PATTERN.test(key)`.
+ *
+ * @param {OpencodeSettings} [settings] Pre-resolved settings; defaults to a fresh resolve.
+ * @returns {NodeJS.ProcessEnv}
+ */
+export function getOpencodeEnv(settings) {
+  const s = settings ?? resolveOpencodeSettings();
+  const endpoint = getLMStudioEndpoint(s);
+
+  const cleanEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    const isWhitelisted = SAFE_ENV_WHITELIST.has(key) || OPENCODE_EXTRA_ENV_ALLOWLIST.has(key);
+    if (isWhitelisted && !SENSITIVE_ENV_KEY_PATTERN.test(key)) {
+      cleanEnv[key] = value;
+    }
+  }
+
+  // Network proxy trapping: traps external WAN calls while allowing local LM Studio.
+  const localHosts = `127.0.0.1,localhost,127.0.0.1:${endpoint.port},localhost:${endpoint.port},${endpoint.host},${endpoint.host}:${endpoint.port},::1`;
+
+  cleanEnv.NO_PROXY = localHosts;
+  cleanEnv.no_proxy = localHosts;
+  cleanEnv.HTTP_PROXY = 'http://127.0.0.1:0';
+  cleanEnv.http_proxy = 'http://127.0.0.1:0';
+  cleanEnv.HTTPS_PROXY = 'http://127.0.0.1:0';
+  cleanEnv.https_proxy = 'http://127.0.0.1:0';
+
+  return cleanEnv;
+}
+
+// ============================================================================
+// SECTION: Command Construction
+// ============================================================================
+
+/**
+ * Resolves the opencode binary path on Windows to avoid shell: true.
+ * @returns {string}
+ */
+export function resolveOpencodeBinary() {
+  if (process.platform === 'win32') {
+    const res = spawnSync('where.exe', ['opencode'], { encoding: 'utf8' });
+    if (res.status === 0 && res.stdout.trim()) {
+      const firstLine = res.stdout.trim().split(/\r?\n/)[0];
+      if (firstLine && fs.existsSync(firstLine)) {
+        return firstLine;
+      }
+    }
+  }
+  return 'opencode';
+}
+
+/**
+ * Constructs the execution command and arguments for OpenCode or Linux bwrap.
+ * @param {object} [params]
+ * @param {string} [params.prompt]
+ * @param {string[]} [params.files]
+ * @param {string|null} [params.model]
+ * @param {string|null} [params.agent]
+ * @param {boolean} [params.json]
+ */
+export function buildCommand({ prompt = '', files = [], model = null, agent = null, json = false } = {}) {
+  const isLinux = process.platform === 'linux';
+  const checkBwrap = isLinux ? spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
+  const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
+
+  const formattedPrompt = formatSafetyPrompt(prompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: files,
+  });
+  const opencodeArgs = ['run', '--auto', '--pure'];
+
+  const effectiveAgent = agent || resolveDefaultAgent();
+  if (effectiveAgent) {
+    opencodeArgs.push('--agent', effectiveAgent);
+  }
+
+  const effectiveModel = model || resolveDefaultModel();
+  if (effectiveModel) {
+    opencodeArgs.push('-m', effectiveModel);
+  }
+
+  if (json) {
+    opencodeArgs.push('--format', 'json');
+  }
+
+  for (const file of files) {
+    opencodeArgs.push(`--file=${file}`);
+  }
+
+  opencodeArgs.push('--', formattedPrompt);
+
+  if (hasLinuxBwrap) {
+    const bwrapArgs = [
+      '--ro-bind', '/', '/',
+      '--dev', '/dev',
+      '--proc', '/proc',
+      '--tmpfs', '/tmp',
+      '--tmpfs', '/run',
+      '--unshare-user',
+      '--unshare-ipc',
+      '--unshare-pid',
+      '--unshare-uts',
+    ];
+
+    bwrapArgs.push('--ro-bind', PROJECT_ROOT, PROJECT_ROOT);
+
+    for (const f of files) {
+      if (!f.startsWith(PROJECT_ROOT)) {
+        bwrapArgs.push('--ro-bind', f, f);
+      }
+    }
+
+    bwrapArgs.push('--chdir', PROJECT_ROOT);
+    bwrapArgs.push('opencode', ...opencodeArgs);
+
+    return { command: 'bwrap', args: bwrapArgs, engineType: 'linux-bwrap' };
+  }
+
+  return { command: resolveOpencodeBinary(), args: opencodeArgs, engineType: 'process-hardened' };
+}
+
+// ============================================================================
+// SECTION: CLI Entry Point
+// ============================================================================
+
+export async function main() {
+  const options = parseCommonArgs(process.argv);
+
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  const pipedStdin = await readStdin();
+  let finalPrompt = options.prompt.trim();
+  if (pipedStdin) {
+    finalPrompt = finalPrompt ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}` : pipedStdin;
+  }
+
+  if (!finalPrompt) {
+    console.error('Error: No prompt provided. Use --help for usage.');
+    process.exit(1);
+  }
+
+  try {
+    const res = await runOpencode({ ...options, prompt: finalPrompt });
+    if (res.stdout) {
+      process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
+    }
+    if (res.gitIntegrityViolation) {
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (res.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
+      }
+      console.warn('');
+    }
+    process.exit(res.exitCode);
+  } catch (err) {
+    console.error(`\n[dispatch] ERROR: ${err.message}`);
+    if (err.stderr && err.stderr.trim()) {
+      console.error(`\n--- Subprocess Stderr ---\n${err.stderr.trim()}`);
+    }
+    process.exit(typeof err.code === 'number' ? err.code : 1);
+  }
+}
+
+function printHelp() {
+  console.log(`
+OpenCode Runner (OpenCode + LM Studio, sandboxed + WAN proxy-trapped)
+
+Usage:
+  node scripts/opencode-run.mjs [options] [prompt]
+
+Options:
+  -p, --prompt <string>       The prompt message to send to the local agent
+  -f, --file, --artifact      Attach a context file or Antigravity artifact path (can repeat)
+  -a, --agent <name>          Override agent (defaults to 'delegate' from opencode.jsonc)
+  -m, --model <name>          Override model (defaults to opencode.jsonc model)
+  -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
+  --json                      Emit raw JSON event stream
+  -v, --verbose               Stream live execution trace and tool invocations (default: false)
+  -h, --help                  Show this help message
+
+Prerequisites:
+  - LM Studio running locally with server started (default: http://127.0.0.1:1234/v1)
+  - opencode CLI installed and available in PATH
+  - opencode.jsonc (or opencode.json) at the repository root
+
+Examples:
+  node scripts/opencode-run.mjs "Review git diff for bugs"
+  node scripts/opencode-run.mjs -a delegate "Inspect codebase structure"
+  node scripts/opencode-run.mjs -v "Inspect codebase structure"
+  git diff | node scripts/opencode-run.mjs "Analyze these changes"
+  node scripts/opencode-run.mjs -f CONTEXT.md "Summarize invariants"
+`);
+}
+
+// ============================================================================
+// SECTION: Module Execution Guard
+// ============================================================================
+
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    console.error(`Fatal error: ${err.message}`);
+    process.exit(1);
+  });
+}

@@ -8,7 +8,7 @@
  * 1. Claude Code (`claude`)
  * 2. Antigravity 2.0 (`agy`)
  * 3. GitHub Copilot (`copilot`)
- * 4. Local agent (`local`) (OpenCode + LM Studio) if online
+ * 4. OpenCode (`opencode`) (OpenCode + LM Studio) if online
  * (skipping current orchestrator unless --allow-same-agent, which runs as last resort)
  * 5. Fallback signal for built-in subagent invocation
  *
@@ -18,18 +18,18 @@
  */
 
 import path from 'node:path';
-import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   classifyFailure,
   DEFAULT_TIMEOUT_SECONDS,
   getGitStatus,
   isEmptyResult,
+  isMainModule,
   parseCommonArgs,
   readStdin,
   verifySkillIntegrity,
 } from './common.mjs';
-import { isLocalAvailable, runLocal } from './local-run.mjs';
+import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
 import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
@@ -37,41 +37,79 @@ import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 
+// ============================================================================
+// SECTION: Types
+// ============================================================================
+
+/** @typedef {'opencode'|'agy'|'claude'|'copilot'} Provider */
+
 /**
- * Detects the orchestrator runtime from environment variables.
- *
- * Claude Code exports `CLAUDECODE` / `CLAUDE_CODE_*`; probing only the `CLAUDE_CODE` and
- * `CLAUDE_SESSION_ID` that never existed made detection return null there, so the cascade
- * delegated straight back to the orchestrator's own platform. The VS Code heuristic went for
- * the same reason: `VSCODE_PID` is set in any VS Code terminal, whichever agent drives it.
- * `--orchestrator` overrides whatever this returns.
+ * @typedef {object} DispatchTaskOptions
+ * @property {string} prompt
+ * @property {string[]} [files]
+ * @property {string} [model]
+ * @property {string} [effort]
+ * @property {string} [agent]
+ * @property {number} [timeout] Seconds before the delegate is killed.
+ * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
+ * @property {boolean} [json] Structured JSON output (local provider only).
+ * @property {boolean} [verbose]
+ * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
+ * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
+ * @property {boolean} [allowSameAgent] Allow falling back to the orchestrator's own CLI.
  */
-export function detectOrchestrator() {
-  if (
-    process.env.ANTIGRAVITY_AGENT ||
-    process.env.ANTIGRAVITY_CONVERSATION_ID ||
-    process.env.ANTIGRAVITY_SESSION_ID ||
-    process.env.GEMINI_CLI
-  ) {
-    return 'agy';
-  }
-  if (
-    process.env.CLAUDECODE ||
-    process.env.CLAUDE_CODE ||
-    process.env.CLAUDE_CODE_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    process.env.CLAUDE_CODE_ENTRYPOINT
-  ) {
-    return 'claude';
-  }
-  if (process.env.COPILOT_AGENT || process.env.COPILOT_CLI_SESSION_ID) {
-    return 'copilot';
-  }
-  if (process.env.OPENCODE_PORT || process.env.OPENCODE_AGENT) {
-    return 'local';
-  }
-  return null;
-}
+
+/**
+ * @typedef {object} DispatchTaskResult
+ * @property {Provider} provider
+ * @property {string} stdout Cleaned assistant response.
+ * @property {string} stderr
+ * @property {number} exitCode
+ * @property {string} logFile
+ * @property {'timeout'|'buffer'|null} truncated
+ * @property {boolean} [gitIntegrityViolation]
+ * @property {string|null} [gitIntegrityDetails]
+ */
+
+// ============================================================================
+// SECTION: Constants (tweak these)
+// ============================================================================
+
+/**
+ * Cascade preference order, most-preferred first. The single source of truth for provider
+ * order — {@link getCandidateProviders} and the help text both iterate this instead of
+ * redeclaring it.
+ * @type {Provider[]}
+ */
+export const PREFERENCE_ORDER = ['claude', 'agy', 'copilot', 'opencode'];
+
+/** Accepted `--provider` aliases, normalized to their canonical {@link Provider} name. */
+const PROVIDER_ALIASES = {
+  opencode: 'opencode',
+  local: 'opencode',  // NOTE: back-compat alias for stale config.jsonc using the old key name
+  agy: 'agy',
+  antigravity: 'agy',
+  claude: 'claude',
+  claudecode: 'claude',
+  copilot: 'copilot',
+  'github-copilot': 'copilot',
+};
+
+/** Probes reachability for each provider, indirected so tests can mock individual entries. */
+export const providerProbes = {
+  isOpencodeAvailable,
+  isAgyAvailable,
+  isClaudeAvailable,
+  isCopilotAvailable,
+};
+
+/** Executes a task on each provider, indirected so tests can mock individual entries. */
+export const providerRunners = {
+  opencode: runOpencode,
+  agy: runAgy,
+  claude: runClaude,
+  copilot: runCopilot,
+};
 
 /**
  * Workspace state probe, indirected through an object so the write-mode cascade guard can be
@@ -82,92 +120,14 @@ export const workspaceProbes = {
   getGitStatus,
 };
 
-export const providerProbes = {
-  isLocalAvailable,
-  isAgyAvailable,
-  isClaudeAvailable,
-  isCopilotAvailable,
-};
-
-/**
- * Returns an ordered array of viable candidate providers based on the preference cascade:
- * 1. Alternative Providers in preference order (claude > agy > copilot > local, skipping orchestrator)
- * 2. Same Agent as orchestrator (only if allowSameAgent is true)
- *
- * @param {Object} [params]
- * @param {string|null} [params.explicitProvider]
- * @param {string|null} [params.orchestrator]
- * @param {boolean} [params.allowSameAgent]
- * @returns {Promise<string[]>}
- */
-export async function getCandidateProviders(params = {}) {
-  const { explicitProvider = null, orchestrator = null, allowSameAgent = false } = params;
-
-  if (explicitProvider) {
-    const p = explicitProvider.toLowerCase();
-    if (['local', 'opencode'].includes(p)) return ['local'];
-    if (['agy', 'antigravity'].includes(p)) return ['agy'];
-    if (['claude', 'claudecode'].includes(p)) return ['claude'];
-    if (['copilot', 'github-copilot'].includes(p)) return ['copilot'];
-    throw new Error(`Unknown provider specified: ${explicitProvider}`);
-  }
-
-  const effectiveOrchestrator = orchestrator || detectOrchestrator();
-  const candidates = [];
-
-  const preferenceOrder = ['claude', 'agy', 'copilot', 'local'];
-  const alternatives = preferenceOrder.filter(
-    (agent) => agent !== effectiveOrchestrator,
-  );
-
-  for (const candidate of alternatives) {
-    if (candidate === 'claude' && (await providerProbes.isClaudeAvailable())) candidates.push('claude');
-    if (candidate === 'agy' && (await providerProbes.isAgyAvailable())) candidates.push('agy');
-    if (candidate === 'copilot' && (await providerProbes.isCopilotAvailable())) candidates.push('copilot');
-    if (candidate === 'local' && (await providerProbes.isLocalAvailable())) candidates.push('local');
-  }
-
-  // Same agent as orchestrator (only if explicitly allowed)
-  if (allowSameAgent && effectiveOrchestrator) {
-    if (effectiveOrchestrator === 'claude' && (await providerProbes.isClaudeAvailable())) candidates.push('claude');
-    if (effectiveOrchestrator === 'agy' && (await providerProbes.isAgyAvailable())) candidates.push('agy');
-    if (effectiveOrchestrator === 'copilot' && (await providerProbes.isCopilotAvailable())) candidates.push('copilot');
-    if (effectiveOrchestrator === 'local' && (await providerProbes.isLocalAvailable())) candidates.push('local');
-  }
-
-  return candidates;
-}
-
-/**
- * Resolves the primary target provider using the preference cascade.
- * @param {Object} [params]
- * @returns {Promise<string|null>}
- */
-export async function resolveProvider(params = {}) {
-  const candidates = await getCandidateProviders(params);
-  return candidates[0] || null;
-}
-
-export const providerRunners = {
-  local: runLocal,
-  agy: runAgy,
-  claude: runClaude,
-  copilot: runCopilot,
-};
-
-/**
- * Executes a specific provider runner.
- */
-export async function executeProvider(provider, runnerOptions) {
-  const runner = providerRunners[provider];
-  if (!runner) {
-    throw new Error(`Unhandled provider: ${provider}`);
-  }
-  return await runner(runnerOptions);
-}
+// ============================================================================
+// SECTION: Main API — dispatchTask()
+// ============================================================================
 
 /**
  * Dispatches the prompt to candidate providers with automatic fallback passes.
+ * @param {DispatchTaskOptions} [options]
+ * @returns {Promise<DispatchTaskResult>}
  */
 export async function dispatchTask(options = {}) {
   const {
@@ -185,17 +145,7 @@ export async function dispatchTask(options = {}) {
     allowSameAgent = false,
   } = options;
 
-  const integrity = verifySkillIntegrity(SKILL_DIR);
-  if (!integrity.valid && !integrity.missing) {
-    process.stderr.write(
-      `[dispatch] WARNING: Skill file integrity check failed! Modified files:\n` +
-        integrity.violations.map((v) => `  - ${v}`).join('\n') + '\n' +
-        `[dispatch] This may indicate tampering. Aborting dispatch.\n`,
-    );
-    const err = new Error('Skill file integrity verification failed');
-    err.code = 'INTEGRITY_VIOLATION';
-    throw err;
-  }
+  assertSkillIntegrity();
 
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
@@ -206,7 +156,7 @@ export async function dispatchTask(options = {}) {
   if (candidates.length === 0) {
     const err = new Error(
       'No alternative dispatch agent available.\n' +
-        '- Local OpenCode / LM Studio is offline.\n' +
+        '- OpenCode / LM Studio is offline.\n' +
         '- No alternative external agents on other platforms were found and ready.\n' +
         'Proceeding to orchestrator subagent fallback.',
     );
@@ -214,22 +164,38 @@ export async function dispatchTask(options = {}) {
     throw err;
   }
 
-  const runnerOptions = {
-    prompt,
-    files,
-    model,
-    effort,
-    agent,
-    timeout,
-    maxBufferMb,
-    json,
-    verbose,
-  };
+  const runnerOptions = { prompt, files, model, effort, agent, timeout, maxBufferMb, json, verbose };
 
+  return await runCascade(candidates, runnerOptions, { pinned: Boolean(provider) });
+}
+
+/** Throws if any skill file has been tampered with since installation. */
+function assertSkillIntegrity() {
+  const integrity = verifySkillIntegrity(SKILL_DIR);
+  if (integrity.valid || integrity.missing) return;
+  process.stderr.write(
+    `[dispatch] WARNING: Skill file integrity check failed! Modified files:\n` +
+      integrity.violations.map((v) => `  - ${v}`).join('\n') +
+      '\n' +
+      `[dispatch] This may indicate tampering. Aborting dispatch.\n`,
+  );
+  const err = new Error('Skill file integrity verification failed');
+  err.code = 'INTEGRITY_VIOLATION';
+  throw err;
+}
+
+/**
+ * Runs `runnerOptions` through `candidates` in order, cascading to the next provider on
+ * failure. A truncated or empty run is still worth returning if nothing better follows:
+ * without `bestPartial`, a 9-minute analysis that timed out one step short was discarded
+ * outright.
+ * @param {Provider[]} candidates
+ * @param {object} runnerOptions
+ * @param {{ pinned: boolean }} cascadeOptions
+ * @returns {Promise<DispatchTaskResult>}
+ */
+async function runCascade(candidates, runnerOptions, { pinned }) {
   const attemptFailures = [];
-
-  // A truncated or empty run is still worth returning if nothing better follows: without
-  // this, a 9-minute analysis that timed out one step short was discarded outright.
   let bestPartial = null;
 
   for (let i = 0; i < candidates.length; i++) {
@@ -240,7 +206,7 @@ export async function dispatchTask(options = {}) {
     const shouldCascade = (reason, kind) => {
       attemptFailures.push(`${currentProvider}: ${reason}${kind ? ` [${kind}]` : ''}`);
 
-      if (provider) {
+      if (pinned) {
         process.stderr.write(
           `[dispatch] Provider '${currentProvider}' ${reason}${kind ? ` [${kind}]` : ''}. ` +
             `Pinned with --provider, so not cascading — see the session log.\n`,
@@ -301,42 +267,22 @@ export async function dispatchTask(options = {}) {
   throw err;
 }
 
+// ============================================================================
+// SECTION: CLI Entry Point
+// ============================================================================
+
 export async function main() {
   const options = parseCommonArgs(process.argv);
 
   if (options.help) {
-    console.log(`
-Master Cascade Dispatcher
-
-Routes a task through the delegate cascade. The authoritative description of the cascade,
-monitoring, and fallback lives in the dispatch skill: SKILL.md
-
-Usage:
-  node ${process.argv[1]} [options] [prompt]
-
-Options:
-  -p, --prompt <string>       The prompt message to send
-  -f, --file, --artifact      Attach context file or artifact (repeatable)
-  -m, --model <name>          Override model identifier
-  -e, --effort <level>        Override reasoning effort (low, medium, high, max)
-  -a, --agent <name>          Override agent name
-  -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
-  --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
-  --provider <name>           Force specific provider (local, agy, claude, copilot)
-  --orchestrator <name>       Explicitly declare orchestrator (agy, claude, copilot, local)
-  --json                      Request structured JSON output (local provider only)
-  -v, --verbose               Stream live trace to stderr (terminal only; ignored when piped)
-  -h, --help                  Show this help
-`);
+    printHelp();
     process.exit(0);
   }
 
   const pipedStdin = await readStdin();
   let finalPrompt = options.prompt.trim();
   if (pipedStdin) {
-    finalPrompt = finalPrompt
-      ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}`
-      : pipedStdin;
+    finalPrompt = finalPrompt ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}` : pipedStdin;
   }
 
   if (!finalPrompt) {
@@ -373,15 +319,153 @@ Options:
   }
 }
 
-if (
-  process.argv[1] &&
-  (() => {
-    const a = path.resolve(process.argv[1]);
-    const b = path.resolve(currentFilePath);
-    if (a === b) return true;
-    try { return realpathSync(a) === realpathSync(b); } catch { return false; }
-  })()
-) {
+function printHelp() {
+  console.log(`
+Master Cascade Dispatcher
+
+Routes a task through the delegate cascade. The authoritative description of the cascade,
+monitoring, and fallback lives in the dispatch skill: SKILL.md
+
+Usage:
+  node ${process.argv[1]} [options] [prompt]
+
+Options:
+  -p, --prompt <string>       The prompt message to send
+  -f, --file, --artifact      Attach context file or artifact (repeatable)
+  -m, --model <name>          Override model identifier
+  -e, --effort <level>        Override reasoning effort (low, medium, high, max)
+  -a, --agent <name>          Override agent name
+  -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
+  --provider <name>           Force specific provider (${PREFERENCE_ORDER.join(', ')})
+  --orchestrator <name>       Explicitly declare orchestrator (${PREFERENCE_ORDER.join(', ')})
+  --json                      Request structured JSON output (local provider only)
+  -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
+  -h, --help                  Show this help
+`);
+}
+
+// ============================================================================
+// SECTION: Provider Resolution
+// ============================================================================
+
+/**
+ * Returns an ordered array of viable candidate providers based on the preference cascade:
+ * 1. Alternative providers in preference order ({@link PREFERENCE_ORDER}, skipping orchestrator)
+ * 2. Same agent as orchestrator (only if `allowSameAgent` is true)
+ *
+ * @param {object} [params]
+ * @param {string|null} [params.explicitProvider]
+ * @param {string|null} [params.orchestrator]
+ * @param {boolean} [params.allowSameAgent]
+ * @returns {Promise<Provider[]>}
+ */
+export async function getCandidateProviders(params = {}) {
+  const { explicitProvider = null, orchestrator = null, allowSameAgent = false } = params;
+
+  if (explicitProvider) {
+    return [resolveExplicitProvider(explicitProvider)];
+  }
+
+  const effectiveOrchestrator = orchestrator || detectOrchestrator();
+  const alternatives = PREFERENCE_ORDER.filter((p) => p !== effectiveOrchestrator);
+
+  const candidates = [];
+  for (const name of alternatives) {
+    if (await isProviderAvailable(name)) candidates.push(name);
+  }
+
+  // Same agent as orchestrator (only if explicitly allowed), tried last.
+  if (allowSameAgent && effectiveOrchestrator && (await isProviderAvailable(effectiveOrchestrator))) {
+    candidates.push(effectiveOrchestrator);
+  }
+
+  return candidates;
+}
+
+/** Normalizes a user-supplied `--provider` value to a canonical {@link Provider} name. */
+function resolveExplicitProvider(explicitProvider) {
+  const resolved = PROVIDER_ALIASES[explicitProvider.toLowerCase()];
+  if (!resolved) throw new Error(`Unknown provider specified: ${explicitProvider}`);
+  return resolved;
+}
+
+/** Checks reachability of one provider via {@link providerProbes}. */
+async function isProviderAvailable(name) {
+  const probe = {
+    claude: providerProbes.isClaudeAvailable,
+    agy: providerProbes.isAgyAvailable,
+    copilot: providerProbes.isCopilotAvailable,
+    opencode: providerProbes.isOpencodeAvailable,
+  }[name];
+  return probe ? await probe() : false;
+}
+
+/**
+ * Resolves the primary target provider using the preference cascade.
+ * @param {object} [params]
+ * @returns {Promise<Provider|null>}
+ */
+export async function resolveProvider(params = {}) {
+  const candidates = await getCandidateProviders(params);
+  return candidates[0] || null;
+}
+
+/** Executes a specific provider runner via {@link providerRunners}. */
+export async function executeProvider(provider, runnerOptions) {
+  const runner = providerRunners[provider];
+  if (!runner) {
+    throw new Error(`Unhandled provider: ${provider}`);
+  }
+  return await runner(runnerOptions);
+}
+
+// ============================================================================
+// SECTION: Orchestrator Detection
+// ============================================================================
+
+/**
+ * Detects the orchestrator runtime from environment variables.
+ *
+ * Claude Code exports `CLAUDECODE` / `CLAUDE_CODE_*`; probing only the `CLAUDE_CODE` and
+ * `CLAUDE_SESSION_ID` that never existed made detection return null there, so the cascade
+ * delegated straight back to the orchestrator's own platform. The VS Code heuristic went for
+ * the same reason: `VSCODE_PID` is set in any VS Code terminal, whichever agent drives it.
+ * `--orchestrator` overrides whatever this returns.
+ * @returns {Provider|null}
+ */
+export function detectOrchestrator() {
+  if (
+    process.env.ANTIGRAVITY_AGENT ||
+    process.env.ANTIGRAVITY_CONVERSATION_ID ||
+    process.env.ANTIGRAVITY_SESSION_ID ||
+    process.env.GEMINI_CLI
+  ) {
+    return 'agy';
+  }
+  if (
+    process.env.CLAUDECODE ||
+    process.env.CLAUDE_CODE ||
+    process.env.CLAUDE_CODE_SESSION_ID ||
+    process.env.CLAUDE_SESSION_ID ||
+    process.env.CLAUDE_CODE_ENTRYPOINT
+  ) {
+    return 'claude';
+  }
+  if (process.env.COPILOT_AGENT || process.env.COPILOT_CLI_SESSION_ID) {
+    return 'copilot';
+  }
+  if (process.env.OPENCODE_PORT || process.env.OPENCODE_AGENT) {
+    return 'opencode';
+  }
+  return null;
+}
+
+// ============================================================================
+// SECTION: Module Execution Guard
+// ============================================================================
+
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error(`Fatal error: ${err.message}`);
     process.exit(1);

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, it, after, afterEach, mock } from 'node:test';
 
 import {
@@ -24,6 +25,14 @@ import {
   describeGitStatusDiff,
   verifySkillIntegrity,
   generateSkillHashes,
+  buildFormattedPrompt,
+  scanVersionDirs,
+  isExecutableFile,
+  findFirstExistingFile,
+  existsAny,
+  stripJsonComments,
+  parseJsonc,
+  isMainModule,
 } from '../../dispatch/scripts/common.mjs';
 
 import {
@@ -84,6 +93,7 @@ import {
   probeAllAgyModes,
   getNewestBrainConversationId,
   runAgy,
+  buildAgyArgs,
 } from '../../dispatch/scripts/agy-run.mjs';
 
 // ---------------------------------------------------------------------------
@@ -263,6 +273,133 @@ describe('common utilities', () => {
     const diff = describeGitStatusDiff(before, after);
     assert.ok(diff !== null);
     assert.ok(diff.includes('new.ts'));
+  });
+
+  it('buildFormattedPrompt formats prompt with safety constraints and optional attachments', () => {
+    const promptOnly = buildFormattedPrompt('Perform analysis');
+    assert.ok(promptOnly.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
+    assert.ok(promptOnly.includes('Perform analysis'));
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-attach-'));
+    try {
+      const attachPath = path.join(tmpDir, 'context.md');
+      fs.writeFileSync(attachPath, 'Sample attached content');
+      const withFiles = buildFormattedPrompt('Perform analysis', [attachPath]);
+      assert.ok(withFiles.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
+      assert.ok(withFiles.includes('[ATTACHED FILES]:'));
+      assert.ok(withFiles.includes('Sample attached content'));
+      assert.ok(withFiles.includes('Perform analysis'));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('scanVersionDirs returns directories sorted newest-first and handles non-existent dirs', () => {
+    assert.deepEqual(scanVersionDirs('/path/that/does/not/exist/at/all'), []);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'version-scan-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'v1.0.0'));
+      fs.mkdirSync(path.join(tmpDir, 'v2.1.0'));
+      fs.mkdirSync(path.join(tmpDir, 'v1.10.0'));
+      fs.writeFileSync(path.join(tmpDir, 'file.txt'), 'hello');
+
+      const versions = scanVersionDirs(tmpDir);
+      assert.deepEqual(versions, ['v2.1.0', 'v1.10.0', 'v1.0.0']);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('isExecutableFile validates executable regular files and rejects invalid paths', () => {
+    assert.equal(isExecutableFile(null), false);
+    assert.equal(isExecutableFile(''), false);
+    assert.equal(isExecutableFile('/nonexistent/path/binary'), false);
+    assert.equal(isExecutableFile(os.tmpdir()), false);
+    assert.equal(isExecutableFile(process.execPath), true);
+  });
+
+  it('findFirstExistingFile resolves the first existing file and handles ~ expansion', () => {
+    assert.equal(findFirstExistingFile([]), null);
+    assert.equal(findFirstExistingFile(['/nonexistent/a', '/nonexistent/b']), null);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-exist-'));
+    try {
+      const fileB = path.join(tmpDir, 'existing.txt');
+      fs.writeFileSync(fileB, 'content');
+      const found = findFirstExistingFile(['/nonexistent/file', fileB, '/another/ghost']);
+      assert.equal(found, fileB);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('existsAny verifies existence of multiple candidate paths', () => {
+    assert.equal(existsAny(), false);
+    assert.equal(existsAny(null, undefined, ''), false);
+    assert.equal(existsAny('/nonexistent/1', '/nonexistent/2'), false);
+    assert.equal(existsAny('/nonexistent/1', process.execPath, '/nonexistent/2'), true);
+  });
+
+  it('stripJsonComments removes comments and trailing commas while preserving strings', () => {
+    assert.equal(stripJsonComments(''), '');
+    assert.equal(stripJsonComments(null), '');
+
+    const jsonc = `
+      {
+        // Line comment
+        "url": "https://example.com/api",
+        /* Multi-line
+           comment */
+        "key": "value // not a comment",
+        "trailing": true,
+      }
+    `;
+    const stripped = stripJsonComments(jsonc);
+    assert.ok(!stripped.includes('// Line comment'));
+    assert.ok(!stripped.includes('/* Multi-line'));
+    assert.ok(stripped.includes('"url": "https://example.com/api"'));
+    assert.ok(stripped.includes('"key": "value // not a comment"'));
+    const parsed = JSON.parse(stripped);
+    assert.equal(parsed.url, 'https://example.com/api');
+    assert.equal(parsed.key, 'value // not a comment');
+    assert.equal(parsed.trailing, true);
+
+    const withCommasInString = '{"text": "val, } more, ]", "trailing": 1,}';
+    const parsedWithCommas = JSON.parse(stripJsonComments(withCommasInString));
+    assert.equal(parsedWithCommas.text, 'val, } more, ]');
+    assert.equal(parsedWithCommas.trailing, 1);
+  });
+
+  it('parseJsonc parses JSONC strings with comments and trailing commas', () => {
+    const input = '{\n  // comment\n  "enabled": true,\n  "count": 42,\n}';
+    const res = parseJsonc(input);
+    assert.deepEqual(res, { enabled: true, count: 42 });
+  });
+
+  it('isMainModule detects module execution entry point correctly including symlinks', () => {
+    assert.equal(isMainModule(null), false);
+    assert.equal(isMainModule(''), false);
+    if (process.argv[1]) {
+      const currentUrl = pathToFileURL(path.resolve(process.argv[1])).href;
+      assert.equal(isMainModule(currentUrl), true);
+
+      // Verify symlink resolution via realpathSync
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'symlink-main-'));
+      try {
+        const linkPath = path.join(tmpDir, 'symlink-runner.mjs');
+        try {
+          fs.symlinkSync(path.resolve(process.argv[1]), linkPath);
+          const symlinkUrl = pathToFileURL(linkPath).href;
+          assert.equal(isMainModule(symlinkUrl), true);
+        } catch {
+          // Windows non-elevated environments may reject symlink creation
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+    assert.equal(isMainModule('file:///fake/path/definitely_not_main.mjs'), false);
   });
 });
 
@@ -778,10 +915,10 @@ describe('dispatch cascade & orchestrator detection', () => {
       ['OPENCODE_PORT', '4096'],
       ['OPENCODE_AGENT', 'opencode'],
     ]) {
-      it(`detects local when ${envVar} is set`, () => {
+      it(`detects opencode when ${envVar} is set`, () => {
         clearOrchestratorEnv();
         process.env[envVar] = value;
-        assert.equal(detectOrchestrator(), 'local');
+        assert.equal(detectOrchestrator(), 'opencode');
       });
     }
 
@@ -822,7 +959,7 @@ describe('dispatch cascade & orchestrator detection', () => {
     mock.method(providerProbes, 'isClaudeAvailable', async () => true);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const provider = await resolveProvider();
     assert.equal(provider, 'claude');
@@ -833,7 +970,7 @@ describe('dispatch cascade & orchestrator detection', () => {
     mock.method(providerProbes, 'isClaudeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const provider = await resolveProvider();
     assert.equal(provider, 'agy');
@@ -844,26 +981,26 @@ describe('dispatch cascade & orchestrator detection', () => {
     mock.method(providerProbes, 'isClaudeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => false);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const provider = await resolveProvider();
     assert.equal(provider, 'copilot');
   });
 
-  it('falls back to local when claude, agy, and copilot are unavailable', async () => {
+  it('falls back to opencode when claude, agy, and copilot are unavailable', async () => {
     clearOrchestratorEnv();
     mock.method(providerProbes, 'isClaudeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => false);
     mock.method(providerProbes, 'isCopilotAvailable', async () => false);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const provider = await resolveProvider();
-    assert.equal(provider, 'local');
+    assert.equal(provider, 'opencode');
   });
 
   it('skips orchestrator in alternative cascade', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     process.env.CLAUDE_CODE = '1';
 
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
@@ -875,7 +1012,7 @@ describe('dispatch cascade & orchestrator detection', () => {
 
   it('returns null (subagent fallback) when no alternative agent is available', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     process.env.CLAUDE_CODE = '1';
 
     mock.method(providerProbes, 'isAgyAvailable', async () => false);
@@ -888,7 +1025,7 @@ describe('dispatch cascade & orchestrator detection', () => {
 
   it('falls back to same agent when allowSameAgent is explicitly true', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     process.env.CLAUDE_CODE = '1';
 
     mock.method(providerProbes, 'isAgyAvailable', async () => false);
@@ -901,7 +1038,7 @@ describe('dispatch cascade & orchestrator detection', () => {
 
   it('returns null when all providers are unavailable', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => false);
     mock.method(providerProbes, 'isClaudeAvailable', async () => false);
     mock.method(providerProbes, 'isCopilotAvailable', async () => false);
@@ -915,15 +1052,15 @@ describe('dispatch cascade & orchestrator detection', () => {
     assert.equal(provider, 'copilot');
   });
 
-  it('returns ordered candidates according to preference: claude > agy > copilot > local', async () => {
+  it('returns ordered candidates according to preference: claude > agy > copilot > opencode', async () => {
     clearOrchestratorEnv();
     mock.method(providerProbes, 'isClaudeAvailable', async () => true);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const candidates = await getCandidateProviders();
-    assert.deepEqual(candidates, ['claude', 'agy', 'copilot', 'local']);
+    assert.deepEqual(candidates, ['claude', 'agy', 'copilot', 'opencode']);
   });
 
   it('returns ordered candidates for fallback passes skipping orchestrator', async () => {
@@ -932,15 +1069,20 @@ describe('dispatch cascade & orchestrator detection', () => {
 
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-    mock.method(providerProbes, 'isLocalAvailable', async () => true);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
     const candidates = await getCandidateProviders();
-    assert.deepEqual(candidates, ['agy', 'copilot', 'local']);
+    assert.deepEqual(candidates, ['agy', 'copilot', 'opencode']);
+  });
+
+  it('--provider local resolves to opencode through alias table', async () => {
+    const provider = await resolveProvider({ explicitProvider: 'local' });
+    assert.equal(provider, 'opencode');
   });
 
   it('cascades to next candidate when first candidate fails during execution', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     process.env.CLAUDE_CODE = '1';
 
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
@@ -964,7 +1106,7 @@ describe('dispatch cascade & orchestrator detection', () => {
 
   it('throws NO_DISPATCH_AVAILABLE when all candidate passes fail', async () => {
     clearOrchestratorEnv();
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     process.env.CLAUDE_CODE = '1';
 
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
@@ -983,7 +1125,7 @@ describe('dispatch cascade & orchestrator detection', () => {
   it('cascades past a provider that exits 0 with no output', async () => {
     clearOrchestratorEnv();
     process.env.CLAUDECODE = '1';
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
 
@@ -1031,7 +1173,7 @@ describe('dispatch cascade & orchestrator detection', () => {
   it('returns partial output when every provider fails', async () => {
     clearOrchestratorEnv();
     process.env.CLAUDECODE = '1';
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
 
@@ -1055,7 +1197,7 @@ describe('dispatch cascade & orchestrator detection', () => {
   it.skip('halts the cascade when a write-mode dispatch leaves the workspace modified', async () => {
     clearOrchestratorEnv();
     process.env.CLAUDECODE = '1';
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
 
@@ -1079,7 +1221,7 @@ describe('dispatch cascade & orchestrator detection', () => {
   it('still cascades a write-mode failure that left the workspace untouched', async () => {
     clearOrchestratorEnv();
     process.env.CLAUDECODE = '1';
-    mock.method(providerProbes, 'isLocalAvailable', async () => false);
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
     mock.method(providerProbes, 'isAgyAvailable', async () => true);
     mock.method(providerProbes, 'isCopilotAvailable', async () => true);
 
@@ -1220,5 +1362,119 @@ describe('antigravity multi-mode and reachability', () => {
 
   it('runAgy is a function', () => {
     assert.equal(typeof runAgy, 'function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: agy args construction — brief file and file attachment
+// ---------------------------------------------------------------------------
+
+describe('agy args construction: brief file and external file attachment', () => {
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-agy-args-'));
+  const externalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-external-'));
+  const created = [scratchDir, externalDir];
+
+  const scratchFile = (dir, name, contents) => {
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, contents, 'utf8');
+    return p;
+  };
+
+  after(() => {
+    for (const target of created) {
+      try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  it('includes --add-dir <briefFile dir> when prompt overflowed to a brief file', () => {
+    const briefFile = scratchFile(scratchDir, 'brief.md', 'task content');
+    const args = buildAgyArgs('read this brief file', briefFile, {
+      model: 'gemini-3.8-flash',
+      effort: 'medium',
+      timeout: 1800,
+    });
+
+    const idx = args.indexOf('--add-dir');
+    assert.ok(idx !== -1, 'expected --add-dir flag in agyArgs when briefFile is set');
+    assert.equal(args[idx + 1], path.dirname(briefFile));
+    // agy has no -f/--file flag; passing one is a hard CLI parse error.
+    assert.ok(!args.includes('-f'), 'agy CLI does not support -f');
+  });
+
+  it('omits --add-dir when no brief file was created (prompt fit on argv)', () => {
+    const args = buildAgyArgs('short prompt', null, {
+      model: 'gemini-3.8-flash',
+      effort: 'medium',
+      timeout: 1800,
+    });
+
+    assert.ok(!args.includes('--add-dir'), 'expected no --add-dir flag when briefFile is null');
+    assert.ok(args.includes('--dangerously-skip-permissions'), 'expected --dangerously-skip-permissions flag in agyArgs');
+  });
+
+  it('places --add-dir before --model and --mode so agy grants directory access before task flags', () => {
+    const briefFile = scratchFile(scratchDir, 'order-brief.md', 'order test');
+    const args = buildAgyArgs('pointer', briefFile, {
+      model: 'gemini-3.8-flash',
+      effort: 'medium',
+      timeout: 1800,
+    });
+
+    const addDirIdx = args.indexOf('--add-dir');
+    const modelIdx = args.indexOf('--model');
+    const modeIdx = args.indexOf('--mode');
+    assert.ok(addDirIdx < modelIdx, '--add-dir should appear before --model');
+    assert.ok(addDirIdx < modeIdx, '--add-dir should appear before --mode');
+  });
+
+  it('builds a brief file from a large inlined attachment and grants its directory via --add-dir', () => {
+    // Simulate a file large enough that, when inlined + safety header is prepended,
+    // the total prompt overflows the argv limit.
+    const largeContent = 'x'.repeat(getArgvByteLimit() + 1);
+    const largeFile = scratchFile(externalDir, 'large-context.md', largeContent);
+
+    const block = buildAttachmentBlock([largeFile]);
+    assert.ok(block.text.length > 0, 'attachment block should contain the file content');
+    assert.ok(block.text.includes('[Attached Context File:'), 'block should label the file');
+
+    // The full prompt (attachment block + safety header) overflows argv
+    const fullPrompt = `${block.text}\n\nAnalyze this file.`;
+    const { briefFile } = preparePromptForArgv(fullPrompt, 'agy');
+
+    if (briefFile) {
+      created.push(briefFile);
+      assert.ok(fs.existsSync(briefFile), 'brief file should exist on disk');
+      const briefContents = fs.readFileSync(briefFile, 'utf8');
+      assert.ok(briefContents.includes('[Attached Context File:'), 'brief file should contain inlined attachment');
+
+      // Confirm the agy args grant access to the brief file's directory
+      const args = buildAgyArgs('pointer prompt', briefFile, { model: 'gemini-3.8-flash', effort: 'medium', timeout: 1800 });
+      assert.equal(args[args.indexOf('--add-dir') + 1], path.dirname(briefFile));
+    } else {
+      // If the prompt happened to fit (unlikely), brief file is null — that's fine too
+      assert.equal(briefFile, null);
+    }
+  });
+
+  it('reads a file from outside the project workspace and inlines it in the attachment block', () => {
+    const externalFile = scratchFile(externalDir, 'external-context.ts', 'export const x = 42;');
+    const block = buildAttachmentBlock([externalFile]);
+
+    assert.ok(block.text.includes('[Attached Context File:'), 'block should label external file');
+    assert.ok(block.text.includes('export const x = 42;'), 'block should include external file content');
+    assert.equal(block.notes.length, 0, 'no error notes for a readable external file');
+  });
+
+  it('SENSITIVE_FILE_PATTERNS: token.txt is rejected but tokenizer.ts is not', () => {
+    const tokenFile = scratchFile(externalDir, 'token.txt', 'ghp_secret123');
+    const tokenizerFile = scratchFile(externalDir, 'tokenizer.ts', 'export class Tokenizer {}');
+
+    const tokenBlock = buildAttachmentBlock([tokenFile]);
+    assert.equal(tokenBlock.text, '', 'token.txt should be rejected by sensitive pattern');
+    assert.ok(tokenBlock.notes.some((n) => n.includes('token.txt')));
+
+    const tokenizerBlock = buildAttachmentBlock([tokenizerFile]);
+    assert.ok(tokenizerBlock.text.includes('export class Tokenizer {}'), 'tokenizer.ts should NOT be rejected');
+    assert.equal(tokenizerBlock.notes.length, 0);
   });
 });

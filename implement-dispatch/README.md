@@ -42,7 +42,7 @@ flowchart TD
 
 ### Prerequisites
 - **Node.js**: `v18.0.0` or higher.
-- **At least one agent CLI** installed or reachable (`claude`, `agy`, `copilot`, `local`).
+- **At least one agent CLI** installed or reachable (`claude`, `agy`, `copilot`, `opencode`).
 - **`dispatch` skill**: Required runner and provider cascade.
 
 ### Companion Skills
@@ -116,7 +116,7 @@ Tune review rigor, round budgets, and consensus requirements to match the scope 
 
 ### 3. Pinning Specific Reviewers (`(<pins>)`)
 
-Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `local`):
+Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`):
 
 ```markdown
 /implement-dispatch (claude,agy): Implement OAuth2 PKCE authorization flow
@@ -132,19 +132,18 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 
 ---
 
-## Review Levels & Consensus Matrix
+## Review Levels
 
-`implement-dispatch` scales review breadth (number of agents) and review depth (re-review rounds and consensus requirements) according to the chosen level:
+Levels scale spend along four axes at once — how many agents review (`targetCount`), how many waves each phase may spend (`maxRounds`), whether consensus is mandatory, and how large a tool-turn budget each reviewer gets. `config.default.jsonc` is the single source of truth for all of it; the summary below describes what the shipped defaults cost.
 
-| Level | Plan Review | Code Review | Re-Review Rounds | Consensus Required? | Default Target Breadth |
-|---|---|---|---|---|---|
-| `low` | *Skipped* | 1 agent, 1 round | *Skipped* | No | 1 external agent |
-| `medium` | 1 agent, 1 round | 1 agent, 3 rounds | Up to 2 re-reviews | No | 1 external agent |
-| `high` | 1 agent, 1 round | All agents, 3 rounds | Up to 2 re-reviews | **Yes** (strict) | All available external agents |
-| `max` | All agents + self, 3 rounds | All agents + self, 5 rounds | Up to 4 re-reviews | **Yes** (strict) | All external agents + host CLI (`--allow-same-agent`) |
+- `low` — cheapest. Plan review is skipped entirely; code review gets one wave with one external agent and no consensus requirement.
+- `medium` — the default. One plan-review wave with one agent, up to three code-review waves with one agent, no consensus requirement.
+- `high` — code review fans out to every available agent for up to three waves, and consensus becomes mandatory: no finding may be dismissed without verified counter-evidence.
+- `max` — the widest and deepest. Both phases fan out to every available agent *plus* the host CLI itself (`--allow-same-agent`), with three plan-review waves and five code-review waves under strict consensus.
 
 ### Key Execution Mechanics
-- **Waves, Not Individual Dispatches**: A round represents a single parallel wave across all target agents. Plan review and code review maintain separate, independent round counters.
+- **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
+- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's `targetCount`. Pins do not resurrect a phase the level skips.
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
 - **Consensus Rules**:
   - Under `medium` and `low` (`consensus: false`), the orchestrator can reject claims directly if counter-evidence exists.
@@ -153,37 +152,69 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 
 ---
 
-## Configuration & Model Routing
+## Configuration & Flow Policy
 
-Agent models and reasoning effort levels can be customized across phases (`plan-review`, `implementation`, `code-review`) in `config.default.jsonc` or by creating a local `config.jsonc` file.
+`config.default.jsonc` holds the whole flow policy: the review knobs per phase plus the models and reasoning effort per platform. Customize it by creating a local `config.jsonc` alongside it, which **replaces** the default file wholly rather than merging into it — so copy the default as your starting point, and expect a clear validation error listing every problem if a section or knob is missing.
+
+The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. The two review sections additionally carry five level-keyed knobs:
+
+| Knob | Meaning |
+|---|---|
+| `maxRounds` | Cap on total fan-out waves for the phase, counting the first review |
+| `targetCount` | How many platforms an unpinned wave dispatches to — a whole number or `"all"` |
+| `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
+| `includeSelf` | When `true`, the host CLI is an eligible reviewer (sorted last). Optional; defaults to `false` |
+| `toolTurns` | Tool-turn budget handed to each reviewer |
+
+Either `maxRounds: 0` or `targetCount: 0` skips a phase entirely. When `targetCount` is `0`, the resolver normalizes `maxRounds` to `0` as well, so `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
+
+> **Upgrading an existing `config.jsonc`**: per-platform entries used to sit directly under each section; they now nest under `platforms`. A pre-existing flat config fails validation with errors like `plan-review.platforms must be an object` and `unrecognized key "claude"` — both mean the entries need moving under `platforms`. Run `--validate-only` (below) to check before your next run.
 
 ```jsonc
 {
   "plan-review": {
-    "claude": {
-      "low": { "model": "claude-opus-5", "effort": "low" },
-      "medium": { "model": "claude-opus-5", "effort": "medium" },
-      "high": { "model": "claude-opus-5", "effort": "high" },
-      "max": { "model": "claude-opus-5", "effort": "xhigh" }
-    },
-    "agy": {
-      "model": "gemini-3.8-flash",
-      "effort": "high"
+    "maxRounds": { "low": 0, "medium": 1, "max": 3 },
+    "targetCount": { "low": 0, "medium": 1, "max": "all" },
+    "consensus": { "low": false, "high": true },
+    "includeSelf": { "low": false, "max": true },
+    "toolTurns": { "low": 3, "medium": 4, "high": 6, "max": 8 },
+    "platforms": {
+      "claude": {
+        "low": { "model": "claude-opus-5", "effort": "low" },
+        "medium": { "model": "claude-opus-5", "effort": "medium" },
+        "high": { "model": "claude-opus-5", "effort": "high" },
+        "max": { "model": "claude-opus-5", "effort": "xhigh" }
+      },
+      "agy": { "model": "gemini-3.8-flash", "effort": "high" }
     }
   },
   "implementation": {
-    "claude": {
-      "low": { "model": "claude-sonnet-5", "effort": "medium" },
-      "high": { "model": "claude-opus-5", "effort": "low" }
+    "platforms": {
+      "claude": {
+        "low": { "model": "claude-sonnet-5", "effort": "medium" },
+        "high": { "model": "claude-opus-5", "effort": "low" }
+      }
     }
   }
 }
 ```
 
+Validate a config without spawning any provider probes:
+
+```bash
+node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --validate-only
+```
+
+It checks the config schema and nothing else, so combining it with any run flag (`--platform`, `--level`, `--slug`, `--date`, `--pins`) is an error rather than a silent no-op.
+
 ### Level Matching & Fallback Rules
+
+Knobs and platform entries are **sparse by design**: define only the levels where the spend changes. Every value resolves by the same rule.
+
 - **Exact Match First**: Matches the requested level directly.
 - **Round Down Floor**: If an exact level is missing, it rounds down to the nearest configured level below it.
 - **Round Up Ceiling**: If nothing is configured below, it matches the lowest level above it.
+- **Sparse Keys Set Floors**: Because levels only ever round down, the lowest key you define is the floor for everything beneath it — define `low` to set the base and a higher key to mark where spend increases.
 - **Top-Heavy Reasoning**: Default configurations intentionally invest reasoning budget (`high` / `max` effort) into review phases to catch subtle flaws, keeping implementation lean.
 
 ---
@@ -196,7 +227,7 @@ Agent models and reasoning effort levels can be customized across phases (`plan-
 - **Host Repository Conventions**: The orchestrator reads your project's `AGENTS.md` or `CLAUDE.md` to discover:
   - **Verify command**: The test/lint command that must remain green across all iterations.
   - **Escalation triggers**: Domain-specific decisions that require immediate user input.
-- **Scratch Space Lifecycle**: Temporary plans and review logs are stored in `.scratch/plan/`. On successful consensus, temporary artifacts are automatically cleaned up. If a run terminates in deadlock or requires user intervention, artifacts are preserved for easy resumption.
+- **Scratch Space Lifecycle**: The flow resolver generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are cleaned up; if a run terminates in deadlock or requires user intervention, they are preserved for easy resumption.
 - **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
 
 ---

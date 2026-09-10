@@ -11,7 +11,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 | **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | `claude-opus-5` (fallback: `bedrock.claude-opus-5`) | `medium` | Read-only | `claude --resume <session_id>` |
 | **Antigravity 2.0** | `agy` | `agy` | `scripts/agy-run.mjs` | `gemini-3.8-flash` | `medium` | `--mode plan` | `conversation://<id>` |
 | **GitHub Copilot** | `copilot` | `copilot` | `scripts/copilot-run.mjs` | `gpt-5.6-luna` | `max` | `--mode plan` | `copilot --resume <session_id>` |
-| **Local OpenCode** | `local` | `opencode` | `scripts/local-run.mjs` | `lmstudio/qwen3.8-27b-ridge` | `null` (server default) | Read-only | Local server logs |
+| **OpenCode** | `opencode` | `opencode` | `scripts/opencode-run.mjs` | `lmstudio/qwen3.8-27b-ridge` | `null` (server default) | Read-only | Local server logs |
 
 ---
 
@@ -77,7 +77,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ### Sandboxing & Isolation
 - **Structural Read-Only**: Enforced via `--mode plan`. Edits are blocked at the runtime level.
 - **Claude Code Sandbox Constraint**: Antigravity binds a local TCP socket for its language server, conflicting with Claude Code's Bash tool sandbox (`bind: operation not permitted`). Runs pass `dangerouslyDisableSandbox: true`; safety is maintained structurally via `--mode plan`.
-- **Headless Permissions**: Runs are strictly headless; unapproved interactive tools are auto-denied.
+- **Headless Permissions**: Runs pass `--dangerously-skip-permissions` to auto-approve tool execution requests (e.g. file reading, search) without interactive prompts in headless mode, while write operations are structurally prevented by `--mode plan`.
 
 ### Session Monitoring
 - **Deep-Link**: Emits `conversation://<conversation-id>` on init and completion for direct canvas navigation in the Antigravity desktop app.
@@ -119,13 +119,14 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 ---
 
-## 5. Local OpenCode (`local`)
+## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
 - **Default Model**: `lmstudio/qwen3.8-27b-ridge` (override via `-m <model>`)
 - **Default Reasoning Effort**: `null` (server default)
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: Preflight HTTP probe against `http://127.0.0.1:1234/v1`
+- **Config**: `opencode.jsonc` (or `opencode.json`) at the repository root for model, agent, and limit overrides.
 
 ### Order of Preference
 1. **Local OpenCode (`opencode`)**:

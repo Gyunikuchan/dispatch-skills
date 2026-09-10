@@ -19,9 +19,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import {
-  buildAttachmentBlock,
+  buildFormattedPrompt,
+  checkGitIntegrity,
   classifyFailure,
   createSessionLogger,
   createTraceWriter,
@@ -30,20 +30,75 @@ import {
   emitInitBanner,
   extractCleanResponse,
   findBinary,
-  formatSafetyPrompt,
-  describeGitStatusDiff,
+  findFirstExistingFile,
   getGitStatus,
   getSanitizedEnv,
+  isMainModule,
   parseCommonArgs,
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  scanVersionDirs,
   spawnCli,
   spawnCliSync,
   terminateProcessTree,
 } from './common.mjs';
 
-const currentFilePath = fileURLToPath(import.meta.url);
+// ============================================================================
+// SECTION: Types
+// ============================================================================
+
+/** @typedef {'desktop'|'vscode'|'cli'} ClaudeMode */
+
+/**
+ * @typedef {object} ModeDefinition
+ * @property {ClaudeMode} mode
+ * @property {string} name
+ * @property {() => string|null} fn Resolves the binary path for this mode, or null if absent.
+ */
+
+/**
+ * @typedef {object} ClaudeTarget
+ * @property {ClaudeMode} mode
+ * @property {string} name
+ * @property {string} bin
+ */
+
+/**
+ * @typedef {object} RunClaudeOptions
+ * @property {string} prompt
+ * @property {string[]} [files]
+ * @property {string|string[]} [model] Model id, comma-separated list, or array — tried in order.
+ * @property {string} [effort]
+ * @property {number} [timeout] Seconds before the delegate is killed.
+ * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
+ * @property {boolean} [verbose]
+ * @property {ClaudeMode|null} [claudeMode] Pins execution to one mode; disables mode cascade.
+ */
+
+/**
+ * @typedef {object} RunClaudeResult
+ * @property {'claude'} provider
+ * @property {ClaudeMode} claudeMode
+ * @property {string} bin
+ * @property {string} model
+ * @property {string} stdout Cleaned assistant response.
+ * @property {string} rawStdout Raw stdout, unparsed.
+ * @property {string} stderr
+ * @property {number} exitCode
+ * @property {string} logFile
+ * @property {string|null} briefFile
+ * @property {string|null} sessionId
+ * @property {string|null} sessionLink
+ * @property {'timeout'|'buffer'|null} truncated
+ * @property {string|null} failureKind
+ * @property {boolean} gitIntegrityViolation
+ * @property {string|null} gitIntegrityDetails
+ */
+
+// ============================================================================
+// SECTION: Constants (tweak these)
+// ============================================================================
 
 export const DEFAULT_CLAUDE_MODELS = [
   'claude-opus-5',
@@ -99,380 +154,443 @@ export const READ_ONLY_ALLOWED_TOOLS = [
   'TodoWrite',
 ];
 
-// SECTION: Directory & Version Scanning Helpers
+/**
+ * Execution modes in cascade preference order: Claude Desktop > VS Code Extension > CLI.
+ * The single source of truth for mode metadata — every mode-aware function below
+ * (resolution, probing, execution) iterates this instead of redeclaring the list.
+ * @type {ModeDefinition[]}
+ */
+export const MODE_DEFINITIONS = [
+  { mode: 'desktop', name: 'Claude Desktop', fn: () => getClaudeDesktopBinary() },
+  { mode: 'vscode', name: 'Claude VS Code Extension', fn: () => getClaudeVSCodeBinary() },
+  { mode: 'cli', name: 'Claude CLI', fn: () => getClaudeCliBinary() },
+];
+
+// ============================================================================
+// SECTION: Main API — runClaude()
+// ============================================================================
 
 /**
- * Scans a directory for subdirectories, sorted in descending order (newest version first).
- * Used across macOS, Windows, and Linux for version-stamped application caches.
+ * Runs a prompt through Claude Code using the preferred mode (desktop > vscode > cli).
+ * If a mode encounters auth or quota failure (unsubscribed or out of tokens), it cascades
+ * to the next available mode in preference order unless pinned via `claudeMode`.
  *
- * @param {string} baseDir
+ * @param {RunClaudeOptions} options
+ * @returns {Promise<RunClaudeResult>}
+ */
+export async function runClaude(options = {}) {
+  const {
+    prompt,
+    files = [],
+    model = DEFAULT_CLAUDE_MODEL,
+    effort = DEFAULT_CLAUDE_EFFORT,
+    timeout = DEFAULT_TIMEOUT_SECONDS,
+    maxBufferMb = 10,
+    verbose = false,
+    claudeMode = null,
+  } = options;
+
+  const viableTargets = findViableTargets(claudeMode);
+  if (viableTargets.length === 0) {
+    throw createNoTargetsError();
+  }
+
+  const sessionLogger = createSessionLogger('claude');
+  const initialGitStatus = getGitStatus();
+  const formattedPrompt = buildFormattedPrompt(prompt, files);
+  const modelsToTry = resolveModelsToTry(model);
+  const effectiveEffort = effort || DEFAULT_CLAUDE_EFFORT;
+
+  let lastResult = null;
+
+  // Cascade across viable targets, and within each target across candidate models,
+  // both in priority order. A quota/auth failure advances to the next target; any
+  // other failure advances to the next model before giving up on the target.
+  for (let i = 0; i < viableTargets.length; i++) {
+    const target = viableTargets[i];
+    const isLastTarget = i === viableTargets.length - 1;
+
+    for (let m = 0; m < modelsToTry.length; m++) {
+      const currentModel = modelsToTry[m];
+      const isLastModel = m === modelsToTry.length - 1;
+
+      try {
+        const result = await executeOnTarget({
+          target,
+          model: currentModel,
+          formattedPrompt,
+          effort: effectiveEffort,
+          timeout,
+          maxBufferMb,
+          verbose,
+          sessionLogger,
+          initialGitStatus,
+        });
+        lastResult = result;
+
+        if (result.exitCode === 0 && !result.failureKind) {
+          sessionLogger.close();
+          return result;
+        }
+
+        if (!isLastModel) {
+          const nextModel = modelsToTry[m + 1];
+          process.stderr.write(
+            `[dispatch] Notice: Model '${currentModel}' failed or not available on ${target.name} (exit ${result.exitCode}${result.failureKind ? `, failure: ${result.failureKind}` : ''}).\n` +
+              `[dispatch] Trying fallback model '${nextModel}'...\n`,
+          );
+          continue;
+        }
+
+        const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
+        if (isQuotaOrAuth && !isLastTarget && !claudeMode) {
+          process.stderr.write(
+            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
+              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
+          );
+          break;
+        }
+
+        sessionLogger.close();
+        return result;
+      } catch (err) {
+        if (!isLastModel) {
+          process.stderr.write(
+            `[dispatch] Warning: Model '${currentModel}' execution failed on ${target.name} (${err.message}). Trying fallback model '${modelsToTry[m + 1]}'...\n`,
+          );
+          continue;
+        }
+        if (!isLastTarget && !claudeMode) {
+          process.stderr.write(
+            `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
+          );
+          break;
+        }
+        sessionLogger.close();
+        throw err;
+      }
+    }
+  }
+
+  sessionLogger.close();
+  return lastResult;
+}
+
+/**
+ * Resolves the models to try, in priority order, from the raw `model` option.
+ * Accepts an array, a comma-separated string, a single model id, or the sentinel
+ * `'default'` / the current default id (both expand to the full default fallback list).
+ * @param {string|string[]} model
  * @returns {string[]}
  */
-function scanVersionDirs(baseDir) {
-  if (!fs.existsSync(baseDir)) return [];
-  try {
-    const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
-  } catch {
-    return [];
+function resolveModelsToTry(model) {
+  let models = [];
+  if (Array.isArray(model)) {
+    models = model.filter(Boolean);
+  } else if (typeof model === 'string' && model.includes(',')) {
+    models = model.split(',').map((m) => m.trim()).filter(Boolean);
+  } else if (typeof model === 'string' && model.trim()) {
+    const trimmed = model.trim();
+    models = trimmed === DEFAULT_CLAUDE_MODEL || trimmed === 'default'
+      ? [...DEFAULT_CLAUDE_MODELS]
+      : [trimmed];
   }
+  return models.length > 0 ? models : [...DEFAULT_CLAUDE_MODELS];
 }
 
-/**
- * Probes a list of candidate file paths, expanding leading `~` to the user's home directory.
- * Returns the first candidate that exists on disk and is a regular file.
- *
- * @param {string[]} candidates
- * @returns {string|null}
- */
-function findFirstExistingFile(candidates) {
-  const homeDir = os.homedir();
+
+/** Filters {@link MODE_DEFINITIONS} down to modes with a reachable binary. */
+function findViableTargets(claudeMode) {
+  const candidates = claudeMode
+    ? MODE_DEFINITIONS.filter((m) => m.mode === claudeMode.toLowerCase())
+    : MODE_DEFINITIONS;
+
+  const viable = [];
   for (const candidate of candidates) {
-    if (!candidate) continue;
-    const expanded = candidate.replace(/^~(?=$|\/|\\)/, homeDir);
-    try {
-      if (fs.existsSync(expanded)) {
-        const stat = fs.statSync(expanded);
-        if (stat.isFile()) {
-          return path.resolve(expanded);
+    const bin = candidate.fn();
+    if (bin && testClaudeBinaryReachability(bin).reachable) {
+      viable.push({ mode: candidate.mode, name: candidate.name, bin });
+    }
+  }
+  return viable;
+}
+
+function createNoTargetsError() {
+  const err = new Error(
+    'Claude Code was not found or not reachable in any mode (Claude Desktop, VS Code extension, or CLI).\n' +
+      'Install options:\n' +
+      '  - Claude Desktop: Install Claude Desktop application\n' +
+      '  - VS Code Extension: Install Anthropic Claude Code extension\n' +
+      '  - Claude CLI: npm install -g @anthropic-ai/claude-code (or curl -fsSL https://claude.ai/install.sh | bash)',
+  );
+  err.code = 'CLI_NOT_FOUND';
+  return err;
+}
+
+/**
+ * Spawns Claude Code on a single resolved target/model pair and resolves once the
+ * process exits, enforcing the timeout and buffer caps and checking git integrity.
+ * @returns {Promise<RunClaudeResult>}
+ */
+function executeOnTarget({
+  target,
+  model,
+  formattedPrompt,
+  effort,
+  timeout,
+  maxBufferMb,
+  verbose,
+  sessionLogger,
+  initialGitStatus,
+}) {
+  // Headless print mode (interactive mode removed — delegates are always headless)
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
+  const claudeArgs = ['-p', argvPrompt, '--output-format', 'json'];
+  if (model) claudeArgs.push('--model', model);
+  if (effort) claudeArgs.push('--effort', effort);
+  for (const tool of READ_ONLY_ALLOWED_TOOLS) {
+    claudeArgs.push('--allowedTools', tool);
+  }
+
+  emitInitBanner({
+    provider: `Claude Code [${target.mode}] (claude)`,
+    logFile: sessionLogger.logFile,
+    mode: 'READ-ONLY',
+  });
+
+  const trace = createTraceWriter(verbose);
+
+  return new Promise((resolve, reject) => {
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    let totalOutputBytes = 0;
+    let isTimedOut = false;
+    let isBufferExceeded = false;
+    const maxBufferBytes = maxBufferMb * 1024 * 1024;
+
+    const child = spawnCli(target.bin, claudeArgs, {
+      cwd: PROJECT_ROOT,
+      env: getSanitizedEnv(),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
+    });
+
+    const timer = setTimeout(() => {
+      isTimedOut = true;
+      terminateProcessTree(child);
+    }, timeout * 1000);
+
+    child.stdout.on('data', (chunk) => {
+      totalOutputBytes += chunk.length;
+      if (totalOutputBytes > maxBufferBytes) {
+        if (!isBufferExceeded) {
+          isBufferExceeded = true;
+          terminateProcessTree(child);
         }
+        return;
       }
-    } catch {}
-  }
-  return null;
+      stdoutBuffer += chunk.toString('utf8');
+      sessionLogger.write(chunk);
+      if (trace) trace(chunk);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderrBuffer += chunk.toString('utf8');
+      sessionLogger.write(chunk);
+      if (trace) trace(chunk);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timer);
+
+      const envelope = parseClaudeEnvelope(stdoutBuffer);
+      const sessionId = envelope.sessionId || extractClaudeSessionId(stderrBuffer);
+      const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
+
+      const gitIntegrity = checkGitIntegrity(initialGitStatus);
+
+      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
+      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+
+      emitCompletionBanner({
+        provider: `Claude Code [${target.mode}] (claude)`,
+        sessionLink,
+        exitCode,
+        truncated,
+      });
+
+      resolve({
+        provider: 'claude',
+        claudeMode: target.mode,
+        bin: target.bin,
+        model,
+        stdout: envelope.text,
+        rawStdout: stdoutBuffer,
+        stderr: stderrBuffer,
+        exitCode: envelope.isError && exitCode === 0 ? 1 : exitCode,
+        logFile: sessionLogger.logFile,
+        briefFile,
+        sessionId,
+        sessionLink,
+        truncated,
+        failureKind:
+          envelope.subtype ||
+          classifyFailure(`${stderrBuffer}\n${envelope.text}`) ||
+          (truncated ? truncated : null),
+        gitIntegrityViolation: gitIntegrity.violation,
+        gitIntegrityDetails: gitIntegrity.details,
+      });
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      terminateProcessTree(child);
+      sessionLogger.close();
+      err.code = 1;
+      err.stderr = stderrBuffer;
+      reject(err);
+    });
+  });
 }
 
-// SECTION: Mode 1 - Claude Desktop (`desktop`)
+// ============================================================================
+// SECTION: CLI Entry Point
+// ============================================================================
 
-/**
- * Resolves the Claude Code binary bundled or managed by the Claude Desktop application.
- *
- * Branching by Operating System:
- * - macOS (darwin):
- *   Probes `~/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude`
- *   as well as fallback app bundle resource paths.
- * - Windows (win32):
- *   Probes `%APPDATA%\Claude\claude-code` and `%LOCALAPPDATA%\Claude\claude-code` for `<version>\claude.exe`,
- *   and `%LOCALAPPDATA%\Programs\Claude\resources\claude-code\claude.exe`.
- * - Linux (linux):
- *   Probes `~/.config/Claude/claude-code/<version>/claude`, `~/.local/share/Claude/claude-code/...`,
- *   and `/opt/Claude/claude-code/claude`.
- *
- * @returns {string|null}
- */
-export function getClaudeDesktopBinary() {
-  const candidates = [];
+export async function main() {
+  const options = parseCommonArgs(process.argv);
+  const { requestedMode, testModes } = parseModeFlags(process.argv.slice(2));
 
-  // [MODE: Claude Desktop] [OS: macOS]
-  // Claude Desktop on macOS installs helper CLI binaries inside ~/Library/Application Support/Claude/claude-code/<version>/claude.app
-  if (process.platform === 'darwin') {
-    const appSupportClaudeCode = path.join(
-      os.homedir(),
-      'Library/Application Support/Claude/claude-code',
-    );
-    const versions = scanVersionDirs(appSupportClaudeCode);
-    for (const ver of versions) {
-      candidates.push(
-        path.join(appSupportClaudeCode, ver, 'claude.app/Contents/MacOS/claude'),
-        path.join(appSupportClaudeCode, ver, 'claude'),
-        path.join(appSupportClaudeCode, ver, 'bin/claude'),
-      );
-    }
-    candidates.push(
-      '/Applications/Claude.app/Contents/Resources/claude-code/claude',
-      path.join(os.homedir(), 'Applications/Claude.app/Contents/Resources/claude-code/claude'),
-    );
+  if (testModes) {
+    printReachabilityReport();
+    process.exit(0);
   }
 
-  // [MODE: Claude Desktop] [OS: Windows]
-  // Claude Desktop on Windows stores app data in %APPDATA%\Claude and %LOCALAPPDATA%\Claude
-  if (process.platform === 'win32') {
-    const winDirs = [
-      process.env.APPDATA ? path.join(process.env.APPDATA, 'Claude', 'claude-code') : null,
-      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Claude', 'claude-code') : null,
-    ].filter(Boolean);
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
 
-    for (const winDir of winDirs) {
-      const versions = scanVersionDirs(winDir);
-      for (const ver of versions) {
-        candidates.push(
-          path.join(winDir, ver, 'claude.exe'),
-          path.join(winDir, ver, 'claude', 'claude.exe'),
-          path.join(winDir, ver, 'bin', 'claude.exe'),
-        );
+  const pipedStdin = await readStdin();
+  let finalPrompt = options.prompt.trim();
+  if (pipedStdin) {
+    finalPrompt = finalPrompt ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}` : pipedStdin;
+  }
+
+  if (!finalPrompt) {
+    console.error('Error: No prompt provided.');
+    process.exit(1);
+  }
+
+  try {
+    const res = await runClaude({
+      ...options,
+      claudeMode: requestedMode || options.claudeMode,
+      prompt: finalPrompt,
+    });
+    if (res.stdout) {
+      process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
+    }
+    if (res.gitIntegrityViolation) {
+      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
+      if (res.gitIntegrityDetails) {
+        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
       }
+      console.warn('');
     }
-
-    if (process.env.LOCALAPPDATA) {
-      candidates.push(
-        path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'resources', 'claude-code', 'claude.exe'),
-        path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'claude-code', 'claude.exe'),
-      );
-    }
+    process.exit(res.exitCode);
+  } catch (err) {
+    console.error(`\n[dispatch] ERROR: ${err.message}`);
+    process.exit(typeof err.code === 'number' ? err.code : 1);
   }
-
-  // [MODE: Claude Desktop] [OS: Linux]
-  // Claude Desktop / packages on Linux place data in ~/.config/Claude or ~/.local/share/Claude
-  if (process.platform === 'linux') {
-    const linuxDirs = [
-      path.join(os.homedir(), '.config', 'Claude', 'claude-code'),
-      path.join(os.homedir(), '.local', 'share', 'Claude', 'claude-code'),
-    ];
-    for (const lDir of linuxDirs) {
-      const versions = scanVersionDirs(lDir);
-      for (const ver of versions) {
-        candidates.push(
-          path.join(lDir, ver, 'claude'),
-          path.join(lDir, ver, 'bin', 'claude'),
-        );
-      }
-    }
-    candidates.push(
-      '/opt/Claude/claude-code/claude',
-      '/opt/claude/claude-code/claude',
-    );
-  }
-
-  return findFirstExistingFile(candidates);
 }
 
-// SECTION: Mode 2 - Claude VS Code Extension (`vscode`)
-
-/**
- * Resolves the Claude Code binary bundled with the Anthropic VS Code Extension.
- *
- * Branching by Operating System & IDE:
- * - Cross-platform:
- *   1. Direct environment variable export `CLAUDE_CODE_EXECPATH`.
- *   2. Probes VS Code extension directories (`~/.vscode/extensions`, `~/.vscode-insiders/extensions`,
- *      `~/.vscode-server/extensions`, `~/.cursor/extensions`) for `anthropic.claude-code-*`.
- * - macOS (darwin):
- *   Probes `~/Library/Application Support/Code/agent-host/sdk-cache/claude` and `Code - Insiders`.
- * - Windows (win32):
- *   Probes `%APPDATA%\Code\agent-host\sdk-cache\claude` and `Code - Insiders`.
- * - Linux (linux):
- *   Probes `~/.config/Code/agent-host/sdk-cache/claude` and `Code - Insiders`.
- *
- * @returns {string|null}
- */
-export function getClaudeVSCodeBinary() {
-  const candidates = [];
-
-  // [MODE: Claude VS Code Extension] [OS: Cross-platform - Environment Variable]
-  // The VS Code extension exports CLAUDE_CODE_EXECPATH into terminals it spawns.
-  if (process.env.CLAUDE_CODE_EXECPATH) {
-    candidates.push(process.env.CLAUDE_CODE_EXECPATH);
-  }
-
-  // [MODE: Claude VS Code Extension] [OS: Cross-platform - Extension Directory Scan]
-  // Scans standard VS Code / Cursor extension directories for native binaries.
-  const homeDir = os.homedir();
-  const extBaseDirs = [
-    path.join(homeDir, '.vscode', 'extensions'),
-    path.join(homeDir, '.vscode-insiders', 'extensions'),
-    path.join(homeDir, '.vscode-server', 'extensions'),
-    path.join(homeDir, '.cursor', 'extensions'),
-  ];
-
-  for (const extBase of extBaseDirs) {
-    if (!fs.existsSync(extBase)) continue;
-    try {
-      const entries = fs.readdirSync(extBase, { withFileTypes: true });
-      const claudeExts = entries
-        .filter((entry) => entry.isDirectory() && /(?:anthropic\.)?claude-code/i.test(entry.name))
-        .map((entry) => entry.name)
-        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
-
-      for (const extName of claudeExts) {
-        if (process.platform === 'win32') {
-          // [OS: Windows] Extension binary paths
-          candidates.push(
-            path.join(extBase, extName, 'resources', 'native-binary', 'claude.exe'),
-            path.join(extBase, extName, 'bin', 'claude.exe'),
-            path.join(extBase, extName, 'resources', 'native-binary', 'claude.cmd'),
-          );
-        } else {
-          // [OS: macOS / Linux] Extension binary paths
-          candidates.push(
-            path.join(extBase, extName, 'resources', 'native-binary', 'claude'),
-            path.join(extBase, extName, 'bin', 'claude'),
-          );
-        }
-      }
-    } catch {}
-  }
-
-  // [MODE: Claude VS Code Extension] [OS: macOS - Agent-host SDK Cache]
-  if (process.platform === 'darwin') {
-    const macCodeRoots = [
-      path.join(homeDir, 'Library/Application Support/Code/agent-host/sdk-cache/claude'),
-      path.join(homeDir, 'Library/Application Support/Code - Insiders/agent-host/sdk-cache/claude'),
-    ];
-    for (const sdkRoot of macCodeRoots) {
-      const versions = scanVersionDirs(sdkRoot);
-      for (const ver of versions) {
-        candidates.push(
-          path.join(sdkRoot, ver, 'darwin-arm64/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'),
-          path.join(sdkRoot, ver, 'darwin-x64/node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/claude'),
-        );
-      }
+/** Parses the runner-specific `--claude-mode`/`--mode` and `--test-modes` flags. */
+function parseModeFlags(args) {
+  let requestedMode = null;
+  let testModes = false;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--claude-mode' || arg === '--mode') {
+      requestedMode = args[++i] || null;
+    } else if (arg.startsWith('--claude-mode=')) {
+      requestedMode = arg.slice('--claude-mode='.length);
+    } else if (arg === '--test-modes' || arg === '--probe-modes' || arg === '--reachability') {
+      testModes = true;
     }
   }
-
-  // [MODE: Claude VS Code Extension] [OS: Windows - Agent-host SDK Cache]
-  if (process.platform === 'win32' && process.env.APPDATA) {
-    const winCodeRoots = [
-      path.join(process.env.APPDATA, 'Code', 'agent-host', 'sdk-cache', 'claude'),
-      path.join(process.env.APPDATA, 'Code - Insiders', 'agent-host', 'sdk-cache', 'claude'),
-    ];
-    for (const sdkRoot of winCodeRoots) {
-      const versions = scanVersionDirs(sdkRoot);
-      for (const ver of versions) {
-        candidates.push(
-          path.join(sdkRoot, ver, 'win32-x64', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-x64', 'claude.exe'),
-          path.join(sdkRoot, ver, 'win32-arm64', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-arm64', 'claude.exe'),
-        );
-      }
-    }
-  }
-
-  // [MODE: Claude VS Code Extension] [OS: Linux - Agent-host SDK Cache]
-  if (process.platform === 'linux') {
-    const linuxCodeRoots = [
-      path.join(homeDir, '.config', 'Code', 'agent-host', 'sdk-cache', 'claude'),
-      path.join(homeDir, '.config', 'Code - Insiders', 'agent-host', 'sdk-cache', 'claude'),
-    ];
-    for (const sdkRoot of linuxCodeRoots) {
-      const versions = scanVersionDirs(sdkRoot);
-      for (const ver of versions) {
-        candidates.push(
-          path.join(sdkRoot, ver, 'linux-x64/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude'),
-          path.join(sdkRoot, ver, 'linux-arm64/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude'),
-        );
-      }
-    }
-  }
-
-  return findFirstExistingFile(candidates);
+  return { requestedMode, testModes };
 }
 
-// SECTION: Mode 3 - Claude CLI (`cli`)
-
-/**
- * Resolves the standalone Claude Code CLI binary installed via npm, native installer, or package manager.
- *
- * Branching by Operating System:
- * - macOS / Linux:
- *   Probes `~/.local/bin/claude`, `/usr/local/bin/claude`, `/opt/homebrew/bin/claude`,
- *   global npm/nvm paths, and system PATH via `which`.
- * - Windows:
- *   Probes `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, and system PATH via `where.exe`.
- *   Prefers nested direct `claude.exe` to avoid batch launcher argument mangling.
- *
- * @returns {string|null}
- */
-export function getClaudeCliBinary() {
-  const extraCandidates = [];
-
-  // [MODE: Claude CLI] [OS: macOS / Linux]
-  if (process.platform !== 'win32') {
-    extraCandidates.push(
-      '~/.local/bin/claude',
-      '/usr/local/bin/claude',
-      '/opt/homebrew/bin/claude',
-      '~/.npm-global/bin/claude',
-    );
-
-    // Node Version Manager (NVM) paths on macOS/Linux
-    const nvmVersionsDir = path.join(os.homedir(), '.nvm', 'versions', 'node');
-    const nvmVersions = scanVersionDirs(nvmVersionsDir);
-    for (const ver of nvmVersions) {
-      extraCandidates.push(path.join(nvmVersionsDir, ver, 'bin', 'claude'));
+function printReachabilityReport() {
+  const report = probeAllClaudeModes();
+  console.log('\nClaude Modes Reachability Report:');
+  for (const r of report) {
+    const statusIcon = r.reachable ? '✓ REACHABLE' : '✗ UNREACHABLE';
+    const detail = r.reachable ? `(version: ${r.version})` : `(${r.error || 'not installed'})`;
+    console.log(`  - [${r.mode}] ${r.name.padEnd(26)}: ${statusIcon} ${detail}`);
+    if (r.bin) {
+      console.log(`      Path: ${r.bin}`);
     }
   }
-
-  // [MODE: Claude CLI] [OS: Windows]
-  if (process.platform === 'win32') {
-    if (process.env.APPDATA) {
-      extraCandidates.push(path.join(process.env.APPDATA, 'npm', 'claude.cmd'));
-      extraCandidates.push(path.join(process.env.APPDATA, 'npm', 'claude'));
-    }
-    if (process.env.USERPROFILE) {
-      extraCandidates.push(path.join(process.env.USERPROFILE, '.local', 'bin', 'claude.exe'));
-      extraCandidates.push(path.join(process.env.USERPROFILE, '.local', 'bin', 'claude.cmd'));
-    }
-    if (process.env.LOCALAPPDATA) {
-      extraCandidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'claude.exe'));
-    }
-  }
-
-  // System PATH lookup fallback across platforms
-  const bin = findBinary(process.platform === 'win32' ? 'claude.cmd' : 'claude', extraCandidates);
-
-  // [OS: Windows] Prefer direct claude.exe inside node_modules over .cmd launcher
-  if (process.platform === 'win32' && bin) {
-    const nestedExe = path.join(
-      path.dirname(bin),
-      'node_modules',
-      '@anthropic-ai',
-      'claude-code',
-      'bin',
-      'claude.exe',
-    );
-    if (fs.existsSync(nestedExe)) {
-      return nestedExe;
-    }
-  }
-
-  return bin;
+  const resolved = resolveClaudeTarget();
+  console.log(
+    `\nActive preference selection: ${
+      resolved ? `${resolved.name} [${resolved.mode}] (${resolved.bin})` : 'None found'
+    }\n`,
+  );
 }
 
-// SECTION: Mode Preference Order & Target Resolution
+function printHelp() {
+  console.log(`
+Claude Code CLI Runner (claude)
+
+Usage:
+  node scripts/claude-run.mjs [options] [prompt]
+
+Options:
+  -p, --prompt <string>         The prompt message to send
+  -f, --file, --artifact        Attach context file or artifact (repeatable)
+  -m, --model <name>            Override Claude model (default: ${DEFAULT_CLAUDE_MODELS.join(', ')})
+  -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_CLAUDE_EFFORT})
+  -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --claude-mode <mode>          Select execution mode: desktop | vscode | cli
+  --test-modes, --reachability  Test reachability of all modes (--version) without token consumption
+  -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
+  -h, --help                    Show this help
+
+Preference Order:
+  1. Claude Desktop (desktop)
+  2. Claude VS Code Extension (vscode)
+  3. Claude CLI (cli)
+`);
+}
+
+// ============================================================================
+// SECTION: Mode Resolution & Reachability
+// ============================================================================
 
 /**
- * Resolves the Claude binary in order of preference:
- *   1. Claude Desktop (`desktop`)
- *   2. Claude VS Code Extension (`vscode`)
- *   3. Claude CLI (`cli`)
- *
- * @param {'desktop'|'vscode'|'cli'|null} [preferredMode] Explicit mode override, or null for default cascade
+ * Resolves the Claude binary in cascade preference order, or for one pinned mode.
+ * @param {ClaudeMode|null} [preferredMode]
  * @returns {string|null}
  */
 export function getClaudeBinary(preferredMode = null) {
-  if (preferredMode === 'desktop') return getClaudeDesktopBinary();
-  if (preferredMode === 'vscode') return getClaudeVSCodeBinary();
-  if (preferredMode === 'cli') return getClaudeCliBinary();
-
-  // Cascade order of preference: claude desktop > claude vscode extension > claude cli
-  return (
-    getClaudeDesktopBinary() ||
-    getClaudeVSCodeBinary() ||
-    getClaudeCliBinary() ||
-    null
-  );
+  const target = resolveClaudeTarget(preferredMode);
+  return target ? target.bin : null;
 }
 
 /**
  * Resolves the active Claude execution target with mode metadata.
- *
- * @param {'desktop'|'vscode'|'cli'|null} [preferredMode]
- * @returns {{ mode: 'desktop'|'vscode'|'cli', name: string, bin: string } | null}
+ * @param {ClaudeMode|null} [preferredMode]
+ * @returns {ClaudeTarget|null}
  */
 export function resolveClaudeTarget(preferredMode = null) {
-  const modes = [
-    { mode: 'desktop', name: 'Claude Desktop', fn: getClaudeDesktopBinary },
-    { mode: 'vscode', name: 'Claude VS Code Extension', fn: getClaudeVSCodeBinary },
-    { mode: 'cli', name: 'Claude CLI', fn: getClaudeCliBinary },
-  ];
+  const candidates = preferredMode
+    ? MODE_DEFINITIONS.filter((m) => m.mode === preferredMode.toLowerCase())
+    : MODE_DEFINITIONS;
 
-  const ordered = preferredMode
-    ? modes.filter((m) => m.mode === preferredMode.toLowerCase())
-    : modes;
-
-  for (const candidate of ordered) {
+  for (const candidate of candidates) {
     const bin = candidate.fn();
     if (bin) {
       return { mode: candidate.mode, name: candidate.name, bin };
@@ -481,12 +599,9 @@ export function resolveClaudeTarget(preferredMode = null) {
   return null;
 }
 
-// SECTION: Reachability & Mode Probing
-
 /**
- * Tests whether a Claude binary is reachable and executable without requiring tokens or subscriptions.
- * Runs `--version` with a short timeout.
- *
+ * Tests whether a Claude binary is reachable and executable without requiring tokens or
+ * subscriptions. Runs `--version` with a short timeout.
  * @param {string} binPath
  * @returns {{ reachable: boolean, version: string|null, error: string|null }}
  */
@@ -500,8 +615,7 @@ export function testClaudeBinaryReachability(binPath) {
   try {
     const res = spawnCliSync(binPath, ['--version'], { encoding: 'utf8', timeout: 3000 });
     if (res.status === 0) {
-      const version = (res.stdout || '').trim();
-      return { reachable: true, version, error: null };
+      return { reachable: true, version: (res.stdout || '').trim(), error: null };
     }
     return {
       reachable: false,
@@ -514,18 +628,12 @@ export function testClaudeBinaryReachability(binPath) {
 }
 
 /**
- * Probes all three Claude modes, reporting reachability, paths, and versions without consuming tokens.
- *
- * @returns {Array<{ mode: 'desktop'|'vscode'|'cli', name: string, bin: string|null, reachable: boolean, version: string|null, status: string, error?: string }>}
+ * Probes all three Claude modes, reporting reachability, paths, and versions without
+ * consuming tokens.
+ * @returns {Array<{ mode: ClaudeMode, name: string, bin: string|null, reachable: boolean, version: string|null, status: string, error?: string }>}
  */
 export function probeAllClaudeModes() {
-  const modes = [
-    { mode: 'desktop', name: 'Claude Desktop', fn: getClaudeDesktopBinary },
-    { mode: 'vscode', name: 'Claude VS Code Extension', fn: getClaudeVSCodeBinary },
-    { mode: 'cli', name: 'Claude CLI', fn: getClaudeCliBinary },
-  ];
-
-  return modes.map(({ mode, name, fn }) => {
+  return MODE_DEFINITIONS.map(({ mode, name, fn }) => {
     const bin = fn();
     if (!bin) {
       return { mode, name, bin: null, reachable: false, version: null, status: 'NOT_FOUND' };
@@ -546,8 +654,7 @@ export function probeAllClaudeModes() {
 /**
  * Checks if Claude Code is available in any mode (or a specific preferred mode)
  * by verifying binary reachability up to `--version`.
- *
- * @param {'desktop'|'vscode'|'cli'|null} [preferredMode]
+ * @param {ClaudeMode|null} [preferredMode]
  * @returns {Promise<boolean>}
  */
 export async function isClaudeAvailable(preferredMode = null) {
@@ -556,7 +663,291 @@ export async function isClaudeAvailable(preferredMode = null) {
   return testClaudeBinaryReachability(bin).reachable;
 }
 
+// ============================================================================
+// SECTION: Binary Discovery — Mode 1: Claude Desktop (`desktop`)
+// ============================================================================
+
+/**
+ * Resolves the Claude Code binary bundled or managed by the Claude Desktop application.
+ *
+ * Branching by Operating System:
+ * - macOS (darwin):
+ *   Probes `~/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude`
+ *   as well as fallback app bundle resource paths.
+ * - Windows (win32):
+ *   Probes `%APPDATA%\Claude\claude-code` and `%LOCALAPPDATA%\Claude\claude-code` for `<version>\claude.exe`,
+ *   and `%LOCALAPPDATA%\Programs\Claude\resources\claude-code\claude.exe`.
+ * - Linux (linux):
+ *   Probes `~/.config/Claude/claude-code/<version>/claude`, `~/.local/share/Claude/claude-code/...`,
+ *   and `/opt/Claude/claude-code/claude`.
+ *
+ * @returns {string|null}
+ */
+export function getClaudeDesktopBinary() {
+  const candidates = [];
+
+  // [OS: macOS] Claude Desktop installs helper CLI binaries inside
+  // ~/Library/Application Support/Claude/claude-code/<version>/claude.app
+  if (process.platform === 'darwin') {
+    const appSupportClaudeCode = path.join(
+      os.homedir(),
+      'Library/Application Support/Claude/claude-code',
+    );
+    for (const ver of scanVersionDirs(appSupportClaudeCode)) {
+      candidates.push(
+        path.join(appSupportClaudeCode, ver, 'claude.app/Contents/MacOS/claude'),
+        path.join(appSupportClaudeCode, ver, 'claude'),
+        path.join(appSupportClaudeCode, ver, 'bin/claude'),
+      );
+    }
+    candidates.push(
+      '/Applications/Claude.app/Contents/Resources/claude-code/claude',
+      path.join(os.homedir(), 'Applications/Claude.app/Contents/Resources/claude-code/claude'),
+    );
+  }
+
+  // [OS: Windows] Claude Desktop stores app data in %APPDATA%\Claude and %LOCALAPPDATA%\Claude
+  if (process.platform === 'win32') {
+    const winDirs = [
+      process.env.APPDATA ? path.join(process.env.APPDATA, 'Claude', 'claude-code') : null,
+      process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Claude', 'claude-code') : null,
+    ].filter(Boolean);
+
+    for (const winDir of winDirs) {
+      for (const ver of scanVersionDirs(winDir)) {
+        candidates.push(
+          path.join(winDir, ver, 'claude.exe'),
+          path.join(winDir, ver, 'claude', 'claude.exe'),
+          path.join(winDir, ver, 'bin', 'claude.exe'),
+        );
+      }
+    }
+
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(
+        path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'resources', 'claude-code', 'claude.exe'),
+        path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'claude-code', 'claude.exe'),
+      );
+    }
+  }
+
+  // [OS: Linux] Claude Desktop / packages place data in ~/.config/Claude or ~/.local/share/Claude
+  if (process.platform === 'linux') {
+    const linuxDirs = [
+      path.join(os.homedir(), '.config', 'Claude', 'claude-code'),
+      path.join(os.homedir(), '.local', 'share', 'Claude', 'claude-code'),
+    ];
+    for (const lDir of linuxDirs) {
+      for (const ver of scanVersionDirs(lDir)) {
+        candidates.push(
+          path.join(lDir, ver, 'claude'),
+          path.join(lDir, ver, 'bin', 'claude'),
+        );
+      }
+    }
+    candidates.push(
+      '/opt/Claude/claude-code/claude',
+      '/opt/claude/claude-code/claude',
+    );
+  }
+
+  return findFirstExistingFile(candidates);
+}
+
+// ============================================================================
+// SECTION: Binary Discovery — Mode 2: Claude VS Code Extension (`vscode`)
+// ============================================================================
+
+/**
+ * Resolves the Claude Code binary bundled with the Anthropic VS Code Extension.
+ *
+ * Branching by Operating System & IDE:
+ * - Cross-platform:
+ *   1. Direct environment variable export `CLAUDE_CODE_EXECPATH`.
+ *   2. Probes VS Code extension directories (`~/.vscode/extensions`, `~/.vscode-insiders/extensions`,
+ *      `~/.vscode-server/extensions`, `~/.cursor/extensions`) for `anthropic.claude-code-*`.
+ * - macOS (darwin):
+ *   Probes `~/Library/Application Support/Code/agent-host/sdk-cache/claude` and `Code - Insiders`.
+ * - Windows (win32):
+ *   Probes `%APPDATA%\Code\agent-host\sdk-cache\claude` and `Code - Insiders`.
+ * - Linux (linux):
+ *   Probes `~/.config/Code/agent-host/sdk-cache/claude` and `Code - Insiders`.
+ *
+ * @returns {string|null}
+ */
+export function getClaudeVSCodeBinary() {
+  const candidates = [];
+  const homeDir = os.homedir();
+
+  // [Cross-platform] The VS Code extension exports CLAUDE_CODE_EXECPATH into terminals it spawns.
+  if (process.env.CLAUDE_CODE_EXECPATH) {
+    candidates.push(process.env.CLAUDE_CODE_EXECPATH);
+  }
+
+  // [Cross-platform] Scan standard VS Code / Cursor extension directories for native binaries.
+  const extBaseDirs = [
+    path.join(homeDir, '.vscode', 'extensions'),
+    path.join(homeDir, '.vscode-insiders', 'extensions'),
+    path.join(homeDir, '.vscode-server', 'extensions'),
+    path.join(homeDir, '.cursor', 'extensions'),
+  ];
+
+  for (const extBase of extBaseDirs) {
+    if (!fs.existsSync(extBase)) continue;
+    try {
+      const entries = fs.readdirSync(extBase, { withFileTypes: true });
+      const claudeExts = entries
+        .filter((entry) => entry.isDirectory() && /(?:anthropic\.)?claude-code/i.test(entry.name))
+        .map((entry) => entry.name)
+        .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+
+      for (const extName of claudeExts) {
+        if (process.platform === 'win32') {
+          candidates.push(
+            path.join(extBase, extName, 'resources', 'native-binary', 'claude.exe'),
+            path.join(extBase, extName, 'bin', 'claude.exe'),
+            path.join(extBase, extName, 'resources', 'native-binary', 'claude.cmd'),
+          );
+        } else {
+          candidates.push(
+            path.join(extBase, extName, 'resources', 'native-binary', 'claude'),
+            path.join(extBase, extName, 'bin', 'claude'),
+          );
+        }
+      }
+    } catch {}
+  }
+
+  // [OS: macOS] Agent-host SDK cache
+  if (process.platform === 'darwin') {
+    const macCodeRoots = [
+      path.join(homeDir, 'Library/Application Support/Code/agent-host/sdk-cache/claude'),
+      path.join(homeDir, 'Library/Application Support/Code - Insiders/agent-host/sdk-cache/claude'),
+    ];
+    for (const sdkRoot of macCodeRoots) {
+      for (const ver of scanVersionDirs(sdkRoot)) {
+        candidates.push(
+          path.join(sdkRoot, ver, 'darwin-arm64/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude'),
+          path.join(sdkRoot, ver, 'darwin-x64/node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/claude'),
+        );
+      }
+    }
+  }
+
+  // [OS: Windows] Agent-host SDK cache
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    const winCodeRoots = [
+      path.join(process.env.APPDATA, 'Code', 'agent-host', 'sdk-cache', 'claude'),
+      path.join(process.env.APPDATA, 'Code - Insiders', 'agent-host', 'sdk-cache', 'claude'),
+    ];
+    for (const sdkRoot of winCodeRoots) {
+      for (const ver of scanVersionDirs(sdkRoot)) {
+        candidates.push(
+          path.join(sdkRoot, ver, 'win32-x64', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-x64', 'claude.exe'),
+          path.join(sdkRoot, ver, 'win32-arm64', 'node_modules', '@anthropic-ai', 'claude-agent-sdk-win32-arm64', 'claude.exe'),
+        );
+      }
+    }
+  }
+
+  // [OS: Linux] Agent-host SDK cache
+  if (process.platform === 'linux') {
+    const linuxCodeRoots = [
+      path.join(homeDir, '.config', 'Code', 'agent-host', 'sdk-cache', 'claude'),
+      path.join(homeDir, '.config', 'Code - Insiders', 'agent-host', 'sdk-cache', 'claude'),
+    ];
+    for (const sdkRoot of linuxCodeRoots) {
+      for (const ver of scanVersionDirs(sdkRoot)) {
+        candidates.push(
+          path.join(sdkRoot, ver, 'linux-x64/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude'),
+          path.join(sdkRoot, ver, 'linux-arm64/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude'),
+        );
+      }
+    }
+  }
+
+  return findFirstExistingFile(candidates);
+}
+
+// ============================================================================
+// SECTION: Binary Discovery — Mode 3: Claude CLI (`cli`)
+// ============================================================================
+
+/**
+ * Resolves the standalone Claude Code CLI binary installed via npm, native installer, or
+ * package manager.
+ *
+ * Branching by Operating System:
+ * - macOS / Linux:
+ *   Probes `~/.local/bin/claude`, `/usr/local/bin/claude`, `/opt/homebrew/bin/claude`,
+ *   global npm/nvm paths, and system PATH via `which`.
+ * - Windows:
+ *   Probes `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, and system PATH
+ *   via `where.exe`. Prefers nested direct `claude.exe` to avoid batch launcher argument mangling.
+ *
+ * @returns {string|null}
+ */
+export function getClaudeCliBinary() {
+  const extraCandidates = [];
+
+  // [OS: macOS / Linux]
+  if (process.platform !== 'win32') {
+    extraCandidates.push(
+      '~/.local/bin/claude',
+      '/usr/local/bin/claude',
+      '/opt/homebrew/bin/claude',
+      '~/.npm-global/bin/claude',
+    );
+
+    const nvmVersionsDir = path.join(os.homedir(), '.nvm', 'versions', 'node');
+    for (const ver of scanVersionDirs(nvmVersionsDir)) {
+      extraCandidates.push(path.join(nvmVersionsDir, ver, 'bin', 'claude'));
+    }
+  }
+
+  // [OS: Windows]
+  if (process.platform === 'win32') {
+    if (process.env.APPDATA) {
+      extraCandidates.push(
+        path.join(process.env.APPDATA, 'npm', 'claude.cmd'),
+        path.join(process.env.APPDATA, 'npm', 'claude'),
+      );
+    }
+    if (process.env.USERPROFILE) {
+      extraCandidates.push(
+        path.join(process.env.USERPROFILE, '.local', 'bin', 'claude.exe'),
+        path.join(process.env.USERPROFILE, '.local', 'bin', 'claude.cmd'),
+      );
+    }
+    if (process.env.LOCALAPPDATA) {
+      extraCandidates.push(path.join(process.env.LOCALAPPDATA, 'Programs', 'Claude', 'claude.exe'));
+    }
+  }
+
+  const bin = findBinary(process.platform === 'win32' ? 'claude.cmd' : 'claude', extraCandidates);
+
+  // [OS: Windows] Prefer direct claude.exe inside node_modules over the .cmd launcher
+  if (process.platform === 'win32' && bin) {
+    const nestedExe = path.join(
+      path.dirname(bin),
+      'node_modules',
+      '@anthropic-ai',
+      'claude-code',
+      'bin',
+      'claude.exe',
+    );
+    if (fs.existsSync(nestedExe)) {
+      return nestedExe;
+    }
+  }
+
+  return bin;
+}
+
+
+// ============================================================================
 // SECTION: Session ID & Envelope Parsing
+// ============================================================================
 
 /**
  * Extracts Claude session ID from raw output or error trace.
@@ -617,398 +1008,11 @@ export function parseClaudeEnvelope(rawStdout) {
   };
 }
 
-// SECTION: Execution Runner
+// ============================================================================
+// SECTION: Module Execution Guard
+// ============================================================================
 
-/**
- * Runs a prompt through Claude Code using the preferred mode (desktop > vscode > cli).
- * If a mode encounters auth or quota failure (unsubscribed or out of tokens), it cascades
- * to the next available mode in preference order unless pinned.
- */
-export async function runClaude(options = {}) {
-  const {
-    prompt,
-    files = [],
-    model = DEFAULT_CLAUDE_MODEL,
-    effort = DEFAULT_CLAUDE_EFFORT,
-    timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
-    verbose = false,
-    claudeMode = null,
-  } = options;
-
-  // Determine candidate execution modes in order of preference
-  const allModeCandidates = [
-    { mode: 'desktop', name: 'Claude Desktop', fn: getClaudeDesktopBinary },
-    { mode: 'vscode', name: 'Claude VS Code Extension', fn: getClaudeVSCodeBinary },
-    { mode: 'cli', name: 'Claude CLI', fn: getClaudeCliBinary },
-  ];
-
-  const targetModes = claudeMode
-    ? allModeCandidates.filter((m) => m.mode === claudeMode.toLowerCase())
-    : allModeCandidates;
-
-  const viableTargets = [];
-  for (const candidate of targetModes) {
-    const bin = candidate.fn();
-    if (bin && testClaudeBinaryReachability(bin).reachable) {
-      viableTargets.push({ mode: candidate.mode, name: candidate.name, bin });
-    }
-  }
-
-  if (viableTargets.length === 0) {
-    const err = new Error(
-      'Claude Code was not found or not reachable in any mode (Claude Desktop, VS Code extension, or CLI).\n' +
-        'Install options:\n' +
-        '  - Claude Desktop: Install Claude Desktop application\n' +
-        '  - VS Code Extension: Install Anthropic Claude Code extension\n' +
-        '  - Claude CLI: npm install -g @anthropic-ai/claude-code (or curl -fsSL https://claude.ai/install.sh | bash)',
-    );
-    err.code = 'CLI_NOT_FOUND';
-    throw err;
-  }
-
-  const sessionLogger = createSessionLogger('claude');
-  const initialGitStatus = getGitStatus();
-
-  const attachments = buildAttachmentBlock(files);
-  for (const note of attachments.notes) {
-    process.stderr.write(`[dispatch] Attachment ${note}\n`);
-  }
-
-  const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
-  const formattedPrompt = formatSafetyPrompt(fullPrompt, {
-    workspaceRoot: PROJECT_ROOT,
-    attachedFiles: files,
-  });
-
-  const effectiveEffort = effort || DEFAULT_CLAUDE_EFFORT;
-
-  // Resolve models to try in priority order
-  let modelsToTry = [];
-  if (Array.isArray(model)) {
-    modelsToTry = model.filter(Boolean);
-  } else if (typeof model === 'string' && model.includes(',')) {
-    modelsToTry = model.split(',').map((m) => m.trim()).filter(Boolean);
-  } else if (typeof model === 'string' && model.trim()) {
-    const trimmed = model.trim();
-    if (trimmed === DEFAULT_CLAUDE_MODEL || trimmed === 'default') {
-      modelsToTry = [...DEFAULT_CLAUDE_MODELS];
-    } else {
-      modelsToTry = [trimmed];
-    }
-  } else {
-    modelsToTry = [...DEFAULT_CLAUDE_MODELS];
-  }
-
-  if (modelsToTry.length === 0) {
-    modelsToTry = [...DEFAULT_CLAUDE_MODELS];
-  }
-
-  // Helper to execute on a specific target and model
-  const executeOnTarget = async (target, targetModel = null) => {
-    const selectedModel = targetModel || modelsToTry[0] || DEFAULT_CLAUDE_MODEL;
-    // Headless print mode (interactive mode removed — delegates are always headless)
-    const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
-    const claudeArgs = ['-p', argvPrompt, '--output-format', 'json'];
-
-    if (selectedModel) claudeArgs.push('--model', selectedModel);
-    if (effectiveEffort) claudeArgs.push('--effort', effectiveEffort);
-    for (const tool of READ_ONLY_ALLOWED_TOOLS) {
-      claudeArgs.push('--allowedTools', tool);
-    }
-
-    emitInitBanner({
-      provider: `Claude Code [${target.mode}] (claude)`,
-      logFile: sessionLogger.logFile,
-      mode: 'READ-ONLY',
-    });
-
-    const trace = createTraceWriter(verbose);
-
-    return new Promise((resolve, reject) => {
-      let stdoutBuffer = '';
-      let stderrBuffer = '';
-      let totalOutputBytes = 0;
-      let isTimedOut = false;
-      let isBufferExceeded = false;
-      const maxBufferBytes = maxBufferMb * 1024 * 1024;
-
-      const child = spawnCli(target.bin, claudeArgs, {
-        cwd: PROJECT_ROOT,
-        env: getSanitizedEnv(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      });
-
-      const timer = setTimeout(() => {
-        isTimedOut = true;
-        terminateProcessTree(child);
-      }, timeout * 1000);
-
-      const cleanup = () => {
-        clearTimeout(timer);
-        terminateProcessTree(child);
-        sessionLogger.close();
-      };
-
-      child.stdout.on('data', (chunk) => {
-        totalOutputBytes += chunk.length;
-        if (totalOutputBytes > maxBufferBytes) {
-          if (!isBufferExceeded) {
-            isBufferExceeded = true;
-            terminateProcessTree(child);
-          }
-          return;
-        }
-        stdoutBuffer += chunk.toString('utf8');
-        sessionLogger.write(chunk);
-        if (trace) trace(chunk);
-      });
-
-      child.stderr.on('data', (chunk) => {
-        stderrBuffer += chunk.toString('utf8');
-        sessionLogger.write(chunk);
-        if (trace) trace(chunk);
-      });
-
-      child.on('close', (code, signal) => {
-        clearTimeout(timer);
-
-        const envelope = parseClaudeEnvelope(stdoutBuffer);
-        const sessionId = envelope.sessionId || extractClaudeSessionId(stderrBuffer);
-        const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
-
-        let gitIntegrityViolation = false;
-        let gitIntegrityDetails = null;
-        if (initialGitStatus !== null) {
-          const finalGitStatus = getGitStatus();
-          if (finalGitStatus !== null && finalGitStatus !== initialGitStatus) {
-            gitIntegrityViolation = true;
-            gitIntegrityDetails = describeGitStatusDiff(initialGitStatus, finalGitStatus);
-          }
-        }
-
-        const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-        const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
-
-        emitCompletionBanner({
-          provider: `Claude Code [${target.mode}] (claude)`,
-          sessionLink,
-          exitCode,
-          truncated,
-        });
-
-        resolve({
-          provider: 'claude',
-          claudeMode: target.mode,
-          bin: target.bin,
-          model: selectedModel,
-          stdout: envelope.text,
-          rawStdout: stdoutBuffer,
-          stderr: stderrBuffer,
-          exitCode: envelope.isError && exitCode === 0 ? 1 : exitCode,
-          logFile: sessionLogger.logFile,
-          briefFile,
-          sessionId,
-          sessionLink,
-          truncated,
-          failureKind:
-            envelope.subtype ||
-            classifyFailure(`${stderrBuffer}\n${envelope.text}`) ||
-            (truncated ? truncated : null),
-          gitIntegrityViolation,
-          gitIntegrityDetails,
-        });
-      });
-
-      child.on('error', (err) => {
-        cleanup();
-        err.code = 1;
-        err.stderr = stderrBuffer;
-        reject(err);
-      });
-    });
-  };
-
-  let lastResult = null;
-
-  // Execute across viable targets and candidate models in priority order
-  for (let i = 0; i < viableTargets.length; i++) {
-    const currentTarget = viableTargets[i];
-    const isLastTarget = i === viableTargets.length - 1;
-
-    for (let m = 0; m < modelsToTry.length; m++) {
-      const currentModel = modelsToTry[m];
-      const isLastModel = m === modelsToTry.length - 1;
-
-      try {
-        const result = await executeOnTarget(currentTarget, currentModel);
-        lastResult = result;
-
-        const isSuccess = result.exitCode === 0 && !result.failureKind;
-        if (isSuccess) {
-          sessionLogger.close();
-          return result;
-        }
-
-        // If this model run failed, try next fallback model if available
-        if (!isLastModel) {
-          const nextModel = modelsToTry[m + 1];
-          process.stderr.write(
-            `[dispatch] Notice: Model '${currentModel}' failed or not available on ${currentTarget.name} (exit ${result.exitCode}${result.failureKind ? `, failure: ${result.failureKind}` : ''}).\n` +
-              `[dispatch] Trying fallback model '${nextModel}'...\n`,
-          );
-          continue;
-        }
-
-        const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
-
-        // If all models failed on this target mode and it's out of quota/auth, cascade to next available mode
-        if (isQuotaOrAuth && !isLastTarget && !claudeMode) {
-          process.stderr.write(
-            `[dispatch] Notice: ${currentTarget.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
-              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
-          );
-          break;
-        }
-
-        sessionLogger.close();
-        return result;
-      } catch (err) {
-        if (!isLastModel) {
-          process.stderr.write(
-            `[dispatch] Warning: Model '${currentModel}' execution failed on ${currentTarget.name} (${err.message}). Trying fallback model '${modelsToTry[m + 1]}'...\n`,
-          );
-          continue;
-        }
-        if (!isLastTarget && !claudeMode) {
-          process.stderr.write(
-            `[dispatch] Warning: ${currentTarget.name} execution failed (${err.message}). Cascading to next mode...\n`,
-          );
-          break;
-        }
-        sessionLogger.close();
-        throw err;
-      }
-    }
-  }
-
-  sessionLogger.close();
-  return lastResult;
-}
-
-// SECTION: CLI Entry Point
-
-export async function main() {
-  const options = parseCommonArgs(process.argv);
-
-  // Parse custom mode flags
-  const args = process.argv.slice(2);
-  let requestedMode = null;
-  let testModes = false;
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--claude-mode' || arg === '--mode') {
-      requestedMode = args[++i] || null;
-    } else if (arg.startsWith('--claude-mode=')) {
-      requestedMode = arg.slice('--claude-mode='.length);
-    } else if (arg === '--test-modes' || arg === '--probe-modes' || arg === '--reachability') {
-      testModes = true;
-    }
-  }
-
-  if (testModes) {
-    const report = probeAllClaudeModes();
-    console.log('\nClaude Modes Reachability Report:');
-    for (const r of report) {
-      const statusIcon = r.reachable ? '✓ REACHABLE' : '✗ UNREACHABLE';
-      const detail = r.reachable ? `(version: ${r.version})` : `(${r.error || 'not installed'})`;
-      console.log(`  - [${r.mode}] ${r.name.padEnd(26)}: ${statusIcon} ${detail}`);
-      if (r.bin) {
-        console.log(`      Path: ${r.bin}`);
-      }
-    }
-    const resolved = resolveClaudeTarget();
-    console.log(
-      `\nActive preference selection: ${
-        resolved ? `${resolved.name} [${resolved.mode}] (${resolved.bin})` : 'None found'
-      }\n`,
-    );
-    process.exit(0);
-  }
-
-  if (options.help) {
-    console.log(`
-Claude Code CLI Runner (claude)
-
-Usage:
-  node scripts/claude-run.mjs [options] [prompt]
-
-Options:
-  -p, --prompt <string>         The prompt message to send
-  -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Claude model (default: ${DEFAULT_CLAUDE_MODELS.join(', ')})
-  -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_CLAUDE_EFFORT})
-  -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
-  --claude-mode <mode>          Select execution mode: desktop | vscode | cli
-  --test-modes, --reachability  Test reachability of all modes (--version) without token consumption
-  -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
-  -h, --help                    Show this help
-
-Preference Order:
-  1. Claude Desktop (desktop)
-  2. Claude VS Code Extension (vscode)
-  3. Claude CLI (cli)
-`);
-    process.exit(0);
-  }
-
-  const pipedStdin = await readStdin();
-  let finalPrompt = options.prompt.trim();
-  if (pipedStdin) {
-    finalPrompt = finalPrompt
-      ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}`
-      : pipedStdin;
-  }
-
-  if (!finalPrompt) {
-    console.error('Error: No prompt provided.');
-    process.exit(1);
-  }
-
-  try {
-    const res = await runClaude({
-      ...options,
-      claudeMode: requestedMode || options.claudeMode,
-      prompt: finalPrompt,
-    });
-    if (res.stdout) {
-      process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
-    }
-    if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (res.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
-      }
-      console.warn('');
-    }
-    process.exit(res.exitCode);
-  } catch (err) {
-    console.error(`\n[dispatch] ERROR: ${err.message}`);
-    process.exit(typeof err.code === 'number' ? err.code : 1);
-  }
-}
-
-if (
-  process.argv[1] &&
-  (() => {
-    const a = path.resolve(process.argv[1]);
-    const b = path.resolve(currentFilePath);
-    if (a === b) return true;
-    try { return fs.realpathSync(a) === fs.realpathSync(b); } catch { return false; }
-  })()
-) {
+if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     console.error(`Fatal error: ${err.message}`);
     process.exit(1);

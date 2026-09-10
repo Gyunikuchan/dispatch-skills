@@ -104,7 +104,7 @@ Guide the orchestrator to route the code review to a specific external CLI:
 Pass explicit plan or walkthrough paths if you want the review anchored to specific design docs:
 
 ```markdown
-/dispatch-code-review .scratch/plan/auth-v2-walkthrough.md
+/dispatch-code-review .scratch/plan/2026-09-08-auth-v2-walkthrough.md
 ```
 
 ---

@@ -64,6 +64,7 @@ Populate the template variables:
 - `<Plan Path>` — path to the attached plan, or `None`.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
 - `<Review Scope>` — `Full review` on a first review. On a re-review, `Re-review round <n> — verify the resolutions logged under ## Review Findings & Resolutions; raise new findings only on lines changed since round <n-1>: <changed paths>`.
+- `<Tool Turn Budget>` — orchestrator-supplied tool-turn budget, or `Unspecified`.
 
 ````markdown
 Evaluate recent session changes across six axes.
@@ -74,6 +75,7 @@ Evaluate recent session changes across six axes.
 - Implementation Plan: <Plan Path>
 - Review Focus: <User Focus Areas>
 - Review Scope: <Review Scope>
+- Tool Turn Budget: <Tool Turn Budget>
 
 Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` from the workspace) and industry best practices for code quality.
 
@@ -84,7 +86,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
 2. Cross-reference changes against the attached walkthrough and implementation plan (if provided) to verify intent fidelity, completeness, and test coverage.
 3. Targeted inspection: inspect targeted diffs (`git diff --staged -- <paths>` / `git diff -- <paths>`) and check adjacent call sites, interfaces, or tests to verify contracts and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Avoid full-file dumps or open-ended codebase exploration.
 4. Honour Review Scope: on a re-review round, confine the six axes to the paths it names plus their call sites, confirm each logged resolution actually landed, and treat lines settled in earlier rounds as closed.
-5. Complete inspection quickly (typically 3–4 tool turns for focused tasks; up to 8 tool turns for broad refactors or cross-cutting changes; fewer on a re-review round), then emit the report immediately.
+5. Complete inspection within Tool Turn Budget when it names a number; otherwise spend 3–4 tool turns for focused tasks, up to 8 for broad refactors or cross-cutting changes, and fewer on a re-review round. Spend a constrained budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
 
 #### 2. Six-Axis Evaluation
 - **Architecture & Module Design** (`shallow`, `seam`, `adapter`, `coupling`):

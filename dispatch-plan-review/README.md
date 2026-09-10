@@ -84,7 +84,7 @@ Pass focus areas directly after the command:
 ```
 
 ```markdown
-/dispatch-plan-review .scratch/plan/auth-v2.md focus on trust boundaries and session revocation
+/dispatch-plan-review .scratch/plan/2026-09-08-auth-v2.md focus on trust boundaries and session revocation
 ```
 
 ### 3. Pinning a Reviewer Provider
@@ -116,7 +116,7 @@ If no plan file exists yet, simply describe the feature and request a plan revie
 - **Plan File Updated on Disk**: Accepted changes are not just printed in the chat; they are actively written back to the target plan file (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying the plan.
 - **Structured Plan Resolution Order**:
-  1. *Explicit user-provided path* (e.g. `.scratch/plan/feature.md`).
+  1. *Explicit user-provided path* (e.g. `.scratch/plan/2026-09-08-feature.md`).
   2. *Platform-native plan* (e.g. Antigravity's `implementation_plan.md` artifact).
   3. *Auto-authored plan* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only files named in proposed changes and immediate call sites) rather than unbounded codebase scans, keeping turnaround quick and tokens focused.

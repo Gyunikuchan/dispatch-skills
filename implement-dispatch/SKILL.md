@@ -25,43 +25,57 @@ Delegates return **claims**; the orchestrator adjudicates and applies them.
 
 Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
 
-- `<level>` — `low`, `medium`, `high`, `max`. Controls depth (round caps, consensus requirements), target breadth when unpinned (`none` / `one` / `all`), and model/effort configuration per phase.
-- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `local`). Controls breadth: fans out to exactly these providers.
+- `<level>` — `low`, `medium`, `high`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
+- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`). Overrides breadth: fans out to exactly these providers, whatever the level's count.
 
 ## Flow Plan
 
-Resolve the flow plan at the end of Step 1 once scope is classified, and store the output as `flow`:
+Resolve the flow plan at the end of Step 1 once scope is classified and the slug is chosen, and store the output as `flow`:
 
 ```bash
-node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
+node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> --slug <kebab-slug> [--level <level>] [--pins <key,key,...>] [--date <yyyy-mm-dd>]
 ```
 
-Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `local`).
+Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `opencode`). `--date` defaults to today. `--validate-only` checks the config schema alone and rejects every other flag.
 
 | Field | Read at | Meaning |
 |-------|---------|---------|
 | `flow['plan-review'].targets` | Step 3 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
-| `flow['plan-review'].rounds` | Step 3 | Plan review round cap (`0` skips plan review) |
+| `flow['plan-review'].maxRounds` | Step 3 | Plan review wave cap; `0` means the phase is configured off |
 | `flow['plan-review'].consensus` | Step 3 | Plan review consensus requirement (`true` / `false`) |
+| `flow['plan-review'].toolTurns` | Step 3 | Tool-turn budget handed to each plan reviewer |
 | `flow.implementation` | Step 4 | Orchestrator platform plus model and effort hints for native subagents |
 | `flow['code-review'].targets` | Steps 5, 7 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
-| `flow['code-review'].rounds` | Steps 5, 7 | Code review round cap (`0` skips code review) |
+| `flow['code-review'].maxRounds` | Steps 5, 7 | Code review wave cap; `0` means the phase is configured off |
 | `flow['code-review'].consensus` | Steps 6, 7 | Code review consensus requirement (`true` / `false`) |
+| `flow['code-review'].toolTurns` | Steps 5, 7 | Tool-turn budget handed to each code reviewer |
+| `flow.paths.plan` | Step 2 | Recommended plan artifact path |
+| `flow.paths.walkthrough` | Step 5 | Recommended walkthrough artifact path |
+| `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: number } }` — report as data |
 
-A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. Plan review and code review track independent round counters.
+A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. `maxRounds` counts total waves **including the first review**. Plan review and code review track independent round counters.
 
-When `targets` is empty while `rounds > 0`, external platforms are unavailable: take the in-process subagent fallback below.
+When `targets` is empty and `maxRounds > 0`, external platforms are unavailable: take the in-process subagent fallback below. When `maxRounds === 0` the phase is configured off — run neither the dispatch nor the fallback.
+
+## Platform Agent Modes
+
+| Platform | Write-capable subagent | Read-only subagent |
+|----------|------------------------|--------------------|
+| `claude` | `general-purpose` | `Explore` |
+| `agy` | `self` | `research` |
+| `copilot` | `self` | `self` (read-only tool set) |
+| `opencode` | orchestrator executes directly | orchestrator executes directly |
 
 ## Operating Invariants
 
 - **Execution boundaries**: External delegates run in structurally read-only mode (`--mode plan` or restricted `--allowedTools`). Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
 - **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
 - **Provider flags**: Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
-- **Fallback**: When a provider fails or no candidate is available, re-run the prompt and attachments through an in-process read-only subagent (`research` in Antigravity, `Explore` in Claude Code).
+- **Fallback**: When a provider fails or no candidate is available, re-run the prompt and attachments through the in-process read-only subagent from the platform agent-mode table.
 - **Target affinity**: Route re-reviews and dispute rebuttals back to the specific delegate handles that raised or accepted them.
 - **Evidence over votes**: Deduplicate findings across delegate reports by target locus (`## <Section>` or `<file>:L<line>`). Ground truth is the requirement, active code, and repository rules.
 - **Consensus rule**: Under `consensus: true`, every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in re-dispatch. Under `consensus: false`, reject directly when verified counter-evidence exists.
-- **Round cap escalation**: Reaching a phase's round cap without consensus escalates remaining disputes to the user. User feedback resets that phase's counter.
+- **Round cap escalation**: Reaching a phase's round cap without consensus escalates remaining disputes to the user. User feedback starts a fresh cap: reset that phase's round counter to 0 and allow up to `flow['<phase>'].maxRounds` additional waves.
 
 ## Host Conventions
 
@@ -69,7 +83,7 @@ Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start:
 - **Verify command**: Project test/lint command kept green across all code changes (Steps 4, 6, 7).
 - **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
 
-Scratch artifacts live in `.scratch/plan/` (or platform scratch).
+Resolve each artifact location independently: take `flow.paths.plan` and `flow.paths.walkthrough` as the recommended locations, and when the host platform has already produced a native artifact of that kind, write into that one instead using the respective review skill's template.
 
 ## Process
 
@@ -81,15 +95,16 @@ Scratch artifacts live in `.scratch/plan/` (or platform scratch).
    - `focused` (single component/contract) → requested level.
    - `cross-cutting` (multiple components, schema, security boundary) → requested level.
    *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
-3. Run `resolve-flow.mjs` to resolve `flow`.
+3. Choose a kebab-case slug naming the change.
+4. Run `resolve-flow.mjs` with that slug to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
 
-**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, and `flow` is resolved.
+**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, and `flow` is resolved without errors.
 
 ---
 
 ### 2. Write the Plan
 
-Write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
+Write the plan at `flow.paths.plan` (or the native plan artifact, per Host Conventions) following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
 
 **Done when:** Plan file exists on disk with all template sections populated.
 
@@ -97,11 +112,11 @@ Write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following `dispatch-plan-review`'s 
 
 ### 3. Plan Review Loop
 
-*Runs when `flow['plan-review'].rounds > 0`.*
+*Skipped when `flow['plan-review'].maxRounds === 0`.*
 
-1. **Dispatch**: Dispatch `dispatch-plan-review` prompt template in parallel to each target in `flow['plan-review'].targets` with attached plan (`-f`). Round 1 uses `Review Scope: Full review`.
+1. **Dispatch**: Dispatch `dispatch-plan-review` prompt template in parallel to each target in `flow['plan-review'].targets` with attached plan (`-f`), populating `<Tool Turn Budget>` from `flow['plan-review'].toolTurns`. Round 1 uses `Review Scope: Full review`.
 2. **Adjudicate**: Evaluate returned claims per `dispatch-plan-review`'s adjudication table. Discard passing axes.
-3. **Fold & Re-dispatch**: Apply accepted findings to the plan on disk and record outcomes under `## Review Findings & Resolutions`. When accepted changes modify sections and round count < `flow['plan-review'].rounds`, re-dispatch to reviewing delegates with `Review Scope: Re-review round <n>` naming changed sections.
+3. **Fold & Re-dispatch**: Apply accepted findings to the plan on disk and record outcomes under `## Review Findings & Resolutions`. When accepted changes modify sections and round count < `flow['plan-review'].maxRounds`, re-dispatch to reviewing delegates with `Review Scope: Re-review round <n>` naming changed sections.
 4. **Consensus & Cap**: Enforce `flow['plan-review'].consensus`. Escalate unresolved disputes to the user when cap is reached.
 
 **Done when:** Plan on disk reflects all accepted findings, and all disputes are resolved or user-ruled.
@@ -110,7 +125,7 @@ Write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following `dispatch-plan-review`'s 
 
 ### 4. Implement
 
-Dispatch implementation test-first to a native write-capable subagent (`self` in Antigravity, `general-purpose` in Claude Code) configured with `model` and `effort` from `flow.implementation`. For trivial single-file edits or when subagents are unavailable, execute directly.
+Dispatch implementation test-first to the native write-capable subagent from the platform agent-mode table, configured with `model` and `effort` from `flow.implementation`. Execute directly only when the scope is `trivial` or when the subagent spawn fails.
 
 Require the subagent to implement Proposed Changes, run the host verify command until green, and report back modified files, verification output, and any deviations.
 
@@ -120,10 +135,10 @@ Require the subagent to implement Proposed Changes, run the host verify command 
 
 ### 5. Code Review
 
-*Runs when `flow['code-review'].rounds > 0`.*
+*Skipped when `flow['code-review'].maxRounds === 0`.*
 
-1. Write `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` following `dispatch-code-review`'s walkthrough template.
-2. Dispatch `dispatch-code-review` prompt template in parallel to each target in `flow['code-review'].targets` with attached walkthrough and plan (`-f`), using `Review Scope: Full review`. (Consumes round 1 of code review).
+1. Write the walkthrough at `flow.paths.walkthrough` (or the native walkthrough artifact, per Host Conventions) following `dispatch-code-review`'s walkthrough template.
+2. Dispatch `dispatch-code-review` prompt template in parallel to each target in `flow['code-review'].targets` with attached walkthrough and plan (`-f`), populating `<Tool Turn Budget>` from `flow['code-review'].toolTurns` and using `Review Scope: Full review`. (Consumes round 1 of code review).
 3. Adjudicate returned claims against cited `<file>:L<line>` per `dispatch-code-review`.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
@@ -143,7 +158,7 @@ Require the subagent to implement Proposed Changes, run the host verify command 
 
 ### 7. Re-Review Loop
 
-While previous round modified code and code review round count < `flow['code-review'].rounds`:
+While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
 1. Re-dispatch to reviewing targets with updated walkthrough and `Review Scope: Re-review round <n>` naming modified lines.
 2. Adjudicate returned claims and apply fixes per Step 6.
 
@@ -159,13 +174,14 @@ Proceed to Handoff when:
 ### 8. Handoff & Cleanup
 
 1. **Report to user**: Emit the completed walkthrough directly to the user (or format per host repository handoff conventions in `AGENTS.md` / `CLAUDE.md`), accompanied by run metadata:
-   - Scope classification and effective level.
-   - Rounds spent per phase against caps.
+   - Scope classification, plus `flow.diagnostics.effectiveLevel` and any scope downshift from Step 1.
+   - Rounds spent per phase against `maxRounds`.
    - Reviewing delegates (provider keys, session handles) and any failed delegates.
+   - `flow.diagnostics.unavailable`, `droppedPins`, and `clamped` reported as data.
    - Absent optional skills (if any).
    - Summary of accepted fixes and rejected/downgraded findings.
    - Verification command status.
-2. **Prune scratch artifacts**: Delete `.scratch/plan/` temporary plan and walkthrough files upon reaching consensus/completion. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files for resumption and state reasons in the handoff.
+2. **Prune scratch artifacts**: Delete the scratch plan and walkthrough files this run created upon reaching consensus/completion, leaving platform-native artifacts in place. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files for resumption and state reasons in the handoff.
 3. Leave git operations (commit, push, PR) to the user.
 
 **Done when:** Walkthrough and handoff delivered to user, and temporary scratch artifacts pruned (or retained with explicit reason).

@@ -3,9 +3,13 @@
  * Resolves the implement-dispatch execution flow plan.
  *
  * Usage:
- *   node resolve-flow.mjs --platform <key> [--level <low|medium|high|max>] [--pins <key,key,...>]
+ *   node resolve-flow.mjs --platform <key> --slug <kebab-slug>
+ *                         [--level <low|medium|high|max>] [--pins <key,key,...>]
+ *                         [--date <yyyy-mm-dd>]
+ *   node resolve-flow.mjs --validate-only
  *
- * Outputs JSON to stdout describing plan-review, implementation, and code-review targets.
+ * Outputs JSON to stdout describing plan-review, implementation, and code-review
+ * targets, the recommended artifact paths, and run diagnostics.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -16,72 +20,91 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const DISPATCH_SCRIPTS = path.resolve(__dirname, '../../dispatch/scripts');
 
+/** Invocation grammar for `/implement-dispatch <level>`; not a per-project preference. */
 const LEVELS = ['low', 'medium', 'high', 'max'];
 
-// Per-level config table
-//   planTargets: 'none' | 'one' | 'all'
-//   planRounds: number — fan-out waves for plan review, each wave dispatching every target
-//   codeTargets: 'one' | 'all'
-//   codeRounds: number — fan-out waves for code review, counted independently of planRounds
-//   consensus: boolean
-const LEVEL_CONFIG = {
-  low:    { planTargets: 'none', planRounds: 0, codeTargets: 'one', codeRounds: 1, consensus: false, includeSelf: false },
-  medium: { planTargets: 'one',  planRounds: 1, codeTargets: 'one', codeRounds: 3, consensus: false, includeSelf: false },
-  high:   { planTargets: 'one',  planRounds: 1, codeTargets: 'all', codeRounds: 3, consensus: true,  includeSelf: false },
-  max:    { planTargets: 'all',  planRounds: 3, codeTargets: 'all', codeRounds: 5, consensus: true,  includeSelf: true  },
-};
+const REVIEW_SECTIONS = ['plan-review', 'code-review'];
+const SECTIONS = ['plan-review', 'implementation', 'code-review'];
+const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf', 'toolTurns'];
+/** Knobs that may be omitted entirely; every other knob must define at least one level. */
+const OPTIONAL_KNOBS = ['includeSelf'];
+
+const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const SCRATCH_DIR = '.scratch/plan';
 
 // --- Level resolution ---
 
 /**
- * Resolves the model/effort hints for one platform's entry in any config section.
- *
- * An entry may carry flat `model`/`effort` keys (applying to every level), level keys
- * (`low`/`medium`/`high`/`max`) overriding them, or both. Level selection is:
+ * Picks which defined level applies to the requested level:
  * exact match → nearest defined level below → lowest defined level above.
  *
- * @param {object} entry  - config[section][platform]
- * @param {string} level  - requested level
- * @param {(msg: string) => void} warn - receives config-shape warnings
- * @param {string} section - config section name, for warning messages
+ * Sorts its input, so callers need not pass `definedLevels` in LEVELS order.
+ *
+ * @param {string[]} definedLevels - defined level keys, in any order
+ * @param {string} level           - requested level
+ * @returns {string | undefined}
+ */
+export function selectLevel(definedLevels, level) {
+  if (definedLevels.length === 0) return undefined;
+  const requestedIndex = LEVELS.indexOf(level);
+  const ordered = [...definedLevels].sort((a, b) => LEVELS.indexOf(a) - LEVELS.indexOf(b));
+  return (
+    ordered.findLast(l => LEVELS.indexOf(l) <= requestedIndex) ??
+    ordered.find(l => LEVELS.indexOf(l) > requestedIndex)
+  );
+}
+
+/**
+ * Resolves the model/effort hints for one platform's entry in any `platforms` map.
+ *
+ * An entry may carry flat `model`/`effort` keys (applying to every level), level keys
+ * (`low`/`medium`/`high`/`max`) overriding them, or both. Shape problems are fatal at
+ * validation time, so unrecognised keys are simply not level overrides here.
+ *
+ * @param {object} entry - config[section].platforms[platform]
+ * @param {string} level - requested level
  * @returns {{ model?: string, effort?: string }}
  */
-export function resolveLevelEntry(entry, level, warn = () => {}, section = 'flow') {
+export function resolveLevelEntry(entry, level) {
   if (!entry || typeof entry !== 'object') return {};
 
   const base = {};
   if (entry.model !== undefined) base.model = entry.model;
   if (entry.effort !== undefined) base.effort = entry.effort;
 
-  // Collect valid level overrides, warning on anything unrecognised or malformed
   const overrides = {};
   for (const [key, value] of Object.entries(entry)) {
     if (key === 'model' || key === 'effort') continue;
-    if (!LEVELS.includes(key)) {
-      warn(`Ignoring unrecognized key "${key}" in ${section} config. Valid levels: ${LEVELS.join(', ')}`);
-      continue;
-    }
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      warn(`Ignoring level "${key}" in ${section} config: expected an object with model/effort.`);
-      continue;
-    }
+    if (!LEVELS.includes(key)) continue;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
     overrides[key] = value;
   }
 
-  const defined = LEVELS.filter(l => overrides[l] !== undefined);
-  if (defined.length === 0) return base;
-
-  const requestedIndex = LEVELS.indexOf(level);
-  // Nearest at or below the requested level, else the lowest defined above it
-  const chosen =
-    [...defined].reverse().find(l => LEVELS.indexOf(l) <= requestedIndex) ??
-    defined.find(l => LEVELS.indexOf(l) > requestedIndex);
+  const chosen = selectLevel(LEVELS.filter(l => overrides[l] !== undefined), level);
+  if (chosen === undefined) return base;
 
   const override = overrides[chosen];
   const resolved = { ...base };
   if (override.model !== undefined) resolved.model = override.model;
   if (override.effort !== undefined) resolved.effort = override.effort;
   return resolved;
+}
+
+/**
+ * Resolves a level-keyed scalar knob (`maxRounds`, `targetCount`, `consensus`, ...)
+ * under the same exact → below → above rule as level entries.
+ *
+ * @param {Record<string, unknown>} knob - level key → scalar value
+ * @param {string} level                 - requested level
+ * @returns {unknown | undefined}
+ */
+export function resolveLevelScalar(knob, level) {
+  if (!knob || typeof knob !== 'object') return undefined;
+  const defined = LEVELS.filter(l => knob[l] !== undefined);
+  const chosen = selectLevel(defined, level);
+  return chosen === undefined ? undefined : knob[chosen];
 }
 
 // --- JSONC parsing ---
@@ -129,15 +152,185 @@ function parseJsonc(text) {
 
 // --- Config loading ---
 
-export function loadConfig(scriptDir = __dirname) {
+export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
   const root = path.resolve(scriptDir, '..');
   const localPath = path.join(root, 'config.jsonc');
   const defaultPath = path.join(root, 'config.default.jsonc');
-  const configPath = existsSync(localPath) ? localPath : defaultPath;
+  const configPath = !defaultOnly && existsSync(localPath) ? localPath : defaultPath;
   if (!existsSync(configPath)) {
     throw new Error(`Config file not found: tried ${localPath} and ${defaultPath}`);
   }
   return parseJsonc(readFileSync(configPath, 'utf8'));
+}
+
+// --- Config validation ---
+
+const DIFF_HINT = 'diff against config.default.jsonc';
+
+function isPlainObject(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNonNegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function validatePlatforms(section, platforms, problems) {
+  const where = `${section}.platforms`;
+  if (!isPlainObject(platforms)) {
+    problems.push(`${where} must be an object mapping platform key to model/effort settings (${DIFF_HINT}).`);
+    return;
+  }
+  const keys = Object.keys(platforms);
+  if (keys.length === 0) {
+    problems.push(`${where} must define at least one platform (${DIFF_HINT}).`);
+  }
+  for (const key of keys) {
+    const entry = platforms[key];
+    if (!isPlainObject(entry)) {
+      problems.push(`${where}.${key} must be an object (${DIFF_HINT}).`);
+      continue;
+    }
+    for (const [field, value] of Object.entries(entry)) {
+      if (field === 'model' || field === 'effort') {
+        if (typeof value !== 'string') {
+          problems.push(`${where}.${key}.${field} must be a string (${DIFF_HINT}).`);
+        }
+        continue;
+      }
+      if (!LEVELS.includes(field)) {
+        problems.push(
+          `${where}.${key} has unrecognized key "${field}". Valid keys: model, effort, ${LEVELS.join(', ')} (${DIFF_HINT}).`
+        );
+        continue;
+      }
+      if (!isPlainObject(value)) {
+        problems.push(`${where}.${key}.${field} must be an object with model/effort (${DIFF_HINT}).`);
+        continue;
+      }
+      // A level override carries only model/effort; a typo or an empty object here
+      // would otherwise validate clean and silently resolve to no hint at all.
+      if (Object.keys(value).length === 0) {
+        problems.push(
+          `${where}.${key}.${field} must set at least one of model, effort (${DIFF_HINT}).`
+        );
+      }
+      for (const [inner, innerValue] of Object.entries(value)) {
+        if (inner !== 'model' && inner !== 'effort') {
+          problems.push(
+            `${where}.${key}.${field} has unrecognized key "${inner}". Valid keys: model, effort (${DIFF_HINT}).`
+          );
+        } else if (typeof innerValue !== 'string') {
+          problems.push(`${where}.${key}.${field}.${inner} must be a string (${DIFF_HINT}).`);
+        }
+      }
+    }
+  }
+}
+
+function validateKnob(section, name, knob, problems) {
+  const where = `${section}.${name}`;
+  if (!isPlainObject(knob)) {
+    problems.push(`${where} must be an object keyed by level (${DIFF_HINT}).`);
+    return;
+  }
+  const keys = Object.keys(knob);
+  if (keys.length === 0) {
+    problems.push(`${where} must define at least one level (${DIFF_HINT}).`);
+  }
+  for (const key of keys) {
+    if (!LEVELS.includes(key)) {
+      problems.push(
+        `${where} has unrecognized level "${key}". Valid levels: ${LEVELS.join(', ')} (${DIFF_HINT}).`
+      );
+      continue;
+    }
+    const value = knob[key];
+    switch (name) {
+      case 'maxRounds':
+        if (!isNonNegativeInteger(value)) {
+          problems.push(`${where}.${key} must be a non-negative integer (${DIFF_HINT}).`);
+        }
+        break;
+      case 'targetCount':
+        if (value !== 'all' && !isNonNegativeInteger(value)) {
+          problems.push(`${where}.${key} must be a non-negative integer or "all" (${DIFF_HINT}).`);
+        }
+        break;
+      case 'consensus':
+      case 'includeSelf':
+        if (typeof value !== 'boolean') {
+          problems.push(`${where}.${key} must be a boolean (${DIFF_HINT}).`);
+        }
+        break;
+      case 'toolTurns':
+        if (!Number.isInteger(value) || value < 1) {
+          problems.push(`${where}.${key} must be a positive integer (${DIFF_HINT}).`);
+        }
+        break;
+    }
+  }
+}
+
+/**
+ * Validates a parsed config against the flow schema.
+ *
+ * Reports every problem found in one pass; callers join and throw.
+ *
+ * @param {object} config
+ * @returns {string[]} problem descriptions, empty when the config is valid
+ */
+export function validateConfig(config) {
+  const problems = [];
+
+  if (!isPlainObject(config)) {
+    return [`Config must be a JSON object with sections: ${SECTIONS.join(', ')} (${DIFF_HINT}).`];
+  }
+
+  for (const key of Object.keys(config)) {
+    if (!SECTIONS.includes(key)) {
+      problems.push(
+        `Unrecognized top-level key "${key}". Valid sections: ${SECTIONS.join(', ')} (${DIFF_HINT}).`
+      );
+    }
+  }
+
+  for (const section of SECTIONS) {
+    if (config[section] === undefined) {
+      problems.push(`Missing required section "${section}" (${DIFF_HINT}).`);
+      continue;
+    }
+    if (!isPlainObject(config[section])) {
+      problems.push(`Section "${section}" must be an object (${DIFF_HINT}).`);
+      continue;
+    }
+
+    const allowed = section === 'implementation' ? ['platforms'] : ['platforms', ...REVIEW_KNOBS];
+    for (const key of Object.keys(config[section])) {
+      if (!allowed.includes(key)) {
+        problems.push(
+          `Section "${section}" has unrecognized key "${key}". Valid keys: ${allowed.join(', ')} (${DIFF_HINT}).`
+        );
+      }
+    }
+
+    validatePlatforms(section, config[section].platforms, problems);
+
+    if (section === 'implementation') continue;
+
+    for (const knob of REVIEW_KNOBS) {
+      const value = config[section][knob];
+      if (value === undefined) {
+        if (!OPTIONAL_KNOBS.includes(knob)) {
+          problems.push(`Section "${section}" is missing required knob "${knob}" (${DIFF_HINT}).`);
+        }
+        continue;
+      }
+      validateKnob(section, knob, value, problems);
+    }
+  }
+
+  return problems;
 }
 
 // --- Liveness ---
@@ -148,7 +341,7 @@ export async function defaultLiveness() {
     claude: 'claude-run.mjs',
     agy: 'agy-run.mjs',
     copilot: 'copilot-run.mjs',
-    local: 'local-run.mjs',
+    opencode: 'opencode-run.mjs',
   };
   await Promise.all(
     Object.entries(runners).map(async ([key, file]) => {
@@ -161,7 +354,30 @@ export async function defaultLiveness() {
       }
     })
   );
+  // NOTE: back-compat alias for stale config.jsonc files that still use the old 'local' key.
+  results.local = results.opencode;
   return results;
+}
+
+// --- Date & path helpers ---
+
+/** Local calendar date as `yyyy-mm-dd` — the filename should match the user's day. */
+export function localDate(now = new Date()) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+export function isValidDate(value) {
+  if (!DATE_PATTERN.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function buildPaths(date, slug) {
+  return {
+    plan: path.posix.join(SCRATCH_DIR, `${date}-${slug}.md`),
+    walkthrough: path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
+  };
 }
 
 // --- Core resolution ---
@@ -169,27 +385,43 @@ export async function defaultLiveness() {
 /**
  * Resolves the flow plan.
  *
- * @param {{ platform: string, level?: string, pins?: string[] }} options
- * @param {Record<string, boolean>} liveness  - map of platform key → available
- * @param {object} config                     - parsed config object
- * @param {(msg: string) => void} warn        - receives config-shape warnings
+ * Pure over its inputs: no clock, filesystem, or process access beyond the
+ * optional `date` default.
+ *
+ * `slug` is optional here and `flow.paths` is present only when it is given, so
+ * callers that want nothing to do with artifact paths can omit it. The CLI requires
+ * it, which is why the skill can treat `flow.paths` as always present.
+ *
+ * @param {{ platform: string, level?: string, pins?: string[], slug?: string, date?: string }} options
+ * @param {Record<string, boolean>} liveness - map of platform key → available
+ * @param {object} config                    - parsed config object
  * @returns {object} flow plan JSON
  */
-export function resolveFlow(options, liveness, config, warn = msg => process.stderr.write(`Warning: ${msg}\n`)) {
-  const { platform, level = 'medium', pins } = options;
+export function resolveFlow(options, liveness, config) {
+  const { platform, level = 'medium', pins, slug, date } = options;
 
   if (!LEVELS.includes(level)) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
   }
+  // Validated here rather than only at the CLI so the generated paths cannot escape
+  // the scratch directory when `resolveFlow` is called directly.
+  if (slug !== undefined && !SLUG_PATTERN.test(slug)) {
+    throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
+  }
+  if (date !== undefined && !isValidDate(date)) {
+    throw new Error(`Date "${date}" must be a valid calendar date as yyyy-mm-dd`);
+  }
 
-  const levelCfg = LEVEL_CONFIG[level];
+  const problems = validateConfig(config);
+  if (problems.length > 0) {
+    throw new Error(`Invalid config:\n- ${problems.join('\n- ')}`);
+  }
 
-  // Validate pins against known config keys
+  const platformsOf = section => config[section].platforms;
+
+  // Validate pins against the union of both review sections' platform keys
   if (pins && pins.length > 0) {
-    const allKeys = new Set([
-      ...Object.keys(config['plan-review'] ?? {}),
-      ...Object.keys(config['code-review'] ?? {}),
-    ]);
+    const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(platformsOf(s))));
     const unknown = pins.filter(p => !allKeys.has(p));
     if (unknown.length > 0) {
       throw new Error(
@@ -198,111 +430,145 @@ export function resolveFlow(options, liveness, config, warn = msg => process.std
     }
   }
 
-  // Build a filtered+live candidate list for a given section config
-  function getCandidates(sectionConfig, forReview, includeSelf = false) {
-    // Start from config order; if pinned, filter to pins (in pin order)
-    let keys = Object.keys(sectionConfig ?? {});
+  const clamped = {};
+  const droppedPins = {};
+
+  /**
+   * Builds the live candidate list for one review section.
+   * Pins override `targetCount` and `includeSelf`; unpinned runs sort the
+   * orchestrator last so a narrow count cannot silently yield a self-only review.
+   */
+  function getCandidates(sectionName, targetCount, includeSelf) {
+    const platforms = platformsOf(sectionName);
+    const allKeys = Object.keys(platforms);
+
     if (pins && pins.length > 0) {
-      keys = pins.filter(p => keys.includes(p));
-    }
-
-    // Liveness filter — require explicit true; undefined (unknown platform) is treated as unavailable
-    keys = keys.filter(k => liveness[k] === true);
-
-    // For review sections: error when all pinned platforms are unavailable (pins present in this section's config)
-    // Note: pins absent from this section's config silently produce no targets — this is by design (best-effort per section)
-    if (forReview && pins && pins.length > 0) {
-      const validPins = pins.filter(p => Object.keys(sectionConfig ?? {}).includes(p));
+      const validPins = pins.filter(p => allKeys.includes(p));
       const livePins = validPins.filter(p => liveness[p] === true);
       if (validPins.length > 0 && livePins.length === 0) {
-        throw new Error(
-          `All pinned platforms unavailable: ${validPins.join(', ')}`
-        );
+        throw new Error(`All pinned platforms unavailable: ${validPins.join(', ')}`);
       }
+      return livePins;
     }
 
-    // Exclude orchestrator from reviews unless explicitly pinned or includeSelf is set (max level)
-    if (forReview) {
-      const orchestratorPinned = pins && pins.includes(platform);
-      if (!orchestratorPinned && !includeSelf) {
-        keys = keys.filter(k => k !== platform);
-      }
+    // Liveness filter — require explicit true; undefined (unknown platform) is unavailable
+    let keys = allKeys.filter(k => liveness[k] === true);
+    if (includeSelf) {
+      keys = [...keys.filter(k => k !== platform), ...keys.filter(k => k === platform)];
+    } else {
+      keys = keys.filter(k => k !== platform);
     }
 
-    return keys;
+    const requested = targetCount === 'all' ? keys.length : targetCount;
+    const resolved = Math.min(requested, keys.length);
+    if (resolved < requested) clamped[sectionName] = { requested, resolved };
+    return keys.slice(0, resolved);
   }
 
-  function buildTarget(sectionConfig, key, sectionName) {
-    const hints = resolveLevelEntry(sectionConfig[key] ?? {}, level, warn, sectionName);
+  function buildTarget(sectionName, key) {
+    const hints = resolveLevelEntry(platformsOf(sectionName)[key] ?? {}, level);
     const target = { platform: key };
     if (hints.model !== undefined) target.model = hints.model;
     if (hints.effort !== undefined) target.effort = hints.effort;
-    // Flag same-agent reviews (orchestrator pinned)
+    // Flag same-agent reviews (orchestrator is a target)
     if (key === platform) target.allowSameAgent = true;
     return target;
   }
 
-  function buildReviewSection(sectionName, sectionConfig, targetCount, rounds, consensus, includeSelf = false) {
-    // Skip candidate resolution (including the all-unavailable error) when the phase is skipped
-    const targets = (targetCount === 'none' || targetCount === 0)
-      ? []
-      : (() => {
-          const keys = getCandidates(sectionConfig, true, includeSelf);
-          return targetCount === 'one'
-            ? (keys.length > 0 ? [buildTarget(sectionConfig, keys[0], sectionName)] : [])
-            : keys.map(k => buildTarget(sectionConfig, k, sectionName));
-        })();
+  function buildReviewSection(sectionName) {
+    const section = config[sectionName];
+    let maxRounds = resolveLevelScalar(section.maxRounds, level);
+    const targetCount = resolveLevelScalar(section.targetCount, level);
+    const consensus = resolveLevelScalar(section.consensus, level);
+    const includeSelf = resolveLevelScalar(section.includeSelf, level) ?? false;
+    const toolTurns = resolveLevelScalar(section.toolTurns, level);
 
-    // `rounds` counts fan-out waves; each wave dispatches every target in `targets`
-    return { targets, rounds, consensus };
+    // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
+    // does so callers have a single sentinel: `maxRounds === 0`.
+    if (targetCount === 0) maxRounds = 0;
+
+    // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
+    // every pin by construction, which is not a diagnostic worth reporting.
+    if (maxRounds > 0 && pins && pins.length > 0) {
+      const absent = pins.filter(p => !Object.keys(platformsOf(sectionName)).includes(p));
+      if (absent.length > 0) droppedPins[sectionName] = absent;
+    }
+
+    // `maxRounds === 0` means the phase is configured off; `targets` empty with
+    // `maxRounds > 0` means platforms are unavailable — the in-process fallback applies.
+    // `maxRounds` caps total fan-out waves including the first review; each wave
+    // dispatches every target in `targets`.
+    const targets =
+      maxRounds === 0
+        ? []
+        : getCandidates(sectionName, targetCount, includeSelf).map(k => buildTarget(sectionName, k));
+
+    return { targets, maxRounds, consensus, toolTurns };
   }
 
-  // plan-review
-  const planReview = buildReviewSection(
-    'plan-review',
-    config['plan-review'] ?? {},
-    levelCfg.planTargets,
-    levelCfg.planRounds,
-    levelCfg.consensus,
-    levelCfg.includeSelf
-  );
+  const planReview = buildReviewSection('plan-review');
 
-  // implementation
-  const implEntry = (config.implementation ?? {})[platform] ?? {};
-  const implHints = resolveLevelEntry(implEntry, level, warn, 'implementation');
+  const implEntry = platformsOf('implementation')[platform] ?? {};
+  const implHints = resolveLevelEntry(implEntry, level);
   const implementation = { platform };
   if (implHints.model !== undefined) implementation.model = implHints.model;
   if (implHints.effort !== undefined) implementation.effort = implHints.effort;
 
-  // code-review
-  const codeReview = buildReviewSection(
-    'code-review',
-    config['code-review'] ?? {},
-    levelCfg.codeTargets,
-    levelCfg.codeRounds,
-    levelCfg.consensus,
-    levelCfg.includeSelf
-  );
+  const codeReview = buildReviewSection('code-review');
 
-  return { 'plan-review': planReview, implementation, 'code-review': codeReview };
+  const configured = new Set(SECTIONS.flatMap(s => Object.keys(platformsOf(s))));
+  const unavailable = [...configured].filter(k => liveness[k] !== true).sort();
+
+  const flow = {
+    'plan-review': planReview,
+    implementation,
+    'code-review': codeReview,
+    diagnostics: { effectiveLevel: level, unavailable, droppedPins, clamped },
+  };
+
+  if (slug !== undefined) {
+    flow.paths = buildPaths(date ?? localDate(), slug);
+  }
+
+  return flow;
 }
 
 // --- CLI entry point ---
 
-async function main() {
-  const args = process.argv.slice(2);
+function parseArgs(args) {
   const opts = {};
+  const value = i => {
+    const next = args[i + 1];
+    if (next === undefined || next.startsWith('--')) {
+      throw new Error(`Missing value for ${args[i]}`);
+    }
+    return next;
+  };
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case '--platform': opts.platform = args[++i]; break;
-      case '--level':    opts.level = args[++i]; break;
-      case '--pins':     opts.pins = args[++i].split(',').map(s => s.trim()).filter(Boolean); break;
+      case '--platform': opts.platform = value(i); i++; break;
+      case '--level':    opts.level = value(i); i++; break;
+      case '--slug':     opts.slug = value(i); i++; break;
+      case '--date':     opts.date = value(i); i++; break;
+      case '--pins':
+        opts.pins = value(i).split(',').map(s => s.trim()).filter(Boolean);
+        i++;
+        break;
+      case '--validate-only': opts.validateOnly = true; break;
+      default:
+        throw new Error(`Unrecognized argument "${args[i]}"`);
     }
   }
+  return opts;
+}
 
-  if (!opts.platform) {
-    process.stderr.write('Error: --platform is required\n');
+async function main() {
+  let opts;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
   }
 
@@ -311,6 +577,40 @@ async function main() {
     config = loadConfig();
   } catch (err) {
     process.stderr.write(`Error loading config: ${err.message}\n`);
+    process.exit(1);
+  }
+
+  // `--validate-only` short-circuits before liveness so it spawns no provider probes.
+  // Every other path lets `resolveFlow` validate, keeping one validation call per run.
+  if (opts.validateOnly) {
+    // Refuse the combination rather than silently ignoring flags the user believes
+    // were checked: --validate-only inspects the config schema and nothing else.
+    const ignored = ['platform', 'level', 'slug', 'date', 'pins'].filter(k => opts[k] !== undefined);
+    if (ignored.length > 0) {
+      process.stderr.write(
+        `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
+          .map(k => `--${k}`)
+          .join(', ')}\n`
+      );
+      process.exit(1);
+    }
+    const problems = validateConfig(config);
+    if (problems.length > 0) {
+      process.stderr.write(`Invalid config:\n- ${problems.join('\n- ')}\n`);
+      process.exit(1);
+    }
+    process.stdout.write('Config is valid.\n');
+    return;
+  }
+
+  // Presence of the required flags is a CLI concern; their shape is checked by
+  // `resolveFlow`, which enforces it for programmatic callers too.
+  if (!opts.platform) {
+    process.stderr.write('Error: --platform is required\n');
+    process.exit(1);
+  }
+  if (!opts.slug) {
+    process.stderr.write('Error: --slug is required\n');
     process.exit(1);
   }
 

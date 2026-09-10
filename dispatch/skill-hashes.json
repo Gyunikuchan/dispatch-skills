@@ -1,10 +1,9 @@
 {
-  "SKILL.md": "592b244a6a7fc6dc21144a13d513f1936dc004c0546a36c42a02c1e829a1e070",
-  "scripts/agy-run.mjs": "5abe694c8ef01b3eda755b9c578ee60c9d71e316d0f44e046bbf162f3ca282ca",
-  "scripts/claude-run.mjs": "0c3d57426ba6f39cad3e57d1d45700b822a6091aaf2790360c9b08395371601e",
-  "scripts/common.mjs": "6fb622a2829a4d802643851865f04dfecd3a335b2167bef73f845d1d6acf0ec9",
-  "scripts/copilot-run.mjs": "c1004abc2665956351fe5d9b992ed2b0b2a33ba9403193b52b05f033dcef3305",
-  "scripts/dispatch.mjs": "e1f1def25c8152b4e11330dc51aa3d8df9031aabb81b243c53939bc75f14032a",
-  "scripts/local-llm-run.mjs": "4dae1f215317c00e5330b16eb305ba9fd5fa426ce3d0fbf6aa9f503c3350d2e2",
-  "scripts/local-run.mjs": "ab2f07deeb772998aebbfd0176eb251c4fa339b48d4894c8e6cd2214944a0506"
+  "SKILL.md": "7bc7aadbe2e8b1b2a3ad7ccc445eef2420be0379ddbe89d35a3635b3e9a21e2f",
+  "scripts/agy-run.mjs": "9eb38c13f74acdc9ce1485c7bd202e2d4356ff6cce793299936f06c1321d9051",
+  "scripts/claude-run.mjs": "5df13d7d15ce02aafbde203a446e2c8e5298ec1df563281e658c11a05fc1ecd6",
+  "scripts/common.mjs": "c0deba6e746c1203304f6f6bea0cd34dca8966659ed450739c2a5b9057f4b071",
+  "scripts/copilot-run.mjs": "ba50e89b115fceda435815685b1a68e7710dacf33ccbc6f775d35f7712e4b222",
+  "scripts/dispatch.mjs": "a7669fcbf2e306ed914c9ee97415850d89648bb0b6f56a271a91cf574cbf5d84",
+  "scripts/opencode-run.mjs": "2714e3dd6234d191cec9a3993ae653fd50b0a596b438a7c1e47e04c9dd0a3411"
 }

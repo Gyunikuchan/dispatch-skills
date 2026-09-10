@@ -6,34 +6,44 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, afterEach, mock } from 'node:test';
 
-import { SENSITIVE_FILE_PATTERNS, formatSafetyPrompt } from '../../dispatch/scripts/common.mjs';
 import {
-  DEFAULT_FALLBACK_AGENT,
   DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
+  extractCleanResponse,
+  formatSafetyPrompt,
+  isPathInside,
+  normalizePath,
+  parseCommonArgs,
   PROJECT_ROOT,
   SENSITIVE_ENV_KEY_PATTERN,
+  SENSITIVE_FILE_PATTERNS,
+} from '../../dispatch/scripts/common.mjs';
+import {
+  DEFAULT_CONTEXT_LIMIT,
+  DEFAULT_FALLBACK_AGENT,
+  DEFAULT_LM_STUDIO_HOST,
+  DEFAULT_LM_STUDIO_PORT,
+  DEFAULT_OUTPUT_LIMIT,
+  GPU_LOCK_FILE_NAME,
   buildCommand,
   getAllowedBoundaryRoots,
   getLMStudioEndpoint,
-  getSanitizedEnv,
-  isPathInside,
-  normalizePathForComparison,
-  parseArgs,
+  getOpencodeEnv,
+  isOpencodeAvailable,
   preflightLMStudioCheck,
   readOpencodeConfig,
   resolveContextFiles,
   resolveDefaultAgent,
   resolveDefaultModel,
-  runLocalAgent,
+  resolveOpencodeSettings,
+  runOpencode,
   stripJsonComments,
-  extractAssistantResponse,
-} from '../../dispatch/scripts/local-llm-run.mjs';
+} from '../../dispatch/scripts/opencode-run.mjs';
 
-describe('local-llm-run', () => {
-  describe('parseArgs', () => {
+describe('opencode-run', () => {
+  describe('parseCommonArgs', () => {
     it('parses basic flags and positional prompt with silent default', () => {
-      const opts = parseArgs(['node', 'local-llm-run.mjs', 'Review', 'this', 'diff']);
+      const opts = parseCommonArgs(['node', 'opencode-run.mjs', 'Review', 'this', 'diff']);
 
       assert.equal(opts.prompt, 'Review this diff');
       assert.equal(opts.agent, null);
@@ -45,13 +55,12 @@ describe('local-llm-run', () => {
     });
 
     it('parses explicit prompt flag, files, agent, and verbose flag', () => {
-      const opts = parseArgs([
-        'node', 'local-llm-run.mjs',
+      const opts = parseCommonArgs([
+        'node', 'opencode-run.mjs',
         '-p', 'Custom prompt',
         '-f', 'CONTEXT.md',
         '--artifact', 'docs/adr/001.md',
         '-a', 'local',
-        '--allow-write',
         '--json',
         '-v',
       ]);
@@ -64,8 +73,8 @@ describe('local-llm-run', () => {
     });
 
     it('parses equals-separated arguments and custom numbers', () => {
-      const opts = parseArgs([
-        'node', 'local-llm-run.mjs',
+      const opts = parseCommonArgs([
+        'node', 'opencode-run.mjs',
         '--file=CONTEXT.md',
         '--artifact=README.md',
         '--agent=local',
@@ -86,19 +95,21 @@ describe('local-llm-run', () => {
     });
 
     it('parses help flag', () => {
-      const opts = parseArgs(['node', 'local-llm-run.mjs', '--help']);
+      const opts = parseCommonArgs(['node', 'opencode-run.mjs', '--help']);
       assert.equal(opts.help, true);
     });
   });
 
-  describe('extractAssistantResponse', () => {
+  describe('extractCleanResponse', () => {
     it('returns raw text unmodified when there are no tool traces', () => {
       const input = '# Review Findings\nAll tests pass cleanly.';
-      assert.equal(extractAssistantResponse(input), input);
+      assert.equal(extractCleanResponse(input), input);
     });
 
-    it('strips leading opencode tool logs and extracts assistant markdown response', () => {
-      const input = `> build · qwen3.8-27b@iq4_xs
+    it('strips [dispatch]-tagged trace lines and extracts assistant markdown response', () => {
+      const input = `[dispatch] Provider: OpenCode (LM Studio)
+[dispatch] Done: OpenCode (LM Studio) | Exit: 0
+> build · qwen3.8-27b@iq4_xs
 → Skill "code-review"
 $ git status --short
 A file.ts
@@ -113,24 +124,34 @@ Everything looks great.`;
 ## Summary
 Everything looks great.`;
 
-      assert.equal(extractAssistantResponse(input), expected);
+      assert.equal(extractCleanResponse(input), expected);
     });
 
     it('handles empty or non-string inputs safely', () => {
-      assert.equal(extractAssistantResponse(''), '');
-      assert.equal(extractAssistantResponse(null), '');
+      assert.equal(extractCleanResponse(''), '');
+      assert.equal(extractCleanResponse(null), '');
     });
   });
 
   describe('formatSafetyPrompt', () => {
     it('prepends read-only safety guardrails by default', () => {
       const prompt = 'Check for bugs in domain logic';
-      const formatted = formatSafetyPrompt(prompt, false);
+      const formatted = formatSafetyPrompt(prompt);
 
       assert.ok(formatted.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
       assert.ok(formatted.includes('strict READ-ONLY analysis mode'));
       assert.ok(formatted.includes('MUST NOT edit, overwrite, create, or delete any files'));
       assert.ok(formatted.includes(prompt));
+    });
+
+    it('frames workspace and attachment scope when opts are supplied', () => {
+      const formatted = formatSafetyPrompt('Review the diff', {
+        workspaceRoot: PROJECT_ROOT,
+        attachedFiles: ['walkthrough.md', 'plan.md'],
+      });
+
+      assert.ok(formatted.includes(`[PRIMARY WORKSPACE]: ${PROJECT_ROOT}`));
+      assert.ok(formatted.includes('[ATTACHED FILES]: walkthrough.md, plan.md'));
     });
 
     it('always includes the prompt text in the output', () => {
@@ -154,7 +175,7 @@ Everything looks great.`;
 
     it('normalizes path comparison across platforms', () => {
       const p = path.resolve('CONTEXT.md');
-      const normalized = normalizePathForComparison(p);
+      const normalized = normalizePath(p);
 
       if (process.platform === 'win32') {
         assert.equal(normalized, p.toLowerCase());
@@ -187,7 +208,22 @@ Everything looks great.`;
       }, /does not exist/);
     });
 
-    it('rejects sensitive files matching denylist patterns', () => {
+    it('rejects an existing sensitive file inside an allowed boundary', () => {
+      // The file must exist and sit inside PROJECT_ROOT, otherwise the existence or boundary
+      // check would reject it first and the denylist would never be exercised.
+      const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-run-test');
+      fs.writeFileSync(sensitivePath, 'SECRET=1\n');
+      try {
+        assert.throws(
+          () => resolveContextFiles([sensitivePath]),
+          /matches sensitive denylist pattern/,
+        );
+      } finally {
+        fs.unlinkSync(sensitivePath);
+      }
+    });
+
+    it('covers the documented sensitive filename shapes', () => {
       const sensitiveFiles = [
         '.env', '.env.local', '.env.production',
         'secret.key', 'id_rsa', 'id_ed25519',
@@ -215,7 +251,7 @@ Everything looks great.`;
     });
   });
 
-  describe('getSanitizedEnv & WAN Network Confinement', () => {
+  describe('getOpencodeEnv & WAN Network Confinement', () => {
     it('whitelists safe variables and purges sensitive tokens/keys', () => {
       const oldEnv = { ...process.env };
       try {
@@ -225,7 +261,7 @@ Everything looks great.`;
         process.env.AWS_SECRET_ACCESS_KEY = 'test-aws-secret';
         process.env.MY_SECRET_PASSWORD = 'password123';
 
-        const cleanEnv = getSanitizedEnv();
+        const cleanEnv = getOpencodeEnv();
 
         assert.ok(!('ANTHROPIC_API_KEY' in cleanEnv));
         assert.ok(!('OPENAI_API_KEY' in cleanEnv));
@@ -242,11 +278,69 @@ Everything looks great.`;
       }
     });
 
-    it('strictly checks SENSITIVE_ENV_KEY_PATTERN', () => {
-      assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('API_KEY'));
-      assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('SECRET_VAL'));
-      assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('AUTH_TOKEN'));
-      assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('PRIVATE_KEY'));
+    it('admits only exactly-allowlisted OPENCODE_ keys, dropping unknown ones', () => {
+      const oldEnv = process.env;
+      try {
+        process.env = { ...oldEnv };
+        // Both allowlists are exact-name, not prefix-matched: the OPENCODE_ prefix alone
+        // grants nothing.
+        process.env.OPENCODE_CONFIG_DIR = '/tmp/opencode-config';
+        process.env.OPENCODE_API_KEY = 'should-not-survive';
+        process.env.OPENCODE_UNKNOWN_SETTING = 'should-not-survive';
+
+        const env = getOpencodeEnv();
+
+        assert.equal(env.OPENCODE_CONFIG_DIR, '/tmp/opencode-config');
+        assert.equal(env.OPENCODE_API_KEY, undefined);
+        assert.equal(env.OPENCODE_UNKNOWN_SETTING, undefined);
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('never emits a key matching SENSITIVE_ENV_KEY_PATTERN', () => {
+      const oldEnv = process.env;
+      try {
+        process.env = { ...oldEnv };
+        process.env.AWS_SECRET_ACCESS_KEY = 'should-not-survive';
+        process.env.GITHUB_TOKEN = 'should-not-survive';
+        process.env.OPENCODE_API_KEY = 'should-not-survive';
+
+        const env = getOpencodeEnv();
+
+        // NOTE: the sensitive-key conjunct in getOpencodeEnv is defence in depth and is
+        // currently unreachable — no name in either exact-match allowlist matches the pattern,
+        // so the allowlist rejects these first. This asserts the resulting invariant, which
+        // holds however a future allowlist addition shifts which layer does the rejecting.
+        for (const key of Object.keys(env)) {
+          assert.ok(
+            !SENSITIVE_ENV_KEY_PATTERN.test(key),
+            `sanitized env must not carry sensitive key ${key}`,
+          );
+        }
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('proxy NO_PROXY includes the resolved endpoint port', () => {
+      const settings = resolveOpencodeSettings(null);
+      const env = getOpencodeEnv(settings);
+      assert.ok(env.NO_PROXY.includes(String(settings.port)));
+    });
+
+    it('keeps OPENCODE_* entries that are not sensitive', () => {
+      const oldEnv = { ...process.env };
+      try {
+        process.env.OPENCODE_PORT = '4096';
+        process.env.OPENCODE_DISABLE_UPDATE_CHECK = '1';
+
+        const env = getOpencodeEnv();
+        assert.equal(env.OPENCODE_PORT, '4096');
+        assert.equal(env.OPENCODE_DISABLE_UPDATE_CHECK, '1');
+      } finally {
+        process.env = oldEnv;
+      }
     });
   });
 
@@ -285,15 +379,46 @@ Everything looks great.`;
     });
 
     it('returns null from readOpencodeConfig when no config file exists', () => {
-      const config = readOpencodeConfig();
+      const config = readOpencodeConfig(os.tmpdir());
       assert.equal(config, null);
     });
 
     it('resolves LM Studio endpoint defaults when no config is present', () => {
-      const endpoint = getLMStudioEndpoint();
+      const endpoint = getLMStudioEndpoint(resolveOpencodeSettings(null));
       assert.equal(endpoint.host, '127.0.0.1');
       assert.equal(endpoint.port, 1234);
       assert.equal(endpoint.pathname, '/v1');
+    });
+
+    it('reads the real repo opencode.jsonc that the runner names a prerequisite', () => {
+      // Passing null bypasses the file read and yields only the DEFAULT_* fallbacks, so read
+      // the prerequisite config explicitly and assert the values it actually declares.
+      const config = readOpencodeConfig(PROJECT_ROOT);
+      assert.ok(config, 'repo-root opencode.jsonc must be readable — the runner requires it');
+
+      const oldEnv = process.env;
+      try {
+        // LM_STUDIO_URL overrides the config baseURL, so clear it — otherwise a developer with
+        // that variable exported fails the suite for the wrong reason.
+        process.env = { ...oldEnv };
+        delete process.env.LM_STUDIO_URL;
+
+        const settings = resolveOpencodeSettings(config);
+        assert.equal(settings.contextLimit, 73728);
+        assert.equal(settings.outputLimit, 8192);
+        assert.equal(settings.host, '127.0.0.1');
+        assert.equal(settings.port, 1234);
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('falls back to DEFAULT_* limits when no config is available', () => {
+      const settings = resolveOpencodeSettings(null);
+      assert.equal(settings.contextLimit, DEFAULT_CONTEXT_LIMIT);
+      assert.equal(settings.outputLimit, DEFAULT_OUTPUT_LIMIT);
+      assert.equal(settings.host, DEFAULT_LM_STUDIO_HOST);
+      assert.equal(settings.port, DEFAULT_LM_STUDIO_PORT);
     });
   });
 
@@ -303,7 +428,6 @@ Everything looks great.`;
         prompt: 'Analyze invariants',
         files: [path.resolve('CONTEXT.md')],
         model: 'lmstudio/qwen3.8-27b@iq4_xs',
-        allowWrite: false,
         json: true,
       });
 
@@ -328,7 +452,6 @@ Everything looks great.`;
         prompt: 'Analyze invariants',
         files: [],
         agent: 'custom-agent',
-        allowWrite: true,
         json: false,
       });
 
@@ -369,7 +492,19 @@ Everything looks great.`;
       assert.equal(isReady, true);
     });
 
-    it('runLocalAgent rejects with clear instructions when LM Studio is offline', async () => {
+    it('isOpencodeAvailable returns false when preflight fails', async () => {
+      mock.method(http, 'get', () => {
+        const emitter = new EventEmitter();
+        Object.assign(emitter, { destroy: mock.fn() });
+        process.nextTick(() => emitter.emit('error', new Error('ECONNREFUSED')));
+        return emitter;
+      });
+
+      const available = await isOpencodeAvailable();
+      assert.equal(available, false);
+    });
+
+    it('runOpencode rejects with SERVER_OFFLINE naming host and port when LM Studio is offline', async () => {
       mock.method(http, 'get', () => {
         const emitter = new EventEmitter();
         Object.assign(emitter, { destroy: mock.fn() });
@@ -378,9 +513,89 @@ Everything looks great.`;
       });
 
       await assert.rejects(
-        runLocalAgent({ prompt: 'Test prompt when offline' }),
-        /LM Studio local server is not reachable/,
+        runOpencode({ prompt: 'Test prompt when offline' }),
+        (err) => {
+          assert.ok(err.message.includes('LM Studio local server is not reachable'));
+          assert.ok(err.message.includes('127.0.0.1'));
+          assert.ok(err.message.includes('1234'));
+          assert.equal(err.code, 'SERVER_OFFLINE');
+          return true;
+        },
       );
+    });
+
+    it('runOpencode rejects with CONTEXT_BUDGET_EXCEEDED and leaves no lockfile', async () => {
+      mock.method(http, 'get', (...args) => {
+        const callback = typeof args[1] === 'function' ? args[1] : args[2];
+        const emitter = new EventEmitter();
+        Object.assign(emitter, { destroy: mock.fn() });
+        process.nextTick(() => {
+          if (callback) callback({ statusCode: 200 });
+        });
+        return emitter;
+      });
+
+      const settings = resolveOpencodeSettings(null);
+      const hugeBudget = (settings.contextLimit - settings.outputLimit) * 3.5 + 1;
+      const hugePrompt = 'x'.repeat(Math.ceil(hugeBudget));
+
+      const lockFile = path.join(os.tmpdir(), GPU_LOCK_FILE_NAME);
+
+      await assert.rejects(
+        runOpencode({ prompt: hugePrompt }),
+        (err) => {
+          assert.equal(err.code, 'CONTEXT_BUDGET_EXCEEDED');
+          return true;
+        },
+      );
+
+      // Lock must have been released
+      assert.ok(!fs.existsSync(lockFile) || fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid));
+    });
+
+    it('runOpencode releases the lock when an attachment hits the denylist', async () => {
+      mock.method(http, 'get', (...args) => {
+        const callback = typeof args[1] === 'function' ? args[1] : args[2];
+        const emitter = new EventEmitter();
+        Object.assign(emitter, { destroy: mock.fn() });
+        process.nextTick(() => {
+          if (callback) callback({ statusCode: 200 });
+        });
+        return emitter;
+      });
+
+      const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-lock-test');
+      fs.writeFileSync(sensitivePath, 'SECRET=1\n');
+      const lockFile = path.join(os.tmpdir(), GPU_LOCK_FILE_NAME);
+
+      try {
+        await assert.rejects(
+          runOpencode({ prompt: 'Review this', files: [sensitivePath] }),
+          /matches sensitive denylist pattern/,
+        );
+
+        assert.ok(
+          !fs.existsSync(lockFile) ||
+            fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid),
+          'lock must be released when resolveContextFiles throws',
+        );
+      } finally {
+        fs.unlinkSync(sensitivePath);
+      }
+    });
+
+    it('runOpencode rejects an empty prompt before any preflight or lock side effect', async () => {
+      // A lockfile-absence assertion cannot detect this ordering: it passes trivially, and it
+      // would also pass with the guard placed after acquireLock, because releaseOnce releases
+      // on that path anyway. Preflight sits between the guard and the lock, so asserting the
+      // health check never fired proves the guard ran before both.
+      const httpGet = mock.method(http, 'get', () => {
+        throw new Error('preflight must not run for an empty prompt');
+      });
+
+      await assert.rejects(runOpencode({ prompt: '   ' }), /No prompt provided/);
+
+      assert.equal(httpGet.mock.callCount(), 0);
     });
   });
 });
