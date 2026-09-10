@@ -22,8 +22,12 @@
  * =============================================================================
  * - LM Studio: Running locally with the local server started (http://127.0.0.1:1234/v1).
  * - OpenCode: `opencode` CLI installed and available in PATH.
- * - Config: `opencode.jsonc` (or `opencode.json`) at the repository root supplying model,
- *   agent, context/output limits, and optional provider `baseURL`/`apiKey`.
+ * - Config: merged across every locally-readable tier from opencode's own precedence order
+ *   (https://opencode.ai/docs/config/#precedence-order) — global (`~/.config/opencode/`),
+ *   `OPENCODE_CONFIG`, project root, `.opencode/` directories, `OPENCODE_CONFIG_CONTENT`, and
+ *   OS-managed config dirs — supplying model, agent, context/output limits, and optional
+ *   provider `baseURL`/`apiKey`. Remote config and macOS MDM `.mobileconfig` are excluded (see
+ *   `readOpencodeConfig`'s doc comment for why).
  * - Optional: `bwrap` (Bubblewrap) on Linux for filesystem-level read-only mounts.
  *
  * =============================================================================
@@ -158,10 +162,13 @@ const PROVIDER_LABEL = 'OpenCode (LM Studio)';
  * be noise in every other delegate's environment.
  */
 export const OPENCODE_EXTRA_ENV_ALLOWLIST = new Set([
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_CONTENT',
   'OPENCODE_CONFIG_DIR',
   'OPENCODE_CACHE_DIR',
   'OPENCODE_DISABLE_UPDATE_CHECK',
   'OPENCODE_PORT',
+  'XDG_CONFIG_HOME',
 ]);
 
 // NOTE: GPU lockfile name is pinned to this legacy value — os.tmpdir() is machine-global and
@@ -485,26 +492,201 @@ export async function isOpencodeAvailable() {
 // ============================================================================
 
 /**
- * Reads and parses opencode configuration file (supporting JSON and JSONC with comments).
- * @param {string} [projectRoot]
+ * Recursively merges `overlay` onto `base`: plain objects merge key-by-key, arrays concatenate
+ * (base then overlay), and any other value type is overridden by `overlay`. Approximates
+ * opencode's own `mergeConfigConcatArrays` without a schema — sufficient for this config's
+ * actual shape (`model`, `provider.<name>.*`, `agent.<name>.*`, `compaction`).
+ * @param {object|null} base
+ * @param {object|null} overlay
  * @returns {object|null}
  */
-export function readOpencodeConfig(projectRoot = PROJECT_ROOT) {
-  const candidateFiles = [
-    path.join(projectRoot, 'opencode.jsonc'),
-    path.join(projectRoot, 'opencode.json'),
-  ];
+export function mergeConfigDeep(base, overlay) {
+  if (!base) return overlay ?? null;
+  if (!overlay) return base;
 
-  for (const configPath of candidateFiles) {
-    if (fs.existsSync(configPath)) {
-      try {
-        const raw = fs.readFileSync(configPath, 'utf8');
-        return parseJsonc(raw);
-      } catch {}
+  const result = { ...base };
+  for (const [key, overlayValue] of Object.entries(overlay)) {
+    // Config files are untrusted input (read from disk, or from an env-var-supplied path/
+    // content); a bracket assignment to these keys would consult Object.prototype's `__proto__`
+    // accessor and repoint result's actual prototype rather than setting a plain data property.
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    const baseValue = result[key];
+    if (Array.isArray(baseValue) && Array.isArray(overlayValue)) {
+      result[key] = [...baseValue, ...overlayValue];
+    } else if (
+      baseValue &&
+      overlayValue &&
+      typeof baseValue === 'object' &&
+      typeof overlayValue === 'object' &&
+      !Array.isArray(baseValue) &&
+      !Array.isArray(overlayValue)
+    ) {
+      result[key] = mergeConfigDeep(baseValue, overlayValue);
+    } else {
+      result[key] = overlayValue;
     }
   }
+  return result;
+}
 
-  return null;
+/**
+ * Reads and parses one opencode config file (JSON or JSONC). Returns `null` on a missing,
+ * unreadable, unparsable, or denylisted path — every source in the precedence chain is
+ * best-effort, matching this file's existing security posture (`SENSITIVE_FILE_PATTERNS`, the
+ * same denylist `resolveContextFiles` enforces for `-f` attachments).
+ * @param {string} filePath
+ * @returns {object|null}
+ */
+export function loadConfigFile(filePath) {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+
+  const baseName = path.basename(filePath);
+  for (const pattern of SENSITIVE_FILE_PATTERNS) {
+    if (pattern.test(filePath) || pattern.test(baseName)) return null;
+  }
+
+  try {
+    const parsed = parseJsonc(fs.readFileSync(filePath, 'utf8'));
+    return isPlainConfigObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True for a non-null, non-array object — the only shape `mergeConfigDeep` can safely fold.
+ * A top-level array or primitive (`true`, `123`, `"str"`) would otherwise be iterated by
+ * `Object.entries` and silently corrupt the merged config with spurious numeric-like keys.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isPlainConfigObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Resolves the one OS-specific managed opencode config directory (admin-controlled, per
+ * https://opencode.ai/docs/config/#precedence-order tier 7). Resolves the Windows path instead
+ * of hardcoding the `%ProgramData%` literal, which Node never expands. `env`/`platform` are
+ * parameterized (not read from `process.env`/`process.platform` directly) so tests can point
+ * this at an isolated fixture directory instead of the real machine's admin-managed config dir.
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {string} [options.platform]
+ * @returns {string}
+ */
+export function resolveManagedConfigDir({ env = process.env, platform = process.platform } = {}) {
+  if (platform === 'darwin') return '/Library/Application Support/opencode';
+  if (platform === 'linux') return '/etc/opencode';
+  const programData = env.ProgramData || env.ALLUSERSPROFILE || 'C:\\ProgramData';
+  return path.join(programData, 'opencode');
+}
+
+/**
+ * Builds the ordered list of opencode config file candidates, lowest to highest precedence,
+ * matching every locally-readable tier from https://opencode.ai/docs/config/#precedence-order:
+ * global, custom (`OPENCODE_CONFIG`), project, `.opencode` directories, and managed (admin).
+ * Tier 6 (`OPENCODE_CONFIG_CONTENT`, inline text) and the remote/MDM tiers are not file paths —
+ * handled separately by {@link readOpencodeConfig} and excluded respectively (see that
+ * function's doc comment).
+ * @param {object} params
+ * @param {string} params.projectRoot
+ * @param {string} params.homeDir
+ * @param {NodeJS.ProcessEnv} params.env
+ * @returns {string[]}
+ */
+export function resolveOpencodeConfigSources({ projectRoot, homeDir, env }) {
+  const globalConfigDir = path.join(
+    env.XDG_CONFIG_HOME || path.join(homeDir, '.config'),
+    'opencode',
+  );
+  const sources = [
+    // Tier 2: global.
+    path.join(globalConfigDir, 'config.json'),
+    path.join(globalConfigDir, 'opencode.json'),
+    path.join(globalConfigDir, 'opencode.jsonc'),
+    // Tier 3: custom (single path, as opencode itself resolves it).
+    env.OPENCODE_CONFIG,
+    // Tier 4: project — checked directly, no upward walk (PROJECT_ROOT is already the git
+    // worktree root every caller in this script uses, so there is never an intermediate
+    // directory to traverse).
+    path.join(projectRoot, 'opencode.json'),
+    path.join(projectRoot, 'opencode.jsonc'),
+    // Tier 5: .opencode directories — home first (broader), then project (more specific), then
+    // an explicit OPENCODE_CONFIG_DIR override. Folded after tier 4 (project root), so a
+    // personal ~/.opencode/opencode.json(c) outranks a bare project-root opencode.json(c) for
+    // repos that haven't migrated to .opencode — an intentional consequence of the doc's own
+    // numbered order (project is tier 4, .opencode dirs are tier 5), not an ordering bug here.
+    path.join(homeDir, '.opencode', 'opencode.json'),
+    path.join(homeDir, '.opencode', 'opencode.jsonc'),
+    path.join(projectRoot, '.opencode', 'opencode.json'),
+    path.join(projectRoot, '.opencode', 'opencode.jsonc'),
+  ];
+
+  if (env.OPENCODE_CONFIG_DIR) {
+    sources.push(
+      path.join(env.OPENCODE_CONFIG_DIR, 'opencode.json'),
+      path.join(env.OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
+    );
+  }
+
+  return sources.filter(Boolean);
+}
+
+/**
+ * Reads and merges opencode configuration across every locally-readable source, in the exact
+ * precedence order documented at https://opencode.ai/docs/config/#precedence-order (later
+ * folds override earlier ones for scalar fields; array fields concatenate):
+ *
+ *   global → custom (`OPENCODE_CONFIG`) → project → `.opencode` dirs →
+ *   inline (`OPENCODE_CONFIG_CONTENT`) → managed (admin)
+ *
+ * Two tiers are excluded by design, not oversight:
+ * - **Remote config** (`.well-known/opencode`): requires an outbound fetch to an arbitrary
+ *   remote origin, which conflicts with this runner's WAN-confinement model (`getOpencodeEnv`
+ *   proxy-traps all outbound WAN for the delegate; the orchestrator process resolving its own
+ *   config shouldn't open a network path the delegate itself is denied).
+ * - **macOS MDM `.mobileconfig`**: a binary/plist profile read via `CFPreferences`, not a JSON
+ *   file on a documented path — no reasonable cross-platform Node implementation.
+ *
+ * The managed tier (tier 7) is a local, read-only filesystem read, so it's included; a missing
+ * or unreadable managed directory (the common case without MDM) is silently skipped, same as
+ * every other optional source.
+ *
+ * `homeDir` and `env` are parameterized rather than read from `os.homedir()` / `process.env`
+ * directly, so callers (and tests) can isolate every tier from the real machine's config.
+ *
+ * @param {string} [projectRoot]
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {string} [options.homeDir]
+ * @param {string} [options.managedConfigDir] Overrides {@link resolveManagedConfigDir}'s result —
+ *   lets tests isolate the managed tier from the real machine's admin-managed config dir.
+ * @returns {object|null}
+ */
+export function readOpencodeConfig(
+  projectRoot = PROJECT_ROOT,
+  { env = process.env, homeDir = os.homedir(), managedConfigDir = resolveManagedConfigDir({ env }) } = {},
+) {
+  let merged = null;
+
+  for (const filePath of resolveOpencodeConfigSources({ projectRoot, homeDir, env })) {
+    merged = mergeConfigDeep(merged, loadConfigFile(filePath));
+  }
+
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    try {
+      const inline = parseJsonc(env.OPENCODE_CONFIG_CONTENT);
+      if (isPlainConfigObject(inline)) {
+        merged = mergeConfigDeep(merged, inline);
+      }
+    } catch {}
+  }
+
+  merged = mergeConfigDeep(merged, loadConfigFile(path.join(managedConfigDir, 'opencode.json')));
+  merged = mergeConfigDeep(merged, loadConfigFile(path.join(managedConfigDir, 'opencode.jsonc')));
+
+  return merged;
 }
 
 /**
@@ -994,7 +1176,8 @@ Options:
 Prerequisites:
   - LM Studio running locally with server started (default: http://127.0.0.1:1234/v1)
   - opencode CLI installed and available in PATH
-  - opencode.jsonc (or opencode.json) at the repository root
+  - opencode.json(c) merged across opencode's own config precedence order — see
+    https://opencode.ai/docs/config/#precedence-order
 
 Examples:
   node scripts/opencode-run.mjs "Review git diff for bugs"

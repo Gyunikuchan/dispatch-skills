@@ -126,7 +126,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 - **Default Reasoning Effort**: `null` (server default)
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: Preflight HTTP probe against `http://127.0.0.1:1234/v1`
-- **Config**: `opencode.jsonc` (or `opencode.json`) at the repository root for model, agent, and limit overrides.
+- **Config**: merged across every locally-readable tier of opencode's own precedence order (https://opencode.ai/docs/config/#precedence-order): global (`~/.config/opencode/`, `XDG_CONFIG_HOME`-aware) → `OPENCODE_CONFIG` → project root → `.opencode/` directories → `OPENCODE_CONFIG_CONTENT` → OS-managed config dirs, for model, agent, and limit overrides. `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, and `XDG_CONFIG_HOME` also pass through to the spawned delegate's environment so it resolves the same config. Remote config and macOS MDM `.mobileconfig` are excluded — see `readOpencodeConfig` in `opencode-run.mjs`.
 
 ### Order of Preference
 1. **Local OpenCode (`opencode`)**:

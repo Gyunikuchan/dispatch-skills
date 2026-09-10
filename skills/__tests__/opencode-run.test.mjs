@@ -30,11 +30,14 @@ import {
   getLMStudioEndpoint,
   getOpencodeEnv,
   isOpencodeAvailable,
+  loadConfigFile,
+  mergeConfigDeep,
   preflightLMStudioCheck,
   readOpencodeConfig,
   resolveContextFiles,
   resolveDefaultAgent,
   resolveDefaultModel,
+  resolveManagedConfigDir,
   resolveOpencodeSettings,
   runOpencode,
   stripJsonComments,
@@ -342,6 +345,22 @@ Everything looks great.`;
         process.env = oldEnv;
       }
     });
+
+    it('passes OPENCODE_CONFIG, OPENCODE_CONFIG_CONTENT & XDG_CONFIG_HOME through so the spawned delegate resolves the same config', () => {
+      const oldEnv = { ...process.env };
+      try {
+        process.env.OPENCODE_CONFIG = '/tmp/custom-opencode-config.jsonc';
+        process.env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ model: 'inline/model' });
+        process.env.XDG_CONFIG_HOME = '/tmp/xdg-config-home';
+
+        const env = getOpencodeEnv();
+        assert.equal(env.OPENCODE_CONFIG, '/tmp/custom-opencode-config.jsonc');
+        assert.equal(env.OPENCODE_CONFIG_CONTENT, JSON.stringify({ model: 'inline/model' }));
+        assert.equal(env.XDG_CONFIG_HOME, '/tmp/xdg-config-home');
+      } finally {
+        process.env = oldEnv;
+      }
+    });
   });
 
   describe('stripJsonComments', () => {
@@ -379,8 +398,18 @@ Everything looks great.`;
     });
 
     it('returns null from readOpencodeConfig when no config file exists', () => {
-      const config = readOpencodeConfig(os.tmpdir());
-      assert.equal(config, null);
+      const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-empty-'));
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-empty-home-'));
+      try {
+        const config = readOpencodeConfig(isolatedRoot, {
+          env: {},
+          homeDir: isolatedHome,
+        });
+        assert.equal(config, null);
+      } finally {
+        fs.rmSync(isolatedRoot, { recursive: true, force: true });
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
     });
 
     it('resolves LM Studio endpoint defaults when no config is present', () => {
@@ -390,26 +419,31 @@ Everything looks great.`;
       assert.equal(endpoint.pathname, '/v1');
     });
 
-    it('reads the real repo opencode.jsonc that the runner names a prerequisite', () => {
-      // Passing null bypasses the file read and yields only the DEFAULT_* fallbacks, so read
-      // the prerequisite config explicitly and assert the values it actually declares.
-      const config = readOpencodeConfig(PROJECT_ROOT);
-      assert.ok(config, 'repo-root opencode.jsonc must be readable — the runner requires it');
-
-      const oldEnv = process.env;
+    it('reads the real repo .opencode/opencode.jsonc that the runner names a prerequisite', () => {
+      // Isolate homeDir/env so an ambient ~/.config/opencode, ~/.opencode, or OPENCODE_CONFIG*
+      // on the developer's machine can't override the values this test asserts.
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-realrepo-home-'));
       try {
-        // LM_STUDIO_URL overrides the config baseURL, so clear it — otherwise a developer with
-        // that variable exported fails the suite for the wrong reason.
-        process.env = { ...oldEnv };
-        delete process.env.LM_STUDIO_URL;
+        const config = readOpencodeConfig(PROJECT_ROOT, { env: {}, homeDir: isolatedHome });
+        assert.ok(config, '.opencode/opencode.jsonc must be readable — the runner requires it');
 
-        const settings = resolveOpencodeSettings(config);
-        assert.equal(settings.contextLimit, 73728);
-        assert.equal(settings.outputLimit, 8192);
-        assert.equal(settings.host, '127.0.0.1');
-        assert.equal(settings.port, 1234);
+        const oldEnv = process.env;
+        try {
+          // LM_STUDIO_URL overrides the config baseURL, so clear it — otherwise a developer with
+          // that variable exported fails the suite for the wrong reason.
+          process.env = { ...oldEnv };
+          delete process.env.LM_STUDIO_URL;
+
+          const settings = resolveOpencodeSettings(config);
+          assert.equal(settings.contextLimit, 73728);
+          assert.equal(settings.outputLimit, 8192);
+          assert.equal(settings.host, '127.0.0.1');
+          assert.equal(settings.port, 1234);
+        } finally {
+          process.env = oldEnv;
+        }
       } finally {
-        process.env = oldEnv;
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
       }
     });
 
@@ -419,6 +453,272 @@ Everything looks great.`;
       assert.equal(settings.outputLimit, DEFAULT_OUTPUT_LIMIT);
       assert.equal(settings.host, DEFAULT_LM_STUDIO_HOST);
       assert.equal(settings.port, DEFAULT_LM_STUDIO_PORT);
+    });
+
+    it('prefers .opencode/opencode.jsonc over a repository-root config, matching opencode precedence', () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-precedence-'));
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-precedence-home-'));
+      try {
+        fs.writeFileSync(path.join(tmpRoot, 'opencode.jsonc'), JSON.stringify({ model: 'root/model' }));
+        fs.mkdirSync(path.join(tmpRoot, '.opencode'));
+        fs.writeFileSync(
+          path.join(tmpRoot, '.opencode', 'opencode.jsonc'),
+          JSON.stringify({ model: 'dotopencode/model' }),
+        );
+
+        const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
+        assert.equal(config.model, 'dotopencode/model');
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to a repository-root config when .opencode has none', () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-fallback-'));
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-fallback-home-'));
+      try {
+        fs.writeFileSync(path.join(tmpRoot, 'opencode.json'), JSON.stringify({ model: 'root/model' }));
+
+        const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
+        assert.equal(config.model, 'root/model');
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('reads global config from <homeDir>/.config/opencode when nothing else is present', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-global-home-'));
+      try {
+        const globalDir = path.join(isolatedHome, '.config', 'opencode');
+        fs.mkdirSync(globalDir, { recursive: true });
+        fs.writeFileSync(path.join(globalDir, 'opencode.jsonc'), JSON.stringify({ model: 'global/model' }));
+
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-global-root-'));
+        try {
+          const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
+          assert.equal(config.model, 'global/model');
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('honors XDG_CONFIG_HOME for the global config tier', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-xdg-home-'));
+      const xdgDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-xdg-'));
+      try {
+        const globalDir = path.join(xdgDir, 'opencode');
+        fs.mkdirSync(globalDir, { recursive: true });
+        fs.writeFileSync(path.join(globalDir, 'opencode.jsonc'), JSON.stringify({ model: 'xdg/model' }));
+
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-xdg-root-'));
+        try {
+          const config = readOpencodeConfig(tmpRoot, {
+            env: { XDG_CONFIG_HOME: xdgDir },
+            homeDir: isolatedHome,
+          });
+          assert.equal(config.model, 'xdg/model');
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+        fs.rmSync(xdgDir, { recursive: true, force: true });
+      }
+    });
+
+    it('reads OPENCODE_CONFIG above global but below project, per documented precedence', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-custom-home-'));
+      const customConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-custom-'));
+      try {
+        const globalDir = path.join(isolatedHome, '.config', 'opencode');
+        fs.mkdirSync(globalDir, { recursive: true });
+        fs.writeFileSync(path.join(globalDir, 'opencode.jsonc'), JSON.stringify({ model: 'global/model' }));
+
+        const customConfigPath = path.join(customConfigDir, 'custom.jsonc');
+        fs.writeFileSync(customConfigPath, JSON.stringify({ model: 'custom/model' }));
+
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-custom-root-'));
+        try {
+          // Custom (OPENCODE_CONFIG) beats global but yields to project.
+          const withoutProject = readOpencodeConfig(tmpRoot, {
+            env: { OPENCODE_CONFIG: customConfigPath },
+            homeDir: isolatedHome,
+          });
+          assert.equal(withoutProject.model, 'custom/model');
+
+          fs.writeFileSync(path.join(tmpRoot, 'opencode.jsonc'), JSON.stringify({ model: 'project/model' }));
+          const withProject = readOpencodeConfig(tmpRoot, {
+            env: { OPENCODE_CONFIG: customConfigPath },
+            homeDir: isolatedHome,
+          });
+          assert.equal(withProject.model, 'project/model');
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+        fs.rmSync(customConfigDir, { recursive: true, force: true });
+      }
+    });
+
+    it('rejects an OPENCODE_CONFIG path matching SENSITIVE_FILE_PATTERNS, treating it as absent', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-sensitive-home-'));
+      const sensitiveDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-sensitive-'));
+      try {
+        const sensitivePath = path.join(sensitiveDir, '.env');
+        fs.writeFileSync(sensitivePath, JSON.stringify({ model: 'should-not-load' }));
+
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-sensitive-root-'));
+        try {
+          const config = readOpencodeConfig(tmpRoot, {
+            env: { OPENCODE_CONFIG: sensitivePath },
+            homeDir: isolatedHome,
+          });
+          assert.equal(config, null);
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+        fs.rmSync(sensitiveDir, { recursive: true, force: true });
+      }
+    });
+
+    it('folds OPENCODE_CONFIG_CONTENT above file-based tiers but below managed admin config', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-inline-home-'));
+      try {
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-inline-root-'));
+        try {
+          fs.writeFileSync(path.join(tmpRoot, 'opencode.jsonc'), JSON.stringify({ model: 'project/model' }));
+
+          const inlineOnly = readOpencodeConfig(tmpRoot, {
+            env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: 'inline/model' }) },
+            homeDir: isolatedHome,
+          });
+          assert.equal(inlineOnly.model, 'inline/model', 'inline config must override project config');
+
+          const managedDir = path.join(tmpRoot, 'managed');
+          fs.mkdirSync(managedDir, { recursive: true });
+          fs.writeFileSync(path.join(managedDir, 'opencode.json'), JSON.stringify({ model: 'managed/model' }));
+
+          const withManaged = readOpencodeConfig(tmpRoot, {
+            env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: 'inline/model' }) },
+            homeDir: isolatedHome,
+            managedConfigDir: managedDir,
+          });
+          assert.equal(withManaged.model, 'managed/model', 'managed config must override inline config');
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('deep-merges provider blocks across two sources instead of one replacing the other', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-mergeprov-home-'));
+      try {
+        const globalDir = path.join(isolatedHome, '.config', 'opencode');
+        fs.mkdirSync(globalDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(globalDir, 'opencode.jsonc'),
+          JSON.stringify({ provider: { lmstudio: { baseURL: 'http://global-lmstudio' } } }),
+        );
+
+        const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-mergeprov-root-'));
+        try {
+          fs.writeFileSync(
+            path.join(tmpRoot, 'opencode.jsonc'),
+            JSON.stringify({ provider: { anthropic: { baseURL: 'http://project-anthropic' } } }),
+          );
+
+          const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
+          assert.equal(config.provider.lmstudio.baseURL, 'http://global-lmstudio');
+          assert.equal(config.provider.anthropic.baseURL, 'http://project-anthropic');
+        } finally {
+          fs.rmSync(tmpRoot, { recursive: true, force: true });
+        }
+      } finally {
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('mergeConfigDeep drops __proto__/constructor/prototype keys instead of repointing the prototype', () => {
+      const base = { model: 'base/model' };
+      const malicious = JSON.parse('{"__proto__": {"polluted": true}, "constructor": "x", "prototype": "y", "model": "overlay/model"}');
+
+      const merged = mergeConfigDeep(base, malicious);
+
+      assert.equal(merged.model, 'overlay/model');
+      assert.equal(({}).polluted, undefined, 'Object.prototype must not be polluted');
+      assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+      assert.equal(merged.constructor, Object, 'constructor must remain the inherited one, not the string "x"');
+    });
+
+    it('loadConfigFile rejects a top-level array or primitive instead of corrupting the merge', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-nonobject-'));
+      try {
+        const arrayPath = path.join(tmpDir, 'array.json');
+        fs.writeFileSync(arrayPath, JSON.stringify(['not', 'an', 'object']));
+        assert.equal(loadConfigFile(arrayPath), null);
+
+        const primitivePath = path.join(tmpDir, 'primitive.json');
+        fs.writeFileSync(primitivePath, JSON.stringify(true));
+        assert.equal(loadConfigFile(primitivePath), null);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('ignores a non-object OPENCODE_CONFIG_CONTENT instead of corrupting the merge', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-inlinebad-home-'));
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-inlinebad-root-'));
+      try {
+        fs.writeFileSync(path.join(tmpRoot, 'opencode.jsonc'), JSON.stringify({ model: 'project/model' }));
+
+        const config = readOpencodeConfig(tmpRoot, {
+          env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(['not', 'an', 'object']) },
+          homeDir: isolatedHome,
+        });
+        assert.equal(config.model, 'project/model');
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
+    });
+
+    it('resolveManagedConfigDir resolves per parameterized platform/env, not the real machine', () => {
+      assert.equal(resolveManagedConfigDir({ platform: 'darwin', env: {} }), '/Library/Application Support/opencode');
+      assert.equal(resolveManagedConfigDir({ platform: 'linux', env: {} }), '/etc/opencode');
+      assert.equal(
+        resolveManagedConfigDir({ platform: 'win32', env: { ProgramData: 'C:\\Fixture\\ProgramData' } }),
+        path.join('C:\\Fixture\\ProgramData', 'opencode'),
+      );
+      assert.equal(
+        resolveManagedConfigDir({ platform: 'win32', env: {} }),
+        path.join('C:\\ProgramData', 'opencode'),
+      );
+    });
+
+    it('does not throw when the managed config directory is missing or unreadable', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-nomanaged-home-'));
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-nomanaged-root-'));
+      try {
+        fs.writeFileSync(path.join(tmpRoot, 'opencode.jsonc'), JSON.stringify({ model: 'project/model' }));
+
+        assert.doesNotThrow(() => {
+          const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
+          assert.equal(config.model, 'project/model');
+        });
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+        fs.rmSync(isolatedHome, { recursive: true, force: true });
+      }
     });
   });
 
