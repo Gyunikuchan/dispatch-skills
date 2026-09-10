@@ -726,6 +726,32 @@ function isSubscriptionOrTokenIssue(text) {
 }
 
 /**
+ * Builds the agy CLI argument array for a headless --print run.
+ * Exported for unit testing.
+ *
+ * agy has no file-attachment flag (`agy --help` lists no `-f`/`--file`) — attempting to pass
+ * one is a hard CLI parse error ("flags provided but not defined: -f"). When the prompt
+ * overflows argv and spills to a brief file, agy can only reach it by reading the path
+ * directly, which requires the file's directory to be in its workspace. `--add-dir` grants
+ * that without widening access to the rest of the OS temp directory.
+ *
+ * @param {string} argvPrompt - The prompt text to pass on argv (may be a brief-file pointer).
+ * @param {string|null} briefFile - Path to the brief file, or null if the prompt fit on argv.
+ * @param {Object} opts
+ * @param {string} [opts.model]
+ * @param {string} [opts.effort]
+ * @param {number} opts.timeout
+ */
+export function buildAgyArgs(argvPrompt, briefFile, { model, effort, timeout }) {
+  const args = ['--print', argvPrompt, `--print-timeout=${timeout}s`];
+  if (briefFile) args.push('--add-dir', path.dirname(briefFile));
+  if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
+  args.push('--mode', 'plan');
+  return args;
+}
+
+/**
  * Executes a single prompt in a specific Antigravity mode.
  */
 async function executeAgyInMode(mode, options) {
@@ -763,17 +789,7 @@ async function executeAgyInMode(mode, options) {
 
   // Headless execution (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'agy');
-  const agyArgs = ['--print', argvPrompt, `--print-timeout=${timeout}s`];
-
-  if (effectiveModel) {
-    agyArgs.push('--model', effectiveModel);
-  }
-
-  if (effectiveEffort) {
-    agyArgs.push('--effort', effectiveEffort);
-  }
-
-  agyArgs.push('--mode', 'plan');
+  const agyArgs = buildAgyArgs(argvPrompt, briefFile, { model: effectiveModel, effort: effectiveEffort, timeout });
 
   emitInitBanner({
     provider: providerLabel,

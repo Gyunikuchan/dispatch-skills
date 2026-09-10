@@ -120,8 +120,9 @@ export const SENSITIVE_FILE_PATTERNS = [
   /\.vault-token$/i,
   /credentials\.json$/i,
   /service[-_]?account.*\.json$/i,
-  /token/i,
-  /secret/i,
+  // Whole-word match only: prevents false-positives on "tokenizer.ts", "token-bucket.ts", etc.
+  /\btoken\b/i,
+  /\bsecrets?\b/i,
 ];
 
 /**
