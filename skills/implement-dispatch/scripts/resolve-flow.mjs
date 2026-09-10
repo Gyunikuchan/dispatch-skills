@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { parseJsonc, PROJECT_ROOT } from '../../dispatch/scripts/common.mjs';
+import { parseJsonc, PROJECT_ROOT, isMainModule } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -637,7 +637,7 @@ async function main() {
 }
 
 // Run main only when invoked directly
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMainModule(import.meta.url)) {
   main().catch(err => {
     process.stderr.write(`Unexpected error: ${err.message}\n`);
     process.exit(1);

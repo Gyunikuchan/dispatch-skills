@@ -204,7 +204,15 @@ export const SENSITIVE_FILE_PATTERNS = [
   /\.vault-token$/i,
   /credentials\.json$/i,
   /service[-_]?account.*\.json$/i,
-  // Whole-word match only: prevents false-positives on "tokenizer.ts", "token-bucket.ts", etc.
+];
+
+/**
+ * Whole-word filename patterns, checked against the basename only (never the full absolute
+ * path) — testing these against the full path would false-positive on any ancestor directory
+ * whose name contains the word (e.g. a repo checked out under `.../my-token-service/...`),
+ * while a whole-word basename match still avoids "tokenizer.ts", "token-bucket.ts", etc.
+ */
+export const SENSITIVE_FILE_BASENAME_PATTERNS = [
   /\btoken\b/i,
   /\bsecrets?\b/i,
 ];
@@ -604,6 +612,14 @@ export function readAttachment(filePath, maxBytes = MAX_ATTACHMENT_BYTES_PER_FIL
       return null;
     }
   }
+  for (const pattern of SENSITIVE_FILE_BASENAME_PATTERNS) {
+    if (pattern.test(baseName)) {
+      process.stderr.write(
+        `[dispatch] Attachment rejected: '${filePath}' matches sensitive file denylist.\n`,
+      );
+      return null;
+    }
+  }
   for (const pattern of SENSITIVE_DIR_PATTERNS) {
     if (pattern.test(abs)) {
       process.stderr.write(
@@ -611,6 +627,17 @@ export function readAttachment(filePath, maxBytes = MAX_ATTACHMENT_BYTES_PER_FIL
       );
       return null;
     }
+  }
+  // Boundary awareness (warn, not reject): the orchestrator's own workspace, agent-config
+  // directories, and the OS temp dir (where relocated artifacts like a walkthrough.md live)
+  // cover the common attachment sources. `-f` is always an explicit orchestrator choice, so a
+  // path outside those roots is not blocked here — the denylist above is the actual gate — but
+  // it's surfaced so an operator scanning logs can spot an unexpectedly wide attachment.
+  const allowedRoots = getAllowedBoundaryRoots();
+  if (!allowedRoots.some((root) => isPathInside(abs, root))) {
+    process.stderr.write(
+      `[dispatch] Attachment '${filePath}' is outside the usual workspace/artifact boundaries; reading anyway (not on the sensitive denylist).\n`,
+    );
   }
 
   let stat;
@@ -1028,6 +1055,34 @@ export function isPathInside(targetPath, rootDirectory) {
   if (normTarget === normRoot) return true;
   const rel = path.relative(normRoot, normTarget);
   return !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+
+/**
+ * Returns allowed boundary root directories for `-f` attachments and context files:
+ * - Project workspace
+ * - Antigravity brain / artifacts (~/.gemini/antigravity and %APPDATA%/%LOCALAPPDATA%/antigravity)
+ * - Agent configurations (~/.agents, ~/.claude)
+ * - OS temp directory (covers orchestrator-relocated artifacts, e.g. a walkthrough moved to
+ *   `os.tmpdir()` by implement-dispatch's scratch-fallback cleanup, and delegate brief files)
+ */
+export function getAllowedBoundaryRoots() {
+  const homeDir = os.homedir();
+  const roots = [
+    PROJECT_ROOT,
+    path.join(homeDir, '.gemini', 'antigravity'),
+    path.join(homeDir, '.agents'),
+    path.join(homeDir, '.claude'),
+    os.tmpdir(),
+  ];
+
+  if (process.env.APPDATA) {
+    roots.push(path.join(process.env.APPDATA, 'antigravity'));
+  }
+  if (process.env.LOCALAPPDATA) {
+    roots.push(path.join(process.env.LOCALAPPDATA, 'antigravity'));
+  }
+
+  return roots;
 }
 
 /**

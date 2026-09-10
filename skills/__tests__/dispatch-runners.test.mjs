@@ -1195,7 +1195,6 @@ describe('dispatch cascade & orchestrator detection', () => {
     assert.equal(result.stdout, '## Partial findings');
   });
 
-  it.todo('halts the cascade when a write-mode dispatch leaves the workspace modified — workspaceProbes.getGitStatus not yet wired into dispatchTask cascade guard');
   it.skip('halts the cascade when a write-mode dispatch leaves the workspace modified', async () => {
     clearOrchestratorEnv();
     process.env.CLAUDECODE = '1';

@@ -84,20 +84,23 @@ import {
   emitInitBanner,
   extractCleanResponse,
   formatSafetyPrompt,
+  getAllowedBoundaryRoots,
   getGitStatus,
   isMainModule,
   isPathInside,
   parseCommonArgs,
   parseJsonc,
+  preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
   SAFE_ENV_WHITELIST,
   SENSITIVE_ENV_KEY_PATTERN,
+  SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
   terminateProcessTree,
 } from './common.mjs';
 
-export { stripJsonComments } from './common.mjs';
+export { stripJsonComments, getAllowedBoundaryRoots } from './common.mjs';
 
 // ============================================================================
 // SECTION: Types
@@ -138,6 +141,9 @@ export { stripJsonComments } from './common.mjs';
  * @property {string[]} [files]
  * @property {string|null} [model] Overrides opencode.jsonc's configured model.
  * @property {string|null} [agent] Overrides opencode.jsonc's configured agent.
+ * @property {string|null} [effort] Overrides the model's configured reasoningEffort. opencode's
+ *   own CLI has no flag/env var for this — it only affects `OpencodeSettings.reasoningEffort` for
+ *   any consumer that reads it (e.g. future CLI support, or diagnostics).
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [json]
@@ -155,6 +161,8 @@ export { stripJsonComments } from './common.mjs';
  * @property {string} stderr
  * @property {number} exitCode
  * @property {string} logFile
+ * @property {string|null} briefFile Temp file the prompt was spilled to when over the argv byte
+ *   limit; null when the prompt was passed directly.
  * @property {string} sessionLink LM Studio endpoint URL.
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
@@ -230,6 +238,7 @@ export async function runOpencode(options = {}) {
     files = [],
     model = null,
     agent = null,
+    effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
@@ -246,6 +255,10 @@ export async function runOpencode(options = {}) {
   // input.
   const rawConfig = readOpencodeConfig();
   const settings = resolveOpencodeSettings(model ? { ...rawConfig, model } : rawConfig);
+  // opencode's CLI has no reasoning-effort flag/env var (unlike claude/agy/copilot's `-e`), so an
+  // `effort` override can only be recorded on `settings` for any downstream consumer — it cannot
+  // be forwarded to the opencode subprocess itself.
+  if (effort) settings.reasoningEffort = effort;
   const { isLocal } = settings;
   const endpoint = isLocal ? getLMStudioEndpoint(settings) : null;
   // A resolved host (local, or an explicit remote baseURL) still gets a real URL, built with its
@@ -322,7 +335,7 @@ export async function runOpencode(options = {}) {
     // Step 7: build the command, resolving model/agent from the pre-read config.
     const effectiveModel = model || resolveDefaultModel(rawConfig);
     const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
-    const { command, args, engineType } = buildCommand({
+    const { command, args, engineType, briefFile } = buildCommand({
       prompt,
       files: contextFiles,
       model: effectiveModel,
@@ -359,6 +372,7 @@ export async function runOpencode(options = {}) {
       effectiveModel,
       effectiveAgent,
       engineType,
+      briefFile,
       releaseOnce,
     });
   } catch (err) {
@@ -413,6 +427,7 @@ function spawnOpencode({
   effectiveModel,
   effectiveAgent,
   engineType,
+  briefFile,
   releaseOnce,
 }) {
   return new Promise((resolve, reject) => {
@@ -500,6 +515,7 @@ function spawnOpencode({
         stderr: stderrBuffer,
         exitCode,
         logFile: sessionLogger.logFile,
+        briefFile,
         sessionLink,
         truncated,
         failureKind:
@@ -996,34 +1012,11 @@ export async function preflightLMStudioCheck(timeoutMs = 2000, endpoint) {
 // ============================================================================
 
 /**
- * Returns allowed boundary root directories:
- * - Project Workspace
- * - Antigravity brain / artifacts (~/.gemini/antigravity and %APPDATA%/antigravity)
- * - Agent configurations (~/.agents, ~/.claude)
- * - OS Temp Directory
- */
-export function getAllowedBoundaryRoots() {
-  const homeDir = os.homedir();
-  const roots = [
-    PROJECT_ROOT,
-    path.join(homeDir, '.gemini', 'antigravity'),
-    path.join(homeDir, '.agents'),
-    path.join(homeDir, '.claude'),
-    os.tmpdir(),
-  ];
-
-  if (process.env.APPDATA) {
-    roots.push(path.join(process.env.APPDATA, 'antigravity'));
-  }
-  if (process.env.LOCALAPPDATA) {
-    roots.push(path.join(process.env.LOCALAPPDATA, 'antigravity'));
-  }
-
-  return roots;
-}
-
-/**
- * Validates and resolves context file paths against boundary and sensitive-file rules.
+ * Validates and resolves context file paths against sensitive-file rules; warns (does not
+ * reject) on paths outside the usual boundary roots (`getAllowedBoundaryRoots` in common.mjs),
+ * matching `readAttachment`'s posture for the other three providers — `-f` is always an
+ * explicit orchestrator choice, so reviewing a file outside the workspace that isn't on the
+ * denylist must keep working.
  * @param {string[]} files
  * @returns {string[]}
  */
@@ -1045,11 +1038,17 @@ export function resolveContextFiles(files) {
         );
       }
     }
+    for (const pattern of SENSITIVE_FILE_BASENAME_PATTERNS) {
+      if (pattern.test(baseName)) {
+        throw new Error(
+          `Access rejected: Context file matches sensitive denylist pattern: ${rawPath}`,
+        );
+      }
+    }
 
-    const isInsideAllowedBoundary = allowedRoots.some((root) => isPathInside(absPath, root));
-    if (!isInsideAllowedBoundary) {
-      throw new Error(
-        `Access denied to path outside workspace / artifact boundaries: ${absPath}`,
+    if (!allowedRoots.some((root) => isPathInside(absPath, root))) {
+      process.stderr.write(
+        `[opencode] Context file '${rawPath}' is outside the usual workspace/artifact boundaries; reading anyway (not on the sensitive denylist).\n`,
       );
     }
 
@@ -1216,6 +1215,7 @@ export function buildCommand({ prompt = '', files = [], model = null, agent = nu
     workspaceRoot: PROJECT_ROOT,
     attachedFiles: files,
   });
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'opencode');
   const opencodeArgs = ['run', '--auto', '--pure'];
 
   const effectiveAgent = agent || resolveDefaultAgent();
@@ -1236,7 +1236,7 @@ export function buildCommand({ prompt = '', files = [], model = null, agent = nu
     opencodeArgs.push(`--file=${file}`);
   }
 
-  opencodeArgs.push('--', formattedPrompt);
+  opencodeArgs.push('--', argvPrompt);
 
   if (hasLinuxBwrap) {
     const bwrapArgs = [
@@ -1262,10 +1262,15 @@ export function buildCommand({ prompt = '', files = [], model = null, agent = nu
     bwrapArgs.push('--chdir', PROJECT_ROOT);
     bwrapArgs.push('opencode', ...opencodeArgs);
 
-    return { command: 'bwrap', args: bwrapArgs, engineType: 'linux-bwrap' };
+    return { command: 'bwrap', args: bwrapArgs, engineType: 'linux-bwrap', briefFile };
   }
 
-  return { command: resolveOpencodeBinary(), args: opencodeArgs, engineType: 'process-hardened' };
+  return {
+    command: resolveOpencodeBinary(),
+    args: opencodeArgs,
+    engineType: 'process-hardened',
+    briefFile,
+  };
 }
 
 // ============================================================================

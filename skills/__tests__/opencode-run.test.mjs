@@ -17,6 +17,7 @@ import {
   parseCommonArgs,
   PROJECT_ROOT,
   SENSITIVE_ENV_KEY_PATTERN,
+  SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
 } from '../dispatch/scripts/common.mjs';
 import {
@@ -238,21 +239,25 @@ Everything looks great.`;
       ];
 
       for (const file of sensitiveFiles) {
-        const matches = SENSITIVE_FILE_PATTERNS.some((p) => p.test(file));
+        const matches =
+          SENSITIVE_FILE_PATTERNS.some((p) => p.test(file)) ||
+          SENSITIVE_FILE_BASENAME_PATTERNS.some((p) => p.test(file));
         assert.ok(matches, `Expected ${file} to match sensitive file pattern`);
       }
     });
 
-    it('rejects files outside allowed boundaries', () => {
+    it('reads files outside allowed boundaries with a warning, not a rejection', () => {
+      // Dispatched agents legitimately need to read attachments outside the workspace (an
+      // external file to review, a walkthrough relocated to os.tmpdir()) — the boundary check
+      // is advisory (stderr warning) for anything not on the sensitive denylist, never a throw.
       const outOfBoundsPath =
         process.platform === 'win32'
           ? 'C:\\Windows\\system32\\drivers\\etc\\hosts'
           : '/etc/hosts';
 
       if (fs.existsSync(outOfBoundsPath)) {
-        assert.throws(() => {
-          resolveContextFiles([outOfBoundsPath]);
-        }, /Access denied to path outside workspace/);
+        const resolved = resolveContextFiles([outOfBoundsPath]);
+        assert.equal(resolved[0], path.resolve(outOfBoundsPath));
       }
     });
   });
