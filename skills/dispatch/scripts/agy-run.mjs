@@ -36,6 +36,7 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  resolveRunnerExitCode,
   spawnCli,
   spawnCliSync,
   terminateProcessTree,
@@ -391,7 +392,9 @@ function executeAgyInMode(mode, options) {
       const gitIntegrity = checkGitIntegrity(initialGitStatus);
 
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+      const cleanStdout = extractCleanResponse(stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
+      const failureKind = classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
 
       emitCompletionBanner({
         provider: providerLabel,
@@ -403,7 +406,7 @@ function executeAgyInMode(mode, options) {
       resolve({
         provider: 'agy',
         mode,
-        stdout: extractCleanResponse(stdoutBuffer),
+        stdout: cleanStdout,
         rawStdout: stdoutBuffer,
         stderr: stderrBuffer,
         exitCode,
@@ -412,7 +415,7 @@ function executeAgyInMode(mode, options) {
         conversationId,
         sessionLink,
         truncated,
-        failureKind: classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated,
+        failureKind,
         gitIntegrityViolation: gitIntegrity.violation,
         gitIntegrityDetails: gitIntegrity.details,
       });

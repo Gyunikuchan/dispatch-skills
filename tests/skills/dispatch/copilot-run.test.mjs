@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.mjs';
+
 import {
   buildCopilotArgs,
   getCopilotDesktopCandidates,
@@ -127,6 +129,17 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
         classifyCopilotFailure('Please run `gh auth login` to authenticate'),
         'auth',
       );
+    });
+  });
+
+  describe('exit code & output resolution', () => {
+    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
+      const stdout = 'Review: timeout and rate limit concerns addressed';
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: stdout }), 0);
+    });
+
+    it('forces exit code 1 when copilot exits 0 with empty stdout', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 });

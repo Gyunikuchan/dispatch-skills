@@ -7,6 +7,7 @@ import { describe, it, after } from 'node:test';
 import {
   getArgvByteLimit,
   preparePromptForArgv,
+  resolveRunnerExitCode,
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 import {
@@ -208,6 +209,18 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const modeIdx = args.indexOf('--mode');
       assert.ok(addDirIdx < modelIdx, '--add-dir should appear before --model');
       assert.ok(addDirIdx < modeIdx, '--add-dir should appear before --mode');
+    });
+  });
+
+  describe('exit code & output resolution', () => {
+    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
+      const stdout = 'Review: observed timeout issue in network handler';
+      const clean = stdout;
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: clean }), 0);
+    });
+
+    it('forces exit code 1 when agy exits 0 with empty stdout', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 });

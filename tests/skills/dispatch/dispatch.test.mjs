@@ -351,10 +351,28 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       const result = await dispatchTask({ prompt: 'Review', provider: 'agy' });
       assert.equal(result.provider, 'agy');
+      assert.equal(result.exitCode, 1);
 
       const notice = written.join('');
       assert.ok(notice.includes("Provider 'agy' exited 0 with no output"));
       assert.ok(notice.includes('Pinned with --provider'));
+    });
+
+    it('returns exitCode 1 when copilot is pinned with --provider and returns nothing (not logged in)', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDECODE = '1';
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: '',
+        stderr: 'Please run `gh auth login` to authenticate',
+        exitCode: 0,
+        failureKind: 'auth',
+      }));
+
+      const result = await dispatchTask({ prompt: 'Review', provider: 'copilot' });
+      assert.equal(result.provider, 'copilot');
+      assert.equal(result.exitCode, 1);
     });
 
     it('returns partial output when every provider fails', async () => {

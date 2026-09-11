@@ -48,6 +48,7 @@ import {
   parseJsonc,
   isMainModule,
   readStdin,
+  resolveRunnerExitCode,
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 // ---------------------------------------------------------------------------
@@ -732,5 +733,53 @@ describe('common: jsonc & module helpers', () => {
     } finally {
       process.stdin.isTTY = origIsTTY;
     }
+  });
+
+  describe('resolveRunnerExitCode', () => {
+    it('preserves exit code 0 when clean stdout is non-empty', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '## Verdict\nAll good.' }), 0);
+    });
+
+    it('preserves exit code 0 when stdout mentions failure keywords like timeout or rate limit', () => {
+      assert.equal(
+        resolveRunnerExitCode({
+          code: 0,
+          cleanStdout: 'Code review: found a timeout bug in rate limit handler',
+        }),
+        0,
+      );
+    });
+
+    it('forces exit code 1 when code is 0 but cleanStdout is empty', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '   \n  \t' }), 1);
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: null }), 1);
+    });
+
+    it('forces exit code 1 when isError flag is true despite exit code 0', () => {
+      assert.equal(
+        resolveRunnerExitCode({ code: 0, cleanStdout: 'Some error message', isError: true }),
+        1,
+      );
+    });
+
+    it('maps timeout truncation to 124', () => {
+      assert.equal(
+        resolveRunnerExitCode({ code: 0, truncated: 'timeout', cleanStdout: 'partial output' }),
+        124,
+      );
+    });
+
+    it('maps buffer truncation to 137', () => {
+      assert.equal(
+        resolveRunnerExitCode({ code: 0, truncated: 'buffer', cleanStdout: 'partial output' }),
+        137,
+      );
+    });
+
+    it('preserves non-zero exit codes', () => {
+      assert.equal(resolveRunnerExitCode({ code: 2, cleanStdout: 'Usage error' }), 2);
+      assert.equal(resolveRunnerExitCode({ code: null, signal: 'SIGTERM' }), 1);
+    });
   });
 });

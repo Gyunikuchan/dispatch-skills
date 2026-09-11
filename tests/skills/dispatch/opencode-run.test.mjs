@@ -9,6 +9,7 @@ import { describe, it, afterEach, mock } from 'node:test';
 
 import {
   PROJECT_ROOT,
+  resolveRunnerExitCode,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
@@ -949,6 +950,17 @@ describe('opencode-run', () => {
       await assert.rejects(runOpencode({ prompt: '   ' }), /No prompt provided/);
 
       assert.equal(httpGet.mock.callCount(), 0);
+    });
+  });
+
+  describe('exit code & output resolution', () => {
+    it('preserves exit code 0 when stdout contains keywords like timeout or 401', () => {
+      const stdout = 'Review: timeout and 401 handling are verified';
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: stdout }), 0);
+    });
+
+    it('forces exit code 1 when opencode exits 0 with empty stdout', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 });

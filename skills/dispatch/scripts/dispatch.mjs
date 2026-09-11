@@ -272,7 +272,7 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
       // failure, not a silent success.
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
-        if (!shouldCascade('exited 0 with no output', kind)) return result;
+        if (!shouldCascade('exited 0 with no output', kind)) return { ...result, exitCode: 1 };
         continue;
       }
 

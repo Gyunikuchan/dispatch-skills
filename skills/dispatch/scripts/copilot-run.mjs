@@ -37,6 +37,7 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  resolveRunnerExitCode,
   scanVersionDirs,
   spawnCli,
   spawnCliSync,
@@ -339,7 +340,8 @@ function executeOnTarget({
 
       // A truncated run still carries its partial analysis; return captured output
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+      const cleanStdout = extractCleanResponse(stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
       const failureKind = classifyCopilotFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
 
       emitCompletionBanner({ provider: providerLabel, sessionLink, exitCode, truncated });
@@ -348,7 +350,7 @@ function executeOnTarget({
         provider: 'copilot',
         mode: target.mode,
         binary: target.binary,
-        stdout: extractCleanResponse(stdoutBuffer),
+        stdout: cleanStdout,
         rawStdout: stdoutBuffer,
         stderr: stderrBuffer,
         exitCode,
@@ -420,7 +422,7 @@ export async function main() {
       }
       console.warn('');
     }
-    process.exit(res.stdout ? res.exitCode : (res.failureKind ? 1 : res.exitCode));
+    process.exit(res.exitCode);
   } catch (err) {
     console.error(`\n[dispatch] ERROR: ${err.message}`);
     process.exit(typeof err.code === 'number' ? err.code : 1);

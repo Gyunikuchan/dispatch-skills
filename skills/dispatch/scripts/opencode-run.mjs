@@ -95,6 +95,7 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  resolveRunnerExitCode,
   SAFE_ENV_WHITELIST,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_BASENAME_PATTERNS,
@@ -501,7 +502,10 @@ function spawnOpencode({
         );
       }
 
-      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+      const cleanStdout = json ? stdoutBuffer : extractCleanResponse(stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
+      const failureKind =
+        classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || (truncated ? truncated : null);
 
       emitCompletionBanner({
         provider: describeProvider(settings),
@@ -517,7 +521,7 @@ function spawnOpencode({
         model: effectiveModel,
         agent: effectiveAgent,
         engineType,
-        stdout: json ? stdoutBuffer : extractCleanResponse(stdoutBuffer),
+        stdout: cleanStdout,
         rawStdout: stdoutBuffer,
         stderr: stderrBuffer,
         exitCode,
@@ -525,8 +529,7 @@ function spawnOpencode({
         briefFile,
         sessionLink,
         truncated,
-        failureKind:
-          classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || (truncated ? truncated : null),
+        failureKind,
         gitIntegrityViolation: gitIntegrity.violation,
         gitIntegrityDetails: gitIntegrity.details,
       });

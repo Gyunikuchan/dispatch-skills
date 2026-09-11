@@ -38,6 +38,7 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  resolveRunnerExitCode,
   scanVersionDirs,
   spawnCli,
   spawnCliSync,
@@ -415,7 +416,13 @@ function executeOnTarget({
       const gitIntegrity = checkGitIntegrity(initialGitStatus);
 
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const exitCode = truncated ? (isTimedOut ? 124 : 137) : (code ?? (signal ? 1 : 0));
+      const exitCode = resolveRunnerExitCode({
+        code,
+        signal,
+        truncated,
+        cleanStdout: envelope.text,
+        isError: envelope.isError,
+      });
 
       emitCompletionBanner({
         provider: `Claude Code [${target.mode}] (claude)`,
@@ -432,7 +439,7 @@ function executeOnTarget({
         stdout: envelope.text,
         rawStdout: stdoutBuffer,
         stderr: stderrBuffer,
-        exitCode: envelope.isError && exitCode === 0 ? 1 : exitCode,
+        exitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         sessionId,

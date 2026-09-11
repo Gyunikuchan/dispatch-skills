@@ -1501,3 +1501,26 @@ export function isEmptyResult(result) {
   return !result || typeof result.stdout !== 'string' || result.stdout.trim().length === 0;
 }
 
+/**
+ * Resolves the effective exit code for a delegate subprocess run.
+ * Forces exit code 1 when a process exited 0 but produced no usable output or
+ * reported an error envelope. Truncations map to 124 (timeout) or 137 (buffer cap).
+ *
+ * @param {object} [options]
+ * @param {number|null} [options.code] - Raw child process exit code
+ * @param {string|null} [options.signal] - Termination signal if any
+ * @param {string|null} [options.truncated] - 'timeout' | 'buffer' | null
+ * @param {string} [options.cleanStdout] - Cleaned/extracted stdout response text
+ * @param {boolean} [options.isError] - Optional provider error flag (e.g. Claude envelope.isError)
+ * @returns {number} Effective exit code
+ */
+export function resolveRunnerExitCode({ code, signal, truncated, cleanStdout, isError = false } = {}) {
+  if (truncated === 'timeout') return 124;
+  if (truncated === 'buffer') return 137;
+  const raw = code ?? (signal ? 1 : 0);
+  if (raw === 0 && (isError || !cleanStdout || !cleanStdout.trim())) {
+    return 1;
+  }
+  return raw;
+}
+

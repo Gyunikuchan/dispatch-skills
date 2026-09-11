@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.mjs';
+
 import {
   READ_ONLY_ALLOWED_TOOLS,
   MODE_DEFINITIONS,
@@ -164,6 +166,21 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
     it('checks Claude availability without consuming tokens', async () => {
       const available = await isClaudeAvailable();
       assert.equal(typeof available, 'boolean');
+    });
+  });
+
+  describe('exit code & output resolution', () => {
+    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
+      const stdout = 'Review: timeout and rate limit considerations';
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: stdout }), 0);
+    });
+
+    it('forces exit code 1 when claude exits 0 with isError envelope', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: 'error details', isError: true }), 1);
+    });
+
+    it('forces exit code 1 when claude exits 0 with empty stdout', () => {
+      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 });
