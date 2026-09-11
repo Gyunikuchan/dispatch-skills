@@ -806,8 +806,14 @@ export function createSessionLogger(providerName) {
  * Must be emitted BEFORE spawning the delegate: the log path it names is the orchestrator's
  * only handle for monitoring a run in flight.
  */
-export function emitInitBanner({ provider, sessionLink, logFile, mode }) {
+export function emitInitBanner({ provider, model, effort, sessionLink, logFile, mode }) {
   const parts = [`[dispatch] Provider: ${provider}`];
+  if (model) {
+    parts.push(`Model: ${Array.isArray(model) ? model.join(', ') : model}`);
+  }
+  if (effort) {
+    parts.push(`Effort: ${effort}`);
+  }
   if (sessionLink) {
     parts.push(`Session: ${sessionLink}`);
   }

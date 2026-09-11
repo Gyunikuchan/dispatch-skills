@@ -17,7 +17,7 @@ Deliver high-confidence cross-agent delegation and review with minimal token ove
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Use relative repo paths for markdown links (never machine-specific `file:///`). Exception: a chat-only link to an out-of-repo session path (e.g. OS temp directory) is exempt.
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs.
 
 ## Ask Before You Assume
 

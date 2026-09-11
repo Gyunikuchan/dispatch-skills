@@ -14,6 +14,8 @@ import {
   normalizePath,
   getAllowedBoundaryRoots,
   createSessionLogger,
+  emitInitBanner,
+  emitCompletionBanner,
   buildAttachmentBlock,
   readAttachment,
   preparePromptForArgv,
@@ -419,6 +421,78 @@ describe('common: session logging & process spawning', () => {
       assert.equal(out.trim(), 'async');
       done();
     });
+  });
+
+  it('emitInitBanner formats standard banner with provider, model, effort, session, mode, and log', () => {
+    let captured = '';
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      captured += chunk;
+      return true;
+    };
+    try {
+      emitInitBanner({
+        provider: 'Claude Code [desktop] (claude)',
+        model: 'claude-3-7-sonnet',
+        effort: 'high',
+        sessionLink: 'https://example.com/session',
+        mode: 'READ-ONLY',
+        logFile: '/tmp/test.log',
+      });
+      assert.equal(
+        captured,
+        '[dispatch] Provider: Claude Code [desktop] (claude) | Model: claude-3-7-sonnet | Effort: high | Session: https://example.com/session | Mode: READ-ONLY | Log: /tmp/test.log\n',
+      );
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  it('emitInitBanner formats array model and omits null/undefined fields', () => {
+    let captured = '';
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      captured += chunk;
+      return true;
+    };
+    try {
+      emitInitBanner({
+        provider: 'Antigravity 2.0 (agy)',
+        model: ['gemini-3.8-flash', 'gemini-3.7-flash'],
+        effort: null,
+        logFile: '/tmp/test.log',
+        mode: 'READ-ONLY',
+      });
+      assert.equal(
+        captured,
+        '[dispatch] Provider: Antigravity 2.0 (agy) | Model: gemini-3.8-flash, gemini-3.7-flash | Mode: READ-ONLY | Log: /tmp/test.log\n',
+      );
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  it('emitCompletionBanner formats completion banner with provider, resume, exitCode, and truncated', () => {
+    let captured = '';
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      captured += chunk;
+      return true;
+    };
+    try {
+      emitCompletionBanner({
+        provider: 'OpenCode (LM Studio)',
+        sessionLink: 'http://127.0.0.1:1234/v1',
+        exitCode: 0,
+        truncated: 'timeout',
+      });
+      assert.equal(
+        captured,
+        '[dispatch] Done: OpenCode (LM Studio) | Exit: 0 | Resume: http://127.0.0.1:1234/v1 | Truncated: timeout\n',
+      );
+    } finally {
+      process.stderr.write = origWrite;
+    }
   });
 
   it('terminateProcessTree safely handles null or dead child', () => {

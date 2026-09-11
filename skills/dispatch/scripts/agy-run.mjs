@@ -333,6 +333,8 @@ function executeAgyInMode(mode, options) {
 
   emitInitBanner({
     provider: providerLabel,
+    model: effectiveModel,
+    effort: effectiveEffort,
     logFile: sessionLogger.logFile,
     mode: 'READ-ONLY',
   });

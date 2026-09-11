@@ -279,7 +279,13 @@ function executeOnTarget({
   const modeLabel = { desktop: 'copilot desktop', vscode: 'copilot vscode', cli: 'copilot cli' }[target.mode];
   const providerLabel = `GitHub Copilot [${target.mode}] (${modeLabel})`;
 
-  emitInitBanner({ provider: providerLabel, logFile: sessionLogger.logFile, mode: 'READ-ONLY' });
+  emitInitBanner({
+    provider: providerLabel,
+    model,
+    effort,
+    logFile: sessionLogger.logFile,
+    mode: 'READ-ONLY',
+  });
 
   const trace = createTraceWriter(verbose);
 

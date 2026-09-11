@@ -282,6 +282,8 @@ export async function runOpencode(options = {}) {
   const sessionLogger = createSessionLogger('opencode');
   emitInitBanner({
     provider: describeProvider(settings),
+    model: settings.rawModel || null,
+    effort: settings.reasoningEffort || null,
     sessionLink,
     logFile: sessionLogger.logFile,
     mode: 'READ-ONLY',

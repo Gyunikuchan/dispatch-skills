@@ -357,6 +357,8 @@ function executeOnTarget({
 
   emitInitBanner({
     provider: `Claude Code [${target.mode}] (claude)`,
+    model,
+    effort,
     logFile: sessionLogger.logFile,
     mode: 'READ-ONLY',
   });
