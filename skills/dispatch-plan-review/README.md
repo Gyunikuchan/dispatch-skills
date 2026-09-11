@@ -200,11 +200,3 @@ When running inside Antigravity, the orchestrator automatically detects the acti
 
 ### False Claims on Uncommitted Code
 Delegates inspect the files present on disk. If your plan refers to code changes from an uncommitted draft branch or unstaged stash that is not present in the workspace, the delegate may flag them as missing symbols. Ensure workspace dependencies and referenced files exist before running review.
-
----
-
-## Pairs With
-
-- **`dispatch`**: The core cross-agent execution bridge and CLI provider cascade (required).
-- **`dispatch-code-review`**: The companion skill for cross-agent code reviews once implementation is complete.
-

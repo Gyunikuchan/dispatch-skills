@@ -201,10 +201,3 @@ Delegates do not require manual rule configuration. They automatically inspect t
 
 ### Reviewing Transient Antigravity Walkthroughs
 When running inside Antigravity, the orchestrator automatically detects the active `walkthrough.md` and `implementation_plan.md` artifacts from the session brain directory. You do not need to copy or export them manually.
-
----
-
-## Pairs With
-
-- **`dispatch`**: The core cross-agent execution bridge and CLI provider cascade (required).
-- **`dispatch-plan-review`**: The companion skill for cross-agent plan reviews before code is written.
