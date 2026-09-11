@@ -246,6 +246,7 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
   - **Verify command**: The test/lint command that must remain green across all iterations.
   - **Escalation triggers**: Domain-specific decisions that require immediate user input.
 - **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are moved to the OS temp directory (never deleted); if a run terminates in deadlock or requires user intervention, they are preserved in place for easy resumption.
+- **Single Plan Approval Gate**: When preceded by interactive user questioning or requirements interviews, questioning finishes first, followed immediately by plan authoring and multi-agent plan review. The orchestrator solicits user approval only once on the refined, post-review plan rather than asking twice.
 - **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
 
 ---

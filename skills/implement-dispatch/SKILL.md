@@ -83,6 +83,7 @@ Read-only fallback subagents (used per the Fallback invariant below) live in `di
 - **Adjudication**: Per `dispatch`'s `references/alignment.md` § Adjudication (evidence over votes, verdict table). Ground truth is the requirement, active code, and repository rules.
 - **Consensus rule**: Under `consensus: true`, every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in re-dispatch. Under `consensus: false`, reject directly when verified counter-evidence exists.
 - **Round cap escalation**: Reaching a phase's round cap without consensus escalates remaining disputes to the user. User feedback starts a fresh cap: reset that phase's round counter to 0 and allow up to `flow['<phase>'].maxRounds` additional waves.
+- **Single-Gate Plan Approval**: When preceded by interactive questioning or user interviews, let questioning conclude first. Transition immediately to plan authoring and plan review without intermediate approval requests; solicit user approval only once on the refined post-review plan before implementation.
 
 ## Host Conventions
 
@@ -99,7 +100,7 @@ Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the
 
 ### 1. Understand Requirement & Scope
 
-1. Restate the ask as checkable success criteria. Record settling assumptions directly in the plan; query the user only on unresolvable contradictions or repository escalation triggers.
+1. Restate the ask as checkable success criteria. When preceded by interactive questioning or user interviews, let questioning finish first and incorporate settled decisions directly into the success criteria and assumptions. Record settling assumptions directly in the plan; query the user only on unresolvable contradictions or repository escalation triggers.
 2. **Scope gate**: Classify the change to determine the level:
    - `trivial` (single-file mechanical edit, rename, comment/typo fix, constant change) → downshift to `low`.
    - `focused` (single component/contract) → requested level.
@@ -116,6 +117,8 @@ Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the
 
 Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
 
+When operating under host planning mode or after interactive questioning, do not pause or prompt the user for approval of this raw draft — proceed immediately to Step 3's review loop.
+
 **Done when:** Plan file exists on disk with all template sections populated.
 
 ---
@@ -130,11 +133,13 @@ Invoke `dispatch-plan-review` in **orchestrated mode** per `dispatch`'s `referen
 2. **Fold & Re-dispatch**: When the returned round's accepted changes modify sections and round count < `flow['plan-review'].maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
 3. **Consensus & Cap**: Enforce `flow['plan-review'].consensus` against returned `[Disputed]` entries — accept, rebut with counter-evidence in re-dispatch, or escalate to the user when the round cap is reached.
 
-**Done when:** Plan on disk reflects all accepted findings, and all disputes are resolved or user-ruled.
+**Done when:** Plan on disk reflects all accepted findings, all disputes are resolved or user-ruled, and the refined plan is approved by the user (when required by host planning mode or user confirmation).
 
 ---
 
 ### 4. Implement
+
+When host planning mode or user confirmation is active, ensure the refined plan (updated with Step 3's accepted review findings) has received user approval before writing code.
 
 Dispatch implementation test-first to the native write-capable subagent from the platform agent-mode table, configured with `model` and `effort` from `flow.implementation`. For `trivial` scope or if subagent spawn fails, the orchestrator writes the initial code directly while keeping all subsequent review and diagnostic steps intact.
 
