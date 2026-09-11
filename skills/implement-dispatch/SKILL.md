@@ -5,119 +5,58 @@ description: Implement features or fixes with cross-agent review loops across ex
 
 # implement-dispatch
 
-Implement a feature or fix with cross-agent review loops across external agent CLIs. This skill owns the **control flow** — fan-out breadth, re-review depth, consensus gates, and artifact cleanup. Upstream skills carry specific mechanics:
+Orchestrate feature and fix implementations with multi-agent review loops across external agent CLIs. This skill owns **control flow** (scope gating, fan-out waves, consensus loops, implementation, and cleanup). Upstream skills provide review criteria:
 
-| Skill | Role | Required |
-|-------|------|----------|
-| `dispatch` | Runner execution, provider cascade, CLI flags, sandboxing | Yes |
-| `dispatch-plan-review` | Plan template, review axes, adjudication table, plan finding grammar | Optional (Step 3 skipped if absent) |
-| `dispatch-code-review` | Walkthrough template, review axes, adjudication table, code finding grammar | Optional (Steps 5–7 skipped if absent) |
+| Skill | Role | Status |
+|-------|------|--------|
+| `dispatch` | Runner execution, CLI flags, sandboxing, fallback | **Required** |
+| `dispatch-plan-review` | Plan template, review axes, plan adjudication | **Optional** *(skips Step 3 if absent)* |
+| `dispatch-code-review` | Walkthrough template, review axes, code adjudication | **Optional** *(skips Steps 5–7 if absent)* |
 
-Reference each skill by name. If an optional skill is absent, name its absence in the handoff, author the artifact with standard headings, and proceed with the reduced flow.
-
-Delegates return **claims**; the orchestrator adjudicates and applies them.
+If an optional skill is absent, name its absence in the handoff and proceed with the reduced flow.
 
 ## Invocation
 
 ```
-/implement-dispatch <level> (<pins>): <feature | fix | ask>
+/implement-dispatch <level> (<pins>): <ask>
 ```
 
-Extends `dispatch`'s `references/alignment.md` § Invocation base grammar with `<level>` and `: <ask>`. Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
-
-- `<level>` — `low`, `medium`, `high`, `xhigh`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
-- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), or `dispatch`'s `--provider` aliases (e.g. `antigravity`, `claudecode`), normalized to the canonical key, or `all` to pin all configured platforms (including the orchestrator's own platform as a same-agent target). Overrides breadth: fans out to exactly these providers (or all available platforms when `all`), whatever the level's count.
-
-## Flow Plan
-
-Resolve the flow plan at the end of Step 1 once scope is classified, and store the output as `flow`:
-
-```bash
-node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...|all>]
-```
-
-Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `opencode`). `--validate-only` checks the config schema alone and rejects every other flag.
-
-`resolve-flow.mjs` resolves the review/implementation flow only — no artifact paths or slug. Resolve those separately via `dispatch`'s `resolve-artifact-paths.mjs` (see Host Conventions below).
-
-| Field | Read at | Meaning |
-|-------|---------|---------|
-| `flow['plan-review'].targets` | Step 3 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
-| `flow['plan-review'].maxRounds` | Step 3 | Plan review wave cap; `0` means the phase is configured off |
-| `flow['plan-review'].consensus` | Step 3 | Plan review consensus requirement (`true` / `false`) |
-| `flow['plan-review'].toolTurns` | Step 3 | Tool-turn budget handed to each plan reviewer |
-| `flow.implementation` | Step 4 | Orchestrator platform plus model and effort hints for native subagents |
-| `flow['code-review'].targets` | Steps 5, 7 | Platforms to dispatch (`platform`, `model?`, `effort?`, `allowSameAgent?`) |
-| `flow['code-review'].maxRounds` | Steps 5, 7 | Code review wave cap; `0` means the phase is configured off |
-| `flow['code-review'].consensus` | Steps 6, 7 | Code review consensus requirement (`true` / `false`) |
-| `flow['code-review'].toolTurns` | Steps 5, 7 | Tool-turn budget handed to each code reviewer |
-| `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: { requested: number, resolved: number } } }` — report as data |
-
-Artifact paths (plan/walkthrough) are not part of `flow` — resolve them separately via `dispatch`'s `resolve-artifact-paths.mjs` (Host Conventions below).
-
-A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. `maxRounds` counts total waves **including the first review**. Plan review and code review track independent round counters.
-
-When `targets` is empty and `maxRounds > 0`, external platforms are unavailable: take the in-process subagent fallback below. When `maxRounds === 0` the phase is configured off — run neither the dispatch nor the fallback.
-
-An unpinned run with no live candidates degrades to the fallback (`targets: []`, `maxRounds > 0`); a pinned run where every named pin is unavailable is a hard `resolve-flow.mjs` error instead — a pin names a specific delegate the user asked for, so its absence is a failure worth surfacing rather than silently substituting.
-
-## Platform Agent Modes
-
-| Platform | Write-capable subagent |
-|----------|------------------------|
-| `claude` | `general-purpose` |
-| `agy` | `self` |
-| `copilot` | `self` |
-| `opencode` | orchestrator executes directly |
-
-Read-only fallback subagents (used per the Fallback invariant below) live in `dispatch`'s Step 3, not here.
-
-## Operating Invariants
-
-- **Mandatory Entry Gate**: Every `/implement-dispatch` invocation begins by running `resolve-flow.mjs` (Step 1). Never edit code or author artifacts before resolving `flow`. Even `low` depth runs execute the resolver, code review, and run diagnostics.
-- **Execution boundaries**: External delegates run structurally read-only, per `dispatch`'s CLI mechanics. Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
-- **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
-- **Provider flags**: Always pass `--provider <target.platform> --no-config` so each dispatch stays on a platform from this skill's own config and ignores `dispatch`'s config. Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
-- **Fallback**: When a provider fails (a pinned target never cascades to another platform) or no candidate is available, re-run the prompt and attachments through the in-process read-only subagent from `dispatch`'s Step 3 read-only subagent table.
-- **Target affinity**: Route re-reviews and dispute rebuttals back to the specific delegate handles that raised or accepted them.
-- **Adjudication**: Per `dispatch`'s `references/alignment.md` § Adjudication (evidence over votes, verdict table). Ground truth is the requirement, active code, and repository rules.
-- **Consensus rule**: Under `consensus: true`, every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in re-dispatch. Under `consensus: false`, reject directly when verified counter-evidence exists.
-- **Round cap escalation**: Reaching a phase's round cap without consensus escalates remaining disputes to the user. User feedback starts a fresh cap: reset that phase's round counter to 0 and allow up to `flow['<phase>'].maxRounds` additional waves.
-- **Single-Gate Plan Approval**: When preceded by interactive questioning or user interviews, let questioning conclude first. Transition immediately to plan authoring and plan review without intermediate approval requests; solicit user approval only once on the refined post-review plan before implementation.
-
-## Host Conventions
-
-Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start for:
-- **Verify command**: Project test/lint command kept green across all code changes (Steps 4, 6, 7).
-- **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
-- **Artifact location convention**: An explicit plan/walkthrough path or directory the repo names, if any.
-
-When the repo names an explicit location above, use it and stop. Otherwise resolve both artifact locations once, at Step 1, via `dispatch`'s `resolve-artifact-paths.mjs` (see its own `--slug`/`--orchestrator` flags; slug derivation and native-vs-scratch tiering both live there now — not in `resolve-flow.mjs`), per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution — native tier (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`, written and updated directly with the respective review skill's template) preferred over the resolved scratch path under `.scratch`, reused for every subsequent write — never author multiple copies (e.g. a native and a scratch) of the same artifact.
-
-Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the orchestrator-supplied artifact so they don't re-derive it.
-
-## Process
-
-### 1. Understand Requirement & Scope
-
-1. Restate the ask as checkable success criteria. When preceded by interactive questioning or user interviews, let questioning finish first and incorporate settled decisions directly into the success criteria and assumptions. Record settling assumptions directly in the plan; query the user only on unresolvable contradictions or repository escalation triggers.
-2. **Scope gate**: Classify the change to determine the level:
-   - `trivial` (single-file mechanical edit, rename, comment/typo fix, constant change) → downshift to `low`.
-   - `focused` (single component/contract) → requested level.
-   - `cross-cutting` (multiple components, schema, security boundary) → requested level.
-   *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
-3. Run `resolve-flow.mjs` to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
-4. Resolve the plan and walkthrough artifact paths per Host Conventions via `dispatch`'s `resolve-artifact-paths.mjs`, which derives the slug itself (explicit → current git branch → active orchestrator's conversation id — see its own docs) and record the resolved paths for reuse in Steps 2 and 5.
-
-**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, `resolve-flow.mjs` has executed and `flow` is loaded, and artifact paths are resolved.
+Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<level>` and `(<pins>)` are optional:
+- `<level>`: `low`, `medium` *(default)*, `high`, `xhigh`, `max`. Controls wave caps, reviewer breadth, consensus gates, and model budgets.
+- `(<pins>)`: Comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), `--provider` aliases, or `all`. Overrides breadth to target specified platforms.
 
 ---
 
-### 2. Write the Plan
+## Process
 
-Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
+### 1. Scope & Setup
 
-When operating under host planning mode or after interactive questioning, do not pause or prompt the user for approval of this raw draft — proceed immediately to Step 3's review loop.
+1. **Understand ask**: Restate requirements as checkable success criteria. If preceded by user questioning/interviews (e.g. `grilling`), fold settled decisions directly into criteria and assumptions without requesting intermediate approval.
+2. **Scope gate**: Classify change to set effective level:
+   - `trivial` (single-file mechanical edit, rename, comment/typo, simple constant) → downshift to `low`.
+   - `focused` or `cross-cutting` → keep requested level.
+   *(Scope only downshifts to `low`; never upshifts or overrides an explicit level).*
+3. **Resolve flow**:
+
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <pins>]
+   ```
+
+   Halt immediately if non-zero; store output as `flow`.
+4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
+
+   ```bash
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
+   ```
+
+**Done when:** Success criteria are checkable, scope is classified, `flow` is loaded, and artifact paths are resolved.
+
+---
+
+### 2. Author Plan
+
+1. Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
+2. **Single-gate rule**: Never ask for plan approval in Steps 1 or 2 (especially post-`grilling`). Transition directly to Step 3's review loop.
 
 **Done when:** Plan file exists on disk with all template sections populated.
 
@@ -125,36 +64,34 @@ When operating under host planning mode or after interactive questioning, do not
 
 ### 3. Plan Review Loop
 
-*Skipped when `flow['plan-review'].maxRounds === 0`.*
+*Skip if `flow['plan-review'].maxRounds === 0`.*
 
-Invoke `dispatch-plan-review` in **orchestrated mode** per `dispatch`'s `references/alignment.md` § Invocation Modes: hand over the plan path, per-target dispatch invocations (`flow['plan-review'].targets`), `Review Scope`, and `Tool Turn Budget` (from `flow['plan-review'].toolTurns`). The review skill owns one wave only — it dispatches, adjudicates, folds accepted findings into the plan, and logs outcomes under `## Review Findings & Resolutions`; it returns any `[Disputed]` entries unescalated. `implement-dispatch` owns the outer loop:
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode** (hand over plan path, targets from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` from `flow['plan-review'].toolTurns`).
+2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
+3. **Consensus & approval**:
+   - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap.
+   - `consensus: false`: Orchestrator may reject unverified claims directly.
+   - **User approval gate**: Only now, at the end of Step 3 on the refined post-review plan, solicit user approval before writing code.
 
-1. **Round 1**: Invoke with `Review Scope: Full review`.
-2. **Fold & Re-dispatch**: When the returned round's accepted changes modify sections and round count < `flow['plan-review'].maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
-3. **Consensus & Cap**: Enforce `flow['plan-review'].consensus` against returned `[Disputed]` entries — accept, rebut with counter-evidence in re-dispatch, or escalate to the user when the round cap is reached.
-
-**Done when:** Plan on disk reflects all accepted findings, all disputes are resolved or user-ruled, and the refined plan is approved by the user (when required by host planning mode or user confirmation).
+**Done when:** Plan reflects all accepted findings, disputes are resolved, and refined plan is approved by the user.
 
 ---
 
 ### 4. Implement
 
-When host planning mode or user confirmation is active, ensure the refined plan (updated with Step 3's accepted review findings) has received user approval before writing code.
+1. Dispatch implementation test-first to platform's native write subagent (see Reference below) configured with `flow.implementation` hints. For `trivial` scope or subagent failure, orchestrator implements directly.
+2. Implement Proposed Changes, run host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and report modified files and test output.
 
-Dispatch implementation test-first to the native write-capable subagent from the platform agent-mode table, configured with `model` and `effort` from `flow.implementation`. For `trivial` scope or if subagent spawn fails, the orchestrator writes the initial code directly while keeping all subsequent review and diagnostic steps intact.
-
-Require the subagent to implement Proposed Changes, run the host verify command until green, and report back modified files, verification output, and any deviations.
-
-**Done when:** Code changes are complete, raw verify output has been inspected, and tests are green.
+**Done when:** Code changes are complete and host verification tests pass green.
 
 ---
 
 ### 5. Code Review
 
-*Skipped when `flow['code-review'].maxRounds === 0`.*
+*Skip if `flow['code-review'].maxRounds === 0`.*
 
-1. Write the walkthrough at the path resolved in Step 1 following `dispatch-code-review`'s walkthrough template.
-2. Invoke `dispatch-code-review` in **orchestrated mode** per `dispatch`'s `references/alignment.md` § Invocation Modes: hand over the walkthrough path (plan alongside it), per-target dispatch invocations (`flow['code-review'].targets`), `Review Scope: Full review`, and `Tool Turn Budget` (from `flow['code-review'].toolTurns`). (Consumes round 1 of code review). The review skill owns this one wave only — dispatch and adjudicate against cited `<file>:L<line>`; in orchestrated mode it applies no fixes and returns `[Disputed]` entries unescalated.
+1. Write the walkthrough at the path resolved in Step 1 following `dispatch-code-review`'s template.
+2. Invoke `dispatch-code-review` in **orchestrated mode** (hand over walkthrough path, plan path, targets from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget`). The review skill returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
 
@@ -162,25 +99,22 @@ Require the subagent to implement Proposed Changes, run the host verify command 
 
 ### 6. Apply Fixes & Settle Disputes
 
-1. Apply accepted findings to the codebase directly as the orchestrator.
-2. Update the walkthrough (`## Changes Made`, `## Verification & Validation`, and append round adjudications under `## Review Findings & Resolutions`).
-3. Run the host verify command until green.
-4. Enforce `flow['code-review'].consensus`: escalate unresolvable disputes to the user via interactive questions with cited lines and counter-readings.
+1. Apply accepted findings directly as the orchestrator.
+2. Update the walkthrough (`## Changes Made`, `## Verification & Validation`, and append round logs under `## Review Findings & Resolutions`).
+3. Re-run the host verify command until green.
+4. Enforce consensus against returned `[Disputed]` items: rebut with counter-evidence, accept, or escalate to the user with interactive questions citing lines and counter-readings.
 
-**Done when:** Accepted fixes are applied, verify command is green, and round adjudications are recorded in the walkthrough.
+**Done when:** Accepted fixes are applied, verify command is green, and round adjudications are logged in the walkthrough.
 
 ---
 
 ### 7. Re-Review Loop
 
 While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode (per Step 5) with the updated walkthrough and `Review Scope: Re-review round <n>` naming modified lines.
-2. Apply fixes per Step 6 to findings the review skill returned as accepted, and settle any returned `[Disputed]` entries per `flow['code-review'].consensus`.
+1. Re-invoke `dispatch-code-review` in orchestrated mode with `Review Scope: Re-review round <n>` naming modified lines, routing re-reviews to citing delegates (target affinity).
+2. Apply accepted fixes and settle disputes per Step 6.
 
-Proceed to Handoff when:
-- **Consensus**: Round returns no new accepted findings on modified code.
-- **No changes**: Step 6 applied no modifications.
-- **Round cap**: Escalate remaining disputes to the user; user feedback resets the counter.
+Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets round cap to 0).
 
 **Done when:** Consensus is reached, no modifications remain, or user rules on deadlock.
 
@@ -188,21 +122,31 @@ Proceed to Handoff when:
 
 ### 8. Handoff & Cleanup
 
-1. **Record run diagnostics**: Append a `## Run Diagnostics` section — owned by `implement-dispatch`, not part of `dispatch-code-review`'s walkthrough template — to the walkthrough, covering:
-   - Scope classification, plus `flow.diagnostics.effectiveLevel` and any scope downshift from Step 1.
-   - Artifact slug and its `slugSource` (`explicit` / `branch` / `conversation`); a `conversation` slug is found automatically only in this conversation.
-   - Rounds spent per phase against `maxRounds`.
-   - Reviewing delegates (provider keys, session handles) and any failed delegates.
-   - `flow.diagnostics.unavailable`, `droppedPins`, and `clamped` reported as data.
-   - Absent optional skills (if any).
-   - Summary of accepted fixes and rejected/downgraded findings.
-   - Verification command status.
+1. **Record diagnostics**: Append `## Run Diagnostics` to the walkthrough (or plan if code review was skipped):
+   - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
+   - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
+   - Rounds spent per phase vs `maxRounds`.
+   - Active, failed, dropped, or unavailable delegates (`flow.diagnostics`).
+   - Summary of accepted/rejected findings and verification command status.
+2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp (`os.tmpdir()`) on completion. If unresolved/halted, retain in place with reasons stated.
+3. **Report to user**: Present run diagnostics and a link to the artifact (never inline full artifact content). Leave git operations (commit, push, PR) to the user.
 
-   When Step 5 was skipped (no walkthrough exists), append this section to the plan instead.
-2. **Relocate scratch artifacts**: per `dispatch`'s `references/alignment.md` § Artifact Lifecycle — `implement-dispatch` owns the full lifecycle, so if Step 1 resolved the scratch-fallback tier, upon reaching consensus/completion move (never delete) the scratch plan and walkthrough files this run created into the OS temp directory (`os.tmpdir()` / `$TMPDIR`), preserving filenames. When the session ends unresolved (round cap reached, open disputes, or user halt), retain scratch files in place for resumption and state reasons in the handoff.
-3. **Report to user**: Report only diagnostics and a link to the artifact — its content stays on disk. Format the hand-off per host repository conventions in `AGENTS.md` / `CLAUDE.md`, including a link to the artifact from Step 1 above:
-   - Host-convention or native tier: a normal repo-relative markdown link.
-   - Scratch tier, post-relocation: a chat-only path to the OS temp location — exempt from the repo's relative-link rule since it is never written into a repo file (see `AGENTS.md` Communication section).
-4. Leave git operations (commit, push, PR) to the user.
+**Done when:** Diagnostics are appended, scratch artifacts relocated (or retained with stated reason), and handoff report delivered.
 
-**Done when:** Run diagnostics are recorded in the walkthrough (or plan), scratch artifacts are relocated to the OS temp directory (or retained in place with explicit reason), and the handoff report links to the artifact without re-emitting its content.
+---
+
+## Reference
+
+### Platform Write Subagents
+| Platform | Native Write Subagent |
+|----------|-----------------------|
+| `claude` | `general-purpose` |
+| `agy` | `self` |
+| `copilot` | `self` |
+| `opencode` | Direct execution |
+
+### Dispatch Invocation Rules
+- **Flags**: Pass `--provider <target.platform> --no-config`. Pass `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` when present in target config. Attach context with `-f "<path>"`.
+- **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
+- **Isolation**: External delegates are strictly read-only (`--mode plan` / read-only tools). Orchestrator / native subagents alone write code.
+- **Fallback**: Provider failures fall back to `dispatch`'s in-process read-only subagent.
