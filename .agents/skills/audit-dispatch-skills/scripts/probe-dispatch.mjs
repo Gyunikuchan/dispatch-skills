@@ -25,7 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { resolveRepoRoot, resolveRunDirs } from './shared.mjs';
+import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
 // SECTION: Types
@@ -257,7 +257,6 @@ function createFixture(repoRoot) {
 
   const nonce = () => crypto.randomBytes(6).toString('hex');
   const nonces = { attached: nonce(), sibling: nonce(), denylisted: nonce() };
-  const toPosix = (p) => p.split(path.sep).join('/');
   const attached = toPosix(path.join(dir, 'attached.md'));
   const sibling = toPosix(path.join(dir, 'sibling.md'));
   const denylisted = toPosix(path.join(dir, 'probe-token.txt'));

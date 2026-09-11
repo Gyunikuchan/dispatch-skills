@@ -1,6 +1,6 @@
 ---
 name: dispatch-code-review
-description: Review session changes across 6 code axes through external agent CLIs, then adjudicate returned claims. Use when code changes need a cross-agent second opinion or review.
+description: Review session code changes across 6 axes through external agent CLIs, then adjudicate returned claims. Use on /dispatch-code-review or when code changes need a cross-agent review.
 ---
 
 # dispatch-code-review
@@ -124,7 +124,7 @@ Write every finding as one line in this grammar:
 
 Structure your review as:
 - `## Verdict`: One line — ship readiness and overall health across the 6 axes.
-- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`; `<axis>: n/a` only for UI when no UI was touched, and on a re-review round `<axis>: out of scope` for an axis Review Scope excludes. Explicitly list every axis.
+- `## Axis Coverage`: One line per axis — `<axis>: clean` or `<axis>: <n> finding(s)`; `<axis>: n/a` only for Test Quality & UI/UX when the change touches neither tests/testable behaviour nor UI, and on a re-review round `<axis>: out of scope` for an axis Review Scope excludes. Explicitly list every axis.
 - `## MUST-FIX`: Defects and vulnerabilities that block shipping, or "None."
 - `## SHOULD-FIX`: Real weaknesses worth correcting now, or "None."
 - `## CONSIDER`: Optional improvements and high-yield cuts, or "None."

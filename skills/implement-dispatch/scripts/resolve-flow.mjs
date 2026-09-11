@@ -41,7 +41,9 @@ export function normalizePin(rawPin) {
   return PROVIDER_ALIASES[lower] ?? (lower === 'all' ? 'all' : rawPin);
 }
 
-// --- Level resolution ---
+// ============================================================================
+// SECTION: Level resolution
+// ============================================================================
 
 /**
  * Picks which defined level applies to the requested level:
@@ -114,7 +116,9 @@ export function resolveLevelScalar(knob, level) {
   return chosen === undefined ? undefined : knob[chosen];
 }
 
-// --- Config loading ---
+// ============================================================================
+// SECTION: Config loading
+// ============================================================================
 
 /**
  * Thin wrapper over the shared loader's candidate list, kept exported for
@@ -135,7 +139,9 @@ export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) 
   return config;
 }
 
-// --- Config validation ---
+// ============================================================================
+// SECTION: Config validation
+// ============================================================================
 
 const DIFF_HINT = 'diff against config.default.jsonc';
 
@@ -309,7 +315,9 @@ export function validateConfig(config) {
   return problems;
 }
 
-// --- Liveness ---
+// ============================================================================
+// SECTION: Liveness
+// ============================================================================
 
 export async function defaultLiveness() {
   const results = {};
@@ -335,7 +343,9 @@ export async function defaultLiveness() {
   return results;
 }
 
-// --- Core resolution ---
+// ============================================================================
+// SECTION: Core resolution
+// ============================================================================
 
 /**
  * Resolves the flow plan.
@@ -493,7 +503,9 @@ export function resolveFlow(options, liveness, config) {
   return flow;
 }
 
-// --- CLI entry point ---
+// ============================================================================
+// SECTION: CLI entry point
+// ============================================================================
 
 function parseArgs(args) {
   const opts = {};

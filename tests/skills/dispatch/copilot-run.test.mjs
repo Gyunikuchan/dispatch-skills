@@ -5,6 +5,7 @@ import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.m
 
 import {
   buildCopilotArgs,
+  extractCopilotSessionId,
   getCopilotDesktopCandidates,
   getCopilotVscodeCandidates,
   getCopilotCliCandidates,
@@ -12,6 +13,7 @@ import {
   getCopilotVscodeBinary,
   getCopilotCliBinary,
   getCopilotBinary,
+  nextCopilotStep,
   resolveCopilotTarget,
   testCopilotReachability,
   probeCopilotModes,
@@ -140,6 +142,75 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
 
     it('forces exit code 1 when copilot exits 0 with empty stdout', () => {
       assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+    });
+  });
+
+  describe('extractCopilotSessionId', () => {
+    it('extracts from JSON session_id field', () => {
+      assert.equal(extractCopilotSessionId('{"session_id":"abc-123-def"}'), 'abc-123-def');
+    });
+
+    it('extracts from "Session ID: <id>" form', () => {
+      assert.equal(extractCopilotSessionId('Session ID: sess-98765432'), 'sess-98765432');
+    });
+
+    it('extracts from "copilot --resume <id>" form', () => {
+      assert.equal(extractCopilotSessionId('Run: copilot --resume sess-abcdefgh'), 'sess-abcdefgh');
+    });
+
+    it('returns null for short ids or no match', () => {
+      assert.equal(extractCopilotSessionId('session id: short'), null);
+      assert.equal(extractCopilotSessionId('no session info here'), null);
+      assert.equal(extractCopilotSessionId(''), null);
+      assert.equal(extractCopilotSessionId(null), null);
+    });
+  });
+
+  describe('nextCopilotStep (pure cascade decision)', () => {
+    it('success -> return', () => {
+      assert.equal(
+        nextCopilotStep({ result: { failureKind: null }, error: null, canCascade: true }),
+        'return',
+      );
+    });
+
+    it('quota/auth failure with cascade available -> next-target', () => {
+      assert.equal(
+        nextCopilotStep({ result: { failureKind: 'quota' }, error: null, canCascade: true }),
+        'next-target',
+      );
+      assert.equal(
+        nextCopilotStep({ result: { failureKind: 'auth' }, error: null, canCascade: true }),
+        'next-target',
+      );
+    });
+
+    it('quota/auth failure without cascade available -> return', () => {
+      assert.equal(
+        nextCopilotStep({ result: { failureKind: 'quota' }, error: null, canCascade: false }),
+        'return',
+      );
+    });
+
+    it('other failure -> return regardless of cascade', () => {
+      assert.equal(
+        nextCopilotStep({ result: { failureKind: 'other' }, error: null, canCascade: true }),
+        'return',
+      );
+    });
+
+    it('error (catch path) with cascade available -> next-target', () => {
+      assert.equal(
+        nextCopilotStep({ result: null, error: new Error('boom'), canCascade: true }),
+        'next-target',
+      );
+    });
+
+    it('error without cascade available -> throw', () => {
+      assert.equal(
+        nextCopilotStep({ result: null, error: new Error('boom'), canCascade: false }),
+        'throw',
+      );
     });
   });
 });

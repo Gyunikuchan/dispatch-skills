@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Dispatch a bounded read-only task across local and external agent CLIs (Claude Code, Antigravity, Copilot, OpenCode) with fallback. Use when delegating investigation, research, or review to another agent CLI.
+description: Dispatch a bounded read-only task to another agent CLI (Claude Code, Antigravity, Copilot, OpenCode) with provider fallback. Use on /dispatch or when delegating investigation, research, or review to another agent.
 ---
 
 # Dispatch
@@ -103,7 +103,7 @@ Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravit
 | `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`opencode`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |
-| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`, plus any level the target platform accepts; user-requested only) | `-e "max"` |
+| `-e <effort>` | Override reasoning effort; passed through verbatim to the target CLI (values are platform-specific; user-requested only) | `-e "high"` |
 | `-t <sec>` | Override timeout in seconds (default: 1800; user-requested only) | `-t 2400` |
 | `--orchestrator <name>` | Override detected orchestrator platform | `--orchestrator claude` |
 | `--json` | Request structured JSON output (opencode provider only) | `--json` |
@@ -150,5 +150,9 @@ Topics: Plan/Walkthrough Artifact Resolution, Invocation, Invocation Modes, Adju
 - **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner:
   ```bash
   tail -n 30 "<logFile>"
+  ```
+  PowerShell:
+  ```powershell
+  Get-Content -Tail 30 "<logFile>"
   ```
 - **Direct runner execution**: Execute a provider runner directly to diagnose binary discovery, authentication, or environment issues (e.g. `node <skill-path>/scripts/claude-run.mjs --help`).

@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 /**
- * Resolves plan/walkthrough artifact paths deterministically, so
- * `implement-dispatch`, `dispatch-plan-review`, and `dispatch-code-review` — run
- * together or independently — converge on the same on-disk file for a given
- * change instead of each inventing its own slug or re-authoring a copy.
+ * Resolves plan/walkthrough artifact paths deterministically, so the review-flow skills (see
+ * `references/alignment.md`) — run together or independently — converge on the same on-disk
+ * file for a given change instead of each inventing its own slug or re-authoring a copy.
  *
  * Resolution order per kind (native artifacts always win over scratch):
  *   1. Platform-native artifact (currently: Antigravity's brain dir) — only scanned
@@ -54,7 +53,9 @@ const PROTECTED_BRANCHES = new Set(['main', 'master', 'develop', 'trunk', 'head'
 const BRANCH_PREFIX_PATTERN = /^(feature|feat|fix|bugfix|hotfix|chore|refactor|release)\//;
 const MAX_SLUG_LENGTH = 60;
 
-// --- Date helpers ---
+// ============================================================================
+// SECTION: Date helpers
+// ============================================================================
 
 /** Local calendar date as `yyyy-mm-dd` — the filename should match the user's day. */
 export function localDate(now = new Date()) {
@@ -68,7 +69,9 @@ export function isValidDate(value) {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-// --- Scratch path template (single source of truth for the canonical shape) ---
+// ============================================================================
+// SECTION: Scratch path template (single source of truth for the canonical shape)
+// ============================================================================
 
 /**
  * @param {string} date - yyyy-mm-dd
@@ -82,7 +85,9 @@ export function buildScratchPaths(date, slug) {
   };
 }
 
-// --- Slug derivation ---
+// ============================================================================
+// SECTION: Slug derivation
+// ============================================================================
 
 /**
  * Kebab-cases arbitrary text: lowercase, non-alphanumeric runs become a single
@@ -201,7 +206,9 @@ export function resolveSlug({ explicit, branch = getCurrentBranch(), orchestrato
   return { slug: null, slugSource: null };
 }
 
-// --- Discovery: native tier ---
+// ============================================================================
+// SECTION: Discovery: native tier
+// ============================================================================
 
 /**
  * Known platform-native artifact locations, newest-file-wins across all of them.
@@ -307,7 +314,9 @@ export function findNativeArtifact(kind, options = {}) {
   return newest ? newest.path.split(path.sep).join('/') : null;
 }
 
-// --- Discovery: existing scratch tier ---
+// ============================================================================
+// SECTION: Discovery: existing scratch tier
+// ============================================================================
 
 /**
  * Finds an existing scratch artifact matching the slug regardless of date
@@ -363,7 +372,9 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
   return newest ? path.posix.join(SCRATCH_DIR, newest.name) : null;
 }
 
-// --- Core resolution ---
+// ============================================================================
+// SECTION: Core resolution
+// ============================================================================
 
 /**
  * Resolves one artifact kind: native tier, then existing scratch, then the
@@ -406,7 +417,9 @@ export function resolveArtifacts({ slug, date, kinds = ['plan', 'walkthrough'], 
   return result;
 }
 
-// --- CLI entry point ---
+// ============================================================================
+// SECTION: CLI entry point
+// ============================================================================
 
 function parseArgs(args) {
   const opts = { kind: 'both' };

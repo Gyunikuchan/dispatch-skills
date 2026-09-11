@@ -118,6 +118,14 @@ describe('resolve-flow CLI', () => {
     assert.ok(flow['code-review'].targets.length > 0);
   });
 
+  it('resolves space-separated "--pins claude,agy" the same as "--pins=claude,agy"', () => {
+    const spaced = run('--platform', 'claude', '--pins', 'claude,agy');
+    const equals = run('--platform=claude', '--pins=claude,agy');
+    assert.equal(spaced.status, 0);
+    assert.equal(equals.status, 0);
+    assert.deepEqual(JSON.parse(spaced.stdout), JSON.parse(equals.stdout));
+  });
+
   it('rejects an unrecognized --flag=value argument', () => {
     const { status, stderr } = run('--platform', 'claude', '--rounds=3');
     assert.equal(status, 1);

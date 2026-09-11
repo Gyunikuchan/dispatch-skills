@@ -780,6 +780,51 @@ describe('resolveFlow', () => {
       const problems = validateConfig(config);
       assert.ok(problems.length >= 5, `expected many problems, got ${problems.length}`);
     });
+
+    it('rejects a null config root', () => {
+      const problems = validateConfig(null);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /Config must be a JSON object/);
+    });
+
+    it('rejects an array config root', () => {
+      const problems = validateConfig([]);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /Config must be a JSON object/);
+    });
+
+    it('rejects a string config root', () => {
+      const problems = validateConfig('not-a-config');
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /Config must be a JSON object/);
+    });
+
+    it('rejects a non-object section value', () => {
+      const config = { ...BASE_CONFIG, 'code-review': 'nope' };
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /Section "code-review" must be an object/);
+    });
+
+    it('rejects a non-object platforms entry', () => {
+      const config = withSections({ 'code-review': { platforms: { agy: 'not-an-object' } } });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /code-review\.platforms\.agy must be an object/);
+    });
+
+    it('rejects a non-string flat effort', () => {
+      const config = withSections({ 'code-review': { platforms: { agy: { effort: 7 } } } });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /code-review\.platforms\.agy\.effort must be a string/);
+    });
+  });
+
+  describe('resolveFlow — unknown level', () => {
+    it('throws for an unrecognized level like "ultra"', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'ultra' }, LIVE_ALL, BASE_CONFIG),
+        /Unknown level "ultra"/
+      );
+    });
   });
 
   describe('targets include model/effort from config', () => {

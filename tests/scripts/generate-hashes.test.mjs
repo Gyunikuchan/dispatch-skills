@@ -26,6 +26,7 @@ describe('generate-hashes script', () => {
     assert.ok(typeof manifest === 'object' && manifest !== null);
     assert.ok('SKILL.md' in manifest);
     assert.ok('scripts/dispatch.mjs' in manifest);
+    assert.ok('references/alignment.md' in manifest);
 
     // Verify sha256 hex format
     for (const [file, hash] of Object.entries(manifest)) {

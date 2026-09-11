@@ -222,12 +222,9 @@ export async function runClaude(options = {}) {
         });
         lastResult = result;
 
-        if (result.exitCode === 0 && !result.failureKind) {
-          sessionLogger.close();
-          return result;
-        }
+        const step = nextClaudeStep({ result, error: null, isLastModel, isLastTarget, pinned: !!claudeMode });
 
-        if (!isLastModel) {
+        if (step === 'next-model') {
           const nextModel = modelsToTry[m + 1];
           process.stderr.write(
             `[dispatch] Notice: Model '${currentModel}' failed or not available on ${target.name} (exit ${result.exitCode}${result.failureKind ? `, failure: ${result.failureKind}` : ''}).\n` +
@@ -236,8 +233,7 @@ export async function runClaude(options = {}) {
           continue;
         }
 
-        const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
-        if (isQuotaOrAuth && !isLastTarget && !claudeMode) {
+        if (step === 'next-target') {
           process.stderr.write(
             `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
               `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
@@ -248,13 +244,15 @@ export async function runClaude(options = {}) {
         sessionLogger.close();
         return result;
       } catch (err) {
-        if (!isLastModel) {
+        const step = nextClaudeStep({ result: null, error: err, isLastModel, isLastTarget, pinned: !!claudeMode });
+
+        if (step === 'next-model') {
           process.stderr.write(
             `[dispatch] Warning: Model '${currentModel}' execution failed on ${target.name} (${err.message}). Trying fallback model '${modelsToTry[m + 1]}'...\n`,
           );
           continue;
         }
-        if (!isLastTarget && !claudeMode) {
+        if (step === 'next-target') {
           process.stderr.write(
             `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
           );
@@ -293,6 +291,27 @@ export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
     args.push('--allowedTools', tool);
   }
   return args;
+}
+
+/**
+ * Pure cascade decision for one target/model attempt, covering both the result path and
+ * the `catch (err)` path (mutually exclusive: pass `error` OR `result`, never both).
+ * `runClaude`'s loop delegates here so the cascade logic is unit-testable without
+ * spawning the real CLI; the stderr notices stay in the loop, unchanged.
+ * @param {{ result: object|null, error: Error|null, isLastModel: boolean, isLastTarget: boolean, pinned: boolean }} args
+ * @returns {'return'|'throw'|'next-model'|'next-target'}
+ */
+export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinned }) {
+  if (error) {
+    if (!isLastModel) return 'next-model';
+    if (!isLastTarget && !pinned) return 'next-target';
+    return 'throw';
+  }
+  if (result.exitCode === 0 && !result.failureKind) return 'return';
+  if (!isLastModel) return 'next-model';
+  const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
+  if (isQuotaOrAuth && !isLastTarget && !pinned) return 'next-target';
+  return 'return';
 }
 
 export function resolveModelsToTry(model) {
@@ -936,7 +955,10 @@ export function getClaudeCliBinary() {
     }
   }
 
-  const bin = findBinary(process.platform === 'win32' ? 'claude.cmd' : 'claude', extraCandidates);
+  const bin = findBinary(
+    process.platform === 'win32' ? ['claude.cmd', 'claude.exe'] : 'claude',
+    extraCandidates,
+  );
 
   // [OS: Windows] Prefer direct claude.exe inside node_modules over the .cmd launcher
   if (process.platform === 'win32' && bin) {

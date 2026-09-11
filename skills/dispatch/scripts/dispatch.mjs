@@ -8,7 +8,7 @@
  * 1. Claude Code (`claude`)
  * 2. Antigravity 2.0 (`agy`)
  * 3. GitHub Copilot (`copilot`)
- * 4. OpenCode (`opencode`) (OpenCode + LM Studio) if online
+ * 4. OpenCode (`opencode`) if online
  * (skipping current orchestrator unless --allow-same-agent, which runs as last resort)
  * 5. Fallback signal for built-in subagent invocation
  *
@@ -177,7 +177,7 @@ export async function dispatchTask(options = {}) {
   if (candidates.length === 0) {
     const err = new Error(
       'No alternative dispatch agent available.\n' +
-        '- OpenCode / LM Studio is offline.\n' +
+        '- OpenCode is offline or unavailable.\n' +
         '- No alternative external agents on other platforms were found and ready.\n' +
         'Proceeding to orchestrator subagent fallback.',
     );

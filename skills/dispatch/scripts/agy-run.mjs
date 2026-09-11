@@ -193,22 +193,12 @@ export async function runAgy(options = {}) {
 
       lastResult = result;
 
-      // Check if this run succeeded
-      const hasOutput = typeof result.stdout === 'string' && result.stdout.trim().length > 0;
-      const combinedOutput = `${result.stderr}\n${result.stdout}`;
-      const isTokenIssue =
-        result.failureKind === 'quota' ||
-        result.failureKind === 'auth' ||
-        isSubscriptionOrTokenIssue(combinedOutput);
-
-      if (result.exitCode === 0 && hasOutput) {
-        return result;
-      }
-
       // If execution reached the mode but encountered token/subscription issues,
       // cascade to the next available mode if one remains.
       const hasNextMode = i < modesToTry.length - 1 && !requestedMode;
-      if (isTokenIssue && hasNextMode) {
+      const step = nextAgyStep({ result, hasNextMode });
+
+      if (step === 'next-mode') {
         process.stderr.write(
           `[dispatch] Antigravity mode '${currentMode}' reached but lacked tokens/subscription (${result.failureKind || 'quota/auth'}).\n` +
             `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
@@ -216,12 +206,8 @@ export async function runAgy(options = {}) {
         continue;
       }
 
-      // If workspace integrity was violated in read-only mode, stop cascading immediately
-      if (result.gitIntegrityViolation) {
-        return result;
-      }
-
-      // If not a token issue, or no further modes remain, return the captured result
+      // Covers both the success return and the "no further cascade" return (including
+      // a workspace integrity violation in read-only mode) — both return the captured result.
       return result;
     } catch (err) {
       lastError = err;
@@ -250,7 +236,7 @@ export async function runAgy(options = {}) {
  * @param {string} text - Combined stderr and stdout output
  * @returns {boolean}
  */
-function isSubscriptionOrTokenIssue(text) {
+export function isSubscriptionOrTokenIssue(text) {
   if (!text || typeof text !== 'string') return false;
   return (
     /\b(usage limit|rate limit|quota|credit balance|insufficient[_ ]quota|too many requests|\b429\b)/i.test(
@@ -261,6 +247,27 @@ function isSubscriptionOrTokenIssue(text) {
     ) ||
     /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i.test(text)
   );
+}
+
+/**
+ * Pure cascade decision for one mode attempt's result path (the `catch (err)` path is not
+ * extracted — it stays inline, since its logic is a single `hasNextMode` branch). Success is
+ * exit 0 with non-empty stdout; a token/subscription issue with another mode available cascades,
+ * otherwise the result is returned as-is (covers both a clean non-cascading failure and a
+ * workspace integrity violation, which the caller returns immediately either way).
+ * @param {{ result: object, hasNextMode: boolean }} args
+ * @returns {'return'|'next-mode'}
+ */
+export function nextAgyStep({ result, hasNextMode }) {
+  const hasOutput = typeof result.stdout === 'string' && result.stdout.trim().length > 0;
+  if (result.exitCode === 0 && hasOutput) return 'return';
+  const combinedOutput = `${result.stderr}\n${result.stdout}`;
+  const isTokenIssue =
+    result.failureKind === 'quota' ||
+    result.failureKind === 'auth' ||
+    isSubscriptionOrTokenIssue(combinedOutput);
+  if (isTokenIssue && hasNextMode) return 'next-mode';
+  return 'return';
 }
 
 /**

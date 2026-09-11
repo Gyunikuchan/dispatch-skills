@@ -77,14 +77,14 @@ Targeted strictly at the human developer using the specific skill:
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`) following `writing-for-agents`. Prune duplicate meaning, maintain single sources of truth, and phrase instructions positively. Leverage plans and walkthroughs created by Antigravity.
 
-Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, and Copilot:
+Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, Copilot, and OpenCode:
 
 - **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `dispatch`'s `references/alignment.md`. Ensure alignment, downward independence, and compatibility across standalone and orchestrated invocations.
 - **Naming**: kebab-case for skill identifiers and filenames.
 - **Paths**: Relative paths with forward slashes instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
-- **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`; an orchestrator owning the full lifecycle relocates its scratch artifacts to OS temp on completion, while standalone reviews retain theirs (see `dispatch`'s `references/alignment.md` § Artifact Lifecycle for review-flow artifacts).
+- **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`; an orchestrator owning the full lifecycle relocates its scratch artifacts to OS temp on completion, while standalone reviews retain theirs (see `dispatch`'s `references/alignment.md` § Artifact Lifecycle for review-flow artifacts). `.scratch/` is intentionally not git-ignored — audit reports and other artifacts may be committed deliberately; review `git status` before committing.
 
 ### Comments
 

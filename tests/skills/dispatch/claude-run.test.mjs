@@ -6,12 +6,14 @@ import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.m
 import {
   READ_ONLY_ALLOWED_TOOLS,
   MODE_DEFINITIONS,
+  buildClaudeArgs,
   extractClaudeSessionId,
   getClaudeBinary,
   getClaudeDesktopBinary,
   getClaudeVSCodeBinary,
   getClaudeCliBinary,
   isClaudeAvailable,
+  nextClaudeStep,
   parseClaudeEnvelope,
   probeAllClaudeModes,
   resolveClaudeTarget,
@@ -181,6 +183,110 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
 
     it('forces exit code 1 when claude exits 0 with empty stdout', () => {
       assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+    });
+  });
+
+  describe('buildClaudeArgs', () => {
+    it('includes -p, --output-format json, and every read-only tool as --allowedTools', () => {
+      const args = buildClaudeArgs('hello', {});
+      assert.equal(args[0], '-p');
+      assert.equal(args[1], 'hello');
+      assert.ok(args.includes('--output-format'));
+      assert.equal(args[args.indexOf('--output-format') + 1], 'json');
+      for (const tool of READ_ONLY_ALLOWED_TOOLS) {
+        assert.ok(args.includes(tool), `expected --allowedTools ${tool}`);
+      }
+      assert.equal(args.filter((a) => a === '--allowedTools').length, READ_ONLY_ALLOWED_TOOLS.length);
+    });
+
+    it('omits --model/--effort when null', () => {
+      const args = buildClaudeArgs('hello', { model: null, effort: null });
+      assert.ok(!args.includes('--model'));
+      assert.ok(!args.includes('--effort'));
+    });
+
+    it('includes --model/--effort when set', () => {
+      const args = buildClaudeArgs('hello', { model: 'claude-opus-5', effort: 'high' });
+      assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5');
+      assert.equal(args[args.indexOf('--effort') + 1], 'high');
+    });
+  });
+
+  describe('nextClaudeStep (pure cascade decision)', () => {
+    const base = { isLastModel: false, isLastTarget: false, pinned: false };
+
+    it('success (exit 0, no failureKind) -> return', () => {
+      const step = nextClaudeStep({ ...base, result: { exitCode: 0, failureKind: null }, error: null });
+      assert.equal(step, 'return');
+    });
+
+    it('failure, not last model -> next-model', () => {
+      const step = nextClaudeStep({ ...base, result: { exitCode: 1, failureKind: 'other' }, error: null });
+      assert.equal(step, 'next-model');
+    });
+
+    it('quota/auth failure, last model, not last target, unpinned -> next-target', () => {
+      const step = nextClaudeStep({
+        ...base,
+        isLastModel: true,
+        result: { exitCode: 1, failureKind: 'quota' },
+        error: null,
+      });
+      assert.equal(step, 'next-target');
+    });
+
+    it('quota/auth failure, last model, pinned -> return', () => {
+      const step = nextClaudeStep({
+        ...base,
+        isLastModel: true,
+        pinned: true,
+        result: { exitCode: 1, failureKind: 'auth' },
+        error: null,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('other (non quota/auth) failure, last model -> return', () => {
+      const step = nextClaudeStep({
+        ...base,
+        isLastModel: true,
+        isLastTarget: false,
+        result: { exitCode: 1, failureKind: 'other' },
+        error: null,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('error (catch path), not last model -> next-model', () => {
+      const step = nextClaudeStep({ ...base, result: null, error: new Error('boom') });
+      assert.equal(step, 'next-model');
+    });
+
+    it('error, last model, not last target, unpinned -> next-target', () => {
+      const step = nextClaudeStep({ ...base, isLastModel: true, result: null, error: new Error('boom') });
+      assert.equal(step, 'next-target');
+    });
+
+    it('error, last model, last target -> throw', () => {
+      const step = nextClaudeStep({
+        ...base,
+        isLastModel: true,
+        isLastTarget: true,
+        result: null,
+        error: new Error('boom'),
+      });
+      assert.equal(step, 'throw');
+    });
+
+    it('error, last model, pinned -> throw', () => {
+      const step = nextClaudeStep({
+        ...base,
+        isLastModel: true,
+        pinned: true,
+        result: null,
+        error: new Error('boom'),
+      });
+      assert.equal(step, 'throw');
     });
   });
 });

@@ -1,6 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Review an implementation plan through external agent CLIs before code is written, then adjudicate returned claims. Use when a plan needs a second opinion or pre-implementation review.
+description: Review an implementation plan through external agent CLIs before code is written, then adjudicate returned claims. Use on /dispatch-plan-review or when a plan needs a pre-implementation cross-agent review.
 ---
 
 # dispatch-plan-review

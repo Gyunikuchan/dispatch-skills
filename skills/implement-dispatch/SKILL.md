@@ -1,6 +1,6 @@
 ---
 name: implement-dispatch
-description: Implement features or fixes with cross-agent review loops across external CLIs (dispatch, adjudicate, re-review to consensus). Use on /implement-dispatch, multi-agent implementation, or cross-agent review loops.
+description: Implement features or fixes through a plan → review → implement → review loop across external agent CLIs, adjudicating claims to consensus. Use on /implement-dispatch or multi-agent implementation with cross-agent review.
 ---
 
 # implement-dispatch
@@ -114,7 +114,7 @@ While previous round modified code and code review round count < `flow['code-rev
 1. Re-invoke `dispatch-code-review` in orchestrated mode with `Review Scope: Re-review round <n>` naming modified lines, routing re-reviews to citing delegates (target affinity).
 2. Apply accepted fixes and settle disputes per Step 6.
 
-Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets round cap to 0).
+Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets that phase's round counter to 0, allowing further rounds).
 
 **Done when:** Consensus is reached, no modifications remain, or user rules on deadlock.
 

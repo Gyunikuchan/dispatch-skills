@@ -44,8 +44,6 @@ import {
   terminateProcessTree,
 } from './common.mjs';
 
-export { isExecutableFile } from './common.mjs';
-
 // ============================================================================
 // SECTION: Types
 // ============================================================================
@@ -171,8 +169,8 @@ export async function runCopilot(options = {}) {
         initialGitStatus,
       });
 
-      const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
-      if (isQuotaOrAuth && canCascade) {
+      const step = nextCopilotStep({ result, error: null, canCascade });
+      if (step === 'next-target') {
         process.stderr.write(
           `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed or token missing).\n` +
             `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
@@ -184,7 +182,8 @@ export async function runCopilot(options = {}) {
       sessionLogger.close();
       return result;
     } catch (err) {
-      if (canCascade) {
+      const step = nextCopilotStep({ result: null, error: err, canCascade });
+      if (step === 'next-target') {
         process.stderr.write(
           `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
         );
@@ -227,6 +226,21 @@ function findViableTargets(copilotMode) {
     if (bin) viable.push({ mode: candidate.mode, name: candidate.name, binary: bin, version: null });
   }
   return viable;
+}
+
+/**
+ * Pure cascade decision for one target attempt, covering both the result path and the
+ * `catch (err)` path (mutually exclusive: pass `error` OR `result`, never both). `runCopilot`'s
+ * loop delegates here so the cascade logic is unit-testable without spawning the real CLI;
+ * the stderr notices stay in the loop, unchanged.
+ * @param {{ result: object|null, error: Error|null, canCascade: boolean }} args
+ * @returns {'return'|'throw'|'next-target'}
+ */
+export function nextCopilotStep({ result, error, canCascade }) {
+  if (error) return canCascade ? 'next-target' : 'throw';
+  const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
+  if (isQuotaOrAuth && canCascade) return 'next-target';
+  return 'return';
 }
 
 function createNoTargetsError() {
@@ -886,7 +900,7 @@ export function getCopilotCliCandidates() {
  * @returns {string|null} Path to executable or null if not installed
  */
 export function getCopilotCliBinary() {
-  const binName = process.platform === 'win32' ? 'copilot.cmd' : 'copilot';
+  const binName = process.platform === 'win32' ? ['copilot.cmd', 'copilot.exe'] : 'copilot';
   return findBinary(binName, getCopilotCliCandidates());
 }
 

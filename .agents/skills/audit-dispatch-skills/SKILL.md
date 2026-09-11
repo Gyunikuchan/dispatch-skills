@@ -88,3 +88,5 @@ Compares the repo against `work/git-status.txt`, moves everything in the run dir
 ## 7. Hand off
 
 Reply with the report path, severity counts, the top five fixes, and the probe table. Offer to act on selected findings (e.g. through `implement-dispatch`).
+
+**Done when:** the reply is sent with the report path, severity counts, top five fixes, probe table, and offer to act.

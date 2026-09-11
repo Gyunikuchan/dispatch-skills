@@ -281,6 +281,12 @@ describe('common: path & boundary utilities', () => {
     assert.ok(nodeBin !== null);
     assert.equal(findBinary('definitely-nonexistent-binary-xyz'), null);
   });
+
+  it('findBinary accepts an array of names, resolving the first PATH match in order', () => {
+    const resolved = findBinary(['definitely-nonexistent-binary-xyz', 'node']);
+    assert.ok(resolved !== null);
+    assert.equal(resolved, findBinary('node'));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -634,6 +640,13 @@ describe('common: skill integrity & hashes', () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it('generateSkillHashes hashes references/*.md and excludes config files', () => {
+    const manifest = generateSkillHashes(path.join(PROJECT_ROOT, 'skills', 'dispatch'));
+    assert.ok('references/alignment.md' in manifest);
+    assert.ok(!Object.keys(manifest).some((k) => k.startsWith('config')));
+    assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
   });
 
   it('verifySkillIntegrity detects a tampered file', () => {

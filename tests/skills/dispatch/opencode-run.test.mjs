@@ -84,6 +84,24 @@ describe('opencode-run', () => {
       }
     });
 
+    it('rejects a context file inside a sensitive directory (e.g. .kube)', () => {
+      // .kube (unlike .ssh) is only on SENSITIVE_DIR_PATTERNS, not SENSITIVE_FILE_PATTERNS,
+      // so this exercises the directory check specifically rather than the file-pattern one.
+      const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-run-test-'));
+      const sshDir = path.join(parentDir, '.kube');
+      fs.mkdirSync(sshDir, { recursive: true });
+      const sensitivePath = path.join(sshDir, 'config');
+      fs.writeFileSync(sensitivePath, 'Host example.com\n');
+      try {
+        assert.throws(
+          () => resolveContextFiles([sensitivePath]),
+          /sensitive directory/,
+        );
+      } finally {
+        fs.rmSync(parentDir, { recursive: true, force: true });
+      }
+    });
+
     it('reads files outside allowed boundaries with a warning, not a rejection', () => {
       const outOfBoundsPath =
         process.platform === 'win32'

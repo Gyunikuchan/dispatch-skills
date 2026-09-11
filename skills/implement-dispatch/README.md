@@ -213,6 +213,22 @@ Either `maxRounds: 0` or `targetCount: 0` skips a phase entirely. When `targetCo
         "high": { "model": "claude-opus-5", "effort": "low" }
       }
     }
+  },
+  "code-review": {
+    "maxRounds": { "low": 0, "medium": 1, "max": 3 },
+    "targetCount": { "low": 0, "medium": 1, "max": "all" },
+    "consensus": { "low": false, "high": true },
+    "includeSelf": { "low": false, "max": true },
+    "toolTurns": { "low": 3, "medium": 4, "high": 6, "max": 8 },
+    "platforms": {
+      "claude": {
+        "low": { "model": "claude-opus-5", "effort": "low" },
+        "medium": { "model": "claude-opus-5", "effort": "medium" },
+        "high": { "model": "claude-opus-5", "effort": "high" },
+        "max": { "model": "claude-opus-5", "effort": "xhigh" }
+      },
+      "agy": { "model": "gemini-3.8-flash", "effort": "high" }
+    }
   }
 }
 ```
@@ -271,4 +287,8 @@ For mechanical one-line changes or renames classified as `trivial`, the orchestr
 External reviews run asynchronously in the background. If you want to check what a reviewer is currently doing, you can monitor the temp logs emitted during launch:
 ```bash
 tail -f "<logFilePath>"
+```
+PowerShell:
+```powershell
+Get-Content -Wait -Tail 30 "<logFilePath>"
 ```

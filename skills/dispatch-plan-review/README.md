@@ -33,7 +33,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, VS Code extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: Copilot CLI or VS Code extension CLI (`copilot`).
-  - **Local OpenCode**: `opencode` binary with a local LM Studio server at `http://127.0.0.1:1234/v1`.
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (any provider/model; see `dispatch`).
 
 ### Installation
 
@@ -48,7 +48,7 @@ npx skills add Gyunikuchan/dispatch-skills --skill dispatch-plan-review
 To install globally for all projects:
 
 ```bash
-npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch dispatch-plan-review
+npx skills add -g Gyunikuchan/dispatch-skills --all
 ```
 
 To install every skill in this repository:

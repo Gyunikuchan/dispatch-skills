@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Generates skill-hashes.json for the dispatch skill.
+ * Generates skill-hashes.json for the dispatch skill: SKILL.md, scripts/*.mjs, and
+ * references/*.md. Config files (config*.jsonc) are excluded — user-edited/dynamic by design.
  * Run after modifying any skill file to update the integrity manifest.
  *
  * Usage: node scripts/generate-hashes.mjs

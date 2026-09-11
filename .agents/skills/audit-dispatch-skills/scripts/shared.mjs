@@ -19,17 +19,66 @@ export function resolveRepoRoot() {
   return path.resolve(res.stdout.trim());
 }
 
+/** Converts platform path separators to forward slashes. */
+export function toPosix(p) {
+  return p.split(path.sep).join('/');
+}
+
+/** Binds `root` and returns a `(p) => string` that resolves a repo-relative forward-slash path. */
+export function relTo(root) {
+  return (p) => toPosix(path.relative(root, p));
+}
+
 /** Reads `--run <dir>` and returns the run, work, and repo-relative forward-slash paths. */
 export function resolveRunDirs(root, argv) {
   const index = argv.indexOf('--run');
   const value = index === -1 ? null : argv[index + 1];
   if (!value) throw new Error(`Missing --run ${AUDIT_PREFIX}<yyyy-mm-dd-hhmm>`);
   const runDir = path.resolve(root, value);
-  const rel = (p) => path.relative(root, p).split(path.sep).join('/');
+  const rel = relTo(root);
   if (!rel(runDir).startsWith(AUDIT_PREFIX)) {
     throw new Error(`--run must be under ${AUDIT_PREFIX} (got ${value})`);
   }
   return { runDir, workDir: path.join(runDir, 'work'), rel };
+}
+
+/**
+ * Parses a frontmatter `description:` field as either a single-line scalar or a YAML
+ * folded/literal block (`>`, `|`, `>-`, `|-`). Folded lines join with a space (YAML folding
+ * semantics), literal lines join with a newline; either way, each continuation line's leading
+ * indentation is stripped before joining, and surrounding quotes on a scalar value are stripped.
+ * Handles only what a `description:` field in this repo's skill frontmatter actually uses — not
+ * a general YAML parser.
+ *
+ * @param {string} text - Full file text (or just the frontmatter block).
+ * @returns {string}
+ */
+export function frontmatterDescription(text) {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? text;
+  const lines = frontmatter.split(/\r?\n/);
+  const startIndex = lines.findIndex((l) => /^description:/.test(l));
+  if (startIndex === -1) return '';
+
+  const inlineValue = lines[startIndex].replace(/^description:\s*/, '');
+  const blockMatch = /^([>|][+-]?)\s*$/.exec(inlineValue);
+  if (!blockMatch) {
+    return inlineValue.trim().replace(/^["']|["']$/g, '');
+  }
+
+  const isFolded = blockMatch[1].startsWith('>');
+  const continuation = [];
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') {
+      if (isFolded) continue;
+      continuation.push('');
+      continue;
+    }
+    if (!/^\s/.test(line)) break; // Dedented line ends the block.
+    continuation.push(line.replace(/^\s+/, ''));
+  }
+
+  return continuation.join(isFolded ? ' ' : '\n').trim();
 }
 
 /**

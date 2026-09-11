@@ -17,7 +17,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { auditGitStatus, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
+import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
 // SECTION: Configurable Constants
@@ -69,6 +69,7 @@ function runTests(root) {
       // Scoped: some tests execute installed CLIs whose JS would otherwise flood the report.
       '--test-coverage-include=skills/**/*.mjs',
       '--test-coverage-include=scripts/**/*.mjs',
+      '--test-coverage-include=.agents/skills/audit-dispatch-skills/**/*.mjs',
       '--test-reporter=spec',
       'tests/**/*.test.mjs',
     ],
@@ -84,7 +85,7 @@ function runTests(root) {
 // ============================================================================
 
 async function buildMetrics(root) {
-  const rel = (p) => path.relative(root, p).split(path.sep).join('/');
+  const rel = relTo(root);
   const docs = authoredDocs(root);
   const scripts = [
     ...walk(path.join(root, 'skills')),
@@ -99,7 +100,7 @@ async function buildMetrics(root) {
   out.push('## Doc footprint', '', '| File | Words | ~Tokens | Description chars |', '|---|---|---|---|');
   for (const file of docs) {
     const text = fs.readFileSync(file, 'utf8');
-    const description = /^description:\s*(.+)$/m.exec(frontmatter(text))?.[1] ?? '';
+    const description = frontmatterDescription(text);
     const words = text.split(/\s+/).filter(Boolean).length;
     out.push(`| ${rel(file)} | ${words} | ${Math.round(text.length / CHARS_PER_TOKEN)} | ${description ? description.length : '—'} |`);
   }
@@ -205,10 +206,6 @@ function headingSlugs(file) {
 // ============================================================================
 // SECTION: Utilities
 // ============================================================================
-
-function frontmatter(text) {
-  return /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? '';
-}
 
 function loc(text) {
   return text.split('\n').filter((l) => l.trim()).length;

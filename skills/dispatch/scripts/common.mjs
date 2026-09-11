@@ -972,25 +972,38 @@ export function verifySkillIntegrity(skillDir, manifestName = 'skill-hashes.json
 }
 
 /**
- * Generates a hash manifest for all tracked files in a skill directory.
- * Hashes SKILL.md and all .mjs files under scripts/.
+ * Generates a hash manifest for all tracked files in a skill directory: SKILL.md, every .mjs
+ * under scripts/, and every .md under references/. Config files (`config*.jsonc`) are never
+ * hashed — they're user-edited/dynamic by design, not part of the skill's integrity surface.
+ * Entries are sorted alphabetically for a stable, diff-friendly manifest.
  */
 export function generateSkillHashes(skillDir) {
-  const manifest = {};
+  const entries = {};
   const skillMd = path.join(skillDir, 'SKILL.md');
   if (fs.existsSync(skillMd)) {
-    manifest['SKILL.md'] = hashFile(skillMd);
+    entries['SKILL.md'] = hashFile(skillMd);
   }
 
   const scriptsDir = path.join(skillDir, 'scripts');
   if (fs.existsSync(scriptsDir)) {
-    const entries = fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs'));
-    for (const entry of entries) {
+    for (const entry of fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs'))) {
       const rel = `scripts/${entry}`;
-      manifest[rel] = hashFile(path.join(skillDir, rel));
+      entries[rel] = hashFile(path.join(skillDir, rel));
     }
   }
 
+  const referencesDir = path.join(skillDir, 'references');
+  if (fs.existsSync(referencesDir)) {
+    for (const entry of fs.readdirSync(referencesDir).filter((f) => f.endsWith('.md'))) {
+      const rel = `references/${entry}`;
+      entries[rel] = hashFile(path.join(skillDir, rel));
+    }
+  }
+
+  const manifest = {};
+  for (const key of Object.keys(entries).sort()) {
+    manifest[key] = entries[key];
+  }
   return manifest;
 }
 
@@ -1069,7 +1082,7 @@ export function isPathInside(targetPath, rootDirectory) {
  * - Antigravity brain / artifacts (~/.gemini/antigravity and %APPDATA%/%LOCALAPPDATA%/antigravity)
  * - Agent configurations (~/.agents, ~/.claude)
  * - OS temp directory (covers orchestrator-relocated artifacts, e.g. a walkthrough moved to
- *   `os.tmpdir()` by implement-dispatch's scratch-fallback cleanup, and delegate brief files)
+ *   `os.tmpdir()` by an orchestrator's scratch-fallback cleanup, and delegate brief files)
  */
 export function getAllowedBoundaryRoots() {
   const homeDir = os.homedir();
@@ -1092,22 +1105,31 @@ export function getAllowedBoundaryRoots() {
 }
 
 /**
- * Locates an executable binary across platforms using:
- * 1. Explicit PATH check via `where.exe` (Windows) or `which` (macOS/Linux)
- * 2. Array of fallback candidate paths
+ * Locates an executable binary across platforms. Precedence: a PATH lookup (`where.exe` on
+ * Windows, `which` elsewhere) for each name in `binName` order — first existing match wins —
+ * then `extraCandidates` in order. `binName` accepts a single name or an ordered array (e.g.
+ * `['claude.cmd', 'claude.exe']` to prefer the batch launcher's nested-exe logic without missing
+ * a PATH-only `claude.exe` install).
+ *
+ * @param {string|string[]} binName
+ * @param {string[]} [extraCandidates]
  */
 export function findBinary(binName, extraCandidates = []) {
-  // Check system PATH
+  const names = Array.isArray(binName) ? binName : [binName];
   const lookupCmd = process.platform === 'win32' ? 'where.exe' : 'which';
-  try {
-    const res = spawnSync(lookupCmd, [binName], { encoding: 'utf8' });
-    if (res.status === 0 && res.stdout.trim()) {
-      const firstMatch = res.stdout.trim().split(/\r?\n/)[0];
-      if (firstMatch && fs.existsSync(firstMatch)) {
-        return firstMatch;
+
+  // Check system PATH, one name at a time, in order.
+  for (const name of names) {
+    try {
+      const res = spawnSync(lookupCmd, [name], { encoding: 'utf8' });
+      if (res.status === 0 && res.stdout.trim()) {
+        const firstMatch = res.stdout.trim().split(/\r?\n/)[0];
+        if (firstMatch && fs.existsSync(firstMatch)) {
+          return firstMatch;
+        }
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   // Check custom candidate paths
   const homeDir = os.homedir();
@@ -1322,7 +1344,7 @@ export function parseJsonc(text) {
 }
 
 // ============================================================================
-// SECTION: Skill Config Loading (dispatch & implement-dispatch)
+// SECTION: Skill Config Loading
 // ============================================================================
 
 /** Canonical provider keys a dispatch config's `platforms` map may key on. */

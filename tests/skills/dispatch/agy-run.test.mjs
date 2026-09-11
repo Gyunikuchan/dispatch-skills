@@ -29,6 +29,8 @@ import {
   getNewestBrainConversationId,
   runAgy,
   buildAgyArgs,
+  isSubscriptionOrTokenIssue,
+  nextAgyStep,
 } from '../../../skills/dispatch/scripts/agy-run.mjs';
 
 describe('agy-run: multi-mode discovery, reachability & argument construction', () => {
@@ -221,6 +223,87 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
 
     it('forces exit code 1 when agy exits 0 with empty stdout', () => {
       assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+    });
+  });
+
+  describe('isSubscriptionOrTokenIssue', () => {
+    it('detects quota / rate-limit / 429 text', () => {
+      assert.equal(isSubscriptionOrTokenIssue('Error: usage limit exceeded'), true);
+      assert.equal(isSubscriptionOrTokenIssue('HTTP 429 too many requests'), true);
+    });
+
+    it('detects unauthorized / 401 text', () => {
+      assert.equal(isSubscriptionOrTokenIssue('401 Unauthorized: invalid api key'), true);
+    });
+
+    it('detects "not signed in" text', () => {
+      assert.equal(isSubscriptionOrTokenIssue('Error: not signed in to antigravity'), true);
+    });
+
+    it('returns false for neutral text or non-string input', () => {
+      assert.equal(isSubscriptionOrTokenIssue('All good, task complete.'), false);
+      assert.equal(isSubscriptionOrTokenIssue(''), false);
+      assert.equal(isSubscriptionOrTokenIssue(null), false);
+      assert.equal(isSubscriptionOrTokenIssue(undefined), false);
+      assert.equal(isSubscriptionOrTokenIssue(42), false);
+    });
+  });
+
+  describe('nextAgyStep (pure cascade decision)', () => {
+    it('exit 0 with non-empty stdout -> return', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 0, stdout: 'done', stderr: '', failureKind: null },
+        hasNextMode: true,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('exit 0 with empty stdout, no token issue -> return', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 0, stdout: '', stderr: '', failureKind: null },
+        hasNextMode: true,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('non-zero exit, no token issue, next mode available -> return', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 1, stdout: '', stderr: 'generic failure', failureKind: 'other' },
+        hasNextMode: true,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('token issue + next mode available -> next-mode', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 1, stdout: '', stderr: '', failureKind: 'quota' },
+        hasNextMode: true,
+      });
+      assert.equal(step, 'next-mode');
+    });
+
+    it('token issue detected via output text (not failureKind) + next mode -> next-mode', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 1, stdout: '', stderr: 'not signed in', failureKind: null },
+        hasNextMode: true,
+      });
+      assert.equal(step, 'next-mode');
+    });
+
+    it('token issue, pinned (no next mode) -> return', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 1, stdout: '', stderr: '', failureKind: 'auth' },
+        hasNextMode: false,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('token issue, last mode (no next mode) -> return', () => {
+      const step = nextAgyStep({
+        result: { exitCode: 1, stdout: '', stderr: '', failureKind: 'quota' },
+        hasNextMode: false,
+      });
+      assert.equal(step, 'return');
     });
   });
 });

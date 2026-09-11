@@ -37,6 +37,12 @@ Delegate a question, read-only, letting the cascade pick a provider:
 /dispatch -f "src/domain/pricing.ts" "Explain how discount stacking is applied here, and flag any order-dependence."
 ```
 
+Review a plan before code exists:
+
+```
+/dispatch-plan-review .scratch/plan/2026-09-11-schema-v4.md focus on migration safety
+```
+
 Review what you just changed:
 
 ```

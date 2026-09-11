@@ -97,13 +97,12 @@ import {
   readStdin,
   resolveRunnerExitCode,
   SAFE_ENV_WHITELIST,
+  SENSITIVE_DIR_PATTERNS,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
   terminateProcessTree,
 } from './common.mjs';
-
-export { stripJsonComments, getAllowedBoundaryRoots } from './common.mjs';
 
 // ============================================================================
 // SECTION: Types
@@ -1058,6 +1057,11 @@ export function resolveContextFiles(files) {
           `Access rejected: Context file matches sensitive denylist pattern: ${rawPath}`,
         );
       }
+    }
+    if (SENSITIVE_DIR_PATTERNS.some((p) => p.test(absPath))) {
+      throw new Error(
+        `Access rejected: Context file is inside a sensitive directory: ${rawPath}`,
+      );
     }
 
     if (!allowedRoots.some((root) => isPathInside(absPath, root))) {

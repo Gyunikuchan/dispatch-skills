@@ -8,6 +8,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const PLAN_REVIEW_PATH = 'skills/dispatch-plan-review/SKILL.md';
 const CODE_REVIEW_PATH = 'skills/dispatch-code-review/SKILL.md';
+const PLAN_REVIEW_README_PATH = 'skills/dispatch-plan-review/README.md';
+const CODE_REVIEW_README_PATH = 'skills/dispatch-code-review/README.md';
 
 /**
  * The two review skills' delegate-facing prompt templates stay inline (not
@@ -89,6 +91,22 @@ function normalizeToolTurnBudget(sentence) {
 
 const CONVENTIONS_LINE = "Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the workspace)";
 
+/** Extracts `- **<Axis>** (\`tag\`, ...)` bullets from a SKILL.md's axis list. */
+function extractSkillAxes(text) {
+  return [...text.matchAll(/^- \*\*([^*]+)\*\* \(((?:`[^`]+`,?\s*)+)\):/gm)].map(([, axis, tags]) => ({
+    axis: axis.trim(),
+    tags: [...tags.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+  }));
+}
+
+/** Extracts `| **<Axis>** | \`tag\`, ... |` table rows from a README's axis table. */
+function extractReadmeAxes(text) {
+  return [...text.matchAll(/^\| \*\*([^*]+)\*\* \| ((?:`[^`]+`,?\s*)+)\|/gm)].map(([, axis, tags]) => ({
+    axis: axis.trim(),
+    tags: [...tags.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
+  }));
+}
+
 describe('review skill prompt template parity', () => {
   const planText = readSkill(PLAN_REVIEW_PATH);
   const codeText = readSkill(CODE_REVIEW_PATH);
@@ -125,5 +143,21 @@ describe('review skill prompt template parity', () => {
     const planBudget = normalizeToolTurnBudget(extractToolTurnBudget(planText));
     const codeBudget = normalizeToolTurnBudget(extractToolTurnBudget(codeText));
     assert.equal(planBudget, codeBudget);
+  });
+});
+
+describe('review skill axis/tag parity: SKILL.md vs README.md', () => {
+  it('dispatch-plan-review: SKILL.md axes match README.md table rows, same names, tags, and order', () => {
+    const skillAxes = extractSkillAxes(readSkill(PLAN_REVIEW_PATH));
+    const readmeAxes = extractReadmeAxes(readSkill(PLAN_REVIEW_README_PATH));
+    assert.ok(skillAxes.length > 0, `${PLAN_REVIEW_PATH} defines no axis bullets`);
+    assert.deepEqual(readmeAxes, skillAxes);
+  });
+
+  it('dispatch-code-review: SKILL.md axes match README.md table rows, same names, tags, and order', () => {
+    const skillAxes = extractSkillAxes(readSkill(CODE_REVIEW_PATH));
+    const readmeAxes = extractReadmeAxes(readSkill(CODE_REVIEW_README_PATH));
+    assert.ok(skillAxes.length > 0, `${CODE_REVIEW_PATH} defines no axis bullets`);
+    assert.deepEqual(readmeAxes, skillAxes);
   });
 });
