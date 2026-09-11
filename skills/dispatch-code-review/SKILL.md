@@ -13,18 +13,15 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 
 Attach the change walkthrough and implementation plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
 
-Resolve context files in order:
+Resolve context files in order. Plan and walkthrough share one slug and one resolver call:
 
-#### Plan resolution (if available)
-1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
-2. **Platform-native plan** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/implementation_plan.md`).
-3. **Existing scratch plan** at `.scratch/plan/<yyyy-mm-dd>-<slug>.md` if present from a prior planning phase.
-4. **None** — omit `-f` for the plan when no plan exists.
-
-#### Walkthrough resolution
-1. **User- or orchestrator-supplied walkthrough** when an explicit path is passed or an orchestrating skill hands one over.
-2. **Platform-native walkthrough** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/walkthrough.md`).
-3. **Author walkthrough under `.scratch`** when no walkthrough exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` following the walkthrough template below before dispatching. External delegates read attached files as their primary task context.
+1. **User- or orchestrator-supplied plan/walkthrough** when an explicit path is passed or an orchestrating skill hands one over — skip the script for that kind.
+2. **Otherwise**, resolve the slug (`dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution): derive from the current git branch, or choose an explicit kebab-case one when derivation fails), then run once for both kinds:
+   ```bash
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --slug <slug>
+   ```
+   For `plan`: `tier: native` or `scratch-existing` means a plan already exists — attach it (e.g. from a prior planning phase); `tier: scratch-new` (`exists: false`) — omit `-f` for the plan, none exists.
+   For `walkthrough`: `tier: native` or `scratch-existing` means one already exists — attach it as-is; `tier: scratch-new` — author the returned path following the walkthrough template below before dispatching. External delegates read attached files as their primary task context.
 
 #### Walkthrough template
 

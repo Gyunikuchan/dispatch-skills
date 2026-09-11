@@ -48,8 +48,13 @@ const GUARDED = [
   'skills/implement-dispatch/README.md',
 ];
 
-/** The review skills must keep naming the convention; they cannot import the resolver. */
-const MUST_NAME_CONVENTION = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md'];
+/**
+ * The review skills must keep pointing at the shared resolver (script + reference
+ * doc) rather than restating the naming convention inline, so there is exactly one
+ * place — `skills/dispatch/references/alignment.md` — that can drift.
+ */
+const MUST_REFERENCE_RESOLVER = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md'];
+const RESOLVER_MENTIONS = ['resolve-artifact-paths.mjs', 'alignment.md'];
 
 /**
  * Mentions of the scratch directory that name no artifact: the bare directory and the
@@ -142,14 +147,21 @@ describe('artifact path convention', () => {
     assert.deepEqual(GUARDED.filter(rel => !discovered.has(rel)), []);
   });
 
-  it('keeps the review skills naming the convention', () => {
-    for (const rel of MUST_NAME_CONVENTION) {
-      const mentions = scratchMentions(rel).filter(m => CANONICAL.some(s => s.test(m.token)));
+  it('keeps the review skills pointing at the shared resolver', () => {
+    for (const rel of MUST_REFERENCE_RESOLVER) {
+      const text = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
       assert.ok(
-        mentions.length > 0,
-        `${rel} no longer names a canonical ${SCRATCH_PREFIX} artifact path`
+        RESOLVER_MENTIONS.some(mention => text.includes(mention)),
+        `${rel} no longer references the shared artifact resolver (${RESOLVER_MENTIONS.join(' or ')})`
       );
     }
+  });
+
+  it('keeps the shared reference doc naming the convention', () => {
+    const mentions = scratchMentions('skills/dispatch/references/alignment.md').filter(m =>
+      CANONICAL.some(s => s.test(m.token))
+    );
+    assert.ok(mentions.length > 0, 'skills/dispatch/references/alignment.md no longer names a canonical artifact path');
   });
 
   it('keeps every skill markdown mention on a canonical shape', () => {

@@ -405,6 +405,15 @@ describe('resolveFlow', () => {
       );
       assert.match(out.paths.plan, /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-my-slug\.md$/);
     });
+
+    it('rejects non-string slugs (null, 42, {}) instead of coercing them into a literal path', () => {
+      for (const badSlug of [null, 42, {}]) {
+        assert.throws(
+          () => resolveFlow({ platform: 'claude', level: 'low', slug: badSlug }, LIVE_ALL, BASE_CONFIG),
+          /must be kebab-case/
+        );
+      }
+    });
   });
 
   describe('diagnostics', () => {

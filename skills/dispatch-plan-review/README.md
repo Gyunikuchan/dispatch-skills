@@ -115,10 +115,7 @@ If no plan file exists yet, simply describe the feature and request a plan revie
 - **Evidence Over Votes**: Provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
 - **Plan File Updated on Disk**: Accepted changes are not just printed in the chat; they are actively written back to the target plan file (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying the plan.
-- **Structured Plan Resolution Order**:
-  1. *Explicit user-provided path* (e.g. `.scratch/plan/2026-09-08-feature.md`).
-  2. *Platform-native plan* (e.g. Antigravity's `implementation_plan.md` artifact).
-  3. *Auto-authored plan* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
+- **Structured Plan Resolution Order** (see `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution)): *explicit user-provided path* → *platform-native plan* (e.g. Antigravity's `implementation_plan.md`) → *existing scratch plan* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only files named in proposed changes and immediate call sites) rather than unbounded codebase scans, keeping turnaround quick and tokens focused.
 
 ---

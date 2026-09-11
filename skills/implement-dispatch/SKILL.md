@@ -87,10 +87,7 @@ Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start for:
 - **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
 - **Artifact location convention**: An explicit plan/walkthrough path or directory the repo names, if any.
 
-Resolve each artifact location once, at Step 1, in this order, and reuse it for every subsequent write — never author both multiple copies (e.g. a native and a scratch) of the same artifact:
-1. **Host convention**: the location named above, when the repo names one.
-2. **Native artifact**: otherwise, the orchestrator platform's own artifact of that kind (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`), written and updated directly with the respective review skill's template applied to its content.
-3. **Scratch fallback**: otherwise, `flow.paths.plan` / `flow.paths.walkthrough` under `.scratch`.
+When the repo names an explicit location above, use it and stop. Otherwise resolve both artifact locations once, at Step 1, per `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution) — native tier (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`, written and updated directly with the respective review skill's template) preferred over `flow.paths.plan` / `flow.paths.walkthrough` under `.scratch`, reused for every subsequent write — never author multiple copies (e.g. a native and a scratch) of the same artifact.
 
 Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the orchestrator-supplied artifact so they don't re-derive it.
 
@@ -104,7 +101,7 @@ Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the
    - `focused` (single component/contract) → requested level.
    - `cross-cutting` (multiple components, schema, security boundary) → requested level.
    *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
-3. Choose a kebab-case slug naming the change.
+3. Derive the slug deterministically from the current git branch via `dispatch`'s `resolve-artifact-paths.mjs` (see Host Conventions below) — this is what lets a standalone `dispatch-plan-review` or `dispatch-code-review` run later on the same branch land on the same artifact. When derivation fails (protected branch, detached HEAD), choose an explicit kebab-case slug naming the change instead.
 4. Run `resolve-flow.mjs` with that slug to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
 5. Resolve the plan and walkthrough artifact paths per Host Conventions and record them for reuse in Steps 2 and 5.
 

@@ -118,6 +118,12 @@ Technical specifications, discovery paths, default models, sandboxing boundaries
 
 ---
 
+## Skill Alignment (implement-dispatch, dispatch-plan-review, dispatch-code-review only)
+
+Not part of general `dispatch` usage — skip this section and [references/alignment.md](references/alignment.md) entirely unless you are running as `implement-dispatch`, `dispatch-plan-review`, or `dispatch-code-review`. It holds conventions those three skills share so independent invocations converge on the same artifacts and behavior instead of drifting apart; other callers of `dispatch` have no reason to load it.
+
+---
+
 ## Troubleshooting
 
 - **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner:

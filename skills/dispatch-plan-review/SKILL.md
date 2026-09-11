@@ -14,8 +14,11 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
 
 1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
-2. **Platform-native plan** when the orchestrator platform produces one (Antigravity writes `<appDataDir>/brain/<conversation-id>/implementation_plan.md`).
-3. **Author plan under `.scratch`** when no plan exists: write `.scratch/plan/<yyyy-mm-dd>-<slug>.md` following the plan template below before dispatching. External delegates read this file with no other context.
+2. **Otherwise**, resolve slug and date (`dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution): derive the slug from the current git branch, or choose an explicit kebab-case one when derivation fails), then run:
+   ```bash
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --slug <slug> --kind plan
+   ```
+   `tier: native` or `scratch-existing` means an artifact already exists — attach it as-is, no authoring. `tier: scratch-new` means none exists: write the returned path following the plan template below before dispatching. External delegates read this file with no other context.
 
 #### Plan template
 

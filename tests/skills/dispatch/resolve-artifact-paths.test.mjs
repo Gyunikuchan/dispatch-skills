@@ -1,0 +1,534 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, it, beforeEach, afterEach } from 'node:test';
+
+import {
+  SCRATCH_DIR,
+  SLUG_PATTERN,
+  localDate,
+  isValidDate,
+  buildScratchPaths,
+  sanitizeSlug,
+  deriveSlugFromBranch,
+  getCurrentBranch,
+  defaultNativeCandidateRoots,
+  findExistingScratchArtifact,
+  resolveArtifactPath,
+  resolveArtifacts,
+} from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
+import { AGY_MODE_DATA_DIRS } from '../../../skills/dispatch/scripts/agy-run.mjs';
+
+const SCRIPT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs'
+);
+
+describe('buildScratchPaths', () => {
+  it('matches the canonical shape', () => {
+    const paths = buildScratchPaths('2026-09-11', 'auth-v2');
+    assert.equal(paths.plan, '.scratch/plan/2026-09-11-auth-v2.md');
+    assert.equal(paths.walkthrough, '.scratch/plan/2026-09-11-auth-v2-walkthrough.md');
+  });
+});
+
+describe('sanitizeSlug', () => {
+  it('kebab-cases arbitrary text', () => {
+    assert.equal(sanitizeSlug('Auth V2!! Rewrite'), 'auth-v2-rewrite');
+  });
+
+  it('returns null for text with nothing kebab-worthy', () => {
+    assert.equal(sanitizeSlug('###'), null);
+    assert.equal(sanitizeSlug(''), null);
+    assert.equal(sanitizeSlug(null), null);
+  });
+
+  it('caps length and trims a trailing dash left by truncation', () => {
+    const slug = sanitizeSlug('a'.repeat(100));
+    assert.ok(slug.length <= 60);
+    assert.ok(SLUG_PATTERN.test(slug));
+  });
+});
+
+describe('deriveSlugFromBranch', () => {
+  it('strips a type prefix and kebab-cases the remainder', () => {
+    assert.equal(deriveSlugFromBranch('feature/Auth-V2'), 'auth-v2');
+    assert.equal(deriveSlugFromBranch('fix/billing_engine'), 'billing-engine');
+  });
+
+  it('rejects protected branch names', () => {
+    for (const branch of ['main', 'master', 'develop', 'trunk', 'HEAD']) {
+      assert.equal(deriveSlugFromBranch(branch), null, branch);
+    }
+  });
+
+  it('returns null for a null or empty branch', () => {
+    assert.equal(deriveSlugFromBranch(null), null);
+    assert.equal(deriveSlugFromBranch(''), null);
+  });
+});
+
+describe('defaultNativeCandidateRoots', () => {
+  it('includes every Antigravity execution mode data dir', () => {
+    const roots = defaultNativeCandidateRoots();
+    for (const dataDir of Object.values(AGY_MODE_DATA_DIRS)) {
+      assert.ok(
+        roots.some(root => root.endsWith(path.join('.gemini', dataDir))),
+        `expected a root ending in .gemini/${dataDir}, got: ${roots.join(', ')}`
+      );
+    }
+  });
+
+  it('includes APPDATA/LOCALAPPDATA roots on win32', () => {
+    const roots = defaultNativeCandidateRoots({
+      platform: 'win32',
+      env: { APPDATA: 'C:\\Users\\test\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local' },
+    });
+    assert.ok(roots.some(root => root.startsWith('C:\\Users\\test\\AppData\\Roaming')));
+    assert.ok(roots.some(root => root.startsWith('C:\\Users\\test\\AppData\\Local')));
+  });
+
+  it('excludes APPDATA/LOCALAPPDATA roots off win32, even when set', () => {
+    const roots = defaultNativeCandidateRoots({
+      platform: 'linux',
+      env: { APPDATA: 'C:\\Users\\test\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\test\\AppData\\Local' },
+    });
+    assert.ok(!roots.some(root => root.includes('AppData')));
+  });
+});
+
+describe('getCurrentBranch', () => {
+  let repoDir;
+
+  beforeEach(() => {
+    repoDir = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-git-'));
+    const git = (...args) => {
+      const res = spawnSync('git', args, { cwd: repoDir, encoding: 'utf8' });
+      assert.equal(res.status, 0, `git ${args.join(' ')} failed: ${res.stderr}`);
+      return res.stdout;
+    };
+    git('init', '--quiet', '--initial-branch=work');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'Test');
+    writeFileSync(path.join(repoDir, 'file.txt'), 'content');
+    git('add', 'file.txt');
+    git('commit', '--quiet', '-m', 'initial commit');
+  });
+
+  afterEach(() => {
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  it('returns the current branch name', () => {
+    assert.equal(getCurrentBranch(repoDir), 'work');
+  });
+
+  it('returns null on detached HEAD', () => {
+    const sha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoDir, encoding: 'utf8' }).stdout.trim();
+    const checkout = spawnSync('git', ['checkout', '--quiet', sha], { cwd: repoDir, encoding: 'utf8' });
+    assert.equal(checkout.status, 0, checkout.stderr);
+    assert.equal(getCurrentBranch(repoDir), null);
+  });
+
+  it('returns null outside a git repository', () => {
+    const nonRepoDir = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-non-git-'));
+    try {
+      assert.equal(getCurrentBranch(nonRepoDir), null);
+    } finally {
+      rmSync(nonRepoDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('isValidDate / localDate', () => {
+  it('accepts a real calendar date and rejects a fake one', () => {
+    assert.equal(isValidDate('2026-09-11'), true);
+    assert.equal(isValidDate('2026-02-30'), false);
+    assert.equal(isValidDate('2026-9-1'), false);
+  });
+
+  it('formats today as yyyy-mm-dd', () => {
+    assert.match(localDate(new Date('2026-01-05T12:00:00Z')), /^2026-01-05$/);
+  });
+});
+
+describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', () => {
+  let projectRoot;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-test-'));
+    mkdirSync(path.join(projectRoot, ...SCRATCH_DIR.split('/')), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it('returns null when no scratch directory exists', () => {
+    rmSync(path.join(projectRoot, '.scratch'), { recursive: true, force: true });
+    assert.equal(findExistingScratchArtifact('plan', 'auth-v2', projectRoot), null);
+  });
+
+  it('rejects a missing or non-string slug rather than coercing it to a matching string', () => {
+    for (const badSlug of [undefined, null, 42, {}]) {
+      assert.throws(
+        () => findExistingScratchArtifact('plan', badSlug, projectRoot),
+        /must be kebab-case/,
+        `slug: ${JSON.stringify(badSlug)}`
+      );
+    }
+  });
+
+  it('finds an existing plan without matching its walkthrough', () => {
+    const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+    writeFileSync(path.join(dir, '2026-09-10-auth-v2.md'), '# plan');
+    writeFileSync(path.join(dir, '2026-09-10-auth-v2-walkthrough.md'), '# walkthrough');
+
+    assert.equal(
+      findExistingScratchArtifact('plan', 'auth-v2', projectRoot),
+      '.scratch/plan/2026-09-10-auth-v2.md'
+    );
+    assert.equal(
+      findExistingScratchArtifact('walkthrough', 'auth-v2', projectRoot),
+      '.scratch/plan/2026-09-10-auth-v2-walkthrough.md'
+    );
+  });
+
+  it('does not match a different slug with a shared prefix', () => {
+    const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+    writeFileSync(path.join(dir, '2026-09-10-auth-v2-extended.md'), '# plan');
+    assert.equal(findExistingScratchArtifact('plan', 'auth-v2', projectRoot), null);
+  });
+
+  it('picks the most recently modified match when multiple dates exist', () => {
+    const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+    const older = path.join(dir, '2026-09-09-auth-v2.md');
+    const newer = path.join(dir, '2026-09-10-auth-v2.md');
+    writeFileSync(older, '# plan');
+    writeFileSync(newer, '# plan');
+    const now = Date.now() / 1000;
+    utimesSync(older, now - 100, now - 100);
+    utimesSync(newer, now, now);
+
+    assert.equal(
+      findExistingScratchArtifact('plan', 'auth-v2', projectRoot),
+      '.scratch/plan/2026-09-10-auth-v2.md'
+    );
+  });
+
+  it('resolveArtifactPath falls back to scratch-new when nothing exists', () => {
+    const resolved = resolveArtifactPath('plan', {
+      slug: 'auth-v2',
+      date: '2026-09-11',
+      projectRoot,
+      native: { orchestrator: null },
+    });
+    assert.deepEqual(resolved, {
+      tier: 'scratch-new',
+      path: '.scratch/plan/2026-09-11-auth-v2.md',
+      exists: false,
+    });
+  });
+
+  it('resolveArtifactPath reuses an existing scratch artifact over scratch-new', () => {
+    const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+    writeFileSync(path.join(dir, '2026-09-05-auth-v2.md'), '# plan');
+
+    const resolved = resolveArtifactPath('plan', {
+      slug: 'auth-v2',
+      date: '2026-09-11',
+      projectRoot,
+      native: { orchestrator: null },
+    });
+    assert.deepEqual(resolved, {
+      tier: 'scratch-existing',
+      path: '.scratch/plan/2026-09-05-auth-v2.md',
+      exists: true,
+    });
+  });
+
+  it('resolveArtifactPath defaults date to today when omitted', () => {
+    const resolved = resolveArtifactPath('plan', {
+      slug: 'auth-v2',
+      projectRoot,
+      native: { orchestrator: null },
+    });
+    assert.equal(resolved.tier, 'scratch-new');
+    assert.equal(resolved.path, `.scratch/plan/${localDate()}-auth-v2.md`);
+    assert.doesNotMatch(resolved.path, /undefined/);
+  });
+
+  it('resolveArtifactPath prefers a native artifact over an existing scratch one, scoped to the active conversation', () => {
+    const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+    writeFileSync(path.join(dir, '2026-09-05-auth-v2.md'), '# plan');
+
+    const nativeRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-native-'));
+    try {
+      const conversationDir = path.join(nativeRoot, 'brain', 'conv-1');
+      mkdirSync(conversationDir, { recursive: true });
+      const nativePlan = path.join(conversationDir, 'implementation_plan.md');
+      writeFileSync(nativePlan, '# native plan');
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: 'conv-1' },
+      });
+      assert.equal(resolved.tier, 'native');
+      assert.equal(resolved.path, nativePlan.split(path.sep).join('/'));
+      // Unconditional, not just an identity check on POSIX: exercises the round-1
+      // backslash-normalization fix even when this suite runs on a non-Windows CI.
+      assert.ok(!resolved.path.includes('\\'));
+      assert.equal(resolved.exists, true);
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('never surfaces a native artifact when the orchestrator is not agy, even if one exists on disk', () => {
+    // Regression: an mtime-based cross-conversation scan with no orchestrator gate
+    // would surface a stale Antigravity walkthrough from an unrelated task while
+    // running under a different orchestrator (e.g. Claude Code) entirely.
+    const nativeRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-native-'));
+    try {
+      const conversationDir = path.join(nativeRoot, 'brain', 'unrelated-conv');
+      mkdirSync(conversationDir, { recursive: true });
+      writeFileSync(path.join(conversationDir, 'implementation_plan.md'), '# unrelated plan');
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        native: { roots: [nativeRoot], orchestrator: 'claude' },
+      });
+      assert.equal(resolved.tier, 'scratch-new');
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to a same-platform recency guess only when no conversation id is known', () => {
+    const nativeRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-native-'));
+    try {
+      const older = path.join(nativeRoot, 'brain', 'conv-old');
+      const newer = path.join(nativeRoot, 'brain', 'conv-new');
+      mkdirSync(older, { recursive: true });
+      mkdirSync(newer, { recursive: true });
+      const olderPlan = path.join(older, 'implementation_plan.md');
+      const newerPlan = path.join(newer, 'implementation_plan.md');
+      writeFileSync(olderPlan, '# older plan');
+      writeFileSync(newerPlan, '# newer plan');
+      const now = Date.now() / 1000;
+      utimesSync(olderPlan, now - 100, now - 100);
+      utimesSync(newerPlan, now, now);
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: null },
+      });
+      assert.equal(resolved.tier, 'native');
+      assert.equal(resolved.path, newerPlan.split(path.sep).join('/'));
+      assert.ok(!resolved.path.includes('\\'));
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers the exact conversation id over recency even when another conversation is newer', () => {
+    const nativeRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-native-'));
+    try {
+      const active = path.join(nativeRoot, 'brain', 'active-conv');
+      const other = path.join(nativeRoot, 'brain', 'other-conv');
+      mkdirSync(active, { recursive: true });
+      mkdirSync(other, { recursive: true });
+      const activePlan = path.join(active, 'implementation_plan.md');
+      const otherPlan = path.join(other, 'implementation_plan.md');
+      writeFileSync(activePlan, '# active plan');
+      writeFileSync(otherPlan, '# other plan');
+      const now = Date.now() / 1000;
+      utimesSync(activePlan, now - 100, now - 100);
+      utimesSync(otherPlan, now, now);
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: 'active-conv' },
+      });
+      assert.equal(resolved.tier, 'native');
+      assert.equal(resolved.path, activePlan.split(path.sep).join('/'));
+      assert.ok(!resolved.path.includes('\\'));
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a conversation id containing path-traversal characters, falling back to recency', () => {
+    const nativeRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-native-'));
+    try {
+      const legit = path.join(nativeRoot, 'brain', 'legit-conv');
+      mkdirSync(legit, { recursive: true });
+      writeFileSync(path.join(legit, 'implementation_plan.md'), '# legit plan');
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: '../../etc' },
+      });
+      // A malformed id must never be interpolated into the path.join; falls back to
+      // the same-platform recency scan (which finds legit-conv) instead of escaping.
+      assert.equal(resolved.tier, 'native');
+      assert.equal(resolved.path, path.join(legit, 'implementation_plan.md').split(path.sep).join('/'));
+    } finally {
+      rmSync(nativeRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolveArtifacts', () => {
+  let projectRoot;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it('resolves both kinds by default', () => {
+    const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-11', projectRoot, native: { orchestrator: null } });
+    assert.equal(result.slug, 'auth-v2');
+    assert.equal(result.date, '2026-09-11');
+    assert.equal(result.plan.path, '.scratch/plan/2026-09-11-auth-v2.md');
+    assert.equal(result.walkthrough.path, '.scratch/plan/2026-09-11-auth-v2-walkthrough.md');
+  });
+
+  it('resolves only the requested kind', () => {
+    const result = resolveArtifacts({
+      slug: 'auth-v2',
+      date: '2026-09-11',
+      kinds: ['plan'],
+      projectRoot,
+      native: { orchestrator: null },
+    });
+    assert.ok(result.plan);
+    assert.equal(result.walkthrough, undefined);
+  });
+
+  it('rejects a non-kebab-case slug', () => {
+    assert.throws(
+      () => resolveArtifacts({ slug: 'Auth_V2', projectRoot, native: { orchestrator: null } }),
+      /must be kebab-case/
+    );
+  });
+
+  it('rejects a missing or non-string slug rather than coercing it to a matching string', () => {
+    // Regression: RegExp.test(undefined) / RegExp.test(null) coerce to the string
+    // literals "undefined" / "null", both of which satisfy SLUG_PATTERN and would
+    // otherwise silently produce a `...-undefined.md` / `...-null.md` artifact path.
+    for (const badSlug of [undefined, null, 42, {}]) {
+      assert.throws(
+        () => resolveArtifacts({ slug: badSlug, projectRoot, native: { orchestrator: null } }),
+        /must be kebab-case/,
+        `slug: ${JSON.stringify(badSlug)}`
+      );
+    }
+    assert.throws(
+      () => resolveArtifacts({ projectRoot, native: { orchestrator: null } }),
+      /must be kebab-case/
+    );
+  });
+
+  it('rejects an invalid date', () => {
+    assert.throws(
+      () => resolveArtifacts({ slug: 'auth-v2', date: '2026-02-30', projectRoot, native: { orchestrator: null } }),
+      /valid calendar date/
+    );
+  });
+});
+
+describe('resolve-artifact-paths CLI', () => {
+  // Isolate HOME/APPDATA/LOCALAPPDATA to an empty temp dir so a real machine's
+  // Antigravity brain directory (which may genuinely hold artifacts) can never
+  // surface as a native-tier result and make this suite machine-dependent.
+  let isolatedHome;
+
+  beforeEach(() => {
+    isolatedHome = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-cli-home-'));
+  });
+
+  afterEach(() => {
+    rmSync(isolatedHome, { recursive: true, force: true });
+  });
+
+  function runCli(args) {
+    const env = {
+      ...process.env,
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      APPDATA: path.join(isolatedHome, 'AppData', 'Roaming'),
+      LOCALAPPDATA: path.join(isolatedHome, 'AppData', 'Local'),
+    };
+    return spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8', env });
+  }
+
+  it('rejects a slug that would escape the scratch directory', () => {
+    const res = runCli(['--slug', '../evil']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /must be kebab-case/);
+  });
+
+  it('rejects an invalid --kind', () => {
+    const res = runCli(['--slug', 'auth-v2', '--kind', 'bogus']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /--kind must be one of plan, walkthrough, both/);
+  });
+
+  it('emits both artifact paths for an explicit slug', () => {
+    // Slug scans this repo's real .scratch/plan/ (the CLI runs against PROJECT_ROOT,
+    // not an isolated one) — kept implausibly specific so a genuine same-day scratch
+    // artifact can never collide and flip the asserted tier to scratch-existing.
+    const res = runCli(['--slug', 'cli-scratch-new-tier-test-fixture', '--date', '2026-09-11']);
+    assert.equal(res.status, 0);
+    const result = JSON.parse(res.stdout);
+    assert.equal(result.slug, 'cli-scratch-new-tier-test-fixture');
+    assert.equal(result.date, '2026-09-11');
+    assert.equal(result.plan.tier, 'scratch-new');
+    assert.equal(result.plan.path, '.scratch/plan/2026-09-11-cli-scratch-new-tier-test-fixture.md');
+    assert.equal(result.walkthrough.tier, 'scratch-new');
+    assert.equal(
+      result.walkthrough.path,
+      '.scratch/plan/2026-09-11-cli-scratch-new-tier-test-fixture-walkthrough.md'
+    );
+  });
+
+  it('never reports a native tier for an orchestrator with no known native artifact', () => {
+    const res = runCli(['--slug', 'cli-scratch-new-tier-test-fixture', '--date', '2026-09-11', '--orchestrator', 'copilot']);
+    assert.equal(res.status, 0);
+    const result = JSON.parse(res.stdout);
+    assert.equal(result.plan.tier, 'scratch-new');
+  });
+
+  it('accepts --flag=value form equivalently to space-separated flags', () => {
+    const res = runCli([
+      '--slug=cli-scratch-new-tier-test-fixture',
+      '--date=2026-09-11',
+      '--kind=plan',
+      '--orchestrator=copilot',
+    ]);
+    assert.equal(res.status, 0);
+    const result = JSON.parse(res.stdout);
+    assert.equal(result.slug, 'cli-scratch-new-tier-test-fixture');
+    assert.equal(result.date, '2026-09-11');
+    assert.equal(result.plan.path, '.scratch/plan/2026-09-11-cli-scratch-new-tier-test-fixture.md');
+    assert.equal(result.walkthrough, undefined);
+  });
+});

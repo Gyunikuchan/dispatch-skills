@@ -18,6 +18,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parseJsonc, PROJECT_ROOT, isMainModule } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
+import {
+  SLUG_PATTERN,
+  localDate,
+  isValidDate,
+  buildScratchPaths,
+} from '../../dispatch/scripts/resolve-artifact-paths.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -31,11 +37,6 @@ const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf', 'toolTurns'];
 /** Knobs that may be omitted entirely; every other knob must define at least one level. */
 const OPTIONAL_KNOBS = ['includeSelf'];
-
-const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-const SCRATCH_DIR = '.scratch/plan';
 
 // --- Level resolution ---
 
@@ -342,27 +343,6 @@ export async function defaultLiveness() {
   return results;
 }
 
-// --- Date & path helpers ---
-
-/** Local calendar date as `yyyy-mm-dd` — the filename should match the user's day. */
-export function localDate(now = new Date()) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-export function isValidDate(value) {
-  if (!DATE_PATTERN.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
-
-function buildPaths(date, slug) {
-  return {
-    plan: path.posix.join(SCRATCH_DIR, `${date}-${slug}.md`),
-    walkthrough: path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
-  };
-}
-
 // --- Core resolution ---
 
 /**
@@ -394,8 +374,10 @@ export function resolveFlow(options, liveness, config) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
   }
   // Validated here rather than only at the CLI so the generated paths cannot escape
-  // the scratch directory when `resolveFlow` is called directly.
-  if (slug !== undefined && !SLUG_PATTERN.test(slug)) {
+  // the scratch directory when `resolveFlow` is called directly. `typeof` is checked
+  // first because `RegExp.test` coerces `null` to the string literal "null", which
+  // satisfies SLUG_PATTERN and would otherwise slip past this guard.
+  if (slug !== undefined && (typeof slug !== 'string' || !SLUG_PATTERN.test(slug))) {
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
   }
   if (date !== undefined && !isValidDate(date)) {
@@ -522,7 +504,7 @@ export function resolveFlow(options, liveness, config) {
   };
 
   if (slug !== undefined) {
-    flow.paths = buildPaths(date ?? localDate(), slug);
+    flow.paths = buildScratchPaths(date ?? localDate(), slug);
   }
 
   return flow;
@@ -636,7 +618,7 @@ async function main() {
     process.stderr.write(`Error: Unknown level "${opts.level}". Valid levels: ${LEVELS.join(', ')}\n`);
     process.exit(1);
   }
-  if (opts.slug !== undefined && !SLUG_PATTERN.test(opts.slug)) {
+  if (opts.slug !== undefined && (typeof opts.slug !== 'string' || !SLUG_PATTERN.test(opts.slug))) {
     process.stderr.write(`Error: Slug "${opts.slug}" must be kebab-case (${SLUG_PATTERN.source})\n`);
     process.exit(1);
   }
