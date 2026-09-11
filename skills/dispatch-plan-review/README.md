@@ -87,16 +87,16 @@ Pass focus areas directly after the command:
 /dispatch-plan-review .scratch/plan/2026-09-08-auth-v2.md focus on trust boundaries and session revocation
 ```
 
-### 3. Pinning a Reviewer Provider
+### 3. Pinning Reviewer Providers
 
-Guide the orchestrator to route the plan review to a specific external CLI:
+Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separated provider keys, no level (standalone reviews run a single round):
 
 ```markdown
-/dispatch-plan-review --provider claude
+/dispatch-plan-review (claude)
 ```
 
 ```markdown
-/dispatch-plan-review --provider agy focus on state-machine lifecycles
+/dispatch-plan-review (claude,agy) focus on state-machine lifecycles
 ```
 
 ### 4. Reviewing Without a Pre-Existing Plan File
@@ -115,8 +115,9 @@ If no plan file exists yet, simply describe the feature and request a plan revie
 - **Evidence Over Votes**: Provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
 - **Plan File Updated on Disk**: Accepted changes are not just printed in the chat; they are actively written back to the target plan file (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying the plan.
-- **Structured Plan Resolution Order** (see `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution)): *explicit user-provided path* → *platform-native plan* (e.g. Antigravity's `implementation_plan.md`) → *existing scratch plan* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
+- **Structured Plan Resolution Order** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided path* → *platform-native plan* (e.g. Antigravity's `implementation_plan.md`) → *existing scratch plan* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only files named in proposed changes and immediate call sites) rather than unbounded codebase scans, keeping turnaround quick and tokens focused.
+- **Artifact Lifecycle**: standalone runs always retain the plan file in place; only an orchestrator owning the full plan-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
 
 ---
 
@@ -192,7 +193,7 @@ The orchestrator maps each claim to an adjudication action:
 By default, the underlying `dispatch` runner will avoid delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) in order to obtain a truly differentiated second opinion. If only one CLI is installed, request `--allow-same-agent` or let it degrade to native subagents.
 
 ### Host Convention Reading
-Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `.claude/CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.
+Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.
 
 ### Reviewing Transient Antigravity Plans
 When running inside Antigravity, the orchestrator automatically detects the active `implementation_plan.md` artifact from the current session brain directory. You do not need to copy or export it manually.

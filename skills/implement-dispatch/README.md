@@ -17,7 +17,7 @@ When working with an AI coding assistant (the **orchestrator**—like Claude Cod
 ```mermaid
 flowchart TD
     User(["👤 User Request"]) --> Scope["1️⃣ Scope & Flow Gate<br/>(Classify scope, resolve level & targets)"]
-    Scope --> Plan["2️⃣ Plan Authoring<br/>(Write .scratch/plan/...)"]
+    Scope --> Plan["2️⃣ Plan Authoring<br/>(Resolved artifact path)"]
     
     Plan --> PlanRev["3️⃣ Plan Review Wave<br/>(Fan out via dispatch)"]
     PlanRev -->|External CLIs critique| PlanAdj{"Adjudicate Plan Claims"}
@@ -30,7 +30,7 @@ flowchart TD
     Fixes --> ReRev{"7️⃣ Consensus Re-Review<br/>(Loop with citing delegates)"}
     
     ReRev -->|Findings remaining| CodeRev
-    ReRev -->|Consensus reached| Handoff["8️⃣ Handoff & Cleanup<br/>(Summary report & prune scratch)"]
+    ReRev -->|Consensus reached| Handoff["8️⃣ Handoff & Cleanup<br/>(Summary report & relocate scratch)"]
     ReRev -->|Cap reached / Deadlock| Escalate(["❓ Escalate to User"])
     
     Handoff --> User
@@ -51,8 +51,8 @@ flowchart TD
 | Skill | Role | Status |
 |---|---|---|
 | [`dispatch`](../dispatch) | Runner execution, CLI flags, sandboxing, and provider cascade | **Required** |
-| [`dispatch-plan-review`](../dispatch-plan-review) | Plan template, 7 review axes, adjudication grammar | **Optional** *(skips plan review if absent)* |
-| [`dispatch-code-review`](../dispatch-code-review) | Walkthrough template, 6 review axes, adjudication grammar | **Optional** *(skips code review if absent)* |
+| [`dispatch-plan-review`](../dispatch-plan-review) | Plan template, review axes, adjudication grammar | **Optional** *(skips plan review if absent)* |
+| [`dispatch-code-review`](../dispatch-code-review) | Walkthrough template, review axes, adjudication grammar | **Optional** *(skips code review if absent)* |
 
 ### Installation
 
@@ -238,7 +238,7 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
 - **Host Repository Conventions**: The orchestrator reads your project's `AGENTS.md` or `CLAUDE.md` to discover:
   - **Verify command**: The test/lint command that must remain green across all iterations.
   - **Escalation triggers**: Domain-specific decisions that require immediate user input.
-- **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are cleaned up; if a run terminates in deadlock or requires user intervention, they are preserved for easy resumption.
+- **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are moved to the OS temp directory (never deleted); if a run terminates in deadlock or requires user intervention, they are preserved in place for easy resumption.
 - **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
 
 ---

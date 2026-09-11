@@ -7,16 +7,22 @@ description: Review an implementation plan through external agent CLIs before co
 
 The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the requirement and host repository rules before editing the plan or reporting to the user.
 
+## Invocation
+
+`dispatch`'s `references/alignment.md` § Invocation is the base grammar (`/dispatch-plan-review (<pins>) [<artifact path>] [<focus>]`); the artifact path here is always the plan.
+
 ## Process
 
 ### 1. Assemble context and dispatch
 
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over both a plan path and dispatch invocations, **standalone** otherwise. Standalone builds per-pin (or cascade) invocations itself and resolves the plan below; orchestrated uses the handed-over path and invocations as-is, skipping resolution.
+
 Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
 
 1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
-2. **Otherwise**, resolve slug and date (`dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution): derive the slug from the current git branch, or choose an explicit kebab-case one when derivation fails), then run:
+2. **Otherwise**, run the resolver per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (it derives the slug; add `--slug <kebab-slug>` only when the user names one or derivation fails):
    ```bash
-   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --slug <slug> --kind plan
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --kind plan
    ```
    `tier: native` or `scratch-existing` means an artifact already exists — attach it as-is, no authoring. `tier: scratch-new` means none exists: write the returned path following the plan template below before dispatching. External delegates read this file with no other context.
 
@@ -89,7 +95,7 @@ Review an implementation plan across seven axes. No code has been written yet �
 - Review Scope: <Review Scope>
 - Tool Turn Budget: <Tool Turn Budget>
 
-Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` from the workspace) and industry best practices.
+Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the workspace) and industry best practices.
 
 ### Instructions
 
@@ -105,13 +111,13 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
   - *Premise & User Gaps*: Challenge the premise. Flag flawed prompt assumptions, XY problems, conflicting constraints, or missing prerequisites.
   - *Scope Discipline*: Flag unrequested refactors, unnecessary feature additions, or gold-plating beyond the prompt.
 - **Domain & Business Logic** (`domain-logic`, `invariant`, `state-machine`):
-  - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `.claude/CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, sign/unit discrepancies (monthly vs. annual, debit vs. credit), or skipped business prerequisites.
+  - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, sign/unit discrepancies (monthly vs. annual, debit vs. credit), or skipped business prerequisites.
   - *Invariants & Integrity*: State consistency and business integrity rules. Ensure operations preserve domain invariants across multi-step mutations.
   - *State Machines & Lifecycles*: Valid state transitions and lifecycle flows. Flag impossible states, unhandled transitions, or missing lifecycle steps.
 - **Plan Coherence & Architecture** (`coherence`, `approach`, `standards`):
   - *Internal Coherence*: Cross-section consistency. Flag producer-consumer contract mismatches (signature, type, or payload discrepancies), out-of-order sequencing, and self-contradictory steps.
   - *Architecture & Layering*: System design and module boundaries. Flag boundary leaks (UI querying storage), improper coupling, or patterns violating codebase idioms.
-  - *Conventions & Specs*: Adherence to repository guidelines (`AGENTS.md` / `.claude/CLAUDE.md`), framework idioms, and authoritative specifications/RFCs.
+  - *Conventions & Specs*: Adherence to repository guidelines (`AGENTS.md` / `CLAUDE.md`), framework idioms, and authoritative specifications/RFCs.
 - **Security & Permissions** (`security`, `auth`, `validation`):
   - *Trust Boundaries & Isolation*: Component trust boundaries, credential exposure, tenant/user data isolation, and least privilege.
   - *Authentication & Authorization*: Role-based access control, permission checks, session validation, and unauthenticated access paths.
@@ -154,38 +160,19 @@ Structure your review as:
 
 ### 2. Adjudicate each actionable claim
 
-Adjudicate claims proposing concrete changes (defects, cuts, recommendations). Discard passing axes, clean verdicts, and praise immediately.
+Adjudicate per `dispatch`'s `references/alignment.md` § Adjudication (scope, verdict table, evidence over votes, dispute escalation).
 
-Ground truth is the **requirement plus the host repository's rules**. Claims citing existing code are verified against the cited `<file>:L<line>`.
+Locus note: ground truth is the **requirement plus the host repository's rules**. Claims citing existing code are verified against the cited `<file>:L<line>`; claims proposing a plan change are verified against the target `## <Section>`.
 
-| Verdict | Criterion | Action |
-|---------|-----------|--------|
-| **Accept** | Requirement or repository rule confirms the defect | Fold into the plan body and log per Step 3 |
-| **Reject** | Contradicted by plan/code, target section missing, already planned, or unverifiable | Drop from plan changes; log rejection in resolutions |
-| **Downgrade** | Real but trivial — style, taste, or speculative | Fold into Out of Scope or drop; log in resolutions |
-| **Disputed** | Unsettleable from plan alone (intent, unverified external figures, deliberate trade-offs) | Escalate to user |
-
-**Evidence over votes**: when aggregating multi-delegate reports, dedupe duplicate claims pointing to the same defect under the same `## <Section>` into a single finding, then verify against requirements and code. Accept valid findings regardless of delegate count; reject refuted findings even if unanimous. Provider agreement is context, not evidence.
-
-**Escalate disputes**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before modifying the plan for **Disputed** findings. Batch up to 4 questions per invocation (if more disputes exist, ask in successive batches); quote the section, state the delegate's claim, and provide your counter-reading with accept / reject / defer options. Apply user choices verbatim as final. Escalate whenever disputes involve repository-named domain authorities, persisted schema, shared URL state, or explicit user requests.
-
-**Done when:** every actionable claim carries a verdict and all disputes are resolved by the user.
+**Done when:** every actionable claim carries a verdict and all disputes are resolved (by the user in standalone mode, or returned unescalated per the orchestrator's consensus rule in orchestrated mode).
 
 ---
 
 ### 3. Fold findings into the plan and report
 
 1. **Update plan body**: Apply accepted `MUST-FIX` and approved modifications **directly to the target plan sections** on disk (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`, etc.). Fold accepted `SHOULD-FIX` / `CONSIDER` items into the plan body or record under **Out of Scope** with rationale.
-2. **Record review outcomes**: Append this round's complete adjudication log under `## Review Findings & Resolutions` in the plan file:
-   - `- **[Accepted]** ## <Section> — <tag>: <defect> → <resolution & where applied>`
-   - `- **[Resolved Dispute]** ## <Section> — <tag>: <defect> → <user ruling & action>`
-   - `- **[Rejected / Downgraded]** ## <Section> — <tag>: <defect> → <rejection rationale>`
+2. **Record review outcomes**: append this round's log under `## Review Findings & Resolutions` in the plan file per `dispatch`'s `references/alignment.md` § Resolutions Log.
 
-Report to the user, prefixed by provider label from the dispatch result (including session deep-link or resume command when available):
+**Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip the user report — the orchestrator's own handoff covers it.
 
-1. **Verdict**: one line — implementation readiness as amended.
-2. **Accepted findings**: each in delegate grammar, indicating where it landed in the plan.
-3. **Next steps**: prioritized items deferred to Out of Scope.
-4. **Adjudication note**: one line summarizing rejected/downgraded counts and dispute resolutions (omit when all findings were accepted without dispute).
-
-**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications, and the user report is delivered with provider prefix.
+**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications, and (standalone only) the user report is delivered with provider prefix.

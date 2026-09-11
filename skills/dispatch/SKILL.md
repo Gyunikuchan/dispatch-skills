@@ -72,9 +72,16 @@ Evaluate runner outcome:
 
 - **Success**: capture stdout and session handle, then proceed to Step 4.
 - **Truncated** (`WARNING: Output truncated`): use partial output if it fulfills the brief; otherwise re-dispatch a narrowed task.
-- **`NO_DISPATCH_AVAILABLE`**: all cascade passes exhausted. Fall back in-process:
-  - Invoke read-only subagent (`research` in Antigravity, `Explore` in Claude Code) with identical prompt and attachments.
-  - For brief tasks or when subagents are unavailable, execute directly in the current session.
+- **`NO_DISPATCH_AVAILABLE`**: all cascade passes exhausted. Fall back in-process to the platform's read-only subagent, with identical prompt and attachments:
+
+  | Platform | Read-only subagent |
+  |----------|---------------------|
+  | `claude` | `Explore` |
+  | `agy` | `research` |
+  | `copilot` | `self` (read-only tool set) |
+  | `opencode` | orchestrator executes directly |
+
+  For brief tasks or when subagents are unavailable, execute directly in the current session.
 
 **Done when:** Complete output obtained from delegate stdout, subagent response, or direct execution.
 
@@ -133,6 +140,8 @@ Technical specifications, discovery paths, default models, sandboxing boundaries
 ## Skill Alignment (implement-dispatch, dispatch-plan-review, dispatch-code-review only)
 
 Not part of general `dispatch` usage — skip this section and [references/alignment.md](references/alignment.md) entirely unless you are running as `implement-dispatch`, `dispatch-plan-review`, or `dispatch-code-review`. It holds conventions those three skills share so independent invocations converge on the same artifacts and behavior instead of drifting apart; other callers of `dispatch` have no reason to load it.
+
+Topics: Plan/Walkthrough Artifact Resolution, Invocation, Invocation Modes, Adjudication, Resolutions Log, User Report, Artifact Lifecycle.
 
 ---
 

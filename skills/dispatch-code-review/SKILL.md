@@ -7,18 +7,24 @@ description: Review session changes across 6 code axes through external agent CL
 
 The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the active codebase before updating the walkthrough or reporting to the user.
 
+## Invocation
+
+`dispatch`'s `references/alignment.md` § Invocation is the base grammar (`/dispatch-code-review (<pins>) [<artifact path>] [<focus>]`); the artifact path here is the walkthrough (plan, if any, attaches alongside it).
+
 ## Process
 
 ### 1. Assemble context and dispatch
+
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over both a walkthrough path and dispatch invocations, **standalone** otherwise. Standalone builds per-pin (or cascade) invocations itself and resolves context files below; orchestrated uses the handed-over path and invocations as-is, skipping resolution.
 
 Attach the change walkthrough and implementation plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
 
 Resolve context files in order. Plan and walkthrough share one slug and one resolver call:
 
 1. **User- or orchestrator-supplied plan/walkthrough** when an explicit path is passed or an orchestrating skill hands one over — skip the script for that kind.
-2. **Otherwise**, resolve the slug (`dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution): derive from the current git branch, or choose an explicit kebab-case one when derivation fails), then run once for both kinds:
+2. **Otherwise**, run the resolver once for both kinds per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (it derives the slug; add `--slug <kebab-slug>` only when the user names one or derivation fails):
    ```bash
-   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --slug <slug>
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
    ```
    For `plan`: `tier: native` or `scratch-existing` means a plan already exists — attach it (e.g. from a prior planning phase); `tier: scratch-new` (`exists: false`) — omit `-f` for the plan, none exists.
    For `walkthrough`: `tier: native` or `scratch-existing` means one already exists — attach it as-is; `tier: scratch-new` — author the returned path following the walkthrough template below before dispatching. External delegates read attached files as their primary task context.
@@ -74,7 +80,7 @@ Evaluate recent session changes across six axes.
 - Review Scope: <Review Scope>
 - Tool Turn Budget: <Tool Turn Budget>
 
-Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` from the workspace) and industry best practices for code quality.
+Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the workspace) and industry best practices for code quality.
 
 ### Instructions
 
@@ -90,7 +96,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `.claude/CLAUDE.md` fro
   - *Depth & Leverage*: Small interfaces hiding deep logic vs shallow pass-through modules. High leverage for callers, locality for maintainers.
   - *Seams & Dependencies*: One adapter = hypothetical seam; two adapters = real seam. Prefer direct implementations over speculative indirection. Internal seams stay private. Dependency tiers (in-process, local-substitutable, remote owned, external mock).
 - **Domain & Business Logic** (`domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type`):
-  - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `.claude/CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, or skipped business prerequisites.
+  - *Domain & Project Rules*: Adversarial audit against project context and domain authorities (`AGENTS.md` / `CLAUDE.md`). Challenge assumptions; catch mistaken requirements, flawed mental models by user/agent, or skipped business prerequisites.
   - *Invariants & State Integrity*: Business rules preserved across mutations and lifecycles. Flag states representable in types but invalid in domain logic, or partial state updates leaving objects corrupted.
   - *Logic, Math & Runtime*: Sign conventions (inflow/outflow), unit alignment (monthly/annual, fraction/percentage), formula accuracy, off-by-one errors, unhandled union branches, unguarded indexing (`arr[0]`), and floating promises.
 - **Security & Resource Safety** (`vuln`, `auth`, `leak`, `perf`):
@@ -133,40 +139,19 @@ Structure your review as:
 
 ### 2. Adjudicate each actionable claim
 
-Adjudicate claims proposing concrete changes (defects, cuts, vulnerabilities, recommendations). Discard passing axes, clean verdicts, and praise immediately.
+Adjudicate per `dispatch`'s `references/alignment.md` § Adjudication (scope, verdict table, evidence over votes, dispute escalation).
 
-Ground truth for a code claim is the cited `<file>:L<line>`. Read it plus enough surrounding context to judge, then assign one verdict:
+Locus note: ground truth for a code claim is the cited `<file>:L<line>` plus enough surrounding context to judge. Verify every claim against the cited lines before accepting; classify uncited, contradicted, or unverifiable claims as **Reject**.
 
-| Verdict | Criterion | Action |
-|---------|-----------|--------|
-| **Accept** | Code confirms the defect and its stated impact | Apply fix or carry into report, and log per Step 3 |
-| **Reject** | Cited code contradicts the claim, the line does not exist, or the fix is already present | Drop from changes; log rejection in walkthrough resolutions |
-| **Downgrade** | Real but trivial — style, taste, or speculative | Fold into next steps or drop; log in walkthrough resolutions |
-| **Disputed** | Unsettleable from code alone (intent, unverified external figures, deliberate trade-offs, convention cutting both ways) | Escalate to user |
-
-Verify every claim against the cited lines before accepting. Classify uncited, contradicted, or unverifiable claims as **Reject**.
-
-**Evidence over votes**: when aggregating multi-delegate reports, dedupe duplicate claims pointing to the same defect at the same `<file>:L<line>` into a single finding, then verify against the code. Accept valid findings regardless of delegate count; reject refuted findings even if unanimous. Provider agreement is context, never evidence.
-
-**Escalate disputes**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before modifying code or reporting for **Disputed** findings. Batch up to 4 questions per invocation (if more disputes exist, ask in successive batches); cite `<file>:L<line>`, state the delegate's claim, and provide your counter-reading with accept / reject / defer options. Apply user choices verbatim as final. Escalate whenever disputes involve repository-named domain authorities, persisted schema, shared URL state, or explicit user requests.
-
-**Done when:** every actionable claim carries a verdict and all disputes are resolved by the user.
+**Done when:** every actionable claim carries a verdict and all disputes are resolved (by the user in standalone mode, or returned unescalated per the orchestrator's consensus rule in orchestrated mode).
 
 ---
 
 ### 3. Fold findings into walkthrough and report
 
-1. **Apply fixes and update walkthrough**: Apply accepted `MUST-FIX` items and approved modifications to the codebase. When fixes modify additional code or verification results, update `## Changes Made` and `## Verification & Validation` in the walkthrough accordingly.
-2. **Record review outcomes**: Append this round's complete adjudication log under `## Review Findings & Resolutions` in the walkthrough file:
-   - `- **[Accepted]** <file>:L<line> — <tag>: <defect> → <resolution & fix applied>`
-   - `- **[Resolved Dispute]** <file>:L<line> — <tag>: <defect> → <user ruling & action>`
-   - `- **[Rejected / Downgraded]** <file>:L<line> — <tag>: <defect> → <rejection rationale>`
+1. **Apply fixes** (standalone mode only — an orchestrated caller owns its own fix step): apply accepted `MUST-FIX` items and approved modifications to the codebase. When fixes modify additional code or verification results, update `## Changes Made` and `## Verification & Validation` in the walkthrough accordingly.
+2. **Record review outcomes**: append this round's log under `## Review Findings & Resolutions` in the walkthrough file per `dispatch`'s `references/alignment.md` § Resolutions Log.
 
-Report to the user, prefixed by provider label from the dispatch result (including session deep-link or resume command when available):
+**Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip both fix application and the user report — the orchestrator applies its own fixes and its handoff covers reporting.
 
-1. **Verdict**: one line — ship readiness and health across the 6 axes.
-2. **Accepted findings**: each in delegate grammar, `MUST-FIX` first. Accepted findings only — filter out passing axes, clean areas, and praise.
-3. **Next steps**: prioritized follow-up fixes citing `<file>:L<line>`.
-4. **Adjudication note**: one line summarizing rejected/downgraded counts and dispute resolutions (omit when all findings were accepted without dispute).
-
-**Done when:** accepted fixes are applied and recorded, `## Review Findings & Resolutions` is updated with this round's adjudications, and the user report is delivered with provider prefix.
+**Done when:** (standalone only) accepted fixes are applied, `## Review Findings & Resolutions` is updated with this round's adjudications, and (standalone only) the user report is delivered with provider prefix.

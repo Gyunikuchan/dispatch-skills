@@ -12,7 +12,7 @@ Deliver high-confidence cross-agent delegation and review with minimal token ove
 - **Structural Least Privilege (Security & Isolation)**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools). File writes and destructive actions belong exclusively to the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
 - **Context Hygiene & Token Density (Efficiency)**: Protect the orchestrator's context window. Execution traces and subprocess logs stream out-of-context to temp logs (`.scratch/` or OS temp); only concise syntheses, banners, and log paths reach the orchestrator. High token density via progressive disclosure.
 - **Autonomous One-Shot Reliability (Rigor & Consensus)**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without requiring user interventions.
-- **Host Neutrality & Composability (Portability & Modularity)**: Zero assumptions about the host repository. Delegates read the target workspace's `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and install standalone or together.
+- **Host Neutrality & Composability (Portability & Modularity)**: Zero assumptions about the host repository. Delegates read the target workspace's `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and install standalone or together. Shared conventions among the review-flow skills (`dispatch`'s `references/alignment.md`) govern only those skills' own behaviour and artifacts; host `AGENTS.md` / `CLAUDE.md` always wins, and skills never write conventions into the host repo.
 
 ## Communication
 
@@ -51,12 +51,12 @@ dispatch → (nothing)
 
 - **Reference by skill name, never by path.**
 - **Assume dependencies are installed**: Downstream skills assume upstream dependencies exist and invoke them directly.
-- **Upstream skills never name downstream skills** in prose or frontmatter.
+- **Upstream skills never name downstream skills** in prose or frontmatter, except `dispatch`'s `references/alignment.md` and the gated "Skill Alignment" pointer section in `dispatch/SKILL.md`, which may name `implement-dispatch`, `dispatch-plan-review`, `dispatch-code-review` — those conventions exist to serve exactly those three skills.
 - **Graceful degradation**: State absence of optional dependencies and run the reduced flow.
 
 ## Review Report Standards
 
-Review skills share the severity ladder (`MUST-FIX` / `SHOULD-FIX` / `CONSIDER`), adjudication table (`Accept` / `Reject` / `Downgrade` / `Disputed`), and finding grammar:
+Review skills share the severity ladder (`MUST-FIX` / `SHOULD-FIX` / `CONSIDER`) and finding grammar:
 
 ```
 <locus> — <tag>: <defect> → <required change>
@@ -64,7 +64,7 @@ Review skills share the severity ladder (`MUST-FIX` / `SHOULD-FIX` / `CONSIDER`)
 
 - `<locus>` is `<file>:L<line>` for code and `## <Section>` for plans.
 - Open reports with `## Verdict` and `## Axis Coverage` (explicitly accounting for every axis).
-- Modifying ladder, grammar, or adjudication requires updating both review skills simultaneously.
+- Adjudication, the resolutions log, and the user report are single-sourced in `dispatch`'s `references/alignment.md`; ladder, grammar, and report skeleton stay inline in both prompt templates, checked by a parity test. Modifying any of them requires updating both review skills simultaneously.
 
 ## Authoring & Cross-Platform Standards
 
@@ -76,7 +76,7 @@ Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and
 - **Paths**: Relative paths with forward slashes instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
-- **Scratch directory**: Ephemeral state and run logs belong in `.scratch/` and are cleaned up upon completion.
+- **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`; an orchestrator owning the full lifecycle relocates its scratch artifacts to OS temp on completion, while standalone reviews retain theirs (see `dispatch`'s `references/alignment.md` § Artifact Lifecycle for review-flow artifacts).
 - **Docs**: Every skill README must include install and usage examples.
 
 ### Comments

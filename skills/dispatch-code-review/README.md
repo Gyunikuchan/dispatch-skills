@@ -87,16 +87,16 @@ Pass focus areas directly after the command to steer delegate attention:
 /dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
 ```
 
-### 3. Pinning a Reviewer Provider
+### 3. Pinning Reviewer Providers
 
-Guide the orchestrator to route the code review to a specific external CLI:
+Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separated provider keys, no level (standalone reviews run a single round):
 
 ```markdown
-/dispatch-code-review --provider claude
+/dispatch-code-review (claude)
 ```
 
 ```markdown
-/dispatch-code-review --provider agy focus on resource lifecycle and memory leaks
+/dispatch-code-review (claude,agy) focus on resource lifecycle and memory leaks
 ```
 
 ### 4. Explicit Context or Walkthrough Targeting
@@ -114,10 +114,11 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 - **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
 - **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
 - **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff` and `git diff --staged`), falling back to `git diff HEAD~1` only when the working tree is clean.
-- **Walkthrough Resolution & Authoring** (see `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution)): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
+- **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only modified files, adjacent call sites, and contracts via code graphs) rather than unbounded codebase scans.
+- **Artifact Lifecycle**: standalone runs always retain the walkthrough file in place; only an orchestrator owning the full implement-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
 
 ---
 
@@ -196,7 +197,7 @@ By default, the underlying `dispatch` runner avoids delegating to the orchestrat
 Delegates run in a structurally read-only mode and inspect the current working tree (`git diff` and `git diff --staged`). Ensure your changes are saved to disk before triggering review.
 
 ### Host Convention Reading
-Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `.claude/CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
+Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 
 ### Reviewing Transient Antigravity Walkthroughs
 When running inside Antigravity, the orchestrator automatically detects the active `walkthrough.md` and `implementation_plan.md` artifacts from the session brain directory. You do not need to copy or export them manually.
