@@ -114,21 +114,29 @@ export function resolveLevelScalar(knob, level) {
 
 export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
   const root = path.resolve(scriptDir, '..');
-  // Checked before the skill-local `config.jsonc`: a globally-installed skill
-  // (`~/.agents/skills`) has one `config.jsonc` shared across every project, so a
-  // per-repo override needs a path rooted at the workspace, not the skill bundle.
-  const projectPath = path.join(PROJECT_ROOT, '.implement-dispatch', 'config.jsonc');
-  const localPath = path.join(root, 'config.jsonc');
   const defaultPath = path.join(root, 'config.default.jsonc');
-  const configPath = defaultOnly
-    ? defaultPath
-    : existsSync(projectPath)
-      ? projectPath
-      : existsSync(localPath)
-        ? localPath
-        : defaultPath;
-  if (!existsSync(configPath)) {
-    throw new Error(`Config file not found: tried ${projectPath}, ${localPath}, and ${defaultPath}`);
+
+  if (defaultOnly) {
+    if (!existsSync(defaultPath)) {
+      throw new Error(`Config file not found: tried ${defaultPath}`);
+    }
+    return parseJsonc(readFileSync(defaultPath, 'utf8'));
+  }
+
+  // Loaded wholly in precedence order: config.local.jsonc takes precedence over
+  // config.jsonc regardless of whether it is in the project or root directory.
+  const projectDir = path.join(PROJECT_ROOT, '.implement-dispatch');
+  const candidates = [
+    path.join(projectDir, 'config.local.jsonc'),
+    path.join(root, 'config.local.jsonc'),
+    path.join(projectDir, 'config.jsonc'),
+    path.join(root, 'config.jsonc'),
+    defaultPath,
+  ];
+
+  const configPath = candidates.find(p => existsSync(p));
+  if (!configPath) {
+    throw new Error(`Config file not found: tried ${candidates.join(', ')}`);
   }
   return parseJsonc(readFileSync(configPath, 'utf8'));
 }

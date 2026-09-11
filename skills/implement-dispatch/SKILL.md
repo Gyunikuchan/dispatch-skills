@@ -70,6 +70,7 @@ An unpinned run with no live candidates degrades to the fallback (`targets: []`,
 
 ## Operating Invariants
 
+- **Mandatory Entry Gate**: Every `/implement-dispatch` invocation begins by running `resolve-flow.mjs` (Step 1). Never edit code or author artifacts before resolving `flow`. Even `low` depth runs execute the resolver, code review, and run diagnostics.
 - **Execution boundaries**: External delegates run structurally read-only, per `dispatch`'s CLI mechanics. Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
 - **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
 - **Provider flags**: Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
@@ -107,7 +108,7 @@ Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the
 4. Run `resolve-flow.mjs` with that slug to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
 5. Resolve the plan and walkthrough artifact paths per Host Conventions and record them for reuse in Steps 2 and 5.
 
-**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, `flow` is resolved without errors, and artifact paths are resolved.
+**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, `resolve-flow.mjs` has executed and `flow` is loaded, and artifact paths are resolved.
 
 ---
 
@@ -134,7 +135,7 @@ Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s
 
 ### 4. Implement
 
-Dispatch implementation test-first to the native write-capable subagent from the platform agent-mode table, configured with `model` and `effort` from `flow.implementation`. Execute directly only when the scope is `trivial` or when the subagent spawn fails.
+Dispatch implementation test-first to the native write-capable subagent from the platform agent-mode table, configured with `model` and `effort` from `flow.implementation`. For `trivial` scope or if subagent spawn fails, the orchestrator writes the initial code directly while keeping all subsequent review and diagnostic steps intact.
 
 Require the subagent to implement Proposed Changes, run the host verify command until green, and report back modified files, verification output, and any deviations.
 

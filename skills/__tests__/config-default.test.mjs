@@ -76,20 +76,50 @@ describe('shipped config', () => {
 });
 
 describe('loadConfig', () => {
-  /** Writes `config.jsonc` at a temp skill root and loads it via loadConfig. */
-  function loadFromSource(source) {
+  /** Writes files at a temp skill root and loads config via loadConfig. */
+  function loadFromFiles(files) {
     const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
     try {
       mkdirSync(path.join(root, 'scripts'));
-      writeFileSync(path.join(root, 'config.jsonc'), source, 'utf8');
+      for (const [name, content] of Object.entries(files)) {
+        writeFileSync(path.join(root, name), content, 'utf8');
+      }
       return loadConfig(path.join(root, 'scripts'));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   }
 
-  it('prefers a local config.jsonc over the default', () => {
-    assert.deepEqual(loadFromSource('{ "marker": "local" }'), { marker: 'local' });
+  function loadFromSource(source) {
+    return loadFromFiles({ 'config.jsonc': source });
+  }
+
+  it('prefers config.local.jsonc over config.jsonc and config.default.jsonc', () => {
+    const loaded = loadFromFiles({
+      'config.local.jsonc': '{ "marker": "local-jsonc" }',
+      'config.jsonc': '{ "marker": "jsonc", "extra": "not-merged" }',
+      'config.default.jsonc': '{ "marker": "default", "defaultOnly": "not-merged" }',
+    });
+    assert.deepEqual(loaded, { marker: 'local-jsonc' });
+  });
+
+  it('prefers config.jsonc over config.default.jsonc when config.local.jsonc is absent', () => {
+    const loaded = loadFromFiles({
+      'config.jsonc': '{ "marker": "jsonc" }',
+      'config.default.jsonc': '{ "marker": "default", "extra": "not-merged" }',
+    });
+    assert.deepEqual(loaded, { marker: 'jsonc' });
+  });
+
+  it('loads config fully without merging missing keys from lower-precedence files', () => {
+    const loaded = loadFromFiles({
+      'config.local.jsonc': '{ "onlyLocal": 123 }',
+      'config.jsonc': '{ "onlyJsonc": 456 }',
+      'config.default.jsonc': '{ "onlyDefault": 789 }',
+    });
+    assert.deepEqual(loaded, { onlyLocal: 123 });
+    assert.equal(loaded.onlyJsonc, undefined);
+    assert.equal(loaded.onlyDefault, undefined);
   });
 
   it('strips line comments', () => {
@@ -129,16 +159,13 @@ describe('loadConfig', () => {
   });
 
   describe('project-root override', () => {
-    // `<PROJECT_ROOT>/.implement-dispatch/config.jsonc` lets a per-repo override reach a
-    // globally-installed skill (`~/.agents/skills`), which otherwise has one config.jsonc
-    // shared across every project. Exercised against the real PROJECT_ROOT since it's a
-    // module-level constant resolved once at import time.
     const overrideDir = path.join(PROJECT_ROOT, '.implement-dispatch');
-    const overridePath = path.join(overrideDir, 'config.jsonc');
 
-    function withOverride(source, fn) {
+    function withOverrides(files, fn) {
       mkdirSync(overrideDir, { recursive: true });
-      writeFileSync(overridePath, source, 'utf8');
+      for (const [name, content] of Object.entries(files)) {
+        writeFileSync(path.join(overrideDir, name), content, 'utf8');
+      }
       try {
         fn();
       } finally {
@@ -146,32 +173,86 @@ describe('loadConfig', () => {
       }
     }
 
-    it('prefers the project-root override over a skill-local config.jsonc', () => {
+    it('prefers project-root config.local.jsonc over project-root config.jsonc', () => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
       try {
         mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-local" }', 'utf8');
-        withOverride('{ "marker": "project-override" }', () => {
-          assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-override' });
-        });
+        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        withOverrides(
+          {
+            'config.local.jsonc': '{ "marker": "project-local" }',
+            'config.jsonc': '{ "marker": "project-jsonc" }',
+          },
+          () => {
+            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-local' });
+          }
+        );
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     });
 
-    it('falls back to the skill-local config.jsonc when no project override exists', () => {
+    it('prefers project-root config.local.jsonc over skill-local config.local.jsonc', () => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
       try {
         mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        withOverrides(
+          {
+            'config.local.jsonc': '{ "marker": "project-local" }',
+          },
+          () => {
+            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-local' });
+          }
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('prefers skill-local config.local.jsonc over project-root config.jsonc', () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
+      try {
+        mkdirSync(path.join(root, 'scripts'));
+        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        withOverrides(
+          {
+            'config.jsonc': '{ "marker": "project-jsonc" }',
+          },
+          () => {
+            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-local' });
+          }
+        );
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it('falls back to skill-local config.local.jsonc when no project override exists', () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
+      try {
+        mkdirSync(path.join(root, 'scripts'));
+        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
+        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-jsonc" }', 'utf8');
         assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-local' });
       } finally {
         rmSync(root, { recursive: true, force: true });
       }
     });
 
+    it('falls back to skill-local config.jsonc when neither project override nor skill-local config.local.jsonc exists', () => {
+      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
+      try {
+        mkdirSync(path.join(root, 'scripts'));
+        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-jsonc" }', 'utf8');
+        assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-jsonc' });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('is ignored under defaultOnly', () => {
-      withOverride('{ "marker": "project-override" }', () => {
+      withOverrides({ 'config.local.jsonc': '{ "marker": "project-override" }' }, () => {
         assert.deepEqual(validateConfig(loadConfig(undefined, { defaultOnly: true })), []);
       });
     });

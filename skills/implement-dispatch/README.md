@@ -154,11 +154,18 @@ Levels scale spend along four axes at once — how many agents review (`targetCo
 
 ## Configuration & Flow Policy
 
-`config.default.jsonc` holds the whole flow policy: the review knobs per phase plus the models and reasoning effort per platform. Customize it by creating a local `config.jsonc` alongside it, which **replaces** the default file wholly rather than merging into it — so copy the default as your starting point, and expect a clear validation error listing every problem if a section or knob is missing.
+`config.default.jsonc` holds the whole flow policy: the review knobs per phase plus the models and reasoning effort per platform. Customize it by creating a local `config.local.jsonc` or `config.jsonc` alongside it, which **replaces** the default file wholly rather than merging into it — so copy the default as your starting point, and expect a clear validation error listing every problem if a section or knob is missing.
 
-When the skill is installed globally (`~/.agents/skills`), a skill-local `config.jsonc` is shared across every project. For a per-repo override instead, place `config.jsonc` at `<project-root>/.implement-dispatch/config.jsonc` — checked before the skill-local file, using the same replaces-wholly semantics.
+When the skill is installed globally (`~/.agents/skills`), a skill-local config is shared across every project. For a per-repo override instead, place `config.local.jsonc` or `config.jsonc` at `<project-root>/.implement-dispatch/` — checked before the skill-local file, using the same replaces-wholly semantics.
 
-A local `config.jsonc` omitting a platform under a section's `platforms` map (e.g. dropping `opencode` after it's added to `config.default.jsonc`) is intentional and supported — not every user wants every platform configured, and an omitted platform is simply never picked as a candidate. This differs from omitting a required top-level knob (`maxRounds`, `targetCount`, etc.), which does fail validation.
+Config files are loaded fully (without merging) based on this order of precedence (`config.local.jsonc` takes precedence over `config.jsonc` regardless of location):
+1. `<project-root>/.implement-dispatch/config.local.jsonc`
+2. `<skill-root>/config.local.jsonc`
+3. `<project-root>/.implement-dispatch/config.jsonc`
+4. `<skill-root>/config.jsonc`
+5. `<skill-root>/config.default.jsonc`
+
+A local config omitting a platform under a section's `platforms` map (e.g. dropping `opencode` after it's added to `config.default.jsonc`) is intentional and supported — not every user wants every platform configured, and an omitted platform is simply never picked as a candidate. This differs from omitting a required top-level knob (`maxRounds`, `targetCount`, etc.), which does fail validation.
 
 The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. The two review sections additionally carry five level-keyed knobs:
 
