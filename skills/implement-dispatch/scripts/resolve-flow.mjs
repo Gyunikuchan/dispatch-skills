@@ -112,6 +112,18 @@ export function resolveLevelScalar(knob, level) {
 
 // --- Config loading ---
 
+export function getImplementDispatchConfigCandidates(scriptDir = __dirname, projectRoot = PROJECT_ROOT) {
+  const root = path.resolve(scriptDir, '..');
+  const projectDir = path.join(projectRoot, '.implement-dispatch');
+  return [
+    path.join(projectDir, 'config.local.jsonc'),
+    path.join(root, 'config.local.jsonc'),
+    path.join(projectDir, 'config.jsonc'),
+    path.join(root, 'config.jsonc'),
+    path.join(root, 'config.default.jsonc'),
+  ];
+}
+
 export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
   const root = path.resolve(scriptDir, '..');
   const defaultPath = path.join(root, 'config.default.jsonc');
@@ -125,14 +137,7 @@ export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) 
 
   // Loaded wholly in precedence order: config.local.jsonc takes precedence over
   // config.jsonc regardless of whether it is in the project or root directory.
-  const projectDir = path.join(PROJECT_ROOT, '.implement-dispatch');
-  const candidates = [
-    path.join(projectDir, 'config.local.jsonc'),
-    path.join(root, 'config.local.jsonc'),
-    path.join(projectDir, 'config.jsonc'),
-    path.join(root, 'config.jsonc'),
-    defaultPath,
-  ];
+  const candidates = getImplementDispatchConfigCandidates(scriptDir, PROJECT_ROOT);
 
   const configPath = candidates.find(p => existsSync(p));
   if (!configPath) {

@@ -10,3 +10,6 @@ if git diff --cached --name-only | grep -q "$SKILL_PATTERN"; then
   # Stage the updated manifest so it's included in the commit.
   git add skills/dispatch/skill-hashes.json
 fi
+
+# Validate all found dispatch config files.
+node scripts/validate-configs.mjs

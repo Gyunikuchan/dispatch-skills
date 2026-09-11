@@ -7,7 +7,8 @@
   "scripts": {
     "prepare": "husky",
     "pretest": "node scripts/generate-hashes.mjs",
-    "test": "node --test \"skills/__tests__/**/*.test.mjs\""
+    "test": "node --test \"skills/__tests__/**/*.test.mjs\"",
+    "validate:configs": "node scripts/validate-configs.mjs"
   },
   "devDependencies": {
     "husky": "^9.1.7"
