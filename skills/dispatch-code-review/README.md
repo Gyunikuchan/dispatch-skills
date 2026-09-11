@@ -51,7 +51,7 @@ To install globally for all projects:
 npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch dispatch-code-review
 ```
 
-To install the entire suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
+To install every skill in this repository:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
@@ -208,4 +208,3 @@ When running inside Antigravity, the orchestrator automatically detects the acti
 
 - **`dispatch`**: The core cross-agent execution bridge and CLI provider cascade (required).
 - **`dispatch-plan-review`**: The companion skill for cross-agent plan reviews before code is written.
-- **`implement-dispatch`**: Full automated workflow combining planning, plan review, execution, and code review into a single pipeline.

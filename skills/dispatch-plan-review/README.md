@@ -51,7 +51,7 @@ To install globally for all projects:
 npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch dispatch-plan-review
 ```
 
-To install the entire suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
+To install every skill in this repository:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
@@ -207,5 +207,4 @@ Delegates inspect the files present on disk. If your plan refers to code changes
 
 - **`dispatch`**: The core cross-agent execution bridge and CLI provider cascade (required).
 - **`dispatch-code-review`**: The companion skill for cross-agent code reviews once implementation is complete.
-- **`implement-dispatch`**: Full automated workflow combining planning, plan review, execution, and code review into a single pipeline.
 

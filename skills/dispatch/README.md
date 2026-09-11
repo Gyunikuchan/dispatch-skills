@@ -53,7 +53,7 @@ To install globally for all projects:
 npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch
 ```
 
-To install all skills in the suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
+To install every skill in this repository:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
