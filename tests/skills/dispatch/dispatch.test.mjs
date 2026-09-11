@@ -1,0 +1,401 @@
+import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, afterEach, mock } from 'node:test';
+
+import {
+  detectOrchestrator,
+  resolveProvider,
+  getCandidateProviders,
+  dispatchTask,
+  providerProbes,
+  providerRunners,
+  workspaceProbes,
+  PROVIDER_ALIASES,
+  PREFERENCE_ORDER,
+} from '../../../skills/dispatch/scripts/dispatch.mjs';
+
+describe('dispatch: orchestrator detection & provider resolution', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    Object.keys(process.env).forEach((k) => delete process.env[k]);
+    Object.assign(process.env, originalEnv);
+    mock.restoreAll();
+  });
+
+  const clearOrchestratorEnv = () => {
+    delete process.env.ANTIGRAVITY_AGENT;
+    delete process.env.ANTIGRAVITY_CONVERSATION_ID;
+    delete process.env.ANTIGRAVITY_PROJECT_ID;
+    delete process.env.GEMINI_CLI;
+    delete process.env.CLAUDE_CODE;
+    delete process.env.CLAUDE_SESSION_ID;
+    delete process.env.CLAUDECODE;
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    delete process.env.ANTIGRAVITY_SESSION_ID;
+    delete process.env.COPILOT_AGENT;
+    delete process.env.COPILOT_CLI_SESSION_ID;
+    delete process.env.VSCODE_PID;
+    delete process.env.OPENCODE_PORT;
+    delete process.env.OPENCODE_AGENT;
+  };
+
+  describe('detectOrchestrator', () => {
+    for (const [envVar, value] of [
+      ['ANTIGRAVITY_AGENT', 'true'],
+      ['ANTIGRAVITY_CONVERSATION_ID', 'conv-123'],
+      ['ANTIGRAVITY_SESSION_ID', 'sess-456'],
+      ['GEMINI_CLI', '1'],
+    ]) {
+      it(`detects agy when ${envVar} is set`, () => {
+        clearOrchestratorEnv();
+        process.env[envVar] = value;
+        assert.equal(detectOrchestrator(), 'agy');
+      });
+    }
+
+    for (const [envVar, value] of [
+      ['CLAUDECODE', '1'],
+      ['CLAUDE_CODE', '1'],
+      ['CLAUDE_CODE_SESSION_ID', 'sess-claude-1'],
+      ['CLAUDE_SESSION_ID', 'sess-claude-2'],
+      ['CLAUDE_CODE_ENTRYPOINT', 'cli'],
+    ]) {
+      it(`detects claude when ${envVar} is set`, () => {
+        clearOrchestratorEnv();
+        process.env[envVar] = value;
+        assert.equal(detectOrchestrator(), 'claude');
+      });
+    }
+
+    for (const [envVar, value] of [
+      ['COPILOT_AGENT', 'true'],
+      ['COPILOT_CLI_SESSION_ID', 'sess-copilot'],
+    ]) {
+      it(`detects copilot when ${envVar} is set`, () => {
+        clearOrchestratorEnv();
+        process.env[envVar] = value;
+        assert.equal(detectOrchestrator(), 'copilot');
+      });
+    }
+
+    for (const [envVar, value] of [
+      ['OPENCODE_PORT', '4096'],
+      ['OPENCODE_AGENT', 'opencode'],
+    ]) {
+      it(`detects opencode when ${envVar} is set`, () => {
+        clearOrchestratorEnv();
+        process.env[envVar] = value;
+        assert.equal(detectOrchestrator(), 'opencode');
+      });
+    }
+
+    it('returns null when no orchestrator markers are present', () => {
+      clearOrchestratorEnv();
+      assert.equal(detectOrchestrator(), null);
+    });
+
+    it('does not infer Copilot from a bare VS Code terminal', () => {
+      clearOrchestratorEnv();
+      process.env.VSCODE_PID = '1234';
+      assert.equal(detectOrchestrator(), null);
+    });
+
+    it('respects precedence order when multiple platform markers are present', () => {
+      clearOrchestratorEnv();
+      process.env.ANTIGRAVITY_AGENT = 'true';
+      process.env.CLAUDECODE = '1';
+      process.env.COPILOT_AGENT = 'true';
+      process.env.OPENCODE_PORT = '4096';
+      assert.equal(detectOrchestrator(), 'agy');
+
+      clearOrchestratorEnv();
+      process.env.CLAUDECODE = '1';
+      process.env.COPILOT_AGENT = 'true';
+      process.env.OPENCODE_PORT = '4096';
+      assert.equal(detectOrchestrator(), 'claude');
+
+      clearOrchestratorEnv();
+      process.env.COPILOT_AGENT = 'true';
+      process.env.OPENCODE_PORT = '4096';
+      assert.equal(detectOrchestrator(), 'copilot');
+    });
+  });
+
+  describe('resolveProvider & getCandidateProviders', () => {
+    it('defines canonical providers and aliases', () => {
+      assert.deepEqual(PREFERENCE_ORDER, ['claude', 'agy', 'copilot', 'opencode']);
+      assert.equal(PROVIDER_ALIASES.antigravity, 'agy');
+      assert.equal(PROVIDER_ALIASES.claudecode, 'claude');
+      assert.equal(PROVIDER_ALIASES['github-copilot'], 'copilot');
+    });
+
+    it('prioritizes claude over agy, copilot, and opencode when all are available', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, 'claude');
+    });
+
+    it('prioritizes agy when claude is unavailable or orchestrator', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, 'agy');
+    });
+
+    it('prioritizes copilot when claude and agy are unavailable', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, 'copilot');
+    });
+
+    it('falls back to opencode when claude, agy, and copilot are unavailable', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, 'opencode');
+    });
+
+    it('skips orchestrator in alternative cascade', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, 'agy');
+    });
+
+    it('returns null (subagent fallback) when no alternative agent is available', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, null);
+    });
+
+    it('falls back to same agent when allowSameAgent is explicitly true', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      const provider = await resolveProvider({ allowSameAgent: true });
+      assert.equal(provider, 'claude');
+    });
+
+    it('returns null when all providers are unavailable', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => false);
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+
+      const provider = await resolveProvider();
+      assert.equal(provider, null);
+    });
+
+    it('honors explicit provider override regardless of cascade', async () => {
+      const provider = await resolveProvider({ explicitProvider: 'copilot' });
+      assert.equal(provider, 'copilot');
+    });
+
+    it('normalizes provider aliases in explicit provider override', async () => {
+      const provider = await resolveProvider({ explicitProvider: 'antigravity' });
+      assert.equal(provider, 'agy');
+    });
+
+    it('--provider local is rejected as unknown after alias removal', async () => {
+      await assert.rejects(
+        resolveProvider({ explicitProvider: 'local' }),
+        /Unknown provider specified: local/,
+      );
+    });
+
+    it('returns ordered candidates according to preference: claude > agy > copilot > opencode', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const candidates = await getCandidateProviders();
+      assert.deepEqual(candidates, ['claude', 'agy', 'copilot', 'opencode']);
+    });
+
+    it('returns ordered candidates for fallback passes skipping orchestrator', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const candidates = await getCandidateProviders();
+      assert.deepEqual(candidates, ['agy', 'copilot', 'opencode']);
+    });
+  });
+
+  describe('dispatchTask execution & cascading', () => {
+    it('cascades to next candidate when first candidate fails during execution', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      mock.method(providerRunners, 'agy', async () => {
+        throw new Error('Auth failed');
+      });
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'Success from copilot fallback',
+        exitCode: 0,
+        logFile: path.join(os.tmpdir(), 'copilot.log'),
+        gitIntegrityViolation: false,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Test task' });
+      assert.equal(result.provider, 'copilot');
+      assert.equal(result.stdout, 'Success from copilot fallback');
+    });
+
+    it('throws NO_DISPATCH_AVAILABLE when all candidate passes fail', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+
+      mock.method(providerRunners, 'agy', async () => {
+        throw new Error('agy crashed');
+      });
+
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test task' }),
+        /All candidate dispatch agents failed execution/,
+      );
+    });
+
+    it('cascades past a provider that exits 0 with no output', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDECODE = '1';
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '   ',
+        stderr: 'usage limit reached',
+        exitCode: 0,
+      }));
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: '## Summary',
+        exitCode: 0,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Review' });
+      assert.equal(result.provider, 'copilot');
+    });
+
+    it('reports why a pinned provider returned nothing instead of passing it off as success', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDECODE = '1';
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '',
+        stderr: 'a tool required the "command" permission',
+        exitCode: 0,
+      }));
+
+      const written = [];
+      mock.method(process.stderr, 'write', (chunk) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+      const result = await dispatchTask({ prompt: 'Review', provider: 'agy' });
+      assert.equal(result.provider, 'agy');
+
+      const notice = written.join('');
+      assert.ok(notice.includes("Provider 'agy' exited 0 with no output"));
+      assert.ok(notice.includes('Pinned with --provider'));
+    });
+
+    it('returns partial output when every provider fails', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDECODE = '1';
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '## Partial findings',
+        exitCode: 124,
+        truncated: 'timeout',
+      }));
+      mock.method(providerRunners, 'copilot', async () => {
+        throw new Error('copilot: command not found');
+      });
+
+      const result = await dispatchTask({ prompt: 'Review' });
+      assert.equal(result.provider, 'agy');
+      assert.equal(result.truncated, 'timeout');
+      assert.equal(result.stdout, '## Partial findings');
+    });
+
+    it('does not cascade when a provider is pinned', async () => {
+      clearOrchestratorEnv();
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: '',
+        exitCode: 0,
+      }));
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '',
+        exitCode: 1,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Review', provider: 'agy' });
+      assert.equal(result.exitCode, 1);
+      assert.equal(copilotRunner.mock.calls.length, 0);
+    });
+  });
+});

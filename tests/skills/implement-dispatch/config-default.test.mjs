@@ -4,12 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { PROJECT_ROOT } from '../dispatch/scripts/common.mjs';
+import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
 import {
   loadConfig,
   resolveFlow,
   validateConfig,
-} from '../implement-dispatch/scripts/resolve-flow.mjs';
+} from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
 
 // Liveness stub: claude is the orchestrator, copilot dead.
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };

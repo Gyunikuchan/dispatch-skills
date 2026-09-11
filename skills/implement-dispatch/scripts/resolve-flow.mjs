@@ -630,6 +630,37 @@ async function main() {
     process.exit(1);
   }
 
+  // Pre-validate options before asynchronous liveness probing so invalid CLI
+  // arguments fail fast without waiting for slow provider network/CLI probes.
+  if (opts.level !== undefined && !LEVELS.includes(opts.level)) {
+    process.stderr.write(`Error: Unknown level "${opts.level}". Valid levels: ${LEVELS.join(', ')}\n`);
+    process.exit(1);
+  }
+  if (opts.slug !== undefined && !SLUG_PATTERN.test(opts.slug)) {
+    process.stderr.write(`Error: Slug "${opts.slug}" must be kebab-case (${SLUG_PATTERN.source})\n`);
+    process.exit(1);
+  }
+  if (opts.date !== undefined && !isValidDate(opts.date)) {
+    process.stderr.write(`Error: Date "${opts.date}" must be a valid calendar date as yyyy-mm-dd\n`);
+    process.exit(1);
+  }
+  const configProblems = validateConfig(config);
+  if (configProblems.length > 0) {
+    process.stderr.write(`Invalid config:\n- ${configProblems.join('\n- ')}\n`);
+    process.exit(1);
+  }
+  if (opts.pins && opts.pins.length > 0) {
+    const normalizedPins = opts.pins.map(p => PROVIDER_ALIASES[p.toLowerCase()] ?? p);
+    const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {})));
+    const unknown = normalizedPins.filter(p => !allKeys.has(p));
+    if (unknown.length > 0) {
+      process.stderr.write(
+        `Error: Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...allKeys].sort().join(', ')}\n`
+      );
+      process.exit(1);
+    }
+  }
+
   let liveness;
   try {
     liveness = await defaultLiveness();

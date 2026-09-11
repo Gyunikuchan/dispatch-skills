@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { resolveFlow } from '../implement-dispatch/scripts/resolve-flow.mjs';
+import { resolveFlow } from '../../skills/implement-dispatch/scripts/resolve-flow.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 

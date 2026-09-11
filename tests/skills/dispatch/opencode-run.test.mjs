@@ -8,18 +8,11 @@ import path from 'node:path';
 import { describe, it, afterEach, mock } from 'node:test';
 
 import {
-  DEFAULT_MAX_BUFFER_MB,
-  DEFAULT_TIMEOUT_SECONDS,
-  extractCleanResponse,
-  formatSafetyPrompt,
-  isPathInside,
-  normalizePath,
-  parseCommonArgs,
   PROJECT_ROOT,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
-} from '../dispatch/scripts/common.mjs';
+} from '../../../skills/dispatch/scripts/common.mjs';
 import {
   DEFAULT_CONTEXT_LIMIT,
   DEFAULT_FALLBACK_AGENT,
@@ -28,7 +21,6 @@ import {
   DEFAULT_OUTPUT_LIMIT,
   GPU_LOCK_FILE_NAME,
   buildCommand,
-  getAllowedBoundaryRoots,
   getLMStudioEndpoint,
   getOpencodeEnv,
   isLocalEndpointHost,
@@ -44,162 +36,9 @@ import {
   resolveManagedConfigDir,
   resolveOpencodeSettings,
   runOpencode,
-  stripJsonComments,
-} from '../dispatch/scripts/opencode-run.mjs';
+} from '../../../skills/dispatch/scripts/opencode-run.mjs';
 
 describe('opencode-run', () => {
-  describe('parseCommonArgs', () => {
-    it('parses basic flags and positional prompt with silent default', () => {
-      const opts = parseCommonArgs(['node', 'opencode-run.mjs', 'Review', 'this', 'diff']);
-
-      assert.equal(opts.prompt, 'Review this diff');
-      assert.equal(opts.agent, null);
-      assert.equal(opts.json, false);
-      assert.equal(opts.verbose, false);
-      assert.equal(opts.timeout, DEFAULT_TIMEOUT_SECONDS);
-      assert.equal(opts.maxBufferMb, DEFAULT_MAX_BUFFER_MB);
-      assert.deepEqual(opts.files, []);
-    });
-
-    it('parses explicit prompt flag, files, agent, and verbose flag', () => {
-      const opts = parseCommonArgs([
-        'node', 'opencode-run.mjs',
-        '-p', 'Custom prompt',
-        '-f', 'CONTEXT.md',
-        '--artifact', 'docs/adr/001.md',
-        '-a', 'local',
-        '--json',
-        '-v',
-      ]);
-
-      assert.equal(opts.prompt, 'Custom prompt');
-      assert.deepEqual(opts.files, ['CONTEXT.md', 'docs/adr/001.md']);
-      assert.equal(opts.agent, 'local');
-      assert.equal(opts.json, true);
-      assert.equal(opts.verbose, true);
-    });
-
-    it('parses equals-separated arguments and custom numbers', () => {
-      const opts = parseCommonArgs([
-        'node', 'opencode-run.mjs',
-        '--file=CONTEXT.md',
-        '--artifact=README.md',
-        '--agent=local',
-        '--model=custom-provider/custom-model',
-        '--timeout=120',
-        '--max-buffer=25',
-        '--verbose',
-        'Explain architecture',
-      ]);
-
-      assert.deepEqual(opts.files, ['CONTEXT.md', 'README.md']);
-      assert.equal(opts.agent, 'local');
-      assert.equal(opts.model, 'custom-provider/custom-model');
-      assert.equal(opts.timeout, 120);
-      assert.equal(opts.maxBufferMb, 25);
-      assert.equal(opts.verbose, true);
-      assert.equal(opts.prompt, 'Explain architecture');
-    });
-
-    it('parses help flag', () => {
-      const opts = parseCommonArgs(['node', 'opencode-run.mjs', '--help']);
-      assert.equal(opts.help, true);
-    });
-  });
-
-  describe('extractCleanResponse', () => {
-    it('returns raw text unmodified when there are no tool traces', () => {
-      const input = '# Review Findings\nAll tests pass cleanly.';
-      assert.equal(extractCleanResponse(input), input);
-    });
-
-    it('strips [dispatch]-tagged trace lines and extracts assistant markdown response', () => {
-      const input = `[dispatch] Provider: OpenCode (LM Studio)
-[dispatch] Done: OpenCode (LM Studio) | Exit: 0
-> build · qwen3.8-27b@iq4_xs
-→ Skill "code-review"
-$ git status --short
-A file.ts
-✱ Grep "test" · 5 matches
-→ Read file.ts
-
-# Multi-Axis Review
-## Summary
-Everything looks great.`;
-
-      const expected = `# Multi-Axis Review
-## Summary
-Everything looks great.`;
-
-      assert.equal(extractCleanResponse(input), expected);
-    });
-
-    it('handles empty or non-string inputs safely', () => {
-      assert.equal(extractCleanResponse(''), '');
-      assert.equal(extractCleanResponse(null), '');
-    });
-  });
-
-  describe('formatSafetyPrompt', () => {
-    it('prepends read-only safety guardrails by default', () => {
-      const prompt = 'Check for bugs in domain logic';
-      const formatted = formatSafetyPrompt(prompt);
-
-      assert.ok(formatted.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
-      assert.ok(formatted.includes('strict READ-ONLY analysis mode'));
-      assert.ok(formatted.includes('MUST NOT edit, overwrite, create, or delete any files'));
-      assert.ok(formatted.includes(prompt));
-    });
-
-    it('frames workspace and attachment scope when opts are supplied', () => {
-      const formatted = formatSafetyPrompt('Review the diff', {
-        workspaceRoot: PROJECT_ROOT,
-        attachedFiles: ['walkthrough.md', 'plan.md'],
-      });
-
-      assert.ok(formatted.includes(`[PRIMARY WORKSPACE]: ${PROJECT_ROOT}`));
-      assert.ok(formatted.includes('[ATTACHED FILES]: walkthrough.md, plan.md'));
-    });
-
-    it('always includes the prompt text in the output', () => {
-      const prompt = 'Add unit tests in src/test.ts';
-      const formatted = formatSafetyPrompt(prompt);
-
-      assert.ok(formatted.includes(prompt));
-    });
-  });
-
-  describe('Path & Boundary Utilities', () => {
-    it('correctly determines whether a path is inside a directory', () => {
-      const parent = path.resolve('/test/workspace');
-      const child = path.resolve('/test/workspace/src/domain/model.ts');
-      const siblingCollision = path.resolve('/test/workspace-malicious/evil.ts');
-
-      assert.equal(isPathInside(child, parent), true);
-      assert.equal(isPathInside(parent, parent), true);
-      assert.equal(isPathInside(siblingCollision, parent), false);
-    });
-
-    it('normalizes path comparison across platforms', () => {
-      const p = path.resolve('CONTEXT.md');
-      const normalized = normalizePath(p);
-
-      if (process.platform === 'win32') {
-        assert.equal(normalized, p.toLowerCase());
-      } else {
-        assert.equal(normalized, p);
-      }
-    });
-
-    it('includes workspace, Antigravity brain, agent dirs, and temp in allowed roots', () => {
-      const roots = getAllowedBoundaryRoots();
-
-      assert.ok(roots.includes(PROJECT_ROOT));
-      assert.ok(roots.includes(os.tmpdir()));
-      assert.ok(roots.some((r) => r.includes('antigravity')));
-    });
-  });
-
   describe('resolveContextFiles & Denylist Security', () => {
     it('resolves valid files within PROJECT_ROOT', () => {
       const resolved = resolveContextFiles(['package.json', 'README.md']);
@@ -216,8 +55,6 @@ Everything looks great.`;
     });
 
     it('rejects an existing sensitive file inside an allowed boundary', () => {
-      // The file must exist and sit inside PROJECT_ROOT, otherwise the existence or boundary
-      // check would reject it first and the denylist would never be exercised.
       const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-run-test');
       fs.writeFileSync(sensitivePath, 'SECRET=1\n');
       try {
@@ -247,9 +84,6 @@ Everything looks great.`;
     });
 
     it('reads files outside allowed boundaries with a warning, not a rejection', () => {
-      // Dispatched agents legitimately need to read attachments outside the workspace (an
-      // external file to review, a walkthrough relocated to os.tmpdir()) — the boundary check
-      // is advisory (stderr warning) for anything not on the sensitive denylist, never a throw.
       const outOfBoundsPath =
         process.platform === 'win32'
           ? 'C:\\Windows\\system32\\drivers\\etc\\hosts'
@@ -293,8 +127,6 @@ Everything looks great.`;
       const oldEnv = process.env;
       try {
         process.env = { ...oldEnv };
-        // Both allowlists are exact-name, not prefix-matched: the OPENCODE_ prefix alone
-        // grants nothing.
         process.env.OPENCODE_CONFIG_DIR = '/tmp/opencode-config';
         process.env.OPENCODE_API_KEY = 'should-not-survive';
         process.env.OPENCODE_UNKNOWN_SETTING = 'should-not-survive';
@@ -319,10 +151,6 @@ Everything looks great.`;
 
         const env = getOpencodeEnv();
 
-        // NOTE: the sensitive-key conjunct in getOpencodeEnv is defence in depth and is
-        // currently unreachable — no name in either exact-match allowlist matches the pattern,
-        // so the allowlist rejects these first. This asserts the resulting invariant, which
-        // holds however a future allowlist addition shifts which layer does the rejecting.
         for (const key of Object.keys(env)) {
           assert.ok(
             !SENSITIVE_ENV_KEY_PATTERN.test(key),
@@ -581,27 +409,6 @@ Everything looks great.`;
     });
   });
 
-  describe('stripJsonComments', () => {
-    it('strips single-line and multi-line comments but preserves strings with slashes', () => {
-      const input = `{
-        // Single line comment
-        "url": "https://opencode.ai/config.json",
-        /* Multi-line
-           comment */
-        "key": "value" // inline comment
-      }`;
-      const parsed = JSON.parse(stripJsonComments(input));
-
-      assert.equal(parsed.url, 'https://opencode.ai/config.json');
-      assert.equal(parsed.key, 'value');
-    });
-
-    it('returns empty string for null or non-string input', () => {
-      assert.equal(stripJsonComments(''), '');
-      assert.equal(stripJsonComments(null), '');
-    });
-  });
-
   describe('resolveDefaultModel, resolveDefaultAgent & LM Studio Endpoint', () => {
     it('returns fallback model when no opencode config is present', () => {
       const model = resolveDefaultModel();
@@ -638,8 +445,6 @@ Everything looks great.`;
     });
 
     it('reads the real repo .opencode/opencode.jsonc that the runner names a prerequisite', () => {
-      // Isolate homeDir/env so an ambient ~/.config/opencode, ~/.opencode, or OPENCODE_CONFIG*
-      // on the developer's machine can't override the values this test asserts.
       const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-realrepo-home-'));
       try {
         const config = readOpencodeConfig(PROJECT_ROOT, { env: {}, homeDir: isolatedHome });
@@ -647,8 +452,6 @@ Everything looks great.`;
 
         const oldEnv = process.env;
         try {
-          // LM_STUDIO_URL overrides the config baseURL, so clear it — otherwise a developer with
-          // that variable exported fails the suite for the wrong reason.
           process.env = { ...oldEnv };
           delete process.env.LM_STUDIO_URL;
 
@@ -762,7 +565,6 @@ Everything looks great.`;
 
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-custom-root-'));
         try {
-          // Custom (OPENCODE_CONFIG) beats global but yields to project.
           const withoutProject = readOpencodeConfig(tmpRoot, {
             env: { OPENCODE_CONFIG: customConfigPath },
             homeDir: isolatedHome,
@@ -1067,7 +869,6 @@ Everything looks great.`;
         },
       );
 
-      // Lock must have been released
       assert.ok(!fs.existsSync(lockFile) || fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid));
     });
 
@@ -1103,10 +904,6 @@ Everything looks great.`;
     });
 
     it('runOpencode rejects an empty prompt before any preflight or lock side effect', async () => {
-      // A lockfile-absence assertion cannot detect this ordering: it passes trivially, and it
-      // would also pass with the guard placed after acquireLock, because releaseOnce releases
-      // on that path anyway. Preflight sits between the guard and the lock, so asserting the
-      // health check never fired proves the guard ran before both.
       const httpGet = mock.method(http, 'get', () => {
         throw new Error('preflight must not run for an empty prompt');
       });

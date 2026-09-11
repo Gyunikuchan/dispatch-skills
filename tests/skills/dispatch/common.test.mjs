@@ -1,0 +1,662 @@
+import assert from 'node:assert/strict';
+import cp from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { describe, it, after } from 'node:test';
+
+import {
+  parseCommonArgs,
+  formatSafetyPrompt,
+  extractCleanResponse,
+  isPathInside,
+  normalizePath,
+  getAllowedBoundaryRoots,
+  createSessionLogger,
+  buildAttachmentBlock,
+  readAttachment,
+  preparePromptForArgv,
+  createBriefFile,
+  classifyFailure,
+  isEmptyResult,
+  DEFAULT_TIMEOUT_SECONDS,
+  DEFAULT_MAX_BUFFER_MB,
+  PROJECT_ROOT,
+  getArgvByteLimit,
+  spawnCli,
+  spawnCliSync,
+  terminateProcessTree,
+  SENSITIVE_FILE_PATTERNS,
+  SENSITIVE_FILE_BASENAME_PATTERNS,
+  SENSITIVE_ENV_KEY_PATTERN,
+  getSanitizedEnv,
+  getGitStatus,
+  checkGitIntegrity,
+  describeGitStatusDiff,
+  verifySkillIntegrity,
+  generateSkillHashes,
+  buildFormattedPrompt,
+  scanVersionDirs,
+  isExecutableFile,
+  findFirstExistingFile,
+  findBinary,
+  existsAny,
+  stripJsonComments,
+  parseJsonc,
+  isMainModule,
+  readStdin,
+} from '../../../skills/dispatch/scripts/common.mjs';
+
+// ---------------------------------------------------------------------------
+// SECTION: Argument Parsing & Defaults
+// ---------------------------------------------------------------------------
+
+describe('common: argument parsing', () => {
+  it('parses basic flags and positional prompt', () => {
+    const argv = ['node', 'dispatch.mjs', 'Review', 'simulation', 'invariants'];
+    const opts = parseCommonArgs(argv);
+
+    assert.equal(opts.prompt, 'Review simulation invariants');
+    assert.equal(opts.verbose, false);
+    assert.equal(opts.timeout, DEFAULT_TIMEOUT_SECONDS);
+    assert.equal(opts.maxBufferMb, DEFAULT_MAX_BUFFER_MB);
+    assert.deepEqual(opts.files, []);
+    assert.equal(opts.json, false);
+    assert.equal(opts.orchestrator, null);
+    assert.equal(opts.provider, null);
+  });
+
+  it('parses explicit flags including orchestrator and provider', () => {
+    const argv = [
+      'node', 'dispatch.mjs',
+      '-p', 'Analyze models',
+      '-f', 'CONTEXT.md',
+      '--artifact', 'docs/adr.md',
+      '--orchestrator', 'claude',
+      '--provider', 'agy',
+      '-v',
+      '--json',
+    ];
+    const opts = parseCommonArgs(argv);
+
+    assert.equal(opts.prompt, 'Analyze models');
+    assert.deepEqual(opts.files, ['CONTEXT.md', 'docs/adr.md']);
+    assert.equal(opts.orchestrator, 'claude');
+    assert.equal(opts.provider, 'agy');
+    assert.equal(opts.verbose, true);
+    assert.equal(opts.json, true);
+  });
+
+  it('accepts backward-compat flags silently', () => {
+    const opts = parseCommonArgs(['node', 'dispatch.mjs', '--allow-write', '-i', '-w', 'prompt']);
+    assert.equal(opts.prompt, 'prompt');
+    assert.equal(opts.verbose, false);
+  });
+
+  it('parses equals-separated flags', () => {
+    const opts = parseCommonArgs([
+      'node', 'dispatch.mjs',
+      '--file=CONTEXT.md',
+      '--artifact=README.md',
+      '--provider=copilot',
+      '--orchestrator=claude',
+      '--model=claude-opus-5',
+      '--effort=high',
+      '--timeout=300',
+      '--max-buffer=20',
+      'prompt text',
+    ]);
+    assert.deepEqual(opts.files, ['CONTEXT.md', 'README.md']);
+    assert.equal(opts.provider, 'copilot');
+    assert.equal(opts.orchestrator, 'claude');
+    assert.equal(opts.model, 'claude-opus-5');
+    assert.equal(opts.effort, 'high');
+    assert.equal(opts.timeout, 300);
+    assert.equal(opts.maxBufferMb, 20);
+    assert.equal(opts.prompt, 'prompt text');
+  });
+
+  it('parses allow-same-agent and json flags', () => {
+    const opts = parseCommonArgs(['node', 'd.mjs', '--allow-same-agent', '--json', 'prompt']);
+    assert.equal(opts.allowSameAgent, true);
+    assert.equal(opts.json, true);
+  });
+
+  it('parses help flag', () => {
+    const opts = parseCommonArgs(['node', 'd.mjs', '--help']);
+    assert.equal(opts.help, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Prompt Formatting & Response Extraction
+// ---------------------------------------------------------------------------
+
+describe('common: prompt formatting & response extraction', () => {
+  it('formats safety prompt in read-only mode', () => {
+    const raw = 'Delete all temp files';
+    const readOnly = formatSafetyPrompt(raw, {});
+    assert.ok(readOnly.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
+    assert.ok(readOnly.includes('You are running in strict READ-ONLY analysis mode.'));
+    assert.ok(readOnly.includes(raw));
+  });
+
+  it('includes workspace and attached files in safety prompt when provided', () => {
+    const formatted = formatSafetyPrompt('Check the code', {
+      workspaceRoot: '/my/repo',
+      attachedFiles: ['CONTEXT.md'],
+    });
+    assert.ok(formatted.includes('[PRIMARY WORKSPACE]: /my/repo'));
+    assert.ok(formatted.includes('[ATTACHED FILES]: CONTEXT.md'));
+  });
+
+  it('buildFormattedPrompt formats prompt with safety constraints and optional attachments', () => {
+    const promptOnly = buildFormattedPrompt('Perform analysis');
+    assert.ok(promptOnly.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
+    assert.ok(promptOnly.includes('Perform analysis'));
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompt-attach-'));
+    try {
+      const attachPath = path.join(tmpDir, 'context.md');
+      fs.writeFileSync(attachPath, 'Sample attached content');
+      const withFiles = buildFormattedPrompt('Perform analysis', [attachPath]);
+      assert.ok(withFiles.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]'));
+      assert.ok(withFiles.includes('[ATTACHED FILES]:'));
+      assert.ok(withFiles.includes('Sample attached content'));
+      assert.ok(withFiles.includes('Perform analysis'));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('extracts clean assistant response suppressing tool traces', () => {
+    const noisyOutput = [
+      '[dispatch] Provider: Antigravity 2.0 (agy)',
+      '→ Skill reading codebase',
+      '→ Read src/domain/models.ts',
+      '$ git status',
+      '✱ Analyzing patterns',
+      '## Final Analysis',
+      'Here is the extracted summary of the domain models.',
+    ].join('\n');
+
+    const extracted = extractCleanResponse(noisyOutput);
+    assert.ok(extracted.includes('## Final Analysis'));
+    assert.ok(extracted.includes('Here is the extracted summary of the domain models.'));
+    assert.ok(!extracted.includes('→ Skill reading codebase'));
+    assert.ok(!extracted.includes('→ Read src/domain/models.ts'));
+  });
+
+  it('returns empty string for non-string or empty extractCleanResponse input', () => {
+    assert.equal(extractCleanResponse(''), '');
+    assert.equal(extractCleanResponse(null), '');
+    assert.equal(extractCleanResponse(undefined), '');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Path & Boundary Utilities
+// ---------------------------------------------------------------------------
+
+describe('common: path & boundary utilities', () => {
+  it('checks path containment correctly across platforms', () => {
+    const root = path.resolve('/test/project');
+    const inside = path.resolve('/test/project/src/index.ts');
+    const outside = path.resolve('/test/other/file.ts');
+
+    assert.equal(isPathInside(inside, root), true);
+    assert.equal(isPathInside(outside, root), false);
+    assert.equal(isPathInside(root, root), true);
+  });
+
+  it('normalizes path comparison across platforms', () => {
+    const p = path.resolve('CONTEXT.md');
+    const normalized = normalizePath(p);
+    if (process.platform === 'win32') {
+      assert.equal(normalized, p.toLowerCase());
+    } else {
+      assert.equal(normalized, p);
+    }
+  });
+
+  it('getAllowedBoundaryRoots includes PROJECT_ROOT, tmpdir, and user homedirs', () => {
+    const roots = getAllowedBoundaryRoots();
+    assert.ok(roots.includes(PROJECT_ROOT));
+    assert.ok(roots.includes(os.tmpdir()));
+  });
+
+  it('scanVersionDirs returns directories sorted newest-first and handles non-existent dirs', () => {
+    assert.deepEqual(scanVersionDirs('/path/that/does/not/exist/at/all'), []);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'version-scan-'));
+    try {
+      fs.mkdirSync(path.join(tmpDir, 'v1.0.0'));
+      fs.mkdirSync(path.join(tmpDir, 'v2.1.0'));
+      fs.mkdirSync(path.join(tmpDir, 'v1.10.0'));
+      fs.writeFileSync(path.join(tmpDir, 'file.txt'), 'hello');
+
+      const versions = scanVersionDirs(tmpDir);
+      assert.deepEqual(versions, ['v2.1.0', 'v1.10.0', 'v1.0.0']);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('isExecutableFile validates executable regular files and rejects invalid paths', () => {
+    assert.equal(isExecutableFile(null), false);
+    assert.equal(isExecutableFile(''), false);
+    assert.equal(isExecutableFile('/nonexistent/path/binary'), false);
+    assert.equal(isExecutableFile(os.tmpdir()), false);
+    assert.equal(isExecutableFile(process.execPath), true);
+  });
+
+  it('findFirstExistingFile resolves the first existing file', () => {
+    assert.equal(findFirstExistingFile([]), null);
+    assert.equal(findFirstExistingFile(['/nonexistent/a', '/nonexistent/b']), null);
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'first-exist-'));
+    try {
+      const fileB = path.join(tmpDir, 'existing.txt');
+      fs.writeFileSync(fileB, 'content');
+      const found = findFirstExistingFile(['/nonexistent/file', fileB, '/another/ghost']);
+      assert.equal(found, fileB);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('existsAny verifies existence of multiple candidate paths', () => {
+    assert.equal(existsAny(), false);
+    assert.equal(existsAny(null, undefined, ''), false);
+    assert.equal(existsAny('/nonexistent/1', '/nonexistent/2'), false);
+    assert.equal(existsAny('/nonexistent/1', process.execPath, '/nonexistent/2'), true);
+  });
+
+  it('findBinary finds system binaries on PATH', () => {
+    const nodeBin = findBinary('node');
+    assert.ok(nodeBin !== null);
+    assert.equal(findBinary('definitely-nonexistent-binary-xyz'), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Attachments, Brief Files & Spill
+// ---------------------------------------------------------------------------
+
+describe('common: attachments, brief files & spill', () => {
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-attach-'));
+  const created = [scratchDir];
+
+  const scratchFile = (name, contents) => {
+    const filePath = path.join(scratchDir, name);
+    fs.writeFileSync(filePath, contents, 'utf8');
+    return filePath;
+  };
+
+  after(() => {
+    for (const target of created) {
+      try {
+        fs.rmSync(target, { recursive: true, force: true });
+      } catch {}
+    }
+  });
+
+  it('reads a small attachment whole', () => {
+    const file = scratchFile('small.md', 'line one\nline two\n');
+    const result = readAttachment(file);
+    assert.ok(result !== null);
+    assert.equal(result.truncated, false);
+    assert.equal(result.content, 'line one\nline two\n');
+  });
+
+  it('caps an oversized attachment on a line boundary', () => {
+    const file = scratchFile('big.md', `${'x'.repeat(50)}\n`.repeat(200));
+    const result = readAttachment(file, 512);
+    assert.ok(result !== null);
+    assert.equal(result.truncated, true);
+    assert.ok(Buffer.byteLength(result.content, 'utf8') <= 512);
+    assert.ok(result.content.endsWith('x'));
+  });
+
+  it('returns null for a missing file or a directory instead of throwing', () => {
+    assert.equal(readAttachment(path.join(scratchDir, 'nope.md')), null);
+    assert.equal(readAttachment(scratchDir), null);
+  });
+
+  it('labels every attachment with its path', () => {
+    const a = scratchFile('a.ts', 'export const a = 1;');
+    const b = scratchFile('b.ts', 'export const b = 2;');
+    const result = buildAttachmentBlock([a, b]);
+
+    assert.ok(result.text.includes(`[Attached Context File: ${a}]`));
+    assert.ok(result.text.includes('export const b = 2;'));
+  });
+
+  it('enforces the total budget across files', () => {
+    const a = scratchFile('big-a.md', 'a'.repeat(4096));
+    const b = scratchFile('big-b.md', 'b'.repeat(4096));
+    const result = buildAttachmentBlock([a, b], { perFile: 4096, total: 4096 });
+
+    assert.ok(result.usedBytes <= 4096);
+    assert.ok(result.notes.some((n) => n.startsWith('skipped')));
+  });
+
+  it('notes an unreadable attachment instead of failing the run', () => {
+    const result = buildAttachmentBlock([path.join(scratchDir, 'ghost.md')]);
+    assert.equal(result.text, '');
+    assert.ok(result.notes.some((n) => n.startsWith('unreadable')));
+  });
+
+  it('leaves a small prompt on argv', () => {
+    const { prompt, briefFile } = preparePromptForArgv('review this diff', 'claude');
+    assert.equal(prompt, 'review this diff');
+    assert.equal(briefFile, null);
+  });
+
+  it('spills an oversized prompt to a brief file holding the full text', () => {
+    const huge = 'y'.repeat(getArgvByteLimit() + 1);
+    const { prompt, briefFile } = preparePromptForArgv(huge, 'claude');
+    assert.ok(briefFile !== null);
+    created.push(briefFile);
+
+    assert.ok(Buffer.byteLength(prompt, 'utf8') < getArgvByteLimit());
+    assert.equal(fs.readFileSync(briefFile, 'utf8'), huge);
+  });
+
+  it('writes brief paths with forward slashes on every platform', () => {
+    const { pointerPrompt, briefFile } = createBriefFile('brief body', 'agy');
+    created.push(briefFile);
+
+    const quotedPath = pointerPrompt.split('Brief file: ')[1].trim();
+    assert.ok(!quotedPath.includes('\\'));
+    assert.ok(fs.existsSync(briefFile));
+  });
+
+  it('rejects sensitive files matching SENSITIVE_FILE_PATTERNS in buildAttachmentBlock', () => {
+    const tokenFile = scratchFile('token.txt', 'secret-token-value');
+    const safeFile = scratchFile('safe.txt', 'safe content');
+
+    const result = buildAttachmentBlock([tokenFile, safeFile]);
+    assert.ok(!result.text.includes('secret-token-value'));
+    assert.ok(result.text.includes('safe content'));
+    assert.ok(result.notes.some((n) => n.includes('token.txt')));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Session Logging & Process Utilities
+// ---------------------------------------------------------------------------
+
+describe('common: session logging & process spawning', () => {
+  it('creates dedicated session log file without errors', () => {
+    const logger = createSessionLogger('test-provider');
+    assert.ok(logger.logFile.includes('test-provider'));
+    assert.ok(logger.logFile.startsWith(os.tmpdir()));
+    assert.ok(!logger.logFile.includes('.scratch'));
+    logger.write('Sample log line\n');
+    logger.close();
+
+    assert.ok(fs.existsSync(logger.logFile));
+    fs.unlinkSync(logger.logFile);
+  });
+
+  it('spawns a binary directly with spawnCliSync', () => {
+    const result = spawnCliSync(process.execPath, ['-e', 'console.log("direct")'], {
+      encoding: 'utf8',
+    });
+    assert.equal(String(result.stdout).trim(), 'direct');
+  });
+
+  it('spawns a process with spawnCli and handles lifecycle', (t, done) => {
+    const child = spawnCli(process.execPath, ['-e', 'console.log("async")'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.on('close', (code) => {
+      assert.equal(code, 0);
+      assert.equal(out.trim(), 'async');
+      done();
+    });
+  });
+
+  it('terminateProcessTree safely handles null or dead child', () => {
+    assert.doesNotThrow(() => terminateProcessTree(null));
+    assert.doesNotThrow(() => terminateProcessTree({ pid: 99999999 }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Security, Sanitization & Git Integrity
+// ---------------------------------------------------------------------------
+
+describe('common: security & git integrity', () => {
+  it('getSanitizedEnv strips sensitive keys and preserves safe ones', () => {
+    const origKey = process.env.ANTHROPIC_API_KEY;
+    const origPath = process.env.PATH;
+    try {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-test-12345';
+      const clean = getSanitizedEnv();
+
+      assert.ok(!('ANTHROPIC_API_KEY' in clean));
+      if (origPath !== undefined) {
+        assert.equal(clean.PATH, origPath);
+      }
+    } finally {
+      if (origKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY;
+      } else {
+        process.env.ANTHROPIC_API_KEY = origKey;
+      }
+    }
+  });
+
+  it('SENSITIVE_FILE_PATTERNS and SENSITIVE_FILE_BASENAME_PATTERNS match known sensitive filenames', () => {
+    const sensitive = [
+      '.env', '.env.local', '.env.production',
+      'id_rsa', 'id_ed25519',
+      '.npmrc', '.pypirc', '.netrc',
+      'server.pem', 'cert.p12',
+    ];
+    for (const file of sensitive) {
+      assert.ok(
+        SENSITIVE_FILE_PATTERNS.some((p) => p.test(file)) ||
+        SENSITIVE_FILE_BASENAME_PATTERNS.some((p) => p.test(file)),
+        `expected ${file} to match denylist`,
+      );
+    }
+  });
+
+  it('SENSITIVE_ENV_KEY_PATTERN matches credentials and keys', () => {
+    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('AWS_SECRET_ACCESS_KEY'));
+    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('GITHUB_TOKEN'));
+    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('API_KEY'));
+    assert.ok(!SENSITIVE_ENV_KEY_PATTERN.test('PATH'));
+    assert.ok(!SENSITIVE_ENV_KEY_PATTERN.test('NODE_ENV'));
+  });
+
+  it('describeGitStatusDiff returns null when statuses match or are null', () => {
+    assert.equal(describeGitStatusDiff(null, null), null);
+    assert.equal(describeGitStatusDiff('M file.ts', 'M file.ts'), null);
+  });
+
+  it('describeGitStatusDiff returns added lines when status diverges', () => {
+    const before = 'M file.ts';
+    const after = 'M file.ts\n?? new.ts';
+    const diff = describeGitStatusDiff(before, after);
+    assert.ok(diff !== null);
+    assert.ok(diff.includes('new.ts'));
+  });
+
+  it('checkGitIntegrity reports violations when git status changes', () => {
+    const clean = checkGitIntegrity(null);
+    assert.equal(clean.violation, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Failure Classification
+// ---------------------------------------------------------------------------
+
+describe('common: failure classification', () => {
+  const cases = [
+    ['Claude usage limit reached; resets at 4pm', 'quota'],
+    ['HTTP 429 Too Many Requests', 'quota'],
+    ['Your credit balance is too low', 'quota'],
+    ['prompt is too long: 250000 tokens > 200000 maximum', 'context-overflow'],
+    ['context_length_exceeded', 'context-overflow'],
+    ['Error: Invalid API key provided', 'auth'],
+    ['copilot: command not found', 'not-found'],
+    ['Execution timed out after 1800s', 'timeout'],
+    ['## Summary\nNo issues found in the diff.', null],
+    ['', null],
+  ];
+
+  for (const [text, expected] of cases) {
+    it(`classifies "${text.slice(0, 40)}" as ${expected}`, () => {
+      assert.equal(classifyFailure(text), expected);
+    });
+  }
+
+  it('tolerates non-string input', () => {
+    assert.equal(classifyFailure(null), null);
+    assert.equal(classifyFailure(undefined), null);
+  });
+
+  it('treats a clean exit with no output as empty', () => {
+    assert.equal(isEmptyResult({ stdout: '   \n' }), true);
+    assert.equal(isEmptyResult({}), true);
+    assert.equal(isEmptyResult(null), true);
+    assert.equal(isEmptyResult({ stdout: '## Summary' }), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Skill Integrity & Hashes
+// ---------------------------------------------------------------------------
+
+describe('common: skill integrity & hashes', () => {
+  it('verifySkillIntegrity returns missing:true when no manifest exists', () => {
+    const result = verifySkillIntegrity(os.tmpdir(), 'nonexistent-manifest.json');
+    assert.equal(result.missing, true);
+    assert.equal(result.valid, true);
+    assert.deepEqual(result.violations, []);
+  });
+
+  it('generateSkillHashes lists SKILL.md and .mjs scripts', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-hash-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      const scriptsDir = path.join(tmpDir, 'scripts');
+      fs.mkdirSync(scriptsDir);
+      fs.writeFileSync(path.join(scriptsDir, 'runner.mjs'), '// runner', 'utf8');
+
+      const manifest = generateSkillHashes(tmpDir);
+      assert.ok('SKILL.md' in manifest);
+      assert.ok('scripts/runner.mjs' in manifest);
+      assert.ok(typeof manifest['SKILL.md'] === 'string');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('verifySkillIntegrity detects a tampered file', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-tamper-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      const manifest = generateSkillHashes(tmpDir);
+      const manifestPath = path.join(tmpDir, 'skill-hashes.json');
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+
+      // Tamper with the file
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Tampered', 'utf8');
+
+      const result = verifySkillIntegrity(tmpDir);
+      assert.equal(result.valid, false);
+      assert.ok(result.violations.includes('SKILL.md'));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('verifySkillIntegrity passes when all hashes match', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-ok-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      const manifest = generateSkillHashes(tmpDir);
+      const manifestPath = path.join(tmpDir, 'skill-hashes.json');
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+
+      const result = verifySkillIntegrity(tmpDir);
+      assert.equal(result.valid, true);
+      assert.deepEqual(result.violations, []);
+      assert.equal(result.missing, false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: JSONC & Module Helpers
+// ---------------------------------------------------------------------------
+
+describe('common: jsonc & module helpers', () => {
+  it('stripJsonComments removes comments and trailing commas while preserving strings', () => {
+    assert.equal(stripJsonComments(''), '');
+    assert.equal(stripJsonComments(null), '');
+
+    const jsonc = `
+      {
+        // Line comment
+        "url": "https://example.com/api",
+        /* Multi-line
+           comment */
+        "key": "value // not a comment",
+        "trailing": true,
+      }
+    `;
+    const stripped = stripJsonComments(jsonc);
+    assert.ok(!stripped.includes('// Line comment'));
+    assert.ok(!stripped.includes('/* Multi-line'));
+    assert.ok(stripped.includes('"url": "https://example.com/api"'));
+    assert.ok(stripped.includes('"key": "value // not a comment"'));
+    const parsed = JSON.parse(stripped);
+    assert.equal(parsed.url, 'https://example.com/api');
+    assert.equal(parsed.key, 'value // not a comment');
+    assert.equal(parsed.trailing, true);
+
+    const withCommasInString = '{"text": "val, } more, ]", "trailing": 1,}';
+    const parsedWithCommas = JSON.parse(stripJsonComments(withCommasInString));
+    assert.equal(parsedWithCommas.text, 'val, } more, ]');
+    assert.equal(parsedWithCommas.trailing, 1);
+  });
+
+  it('parseJsonc parses JSONC strings with comments and trailing commas', () => {
+    const input = '{\n  // comment\n  "enabled": true,\n  "count": 42,\n}';
+    const res = parseJsonc(input);
+    assert.deepEqual(res, { enabled: true, count: 42 });
+  });
+
+  it('isMainModule detects module execution entry point correctly including symlinks', () => {
+    assert.equal(isMainModule(null), false);
+    assert.equal(isMainModule(''), false);
+    if (process.argv[1]) {
+      const currentUrl = pathToFileURL(path.resolve(process.argv[1])).href;
+      assert.equal(isMainModule(currentUrl), true);
+    }
+    assert.equal(isMainModule('file:///fake/path/definitely_not_main.mjs'), false);
+  });
+
+  it('readStdin returns null when stdin is a TTY', async () => {
+    const origIsTTY = process.stdin.isTTY;
+    try {
+      process.stdin.isTTY = true;
+      const res = await readStdin();
+      assert.equal(res, null);
+    } finally {
+      process.stdin.isTTY = origIsTTY;
+    }
+  });
+});
