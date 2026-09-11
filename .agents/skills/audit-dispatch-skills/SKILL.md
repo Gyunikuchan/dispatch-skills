@@ -50,11 +50,11 @@ Write findings to .scratch/audit-dispatch-skills/<run>/work/findings/<scope-id>.
 Return only: finding counts by severity and the findings path.
 ```
 
-**Done when:** every scope has returned and its findings file exists; re-spawn any scope whose file is missing or lacks an axis coverage table.
+**Done when:** every scope subagent has completed execution, returned its final response, and its findings file exists; re-spawn any scope whose file is missing or lacks an axis coverage table.
 
 ## 4. Synthesize
 
-Read every findings file and `work/dispatch/summary.md` (wait for the probe to finish first).
+Read every findings file and `work/dispatch/summary.md` (wait for all subagents and the background probe to finish first).
 
 1. **Dedupe**: merge findings that name the same defect — same location, or one root cause across locations. Keep every source scope and the highest severity the evidence supports.
 2. **Verify** each merged finding by opening its cited locations. Confirmed → `Verified`. Contradicted by the code → refuted, moved to the appendix with the reason. Settled only by a run you cannot do here (another OS, a missing CLI) → `Unverified` plus what would settle it. Evidence decides, not how many scopes raised it.
