@@ -1173,7 +1173,6 @@ function probeOpencodeOnPath() {
   if (res.status !== 0 || !res.stdout.trim()) return null;
 
   const firstLine = res.stdout.trim().split(/\r?\n/)[0];
-  if (process.platform === 'win32' && !(firstLine && fs.existsSync(firstLine))) return null;
   return firstLine || null;
 }
 

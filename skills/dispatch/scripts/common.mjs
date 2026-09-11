@@ -1324,11 +1324,11 @@ export function parseJsonc(text) {
  */
 export function isMainModule(importMetaUrl) {
   if (!process.argv[1] || !importMetaUrl) return false;
-  const scriptPath = fileURLToPath(importMetaUrl);
-  const a = path.resolve(process.argv[1]);
-  const b = path.resolve(scriptPath);
-  if (a === b) return true;
   try {
+    const scriptPath = fileURLToPath(importMetaUrl);
+    const a = path.resolve(process.argv[1]);
+    const b = path.resolve(scriptPath);
+    if (a === b) return true;
     return fs.realpathSync(a) === fs.realpathSync(b);
   } catch {
     return false;

@@ -2,8 +2,8 @@
   "SKILL.md": "6d78a3e34866180f9fa1568c094a101117d706923a05057296dbf71f7325b904",
   "scripts/agy-run.mjs": "9eb38c13f74acdc9ce1485c7bd202e2d4356ff6cce793299936f06c1321d9051",
   "scripts/claude-run.mjs": "5df13d7d15ce02aafbde203a446e2c8e5298ec1df563281e658c11a05fc1ecd6",
-  "scripts/common.mjs": "b0a1c4af4ad2e66edac718571cb6e4cadfd7ea8367af73d05b2458a0c10a5bb9",
+  "scripts/common.mjs": "1984e7e8e5339262d81ad334f3cc1a409e89048b0ae22e01ae46f9ecad318133",
   "scripts/copilot-run.mjs": "ba50e89b115fceda435815685b1a68e7710dacf33ccbc6f775d35f7712e4b222",
   "scripts/dispatch.mjs": "635e363c9151532ec7d42f0a6ee5dd7dd0e1e4593304660588301c27d10bfc4e",
-  "scripts/opencode-run.mjs": "e61713dba214f1fbffd99497938100e33d91bee8872569b0bcf2875d8fef0dfe"
+  "scripts/opencode-run.mjs": "6a4b4ece5098b1025b92ff1da4e177230d9730ee8c8a98864bfb0238a0884b3f"
 }
