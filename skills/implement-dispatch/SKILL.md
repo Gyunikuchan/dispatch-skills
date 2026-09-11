@@ -31,11 +31,11 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 1. Scope & Setup
 
-1. **Understand ask**: Restate requirements as checkable success criteria. If preceded by user questioning/interviews (e.g. `grilling`), fold settled decisions directly into criteria and assumptions without requesting intermediate approval.
+1. **Understand ask**: Restate requirements as checkable success criteria. If preceded by user questioning/interviews (e.g. `grilling`), fold settled decisions directly into criteria and assumptions without intermediate approval gates.
 2. **Scope gate**: Classify change to set effective level:
    - `trivial` (single-file mechanical edit, rename, comment/typo, simple constant) → downshift to `low`.
    - `focused` or `cross-cutting` → keep requested level.
-   *(Scope only downshifts to `low`; never upshifts or overrides an explicit level).*
+   *(Explicit levels remain fixed; automatic classification only downshifts unpinned defaults to `low`).*
 3. **Resolve flow**:
 
    ```bash
@@ -56,7 +56,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 2. Author Plan
 
 1. Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
-2. **Single-gate rule**: Never ask for plan approval in Steps 1 or 2 (especially post-`grilling`). Transition directly to Step 3's review loop.
+2. **Single approval gate**: Transition directly to Step 3's review loop; solicit user approval once on the refined plan at the end of Step 3 (especially post-`grilling`).
 
 **Done when:** Plan file exists on disk with all template sections populated.
 
@@ -71,7 +71,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 3. **Consensus & approval**:
    - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap.
    - `consensus: false`: Orchestrator may reject unverified claims directly.
-   - **User approval gate**: Only now, at the end of Step 3 on the refined post-review plan, solicit user approval before writing code.
+   - **User approval gate**: Solicit user approval on the refined post-review plan before writing code.
 
 **Done when:** Plan reflects all accepted findings, disputes are resolved, and refined plan is approved by the user.
 
@@ -79,10 +79,10 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 4. Implement
 
-1. Dispatch implementation test-first to platform's native write subagent (see Reference below) configured with `flow.implementation` hints. For `trivial` scope or subagent failure, orchestrator implements directly.
-2. Implement Proposed Changes, run host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and report modified files and test output.
+1. **Dispatch implementation**: Dispatch test-first to platform's native write subagent (Reference below) configured with `flow.implementation` hints and the resolved walkthrough path from Step 1. Instruct the subagent to implement Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough directly at the resolved path following `dispatch-code-review`'s template (`## Changes Made` with `[NEW]`/`[MODIFY]`/`[DELETE]` tags, `## Verification & Validation`, `## Key Deviations`, and `## Review Findings & Resolutions: *No reviews conducted yet.*`). For `trivial` scope, direct execution, or subagent failure, orchestrator implements and authors directly.
+2. **Verify completion**: Confirm code changes pass host verification tests green and baseline walkthrough exists on disk.
 
-**Done when:** Code changes are complete and host verification tests pass green.
+**Done when:** Code changes are complete, host verification tests pass green, and baseline walkthrough exists on disk.
 
 ---
 
@@ -90,7 +90,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['code-review'].maxRounds === 0`.*
 
-1. Write the walkthrough at the path resolved in Step 1 following `dispatch-code-review`'s template.
+1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s template if skipped).
 2. Invoke `dispatch-code-review` in **orchestrated mode** (hand over walkthrough path, plan path, targets from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget`). The review skill returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
@@ -129,7 +129,7 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
    - Active, failed, dropped, or unavailable delegates (`flow.diagnostics`).
    - Summary of accepted/rejected findings and verification command status.
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp (`os.tmpdir()`) on completion. If unresolved/halted, retain in place with reasons stated.
-3. **Report to user**: Present run diagnostics and a link to the artifact (never inline full artifact content). Leave git operations (commit, push, PR) to the user.
+3. **Report to user**: Present run diagnostics and a link to the artifact (omit full inline artifact content). Git operations (commit, push, PR) remain for the user.
 
 **Done when:** Diagnostics are appended, scratch artifacts relocated (or retained with stated reason), and handoff report delivered.
 
@@ -148,5 +148,5 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
 ### Dispatch Invocation Rules
 - **Flags**: Pass `--provider <target.platform> --no-config`. Pass `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` when present in target config. Attach context with `-f "<path>"`.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
-- **Isolation**: External delegates are strictly read-only (`--mode plan` / read-only tools). Orchestrator / native subagents alone write code.
+- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools). Orchestrator / native subagents alone write code.
 - **Fallback**: Provider failures fall back to `dispatch`'s in-process read-only subagent.
