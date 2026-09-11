@@ -1,10 +1,10 @@
 {
-  "SKILL.md": "39764caa694edd2e023199055067ed7aa6a6e676623633d141cd0b9a7a902fa4",
+  "SKILL.md": "266730254d1368db87460bf53d28395401e59d2d5296b22a2bdfae988710e15c",
   "scripts/agy-run.mjs": "1b52aba222069a6daecaa8d4b74da5c580dfa860057edac79c88f3c0ec635272",
   "scripts/claude-run.mjs": "ba297f760ae4d22c5c05d72b1c1ccd2ed78d70f42a6f8e80ba448f58dde13751",
-  "scripts/common.mjs": "1318f9494feec3352e4fe456e1a9a431ec9f60ae5426f7f01f1742b3899d759e",
+  "scripts/common.mjs": "5331298f80bc36df6d5c4b6bf57e94ae0f90b5a579620854f7e9d2cf6323dd34",
   "scripts/copilot-run.mjs": "5b424688569272abc60f30d75ae183875254f5323221eb9998db1f6cf906b892",
-  "scripts/dispatch.mjs": "f24651407538cd2779c35e0481e6d2a94e59ffc6a09ec3d7f9e46ce39fb3ba6f",
+  "scripts/dispatch.mjs": "9f1716a98f5b79b36114b54e716f3ca667e1887fbce9cd1bef4f60fb61235863",
   "scripts/opencode-run.mjs": "41eb5f296f720f6bd60e10068211509f38c31f8ed2d23003f7f92bca36367b92",
   "scripts/resolve-artifact-paths.mjs": "61266243dc21f8e1d9f9f46013690dc77110dde6ad8b829cd4d9610ee377f216"
 }

@@ -208,7 +208,7 @@ export async function dispatchTask(options = {}) {
 
 /** Loads the dispatch cascade config via the shared skill-config loader. */
 function loadDispatchConfig() {
-  return loadSkillConfig({ skillRoot: SKILL_DIR, projectDirName: '.dispatch' });
+  return loadSkillConfig({ skillRoot: SKILL_DIR });
 }
 
 /** Throws if any skill file has been tampered with since installation. */

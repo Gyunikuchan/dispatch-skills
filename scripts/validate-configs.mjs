@@ -51,14 +51,14 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
     }
   }
 
-  // 1. dispatch configs across standard skill locations, plus the project-root override dir
+  // 1. dispatch configs across standard skill locations
   const dispatchSkillRoots = [
     path.join(projectRoot, 'skills', 'dispatch'),
     path.join(projectRoot, '.agents', 'skills', 'dispatch'),
     path.join(projectRoot, '.claude', 'skills', 'dispatch'),
   ];
   for (const skillRoot of dispatchSkillRoots) {
-    for (const candidate of getConfigCandidates({ skillRoot, projectDirName: '.dispatch', projectRoot })) {
+    for (const candidate of getConfigCandidates({ skillRoot })) {
       addIfFound(candidate, 'dispatch');
     }
   }
@@ -71,7 +71,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
   ];
 
   for (const scriptDir of implementDispatchScriptDirs) {
-    for (const candidate of getImplementDispatchConfigCandidates(scriptDir, projectRoot)) {
+    for (const candidate of getImplementDispatchConfigCandidates(scriptDir)) {
       addIfFound(candidate, 'implement-dispatch');
     }
   }
@@ -222,10 +222,10 @@ export function validateAllConfigs(options = {}) {
       let type = 'jsonc';
       if (normalized.includes('implement-dispatch')) {
         type = 'implement-dispatch';
-      } else if (normalized.includes('dispatch/config') || normalized.includes('.dispatch/')) {
+      } else if (normalized.includes('dispatch/config')) {
         // Checked before the generic 'opencode' substring match below and after
-        // 'implement-dispatch' above, since both "skills/dispatch/config*.jsonc" and
-        // ".dispatch/config*.jsonc" would otherwise fall through unclassified.
+        // 'implement-dispatch' above, since "skills/dispatch/config*.jsonc" would
+        // otherwise fall through unclassified.
         type = 'dispatch';
       } else if (normalized.includes('opencode')) {
         type = 'opencode';

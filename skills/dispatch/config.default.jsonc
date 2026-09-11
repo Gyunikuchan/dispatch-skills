@@ -15,11 +15,9 @@
   * own default.
   *
   * Override locations (loaded wholly — first match wins, no merging across tiers):
-  *   1. <project-root>/.dispatch/config.local.jsonc
-  *   2. <skill-root>/config.local.jsonc
-  *   3. <project-root>/.dispatch/config.jsonc
-  *   4. <skill-root>/config.jsonc
-  *   5. <skill-root>/config.default.jsonc (this file)
+  *   1. <skill-root>/config.local.jsonc
+  *   2. <skill-root>/config.jsonc
+  *   3. <skill-root>/config.default.jsonc (this file)
   *
   * `--no-config` on dispatch.mjs ignores this file entirely (model, effort, and cascade
   * membership) and requires `--provider` — there is no cascade without a config.

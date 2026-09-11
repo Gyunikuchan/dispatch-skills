@@ -116,7 +116,7 @@ Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravit
 
 ## Configuration
 
-Cascade order and per-provider model/effort come from a JSONC config, loaded wholly (no merging) from the first of, in precedence order: `<project-root>/.dispatch/config.local.jsonc`, `config.local.jsonc` next to this skill, `<project-root>/.dispatch/config.jsonc`, `config.jsonc` next to this skill, then the shipped [config.default.jsonc](config.default.jsonc). Copy the default and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it for one project or one machine.
+Cascade order and per-provider model/effort come from a JSONC config, loaded wholly (no merging) from the first of, in precedence order: `config.local.jsonc` next to this skill, `config.jsonc` next to this skill, then the shipped [config.default.jsonc](config.default.jsonc). Copy the default and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it.
 
 Schema: `{ "platforms": { "<claude|agy|copilot|opencode>": { "model"?: string | string[], "effort"?: string } } }`. Key order is cascade order; a platform key omitted entirely means "never dispatched" (distinct from an empty `{}` entry, which dispatches with no `-m`/`-e` override). `model` may be an array for `claude` only, tried in order as fallback models within that one cascade slot. CLI `-m`/`-e` always win over the config entry for the resolved provider.
 

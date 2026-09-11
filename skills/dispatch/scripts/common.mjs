@@ -1323,24 +1323,17 @@ export function parseJsonc(text) {
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
 
 /**
- * Builds the 5-path config precedence list shared by `dispatch` and `implement-dispatch`:
- * project-root override (local, then shared) beats skill-root override (local, then
- * shared) beats the skill's own shipped default. Generalized via `projectDirName` so
- * each skill supplies its own project-root directory name (`.dispatch`,
- * `.implement-dispatch`) without duplicating the precedence order.
+ * Builds the 3-path config precedence list:
+ * skill-root override (local, then shared) beats the skill's own shipped default.
  *
- * @param {object} params
- * @param {string} params.skillRoot
- * @param {string} params.projectDirName
- * @param {string} [params.projectRoot]
+ * @param {object|string} params
+ * @param {string} [params.skillRoot]
  * @returns {string[]}
  */
-export function getConfigCandidates({ skillRoot, projectDirName, projectRoot = PROJECT_ROOT }) {
-  const projectDir = path.join(projectRoot, projectDirName);
+export function getConfigCandidates(params) {
+  const skillRoot = typeof params === 'string' ? params : params?.skillRoot;
   return [
-    path.join(projectDir, 'config.local.jsonc'),
     path.join(skillRoot, 'config.local.jsonc'),
-    path.join(projectDir, 'config.jsonc'),
     path.join(skillRoot, 'config.jsonc'),
     path.join(skillRoot, 'config.default.jsonc'),
   ];
@@ -1352,12 +1345,10 @@ export function getConfigCandidates({ skillRoot, projectDirName, projectRoot = P
  *
  * @param {object} params
  * @param {string} params.skillRoot
- * @param {string} params.projectDirName
- * @param {string} [params.projectRoot]
  * @param {boolean} [params.defaultOnly] Load only `config.default.jsonc`, skipping overrides.
  * @returns {{ config: object, path: string }}
  */
-export function loadSkillConfig({ skillRoot, projectDirName, projectRoot = PROJECT_ROOT, defaultOnly = false }) {
+export function loadSkillConfig({ skillRoot, defaultOnly = false } = {}) {
   if (defaultOnly) {
     const defaultPath = path.join(skillRoot, 'config.default.jsonc');
     if (!fs.existsSync(defaultPath)) {
@@ -1366,7 +1357,7 @@ export function loadSkillConfig({ skillRoot, projectDirName, projectRoot = PROJE
     return { config: parseJsonc(fs.readFileSync(defaultPath, 'utf8')), path: defaultPath };
   }
 
-  const candidates = getConfigCandidates({ skillRoot, projectDirName, projectRoot });
+  const candidates = getConfigCandidates({ skillRoot });
   const configPath = candidates.find((p) => fs.existsSync(p));
   if (!configPath) {
     throw new Error(`Config file not found: tried ${candidates.join(', ')}`);

@@ -12,18 +12,14 @@ import {
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 describe('getConfigCandidates', () => {
-  it('returns the 5-path precedence list in order', () => {
+  it('returns the 3-path precedence list in order', () => {
     const candidates = getConfigCandidates({
       skillRoot: '/skill',
-      projectDirName: '.dispatch',
-      projectRoot: '/project',
     });
     assert.deepEqual(
       candidates.map((p) => p.split(path.sep).join('/')),
       [
-        '/project/.dispatch/config.local.jsonc',
         '/skill/config.local.jsonc',
-        '/project/.dispatch/config.jsonc',
         '/skill/config.jsonc',
         '/skill/config.default.jsonc',
       ],
@@ -33,28 +29,25 @@ describe('getConfigCandidates', () => {
 
 describe('loadSkillConfig', () => {
   let skillRoot;
-  let projectRoot;
 
   beforeEach(() => {
     skillRoot = mkdtempSync(path.join(os.tmpdir(), 'load-skill-config-skill-'));
-    projectRoot = mkdtempSync(path.join(os.tmpdir(), 'load-skill-config-project-'));
   });
 
   afterEach(() => {
     rmSync(skillRoot, { recursive: true, force: true });
-    rmSync(projectRoot, { recursive: true, force: true });
   });
 
   it('throws listing every tried path when none exist', () => {
     assert.throws(
-      () => loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot }),
+      () => loadSkillConfig({ skillRoot }),
       /Config file not found: tried .*config\.local\.jsonc.*config\.default\.jsonc/s,
     );
   });
 
   it('loads config.default.jsonc when nothing else exists', () => {
     writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
-    const { config, path: usedPath } = loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot });
+    const { config, path: usedPath } = loadSkillConfig({ skillRoot });
     assert.deepEqual(config, { platforms: { claude: {} } });
     assert.equal(usedPath, path.join(skillRoot, 'config.default.jsonc'));
   });
@@ -62,34 +55,30 @@ describe('loadSkillConfig', () => {
   it('loads wholly (no merge): a higher-precedence file replaces, not merges with, the default', () => {
     writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {}, "agy": {} } }');
     writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "copilot": {} } }');
-    const { config } = loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot });
+    const { config } = loadSkillConfig({ skillRoot });
     assert.deepEqual(config, { platforms: { copilot: {} } });
   });
 
-  it('prefers project-root config.local.jsonc over every other tier', () => {
+  it('prefers config.local.jsonc over config.jsonc and default', () => {
     writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
     writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "copilot": {} } }');
     writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{ "platforms": { "agy": {} } }');
-    const dispatchDir = path.join(projectRoot, '.dispatch');
-    mkdirSync(dispatchDir, { recursive: true });
-    writeFileSync(path.join(dispatchDir, 'config.jsonc'), '{ "platforms": { "opencode": {} } }');
-    writeFileSync(path.join(dispatchDir, 'config.local.jsonc'), '{ "platforms": { "claude": { "effort": "high" } } }');
 
-    const { config, path: usedPath } = loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot });
-    assert.deepEqual(config, { platforms: { claude: { effort: 'high' } } });
-    assert.equal(usedPath, path.join(dispatchDir, 'config.local.jsonc'));
+    const { config, path: usedPath } = loadSkillConfig({ skillRoot });
+    assert.deepEqual(config, { platforms: { agy: {} } });
+    assert.equal(usedPath, path.join(skillRoot, 'config.local.jsonc'));
   });
 
   it('defaultOnly loads config.default.jsonc even when overrides exist', () => {
     writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
     writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{ "platforms": { "agy": {} } }');
-    const { config } = loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot, defaultOnly: true });
+    const { config } = loadSkillConfig({ skillRoot, defaultOnly: true });
     assert.deepEqual(config, { platforms: { claude: {} } });
   });
 
   it('defaultOnly throws when config.default.jsonc is missing', () => {
     assert.throws(
-      () => loadSkillConfig({ skillRoot, projectDirName: '.dispatch', projectRoot, defaultOnly: true }),
+      () => loadSkillConfig({ skillRoot, defaultOnly: true }),
       /Config file not found: tried/,
     );
   });

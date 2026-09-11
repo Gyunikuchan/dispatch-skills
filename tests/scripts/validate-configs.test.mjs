@@ -90,33 +90,33 @@ describe('validate-configs', () => {
       }
     });
 
-    it('discovers newly added config files in project root or .implement-dispatch', () => {
+    it('discovers newly added config files in skills/implement-dispatch or project root', () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-find-'));
       try {
-        const implDir = path.join(tempDir, '.implement-dispatch');
+        const implDir = path.join(tempDir, 'skills', 'implement-dispatch', 'scripts');
         mkdirSync(implDir, { recursive: true });
-        writeFileSync(path.join(implDir, 'config.local.jsonc'), '{}', 'utf8');
+        writeFileSync(path.join(tempDir, 'skills', 'implement-dispatch', 'config.local.jsonc'), '{}', 'utf8');
         writeFileSync(path.join(tempDir, 'opencode.jsonc'), '{}', 'utf8');
 
         const found = findConfigFiles(tempDir);
         const relPaths = found.map(f => path.relative(tempDir, f.path).replace(/\\/g, '/'));
-        assert.ok(relPaths.includes('.implement-dispatch/config.local.jsonc'));
+        assert.ok(relPaths.includes('skills/implement-dispatch/config.local.jsonc'));
         assert.ok(relPaths.includes('opencode.jsonc'));
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
 
-    it('discovers a dispatch config in the project-root .dispatch override dir, typed "dispatch"', () => {
+    it('discovers a dispatch config in skills/dispatch, typed "dispatch"', () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-find-dispatch-'));
       try {
-        const overrideDir = path.join(tempDir, '.dispatch');
-        mkdirSync(overrideDir, { recursive: true });
-        writeFileSync(path.join(overrideDir, 'config.jsonc'), '{}', 'utf8');
+        const dispatchDir = path.join(tempDir, 'skills', 'dispatch');
+        mkdirSync(dispatchDir, { recursive: true });
+        writeFileSync(path.join(dispatchDir, 'config.jsonc'), '{}', 'utf8');
 
         const found = findConfigFiles(tempDir);
-        const match = found.find(f => path.relative(tempDir, f.path).replace(/\\/g, '/') === '.dispatch/config.jsonc');
-        assert.ok(match, 'expected .dispatch/config.jsonc to be discovered');
+        const match = found.find(f => path.relative(tempDir, f.path).replace(/\\/g, '/') === 'skills/dispatch/config.jsonc');
+        assert.ok(match, 'expected skills/dispatch/config.jsonc to be discovered');
         assert.equal(match.type, 'dispatch');
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -294,9 +294,9 @@ describe('validate-configs', () => {
     it('returns 1 when encountering an invalid config file', () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-cli-'));
       try {
-        const implDir = path.join(tempDir, '.implement-dispatch');
+        const implDir = path.join(tempDir, 'skills', 'implement-dispatch', 'scripts');
         mkdirSync(implDir, { recursive: true });
-        writeFileSync(path.join(implDir, 'config.local.jsonc'), '{ invalid json', 'utf8');
+        writeFileSync(path.join(tempDir, 'skills', 'implement-dispatch', 'config.local.jsonc'), '{ invalid json', 'utf8');
 
         const code = runCli(['--project-root', tempDir, '--quiet']);
         assert.equal(code, 1);

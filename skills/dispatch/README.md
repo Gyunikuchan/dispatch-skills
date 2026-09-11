@@ -129,7 +129,7 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 
 ## Configuration
 
-Cascade order and per-provider `model`/`effort` defaults live in a JSONC config, not in the runner scripts. `dispatch` loads exactly one config file — no merging across tiers — from the first of, in precedence order: `<project-root>/.dispatch/config.local.jsonc`, `skills/dispatch/config.local.jsonc`, `<project-root>/.dispatch/config.jsonc`, `skills/dispatch/config.jsonc`, then the shipped [`config.default.jsonc`](config.default.jsonc). The first three are git-ignored, so a project or machine override never lands in a commit by accident.
+Cascade order and per-provider `model`/`effort` defaults live in a JSONC config, not in the runner scripts. `dispatch` loads exactly one config file — no merging across tiers — from the first of, in precedence order: `skills/dispatch/config.local.jsonc`, `skills/dispatch/config.jsonc`, then the shipped [`config.default.jsonc`](config.default.jsonc). `config.local.jsonc` and `config.jsonc` are git-ignored, so an override never lands in a commit by accident.
 
 Schema:
 
@@ -147,7 +147,7 @@ Schema:
 
 `model` accepts an array only for `claude` (tried in order as fallback models within that one cascade slot); every other platform takes a single string. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
 
-Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, or under `<project-root>/.dispatch/`, and edit it to change the cascade for one project or one machine.
+Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, and edit it to change the cascade.
 
 ---
 

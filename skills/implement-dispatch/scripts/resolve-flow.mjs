@@ -112,20 +112,15 @@ export function resolveLevelScalar(knob, level) {
  * `scripts/validate-configs.mjs` (which discovers implement-dispatch configs by
  * path rather than importing `loadConfig` directly).
  */
-export function getImplementDispatchConfigCandidates(scriptDir = __dirname, projectRoot = PROJECT_ROOT) {
+export function getImplementDispatchConfigCandidates(scriptDir = __dirname) {
   return getConfigCandidates({
     skillRoot: path.resolve(scriptDir, '..'),
-    projectDirName: '.implement-dispatch',
-    projectRoot,
   });
 }
 
-/** `projectRoot` is injectable so tests never write overrides into the real repository. */
-export function loadConfig(scriptDir = __dirname, { defaultOnly = false, projectRoot = PROJECT_ROOT } = {}) {
+export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
   const { config } = loadSkillConfig({
     skillRoot: path.resolve(scriptDir, '..'),
-    projectDirName: '.implement-dispatch',
-    projectRoot,
     defaultOnly,
   });
   return config;
