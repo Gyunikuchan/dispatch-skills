@@ -91,6 +91,13 @@ describe('resolve-flow CLI', () => {
     assert.equal(flow.diagnostics.effectiveLevel, 'low');
   });
 
+  it('accepts --level xhigh', () => {
+    const { status, stdout } = run('--platform', 'claude', '--level', 'xhigh');
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.equal(flow.diagnostics.effectiveLevel, 'xhigh');
+  });
+
   it('accepts --flag=value form equivalently to space-separated flags', () => {
     const { status, stdout } = run('--platform=claude', '--level=low');
     assert.equal(status, 0);

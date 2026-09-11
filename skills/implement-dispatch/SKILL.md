@@ -25,7 +25,7 @@ Delegates return **claims**; the orchestrator adjudicates and applies them.
 
 Extends `dispatch`'s `references/alignment.md` § Invocation base grammar with `<level>` and `: <ask>`. Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
 
-- `<level>` — `low`, `medium`, `high`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
+- `<level>` — `low`, `medium`, `high`, `xhigh`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
 - `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), or `dispatch`'s `--provider` aliases (e.g. `antigravity`, `claudecode`), normalized to the canonical key. Overrides breadth: fans out to exactly these providers, whatever the level's count.
 
 ## Flow Plan

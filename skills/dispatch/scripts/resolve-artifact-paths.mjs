@@ -254,7 +254,7 @@ const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
  * @returns {string|null} absolute path
  */
 export function findNativeArtifact(kind, options = {}) {
-  const orchestrator = options.orchestrator ?? detectOrchestrator();
+  const orchestrator = options.orchestrator !== undefined ? options.orchestrator : detectOrchestrator();
   // Checked before constructing `roots` (which stats env vars and joins paths for
   // every AGY_MODE_DATA_DIRS entry) so a non-agy orchestrator short-circuits cheaply.
   if (!NATIVE_ARTIFACT_ORCHESTRATORS.has(orchestrator)) return null;

@@ -88,7 +88,7 @@ Both `<level>` and `(<pins>)` are optional (defaults to `medium` depth with auto
 
 ### 1. Basic Invocations
 
-Run a balanced implementation with default settings (`medium` depth, automatic single-agent review):
+Run a balanced implementation with default settings (`medium` depth):
 
 ```markdown
 /implement-dispatch Add a CSV export button to the transactions table
@@ -98,7 +98,7 @@ Run a balanced implementation with default settings (`medium` depth, automatic s
 /implement-dispatch Fix off-by-one error in cursor pagination
 ```
 
-### 2. Controlling Depth with Levels (`low`, `medium`, `high`, `max`)
+### 2. Controlling Depth with Levels (`low`, `medium`, `high`, `xhigh`, `max`)
 
 Tune review rigor, round budgets, and consensus requirements to match the scope and risk of your change:
 
@@ -108,6 +108,10 @@ Tune review rigor, round budgets, and consensus requirements to match the scope 
 
 ```markdown
 /implement-dispatch high: Refactor payment webhook idempotency handler
+```
+
+```markdown
+/implement-dispatch xhigh: Audit cryptographic key derivation and session storage
 ```
 
 ```markdown
@@ -134,20 +138,23 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 
 ## Review Levels
 
-Levels scale spend along four axes at once — how many agents review (`targetCount`), how many waves each phase may spend (`maxRounds`), whether consensus is mandatory, and how large a tool-turn budget each reviewer gets. `config.default.jsonc` is the single source of truth for all of it; the summary below describes what the shipped defaults cost.
+Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), tool-turn budgets (`toolTurns`), self-review eligibility (`includeSelf`), and model/effort selection for each phase.
 
-- `low` — cheapest. Plan review is skipped entirely; code review gets one wave with one external agent and no consensus requirement.
-- `medium` — the default. One plan-review wave with one agent, up to three code-review waves with one agent, no consensus requirement.
-- `high` — code review fans out to every available agent for up to three waves, and consensus becomes mandatory: no finding may be dismissed without verified counter-evidence.
-- `max` — the widest and deepest. Both phases fan out to every available agent *plus* the host CLI itself (`--allow-same-agent`), with three plan-review waves and five code-review waves under strict consensus.
+Choose a level based on the risk and complexity of your change:
+
+- **`low`** — **Fast-path / minimal overhead**. Best for minor bug fixes, mechanical changes, or low-risk tasks where extensive review isn't needed. Typically minimizes review rounds and reviewer breadth to move fast.
+- **`medium`** *(default)* — **Balanced everyday development**. Best for standard features and regular tasks. Provides a balanced review flow across planning and code review without excessive round overhead.
+- **`high`** — **Thorough review**. Best for significant features, architectural changes, or complex refactoring that benefits from multi-reviewer critique and deeper verification loops.
+- **`xhigh`** — **Deep multi-agent scrutiny**. Best for security-sensitive areas, core interfaces, or mission-critical logic requiring broader cross-agent review and higher verification budgets.
+- **`max`** — **Maximum depth & exhaustive verification**. Best for high-stakes migrations, cryptographic code, or complex subsystem overhauls where you want the widest possible reviewer fan-out and maximum round limits.
 
 ### Key Execution Mechanics
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
-- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's `targetCount`. Pins do not resurrect a phase the level skips.
+- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Pins do not resurrect a phase configured off (`maxRounds: 0`).
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
-- **Consensus Rules**:
-  - Under `medium` and `low` (`consensus: false`), the orchestrator can reject claims directly if counter-evidence exists.
-  - Under `high` and `max` (`consensus: true`), the orchestrator cannot unilaterally dismiss a finding. Every dispute must be accepted, escalated to the user, or rebutted with verified evidence in re-dispatch.
+- **Consensus Enforcement**:
+  - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists.
+  - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a finding. Every dispute must be accepted, escalated to the user, or rebutted with verified counter-evidence during re-dispatch.
 - **Automatic Scope Downshifting**: Trivial changes (single-file mechanical edits, typo/comment fixes, simple constant changes) are automatically downshifted to `low` to avoid unnecessary review overhead. Explicitly requested levels are never overridden upward.
 
 ---

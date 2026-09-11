@@ -109,7 +109,7 @@ function scratchMentions(rel) {
 
 describe('artifact path convention', () => {
   it('generates paths matching the canonical shapes', () => {
-    const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-10' });
+    const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-10', native: { orchestrator: null } });
     for (const [generated, shapes] of [
       [result.plan.path, PLAN_SHAPES],
       [result.walkthrough.path, WALKTHROUGH_SHAPES],

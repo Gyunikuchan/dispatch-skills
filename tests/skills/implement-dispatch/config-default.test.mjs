@@ -27,15 +27,19 @@ const LEVEL_PARITY = {
     'code-review': { maxRounds: 1, targetCount: 1, consensus: false, includeSelf: false, targets: 1 },
   },
   medium: {
-    'plan-review': { maxRounds: 1, targetCount: 1, consensus: false, includeSelf: false, targets: 1 },
-    'code-review': { maxRounds: 3, targetCount: 1, consensus: false, includeSelf: false, targets: 1 },
+    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, includeSelf: false, targets: 1 },
+    'code-review': { maxRounds: 3, targetCount: 1, consensus: true, includeSelf: false, targets: 1 },
   },
   high: {
-    'plan-review': { maxRounds: 1, targetCount: 1, consensus: true, includeSelf: false, targets: 1 },
-    'code-review': { maxRounds: 3, targetCount: 'all', consensus: true, includeSelf: false, targets: 2 },
+    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, includeSelf: true, targets: 2 },
+    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, includeSelf: false, targets: 2 },
+  },
+  xhigh: {
+    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, includeSelf: true, targets: 3 },
+    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, includeSelf: false, targets: 2 },
   },
   max: {
-    'plan-review': { maxRounds: 3, targetCount: 'all', consensus: true, includeSelf: true, targets: 3 },
+    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, includeSelf: true, targets: 3 },
     'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, includeSelf: true, targets: 3 },
   },
 };
@@ -66,7 +70,7 @@ describe('shipped config', () => {
 
   it('ladders the tool-turn budget across levels', () => {
     const config = loadConfig(undefined, { defaultOnly: true });
-    const expected = { low: 3, medium: 4, high: 6, max: 8 };
+    const expected = { low: 3, medium: 4, high: 6, xhigh: 8, max: 10 };
     for (const [level, turns] of Object.entries(expected)) {
       const flow = resolveFlow({ platform: 'claude', level }, LIVE_ALL, config);
       assert.equal(flow['plan-review'].toolTurns, turns, `plan-review at ${level}`);

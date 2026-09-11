@@ -6,5 +6,5 @@
   "scripts/copilot-run.mjs": "5b424688569272abc60f30d75ae183875254f5323221eb9998db1f6cf906b892",
   "scripts/dispatch.mjs": "9f1716a98f5b79b36114b54e716f3ca667e1887fbce9cd1bef4f60fb61235863",
   "scripts/opencode-run.mjs": "41eb5f296f720f6bd60e10068211509f38c31f8ed2d23003f7f92bca36367b92",
-  "scripts/resolve-artifact-paths.mjs": "61266243dc21f8e1d9f9f46013690dc77110dde6ad8b829cd4d9610ee377f216"
+  "scripts/resolve-artifact-paths.mjs": "c087430f34829095ed8b49fef961f5f54090deaabd1f37c8303b93f1baacbe9f"
 }

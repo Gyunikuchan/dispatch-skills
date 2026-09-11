@@ -128,6 +128,22 @@ describe('resolveFlow', () => {
     });
   });
 
+  describe('level: xhigh', () => {
+    it('plan-review: 1 target, maxRounds=1, consensus=true', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'xhigh' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out['plan-review'].maxRounds, 1);
+      assert.equal(out['plan-review'].consensus, true);
+      assert.equal(out['plan-review'].targets.length, 1);
+    });
+
+    it('code-review: all targets, maxRounds=3, consensus=true', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'xhigh' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out['code-review'].maxRounds, 3);
+      assert.equal(out['code-review'].consensus, true);
+      assert.equal(out['code-review'].targets.length, 2);
+    });
+  });
+
   describe('level: max', () => {
     it('plan-review: all targets including self, maxRounds=3, consensus=true', () => {
       const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
@@ -474,7 +490,7 @@ describe('resolveFlow', () => {
 
     it('treats a flat entry as level-agnostic', () => {
       const flat = { model: 'gemini-3.8-flash', effort: 'medium' };
-      for (const level of ['low', 'medium', 'high', 'max']) {
+      for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
         assert.deepEqual(resolveLevelEntry(flat, level), flat);
       }
     });
@@ -512,6 +528,7 @@ describe('resolveFlow', () => {
       const knob = { medium: 3, max: 5 };
       assert.equal(resolveLevelScalar(knob, 'medium'), 3);
       assert.equal(resolveLevelScalar(knob, 'high'), 3);
+      assert.equal(resolveLevelScalar(knob, 'xhigh'), 3);
       assert.equal(resolveLevelScalar(knob, 'max'), 5);
       assert.equal(resolveLevelScalar(knob, 'low'), 3);
     });
@@ -568,7 +585,7 @@ describe('resolveFlow', () => {
       const problems = validateConfig(config);
       assert.equal(problems.length, 1);
       assert.match(problems[0], /hgih/);
-      assert.match(problems[0], /low, medium, high, max/);
+      assert.match(problems[0], /low, medium, high, xhigh, max/);
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config),
         /hgih/
@@ -696,7 +713,7 @@ describe('resolveFlow', () => {
     });
 
     it('rounds down to the base level key below max', () => {
-      for (const level of ['low', 'medium', 'high']) {
+      for (const level of ['low', 'medium', 'high', 'xhigh']) {
         const out = resolveFlow({ platform: 'claude', level }, LIVE_ALL, LEVELED_CONFIG);
         const target = out['code-review'].targets.find(t => t.platform === 'agy');
         assert.equal(target.effort, 'high', `level ${level}`);
@@ -713,7 +730,7 @@ describe('resolveFlow', () => {
 
   describe('maxRounds counts waves, not dispatches', () => {
     it('always reports maxRounds, including for multi-target levels', () => {
-      for (const level of ['low', 'medium', 'high', 'max']) {
+      for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
         const out = resolveFlow({ platform: 'claude', level }, LIVE_ALL, BASE_CONFIG);
         assert.equal(typeof out['code-review'].maxRounds, 'number', `code-review maxRounds at ${level}`);
         assert.equal(typeof out['plan-review'].maxRounds, 'number', `plan-review maxRounds at ${level}`);

@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node resolve-flow.mjs --platform <key>
- *                         [--level <low|medium|high|max>] [--pins <key,key,...>]
+ *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...>]
  *   node resolve-flow.mjs --validate-only
  *
  * Outputs JSON to stdout describing plan-review, implementation, and code-review
@@ -24,7 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DISPATCH_SCRIPTS = path.resolve(__dirname, '../../dispatch/scripts');
 
 /** Invocation grammar for `/implement-dispatch <level>`; not a per-project preference. */
-const LEVELS = ['low', 'medium', 'high', 'max'];
+const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
