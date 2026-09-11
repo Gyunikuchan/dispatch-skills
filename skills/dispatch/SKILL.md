@@ -100,6 +100,7 @@ Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravit
 | Flag | Description | Example |
 |------|-------------|---------|
 | `-f <path>` | Attach context file or artifact (repeatable, capped) | `-f "src/domain/types.ts"` |
+| `--prompt-file <path>` | Read the prompt from a file instead of `-p`/positional (cannot combine with either) | `--prompt-file "<path to filled prompt>"` |
 | `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`opencode`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |

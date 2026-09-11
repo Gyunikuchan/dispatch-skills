@@ -66,7 +66,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['plan-review'].maxRounds === 0`.*
 
-1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode** (hand over plan path, targets from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` from `flow['plan-review'].toolTurns`).
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode** (hand over plan path, targets from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` from `flow['plan-review'].toolTurns`). Fill its prompt template via `dispatch`'s `fill-template.mjs` (`<skills-dir>/dispatch/scripts/fill-template.mjs`) per `alignment.md` § Prompt Template Filling, and pass the written file to each dispatch with `--prompt-file`.
 2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
 3. **Consensus & approval**:
    - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap.
@@ -79,7 +79,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 4. Implement
 
-1. **Dispatch implementation**: Dispatch test-first to platform's native write subagent (Reference below) configured with `flow.implementation` hints and the resolved walkthrough path from Step 1. Instruct the subagent to implement Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough directly at the resolved path following `dispatch-code-review`'s template (`## Changes Made` with `[NEW]`/`[MODIFY]`/`[DELETE]` tags, `## Verification & Validation`, `## Key Deviations`, and `## Review Findings & Resolutions: *No reviews conducted yet.*`). For `trivial` scope, direct execution, or subagent failure, orchestrator implements and authors directly.
+1. **Dispatch implementation**: Dispatch test-first to platform's native write subagent (Reference below) configured with `flow.implementation` hints and the resolved walkthrough path from Step 1. Instruct the subagent to implement Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough directly at the resolved path following `dispatch-code-review`'s template (`## Changes Made` with `[NEW]`/`[MODIFY]`/`[DELETE]` tags, `## Verification & Validation`, `## Key Deviations`, and `## Review Findings & Resolutions: *No reviews conducted yet.*`). For `trivial` scope, direct execution, or subagent failure, orchestrator implements and authors directly. **Git guard**: the write subagent must never run `git stash`, `git reset`, `git checkout -- <path>`, `git clean`, or any other command that rewrites or discards the working tree/index — untracked scratch artifacts (plan, walkthrough) are not git-ignored and would be swept up. To compare before/after state (e.g. test counts), it runs the verify command and reads its output, or inspects `git diff` / `git status --porcelain` read-only.
 2. **Verify completion**: Confirm code changes pass host verification tests green and baseline walkthrough exists on disk.
 
 **Done when:** Code changes are complete, host verification tests pass green, and baseline walkthrough exists on disk.
@@ -91,7 +91,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 *Skip if `flow['code-review'].maxRounds === 0`.*
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s template if skipped).
-2. Invoke `dispatch-code-review` in **orchestrated mode** (hand over walkthrough path, plan path, targets from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget`). The review skill returns claims without applying code fixes.
+2. Invoke `dispatch-code-review` in **orchestrated mode** (hand over walkthrough path, plan path, targets from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget`). Fill its prompt template via `dispatch`'s `fill-template.mjs` per `alignment.md` § Prompt Template Filling and pass the written file to each dispatch with `--prompt-file`. The review skill returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
 
@@ -111,7 +111,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 7. Re-Review Loop
 
 While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode with `Review Scope: Re-review round <n>` naming modified lines, routing re-reviews to citing delegates (target affinity).
+1. Re-invoke `dispatch-code-review` in orchestrated mode with `Review Scope: Re-review round <n>` naming modified lines, routing re-reviews to citing delegates (target affinity). Re-fill the prompt template (`fill-template.mjs` per `alignment.md` § Prompt Template Filling) with the updated `Review Scope` and pass it with `--prompt-file`.
 2. Apply accepted fixes and settle disputes per Step 6.
 
 Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets that phase's round counter to 0, allowing further rounds).
@@ -146,7 +146,7 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
 | `opencode` | Direct execution |
 
 ### Dispatch Invocation Rules
-- **Flags**: Pass `--provider <target.platform> --no-config`. Pass `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` when present in target config. Attach context with `-f "<path>"`.
+- **Flags**: Pass `--provider <target.platform> --no-config`. Pass `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` when present in target config. Attach context with `-f "<path>"`. Pass a filled review prompt with `--prompt-file "<path>"` (see `dispatch`'s `fill-template.mjs`, `alignment.md` § Prompt Template Filling) instead of `-p`/positional.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
 - **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools). Orchestrator / native subagents alone write code.
 - **Fallback**: Provider failures fall back to `dispatch`'s in-process read-only subagent.

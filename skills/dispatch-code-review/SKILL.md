@@ -61,6 +61,8 @@ Deviations from original plan or design intent, with rationale (or "None").
 
 #### Prompt template
 
+Populate via `dispatch`'s `fill-template.mjs` per `references/alignment.md` § Prompt Template Filling: `node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/dispatch-code-review/SKILL.md --var "Walkthrough Path=<path>" ... --out <path>`.
+
 Populate the template variables:
 - `<Task Summary>` — summary of the ask and the changes made.
 - `<Walkthrough Path>` — path to the attached walkthrough.

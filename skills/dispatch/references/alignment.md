@@ -63,13 +63,36 @@ Detection: a review skill runs **orchestrated** when an orchestrating skill hand
 | Resolve artifact paths | Run resolver | Skip — use handed-over path |
 | Author artifact if absent | Yes (skill template) | No — orchestrator authored it |
 | Build dispatch invocations | From pins / cascade | Use handed-over invocations as-is |
-| Populate prompt template | Yes | Yes (orchestrator supplies Review Scope, Tool Turn Budget) |
+| Populate prompt template | Yes (§ Prompt Template Filling) | Yes (§ Prompt Template Filling; orchestrator supplies Review Scope, Tool Turn Budget) |
 | Adjudicate (shared table) | Yes | Yes |
 | Escalate disputes | Immediately | Per orchestrator's consensus rule |
 | Fold findings + log resolutions | Yes | Yes |
 | Apply code fixes (code review) | Yes | No — orchestrator applies (its fix step) |
 | Report to user | Full report | None — orchestrator's handoff covers it |
 | Artifact lifecycle | Retain in place | Orchestrator decides |
+
+## Prompt Template Filling
+
+How the two review skills turn their inline `#### Prompt template` block into a concrete dispatch prompt, without an ad-hoc extraction script or shell-quoting a multi-line, backtick-heavy prompt.
+
+Templates **stay inline** in each review SKILL.md — `tests/integration/review-skill-parity.test.mjs` documents that choice and guards drift. `dispatch`'s `fill-template.mjs` reads the template from the SKILL.md rather than relocating it.
+
+### Script
+
+```bash
+node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/<review-skill>/SKILL.md \
+  [--section "Prompt template"] (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
+```
+
+Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`).
+
+- **Variable derivation**: required variables are the backtick-quoted `` `<Name>` `` bullets between the `Prompt template` heading and its fenced block — read directly off the SKILL.md, never hand-maintained. `--list` prints them as a JSON array.
+- **Fill**: `--var Name=Value` (repeatable) or `--vars <json file>` (a JSON object of strings; supports multi-line values, e.g. a verbatim `<Requirement>`) supplies every declared variable; `--var` wins over `--vars` on a name collision. Substitution is single-pass over declared names only, so a supplied value is never re-scanned and ungoverned grammar placeholders in the template body (`<file>:L<line>`, `<tag>`, `<axis>`, `<Section>`) are left untouched.
+- **Output**: `--out <path>` writes the filled prompt (recommended: `.scratch/plan/<date>-<slug>-<kind>-review-prompt[-<target>].md`) and prints the path; omitted, the filled prompt prints to stdout.
+
+### Dispatching the filled prompt
+
+Pass the written file straight to `dispatch` with `--prompt-file <path>` (see Runner Flags Reference) instead of the prompt on argv — this avoids re-quoting a multi-line, backtick-heavy prompt through the shell. `--prompt-file` cannot combine with `-p` or a positional prompt.
 
 ## Adjudication
 

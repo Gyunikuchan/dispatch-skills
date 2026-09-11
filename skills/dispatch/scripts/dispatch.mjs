@@ -423,6 +423,7 @@ Usage:
 
 Options:
   -p, --prompt <string>       The prompt message to send
+  --prompt-file <path>        Read the prompt from a file (cannot combine with -p/positional prompt)
   -f, --file, --artifact      Attach context file or artifact (repeatable)
   -m, --model <name>          Override model identifier (takes precedence over config)
   -e, --effort <level>        Override reasoning effort (takes precedence over config)

@@ -114,6 +114,7 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | Option / Flag | Description | Example Slash Command / Usage |
 |---|---|---|
 | `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
+| `--prompt-file <path>` | Read the prompt from a file (cannot combine with `-p` or a positional prompt); pairs with `fill-template.mjs` output. | `/dispatch --prompt-file <path to filled prompt>` |
 | `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
 | `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
 | `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `/dispatch -e max Verify crypto primitives` |

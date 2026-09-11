@@ -133,6 +133,62 @@ describe('common: argument parsing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SECTION: --prompt-file
+// ---------------------------------------------------------------------------
+
+describe('common: --prompt-file', () => {
+  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-prompt-file-'));
+  after(() => {
+    try {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    } catch {}
+  });
+
+  it('reads the file content into options.prompt', () => {
+    const file = path.join(scratchDir, 'brief.md');
+    fs.writeFileSync(file, 'Filled review prompt body', 'utf8');
+
+    const opts = parseCommonArgs(['node', 'dispatch.mjs', '--prompt-file', file]);
+    assert.equal(opts.prompt, 'Filled review prompt body');
+    assert.equal(opts.promptFile, file);
+  });
+
+  it('accepts the equals-separated form', () => {
+    const file = path.join(scratchDir, 'brief-eq.md');
+    fs.writeFileSync(file, 'Equals form content', 'utf8');
+
+    const opts = parseCommonArgs(['node', 'dispatch.mjs', `--prompt-file=${file}`]);
+    assert.equal(opts.prompt, 'Equals form content');
+  });
+
+  it('throws when the file is missing', () => {
+    const missing = path.join(scratchDir, 'does-not-exist.md');
+    assert.throws(
+      () => parseCommonArgs(['node', 'dispatch.mjs', '--prompt-file', missing]),
+      /--prompt-file/,
+    );
+  });
+
+  it('throws when combined with -p', () => {
+    const file = path.join(scratchDir, 'brief-conflict.md');
+    fs.writeFileSync(file, 'content', 'utf8');
+    assert.throws(
+      () => parseCommonArgs(['node', 'dispatch.mjs', '-p', 'inline prompt', '--prompt-file', file]),
+      /--prompt-file/,
+    );
+  });
+
+  it('throws when combined with a positional prompt', () => {
+    const file = path.join(scratchDir, 'brief-conflict2.md');
+    fs.writeFileSync(file, 'content', 'utf8');
+    assert.throws(
+      () => parseCommonArgs(['node', 'dispatch.mjs', '--prompt-file', file, 'positional', 'prompt']),
+      /--prompt-file/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // SECTION: Prompt Formatting & Response Extraction
 // ---------------------------------------------------------------------------
 

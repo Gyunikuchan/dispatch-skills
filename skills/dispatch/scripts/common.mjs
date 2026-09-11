@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
  * @property {string|null} provider
  * @property {boolean} allowSameAgent
  * @property {boolean} help
+ * @property {string|null} promptFile
  */
 
 /**
@@ -339,6 +340,7 @@ export function parseCommonArgs(argv) {
     provider: null,
     allowSameAgent: false,
     help: false,
+    promptFile: null,
   };
 
   const positional = [];
@@ -351,6 +353,8 @@ export function parseCommonArgs(argv) {
       options.help = true;
     } else if (arg === '-p' || arg === '--prompt') {
       options.prompt = args[++i] || '';
+    } else if (arg === '--prompt-file') {
+      options.promptFile = args[++i] || null;
     } else if (arg === '-f' || arg === '--file' || arg === '--artifact') {
       const fileArg = args[++i];
       if (fileArg) options.files.push(fileArg);
@@ -414,9 +418,28 @@ export function parseCommonArgs(argv) {
       options.orchestrator = arg.slice('--orchestrator='.length);
     } else if (arg.startsWith('--provider=')) {
       options.provider = arg.slice('--provider='.length);
+    } else if (arg.startsWith('--prompt-file=')) {
+      options.promptFile = arg.slice('--prompt-file='.length);
     } else if (!arg.startsWith('-')) {
       positional.push(arg);
     }
+  }
+
+  if (options.promptFile) {
+    // Additive flag (see fill-template.mjs / references/alignment.md § Prompt Template Filling):
+    // it removes shell quoting of a filled review prompt, so a `-p`/positional prompt given
+    // alongside it is an ambiguous combination we refuse rather than silently concatenate.
+    if (options.prompt || positional.length > 0) {
+      throw new Error('--prompt-file cannot be combined with -p/--prompt or a positional prompt');
+    }
+    let fileContent;
+    try {
+      fileContent = fs.readFileSync(options.promptFile, 'utf8');
+    } catch {
+      throw new Error(`--prompt-file not found or unreadable: ${options.promptFile}`);
+    }
+    options.prompt = fileContent;
+    return options;
   }
 
   if (!options.prompt && positional.length > 0) {

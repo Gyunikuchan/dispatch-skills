@@ -78,6 +78,8 @@ Explicitly unhandled features or deferred follow-ups.
 
 #### Prompt template
 
+Populate via `dispatch`'s `fill-template.mjs` per `references/alignment.md` § Prompt Template Filling: `node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/dispatch-plan-review/SKILL.md --var "Plan Path=<path>" ... --out <path>`.
+
 Populate the template variables:
 - `<Plan Path>` — path to the attached plan.
 - `<Requirement>` — original user ask, verbatim.

@@ -283,6 +283,9 @@ When a review phase exhausts its allotted round budget before reaching full cons
 ### Fast Direct Execution for Trivial Tasks
 For mechanical one-line changes or renames classified as `trivial`, the orchestrator skips spawning background subagents and applies the edit directly, saving round-trip latency.
 
+### Write Subagent Git Guard
+Step 4's native write subagent is instructed to never run `git stash`, `git reset`, `git checkout -- <path>`, `git clean`, or any other command that rewrites or discards the working tree/index — the untracked `.scratch/` plan and walkthrough are not git-ignored and a `git stash -u` (or a failed pop) would sweep them up. Before/after comparisons (e.g. test counts) go through the verify command's own output or read-only `git diff` / `git status --porcelain`.
+
 ### Inspecting Delegate Review Progress
 External reviews run asynchronously in the background. If you want to check what a reviewer is currently doing, you can monitor the temp logs emitted during launch:
 ```bash
