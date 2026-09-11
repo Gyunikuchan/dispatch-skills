@@ -120,7 +120,11 @@ Tune review rigor, round budgets, and consensus requirements to match the scope 
 
 ### 3. Pinning Specific Reviewers (`(<pins>)`)
 
-Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`; the `dispatch` skill's `--provider` aliases, e.g. `antigravity` for `agy` or `claudecode` for `claude`, are also accepted and normalized to the canonical key):
+Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`; the `dispatch` skill's `--provider` aliases, e.g. `antigravity` for `agy` or `claudecode` for `claude`, are also accepted and normalized to the canonical key), or `all` to pin all available platforms:
+
+```markdown
+/implement-dispatch (all): Audit cryptographic key derivation and session storage
+```
 
 ```markdown
 /implement-dispatch (claude,agy): Implement OAuth2 PKCE authorization flow
@@ -150,7 +154,7 @@ Choose a level based on the risk and complexity of your change:
 
 ### Key Execution Mechanics
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
-- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Pins do not resurrect a phase configured off (`maxRounds: 0`).
+- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a same-agent target (`allowSameAgent: true`). Pins do not resurrect a phase configured off (`maxRounds: 0`).
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
 - **Consensus Enforcement**:
   - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists.

@@ -249,6 +249,83 @@ describe('resolveFlow', () => {
       );
       assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
     });
+
+    it('pins "all" dispatches to all live configured platforms regardless of level', () => {
+      // BASE_CONFIG has platforms: claude, agy, copilot, opencode
+      // LIVE_ALL: claude: true, agy: true, copilot: false, opencode: true
+      // At level 'low', code-review targetCount is 1, but pins: ['all'] dispatches all 3 live platforms
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', pins: ['all'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(
+        out['code-review'].targets.map(t => t.platform),
+        ['claude', 'agy', 'opencode']
+      );
+      const selfTarget = out['code-review'].targets.find(t => t.platform === 'claude');
+      assert.equal(selfTarget?.allowSameAgent, true);
+      // plan-review at level low has maxRounds=0, so targets is empty
+      assert.deepEqual(out['plan-review'].targets, []);
+
+      // At level 'medium', plan-review maxRounds > 0, so plan-review also dispatches all live platforms
+      const mediumOut = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['all'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(
+        mediumOut['plan-review'].targets.map(t => t.platform),
+        ['claude', 'agy', 'opencode']
+      );
+    });
+
+    it('pins "all" reports dropped offline platforms in droppedPins', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['all'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      // copilot is configured in BASE_CONFIG but offline in LIVE_ALL
+      assert.deepEqual(out.diagnostics.droppedPins['plan-review'], ['copilot']);
+      assert.deepEqual(out.diagnostics.droppedPins['code-review'], ['copilot']);
+    });
+
+    it('pins "all" throws when all configured platforms are unavailable', () => {
+      assert.throws(
+        () =>
+          resolveFlow(
+            { platform: 'claude', level: 'medium', pins: ['all'] },
+            { claude: false, agy: false, copilot: false, opencode: false },
+            BASE_CONFIG
+          ),
+        /All pinned platforms unavailable/
+      );
+    });
+
+    it('pins "all" normalizes case (ALL, All)', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', pins: ['ALL'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(
+        out['code-review'].targets.map(t => t.platform),
+        ['claude', 'agy', 'opencode']
+      );
+    });
+
+    it('pins "all" combined with a specific platform dedupes correctly', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', pins: ['agy', 'all'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(
+        out['code-review'].targets.map(t => t.platform),
+        ['agy', 'claude', 'opencode']
+      );
+    });
   });
 
   describe('targetCount', () => {
@@ -318,6 +395,20 @@ describe('resolveFlow', () => {
       );
       assert.equal(out['code-review'].targets.length, 1);
       assert.equal(out['code-review'].targets[0].platform, 'agy');
+    });
+
+    it('targetCount=0 does not skip when pins="all" is given — fans out fully', () => {
+      const config = withSections({ 'code-review': { targetCount: { low: 0 }, maxRounds: { low: 2 } } });
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', pins: ['all'] },
+        LIVE_ALL,
+        config
+      );
+      assert.deepEqual(
+        out['code-review'].targets.map(t => t.platform),
+        ['claude', 'agy', 'opencode']
+      );
+      assert.equal(out['code-review'].maxRounds, 2);
     });
 
     it('targetCount=0 with an all-dead pin still raises the all-pinned-unavailable error', () => {
@@ -633,6 +724,15 @@ describe('resolveFlow', () => {
     it('rejects an empty platforms map', () => {
       const config = withSections({ 'plan-review': { platforms: {} } });
       assert.match(validateConfig(config).join('\n'), /at least one platform/);
+    });
+
+    it('rejects a platform named "all" as a reserved keyword', () => {
+      const config = withSections({
+        'code-review': { platforms: { all: { model: 'm' } } },
+      });
+      const problems = validateConfig(config);
+      assert.equal(problems.length, 1);
+      assert.match(problems[0], /reserved pin keyword "all"/);
     });
 
     it('requires every knob except includeSelf', () => {

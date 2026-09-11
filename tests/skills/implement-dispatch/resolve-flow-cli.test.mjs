@@ -111,6 +111,13 @@ describe('resolve-flow CLI', () => {
     assert.match(stderr, /Unrecognized pin key\(s\): bogus, alsobogus/);
   });
 
+  it('accepts --pins=all in --flag=value form', () => {
+    const { status, stdout } = run('--platform=claude', '--pins=all');
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.ok(flow['code-review'].targets.length > 0);
+  });
+
   it('rejects an unrecognized --flag=value argument', () => {
     const { status, stderr } = run('--platform', 'claude', '--rounds=3');
     assert.equal(status, 1);

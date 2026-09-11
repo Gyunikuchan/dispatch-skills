@@ -26,14 +26,14 @@ Delegates return **claims**; the orchestrator adjudicates and applies them.
 Extends `dispatch`'s `references/alignment.md` § Invocation base grammar with `<level>` and `: <ask>`. Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defaults to `medium`, and the colon is optional.
 
 - `<level>` — `low`, `medium`, `high`, `xhigh`, `max`. Controls depth (wave caps, consensus requirements, tool-turn budgets), target breadth when unpinned, and model/effort configuration per phase.
-- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), or `dispatch`'s `--provider` aliases (e.g. `antigravity`, `claudecode`), normalized to the canonical key. Overrides breadth: fans out to exactly these providers, whatever the level's count.
+- `(<pins>)` — comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), or `dispatch`'s `--provider` aliases (e.g. `antigravity`, `claudecode`), normalized to the canonical key, or `all` to pin all configured platforms (including the orchestrator's own platform as a same-agent target). Overrides breadth: fans out to exactly these providers (or all available platforms when `all`), whatever the level's count.
 
 ## Flow Plan
 
 Resolve the flow plan at the end of Step 1 once scope is classified, and store the output as `flow`:
 
 ```bash
-node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
+node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...|all>]
 ```
 
 Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `opencode`). `--validate-only` checks the config schema alone and rejects every other flag.

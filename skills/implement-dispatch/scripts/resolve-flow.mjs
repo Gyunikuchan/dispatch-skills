@@ -4,7 +4,7 @@
  *
  * Usage:
  *   node resolve-flow.mjs --platform <key>
- *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...>]
+ *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...|all>]
  *   node resolve-flow.mjs --validate-only
  *
  * Outputs JSON to stdout describing plan-review, implementation, and code-review
@@ -31,6 +31,15 @@ const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf', 'toolTurns'];
 /** Knobs that may be omitted entirely; every other knob must define at least one level. */
 const OPTIONAL_KNOBS = ['includeSelf'];
+
+/**
+ * Normalizes a raw pin string (provider key or alias, case-insensitive) to its
+ * canonical provider key or the reserved "all" pin keyword.
+ */
+export function normalizePin(rawPin) {
+  const lower = rawPin.toLowerCase();
+  return PROVIDER_ALIASES[lower] ?? (lower === 'all' ? 'all' : rawPin);
+}
 
 // --- Level resolution ---
 
@@ -149,6 +158,10 @@ function validatePlatforms(section, platforms, problems) {
     problems.push(`${where} must define at least one platform (${DIFF_HINT}).`);
   }
   for (const key of keys) {
+    if (key === 'all') {
+      problems.push(`${where} cannot use reserved pin keyword "all" as a platform key (${DIFF_HINT}).`);
+      continue;
+    }
     const entry = platforms[key];
     if (!isPlainObject(entry)) {
       problems.push(`${where}.${key} must be an object (${DIFF_HINT}).`);
@@ -339,7 +352,7 @@ export function resolveFlow(options, liveness, config) {
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
   // to one target instead of being treated as unrecognized or as two separate targets.
-  const normalizedPins = rawPins?.map(p => PROVIDER_ALIASES[p.toLowerCase()] ?? p);
+  const normalizedPins = rawPins?.map(normalizePin);
   // Dedupe once at entry so a repeated `--pins x,x` cannot produce duplicate
   // dispatch targets in the same wave.
   const pins = normalizedPins ? [...new Set(normalizedPins)] : normalizedPins;
@@ -358,7 +371,7 @@ export function resolveFlow(options, liveness, config) {
   // Validate pins against the union of both review sections' platform keys
   if (pins && pins.length > 0) {
     const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(platformsOf(s))));
-    const unknown = pins.filter(p => !allKeys.has(p));
+    const unknown = pins.filter(p => p !== 'all' && !allKeys.has(p));
     if (unknown.length > 0) {
       throw new Error(
         `Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...allKeys].sort().join(', ')}`
@@ -368,6 +381,14 @@ export function resolveFlow(options, liveness, config) {
 
   const clamped = {};
   const droppedPins = {};
+
+  function expandPins(sectionName) {
+    if (!pins || pins.length === 0) return [];
+    const sectionKeys = Object.keys(platformsOf(sectionName));
+    return pins.includes('all')
+      ? [...new Set(pins.flatMap(p => (p === 'all' ? sectionKeys : p)))]
+      : pins;
+  }
 
   /**
    * Builds the live candidate list for one review section.
@@ -379,7 +400,8 @@ export function resolveFlow(options, liveness, config) {
     const allKeys = Object.keys(platforms);
 
     if (pins && pins.length > 0) {
-      const validPins = pins.filter(p => allKeys.includes(p));
+      const sectionPins = expandPins(sectionName);
+      const validPins = sectionPins.filter(p => allKeys.includes(p));
       const livePins = validPins.filter(p => liveness[p] === true);
       if (validPins.length > 0 && livePins.length === 0) {
         throw new Error(`All pinned platforms unavailable: ${validPins.join(', ')}`);
@@ -439,8 +461,9 @@ export function resolveFlow(options, liveness, config) {
     // both an unrecognized pin key and a pin that's configured but currently offline —
     // either way it's absent from the resolved targets and worth surfacing.
     if (maxRounds > 0 && pins && pins.length > 0) {
+      const sectionPins = expandPins(sectionName);
       const liveKeys = new Set(targets.map(t => t.platform));
-      const dropped = pins.filter(p => !liveKeys.has(p));
+      const dropped = sectionPins.filter(p => !liveKeys.has(p));
       if (dropped.length > 0) droppedPins[sectionName] = dropped;
     }
 
@@ -576,9 +599,9 @@ async function main() {
     process.exit(1);
   }
   if (opts.pins && opts.pins.length > 0) {
-    const normalizedPins = opts.pins.map(p => PROVIDER_ALIASES[p.toLowerCase()] ?? p);
+    const normalizedPins = opts.pins.map(normalizePin);
     const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {})));
-    const unknown = normalizedPins.filter(p => !allKeys.has(p));
+    const unknown = normalizedPins.filter(p => p !== 'all' && !allKeys.has(p));
     if (unknown.length > 0) {
       process.stderr.write(
         `Error: Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...allKeys].sort().join(', ')}\n`
