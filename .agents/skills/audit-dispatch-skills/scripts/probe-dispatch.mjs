@@ -10,7 +10,7 @@
  *                     whether it skipped the file or aborted the run.
  * The probes run separately so a runner that aborts on a denylisted file cannot mask the read result.
  *
- * Usage: node <skill>/scripts/probe-dispatch.mjs --run .scratch/audit-dispatch-skills/<run> [--modes] [--only a,b]
+ * Usage: node <skill>/scripts/probe-dispatch.mjs --run .scratch/audit/<run> [--modes] [--only a,b]
  *                                                [--timeout <s>] [--discover-only]
  *
  * Writes <run>/work/dispatch/summary.md, results.json, and per-target stdout/stderr captures.

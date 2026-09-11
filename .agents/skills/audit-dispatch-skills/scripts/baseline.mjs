@@ -9,7 +9,7 @@
  *                     exports no test mentions, per-file test counts, skill hash drift.
  * Prints a short digest; the files carry the detail.
  *
- * Usage: node <skill>/scripts/baseline.mjs --run .scratch/audit-dispatch-skills/<yyyy-mm-dd-hhmm>
+ * Usage: node <skill>/scripts/baseline.mjs --run .scratch/audit/<yyyy-mm-dd-hhmm>
  */
 
 import fs from 'node:fs';

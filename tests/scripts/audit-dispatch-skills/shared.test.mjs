@@ -21,21 +21,21 @@ describe('audit-dispatch-skills shared helpers', () => {
       assert.throws(() => resolveRunDirs(PROJECT_ROOT, []), /Missing --run/);
     });
 
-    it('throws when the run path is outside .scratch/audit-dispatch-skills/', () => {
+    it('throws when the run path is outside .scratch/audit/', () => {
       assert.throws(
         () => resolveRunDirs(PROJECT_ROOT, ['--run', '.scratch/plan/2026-09-11-foo']),
-        /--run must be under \.scratch\/audit-dispatch-skills\//,
+        /--run must be under \.scratch\/audit\//,
       );
     });
 
     it('returns workDir and a forward-slash rel path for a valid run', () => {
       const { runDir, workDir, rel } = resolveRunDirs(PROJECT_ROOT, [
         '--run',
-        '.scratch/audit-dispatch-skills/2026-09-11-1853',
+        '.scratch/audit/2026-09-11-1853',
       ]);
-      assert.equal(toPosix(path.relative(PROJECT_ROOT, runDir)), '.scratch/audit-dispatch-skills/2026-09-11-1853');
-      assert.equal(toPosix(path.relative(PROJECT_ROOT, workDir)), '.scratch/audit-dispatch-skills/2026-09-11-1853/work');
-      assert.equal(rel(workDir), '.scratch/audit-dispatch-skills/2026-09-11-1853/work');
+      assert.equal(toPosix(path.relative(PROJECT_ROOT, runDir)), '.scratch/audit/2026-09-11-1853');
+      assert.equal(toPosix(path.relative(PROJECT_ROOT, workDir)), '.scratch/audit/2026-09-11-1853/work');
+      assert.equal(rel(workDir), '.scratch/audit/2026-09-11-1853/work');
     });
   });
 

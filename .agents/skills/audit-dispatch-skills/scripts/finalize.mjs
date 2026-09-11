@@ -4,12 +4,12 @@
  * @file finalize.mjs
  * @description Closes an audit run: checks the repo against the baseline snapshot, relocates
  * every working file to OS temp, and appends the relocation path and integrity result to the
- * report, leaving `.scratch/audit-dispatch-skills/<run>/report.md` as the run's only file in the repo.
+ * report, leaving `.scratch/audit/<run>/report.md` as the run's only file in the repo.
  *
  * Relocates rather than deletes (the repo's scratch convention), so findings and probe captures
  * stay inspectable after the run.
  *
- * Usage: node <skill>/scripts/finalize.mjs --run .scratch/audit-dispatch-skills/<yyyy-mm-dd-hhmm>
+ * Usage: node <skill>/scripts/finalize.mjs --run .scratch/audit/<yyyy-mm-dd-hhmm>
  */
 
 import fs from 'node:fs';

@@ -10,12 +10,12 @@ A **report-only** audit of the `dispatch-skills` repository. The standard is `.a
 
 Paths are relative to the repo root. `<skill>` is this skill's directory (`.agents/skills/audit-dispatch-skills` in Antigravity, `.claude/skills/audit-dispatch-skills` in Claude Code). `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start.
 
-**Containment**: every working file (baseline, probe captures, findings) lives under `.scratch/audit-dispatch-skills/<run>/work/`; the report is `.scratch/audit-dispatch-skills/<run>/report.md`. Step 6 relocates `work/` to OS temp, leaving only the report in the repository. A run that stops early keeps `work/` in place for resumption.
+**Containment**: every working file (baseline, probe captures, findings) lives under `.scratch/audit/<run>/work/`; the report is `.scratch/audit/<run>/report.md`. Step 6 relocates `work/` to OS temp, leaving only the report in the repository. A run that stops early keeps `work/` in place for resumption.
 
 ## 1. Baseline
 
 ```bash
-node <skill>/scripts/baseline.mjs --run .scratch/audit-dispatch-skills/<run>
+node <skill>/scripts/baseline.mjs --run .scratch/audit/<run>
 ```
 
 Writes to `work/`: `git-status.txt` (repo snapshot, audit output excluded), `tests.txt` (full suite with coverage, skipping `npm test`'s pretest hash write), and `metrics.md` (doc token footprint, broken links/anchors, script structure, exports no test names, test counts, hash drift). Prints a digest; a failing test is audit evidence, not a stop.
@@ -25,7 +25,7 @@ Writes to `work/`: `git-status.txt` (repo snapshot, audit output excluded), `tes
 ## 2. Launch the dispatch probe
 
 ```bash
-node <skill>/scripts/probe-dispatch.mjs --run .scratch/audit-dispatch-skills/<run>
+node <skill>/scripts/probe-dispatch.mjs --run .scratch/audit/<run>
 ```
 
 Run it **backgrounded** (live prompts take minutes). Claude Code: Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket). Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows a re-run.
@@ -45,8 +45,8 @@ Spawn every scope in a single message so they run in parallel, as native subagen
 
 ```
 Audit <scope path> in the dispatch-skills repo. Read <skill>/references/<deep|broad>.md and follow it.
-Work dir: .scratch/audit-dispatch-skills/<run>/work (baseline evidence: metrics.md, tests.txt).
-Write findings to .scratch/audit-dispatch-skills/<run>/work/findings/<scope-id>.md; write nothing anywhere else.
+Work dir: .scratch/audit/<run>/work (baseline evidence: metrics.md, tests.txt).
+Write findings to .scratch/audit/<run>/work/findings/<scope-id>.md; write nothing anywhere else.
 Return only: finding counts by severity and the findings path.
 ```
 
@@ -64,7 +64,7 @@ Read every findings file and `work/dispatch/summary.md` (wait for all subagents 
 
 ## 5. Write the report
 
-`.scratch/audit-dispatch-skills/<run>/report.md` is self-contained — it quotes what it needs from `work/` rather than linking there. In this order:
+`.scratch/audit/<run>/report.md` is self-contained — it quotes what it needs from `work/` rather than linking there. In this order:
 
 1. **Summary**: severity counts, top five fixes by impact, test totals, one-line probe verdict.
 2. **Dispatch platforms**: discovery table, not-found list, live-probe table (copied from `work/dispatch/summary.md`), cause of each failure.
@@ -78,12 +78,12 @@ Read every findings file and `work/dispatch/summary.md` (wait for all subagents 
 ## 6. Finalize
 
 ```bash
-node <skill>/scripts/finalize.mjs --run .scratch/audit-dispatch-skills/<run>
+node <skill>/scripts/finalize.mjs --run .scratch/audit/<run>
 ```
 
 Compares the repo against `work/git-status.txt`, moves everything in the run dir except `report.md` to an `audit-dispatch-skills-<run>-*` directory in OS temp, and appends the relocation path and integrity result to the report.
 
-**Done when:** the script prints `Repo integrity: unchanged` and `.scratch/audit-dispatch-skills/<run>/` holds only `report.md`. A `CHANGED` result names files touched during the run; attribute each (a subagent write or concurrent user edits) in the reply.
+**Done when:** the script prints `Repo integrity: unchanged` and `.scratch/audit/<run>/` holds only `report.md`. A `CHANGED` result names files touched during the run; attribute each (a subagent write or concurrent user edits) in the reply.
 
 ## 7. Hand off
 

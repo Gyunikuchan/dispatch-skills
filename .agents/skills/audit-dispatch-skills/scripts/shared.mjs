@@ -2,8 +2,8 @@
  * @file shared.mjs
  * @description Run-directory layout and repo-integrity helpers shared by audit-dispatch-skills scripts.
  *
- * Layout: `.scratch/audit-dispatch-skills/<run>/report.md` is the only file that outlives the run;
- * every working file lives under `.scratch/audit-dispatch-skills/<run>/work/` until `finalize.mjs` relocates it.
+ * Layout: `.scratch/audit/<run>/report.md` is the only file that outlives the run;
+ * every working file lives under `.scratch/audit/<run>/work/` until `finalize.mjs` relocates it.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,7 @@ import path from 'node:path';
 
 // Audit output is excluded from integrity snapshots: `.scratch/` is tracked-visible, and the
 // audit's own writes would otherwise read as repo changes.
-const AUDIT_PREFIX = '.scratch/audit-dispatch-skills/';
+const AUDIT_PREFIX = '.scratch/audit/';
 
 export function resolveRepoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
