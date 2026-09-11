@@ -1,0 +1,26 @@
+# Broad audit brief
+
+You audit **across** skills and the repository around them; deep auditors own each skill's internals. Open skill files to check relationships between them, not to re-audit one in isolation.
+
+Scope: how `skills/*` fit together; `.agents/AGENTS.md` (`.claude/CLAUDE.md` symlinks to it); root `README.md`; `scripts/`; `tests/integration/`, `tests/scripts/`, and the test tree layout; `package.json`, `.husky/`, `.gitignore`, `.gitattributes`, `skills-lock.json`, `.opencode/`, `.vscode/`, `.agents/hooks.json`, `.agents/mcp_config.json`.
+
+Read first: `.agents/AGENTS.md` (the standard), `.agents/skills/writing-for-agents/SKILL.md` and its `SKILL-MECHANICS.md`, then `skills/dispatch/references/alignment.md` and each skill's `SKILL.md` frontmatter and section headings. Use the work dir's `metrics.md` and `tests.txt` as leads.
+
+Write findings in the format of [findings.md](findings.md).
+
+## Axes
+
+Apply every axis and record each in the coverage table.
+
+- **`dependency`**: The unidirectional flow in `AGENTS.md`. Search each upstream skill for downstream names (allowed: `dispatch`'s `references/alignment.md` and its gated Skill Alignment section). References by path where a skill name belongs. Standalone installs: does each skill work with only its declared dependencies, and is graceful degradation stated?
+- **`alignment`**: `alignment.md` as the single source — conventions restated or drifted in the review-flow skills; shared review schemas (claim format, severity, adjudication, resolutions log, user report) identical where they must be; the same review behaving compatibly when invoked standalone and from `implement-dispatch`; plan-review/code-review parity against `tests/integration/review-skill-parity.test.mjs`.
+- **`consistency`**: Terminology and leading words across skills (cascade, delegate, claim, adjudicate, consensus), flag names and defaults, structure and tone across skill READMEs, install commands, cross-links.
+- **`hub-docs`**: Root `README.md` against the Documentation Standards (value proposition, install, catalog with dependencies, quick start, architecture highlights): accurate today, enticing, high level.
+- **`context-files`**: `AGENTS.md` graded against `writing-for-agents` as always-loaded context (no-ops, duplication with skills or the environment, stale rules, negation) and checked for accuracy against the repo as it is.
+- **`tooling`**: `package.json` scripts; the husky pre-commit pattern against the real file layout; which files `scripts/generate-hashes.mjs` hashes versus which it should; `scripts/validate-configs.mjs` search paths; ignore and attribute rules; lockfile and agent config files.
+- **`tests`**: Test tree mirroring source; missing cross-skill guards (doc-versus-`--help` flag drift, dependency direction, link integrity); redundant suites; `npm test` side effects.
+- **`security`**: The read-only boundary end to end (dispatch → reviews → `implement-dispatch`), what content reaches delegates, secrets committed in config.
+- **`portability`**: Shell snippets across every doc against the `AGENTS.md` portability rule.
+- **`opportunities`**: Simplifications, code or conventions to hoist into a shared home, files or skills to merge or split, guard tests that would retire a manual review item.
+
+**Done when:** every axis has a coverage row, `Files opened` lists every file read, and every finding cites `path:line` evidence.
