@@ -1,6 +1,6 @@
 # Dispatch Skills Agent Guide
 
-Building agent skills for delegating work to external coding-agent CLIs and reviewing results. Distributed via GitHub (`npx skills`).
+Agent skills for delegating work to external coding-agent CLIs and reviewing results. Distributed via GitHub (`npx skills`).
 
 Single source of truth for agent rules (`.claude/CLAUDE.md` symlinks here); edit this file (`.agents/AGENTS.md`).
 
@@ -8,6 +8,7 @@ Single source of truth for agent rules (`.claude/CLAUDE.md` symlinks here); edit
 
 Deliver high-confidence cross-agent delegation and review with minimal token overhead and minimal human babysitting.
 
+- **Trade-off Hierarchy (Correctness > Token Efficiency > Speed)**: Spend tokens to verify code rather than guess or skip; never sacrifice correctness for efficiency. Optimize context hygiene and token density before raw execution speed.
 - **Claims, Not Verdicts (Review Rigor)**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: a verified finding is accepted regardless of vote count; an unverified finding is rejected even if unanimous. Axis coverage is explicit and visible.
 - **Structural Least Privilege (Security & Isolation)**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools). File writes and destructive actions belong exclusively to the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
 - **Context Hygiene & Token Density (Efficiency)**: Protect the orchestrator's context window. Execution traces and subprocess logs stream out-of-context to temp logs (`.scratch/` or OS temp); only concise syntheses, banners, and log paths reach the orchestrator. High token density via progressive disclosure.
@@ -54,17 +55,23 @@ dispatch → (nothing)
 - **Upstream skills never name downstream skills** in prose or frontmatter, except `dispatch`'s `references/alignment.md` and the gated "Skill Alignment" pointer section in `dispatch/SKILL.md`, which may name `implement-dispatch`, `dispatch-plan-review`, `dispatch-code-review` — those conventions exist to serve exactly those three skills.
 - **Graceful degradation**: State absence of optional dependencies and run the reduced flow.
 
-## Review Report Standards
+## Documentation Standards
 
-Review skills share the severity ladder (`MUST-FIX` / `SHOULD-FIX` / `CONSIDER`) and finding grammar:
+Differentiate repository hub documentation from individual skill manuals:
 
-```
-<locus> — <tag>: <defect> → <required change>
-```
+### Root README (`README.md`)
+High-level entry point designed to entice and orient without overwhelming:
+- **Core Value Proposition**: Overarching pitch and workflow in 2–3 sentences.
+- **Installation**: Quick install via `npx skills add Gyunikuchan/dispatch-skills --all` or `--skill <name>`.
+- **Skills Catalog**: High-level table listing skills, dependencies, and punchy summaries with links to each skill directory.
+- **Quick Start**: Concise copy-paste prompt examples demonstrating core capabilities.
+- **Architecture Highlights**: Key design pillars (structural read-only, context hygiene, evidence-based review).
 
-- `<locus>` is `<file>:L<line>` for code and `## <Section>` for plans.
-- Open reports with `## Verdict` and `## Axis Coverage` (explicitly accounting for every axis).
-- Adjudication, the resolutions log, and the user report are single-sourced in `dispatch`'s `references/alignment.md`; ladder, grammar, and report skeleton stay inline in both prompt templates, checked by a parity test. Modifying any of them requires updating both review skills simultaneously.
+### Skill Manuals (`skills/*/README.md`)
+Targeted strictly at the human developer using the specific skill:
+- **What It Does**: Clear explanation of purpose, core concepts, and key features.
+- **How to Use It**: Prerequisites, installation command, realistic invocation examples (slash commands / prompt templates), and configuration options.
+- **Nuances, Quirks & Troubleshooting**: CLI provider quirks, scratch log inspection, error modes, and edge cases.
 
 ## Authoring & Cross-Platform Standards
 
@@ -72,12 +79,12 @@ Format skills as Markdown with YAML frontmatter (`name`, `description`) followin
 
 Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, and Copilot:
 
+- **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `dispatch`'s `references/alignment.md`. Ensure alignment, downward independence, and compatibility across standalone and orchestrated invocations.
 - **Naming**: kebab-case for skill identifiers and filenames.
 - **Paths**: Relative paths with forward slashes instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
 - **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`; an orchestrator owning the full lifecycle relocates its scratch artifacts to OS temp on completion, while standalone reviews retain theirs (see `dispatch`'s `references/alignment.md` § Artifact Lifecycle for review-flow artifacts).
-- **Docs**: Every skill README must include install and usage examples.
 
 ### Comments
 
