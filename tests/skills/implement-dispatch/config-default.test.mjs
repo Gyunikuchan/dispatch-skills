@@ -6,6 +6,7 @@ import { describe, it } from 'node:test';
 
 import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
 import {
+  getImplementDispatchConfigCandidates,
   loadConfig,
   resolveFlow,
   validateConfig,
@@ -159,102 +160,113 @@ describe('loadConfig', () => {
   });
 
   describe('project-root override', () => {
-    const overrideDir = path.join(PROJECT_ROOT, '.implement-dispatch');
+    // NOTE: every case uses a temp project root; writing `.implement-dispatch/` under the
+    // real PROJECT_ROOT raced parallel test files loading config there, and its cleanup
+    // deleted any real override a developer kept in the repo.
 
-    function withOverrides(files, fn) {
-      mkdirSync(overrideDir, { recursive: true });
-      for (const [name, content] of Object.entries(files)) {
-        writeFileSync(path.join(overrideDir, name), content, 'utf8');
-      }
+    /**
+     * Creates a temp skill root (with `skillFiles`) and a temp project root (with
+     * `overrideFiles` under `.implement-dispatch/`), runs `fn`, then removes both.
+     */
+    function withRoots({ skillFiles = {}, overrideFiles = {} }, fn) {
+      const skillRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-skill-'));
+      const projectRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-project-'));
       try {
-        fn();
+        mkdirSync(path.join(skillRoot, 'scripts'));
+        for (const [name, content] of Object.entries(skillFiles)) {
+          writeFileSync(path.join(skillRoot, name), content, 'utf8');
+        }
+        if (Object.keys(overrideFiles).length > 0) {
+          const overrideDir = path.join(projectRoot, '.implement-dispatch');
+          mkdirSync(overrideDir);
+          for (const [name, content] of Object.entries(overrideFiles)) {
+            writeFileSync(path.join(overrideDir, name), content, 'utf8');
+          }
+        }
+        fn({ scriptDir: path.join(skillRoot, 'scripts'), projectRoot });
       } finally {
-        rmSync(overrideDir, { recursive: true, force: true });
+        rmSync(skillRoot, { recursive: true, force: true });
+        rmSync(projectRoot, { recursive: true, force: true });
       }
     }
 
+    it('defaults projectRoot to the real PROJECT_ROOT', () => {
+      const expected = path.join(PROJECT_ROOT, '.implement-dispatch', 'config.local.jsonc');
+      assert.equal(getImplementDispatchConfigCandidates()[0], expected);
+    });
+
     it('prefers project-root config.local.jsonc over project-root config.jsonc', () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
-      try {
-        mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
-        withOverrides(
-          {
+      withRoots(
+        {
+          skillFiles: { 'config.local.jsonc': '{ "marker": "skill-local" }' },
+          overrideFiles: {
             'config.local.jsonc': '{ "marker": "project-local" }',
             'config.jsonc': '{ "marker": "project-jsonc" }',
           },
-          () => {
-            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-local' });
-          }
-        );
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+        },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { projectRoot }), { marker: 'project-local' });
+        }
+      );
     });
 
     it('prefers project-root config.local.jsonc over skill-local config.local.jsonc', () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
-      try {
-        mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
-        withOverrides(
-          {
-            'config.local.jsonc': '{ "marker": "project-local" }',
-          },
-          () => {
-            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'project-local' });
-          }
-        );
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+      withRoots(
+        {
+          skillFiles: { 'config.local.jsonc': '{ "marker": "skill-local" }' },
+          overrideFiles: { 'config.local.jsonc': '{ "marker": "project-local" }' },
+        },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { projectRoot }), { marker: 'project-local' });
+        }
+      );
     });
 
     it('prefers skill-local config.local.jsonc over project-root config.jsonc', () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
-      try {
-        mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
-        withOverrides(
-          {
-            'config.jsonc': '{ "marker": "project-jsonc" }',
-          },
-          () => {
-            assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-local' });
-          }
-        );
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+      withRoots(
+        {
+          skillFiles: { 'config.local.jsonc': '{ "marker": "skill-local" }' },
+          overrideFiles: { 'config.jsonc': '{ "marker": "project-jsonc" }' },
+        },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { projectRoot }), { marker: 'skill-local' });
+        }
+      );
     });
 
     it('falls back to skill-local config.local.jsonc when no project override exists', () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
-      try {
-        mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.local.jsonc'), '{ "marker": "skill-local" }', 'utf8');
-        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-jsonc" }', 'utf8');
-        assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-local' });
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+      withRoots(
+        {
+          skillFiles: {
+            'config.local.jsonc': '{ "marker": "skill-local" }',
+            'config.jsonc': '{ "marker": "skill-jsonc" }',
+          },
+        },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { projectRoot }), { marker: 'skill-local' });
+        }
+      );
     });
 
     it('falls back to skill-local config.jsonc when neither project override nor skill-local config.local.jsonc exists', () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
-      try {
-        mkdirSync(path.join(root, 'scripts'));
-        writeFileSync(path.join(root, 'config.jsonc'), '{ "marker": "skill-jsonc" }', 'utf8');
-        assert.deepEqual(loadConfig(path.join(root, 'scripts')), { marker: 'skill-jsonc' });
-      } finally {
-        rmSync(root, { recursive: true, force: true });
-      }
+      withRoots(
+        { skillFiles: { 'config.jsonc': '{ "marker": "skill-jsonc" }' } },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { projectRoot }), { marker: 'skill-jsonc' });
+        }
+      );
     });
 
     it('is ignored under defaultOnly', () => {
-      withOverrides({ 'config.local.jsonc': '{ "marker": "project-override" }' }, () => {
-        assert.deepEqual(validateConfig(loadConfig(undefined, { defaultOnly: true })), []);
-      });
+      withRoots(
+        {
+          skillFiles: { 'config.default.jsonc': '{ "marker": "default" }' },
+          overrideFiles: { 'config.local.jsonc': '{ "marker": "project-override" }' },
+        },
+        ({ scriptDir, projectRoot }) => {
+          assert.deepEqual(loadConfig(scriptDir, { defaultOnly: true, projectRoot }), { marker: 'default' });
+        }
+      );
     });
   });
 });

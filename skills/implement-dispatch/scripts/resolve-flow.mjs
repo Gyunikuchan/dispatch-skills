@@ -120,11 +120,12 @@ export function getImplementDispatchConfigCandidates(scriptDir = __dirname, proj
   });
 }
 
-export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
+/** `projectRoot` is injectable so tests never write overrides into the real repository. */
+export function loadConfig(scriptDir = __dirname, { defaultOnly = false, projectRoot = PROJECT_ROOT } = {}) {
   const { config } = loadSkillConfig({
     skillRoot: path.resolve(scriptDir, '..'),
     projectDirName: '.implement-dispatch',
-    projectRoot: PROJECT_ROOT,
+    projectRoot,
     defaultOnly,
   });
   return config;
