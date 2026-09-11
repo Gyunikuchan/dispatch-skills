@@ -16,16 +16,21 @@
  *   node resolve-artifact-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>]
  *                                   [--kind plan|walkthrough|both] [--orchestrator <name>]
  *
- * `--slug` is optional: when omitted it is derived from the current git branch
- * (prefix stripped, kebab-cased). Derivation fails on a protected branch
- * (main/master/develop/trunk) or detached HEAD — pass `--slug` explicitly there.
+ * `--slug` is optional: when omitted it is derived, in order, from (1) the current git
+ * branch (prefix stripped, kebab-cased) or (2) the active orchestrator's own
+ * conversation/session id (truncated to 8 chars, prefixed `conversation-`). Branch
+ * derivation fails on a protected branch (main/master/develop/trunk) or detached HEAD;
+ * conversation-id derivation fails when the orchestrator exposes no such env var (e.g.
+ * OpenCode, today) — pass `--slug` explicitly if both fail.
  *
  * `--orchestrator` overrides the auto-detected orchestrator platform (same
  * detection `dispatch` uses); it gates native-tier scanning, which only ever
- * applies to platforms with a known native artifact (currently `agy`).
+ * applies to platforms with a known native artifact (currently `agy`), and is also
+ * the platform consulted for conversation-id slug derivation.
  *
- * Outputs JSON: `{ slug, date, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
- * `tier` is `native`, `scratch-existing`, or `scratch-new`.
+ * Outputs JSON: `{ slug, slugSource, date, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
+ * `tier` is `native`, `scratch-existing`, or `scratch-new`. `slugSource` is
+ * `explicit`, `branch`, or `conversation`.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
@@ -130,6 +135,70 @@ export function getCurrentBranch(cwd = PROJECT_ROOT) {
   if (res.status !== 0) return null;
   const branch = (res.stdout ?? '').trim();
   return branch && branch !== 'HEAD' ? branch : null;
+}
+
+/**
+ * Env vars that carry a conversation (preferred) or session id for each orchestrator,
+ * in preference order — checked only for the orchestrator actually detected, so a stray
+ * env var from another tool never leaks into the derived key.
+ */
+const CONVERSATION_ID_ENV_VARS = {
+  agy: ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID'],
+  // Verified equal to the conversation id; CLAUDE_CODE_HOST_SESSION_ID is the desktop
+  // wrapper's own id and is not used here.
+  claude: ['CLAUDE_CODE_SESSION_ID'],
+  copilot: ['COPILOT_CLI_SESSION_ID'],
+  // OpenCode exposes no documented conversation/session id env var to tool subprocesses
+  // (checked against `opencode --help` / `opencode run --help` and references/providers.md) —
+  // deriving a conversation-slug key for it is not possible; callers fall through to the
+  // existing hard error when branch derivation also fails.
+  opencode: [],
+};
+
+/**
+ * Derives a `conversation-<8 chars>` slug fallback key from the active orchestrator's own
+ * conversation/session id env var. Used only when both `--slug` and branch derivation have
+ * failed (protected branch / detached HEAD).
+ *
+ * @param {{ orchestrator?: string|null, env?: NodeJS.ProcessEnv }} [options]
+ * @returns {string|null} `null` when the orchestrator is unknown, has no id env var
+ *   configured, the env var is unset, or sanitization leaves nothing usable.
+ */
+export function deriveConversationKey({ orchestrator = detectOrchestrator(), env = process.env } = {}) {
+  const envVars = CONVERSATION_ID_ENV_VARS[orchestrator] ?? [];
+  for (const key of envVars) {
+    const raw = env[key];
+    if (!raw) continue;
+    // Truncate before sanitizing trailing dashes: an 8-char slice of a hyphenated id can
+    // itself end in `-`, which would violate SLUG_PATTERN if left untrimmed.
+    const truncated = raw.slice(0, 8).replace(/-+$/, '');
+    const sanitized = sanitizeSlug(truncated);
+    if (sanitized) return `conversation-${sanitized}`;
+  }
+  return null;
+}
+
+/**
+ * Resolves the artifact slug and its source, in precedence order: explicit `--slug` →
+ * branch-derived → orchestrator conversation id. `null` when every source fails — the
+ * caller (CLI) reports a single error naming all three.
+ *
+ * @param {{ explicit?: string, branch?: string|null, orchestrator?: string|null, env?: NodeJS.ProcessEnv }} [options]
+ * @returns {{ slug: string, slugSource: 'explicit'|'branch'|'conversation' } | { slug: null, slugSource: null }}
+ */
+export function resolveSlug({ explicit, branch = getCurrentBranch(), orchestrator = detectOrchestrator(), env = process.env } = {}) {
+  if (explicit !== undefined) {
+    return { slug: explicit, slugSource: 'explicit' };
+  }
+  const fromBranch = deriveSlugFromBranch(branch);
+  if (fromBranch) {
+    return { slug: fromBranch, slugSource: 'branch' };
+  }
+  const fromConversation = deriveConversationKey({ orchestrator, env });
+  if (fromConversation) {
+    return { slug: fromConversation, slugSource: 'conversation' };
+  }
+  return { slug: null, slugSource: null };
 }
 
 // --- Discovery: native tier ---
@@ -391,23 +460,25 @@ function main() {
   }
   const kinds = opts.kind === 'both' ? ['plan', 'walkthrough'] : [opts.kind];
 
-  let slug = opts.slug;
   // typeof-first for the same reason as findExistingScratchArtifact/resolveArtifacts:
   // harmless today (argv values are always strings) but keeps the guard shape uniform.
-  if (slug !== undefined && (typeof slug !== 'string' || !SLUG_PATTERN.test(slug))) {
-    process.stderr.write(`Error: Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})\n`);
+  if (opts.slug !== undefined && (typeof opts.slug !== 'string' || !SLUG_PATTERN.test(opts.slug))) {
+    process.stderr.write(`Error: Slug "${opts.slug}" must be kebab-case (${SLUG_PATTERN.source})\n`);
     process.exit(1);
   }
-  if (slug === undefined) {
-    const branch = getCurrentBranch();
-    slug = deriveSlugFromBranch(branch);
-    if (!slug) {
-      process.stderr.write(
-        `Error: Could not derive a slug from the current branch ("${branch ?? 'unknown'}"). ` +
-          `Pass --slug <kebab-case-slug> explicitly.\n`,
-      );
-      process.exit(1);
-    }
+
+  const branch = getCurrentBranch();
+  const { slug, slugSource } = resolveSlug({
+    explicit: opts.slug,
+    branch,
+    orchestrator: opts.orchestrator ?? detectOrchestrator(),
+  });
+  if (!slug) {
+    process.stderr.write(
+      `Error: Could not derive a slug from the current branch ("${branch ?? 'unknown'}") ` +
+        `or the active orchestrator's conversation id. Pass --slug <kebab-case-slug> explicitly.\n`,
+    );
+    process.exit(1);
   }
 
   if (opts.date !== undefined && !isValidDate(opts.date)) {
@@ -428,7 +499,7 @@ function main() {
     process.exit(1);
   }
 
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  process.stdout.write(JSON.stringify({ ...result, slugSource }, null, 2) + '\n');
 }
 
 if (isMainModule(import.meta.url)) {

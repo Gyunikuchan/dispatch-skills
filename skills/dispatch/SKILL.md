@@ -7,14 +7,14 @@ description: Dispatch a bounded read-only task across local and external agent C
 
 Dispatch a bounded **read-only** task through the agent **cascade** (investigation, research, plan/code reviews). The orchestrator owns the brief, judgment, edits, and commit; the delegate CLI inspects and analyzes.
 
-The cascade, in order — this file is the single source of truth for it:
+The cascade order and per-provider model/effort come from [config.default.jsonc](config.default.jsonc) — see [Configuration](#configuration) below. Its shipped default order is:
 
 1. **Claude Code** (`claude`).
 2. **Antigravity 2.0** (`agy`).
 3. **GitHub Copilot** (`copilot`).
-4. **OpenCode** (`opencode`) against whatever provider/model `opencode.jsonc` configures — local LM Studio by default when unconfigured.
+4. **OpenCode** (`opencode`) against whatever provider/model `opencode.jsonc` configures, or opencode's own CLI default when unconfigured — dispatch assumes no particular provider.
 
-The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
+A platform omitted from the loaded config is never dispatched, regardless of order. The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
@@ -102,6 +102,18 @@ Deliver response to the user prefixed by provider (`[Claude Code]`, `[Antigravit
 | `--json` | Request structured JSON output (opencode provider only) | `--json` |
 | `-a <name>` | Override agent name (opencode provider only) | `-a delegate` |
 | `-v` | Stream live trace (terminal debugging only; suppressed when piped) | `-v` |
+| `--no-config` | Skip loading the cascade config entirely; requires `--provider` | `--no-config --provider claude` |
+| `--validate-only` | Validate the loaded config and exit (no dispatch) | `--validate-only` |
+
+---
+
+## Configuration
+
+Cascade order and per-provider model/effort come from a JSONC config, loaded wholly (no merging) from the first of, in precedence order: `<project-root>/.dispatch/config.local.jsonc`, `config.local.jsonc` next to this skill, `<project-root>/.dispatch/config.jsonc`, `config.jsonc` next to this skill, then the shipped [config.default.jsonc](config.default.jsonc). Copy the default and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it for one project or one machine.
+
+Schema: `{ "platforms": { "<claude|agy|copilot|opencode>": { "model"?: string | string[], "effort"?: string } } }`. Key order is cascade order; a platform key omitted entirely means "never dispatched" (distinct from an empty `{}` entry, which dispatches with no `-m`/`-e` override). `model` may be an array for `claude` only, tried in order as fallback models within that one cascade slot. CLI `-m`/`-e` always win over the config entry for the resolved provider.
+
+Run `node scripts/dispatch.mjs --validate-only` to check the loaded config's shape without dispatching anything.
 
 ---
 

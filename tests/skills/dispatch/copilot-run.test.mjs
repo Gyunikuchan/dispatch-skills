@@ -2,8 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  DEFAULT_COPILOT_MODEL,
-  DEFAULT_COPILOT_EFFORT,
+  buildCopilotArgs,
   getCopilotDesktopCandidates,
   getCopilotVscodeCandidates,
   getCopilotCliCandidates,
@@ -20,9 +19,16 @@ import {
 
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
   describe('constants & defaults', () => {
-    it('defines default model and effort', () => {
-      assert.equal(DEFAULT_COPILOT_MODEL, 'gpt-5.6-luna');
-      assert.equal(DEFAULT_COPILOT_EFFORT, 'max');
+    it('omits -m/-e entirely when model/effort are null (no hardcoded default)', () => {
+      const args = buildCopilotArgs('prompt', { model: null, effort: null });
+      assert.ok(!args.includes('--model'));
+      assert.ok(!args.includes('--effort'));
+    });
+
+    it('includes -m/-e when model/effort are provided (e.g. from dispatch config)', () => {
+      const args = buildCopilotArgs('prompt', { model: 'gpt-5.6-luna', effort: 'max' });
+      assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.6-luna');
+      assert.equal(args[args.indexOf('--effort') + 1], 'max');
     });
   });
 

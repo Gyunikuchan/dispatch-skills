@@ -101,9 +101,6 @@ export { isExecutableFile } from './common.mjs';
 // SECTION: Constants (tweak these)
 // ============================================================================
 
-export const DEFAULT_COPILOT_MODEL = 'gpt-5.6-luna';
-export const DEFAULT_COPILOT_EFFORT = 'max';
-
 /**
  * Execution modes in cascade preference order: Copilot Desktop > VS Code Extension > CLI.
  * The single source of truth for mode metadata — every mode-aware function below
@@ -132,8 +129,8 @@ export async function runCopilot(options = {}) {
   const {
     prompt,
     files = [],
-    model = DEFAULT_COPILOT_MODEL,
-    effort = DEFAULT_COPILOT_EFFORT,
+    model = null,
+    effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
     verbose = false,
@@ -148,8 +145,8 @@ export async function runCopilot(options = {}) {
   const sessionLogger = createSessionLogger('copilot');
   const initialGitStatus = getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
-  const effectiveModel = model || DEFAULT_COPILOT_MODEL;
-  const effectiveEffort = effort || DEFAULT_COPILOT_EFFORT;
+  const effectiveModel = model || null;
+  const effectiveEffort = effort || null;
 
   let lastResult = null;
 
@@ -245,6 +242,21 @@ function createNoTargetsError() {
 }
 
 /**
+ * Builds the `copilot -p` argument array. `model`/`effort` are omitted entirely when
+ * falsy so the Copilot CLI's own default applies — dispatch ships no hardcoded fallback.
+ * @param {string} argvPrompt
+ * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @returns {string[]}
+ */
+export function buildCopilotArgs(argvPrompt, { model, effort } = {}) {
+  const args = ['-p', argvPrompt];
+  if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
+  args.push('--mode', 'plan');
+  return args;
+}
+
+/**
  * Spawns Copilot on a single resolved target and resolves once the process exits,
  * enforcing the timeout and buffer caps and checking git integrity.
  * @returns {Promise<RunCopilotResult>}
@@ -262,10 +274,7 @@ function executeOnTarget({
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot');
-  const copilotArgs = ['-p', argvPrompt];
-  if (model) copilotArgs.push('--model', model);
-  if (effort) copilotArgs.push('--effort', effort);
-  copilotArgs.push('--mode', 'plan');
+  const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort });
 
   const modeLabel = { desktop: 'copilot desktop', vscode: 'copilot vscode', cli: 'copilot cli' }[target.mode];
   const providerLabel = `GitHub Copilot [${target.mode}] (${modeLabel})`;
@@ -472,8 +481,8 @@ Usage:
 Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Copilot model (default: ${DEFAULT_COPILOT_MODEL})
-  -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_COPILOT_EFFORT})
+  -m, --model <name>            Override Copilot model (no default here — see dispatch's config.default.jsonc)
+  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --copilot-mode <mode>         Explicit mode preference: 'desktop', 'vscode', 'cli', or 'auto' (default: auto)
   --test, --probe               Test reachability across modes without requiring tokens or prompt

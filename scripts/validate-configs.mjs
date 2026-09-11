@@ -16,6 +16,8 @@ import {
   parseJsonc,
   PROJECT_ROOT,
   isMainModule,
+  getConfigCandidates,
+  validateDispatchConfig,
 } from '../skills/dispatch/scripts/common.mjs';
 import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/opencode-run.mjs';
 import {
@@ -30,7 +32,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * Returns only those files that actually exist on disk.
  *
  * @param {string} [projectRoot=PROJECT_ROOT]
- * @returns {Array<{ path: string, type: 'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc' }>}
+ * @returns {Array<{ path: string, type: 'dispatch' | 'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc' }>}
  */
 export function findConfigFiles(projectRoot = PROJECT_ROOT) {
   const found = [];
@@ -49,7 +51,19 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
     }
   }
 
-  // 1. implement-dispatch configs across standard skill locations
+  // 1. dispatch configs across standard skill locations, plus the project-root override dir
+  const dispatchSkillRoots = [
+    path.join(projectRoot, 'skills', 'dispatch'),
+    path.join(projectRoot, '.agents', 'skills', 'dispatch'),
+    path.join(projectRoot, '.claude', 'skills', 'dispatch'),
+  ];
+  for (const skillRoot of dispatchSkillRoots) {
+    for (const candidate of getConfigCandidates({ skillRoot, projectDirName: '.dispatch', projectRoot })) {
+      addIfFound(candidate, 'dispatch');
+    }
+  }
+
+  // 1b. implement-dispatch configs across standard skill locations
   const implementDispatchScriptDirs = [
     path.join(projectRoot, 'skills', 'implement-dispatch', 'scripts'),
     path.join(projectRoot, '.agents', 'skills', 'implement-dispatch', 'scripts'),
@@ -99,7 +113,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
  * Validates a single configuration file based on its type.
  *
  * @param {string} filePath
- * @param {'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} type
+ * @param {'dispatch' | 'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} type
  * @returns {{ valid: boolean, problems: string[] }}
  */
 export function validateConfigFile(filePath, type = 'jsonc') {
@@ -124,6 +138,11 @@ export function validateConfigFile(filePath, type = 'jsonc') {
   const problems = [];
 
   switch (type) {
+    case 'dispatch': {
+      const schemaProblems = validateDispatchConfig(parsed);
+      problems.push(...schemaProblems);
+      break;
+    }
     case 'implement-dispatch': {
       const schemaProblems = validateImplementDispatchSchema(parsed);
       problems.push(...schemaProblems);
@@ -199,14 +218,20 @@ export function validateAllConfigs(options = {}) {
   if (options.files && options.files.length > 0) {
     fileEntries = options.files.map(filePath => {
       const absPath = path.resolve(projectRoot, filePath);
+      const normalized = filePath.replace(/\\/g, '/');
       let type = 'jsonc';
-      if (filePath.includes('implement-dispatch')) {
+      if (normalized.includes('implement-dispatch')) {
         type = 'implement-dispatch';
-      } else if (filePath.includes('opencode')) {
+      } else if (normalized.includes('dispatch/config') || normalized.includes('.dispatch/')) {
+        // Checked before the generic 'opencode' substring match below and after
+        // 'implement-dispatch' above, since both "skills/dispatch/config*.jsonc" and
+        // ".dispatch/config*.jsonc" would otherwise fall through unclassified.
+        type = 'dispatch';
+      } else if (normalized.includes('opencode')) {
         type = 'opencode';
-      } else if (filePath.includes('skill-hashes')) {
+      } else if (normalized.includes('skill-hashes')) {
         type = 'skill-hashes';
-      } else if (filePath.includes('skills-lock')) {
+      } else if (normalized.includes('skills-lock')) {
         type = 'skills-lock';
       }
       return { path: absPath, type };

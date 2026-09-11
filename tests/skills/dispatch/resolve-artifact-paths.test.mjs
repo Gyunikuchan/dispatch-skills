@@ -14,6 +14,8 @@ import {
   buildScratchPaths,
   sanitizeSlug,
   deriveSlugFromBranch,
+  deriveConversationKey,
+  resolveSlug,
   getCurrentBranch,
   defaultNativeCandidateRoots,
   findExistingScratchArtifact,
@@ -68,6 +70,100 @@ describe('deriveSlugFromBranch', () => {
   it('returns null for a null or empty branch', () => {
     assert.equal(deriveSlugFromBranch(null), null);
     assert.equal(deriveSlugFromBranch(''), null);
+  });
+});
+
+describe('deriveConversationKey', () => {
+  it('derives a conversation-<8 chars> key from agy env vars, preferring conversation id over session id', () => {
+    const key = deriveConversationKey({
+      orchestrator: 'agy',
+      env: { ANTIGRAVITY_CONVERSATION_ID: 'abcd1234efgh', ANTIGRAVITY_SESSION_ID: 'zzzzzzzzzzzz' },
+    });
+    assert.equal(key, 'conversation-abcd1234');
+  });
+
+  it('falls back to the session id when the conversation id is unset', () => {
+    const key = deriveConversationKey({
+      orchestrator: 'agy',
+      env: { ANTIGRAVITY_SESSION_ID: 'session-9999' },
+    });
+    assert.equal(key, 'conversation-session');
+  });
+
+  it('reads CLAUDE_CODE_SESSION_ID for the claude orchestrator', () => {
+    const key = deriveConversationKey({ orchestrator: 'claude', env: { CLAUDE_CODE_SESSION_ID: '12345678abcd' } });
+    assert.equal(key, 'conversation-12345678');
+  });
+
+  it('reads COPILOT_CLI_SESSION_ID for the copilot orchestrator', () => {
+    const key = deriveConversationKey({ orchestrator: 'copilot', env: { COPILOT_CLI_SESSION_ID: 'cop1lot-id' } });
+    assert.equal(key, 'conversation-cop1lot');
+  });
+
+  it('never reads another orchestrator\'s env var, even when set', () => {
+    const key = deriveConversationKey({
+      orchestrator: 'claude',
+      env: { ANTIGRAVITY_CONVERSATION_ID: 'abcd1234', COPILOT_CLI_SESSION_ID: 'efgh5678' },
+    });
+    assert.equal(key, null);
+  });
+
+  it('returns null for opencode: no documented session/conversation id env var is exposed', () => {
+    const key = deriveConversationKey({
+      orchestrator: 'opencode',
+      env: { OPENCODE_SESSION_ID: 'should-be-ignored' },
+    });
+    assert.equal(key, null);
+  });
+
+  it('returns null when the orchestrator is unknown or the env var is unset', () => {
+    assert.equal(deriveConversationKey({ orchestrator: 'unknown-platform', env: {} }), null);
+    assert.equal(deriveConversationKey({ orchestrator: 'claude', env: {} }), null);
+  });
+
+  it('strips a trailing hyphen left by truncation and sanitizes non-slug characters', () => {
+    const key = deriveConversationKey({ orchestrator: 'claude', env: { CLAUDE_CODE_SESSION_ID: 'AB__12-3456' } });
+    assert.match(key, SLUG_PATTERN);
+  });
+
+  it('returns null when the id sanitizes to nothing usable', () => {
+    const key = deriveConversationKey({ orchestrator: 'claude', env: { CLAUDE_CODE_SESSION_ID: '####' } });
+    assert.equal(key, null);
+  });
+});
+
+describe('resolveSlug', () => {
+  it('prefers an explicit slug over branch or conversation derivation', () => {
+    const result = resolveSlug({
+      explicit: 'my-explicit-slug',
+      branch: 'feature/other-thing',
+      orchestrator: 'claude',
+      env: { CLAUDE_CODE_SESSION_ID: 'abcd1234' },
+    });
+    assert.deepEqual(result, { slug: 'my-explicit-slug', slugSource: 'explicit' });
+  });
+
+  it('falls back to the branch-derived slug when no explicit slug is given', () => {
+    const result = resolveSlug({
+      branch: 'feature/Auth-V2',
+      orchestrator: 'claude',
+      env: { CLAUDE_CODE_SESSION_ID: 'abcd1234' },
+    });
+    assert.deepEqual(result, { slug: 'auth-v2', slugSource: 'branch' });
+  });
+
+  it('falls back to the conversation key when the branch is protected or detached', () => {
+    const result = resolveSlug({
+      branch: 'main',
+      orchestrator: 'claude',
+      env: { CLAUDE_CODE_SESSION_ID: 'abcd1234' },
+    });
+    assert.deepEqual(result, { slug: 'conversation-abcd1234', slugSource: 'conversation' });
+  });
+
+  it('returns { slug: null, slugSource: null } when every source fails', () => {
+    const result = resolveSlug({ branch: null, orchestrator: 'opencode', env: {} });
+    assert.deepEqual(result, { slug: null, slugSource: null });
   });
 });
 
@@ -492,7 +588,7 @@ describe('resolve-artifact-paths CLI', () => {
     assert.match(res.stderr, /--kind must be one of plan, walkthrough, both/);
   });
 
-  it('emits both artifact paths for an explicit slug', () => {
+  it('emits both artifact paths for an explicit slug, with slugSource "explicit"', () => {
     // Slug scans this repo's real .scratch/plan/ (the CLI runs against PROJECT_ROOT,
     // not an isolated one) — kept implausibly specific so a genuine same-day scratch
     // artifact can never collide and flip the asserted tier to scratch-existing.
@@ -500,6 +596,7 @@ describe('resolve-artifact-paths CLI', () => {
     assert.equal(res.status, 0);
     const result = JSON.parse(res.stdout);
     assert.equal(result.slug, 'cli-scratch-new-tier-test-fixture');
+    assert.equal(result.slugSource, 'explicit');
     assert.equal(result.date, '2026-09-11');
     assert.equal(result.plan.tier, 'scratch-new');
     assert.equal(result.plan.path, '.scratch/plan/2026-09-11-cli-scratch-new-tier-test-fixture.md');
@@ -508,6 +605,45 @@ describe('resolve-artifact-paths CLI', () => {
       result.walkthrough.path,
       '.scratch/plan/2026-09-11-cli-scratch-new-tier-test-fixture-walkthrough.md'
     );
+  });
+
+  it('derives slugSource "branch" when --slug is omitted and the branch yields a slug', () => {
+    const res = runCli(['--date', '2026-09-11']);
+    assert.equal(res.status, 0);
+    const result = JSON.parse(res.stdout);
+    // This repo runs on `main` in CI/dev, which is a protected branch — so the real
+    // fallback here is the conversation key (or, absent one, a hard error); assert
+    // whichever this environment actually produces rather than assuming branch success.
+    assert.ok(['branch', 'conversation'].includes(result.slugSource));
+  });
+
+  it('errors when --slug is omitted and both branch and conversation-id derivation fail', () => {
+    // Strip every env var detectOrchestrator()/deriveConversationKey() consult — this
+    // suite itself runs under Claude Code, whose own CLAUDE_CODE_SESSION_ID etc. would
+    // otherwise leak in via ...process.env and let conversation-id derivation succeed.
+    const strippedEnv = { ...process.env };
+    for (const key of [
+      'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
+      'CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
+      'COPILOT_CLI_SESSION_ID',
+    ]) {
+      delete strippedEnv[key];
+    }
+    const res = spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-11'], {
+      encoding: 'utf8',
+      env: {
+        ...strippedEnv,
+        HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+        APPDATA: path.join(isolatedHome, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(isolatedHome, 'AppData', 'Local'),
+        // Force branch derivation to fail (outside any git repo).
+        GIT_CEILING_DIRECTORIES: isolatedHome,
+      },
+      cwd: isolatedHome,
+    });
+    assert.equal(res.status, 1);
+    assert.match(res.stderr, /Could not derive a slug/);
   });
 
   it('never reports a native tier for an orchestrator with no known native artifact', () => {

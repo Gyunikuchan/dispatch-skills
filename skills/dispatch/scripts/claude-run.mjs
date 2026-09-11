@@ -100,13 +100,6 @@ import {
 // SECTION: Constants (tweak these)
 // ============================================================================
 
-export const DEFAULT_CLAUDE_MODELS = [
-  'claude-opus-5',
-  'bedrock.claude-opus-5',
-];
-export const DEFAULT_CLAUDE_MODEL = DEFAULT_CLAUDE_MODELS[0];
-export const DEFAULT_CLAUDE_EFFORT = 'medium';
-
 /**
  * Structural read-only enforcement: only these tools are available to the delegate.
  * Covers file reading, git inspection, and text search — no write, edit, or
@@ -182,8 +175,8 @@ export async function runClaude(options = {}) {
   const {
     prompt,
     files = [],
-    model = DEFAULT_CLAUDE_MODEL,
-    effort = DEFAULT_CLAUDE_EFFORT,
+    model = null,
+    effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
     verbose = false,
@@ -199,7 +192,7 @@ export async function runClaude(options = {}) {
   const initialGitStatus = getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const modelsToTry = resolveModelsToTry(model);
-  const effectiveEffort = effort || DEFAULT_CLAUDE_EFFORT;
+  const effectiveEffort = effort || null;
 
   let lastResult = null;
 
@@ -278,24 +271,39 @@ export async function runClaude(options = {}) {
 
 /**
  * Resolves the models to try, in priority order, from the raw `model` option.
- * Accepts an array, a comma-separated string, a single model id, or the sentinel
- * `'default'` / the current default id (both expand to the full default fallback list).
- * @param {string|string[]} model
+ * Accepts an array, a comma-separated string, or a single model id. `null`/empty means
+ * no model is configured anywhere — a single-element `[null]` list omits `--model`
+ * entirely so the Claude CLI's own default applies.
+ * @param {string|string[]|null} model
+ * @returns {(string|null)[]}
+ */
+/**
+ * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
+ * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
+ * @param {string} argvPrompt
+ * @param {{ model?: string|null, effort?: string|null }} [opts]
  * @returns {string[]}
  */
-function resolveModelsToTry(model) {
+export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
+  const args = ['-p', argvPrompt, '--output-format', 'json'];
+  if (model) args.push('--model', model);
+  if (effort) args.push('--effort', effort);
+  for (const tool of READ_ONLY_ALLOWED_TOOLS) {
+    args.push('--allowedTools', tool);
+  }
+  return args;
+}
+
+export function resolveModelsToTry(model) {
   let models = [];
   if (Array.isArray(model)) {
     models = model.filter(Boolean);
   } else if (typeof model === 'string' && model.includes(',')) {
     models = model.split(',').map((m) => m.trim()).filter(Boolean);
   } else if (typeof model === 'string' && model.trim()) {
-    const trimmed = model.trim();
-    models = trimmed === DEFAULT_CLAUDE_MODEL || trimmed === 'default'
-      ? [...DEFAULT_CLAUDE_MODELS]
-      : [trimmed];
+    models = [model.trim()];
   }
-  return models.length > 0 ? models : [...DEFAULT_CLAUDE_MODELS];
+  return models.length > 0 ? models : [null];
 }
 
 
@@ -345,12 +353,7 @@ function executeOnTarget({
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
-  const claudeArgs = ['-p', argvPrompt, '--output-format', 'json'];
-  if (model) claudeArgs.push('--model', model);
-  if (effort) claudeArgs.push('--effort', effort);
-  for (const tool of READ_ONLY_ALLOWED_TOOLS) {
-    claudeArgs.push('--allowedTools', tool);
-  }
+  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort });
 
   emitInitBanner({
     provider: `Claude Code [${target.mode}] (claude)`,
@@ -551,8 +554,8 @@ Usage:
 Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Claude model (default: ${DEFAULT_CLAUDE_MODELS.join(', ')})
-  -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_CLAUDE_EFFORT})
+  -m, --model <name>            Override Claude model (no default here — see dispatch's config.default.jsonc)
+  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --claude-mode <mode>          Select execution mode: desktop | vscode | cli
   --test-modes, --reachability  Test reachability of all modes (--version) without token consumption

@@ -30,13 +30,15 @@ Both `<level>` and `(<pins>)` are optional and case-insensitive; `<level>` defau
 
 ## Flow Plan
 
-Resolve the flow plan at the end of Step 1 once scope is classified and the slug is chosen, and store the output as `flow`:
+Resolve the flow plan at the end of Step 1 once scope is classified, and store the output as `flow`:
 
 ```bash
-node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> --slug <kebab-slug> [--level <level>] [--pins <key,key,...>] [--date <yyyy-mm-dd>]
+node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <key,key,...>]
 ```
 
-Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `opencode`). `--date` defaults to today. `--validate-only` checks the config schema alone and rejects every other flag.
+Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`). `<key>` is the orchestrator's platform key (`claude`, `agy`, `copilot`, `opencode`). `--validate-only` checks the config schema alone and rejects every other flag.
+
+`resolve-flow.mjs` resolves the review/implementation flow only — no artifact paths or slug. Resolve those separately via `dispatch`'s `resolve-artifact-paths.mjs` (see Host Conventions below).
 
 | Field | Read at | Meaning |
 |-------|---------|---------|
@@ -49,9 +51,9 @@ Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, o
 | `flow['code-review'].maxRounds` | Steps 5, 7 | Code review wave cap; `0` means the phase is configured off |
 | `flow['code-review'].consensus` | Steps 6, 7 | Code review consensus requirement (`true` / `false`) |
 | `flow['code-review'].toolTurns` | Steps 5, 7 | Tool-turn budget handed to each code reviewer |
-| `flow.paths.plan` | Step 1 | Plan artifact path, scratch-fallback tier only (Host Conventions) |
-| `flow.paths.walkthrough` | Step 1 | Walkthrough artifact path, scratch-fallback tier only (Host Conventions) |
 | `flow.diagnostics` | Step 8 | `{ effectiveLevel: string, unavailable: string[], droppedPins: { [section]?: string[] }, clamped: { [section]?: { requested: number, resolved: number } } }` — report as data |
+
+Artifact paths (plan/walkthrough) are not part of `flow` — resolve them separately via `dispatch`'s `resolve-artifact-paths.mjs` (Host Conventions below).
 
 A **round** is one fan-out pass where every target in `targets` is launched in parallel within a single turn. `maxRounds` counts total waves **including the first review**. Plan review and code review track independent round counters.
 
@@ -73,8 +75,8 @@ An unpinned run with no live candidates degrades to the fallback (`targets: []`,
 - **Mandatory Entry Gate**: Every `/implement-dispatch` invocation begins by running `resolve-flow.mjs` (Step 1). Never edit code or author artifacts before resolving `flow`. Even `low` depth runs execute the resolver, code review, and run diagnostics.
 - **Execution boundaries**: External delegates run structurally read-only, per `dispatch`'s CLI mechanics. Initial implementation is dispatched primarily to native write-capable subagents with model/effort from `flow.implementation`. The orchestrator directly applies code fixes resulting from review cycles (Step 6).
 - **Parallel turns**: Launch all delegates for a round concurrently in the background, then yield the turn and await notifications.
-- **Provider flags**: Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
-- **Fallback**: When a provider fails or no candidate is available, re-run the prompt and attachments through the in-process read-only subagent from the platform agent-mode table.
+- **Provider flags**: Always pass `--provider <target.platform> --no-config` so each dispatch stays on a platform from this skill's own config and ignores `dispatch`'s config. Pass target hints `-m <target.model>` and `-e <target.effort>` when present. Pass `--allow-same-agent` when `target.allowSameAgent: true`. Attach artifacts via `-f "<path>"` (forward slashes).
+- **Fallback**: When a provider fails (a pinned target never cascades to another platform) or no candidate is available, re-run the prompt and attachments through the in-process read-only subagent from the platform agent-mode table.
 - **Target affinity**: Route re-reviews and dispute rebuttals back to the specific delegate handles that raised or accepted them.
 - **Evidence over votes**: Deduplicate findings across delegate reports by target locus (`## <Section>` or `<file>:L<line>`). Ground truth is the requirement, active code, and repository rules.
 - **Consensus rule**: Under `consensus: true`, every disputed finding must be accepted, escalated to the user, or rebutted with counter-evidence in re-dispatch. Under `consensus: false`, reject directly when verified counter-evidence exists.
@@ -87,7 +89,7 @@ Read the host repository's `AGENTS.md` / `CLAUDE.md` once at start for:
 - **Escalation triggers**: Project-specific decisions requiring user consultation before proceeding.
 - **Artifact location convention**: An explicit plan/walkthrough path or directory the repo names, if any.
 
-When the repo names an explicit location above, use it and stop. Otherwise resolve both artifact locations once, at Step 1, per `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution) — native tier (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`, written and updated directly with the respective review skill's template) preferred over `flow.paths.plan` / `flow.paths.walkthrough` under `.scratch`, reused for every subsequent write — never author multiple copies (e.g. a native and a scratch) of the same artifact.
+When the repo names an explicit location above, use it and stop. Otherwise resolve both artifact locations once, at Step 1, via `dispatch`'s `resolve-artifact-paths.mjs` (see its own `--slug`/`--orchestrator` flags; slug derivation and native-vs-scratch tiering both live there now — not in `resolve-flow.mjs`), per `dispatch`'s [skill alignment: artifact path resolution](../dispatch/references/alignment.md#planwalkthrough-artifact-resolution) — native tier (e.g. Antigravity's `<appDataDir>/brain/<conversation-id>/implementation_plan.md` and `walkthrough.md`, written and updated directly with the respective review skill's template) preferred over the resolved scratch path under `.scratch`, reused for every subsequent write — never author multiple copies (e.g. a native and a scratch) of the same artifact.
 
 Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the orchestrator-supplied artifact so they don't re-derive it.
 
@@ -101,11 +103,10 @@ Hand the resolved path to `dispatch-plan-review` / `dispatch-code-review` as the
    - `focused` (single component/contract) → requested level.
    - `cross-cutting` (multiple components, schema, security boundary) → requested level.
    *(Scope downshifts only to `low`; never upshifts and never overrides an explicit level).*
-3. Derive the slug deterministically from the current git branch via `dispatch`'s `resolve-artifact-paths.mjs` (see Host Conventions below) — this is what lets a standalone `dispatch-plan-review` or `dispatch-code-review` run later on the same branch land on the same artifact. When derivation fails (protected branch, detached HEAD), choose an explicit kebab-case slug naming the change instead.
-4. Run `resolve-flow.mjs` with that slug to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
-5. Resolve the plan and walkthrough artifact paths per Host Conventions and record them for reuse in Steps 2 and 5.
+3. Run `resolve-flow.mjs` to resolve `flow`. If the resolver exits non-zero, halt immediately and show the full error output to the user — every validation problem is listed and must be resolved before proceeding.
+4. Resolve the plan and walkthrough artifact paths per Host Conventions via `dispatch`'s `resolve-artifact-paths.mjs`, which derives the slug itself (explicit → current git branch → active orchestrator's conversation id — see its own docs) and record the resolved paths for reuse in Steps 2 and 5.
 
-**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, the slug is chosen, `resolve-flow.mjs` has executed and `flow` is loaded, and artifact paths are resolved.
+**Done when:** Success criteria are checkable, assumptions are recorded, scope is classified, `resolve-flow.mjs` has executed and `flow` is loaded, and artifact paths are resolved.
 
 ---
 
@@ -182,6 +183,7 @@ Proceed to Handoff when:
 
 1. **Record run diagnostics**: Append a `## Run Diagnostics` section — owned by `implement-dispatch`, not part of `dispatch-code-review`'s walkthrough template — to the walkthrough, covering:
    - Scope classification, plus `flow.diagnostics.effectiveLevel` and any scope downshift from Step 1.
+   - Artifact slug and its `slugSource` (`explicit` / `branch` / `conversation`); a `conversation` slug is found automatically only in this conversation.
    - Rounds spent per phase against `maxRounds`.
    - Reviewing delegates (provider keys, session handles) and any failed delegates.
    - `flow.diagnostics.unavailable`, `droppedPins`, and `clamped` reported as data.

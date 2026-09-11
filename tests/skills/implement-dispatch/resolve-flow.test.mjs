@@ -383,39 +383,6 @@ describe('resolveFlow', () => {
     });
   });
 
-  describe('paths', () => {
-    it('generates plan and walkthrough paths from slug and date', () => {
-      const out = resolveFlow(
-        { platform: 'claude', level: 'low', slug: 'config-driven-flow-knobs', date: '2026-09-10' },
-        LIVE_ALL,
-        BASE_CONFIG
-      );
-      assert.equal(out.paths.plan, '.scratch/plan/2026-09-10-config-driven-flow-knobs.md');
-      assert.equal(
-        out.paths.walkthrough,
-        '.scratch/plan/2026-09-10-config-driven-flow-knobs-walkthrough.md'
-      );
-    });
-
-    it('defaults the date to today when none is supplied', () => {
-      const out = resolveFlow(
-        { platform: 'claude', level: 'low', slug: 'my-slug' },
-        LIVE_ALL,
-        BASE_CONFIG
-      );
-      assert.match(out.paths.plan, /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-my-slug\.md$/);
-    });
-
-    it('rejects non-string slugs (null, 42, {}) instead of coercing them into a literal path', () => {
-      for (const badSlug of [null, 42, {}]) {
-        assert.throws(
-          () => resolveFlow({ platform: 'claude', level: 'low', slug: badSlug }, LIVE_ALL, BASE_CONFIG),
-          /must be kebab-case/
-        );
-      }
-    });
-  });
-
   describe('diagnostics', () => {
     it('reports the effective level', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);

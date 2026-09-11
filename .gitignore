@@ -6,3 +6,9 @@ dist/
 .env.*
 skills/implement-dispatch/config.jsonc
 skills/implement-dispatch/config.local.jsonc
+skills/dispatch/config.jsonc
+skills/dispatch/config.local.jsonc
+.dispatch/config.jsonc
+.dispatch/config.local.jsonc
+.implement-dispatch/config.jsonc
+.implement-dispatch/config.local.jsonc

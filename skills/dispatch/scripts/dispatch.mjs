@@ -21,12 +21,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   classifyFailure,
+  DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
   getGitStatus,
   isEmptyResult,
   isMainModule,
+  KNOWN_PROVIDERS,
+  loadSkillConfig,
   parseCommonArgs,
   readStdin,
+  validateDispatchConfig,
   verifySkillIntegrity,
 } from './common.mjs';
 import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
@@ -57,6 +61,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
  * @property {boolean} [allowSameAgent] Allow falling back to the orchestrator's own CLI.
+ * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
+ *   membership); requires `provider`.
  */
 
 /**
@@ -74,14 +80,6 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 // ============================================================================
 // SECTION: Constants (tweak these)
 // ============================================================================
-
-/**
- * Cascade preference order, most-preferred first. The single source of truth for provider
- * order — {@link getCandidateProviders} and the help text both iterate this instead of
- * redeclaring it.
- * @type {Provider[]}
- */
-export const PREFERENCE_ORDER = ['claude', 'agy', 'copilot', 'opencode'];
 
 /** Accepted `--provider` aliases, normalized to their canonical {@link Provider} name. */
 export const PROVIDER_ALIASES = {
@@ -142,14 +140,38 @@ export async function dispatchTask(options = {}) {
     orchestrator = null,
     provider = null,
     allowSameAgent = false,
+    noConfig = false,
   } = options;
 
   assertSkillIntegrity();
+
+  if (noConfig && !provider) {
+    const err = new Error('--no-config ignores cascade membership entirely and requires --provider.');
+    err.code = 'NO_CONFIG_REQUIRES_PROVIDER';
+    throw err;
+  }
+
+  let config = null;
+  let configPath = null;
+  if (!noConfig) {
+    const loaded = loadDispatchConfig();
+    config = loaded.config;
+    configPath = loaded.path;
+    const problems = validateDispatchConfig(config);
+    if (problems.length > 0) {
+      const err = new Error(`Invalid dispatch config (${configPath}):\n- ${problems.join('\n- ')}`);
+      err.code = 'INVALID_DISPATCH_CONFIG';
+      throw err;
+    }
+  }
 
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
     orchestrator,
     allowSameAgent,
+    noConfig,
+    config,
+    configPath,
   });
 
   if (candidates.length === 0) {
@@ -163,9 +185,30 @@ export async function dispatchTask(options = {}) {
     throw err;
   }
 
-  const runnerOptions = { prompt, files, model, effort, agent, timeout, maxBufferMb, json, verbose };
+  // Per-candidate: a CLI `-m`/`-e` override wins, else the config entry for that specific
+  // provider, else null (the provider CLI's own default). Distinct models per provider are
+  // required once config supplies them — a single shared `model` cannot express that.
+  const runnerOptionsFor = (candidateProvider) => {
+    const entry = config?.platforms?.[candidateProvider] ?? {};
+    return {
+      prompt,
+      files,
+      agent,
+      timeout,
+      maxBufferMb,
+      json,
+      verbose,
+      model: model ?? entry.model ?? null,
+      effort: effort ?? entry.effort ?? null,
+    };
+  };
 
-  return await runCascade(candidates, runnerOptions, { pinned: Boolean(provider) });
+  return await runCascade(candidates, runnerOptionsFor, { pinned: Boolean(provider) });
+}
+
+/** Loads the dispatch cascade config via the shared skill-config loader. */
+function loadDispatchConfig() {
+  return loadSkillConfig({ skillRoot: SKILL_DIR, projectDirName: '.dispatch' });
 }
 
 /** Throws if any skill file has been tampered with since installation. */
@@ -189,11 +232,12 @@ function assertSkillIntegrity() {
  * without `bestPartial`, a 9-minute analysis that timed out one step short was discarded
  * outright.
  * @param {Provider[]} candidates
- * @param {object} runnerOptions
+ * @param {(provider: Provider) => object} runnerOptionsFor Resolves per-candidate runner options
+ *   (distinct model/effort per provider).
  * @param {{ pinned: boolean }} cascadeOptions
  * @returns {Promise<DispatchTaskResult>}
  */
-async function runCascade(candidates, runnerOptions, { pinned }) {
+async function runCascade(candidates, runnerOptionsFor, { pinned }) {
   const attemptFailures = [];
   let bestPartial = null;
 
@@ -222,7 +266,7 @@ async function runCascade(candidates, runnerOptions, { pinned }) {
     };
 
     try {
-      const result = await executeProvider(currentProvider, runnerOptions);
+      const result = await executeProvider(currentProvider, runnerOptionsFor(currentProvider));
 
       // A CLI that reports quota exhaustion or a refusal on stderr and still exits 0 is a
       // failure, not a silent success.
@@ -272,10 +316,56 @@ async function runCascade(candidates, runnerOptions, { pinned }) {
 
 export async function main() {
   const options = parseCommonArgs(process.argv);
+  const { noConfig, validateOnly } = parseDispatchFlags(process.argv);
 
   if (options.help) {
     printHelp();
     process.exit(0);
+  }
+
+  if (validateOnly) {
+    // Refuse the combination rather than silently ignoring flags the user believes were
+    // checked: --validate-only inspects the dispatch config schema and nothing else.
+    const ignored = [];
+    if (options.prompt) ignored.push('prompt');
+    if (options.files.length > 0) ignored.push('--file');
+    if (options.model !== null) ignored.push('--model');
+    if (options.effort !== null) ignored.push('--effort');
+    if (options.agent !== null) ignored.push('--agent');
+    if (options.timeout !== DEFAULT_TIMEOUT_SECONDS) ignored.push('--timeout');
+    if (options.maxBufferMb !== DEFAULT_MAX_BUFFER_MB) ignored.push('--max-buffer');
+    if (options.allowSameAgent) ignored.push('--allow-same-agent');
+    if (options.json) ignored.push('--json');
+    if (options.verbose) ignored.push('--verbose');
+    if (options.orchestrator !== null) ignored.push('--orchestrator');
+    if (options.provider !== null) ignored.push('--provider');
+    if (noConfig) ignored.push('--no-config');
+    if (ignored.length > 0) {
+      console.error(
+        `Error: --validate-only checks the dispatch config schema alone and cannot be combined with: ${ignored.join(', ')}`,
+      );
+      process.exit(1);
+    }
+
+    let loaded;
+    try {
+      loaded = loadDispatchConfig();
+    } catch (err) {
+      console.error(`Error loading config: ${err.message}`);
+      process.exit(1);
+    }
+    const problems = validateDispatchConfig(loaded.config);
+    if (problems.length > 0) {
+      console.error(`Invalid dispatch config (${loaded.path}):\n- ${problems.join('\n- ')}`);
+      process.exit(1);
+    }
+    console.log('Config is valid.');
+    return;
+  }
+
+  if (noConfig && !options.provider) {
+    console.error('Error: --no-config ignores cascade membership entirely and requires --provider.');
+    process.exit(1);
   }
 
   const pipedStdin = await readStdin();
@@ -290,7 +380,7 @@ export async function main() {
   }
 
   try {
-    const result = await dispatchTask({ ...options, prompt: finalPrompt });
+    const result = await dispatchTask({ ...options, prompt: finalPrompt, noConfig });
 
     if (result.stdout) {
       process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
@@ -325,23 +415,39 @@ Master Cascade Dispatcher
 Routes a task through the delegate cascade. The authoritative description of the cascade,
 monitoring, and fallback lives in the dispatch skill: SKILL.md
 
+Cascade order, membership, and per-platform model/effort come from the dispatch config
+(config.default.jsonc, overridable — see the Configuration section of SKILL.md).
+
 Usage:
   node ${process.argv[1]} [options] [prompt]
 
 Options:
   -p, --prompt <string>       The prompt message to send
   -f, --file, --artifact      Attach context file or artifact (repeatable)
-  -m, --model <name>          Override model identifier
-  -e, --effort <level>        Override reasoning effort (low, medium, high, max)
+  -m, --model <name>          Override model identifier (takes precedence over config)
+  -e, --effort <level>        Override reasoning effort (takes precedence over config)
   -a, --agent <name>          Override agent name
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
-  --provider <name>           Force specific provider (${PREFERENCE_ORDER.join(', ')})
-  --orchestrator <name>       Explicitly declare orchestrator (${PREFERENCE_ORDER.join(', ')})
+  --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
+  --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
+  --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
+  --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
   --json                      Request structured JSON output (local provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
 `);
+}
+
+/** Parses dispatch.mjs's own `--no-config` / `--validate-only` flags. */
+function parseDispatchFlags(argv) {
+  let noConfig = false;
+  let validateOnly = false;
+  for (const arg of argv.slice(2)) {
+    if (arg === '--no-config') noConfig = true;
+    else if (arg === '--validate-only') validateOnly = true;
+  }
+  return { noConfig, validateOnly };
 }
 
 // ============================================================================
@@ -350,32 +456,65 @@ Options:
 
 /**
  * Returns an ordered array of viable candidate providers based on the preference cascade:
- * 1. Alternative providers in preference order ({@link PREFERENCE_ORDER}, skipping orchestrator)
- * 2. Same agent as orchestrator (only if `allowSameAgent` is true)
+ * 1. Alternative providers in cascade order (the loaded dispatch config's `platforms` key
+ *    order, skipping orchestrator; falls back to {@link KNOWN_PROVIDERS} when `noConfig`)
+ * 2. Same agent as orchestrator (only if `allowSameAgent` is true, and it is a cascade member)
+ *
+ * A pinned `explicitProvider` absent from the loaded config is a hard error unless `noConfig`
+ * is set — cascade membership rule 3 (dispatch config is the source of truth) applies to
+ * pinned dispatches too.
  *
  * @param {object} [params]
  * @param {string|null} [params.explicitProvider]
  * @param {string|null} [params.orchestrator]
  * @param {boolean} [params.allowSameAgent]
+ * @param {boolean} [params.noConfig] Skip config entirely; only valid alongside `explicitProvider`.
+ * @param {object|null} [params.config] Pre-loaded dispatch config; loaded fresh when omitted
+ *   (and `noConfig` is false) so direct callers/tests need not load it themselves.
+ * @param {string|null} [params.configPath] Path `config` was loaded from, for error messages.
  * @returns {Promise<Provider[]>}
  */
 export async function getCandidateProviders(params = {}) {
-  const { explicitProvider = null, orchestrator = null, allowSameAgent = false } = params;
+  const { explicitProvider = null, orchestrator = null, allowSameAgent = false, noConfig = false } = params;
 
-  if (explicitProvider) {
-    return [resolveExplicitProvider(explicitProvider)];
+  let config = params.config;
+  let configPath = params.configPath;
+  if (!noConfig && config === undefined) {
+    const loaded = loadDispatchConfig();
+    config = loaded.config;
+    configPath = loaded.path;
+    const problems = validateDispatchConfig(config);
+    if (problems.length > 0) {
+      const err = new Error(`Invalid dispatch config (${configPath}):\n- ${problems.join('\n- ')}`);
+      err.code = 'INVALID_DISPATCH_CONFIG';
+      throw err;
+    }
   }
 
+  if (explicitProvider) {
+    const resolved = resolveExplicitProvider(explicitProvider);
+    if (config && !Object.prototype.hasOwnProperty.call(config.platforms, resolved)) {
+      throw new Error(`platform "${resolved}" is not configured in ${configPath}`);
+    }
+    return [resolved];
+  }
+
+  const order = config ? Object.keys(config.platforms) : KNOWN_PROVIDERS;
   const effectiveOrchestrator = orchestrator || detectOrchestrator();
-  const alternatives = PREFERENCE_ORDER.filter((p) => p !== effectiveOrchestrator);
+  const alternatives = order.filter((p) => p !== effectiveOrchestrator);
 
   const candidates = [];
   for (const name of alternatives) {
     if (await isProviderAvailable(name)) candidates.push(name);
   }
 
-  // Same agent as orchestrator (only if explicitly allowed), tried last.
-  if (allowSameAgent && effectiveOrchestrator && (await isProviderAvailable(effectiveOrchestrator))) {
+  // Same agent as orchestrator (only if explicitly allowed, and a cascade member), tried last.
+  if (
+    allowSameAgent &&
+    effectiveOrchestrator &&
+    order.includes(effectiveOrchestrator) &&
+    (await isProviderAvailable(effectiveOrchestrator))
+  ) {
     candidates.push(effectiveOrchestrator);
   }
 

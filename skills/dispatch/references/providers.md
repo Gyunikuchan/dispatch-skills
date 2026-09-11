@@ -6,20 +6,21 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 ## 1. Provider Specifications
 
-| Provider | Key | CLI Binary | Direct Runner | Default Model | Default Effort | Default Mode | Session Handle |
-|----------|-----|------------|---------------|---------------|----------------|--------------|----------------|
-| **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | `claude-opus-5` (fallback: `bedrock.claude-opus-5`) | `medium` | Read-only | `claude --resume <session_id>` |
-| **Antigravity 2.0** | `agy` | `agy` | `scripts/agy-run.mjs` | `gemini-3.8-flash` | `medium` | `--mode plan` | `conversation://<id>` |
-| **GitHub Copilot** | `copilot` | `copilot` | `scripts/copilot-run.mjs` | `gpt-5.6-luna` | `max` | `--mode plan` | `copilot --resume <session_id>` |
-| **OpenCode** | `opencode` | `opencode` | `scripts/opencode-run.mjs` | `lmstudio/qwen3.8-27b-ridge` | `null` (server default) | Read-only | Local server logs |
+Model and reasoning-effort defaults are no longer hardcoded in the runner scripts — they come from [`config.default.jsonc`](../config.default.jsonc) (or a project/machine override; see [Configuration](../SKILL.md#configuration) in `SKILL.md`). A runner given no model/effort (no CLI flag, no config entry) omits `-m`/`-e` entirely and lets the underlying CLI apply its own default.
+
+| Provider | Key | CLI Binary | Direct Runner | Default Mode | Session Handle |
+|----------|-----|------------|---------------|--------------|----------------|
+| **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | Read-only | `claude --resume <session_id>` |
+| **Antigravity 2.0** | `agy` | `agy` | `scripts/agy-run.mjs` | `--mode plan` | `conversation://<id>` |
+| **GitHub Copilot** | `copilot` | `copilot` | `scripts/copilot-run.mjs` | `--mode plan` | `copilot --resume <session_id>` |
+| **OpenCode** | `opencode` | `opencode` | `scripts/opencode-run.mjs` | Read-only | Local server logs |
 
 ---
 
 ## 2. Claude Code (`claude`)
 
 ### Defaults & Overrides
-- **Default Model Priority**: `claude-opus-5` → `bedrock.claude-opus-5` (override via `-m <model>`)
-- **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.claude` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m` means no `-m` flag reaches `claude` at all.
 - **Default Mode**: Read-only (`--allowedTools`)
 - **Mode Override**: `--claude-mode <desktop|vscode|cli>` (explicit execution mode)
 - **Reachability Probe**: `--test-modes` (tests reachability via `--version` across all modes without token consumption)
@@ -44,7 +45,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 - **Tool Restriction**: Passed `--allowedTools` restricts tool types (`Read`, `Bash(grep *)`, `Bash(find *)`), not individual filesystem paths.
 - **Safety Prompt**: Restricts denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
 - **Sandbox Boundary**: Delegate session inherits the host process sandbox boundaries.
-- **Model & Mode Cascade**: Discovery probes test `--version` without token spend. If a model is not available or fails, `runClaude` falls back across candidate models (`claude-opus-5` → `bedrock.claude-opus-5`). On `auth` or `quota` exhaustion across models, it cascades to the next available mode unless pinned.
+- **Model & Mode Cascade**: Discovery probes test `--version` without token spend. If a model is not available or fails, `runClaude` falls back across whatever candidate models were configured (an array `model` in `config.default.jsonc`'s `platforms.claude`, or a single `-m` override). On `auth` or `quota` exhaustion across models, it cascades to the next available mode unless pinned.
 
 ### Session Monitoring
 - **Resume Command**: Captured `session_id` from JSON envelope (`--output-format json`) emits `claude --resume <session_id>`.
@@ -56,8 +57,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ## 3. Antigravity 2.0 (`agy`)
 
 ### Defaults & Overrides
-- **Default Model**: `gemini-3.8-flash` (override via `-m <model>`)
-- **Default Reasoning Effort**: `medium` (override via `-e <level>`, e.g. `low`, `medium`, `high`)
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`). No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--agy-mode <antigravity-2.0|antigravity-vscode|antigravity-cli|auto>`
 - **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
@@ -88,8 +88,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ## 4. GitHub Copilot (`copilot`)
 
 ### Defaults & Overrides
-- **Default Model**: `gpt-5.6-luna` (override via `-m <model>`)
-- **Default Reasoning Effort**: `max` (override via `-e <level>`, e.g. `low`, `medium`, `high`, `max`)
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`). No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--copilot-mode <desktop|vscode|cli|auto>` (explicit execution mode)
 - **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
@@ -122,24 +121,26 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Default Model**: `lmstudio/qwen3.8-27b-ridge` (override via `-m <provider>/<model>`)
-- **Default Reasoning Effort**: `null` (server default)
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
-  (`isLocalEndpointHost`). Local (the LM Studio default, or any other loopback-bound backend):
-  preflight HTTP probe against the resolved `baseURL` (e.g. `http://127.0.0.1:1234/v1`) — fast,
-  free, and safe against a machine the user just started. Remote (a cloud provider resolved from
-  `opencode.jsonc`'s `model`): no live network probe — `isOpencodeAvailable()` degrades to a
-  binary-presence probe (`opencode` on `$PATH`), mirroring `isClaudeAvailable`/
-  `isCopilotAvailable`/`isAgyAvailable`; actual reachability is left to `opencode`'s own
-  execution, whose `auth`/`quota`/`not-found` failures are classified normally.
+  (`isLocalEndpointHost`). Local (an `lmstudio/...` model resolved to its loopback endpoint, or any
+  other loopback-bound backend): preflight HTTP probe against the resolved `baseURL` (e.g.
+  `http://127.0.0.1:1234/v1`) — fast, free, and safe against a machine the user just started.
+  Remote, or nothing configured at all (`resolveOpencodeSettings`'s `isLocal: false`): no live
+  network probe — `isOpencodeAvailable()` degrades to a binary-presence probe (`opencode` on
+  `$PATH`), mirroring `isClaudeAvailable`/`isCopilotAvailable`/`isAgyAvailable`; actual
+  reachability is left to `opencode`'s own execution, whose `auth`/`quota`/`not-found` failures
+  are classified normally.
 - **Config**: merged across every locally-readable tier of opencode's own precedence order (https://opencode.ai/docs/config/#precedence-order): global (`~/.config/opencode/`, `XDG_CONFIG_HOME`-aware) → `OPENCODE_CONFIG` → project root → `.opencode/` directories → `OPENCODE_CONFIG_CONTENT` → OS-managed config dirs, for model, agent, and limit overrides. `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, and `XDG_CONFIG_HOME` also pass through to the spawned delegate's environment so it resolves the same config. Remote config and macOS MDM `.mobileconfig` are excluded — see `readOpencodeConfig` in `opencode-run.mjs`.
 
 ### Order of Preference
 1. **OpenCode (`opencode`)**:
-   - Cross-platform: `opencode` binary on system `$PATH`, connecting to the configured provider
-     endpoint (local or remote) — local LM Studio at `http://127.0.0.1:1234/v1` when
-     `opencode.jsonc` sets no `model`; any other `provider/model` string otherwise.
+   - Cross-platform: `opencode` binary on system `$PATH`, connecting to whatever provider endpoint
+     resolves from the configured `model` (`lmstudio/...` resolves to local `http://127.0.0.1:1234/v1`
+     by convention; any other `provider/model` string resolves elsewhere). With no `model`
+     configured anywhere, `opencode`'s own CLI default applies — dispatch assumes no particular
+     provider.
 
 ### Sandboxing & Isolation
 - **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.

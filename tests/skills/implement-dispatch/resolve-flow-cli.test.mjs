@@ -42,98 +42,70 @@ describe('resolve-flow CLI', () => {
   });
 
   it('requires --platform', () => {
-    const { status, stderr } = run('--slug', 'auth-v2');
+    const { status, stderr } = run('--level', 'low');
     assert.equal(status, 1);
     assert.match(stderr, /--platform is required/);
   });
 
-  it('requires --slug', () => {
-    const { status, stderr } = run('--platform', 'claude');
+  it('rejects --slug as an unrecognized argument (artifact paths are resolved separately, by dispatch)', () => {
+    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2');
     assert.equal(status, 1);
-    assert.match(stderr, /--slug is required/);
+    assert.match(stderr, /Unrecognized argument "--slug"/);
   });
 
-  it('rejects a non-kebab-case slug', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'Auth_V2');
+  it('rejects --date as an unrecognized argument', () => {
+    const { status, stderr } = run('--platform', 'claude', '--date', '2026-09-10');
     assert.equal(status, 1);
-    assert.match(stderr, /must be kebab-case/);
+    assert.match(stderr, /Unrecognized argument "--date"/);
   });
 
-  it('rejects a slug containing path separators', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', '../evil');
+  it('rejects --slug=value in --flag=value form', () => {
+    const { status, stderr } = run('--platform=claude', '--slug=auth-v2');
     assert.equal(status, 1);
-    assert.match(stderr, /must be kebab-case/);
-  });
-
-  it('rejects a malformed date', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--date', '2026-9-1');
-    assert.equal(status, 1);
-    assert.match(stderr, /valid calendar date/);
-  });
-
-  it('rejects a date that is not on the calendar', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--date', '2026-02-30');
-    assert.equal(status, 1);
-    assert.match(stderr, /valid calendar date/);
+    assert.match(stderr, /Unrecognized argument "--slug"/);
   });
 
   it('rejects an unrecognized argument', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--rounds', '3');
+    const { status, stderr } = run('--platform', 'claude', '--rounds', '3');
     assert.equal(status, 1);
     assert.match(stderr, /Unrecognized argument "--rounds"/);
   });
 
   it('rejects a flag with a missing value', () => {
-    const { status, stderr } = run('--platform', '--slug', 'auth-v2');
+    const { status, stderr } = run('--platform');
     assert.equal(status, 1);
     assert.match(stderr, /Missing value for --platform/);
   });
 
   it('rejects an unknown level', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--level', 'ultra');
+    const { status, stderr } = run('--platform', 'claude', '--level', 'ultra');
     assert.equal(status, 1);
     assert.match(stderr, /Unknown level "ultra"/);
   });
 
-  it('emits the dated artifact paths for a valid run', () => {
-    const { status, stdout } = run(
-      '--platform', 'claude',
-      '--slug', 'auth-v2',
-      '--date', '2026-09-10',
-      '--level', 'low'
-    );
+  it('emits a flow plan for a valid run, with no artifact paths (dispatch\'s concern now)', () => {
+    const { status, stdout } = run('--platform', 'claude', '--level', 'low');
     assert.equal(status, 0);
     const flow = JSON.parse(stdout);
-    assert.equal(flow.paths.plan, '.scratch/plan/2026-09-10-auth-v2.md');
-    assert.equal(flow.paths.walkthrough, '.scratch/plan/2026-09-10-auth-v2-walkthrough.md');
+    assert.equal(flow.paths, undefined);
     assert.equal(flow.diagnostics.effectiveLevel, 'low');
   });
 
   it('accepts --flag=value form equivalently to space-separated flags', () => {
-    const { status, stdout } = run(
-      '--platform=claude',
-      '--slug=auth-v2',
-      '--date=2026-09-10',
-      '--level=low'
-    );
+    const { status, stdout } = run('--platform=claude', '--level=low');
     assert.equal(status, 0);
     const flow = JSON.parse(stdout);
-    assert.equal(flow.paths.plan, '.scratch/plan/2026-09-10-auth-v2.md');
     assert.equal(flow.diagnostics.effectiveLevel, 'low');
   });
 
   it('parses --pins=key,key in --flag=value form (proven via the unrecognized-pin error path, to stay independent of real provider liveness)', () => {
-    const { status, stderr } = run(
-      '--platform=claude',
-      '--slug=auth-v2',
-      '--pins=bogus,alsobogus'
-    );
+    const { status, stderr } = run('--platform=claude', '--pins=bogus,alsobogus');
     assert.equal(status, 1);
     assert.match(stderr, /Unrecognized pin key\(s\): bogus, alsobogus/);
   });
 
   it('rejects an unrecognized --flag=value argument', () => {
-    const { status, stderr } = run('--platform', 'claude', '--slug', 'auth-v2', '--rounds=3');
+    const { status, stderr } = run('--platform', 'claude', '--rounds=3');
     assert.equal(status, 1);
     assert.match(stderr, /Unrecognized argument "--rounds"/);
   });

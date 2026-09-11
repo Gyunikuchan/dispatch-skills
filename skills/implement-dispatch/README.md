@@ -216,7 +216,7 @@ Validate a config without spawning any provider probes:
 node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --validate-only
 ```
 
-It checks the config schema and nothing else, so combining it with any run flag (`--platform`, `--level`, `--slug`, `--date`, `--pins`) is an error rather than a silent no-op.
+It checks the config schema and nothing else, so combining it with any run flag (`--platform`, `--level`, `--pins`) is an error rather than a silent no-op.
 
 ### Level Matching & Fallback Rules
 
@@ -238,7 +238,7 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
 - **Host Repository Conventions**: The orchestrator reads your project's `AGENTS.md` or `CLAUDE.md` to discover:
   - **Verify command**: The test/lint command that must remain green across all iterations.
   - **Escalation triggers**: Domain-specific decisions that require immediate user input.
-- **Scratch Space Lifecycle**: The flow resolver generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are cleaned up; if a run terminates in deadlock or requires user intervention, they are preserved for easy resumption.
+- **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are cleaned up; if a run terminates in deadlock or requires user intervention, they are preserved for easy resumption.
 - **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
 
 ---

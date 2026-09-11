@@ -3,27 +3,21 @@
  * Resolves the implement-dispatch execution flow plan.
  *
  * Usage:
- *   node resolve-flow.mjs --platform <key> --slug <kebab-slug>
+ *   node resolve-flow.mjs --platform <key>
  *                         [--level <low|medium|high|max>] [--pins <key,key,...>]
- *                         [--date <yyyy-mm-dd>]
  *   node resolve-flow.mjs --validate-only
  *
  * Outputs JSON to stdout describing plan-review, implementation, and code-review
- * targets, the recommended artifact paths, and run diagnostics.
+ * targets and run diagnostics. Artifact paths are resolved separately by
+ * dispatch's resolve-artifact-paths.mjs (single source of truth shared with
+ * dispatch-plan-review/dispatch-code-review) — not this script's concern.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { parseJsonc, PROJECT_ROOT, isMainModule } from '../../dispatch/scripts/common.mjs';
+import { PROJECT_ROOT, isMainModule, getConfigCandidates, loadSkillConfig } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
-import {
-  SLUG_PATTERN,
-  localDate,
-  isValidDate,
-  buildScratchPaths,
-} from '../../dispatch/scripts/resolve-artifact-paths.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -113,38 +107,27 @@ export function resolveLevelScalar(knob, level) {
 
 // --- Config loading ---
 
+/**
+ * Thin wrapper over the shared loader's candidate list, kept exported for
+ * `scripts/validate-configs.mjs` (which discovers implement-dispatch configs by
+ * path rather than importing `loadConfig` directly).
+ */
 export function getImplementDispatchConfigCandidates(scriptDir = __dirname, projectRoot = PROJECT_ROOT) {
-  const root = path.resolve(scriptDir, '..');
-  const projectDir = path.join(projectRoot, '.implement-dispatch');
-  return [
-    path.join(projectDir, 'config.local.jsonc'),
-    path.join(root, 'config.local.jsonc'),
-    path.join(projectDir, 'config.jsonc'),
-    path.join(root, 'config.jsonc'),
-    path.join(root, 'config.default.jsonc'),
-  ];
+  return getConfigCandidates({
+    skillRoot: path.resolve(scriptDir, '..'),
+    projectDirName: '.implement-dispatch',
+    projectRoot,
+  });
 }
 
 export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
-  const root = path.resolve(scriptDir, '..');
-  const defaultPath = path.join(root, 'config.default.jsonc');
-
-  if (defaultOnly) {
-    if (!existsSync(defaultPath)) {
-      throw new Error(`Config file not found: tried ${defaultPath}`);
-    }
-    return parseJsonc(readFileSync(defaultPath, 'utf8'));
-  }
-
-  // Loaded wholly in precedence order: config.local.jsonc takes precedence over
-  // config.jsonc regardless of whether it is in the project or root directory.
-  const candidates = getImplementDispatchConfigCandidates(scriptDir, PROJECT_ROOT);
-
-  const configPath = candidates.find(p => existsSync(p));
-  if (!configPath) {
-    throw new Error(`Config file not found: tried ${candidates.join(', ')}`);
-  }
-  return parseJsonc(readFileSync(configPath, 'utf8'));
+  const { config } = loadSkillConfig({
+    skillRoot: path.resolve(scriptDir, '..'),
+    projectDirName: '.implement-dispatch',
+    projectRoot: PROJECT_ROOT,
+    defaultOnly,
+  });
+  return config;
 }
 
 // --- Config validation ---
@@ -348,20 +331,15 @@ export async function defaultLiveness() {
 /**
  * Resolves the flow plan.
  *
- * Pure over its inputs: no clock, filesystem, or process access beyond the
- * optional `date` default.
+ * Pure over its inputs: no clock, filesystem, or process access.
  *
- * `slug` is optional here and `flow.paths` is present only when it is given, so
- * callers that want nothing to do with artifact paths can omit it. The CLI requires
- * it, which is why the skill can treat `flow.paths` as always present.
- *
- * @param {{ platform: string, level?: string, pins?: string[], slug?: string, date?: string }} options
+ * @param {{ platform: string, level?: string, pins?: string[] }} options
  * @param {Record<string, boolean>} liveness - map of platform key → available
  * @param {object} config                    - parsed config object
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
-  const { platform, level = 'medium', pins: rawPins, slug, date } = options;
+  const { platform, level = 'medium', pins: rawPins } = options;
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
   // to one target instead of being treated as unrecognized or as two separate targets.
@@ -372,16 +350,6 @@ export function resolveFlow(options, liveness, config) {
 
   if (!LEVELS.includes(level)) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
-  }
-  // Validated here rather than only at the CLI so the generated paths cannot escape
-  // the scratch directory when `resolveFlow` is called directly. `typeof` is checked
-  // first because `RegExp.test` coerces `null` to the string literal "null", which
-  // satisfies SLUG_PATTERN and would otherwise slip past this guard.
-  if (slug !== undefined && (typeof slug !== 'string' || !SLUG_PATTERN.test(slug))) {
-    throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
-  }
-  if (date !== undefined && !isValidDate(date)) {
-    throw new Error(`Date "${date}" must be a valid calendar date as yyyy-mm-dd`);
   }
 
   const problems = validateConfig(config);
@@ -503,10 +471,6 @@ export function resolveFlow(options, liveness, config) {
     diagnostics: { effectiveLevel: level, unavailable, droppedPins, clamped },
   };
 
-  if (slug !== undefined) {
-    flow.paths = buildScratchPaths(date ?? localDate(), slug);
-  }
-
   return flow;
 }
 
@@ -537,8 +501,6 @@ function parseArgs(args) {
       switch (flag) {
         case '--platform': opts.platform = val; continue;
         case '--level':    opts.level = val; continue;
-        case '--slug':     opts.slug = val; continue;
-        case '--date':     opts.date = val; continue;
         case '--pins':     setPins(val); continue;
         default:
           throw new Error(`Unrecognized argument "${flag}"`);
@@ -547,8 +509,6 @@ function parseArgs(args) {
     switch (arg) {
       case '--platform': opts.platform = value(i); i++; break;
       case '--level':    opts.level = value(i); i++; break;
-      case '--slug':     opts.slug = value(i); i++; break;
-      case '--date':     opts.date = value(i); i++; break;
       case '--pins':
         setPins(value(i));
         i++;
@@ -583,7 +543,7 @@ async function main() {
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
-    const ignored = ['platform', 'level', 'slug', 'date', 'pins'].filter(k => opts[k] !== undefined);
+    const ignored = ['platform', 'level', 'pins'].filter(k => opts[k] !== undefined);
     if (ignored.length > 0) {
       process.stderr.write(
         `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
@@ -607,23 +567,11 @@ async function main() {
     process.stderr.write('Error: --platform is required\n');
     process.exit(1);
   }
-  if (!opts.slug) {
-    process.stderr.write('Error: --slug is required\n');
-    process.exit(1);
-  }
 
   // Pre-validate options before asynchronous liveness probing so invalid CLI
   // arguments fail fast without waiting for slow provider network/CLI probes.
   if (opts.level !== undefined && !LEVELS.includes(opts.level)) {
     process.stderr.write(`Error: Unknown level "${opts.level}". Valid levels: ${LEVELS.join(', ')}\n`);
-    process.exit(1);
-  }
-  if (opts.slug !== undefined && (typeof opts.slug !== 'string' || !SLUG_PATTERN.test(opts.slug))) {
-    process.stderr.write(`Error: Slug "${opts.slug}" must be kebab-case (${SLUG_PATTERN.source})\n`);
-    process.exit(1);
-  }
-  if (opts.date !== undefined && !isValidDate(opts.date)) {
-    process.stderr.write(`Error: Date "${opts.date}" must be a valid calendar date as yyyy-mm-dd\n`);
     process.exit(1);
   }
   const configProblems = validateConfig(config);

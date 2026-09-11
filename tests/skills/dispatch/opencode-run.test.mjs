@@ -163,7 +163,7 @@ describe('opencode-run', () => {
     });
 
     it('proxy NO_PROXY includes the resolved endpoint port', () => {
-      const settings = resolveOpencodeSettings(null);
+      const settings = resolveOpencodeSettings({ model: 'lmstudio/qwen3.8-27b-ridge' });
       const env = getOpencodeEnv(settings);
       assert.ok(env.NO_PROXY.includes(String(settings.port)));
     });
@@ -227,8 +227,16 @@ describe('opencode-run', () => {
   });
 
   describe('resolveOpencodeSettings — isLocal / explicitBaseURL branching', () => {
-    it('defaults to the local LM Studio endpoint (isLocal: true) with zero config', () => {
+    it('never assumes LM Studio with zero config (no shipped DEFAULT_FALLBACK_MODEL)', () => {
       const settings = resolveOpencodeSettings(null);
+      assert.equal(settings.isLocal, false);
+      assert.equal(settings.providerName, null);
+      assert.equal(settings.host, null);
+      assert.equal(settings.port, null);
+    });
+
+    it('resolves the local LM Studio endpoint (isLocal: true) when a bare lmstudio model is configured', () => {
+      const settings = resolveOpencodeSettings({ model: 'lmstudio/qwen3.8-27b-ridge' });
       assert.equal(settings.isLocal, true);
       assert.equal(settings.host, DEFAULT_LM_STUDIO_HOST);
       assert.equal(settings.port, DEFAULT_LM_STUDIO_PORT);
@@ -344,6 +352,23 @@ describe('opencode-run', () => {
       assert.equal(available, false);
     });
 
+    it('"Fact to verify": no model configured anywhere degrades preflight to the binary-presence probe, not an LM Studio HTTP preflight', async () => {
+      // resolveOpencodeSettings(null) is exactly the "nothing configured anywhere" case
+      // (see resolveOpencodeSettings — isLocal / explicitBaseURL branching, above); this
+      // asserts isOpencodeAvailable() takes the same non-local branch for those settings.
+      const httpGet = mock.method(http, 'get', () => {
+        throw new Error('preflight must not run when no model/endpoint is configured');
+      });
+      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
+
+      const settings = resolveOpencodeSettings(null);
+      assert.equal(settings.isLocal, false);
+      const available = await isOpencodeAvailable(settings);
+
+      assert.equal(available, true);
+      assert.equal(httpGet.mock.callCount(), 0);
+    });
+
     it('isOpencodeBinaryAvailable() reflects the same discovery result directly', () => {
       mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
       assert.equal(isOpencodeBinaryAvailable(), true);
@@ -410,10 +435,14 @@ describe('opencode-run', () => {
   });
 
   describe('resolveDefaultModel, resolveDefaultAgent & LM Studio Endpoint', () => {
-    it('returns fallback model when no opencode config is present', () => {
-      const model = resolveDefaultModel();
-      assert.equal(typeof model, 'string');
-      assert.ok(model.length > 0);
+    it('returns null (no hardcoded fallback) when no model is configured anywhere', () => {
+      assert.equal(resolveDefaultModel({}), null);
+      assert.equal(resolveDefaultModel(null), null);
+    });
+
+    it('returns the configured model when opencode.jsonc sets one', () => {
+      const model = resolveDefaultModel({ model: 'lmstudio/qwen3.8-27b-ridge' });
+      assert.equal(model, 'lmstudio/qwen3.8-27b-ridge');
     });
 
     it('returns fallback agent when no opencode config is present', () => {
@@ -437,11 +466,22 @@ describe('opencode-run', () => {
       }
     });
 
-    it('resolves LM Studio endpoint defaults when no config is present', () => {
-      const endpoint = getLMStudioEndpoint(resolveOpencodeSettings(null));
+    it('resolves LM Studio endpoint defaults when a bare lmstudio model is configured', () => {
+      const endpoint = getLMStudioEndpoint(resolveOpencodeSettings({ model: 'lmstudio/qwen3.8-27b-ridge' }));
       assert.equal(endpoint.host, '127.0.0.1');
       assert.equal(endpoint.port, 1234);
       assert.equal(endpoint.pathname, '/v1');
+    });
+
+    it('no model configured anywhere: settings target neither LM Studio nor any provider', () => {
+      // Behaviour change (this run): no shipped DEFAULT_FALLBACK_MODEL means dispatch never
+      // assumes LM Studio when nothing is configured — opencode's own CLI default applies.
+      const settings = resolveOpencodeSettings(null);
+      assert.equal(settings.providerName, null);
+      assert.equal(settings.modelId, null);
+      assert.equal(settings.isLocal, false);
+      assert.equal(settings.host, null);
+      assert.equal(settings.port, null);
     });
 
     it('reads the real repo .opencode/opencode.jsonc that the runner names a prerequisite', () => {
@@ -468,12 +508,10 @@ describe('opencode-run', () => {
       }
     });
 
-    it('falls back to DEFAULT_* limits when no config is available', () => {
+    it('falls back to DEFAULT_* context/output limits when no config is available', () => {
       const settings = resolveOpencodeSettings(null);
       assert.equal(settings.contextLimit, DEFAULT_CONTEXT_LIMIT);
       assert.equal(settings.outputLimit, DEFAULT_OUTPUT_LIMIT);
-      assert.equal(settings.host, DEFAULT_LM_STUDIO_HOST);
-      assert.equal(settings.port, DEFAULT_LM_STUDIO_PORT);
     });
 
     it('prefers .opencode/opencode.jsonc over a repository-root config, matching opencode precedence', () => {

@@ -12,8 +12,8 @@ import {
   providerRunners,
   workspaceProbes,
   PROVIDER_ALIASES,
-  PREFERENCE_ORDER,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
+import { KNOWN_PROVIDERS } from '../../../skills/dispatch/scripts/common.mjs';
 
 describe('dispatch: orchestrator detection & provider resolution', () => {
   const originalEnv = { ...process.env };
@@ -126,7 +126,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
   describe('resolveProvider & getCandidateProviders', () => {
     it('defines canonical providers and aliases', () => {
-      assert.deepEqual(PREFERENCE_ORDER, ['claude', 'agy', 'copilot', 'opencode']);
+      assert.deepEqual(KNOWN_PROVIDERS, ['claude', 'agy', 'copilot', 'opencode']);
       assert.equal(PROVIDER_ALIASES.antigravity, 'agy');
       assert.equal(PROVIDER_ALIASES.claudecode, 'claude');
       assert.equal(PROVIDER_ALIASES['github-copilot'], 'copilot');
@@ -396,6 +396,110 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const result = await dispatchTask({ prompt: 'Review', provider: 'agy' });
       assert.equal(result.exitCode, 1);
       assert.equal(copilotRunner.mock.calls.length, 0);
+    });
+  });
+
+  describe('config-driven cascade', () => {
+    const CONFIG = {
+      config: { platforms: { agy: { model: 'gemini-3.8-flash', effort: 'medium' }, claude: {} } },
+      configPath: '/fake/config.default.jsonc',
+    };
+
+    it('excludes a platform absent from the loaded config, even if live', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const candidates = await getCandidateProviders({ ...CONFIG });
+      // Cascade order follows the config's platforms key order (agy, then claude),
+      // not the removed hardcoded PREFERENCE_ORDER — copilot/opencode are correctly
+      // excluded entirely since they're absent from CONFIG.platforms.
+      assert.deepEqual(candidates, ['agy', 'claude']);
+    });
+
+    it('uses the config platforms key order as cascade order', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+
+      const candidates = await getCandidateProviders({
+        config: { platforms: { agy: {}, claude: {} } },
+        configPath: '/fake/config.default.jsonc',
+      });
+      assert.deepEqual(candidates, ['agy', 'claude']);
+    });
+
+    it('errors when a pinned provider is absent from the loaded config', async () => {
+      await assert.rejects(
+        getCandidateProviders({ explicitProvider: 'copilot', ...CONFIG }),
+        /platform "copilot" is not configured in \/fake\/config\.default\.jsonc/,
+      );
+    });
+
+    it('allows a pinned provider absent from config when noConfig is set', async () => {
+      const candidates = await getCandidateProviders({ explicitProvider: 'copilot', noConfig: true });
+      assert.deepEqual(candidates, ['copilot']);
+    });
+
+    it('resolves per-provider model/effort from config, distinct per candidate', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+
+      const agyRunner = mock.method(providerRunners, 'agy', async (opts) => ({
+        provider: 'agy',
+        stdout: `model=${opts.model} effort=${opts.effort}`,
+        exitCode: 0,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Test' });
+      assert.equal(agyRunner.mock.calls.length, 1);
+      const passedOpts = agyRunner.mock.calls[0].arguments[0];
+      // Real config.default.jsonc supplies agy's model/effort since no CLI override was given.
+      assert.equal(passedOpts.model, 'gemini-3.8-flash');
+      assert.equal(passedOpts.effort, 'medium');
+      assert.equal(result.provider, 'agy');
+    });
+
+    it('CLI -m/-e override takes precedence over the config entry', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+
+      const agyRunner = mock.method(providerRunners, 'agy', async (opts) => ({
+        provider: 'agy',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+
+      await dispatchTask({ prompt: 'Test', model: 'custom-model', effort: 'low' });
+      const passedOpts = agyRunner.mock.calls[0].arguments[0];
+      assert.equal(passedOpts.model, 'custom-model');
+      assert.equal(passedOpts.effort, 'low');
+    });
+
+    it('dispatchTask rejects --no-config without --provider', async () => {
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test', noConfig: true }),
+        /--no-config .* requires --provider/,
+      );
+    });
+
+    it('dispatchTask honors --no-config alongside --provider, bypassing config membership', async () => {
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Test', provider: 'copilot', noConfig: true });
+      assert.equal(result.provider, 'copilot');
     });
   });
 });

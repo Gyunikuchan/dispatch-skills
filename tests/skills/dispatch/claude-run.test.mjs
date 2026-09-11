@@ -2,9 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  DEFAULT_CLAUDE_MODELS,
-  DEFAULT_CLAUDE_MODEL,
-  DEFAULT_CLAUDE_EFFORT,
   READ_ONLY_ALLOWED_TOOLS,
   MODE_DEFINITIONS,
   extractClaudeSessionId,
@@ -16,17 +13,12 @@ import {
   parseClaudeEnvelope,
   probeAllClaudeModes,
   resolveClaudeTarget,
+  resolveModelsToTry,
   testClaudeBinaryReachability,
 } from '../../../skills/dispatch/scripts/claude-run.mjs';
 
 describe('claude-run: runner discovery, reachability & envelope parsing', () => {
   describe('constants & tools', () => {
-    it('defines candidate models and default effort', () => {
-      assert.deepEqual(DEFAULT_CLAUDE_MODELS, ['claude-opus-5', 'bedrock.claude-opus-5']);
-      assert.equal(DEFAULT_CLAUDE_MODEL, 'claude-opus-5');
-      assert.equal(DEFAULT_CLAUDE_EFFORT, 'medium');
-    });
-
     it('enforces read-only allowed tools list without destructive tools', () => {
       assert.ok(READ_ONLY_ALLOWED_TOOLS.includes('Read'));
       assert.ok(READ_ONLY_ALLOWED_TOOLS.includes('Glob'));
@@ -80,6 +72,29 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
     it('does not match short prose after the word session', () => {
       assert.equal(extractClaudeSessionId('The session: ended cleanly'), null);
       assert.equal(extractClaudeSessionId('{"session_id":"uuid-value-1"}'), 'uuid-value-1');
+    });
+  });
+
+  describe('resolveModelsToTry (no hardcoded default)', () => {
+    it('returns [null] when no model is configured anywhere, omitting --model', () => {
+      assert.deepEqual(resolveModelsToTry(null), [null]);
+      assert.deepEqual(resolveModelsToTry(undefined), [null]);
+      assert.deepEqual(resolveModelsToTry(''), [null]);
+    });
+
+    it('returns the array as-is (ordered fallback list) when given an array', () => {
+      assert.deepEqual(resolveModelsToTry(['claude-opus-5', 'bedrock.claude-opus-5']), [
+        'claude-opus-5',
+        'bedrock.claude-opus-5',
+      ]);
+    });
+
+    it('splits a comma-separated string into an ordered fallback list', () => {
+      assert.deepEqual(resolveModelsToTry('a, b ,c'), ['a', 'b', 'c']);
+    });
+
+    it('wraps a single model string', () => {
+      assert.deepEqual(resolveModelsToTry('claude-opus-5'), ['claude-opus-5']);
     });
   });
 

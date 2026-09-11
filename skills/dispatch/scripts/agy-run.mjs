@@ -104,9 +104,6 @@ export const AGY_MODES = {
   ANTIGRAVITY_CLI: 'antigravity-cli',
 };
 
-export const DEFAULT_AGY_MODEL = 'gemini-3.8-flash';
-export const DEFAULT_AGY_EFFORT = 'medium';
-
 /**
  * Execution modes in cascade preference order: Antigravity 2.0 > VS Code Extension > CLI.
  * The single source of truth for mode metadata — every mode-aware function below
@@ -140,8 +137,8 @@ export async function runAgy(options = {}) {
   const {
     prompt,
     files = [],
-    model = DEFAULT_AGY_MODEL,
-    effort = DEFAULT_AGY_EFFORT,
+    model = null,
+    effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
     verbose = false,
@@ -299,8 +296,8 @@ export function buildAgyArgs(argvPrompt, briefFile, { model, effort, timeout }) 
  */
 function executeAgyInMode(mode, options) {
   const {
-    model = DEFAULT_AGY_MODEL,
-    effort = DEFAULT_AGY_EFFORT,
+    model = null,
+    effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = 10,
     verbose = false,
@@ -320,8 +317,8 @@ function executeAgyInMode(mode, options) {
   }
 
   const startTime = Date.now();
-  const effectiveModel = model || DEFAULT_AGY_MODEL;
-  const effectiveEffort = effort || DEFAULT_AGY_EFFORT;
+  const effectiveModel = model || null;
+  const effectiveEffort = effort || null;
   const dataDir = AGY_MODE_DATA_DIRS[mode] || 'antigravity';
   const providerLabel = AGY_MODE_LABELS[mode] || 'Antigravity 2.0 (agy)';
 
@@ -526,8 +523,8 @@ Usage:
 Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Antigravity model (default: ${DEFAULT_AGY_MODEL})
-  -e, --effort <level>          Override reasoning effort (default: ${DEFAULT_AGY_EFFORT})
+  -m, --model <name>            Override Antigravity model (no default here — see dispatch's config.default.jsonc)
+  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --agy-mode, --mode-variant    Force mode: antigravity-2.0 | antigravity-vscode | antigravity-cli | auto
   --test-reachability           Test and report reachability for all modes without consuming tokens

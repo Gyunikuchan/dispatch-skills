@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { resolveFlow } from '../../skills/implement-dispatch/scripts/resolve-flow.mjs';
+import { resolveArtifacts } from '../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -109,14 +109,10 @@ function scratchMentions(rel) {
 
 describe('artifact path convention', () => {
   it('generates paths matching the canonical shapes', () => {
-    const flow = resolveFlow(
-      { platform: 'claude', level: 'low', slug: 'auth-v2', date: '2026-09-10' },
-      { claude: true },
-      minimalConfig()
-    );
+    const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-10' });
     for (const [generated, shapes] of [
-      [flow.paths.plan, PLAN_SHAPES],
-      [flow.paths.walkthrough, WALKTHROUGH_SHAPES],
+      [result.plan.path, PLAN_SHAPES],
+      [result.walkthrough.path, WALKTHROUGH_SHAPES],
     ]) {
       assert.ok(generated.startsWith(SCRATCH_PREFIX), `${generated} lives under ${SCRATCH_PREFIX}`);
       const token = generated.slice(SCRATCH_PREFIX.length);
@@ -125,17 +121,12 @@ describe('artifact path convention', () => {
         `${generated} matches its canonical shape`
       );
     }
-    assert.ok(flow.paths.walkthrough.endsWith('-walkthrough.md'));
+    assert.ok(result.walkthrough.path.endsWith('-walkthrough.md'));
   });
 
   it('rejects a slug that would escape the scratch directory', () => {
     assert.throws(
-      () =>
-        resolveFlow(
-          { platform: 'claude', level: 'low', slug: '../evil', date: '2026-09-10' },
-          { claude: true },
-          minimalConfig()
-        ),
+      () => resolveArtifacts({ slug: '../evil', date: '2026-09-10' }),
       /must be kebab-case/
     );
   });
@@ -172,19 +163,3 @@ describe('artifact path convention', () => {
     assert.deepEqual(offenders, []);
   });
 });
-
-/** Smallest config satisfying validation, so this suite tests paths and nothing else. */
-function minimalConfig() {
-  const knobs = {
-    maxRounds: { low: 1 },
-    targetCount: { low: 1 },
-    consensus: { low: false },
-    toolTurns: { low: 3 },
-  };
-  const platforms = { claude: { model: 'claude-opus-5' } };
-  return {
-    'plan-review': { ...knobs, platforms },
-    implementation: { platforms },
-    'code-review': { ...knobs, platforms },
-  };
-}

@@ -37,7 +37,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). Local LM Studio at `http://127.0.0.1:1234/v1` is the zero-config default when no model is configured.
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). With no `model` configured anywhere (`opencode.jsonc`, dispatch's own config), `opencode` falls back to its own CLI default — dispatch makes no assumption of Local LM Studio.
 
 ### Installation
 
@@ -122,6 +122,32 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
 | `--json` | Request structured JSON output (OpenCode provider only). | `/dispatch --provider opencode --json Parse AST` |
 | `-v` | Stream live verbose execution traces to the active terminal. | `/dispatch -v Run complex benchmark trace` |
+| `--no-config` | Skip loading the cascade config; requires `--provider`. | `/dispatch --no-config --provider claude ...` |
+| `--validate-only` | Validate the loaded config and exit. | `node scripts/dispatch.mjs --validate-only` |
+
+---
+
+## Configuration
+
+Cascade order and per-provider `model`/`effort` defaults live in a JSONC config, not in the runner scripts. `dispatch` loads exactly one config file — no merging across tiers — from the first of, in precedence order: `<project-root>/.dispatch/config.local.jsonc`, `skills/dispatch/config.local.jsonc`, `<project-root>/.dispatch/config.jsonc`, `skills/dispatch/config.jsonc`, then the shipped [`config.default.jsonc`](config.default.jsonc). The first three are git-ignored, so a project or machine override never lands in a commit by accident.
+
+Schema:
+
+```jsonc
+{
+  "platforms": {
+    // Key order is cascade order. A platform key absent here is never dispatched.
+    "claude": { "model": ["claude-opus-5", "claude-sonnet-5"], "effort": "high" },
+    "agy": {},
+    "copilot": { "model": "gpt-5.6-luna" }
+    // "opencode" omitted: never reached by the cascade in this example.
+  }
+}
+```
+
+`model` accepts an array only for `claude` (tried in order as fallback models within that one cascade slot); every other platform takes a single string. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
+
+Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, or under `<project-root>/.dispatch/`, and edit it to change the cascade for one project or one machine.
 
 ---
 
@@ -157,9 +183,9 @@ tail -n 30 "<logFilePath>"
 `dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
 
 ### OpenCode Provider Setup
-`opencode` is config-driven: it targets whatever `provider/model` `opencode.jsonc` resolves, local or remote.
+`opencode` is config-driven: it targets whatever `provider/model` `opencode.jsonc` resolves, local or remote. `dispatch` assumes nothing about which provider that is — with no `model` configured anywhere, `opencode`'s own CLI default applies, not Local LM Studio.
 
-**Local LM Studio (zero-config default)** — used when `opencode.jsonc` sets no `model`:
+**Local LM Studio** — used when `opencode.jsonc`'s `model` is set to an `lmstudio/...` model:
 1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
 2. Ensure the `opencode` CLI binary is present on your `PATH`.
 3. Dispatch with `--provider opencode` or allow the cascade to reach it.

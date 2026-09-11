@@ -15,6 +15,7 @@ import {
 describe('validate-configs', () => {
   it('validates shipped repository configs cleanly', () => {
     const shippedFiles = [
+      'skills/dispatch/config.default.jsonc',
       'skills/implement-dispatch/config.default.jsonc',
       '.opencode/opencode.jsonc',
       'skills/dispatch/skill-hashes.json',
@@ -58,13 +59,17 @@ describe('validate-configs', () => {
         path.join(dispatchDir, 'skill-hashes.json')
       );
       copyFileSync(
+        path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.default.jsonc'),
+        path.join(dispatchDir, 'config.default.jsonc')
+      );
+      copyFileSync(
         path.join(PROJECT_ROOT, 'skills-lock.json'),
         path.join(tempDir, 'skills-lock.json')
       );
 
       const { valid, results } = validateAllConfigs({ projectRoot: tempDir });
       assert.equal(valid, true);
-      assert.equal(results.length, 4);
+      assert.equal(results.length, 5);
       for (const res of results) {
         assert.equal(res.valid, true);
         assert.deepEqual(res.problems, []);
@@ -101,6 +106,31 @@ describe('validate-configs', () => {
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
+
+    it('discovers a dispatch config in the project-root .dispatch override dir, typed "dispatch"', () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-find-dispatch-'));
+      try {
+        const overrideDir = path.join(tempDir, '.dispatch');
+        mkdirSync(overrideDir, { recursive: true });
+        writeFileSync(path.join(overrideDir, 'config.jsonc'), '{}', 'utf8');
+
+        const found = findConfigFiles(tempDir);
+        const match = found.find(f => path.relative(tempDir, f.path).replace(/\\/g, '/') === '.dispatch/config.jsonc');
+        assert.ok(match, 'expected .dispatch/config.jsonc to be discovered');
+        assert.equal(match.type, 'dispatch');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('discovers the shipped skills/dispatch/config.default.jsonc, typed "dispatch"', () => {
+      const found = findConfigFiles(PROJECT_ROOT);
+      const match = found.find(
+        f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/dispatch/config.default.jsonc'
+      );
+      assert.ok(match, 'expected skills/dispatch/config.default.jsonc to be discovered');
+      assert.equal(match.type, 'dispatch');
+    });
   });
 
   describe('validateConfigFile', () => {
@@ -121,6 +151,28 @@ describe('validate-configs', () => {
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
       }
+    });
+
+    describe('dispatch schema validation', () => {
+      it('rejects a platforms map missing or malformed', () => {
+        const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-dispatch-'));
+        try {
+          const file = path.join(tempDir, 'config.jsonc');
+          writeFileSync(file, '{}', 'utf8');
+          const res = validateConfigFile(file, 'dispatch');
+          assert.equal(res.valid, false);
+          assert.ok(res.problems.length > 0);
+        } finally {
+          rmSync(tempDir, { recursive: true, force: true });
+        }
+      });
+
+      it('accepts the shipped dispatch default config', () => {
+        const validPath = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.default.jsonc');
+        const res = validateConfigFile(validPath, 'dispatch');
+        assert.equal(res.valid, true);
+        assert.deepEqual(res.problems, []);
+      });
     });
 
     describe('implement-dispatch schema validation', () => {

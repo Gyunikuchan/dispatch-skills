@@ -29,11 +29,13 @@
  * =============================================================================
  * PREREQUISITES:
  * =============================================================================
- * - LM Studio (zero-config default): running locally with the local server started
- *   (http://127.0.0.1:1234/v1). Point opencode.jsonc's `model` at any other `provider/model`
- *   (e.g. `anthropic/claude-opus-5`, `openrouter/...`) to target a remote provider instead —
+ * - Model: set opencode.jsonc's `model` to a bare `lmstudio` model name to target a local
+ *   LM Studio server (http://127.0.0.1:1234/v1), or to any other `provider/model` (e.g.
+ *   `anthropic/claude-opus-5`, `openrouter/...`) to target a remote provider instead —
  *   its credentials go in that provider's `provider.<name>.options.apiKey` in opencode.jsonc
- *   (opencode resolves it itself), never in this process's environment.
+ *   (opencode resolves it itself), never in this process's environment. When opencode.jsonc
+ *   sets no `model` at all, this script assumes nothing about the target — opencode's own
+ *   CLI default applies (no `-m` flag passed, no LM Studio host guessed).
  * - OpenCode: `opencode` CLI installed and available in PATH.
  * - Config: merged across every locally-readable tier from opencode's own precedence order
  *   (https://opencode.ai/docs/config/#precedence-order) — global (`~/.config/opencode/`),
@@ -174,7 +176,6 @@ export { stripJsonComments, getAllowedBoundaryRoots } from './common.mjs';
 // SECTION: Constants (tweak these)
 // ============================================================================
 
-export const DEFAULT_FALLBACK_MODEL = 'lmstudio/qwen3.8-27b-ridge';
 export const DEFAULT_FALLBACK_AGENT = 'delegate';
 export const DEFAULT_LM_STUDIO_HOST = '127.0.0.1';
 export const DEFAULT_LM_STUDIO_PORT = 1234;
@@ -191,7 +192,8 @@ export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
  * @returns {string}
  */
 function describeProvider(settings) {
-  return settings.isLocal ? 'OpenCode (LM Studio)' : `OpenCode (${settings.providerName})`;
+  if (settings.isLocal) return 'OpenCode (LM Studio)';
+  return settings.providerName ? `OpenCode (${settings.providerName})` : 'OpenCode (default)';
 }
 
 /**
@@ -224,7 +226,8 @@ export const GPU_LOCK_POLL_MS = 500;
 
 /**
  * Executes a task using the OpenCode runner, against whatever `provider/model` opencode.jsonc
- * resolves — local LM Studio is the zero-config default, not the only supported target.
+ * resolves — local LM Studio when configured, any other provider/model, or opencode's own
+ * CLI default when opencode.jsonc sets no model at all.
  * Session logger and init banner are created before preflight so that an offline
  * LM Studio failure still produces a session log (mirrors the previous two-file
  * split's ordering from the pre-consolidation two-file architecture).
@@ -270,7 +273,9 @@ export async function runOpencode(options = {}) {
     (settings.protocol === 'https:' && settings.port === 443);
   const sessionLink = settings.host
     ? `${settings.protocol}//${settings.host}${isDefaultPort ? '' : `:${settings.port}`}${settings.pathname}`
-    : `opencode:${settings.providerName}/${settings.modelId}`;
+    : settings.providerName
+      ? `opencode:${settings.providerName}/${settings.modelId}`
+      : 'opencode:default';
 
   // Step 2: create logger + emit init banner before any preflight that could fail,
   // so offline runs still produce a session log.
@@ -797,9 +802,11 @@ export function resolveDefaultAgent(config = readOpencodeConfig()) {
 }
 
 /**
- * Resolves the default model identifier from opencode config or fallback.
+ * Resolves the default model identifier from opencode config. Returns `null` when
+ * `opencode.jsonc` sets no model anywhere — dispatch no longer assumes LM Studio in
+ * that case; opencode's own CLI default applies instead (no `-m` flag is passed).
  * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
- * @returns {string}
+ * @returns {string|null}
  */
 export function resolveDefaultModel(config = readOpencodeConfig()) {
   if (config && config.model) {
@@ -812,7 +819,7 @@ export function resolveDefaultModel(config = readOpencodeConfig()) {
     }
     return config.model;
   }
-  return DEFAULT_FALLBACK_MODEL;
+  return null;
 }
 
 /**
@@ -858,17 +865,19 @@ export function isLocalEndpointHost(host) {
  */
 export function resolveOpencodeSettings(config = readOpencodeConfig()) {
   const parsed = config || {};
-  const rawModel = parsed.model || DEFAULT_FALLBACK_MODEL;
-  let providerName = 'lmstudio';
+  // No `model` anywhere leaves providerName/modelKey null — dispatch no longer assumes
+  // LM Studio in that case; opencode's own CLI default applies (no `-m` flag, no host guess).
+  const rawModel = parsed.model || null;
+  let providerName = rawModel ? 'lmstudio' : null;
   let modelKey = rawModel;
 
-  if (rawModel.includes('/')) {
+  if (rawModel && rawModel.includes('/')) {
     const parts = rawModel.split('/');
     providerName = parts[0];
     modelKey = parts.slice(1).join('/');
   }
 
-  const providerConfig = parsed.provider?.[providerName] || {};
+  const providerConfig = providerName ? parsed.provider?.[providerName] || {} : {};
   const explicitBaseURLValue =
     process.env.LM_STUDIO_URL || providerConfig.options?.baseURL || providerConfig.baseURL || null;
   const explicitBaseURL = Boolean(explicitBaseURLValue);
@@ -1339,9 +1348,10 @@ Prerequisites:
   - opencode CLI installed and available in PATH
   - opencode.json(c) merged across opencode's own config precedence order — see
     https://opencode.ai/docs/config/#precedence-order — supplying model, agent, and optional
-    provider baseURL/apiKey. Local LM Studio (default: http://127.0.0.1:1234/v1) is the
-    zero-config default when opencode.jsonc sets no model; pointing 'model' at any other
+    provider baseURL/apiKey. Setting 'model' to a bare lmstudio model name targets a local
+    LM Studio server (default: http://127.0.0.1:1234/v1); pointing 'model' at any other
     provider/model (e.g. anthropic/claude-opus-5, openrouter/...) targets that provider instead —
+    setting no model at all leaves the choice to opencode's own CLI default —
     WAN proxy-trapping and the local GPU lock only apply when the resolved endpoint is local.
   - Remote-provider credentials belong in opencode.jsonc's provider.<name>.options.apiKey
     (resolved by opencode's own subprocess), not in this process's environment — cloud API keys

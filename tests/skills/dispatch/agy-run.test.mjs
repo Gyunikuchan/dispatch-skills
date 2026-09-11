@@ -14,8 +14,6 @@ import {
   AGY_MODE_PREFERENCE,
   AGY_MODE_DATA_DIRS,
   AGY_MODE_LABELS,
-  DEFAULT_AGY_MODEL,
-  DEFAULT_AGY_EFFORT,
   getAgyBinary,
   getAgy20Binary,
   getAgyVSCodeBinary,
@@ -34,9 +32,18 @@ import {
 
 describe('agy-run: multi-mode discovery, reachability & argument construction', () => {
   describe('constants & preference order', () => {
-    it('defines default model and effort', () => {
-      assert.equal(DEFAULT_AGY_MODEL, 'gemini-3.8-flash');
-      assert.equal(DEFAULT_AGY_EFFORT, 'medium');
+    it('omits -m/-e entirely when model/effort are null (no hardcoded default)', () => {
+      const args = buildAgyArgs('prompt', null, { model: null, effort: null, timeout: 60 });
+      assert.ok(!args.includes('--model'));
+      assert.ok(!args.includes('--effort'));
+    });
+
+    it('includes -m/-e when model/effort are provided (e.g. from dispatch config)', () => {
+      const args = buildAgyArgs('prompt', null, { model: 'gemini-3.8-flash', effort: 'medium', timeout: 60 });
+      assert.ok(args.includes('--model'));
+      assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.8-flash');
+      assert.ok(args.includes('--effort'));
+      assert.equal(args[args.indexOf('--effort') + 1], 'medium');
     });
 
     it('enforces preference order: Antigravity 2.0 > VS Code Extension > CLI', () => {

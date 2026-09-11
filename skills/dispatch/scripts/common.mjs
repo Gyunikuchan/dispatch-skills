@@ -1315,6 +1315,140 @@ export function parseJsonc(text) {
   return JSON.parse(stripJsonComments(text));
 }
 
+// ============================================================================
+// SECTION: Skill Config Loading (dispatch & implement-dispatch)
+// ============================================================================
+
+/** Canonical provider keys a dispatch config's `platforms` map may key on. */
+export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
+
+/**
+ * Builds the 5-path config precedence list shared by `dispatch` and `implement-dispatch`:
+ * project-root override (local, then shared) beats skill-root override (local, then
+ * shared) beats the skill's own shipped default. Generalized via `projectDirName` so
+ * each skill supplies its own project-root directory name (`.dispatch`,
+ * `.implement-dispatch`) without duplicating the precedence order.
+ *
+ * @param {object} params
+ * @param {string} params.skillRoot
+ * @param {string} params.projectDirName
+ * @param {string} [params.projectRoot]
+ * @returns {string[]}
+ */
+export function getConfigCandidates({ skillRoot, projectDirName, projectRoot = PROJECT_ROOT }) {
+  const projectDir = path.join(projectRoot, projectDirName);
+  return [
+    path.join(projectDir, 'config.local.jsonc'),
+    path.join(skillRoot, 'config.local.jsonc'),
+    path.join(projectDir, 'config.jsonc'),
+    path.join(skillRoot, 'config.jsonc'),
+    path.join(skillRoot, 'config.default.jsonc'),
+  ];
+}
+
+/**
+ * Loads a skill config wholly from the first candidate that exists (no merging across
+ * tiers), in the precedence order from {@link getConfigCandidates}.
+ *
+ * @param {object} params
+ * @param {string} params.skillRoot
+ * @param {string} params.projectDirName
+ * @param {string} [params.projectRoot]
+ * @param {boolean} [params.defaultOnly] Load only `config.default.jsonc`, skipping overrides.
+ * @returns {{ config: object, path: string }}
+ */
+export function loadSkillConfig({ skillRoot, projectDirName, projectRoot = PROJECT_ROOT, defaultOnly = false }) {
+  if (defaultOnly) {
+    const defaultPath = path.join(skillRoot, 'config.default.jsonc');
+    if (!fs.existsSync(defaultPath)) {
+      throw new Error(`Config file not found: tried ${defaultPath}`);
+    }
+    return { config: parseJsonc(fs.readFileSync(defaultPath, 'utf8')), path: defaultPath };
+  }
+
+  const candidates = getConfigCandidates({ skillRoot, projectDirName, projectRoot });
+  const configPath = candidates.find((p) => fs.existsSync(p));
+  if (!configPath) {
+    throw new Error(`Config file not found: tried ${candidates.join(', ')}`);
+  }
+  return { config: parseJsonc(fs.readFileSync(configPath, 'utf8')), path: configPath };
+}
+
+const DISPATCH_CONFIG_DIFF_HINT = 'diff against config.default.jsonc';
+
+/**
+ * Validates a parsed dispatch config against the `{ platforms: { <key>: { model?, effort? } } }`
+ * schema. Reports every problem in one pass; callers join and throw.
+ *
+ * `model` may be a string array only for `claude` — the sole runner with model-fallback
+ * support; every other platform's `model` must be a plain string.
+ *
+ * @param {object} config
+ * @returns {string[]} problem descriptions, empty when the config is valid
+ */
+export function validateDispatchConfig(config) {
+  const hint = DISPATCH_CONFIG_DIFF_HINT;
+  const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+
+  if (!isPlainObject(config)) {
+    return [`Config must be a JSON object with a "platforms" key (${hint}).`];
+  }
+
+  const problems = [];
+  for (const key of Object.keys(config)) {
+    if (key !== 'platforms') {
+      problems.push(`Unrecognized top-level key "${key}". Valid keys: platforms (${hint}).`);
+    }
+  }
+
+  const platforms = config.platforms;
+  if (!isPlainObject(platforms)) {
+    problems.push(`"platforms" must be an object mapping platform key to model/effort settings (${hint}).`);
+    return problems;
+  }
+
+  const keys = Object.keys(platforms);
+  if (keys.length === 0) {
+    problems.push(`"platforms" must define at least one platform (${hint}).`);
+  }
+
+  for (const key of keys) {
+    if (!KNOWN_PROVIDERS.includes(key)) {
+      problems.push(`platforms has unrecognized key "${key}". Valid keys: ${KNOWN_PROVIDERS.join(', ')} (${hint}).`);
+      continue;
+    }
+    const entry = platforms[key];
+    if (!isPlainObject(entry)) {
+      problems.push(`platforms.${key} must be an object (${hint}).`);
+      continue;
+    }
+    for (const [field, value] of Object.entries(entry)) {
+      if (field === 'model') {
+        if (typeof value === 'string') continue;
+        if (Array.isArray(value)) {
+          if (key !== 'claude') {
+            problems.push(`platforms.${key}.model may only be an array for "claude" (${hint}).`);
+          } else if (value.length === 0 || !value.every((v) => typeof v === 'string')) {
+            problems.push(`platforms.${key}.model array must be a non-empty array of strings (${hint}).`);
+          }
+          continue;
+        }
+        problems.push(
+          `platforms.${key}.model must be a string${key === 'claude' ? ' or a non-empty string array' : ''} (${hint}).`,
+        );
+      } else if (field === 'effort') {
+        if (typeof value !== 'string') {
+          problems.push(`platforms.${key}.effort must be a string (${hint}).`);
+        }
+      } else {
+        problems.push(`platforms.${key} has unrecognized key "${field}". Valid keys: model, effort (${hint}).`);
+      }
+    }
+  }
+
+  return problems;
+}
+
 /**
  * Determines whether the calling module is the main process entry point.
  * Preserves realpathSync symlink resolution.
