@@ -4,12 +4,12 @@
  * @file finalize.mjs
  * @description Closes an audit run: checks the repo against the baseline snapshot, relocates
  * every working file to OS temp, and appends the relocation path and integrity result to the
- * report, leaving `.scratch/audit/<run>/report.md` as the run's only file in the repo.
+ * report, leaving `.scratch/audits/<run>-audit.md` as the run's only file in the repo.
  *
  * Relocates rather than deletes (the repo's scratch convention), so findings and probe captures
  * stay inspectable after the run.
  *
- * Usage: node <skill>/scripts/finalize.mjs --run .scratch/audit/<yyyy-mm-dd-hhmm>
+ * Usage: node <skill>/scripts/finalize.mjs --run <yyyy-mm-dd-hhmm>
  */
 
 import fs from 'node:fs';
@@ -24,8 +24,7 @@ import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs } from './s
 
 function main() {
   const root = resolveRepoRoot();
-  const { runDir, workDir, rel } = resolveRunDirs(root, process.argv);
-  const reportPath = path.join(runDir, 'report.md');
+  const { runId, reportPath, workDir, rel } = resolveRunDirs(root, process.argv);
   if (!fs.existsSync(reportPath)) {
     throw new Error(`${rel(reportPath)} not found; write the report before finalizing.`);
   }
@@ -35,11 +34,11 @@ function main() {
     ? diffStatus(fs.readFileSync(baselinePath, 'utf8'), auditGitStatus(root) ?? '')
     : null;
 
-  const leftovers = fs.readdirSync(runDir).filter((name) => name !== 'report.md');
   let destination = null;
-  if (leftovers.length > 0) {
-    destination = fs.mkdtempSync(path.join(os.tmpdir(), `audit-dispatch-skills-${path.basename(runDir)}-`));
-    for (const name of leftovers) moveEntry(path.join(runDir, name), path.join(destination, name));
+  if (fs.existsSync(workDir)) {
+    destination = fs.mkdtempSync(path.join(os.tmpdir(), `audit-dispatch-skills-${runId}-`));
+    for (const name of fs.readdirSync(workDir)) moveEntry(path.join(workDir, name), path.join(destination, name));
+    fs.rmSync(workDir, { recursive: true, force: true });
   }
 
   const integrity =

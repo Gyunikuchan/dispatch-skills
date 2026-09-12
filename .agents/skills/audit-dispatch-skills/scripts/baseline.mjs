@@ -2,14 +2,14 @@
 
 /**
  * @file baseline.mjs
- * @description Deterministic audit evidence gathered before any subagent runs, written to <run>/work/:
+ * @description Deterministic audit evidence gathered before any subagent runs, written to the run's work dir:
  *   - git-status.txt: repo snapshot (audit output excluded) that finalize.mjs compares against;
  *   - tests.txt:      full test run with line/branch coverage (bypasses `npm test`'s pretest hash write);
  *   - metrics.md:     doc token footprint, broken relative links/anchors, script structure,
  *                     exports no test mentions, per-file test counts, skill hash drift.
  * Prints a short digest; the files carry the detail.
  *
- * Usage: node <skill>/scripts/baseline.mjs --run .scratch/audit/<yyyy-mm-dd-hhmm>
+ * Usage: node <skill>/scripts/baseline.mjs --run <yyyy-mm-dd-hhmm>
  */
 
 import fs from 'node:fs';

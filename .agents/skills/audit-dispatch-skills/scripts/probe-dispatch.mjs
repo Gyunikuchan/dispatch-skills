@@ -10,10 +10,10 @@
  *                     whether it skipped the file or aborted the run.
  * The probes run separately so a runner that aborts on a denylisted file cannot mask the read result.
  *
- * Usage: node <skill>/scripts/probe-dispatch.mjs --run .scratch/audit/<run> [--modes] [--only a,b]
+ * Usage: node <skill>/scripts/probe-dispatch.mjs --run <yyyy-mm-dd-hhmm> [--modes] [--only a,b]
  *                                                [--timeout <s>] [--discover-only]
  *
- * Writes <run>/work/dispatch/summary.md, results.json, and per-target stdout/stderr captures.
+ * Writes <run>-work/dispatch/summary.md, results.json, and per-target stdout/stderr captures.
  * Claude Code: run unsandboxed (Antigravity binds a local TCP socket) and backgrounded
  * (live prompts outlast a single tool call).
  */

@@ -2,8 +2,8 @@
  * @file shared.mjs
  * @description Run-directory layout and repo-integrity helpers shared by audit-dispatch-skills scripts.
  *
- * Layout: `.scratch/audit/<run>/report.md` is the only file that outlives the run;
- * every working file lives under `.scratch/audit/<run>/work/` until `finalize.mjs` relocates it.
+ * Layout: `.scratch/audits/<run>-audit.md` is the only file that outlives the run;
+ * every working file lives under `.scratch/audits/<run>-work/` until `finalize.mjs` relocates it.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -11,7 +11,8 @@ import path from 'node:path';
 
 // Audit output is excluded from integrity snapshots: `.scratch/` is tracked-visible, and the
 // audit's own writes would otherwise read as repo changes.
-const AUDIT_PREFIX = '.scratch/audit/';
+const AUDIT_PREFIX = '.scratch/audits/';
+const RUN_ID = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
 
 export function resolveRepoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
@@ -29,17 +30,25 @@ export function relTo(root) {
   return (p) => toPosix(path.relative(root, p));
 }
 
-/** Reads `--run <dir>` and returns the run, work, and repo-relative forward-slash paths. */
+/**
+ * Reads `--run <yyyy-mm-dd-hhmm>` and derives the run's two paths: the report that outlives the
+ * run and the work directory beside it. A run id, not a directory, so both live flat in
+ * `.scratch/audits/` and the report needs no nesting to be found.
+ */
 export function resolveRunDirs(root, argv) {
   const index = argv.indexOf('--run');
   const value = index === -1 ? null : argv[index + 1];
-  if (!value) throw new Error(`Missing --run ${AUDIT_PREFIX}<yyyy-mm-dd-hhmm>`);
-  const runDir = path.resolve(root, value);
-  const rel = relTo(root);
-  if (!rel(runDir).startsWith(AUDIT_PREFIX)) {
-    throw new Error(`--run must be under ${AUDIT_PREFIX} (got ${value})`);
-  }
-  return { runDir, workDir: path.join(runDir, 'work'), rel };
+  if (!value) throw new Error('Missing --run <yyyy-mm-dd-hhmm>');
+  // A bare id keeps callers off path separators; a full report path is accepted for convenience.
+  const runId = RUN_ID.test(value) ? value : /(\d{4}-\d{2}-\d{2}-\d{4})-(?:audit\.md|work)$/.exec(toPosix(value))?.[1];
+  if (!runId) throw new Error(`--run must be a run id like 2026-09-11-1853 (got ${value})`);
+  const auditsDir = path.join(root, ...AUDIT_PREFIX.split('/').filter(Boolean));
+  return {
+    runId,
+    reportPath: path.join(auditsDir, `${runId}-audit.md`),
+    workDir: path.join(auditsDir, `${runId}-work`),
+    rel: relTo(root),
+  };
 }
 
 /**

@@ -1,6 +1,6 @@
 # Findings format
 
-One file per scope at `.scratch/audit/<run>/work/findings/<scope-id>.md`. Report **claims** with evidence; the orchestrator verifies and ranks. One finding per defect: identical defects across locations share one finding with several locations.
+One file per scope at `.scratch/audits/<run>-work/findings/<scope-id>.md`. Report **claims** with evidence; the orchestrator verifies and ranks. One finding per defect: identical defects across locations share one finding with several locations.
 
 ```md
 # Findings: <scope-id>
