@@ -156,6 +156,7 @@ Choose a level based on the risk and complexity of your change:
 ### Key Execution Mechanics
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
 - **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a same-agent target (`allowSameAgent: true`). Pins do not resurrect a phase configured off (`maxRounds: 0`).
+- **Breadth Clamping**: When a level asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
 - **Consensus Enforcement**:
   - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists.
@@ -266,6 +267,11 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
 ---
 
 ## Nuances, Quirks & Troubleshooting
+
+### Liveness Override (Test-Only)
+`IMPLEMENT_DISPATCH_LIVENESS_JSON` replaces the flow resolver's real provider probing with a literal `{ "claude": true, "agy": false, ... }` map, so a test run does not shell out to every provider CLI. It bypasses probing entirely — nothing is checked against your installed agents.
+
+Because an inherited value would silently reshape a real run, the variable is armed only when `IMPLEMENT_DISPATCH_TEST_MODE=1` is set alongside it. Setting the payload alone is an error naming both variables, not a silent fall back to probing. A run using the override reports `diagnostics.livenessSource: "env-override"`; every other run reports `"probe"`.
 
 ### Graceful Degradation Without Companion Skills
 If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implement-dispatch` continues running seamlessly:

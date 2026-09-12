@@ -135,7 +135,7 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
    - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
    - Rounds spent per phase vs `maxRounds`.
-   - Active, failed, dropped, or unavailable delegates (`flow.diagnostics`).
+   - Active, failed, dropped, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `droppedPins`, `clamped`, `livenessSource`).
    - Summary of accepted/rejected findings and verification command status.
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
 

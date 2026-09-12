@@ -80,7 +80,7 @@ export function selectLevel(definedLevels, level) {
  * Resolves the model/effort hints for one platform's entry in any `platforms` map.
  *
  * An entry may carry flat `model`/`effort` keys (applying to every level), level keys
- * (`low`/`medium`/`high`/`max`) overriding them, or both. Shape problems are fatal at
+ * (`low`/`medium`/`high`/`xhigh`/`max`) overriding them, or both. Shape problems are fatal at
  * validation time, so unrecognised keys are simply not level overrides here.
  *
  * @param {object} entry - config[section].platforms[platform]
@@ -331,7 +331,7 @@ export function validateConfig(config) {
 // SECTION: Liveness
 // ============================================================================
 
-const RUNNER_FILES = {
+export const RUNNER_FILES = {
   claude: 'claude-run.mjs',
   agy: 'agy-run.mjs',
   copilot: 'copilot-run.mjs',
@@ -348,21 +348,41 @@ const RUNNER_FILES = {
 const LIVENESS_ENV_VAR = 'IMPLEMENT_DISPATCH_LIVENESS_JSON';
 
 /**
+ * Explicit opt-in that arms the liveness seam above.
+ *
+ * A dedicated variable rather than `NODE_ENV=test`: ambient signals set by unrelated tooling are
+ * exactly how an inherited payload silently replaces real probing in a production run.
+ */
+const TEST_MODE_ENV_VAR = 'IMPLEMENT_DISPATCH_TEST_MODE';
+
+/**
  * Probes which providers are reachable.
  *
  * @param {string[]} [only] Restrict probing to these provider keys; omit to probe all of them.
  *   Probing a provider no phase can dispatch to is wasted latency.
+ * @returns {Promise<{ liveness: Record<string, boolean>, source: 'env-override' | 'probe' }>}
  */
 export async function defaultLiveness(only) {
   const override = process.env[LIVENESS_ENV_VAR];
   if (override) {
+    // Fail loudly rather than ignore the payload: an operator who believes liveness is pinned
+    // while the resolver probes for real is the quieter version of the bug this gate closes.
+    if (process.env[TEST_MODE_ENV_VAR] !== '1') {
+      throw new Error(
+        `${LIVENESS_ENV_VAR} is a test-only seam and requires ${TEST_MODE_ENV_VAR}=1. ` +
+          `Set both variables or unset ${LIVENESS_ENV_VAR}.`
+      );
+    }
     let parsed;
     try {
       parsed = JSON.parse(override);
     } catch {
       throw new Error(`${LIVENESS_ENV_VAR} is not valid JSON`);
     }
-    return Object.fromEntries(Object.keys(RUNNER_FILES).map((key) => [key, !!parsed[key]]));
+    return {
+      liveness: Object.fromEntries(Object.keys(RUNNER_FILES).map((key) => [key, !!parsed[key]])),
+      source: 'env-override',
+    };
   }
 
   const keys = only?.length ? Object.keys(RUNNER_FILES).filter((k) => only.includes(k)) : Object.keys(RUNNER_FILES);
@@ -379,7 +399,7 @@ export async function defaultLiveness(only) {
       }
     })
   );
-  return results;
+  return { liveness: results, source: 'probe' };
 }
 
 /**
@@ -408,7 +428,9 @@ export function probeCandidates(opts, config) {
  *
  * Pure over its inputs: no clock, filesystem, or process access.
  *
- * @param {{ platform: string, level?: string, pins?: string[] }} options
+ * @param {{ platform: string, level?: string, pins?: string[],
+ *           livenessSource?: 'env-override' | 'probe' }} options
+ *   `livenessSource` is passed in rather than read from the environment, keeping this pure.
  * @param {Record<string, boolean>} liveness - map of platform key → available
  * @param {object} config                    - parsed config object
  * @returns {object} flow plan JSON
@@ -417,6 +439,13 @@ export function resolveFlow(options, liveness, config) {
   const { level = 'medium', pins: rawPins } = options;
   // Same alias normalization as pins, so `claudecode` still self-excludes `claude`.
   const platform = options.platform ? normalizePin(options.platform) : options.platform;
+  // An unvalidated platform self-excludes nothing, so the orchestrator's own agent would be
+  // emitted as an "external" reviewer target and the bogus key would reach the write-subagent table.
+  if (platform && !KNOWN_PROVIDERS.includes(platform)) {
+    throw new Error(
+      `Unknown platform "${options.platform}". Valid platforms: ${KNOWN_PROVIDERS.join(', ')}`
+    );
+  }
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
   // to one target instead of being treated as unrecognized or as two separate targets.
@@ -561,7 +590,13 @@ export function resolveFlow(options, liveness, config) {
     'plan-review': planReview,
     implementation,
     'code-review': codeReview,
-    diagnostics: { effectiveLevel: level, unavailable, droppedPins, clamped },
+    diagnostics: {
+      effectiveLevel: level,
+      unavailable,
+      droppedPins,
+      clamped,
+      livenessSource: options.livenessSource ?? 'probe',
+    },
   };
 
   return flow;
@@ -675,6 +710,15 @@ async function main() {
     process.stderr.write(`Error: Unknown level "${opts.level}". Valid levels: ${LEVELS.join(', ')}\n`);
     process.exit(1);
   }
+  // Normalize first: this block runs before `resolveFlow`'s own normalizePin, so testing the raw
+  // spelling would reject the documented aliases `claudecode` and `antigravity`. The message
+  // still quotes what the user typed.
+  if (!KNOWN_PROVIDERS.includes(normalizePin(opts.platform))) {
+    process.stderr.write(
+      `Error: Unknown platform "${opts.platform}". Valid platforms: ${KNOWN_PROVIDERS.join(', ')}\n`
+    );
+    process.exit(1);
+  }
   const configProblems = validateConfig(config);
   if (configProblems.length > 0) {
     process.stderr.write(`Invalid config:\n- ${configProblems.join('\n- ')}\n`);
@@ -695,8 +739,9 @@ async function main() {
   }
 
   let liveness;
+  let livenessSource;
   try {
-    liveness = await defaultLiveness(probeCandidates(opts, config));
+    ({ liveness, source: livenessSource } = await defaultLiveness(probeCandidates(opts, config)));
   } catch (err) {
     process.stderr.write(`Error checking liveness: ${err.message}\n`);
     process.exit(1);
@@ -704,7 +749,7 @@ async function main() {
 
   let result;
   try {
-    result = resolveFlow(opts, liveness, config);
+    result = resolveFlow({ ...opts, livenessSource }, liveness, config);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);

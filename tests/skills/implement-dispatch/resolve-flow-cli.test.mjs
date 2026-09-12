@@ -27,9 +27,12 @@ function run(...args) {
   const opts = typeof args.at(-1) === 'object' ? args.pop() : {};
   const env = { ...process.env };
   if (opts.realProbes) {
+    // The seam is gated on the test-mode variable, so both halves must go for a real probe.
     delete env.IMPLEMENT_DISPATCH_LIVENESS_JSON;
+    delete env.IMPLEMENT_DISPATCH_TEST_MODE;
   } else {
     env.IMPLEMENT_DISPATCH_LIVENESS_JSON = opts.liveness ?? ALL_LIVE;
+    env.IMPLEMENT_DISPATCH_TEST_MODE = '1';
   }
 
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
@@ -185,13 +188,46 @@ describe('resolve-flow CLI', () => {
     );
   });
 
+  it('rejects an unknown --platform, naming the valid keys', () => {
+    const { status, stderr } = run('--platform', 'bogus', '--level', 'low');
+    assert.equal(status, 1);
+    assert.match(stderr, /Unknown platform "bogus"\. Valid platforms: .*claude/);
+  });
+
+  it('accepts the documented --platform alias claudecode', () => {
+    const { status, stdout } = run('--platform', 'claudecode', '--level', 'low');
+    assert.equal(status, 0);
+    assert.equal(JSON.parse(stdout).implementation.platform, 'claude');
+  });
+
+  it('reports livenessSource "env-override" when the gated seam supplies liveness', () => {
+    const { status, stdout } = run('--platform', 'claude', '--level', 'low');
+    assert.equal(status, 0);
+    assert.equal(JSON.parse(stdout).diagnostics.livenessSource, 'env-override');
+  });
+
+  it('rejects the liveness payload when the test-mode variable is absent', () => {
+    // Spawned directly: `run` always pairs the two variables, which is the behaviour under test.
+    const env = { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE };
+    delete env.IMPLEMENT_DISPATCH_TEST_MODE;
+    const result = spawnSync(process.execPath, [SCRIPT, '--platform', 'claude', '--level', 'low'], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      killSignal: 'SIGKILL',
+      env,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /IMPLEMENT_DISPATCH_LIVENESS_JSON/);
+    assert.match(result.stderr, /IMPLEMENT_DISPATCH_TEST_MODE/);
+  });
+
   it(
     'probes real providers when the seam is absent',
     { skip: process.env.RUN_LIVE_PROVIDER_PROBES ? false : 'set RUN_LIVE_PROVIDER_PROBES=1 to run' },
     () => {
       const { status, stdout } = run('--platform', 'claude', { realProbes: true });
       assert.equal(status, 0);
-      assert.ok(JSON.parse(stdout).diagnostics);
+      assert.equal(JSON.parse(stdout).diagnostics.livenessSource, 'probe');
     },
   );
 });
@@ -219,7 +255,11 @@ describe('resolve-flow CLI: invalid config', () => {
         encoding: 'utf8',
         timeout: 60_000,
         killSignal: 'SIGKILL',
-        env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE },
+        env: {
+          ...process.env,
+          IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE,
+          IMPLEMENT_DISPATCH_TEST_MODE: '1',
+        },
       });
       return { status: result.status, stdout: result.stdout, stderr: result.stderr };
     } finally {

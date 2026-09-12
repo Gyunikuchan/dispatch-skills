@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   resolveFlow,
@@ -9,7 +11,13 @@ import {
   selectLevel,
   normalizePin,
   probeCandidates,
+  RUNNER_FILES,
 } from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
+
+const DISPATCH_SCRIPTS = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../skills/dispatch/scripts'
+);
 
 // Stub liveness: all available except 'copilot'
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
@@ -809,6 +817,21 @@ describe('resolveFlow', () => {
       assert.match(problems.join('\n'), /Section "code-review" must be an object/);
     });
 
+    it('rejects a non-object platforms map', () => {
+      const config = withSections({ 'code-review': { platforms: 'claude' } });
+      const problems = validateConfig(config);
+      assert.match(
+        problems.join('\n'),
+        /code-review\.platforms must be an object mapping platform key to model\/effort settings/
+      );
+    });
+
+    it('rejects a knob that is not keyed by level', () => {
+      const config = withSections({ 'code-review': { maxRounds: 3 } });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /code-review\.maxRounds must be an object keyed by level/);
+    });
+
     it('rejects a non-object platforms entry', () => {
       const config = withSections({ 'code-review': { platforms: { agy: 'not-an-object' } } });
       const problems = validateConfig(config);
@@ -832,6 +855,36 @@ describe('resolveFlow', () => {
 
     it('does not throw when platform is omitted', () => {
       assert.doesNotThrow(() => resolveFlow({ level: 'low' }, LIVE_ALL, BASE_CONFIG));
+    });
+  });
+
+  describe('resolveFlow — unknown platform', () => {
+    it('throws for an unrecognized platform, naming the valid keys', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'bogus', level: 'low' }, LIVE_ALL, BASE_CONFIG),
+        /Unknown platform "bogus"\. Valid platforms: .*claude/
+      );
+    });
+
+    it('accepts a documented alias that normalizes to a known provider', () => {
+      const out = resolveFlow({ platform: 'claudecode', level: 'low' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.implementation.platform, 'claude');
+    });
+  });
+
+  describe('resolveFlow — livenessSource diagnostic', () => {
+    it('defaults to "probe" when the caller passes no source', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.diagnostics.livenessSource, 'probe');
+    });
+
+    it('reports the source the caller supplies', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', livenessSource: 'env-override' },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.equal(out.diagnostics.livenessSource, 'env-override');
     });
   });
 
@@ -985,4 +1038,16 @@ describe('probeCandidates', () => {
     const keys = probeCandidates({ platform: 'claude', pins: ['all'] }, config).sort();
     assert.deepEqual(keys, ['agy', 'claude', 'copilot']);
   });
+});
+
+describe('RUNNER_FILES availability exports', () => {
+  // Pins `defaultLiveness`'s `is<Key>Available` name derivation without spawning a provider CLI:
+  // the modules are imported only, never called, so the test stays hermetic.
+  for (const [key, file] of Object.entries(RUNNER_FILES)) {
+    it(`${file} exports is${key.charAt(0).toUpperCase()}${key.slice(1)}Available`, async () => {
+      const mod = await import(pathToFileURL(path.join(DISPATCH_SCRIPTS, file)).href);
+      const fnName = `is${key.charAt(0).toUpperCase()}${key.slice(1)}Available`;
+      assert.equal(typeof mod[fnName], 'function', `${file} must export ${fnName}`);
+    });
+  }
 });
