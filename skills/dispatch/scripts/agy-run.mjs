@@ -163,15 +163,14 @@ export async function runAgy(options = {}) {
 
   const requestedMode = modeVariant || agyMode || null;
 
-  // Resolve candidate modes
-  let modesToTry;
-  if (requestedMode && requestedMode !== 'auto') {
-    modesToTry = [requestedMode];
-  } else {
-    // Preferred cascade: Antigravity 2.0 > VS Code Extension > CLI
-    const available = await getAvailableAgyModes();
-    modesToTry = available.length > 0 ? available : [...AGY_MODE_PREFERENCE];
-  }
+  // Resolve candidate modes. `pinnedMode` — not `requestedMode` — is what the cascade guards below
+  // must test: 'auto' is a *request* that deliberately pins nothing. Pinning does not depend on
+  // availability, so resolve it first and skip the probe entirely when a mode is pinned.
+  const { pinnedMode } = resolveModePlan({ requestedMode });
+  // Preferred cascade: Antigravity 2.0 > VS Code Extension > CLI
+  const { modesToTry } = pinnedMode
+    ? { modesToTry: [pinnedMode] }
+    : resolveModePlan({ requestedMode, availableModes: await getAvailableAgyModes() });
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
@@ -200,7 +199,7 @@ export async function runAgy(options = {}) {
 
       // If execution reached the mode but encountered token/subscription issues,
       // cascade to the next available mode if one remains.
-      const hasNextMode = i < modesToTry.length - 1 && !requestedMode;
+      const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
       const step = nextAgyStep({ result, hasNextMode });
 
       if (step === 'next-mode') {
@@ -216,7 +215,7 @@ export async function runAgy(options = {}) {
       return result;
     } catch (err) {
       lastError = err;
-      const hasNextMode = i < modesToTry.length - 1 && !requestedMode;
+      const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
       if (hasNextMode) {
         process.stderr.write(
           `[dispatch] Antigravity mode '${currentMode}' failed execution: ${err.message}.\n` +
@@ -252,6 +251,23 @@ export function isSubscriptionOrTokenIssue(text) {
     ) ||
     /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i.test(text)
   );
+}
+
+/**
+ * Decides which modes to try and whether the run is pinned to one, given the requested mode and
+ * the modes found available.
+ *
+ * Pure and exported because the pinning rule and the cascade guard must not drift: `'auto'` is the
+ * documented cascading value, so it pins *nothing* — reading it as a pin (any plain truthiness test
+ * on the requested mode) silently disables the cascade it was asked for.
+ *
+ * @param {{ requestedMode?: AgyMode|'auto'|null, availableModes?: AgyMode[] }} [args={}]
+ * @returns {{ modesToTry: AgyMode[], pinnedMode: AgyMode|null }}
+ */
+export function resolveModePlan({ requestedMode = null, availableModes = [] } = {}) {
+  const pinnedMode = requestedMode && requestedMode !== 'auto' ? requestedMode : null;
+  if (pinnedMode) return { modesToTry: [pinnedMode], pinnedMode };
+  return { modesToTry: availableModes.length > 0 ? [...availableModes] : [...AGY_MODE_PREFERENCE], pinnedMode: null };
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   parseAgyEnvelope,
   isSubscriptionOrTokenIssue,
   nextAgyStep,
+  resolveModePlan,
 } from '../../../skills/dispatch/scripts/agy-run.mjs';
 
 describe('agy-run: multi-mode discovery, reachability & argument construction', () => {
@@ -253,6 +254,71 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(isSubscriptionOrTokenIssue(null), false);
       assert.equal(isSubscriptionOrTokenIssue(undefined), false);
       assert.equal(isSubscriptionOrTokenIssue(42), false);
+    });
+  });
+
+  describe('resolveModePlan (pure mode-cascade decision)', () => {
+    const twoModes = [AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE];
+
+    it("'auto' does not pin, so the cascade stays open", () => {
+      const plan = resolveModePlan({ requestedMode: 'auto', availableModes: twoModes });
+      assert.equal(plan.pinnedMode, null);
+      assert.deepEqual(plan.modesToTry, twoModes);
+    });
+
+    it('an explicit mode pins to exactly that mode', () => {
+      const plan = resolveModePlan({ requestedMode: AGY_MODES.ANTIGRAVITY_VSCODE, availableModes: twoModes });
+      assert.equal(plan.pinnedMode, AGY_MODES.ANTIGRAVITY_VSCODE);
+      assert.deepEqual(plan.modesToTry, [AGY_MODES.ANTIGRAVITY_VSCODE]);
+    });
+
+    it('no requested mode cascades over the available modes', () => {
+      const plan = resolveModePlan({ requestedMode: null, availableModes: twoModes });
+      assert.equal(plan.pinnedMode, null);
+      assert.deepEqual(plan.modesToTry, twoModes);
+    });
+
+    it('falls back to the preference order when nothing is available', () => {
+      const plan = resolveModePlan({ requestedMode: null, availableModes: [] });
+      assert.deepEqual(plan.modesToTry, AGY_MODE_PREFERENCE);
+      assert.notEqual(plan.modesToTry, AGY_MODE_PREFERENCE, 'must be a copy, not the shared array');
+    });
+
+    it('tolerates omitted arguments', () => {
+      assert.deepEqual(resolveModePlan().modesToTry, AGY_MODE_PREFERENCE);
+      assert.equal(resolveModePlan({ requestedMode: 'auto' }).pinnedMode, null);
+    });
+
+    it("composes with nextAgyStep so '--agy-mode auto' cascades on a token issue", () => {
+      // The regression: the cascade guard read `!requestedMode`, which is false for the string
+      // 'auto', so an auto run built the full list and then returned on the first mode's quota
+      // failure instead of falling through.
+      const { modesToTry, pinnedMode } = resolveModePlan({ requestedMode: 'auto', availableModes: twoModes });
+      const hasNextMode = 0 < modesToTry.length - 1 && !pinnedMode;
+      assert.equal(hasNextMode, true);
+      assert.equal(
+        nextAgyStep({
+          result: { exitCode: 1, stdout: '', stderr: 'insufficient tokens', failureKind: 'quota' },
+          hasNextMode,
+        }),
+        'next-mode',
+      );
+    });
+
+    it('an explicitly pinned mode still refuses to cascade on a token issue', () => {
+      const { modesToTry, pinnedMode } = resolveModePlan({
+        requestedMode: AGY_MODES.ANTIGRAVITY_2_0,
+        availableModes: twoModes,
+      });
+      const hasNextMode = 0 < modesToTry.length - 1 && !pinnedMode;
+      assert.equal(hasNextMode, false);
+      assert.notEqual(
+        nextAgyStep({
+          result: { exitCode: 1, stdout: '', stderr: 'insufficient tokens', failureKind: 'quota' },
+          hasNextMode,
+        }),
+        'next-mode',
+      );
     });
   });
 

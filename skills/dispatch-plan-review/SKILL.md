@@ -50,7 +50,7 @@ Attach the plan file plus any user-specified files with `-f "<path>"` (forward s
 
 ### 2. Adjudicate each actionable claim
 
-Start once every launched dispatch has returned a report, `NO_DISPATCH_AVAILABLE`, or its per-pin fallback result.
+Start once every launched dispatch has returned a report, `NO_DISPATCH_AVAILABLE`, or its per-pin fallback result. A dispatch that ended in none of those — a terminal error, or no report at all — is handled per `dispatch`'s `references/alignment.md` § Adjudication **Terminal outcomes**, which also governs the case where no invocation in the wave produced a report.
 
 Adjudicate per `dispatch`'s `references/alignment.md` § Adjudication (scope, verdict table, evidence over votes, dispute escalation).
 
