@@ -18,9 +18,9 @@ Apply every axis and record each in the coverage table.
 - **`hub-docs`**: Root `README.md` against the Documentation Standards (value proposition, install, catalog with dependencies, quick start, architecture highlights): strictly human-optimized, accurate today, enticing, high level.
 - **`context-files`**: `AGENTS.md` graded against `writing-for-agents` as always-loaded context (no-ops, duplication with skills or the environment, stale rules, negation) and checked for accuracy against the repo as it is.
 - **`tooling`**: `package.json` scripts; the husky pre-commit pattern against the real file layout; which files `scripts/generate-hashes.mjs` hashes versus which it should; `scripts/validate-configs.mjs` search paths; ignore and attribute rules; lockfile and agent config files.
-- **`tests`**: Test tree mirroring source; missing cross-skill guards (doc-versus-`--help` flag drift, dependency direction, link integrity); redundant suites; `npm test` side effects.
+- **`tests`**: Test tree mirroring source; missing cross-skill guards (doc-versus-`--help` flag drift, dependency direction, link integrity); redundant suites, overlapping unit vs integration assertions to prune or consolidate; `npm test` side effects.
 - **`security`**: The read-only boundary end to end (dispatch → reviews → `implement-dispatch`), what content reaches delegates, secrets committed in config.
 - **`portability`**: Shell snippets across every doc against the `AGENTS.md` portability rule.
-- **`opportunities`**: Simplifications, code or conventions to hoist into a shared home, files or skills to merge or split, guard tests that would retire a manual review item.
+- **`opportunities`**: Simplifications, redundant code or helper duplicates to hoist into a shared home (`skills/dispatch/scripts/common.mjs`), redundant cross-suite test cases to prune, files or skills to merge or split, guard tests that would retire a manual review item.
 
 **Done when:** every axis has a coverage row, `Files opened` lists every file read, and every finding cites `path:line` evidence.

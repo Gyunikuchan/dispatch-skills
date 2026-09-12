@@ -35,5 +35,5 @@ One file per scope at `.scratch/audit/<run>/work/findings/<scope-id>.md`. Report
 - **critical**: read-only boundary or secret exposure breached, data loss, or a skill unusable on a supported platform.
 - **high**: wrong behaviour on a common path, or a doc that leads a user or agent into a wrong action.
 - **medium**: edge-case bug, missing test for a risky branch, material doc drift, or an agent-doc variance lever (vague completion criterion, buried step).
-- **low**: minor drift, readability, redundant code or tests to prune.
+- **low**: minor drift, readability, redundant code, comments, or tests to prune.
 - **nit**: wording and formatting.
