@@ -8,6 +8,8 @@ import { describe, it, after } from 'node:test';
 
 import {
   parseCommonArgs,
+  formatCliError,
+  safeExitCode,
   formatSafetyPrompt,
   extractCleanResponse,
   isPathInside,
@@ -1254,5 +1256,130 @@ process.stdout.write(JSON.stringify(await readStdin()));`;
       assert.equal(resolveRunnerExitCode({ code: 2, cleanStdout: 'Usage error' }), 2);
       assert.equal(resolveRunnerExitCode({ code: null, signal: 'SIGTERM' }), 1);
     });
+  });
+});
+
+describe('common: formatCliError', () => {
+  it('renders each terminal dispatch sentinel as a bracketed code', () => {
+    for (const code of [
+      'NO_DISPATCH_AVAILABLE',
+      'INVALID_DISPATCH_CONFIG',
+      'INTEGRITY_VIOLATION',
+      'NO_CONFIG_REQUIRES_PROVIDER',
+    ]) {
+      const err = new Error('boom');
+      err.code = code;
+      assert.equal(formatCliError(err), `\n[dispatch] ERROR: [${code}] boom`);
+    }
+  });
+
+  it('falls back to [ERROR] for a missing code and for a numeric forwarded exit code', () => {
+    assert.equal(formatCliError(new Error('plain')), '\n[dispatch] ERROR: [ERROR] plain');
+    const numeric = new Error('forwarded');
+    numeric.code = 2;
+    assert.equal(formatCliError(numeric), '\n[dispatch] ERROR: [ERROR] forwarded');
+  });
+
+  it('prints a non-sentinel string code verbatim (documented consequence: Node system errors)', () => {
+    const err = new Error('no such file');
+    err.code = 'ENOENT';
+    assert.equal(formatCliError(err), '\n[dispatch] ERROR: [ENOENT] no such file');
+  });
+
+  it('handles a non-Error throw and a multi-line message without throwing', () => {
+    assert.equal(formatCliError('bare string'), '\n[dispatch] ERROR: [ERROR] bare string');
+    assert.equal(formatCliError(null), '\n[dispatch] ERROR: [ERROR] null');
+    const multi = new Error('line one\n- line two');
+    multi.code = 'INVALID_DISPATCH_CONFIG';
+    assert.equal(
+      formatCliError(multi),
+      '\n[dispatch] ERROR: [INVALID_DISPATCH_CONFIG] line one\n- line two',
+    );
+  });
+
+  // Totality against the throws that a bare `String(err)` / property read cannot survive: these are
+  // what make the catch in the implementation load-bearing rather than defensive decoration.
+  it('stays total for a null-prototype object, throwing getters, and a symbol', () => {
+    const noProto = Object.create(null);
+    assert.equal(formatCliError(noProto), '\n[dispatch] ERROR: [ERROR] [object Object]');
+
+    const throwingMessage = {
+      code: 'INTEGRITY_VIOLATION',
+      get message() {
+        throw new Error('getter exploded');
+      },
+    };
+    assert.equal(
+      formatCliError(throwingMessage),
+      '\n[dispatch] ERROR: [INTEGRITY_VIOLATION] [object Object]',
+    );
+
+    const throwingCode = {
+      message: 'readable',
+      get code() {
+        throw new Error('getter exploded');
+      },
+    };
+    assert.equal(formatCliError(throwingCode), '\n[dispatch] ERROR: [ERROR] readable');
+
+    assert.equal(formatCliError(Symbol('x')), '\n[dispatch] ERROR: [ERROR] Symbol(x)');
+  });
+
+  // The fallback itself is throwable: `Object.prototype.toString` fails on these three, so the
+  // nested guard is what makes the "total" claim true rather than nearly true.
+  it('stays total when Object.prototype.toString itself throws', () => {
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    const hostile = [
+      revocable.proxy,
+      new Proxy(
+        {},
+        {
+          get() {
+            throw new Error('trap exploded');
+          },
+        },
+      ),
+      {
+        get [Symbol.toStringTag]() {
+          throw new Error('tag exploded');
+        },
+      },
+    ];
+    for (const err of hostile) {
+      assert.equal(formatCliError(err), '\n[dispatch] ERROR: [ERROR] [unprintable error]');
+    }
+
+    // The `.code` guard's own path: the read throws, the message is still printable.
+    const throwingCodeGetter = {
+      message: 'm',
+      get code() {
+        throw new Error('c');
+      },
+    };
+    assert.equal(formatCliError(throwingCodeGetter), '\n[dispatch] ERROR: [ERROR] m');
+  });
+
+  it('derives a total exit code: numeric code forwarded, everything else 1', () => {
+    const forwarded = new Error('delegate failed');
+    forwarded.code = 42;
+    assert.equal(safeExitCode(forwarded), 42);
+
+    const sentinel = new Error('no delegate');
+    sentinel.code = 'NO_DISPATCH_AVAILABLE';
+    assert.equal(safeExitCode(sentinel), 1);
+
+    assert.equal(safeExitCode(null), 1);
+    assert.equal(
+      safeExitCode({
+        get code() {
+          throw new Error('c');
+        },
+      }),
+      1,
+    );
+    const revocable = Proxy.revocable({}, {});
+    revocable.revoke();
+    assert.equal(safeExitCode(revocable.proxy), 1);
   });
 });

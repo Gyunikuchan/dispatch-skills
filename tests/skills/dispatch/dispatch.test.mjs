@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import cp from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it, afterEach, mock } from 'node:test';
@@ -12,7 +14,12 @@ import {
   providerRunners,
   PROVIDER_ALIASES,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
-import { KNOWN_PROVIDERS } from '../../../skills/dispatch/scripts/common.mjs';
+import {
+  KNOWN_PROVIDERS,
+  PROJECT_ROOT,
+  validateDispatchConfig,
+  verifySkillIntegrity,
+} from '../../../skills/dispatch/scripts/common.mjs';
 
 describe('dispatch: orchestrator detection & provider resolution', () => {
   const originalEnv = { ...process.env };
@@ -622,5 +629,68 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const result = await dispatchTask({ prompt: 'Test', provider: 'copilot', noConfig: true });
       assert.equal(result.provider, 'copilot');
     });
+  });
+});
+
+describe('dispatch: terminal sentinels are set and reach the CLI', () => {
+  it('sets NO_CONFIG_REQUIRES_PROVIDER at the dispatchTask throw site', async () => {
+    const err = await dispatchTask({ prompt: 'x', noConfig: true }).then(
+      () => null,
+      (e) => e,
+    );
+    assert.ok(err, '--no-config without --provider rejects');
+    assert.equal(err.code, 'NO_CONFIG_REQUIRES_PROVIDER');
+  });
+
+  // Regression pin on the predicate INVALID_DISPATCH_CONFIG wraps: the throw site itself is
+  // unreachable in-process (getCandidateProviders skips validation for an injected config, and
+  // dispatchTask reads the hardcoded loader).
+  it('pins the INVALID_DISPATCH_CONFIG predicate: validateDispatchConfig reports problems', () => {
+    const problems = validateDispatchConfig({ platforms: 'not-an-object', bogus: 1 });
+    assert.ok(problems.length > 0, 'a malformed config yields a non-empty problems list');
+  });
+
+  // Regression pin on the predicate INTEGRITY_VIOLATION wraps: assertSkillIntegrity is
+  // unexported and hardcodes SKILL_DIR, so the wrapper itself cannot be driven from a test.
+  it('pins the INTEGRITY_VIOLATION predicate: verifySkillIntegrity flags a tampered skill dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-integrity-'));
+    try {
+      const scripts = path.join(dir, 'scripts');
+      fs.mkdirSync(scripts);
+      fs.writeFileSync(path.join(scripts, 'x.mjs'), 'export const a = 1;\n');
+      fs.writeFileSync(
+        path.join(dir, 'skill-hashes.json'),
+        JSON.stringify({ 'scripts/x.mjs': 'deadbeef'.repeat(8) }),
+      );
+      const result = verifySkillIntegrity(dir);
+      assert.equal(result.valid, false);
+      assert.deepEqual(result.violations, ['scripts/x.mjs']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints the sentinel on stderr end-to-end for `dispatch.mjs --no-config`', () => {
+    const script = path.join(
+      PROJECT_ROOT,
+      'skills',
+      'dispatch',
+      'scripts',
+      'dispatch.mjs',
+    );
+    // stdin: 'ignore' — an inherited non-TTY stdin makes the child idle readStdin's initial timeout.
+    const run = cp.spawnSync(process.execPath, [script, '--no-config', 'x'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: PROJECT_ROOT, // hermetic: never inherit the caller's cwd
+    });
+    assert.equal(run.error, undefined, `spawn failed outright: ${run.error?.message}`);
+    const stderr = run.stderr || '';
+    assert.ok(
+      !stderr.includes('[INTEGRITY_VIOLATION]'),
+      `skill hash manifest is stale — run \`npm run hashes\` before this test. stderr: ${stderr}`,
+    );
+    assert.match(stderr, /\[dispatch\] ERROR: \[NO_CONFIG_REQUIRES_PROVIDER\]/);
+    assert.equal(run.status, 1);
   });
 });

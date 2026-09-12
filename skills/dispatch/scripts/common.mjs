@@ -958,6 +958,55 @@ export function createSessionLogger(providerName) {
 }
 
 /**
+ * Formats a terminal CLI error for stderr, surfacing `err.code` in brackets so the sentinel names
+ * the SKILL.md outcome tables key on (`NO_DISPATCH_AVAILABLE`, `INTEGRITY_VIOLATION`, ...) are
+ * actually observable to a caller — exit codes alone cannot carry them.
+ *
+ * Pure and total: a numeric `code` (a forwarded delegate exit code) or none renders `[ERROR]`, and
+ * a non-`Error` throw falls back to `String(err)`. Totality is enforced with a catch rather than
+ * assumed — a null-prototype object has no `toString` for `String()` to call, and a throwing
+ * `.message` / `.code` getter propagates. Throwing here would replace the sentinel this function
+ * exists to surface with an unhandled crash inside the handler.
+ */
+export function formatCliError(err) {
+  let code = 'ERROR';
+  let message;
+  try {
+    if (typeof err?.code === 'string' && err.code) code = err.code;
+  } catch {
+    // Throwing `.code` getter: keep the default.
+  }
+  try {
+    message = typeof err?.message === 'string' && err.message ? err.message : String(err);
+  } catch {
+    // `Object.prototype.toString` is itself throwable — on a revoked Proxy, through a throwing
+    // `get` trap, or via a throwing `Symbol.toStringTag` getter — so it needs its own guard.
+    try {
+      message = Object.prototype.toString.call(err);
+    } catch {
+      message = '[unprintable error]';
+    }
+  }
+  return `
+[dispatch] ERROR: [${code}] ${message}`;
+}
+
+/**
+ * Derives a process exit code from a caught error: a numeric `code` is a delegate's forwarded exit
+ * code, anything else (including a sentinel string) is 1.
+ *
+ * Total for the same reason `formatCliError` is — a throwing `.code` getter here would crash the
+ * handler one line after the sentinel printed, which is the failure the formatter exists to prevent.
+ */
+export function safeExitCode(err) {
+  try {
+    return typeof err?.code === 'number' ? err.code : 1;
+  } catch {
+    return 1;
+  }
+}
+
+/**
  * Emits a single concise initialization banner to stderr to prevent orchestrator context pollution.
  *
  * Must be emitted BEFORE spawning the delegate: the log path it names is the orchestrator's

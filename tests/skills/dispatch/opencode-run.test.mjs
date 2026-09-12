@@ -285,6 +285,50 @@ describe('opencode-run', () => {
     });
   });
 
+  describe('resolveOpencodeSettings — dropped unconsumed fields', () => {
+    it('returns no apiKey, temperature or agentPrompt key, and leaks no LM_STUDIO_API_KEY', () => {
+      const oldEnv = process.env;
+      process.env = { ...oldEnv, LM_STUDIO_API_KEY: 'sk-should-never-surface' };
+      try {
+        const settings = resolveOpencodeSettings({
+          model: 'lmstudio/qwen3.8-27b-ridge',
+          agent: { delegate: { temperature: 0.7, prompt: 'be brief' } },
+        });
+        for (const key of ['apiKey', 'temperature', 'agentPrompt']) {
+          assert.ok(!(key in settings), `settings must not carry "${key}"`);
+        }
+        assert.ok(
+          !JSON.stringify(settings).includes('sk-should-never-surface'),
+          'LM_STUDIO_API_KEY must not appear anywhere in the returned settings',
+        );
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('preserves every other returned field, protocol included', () => {
+      const settings = resolveOpencodeSettings({ model: 'lmstudio/qwen3.8-27b-ridge' });
+      for (const key of [
+        'rawModel',
+        'modelId',
+        'providerName',
+        'baseURL',
+        'contextLimit',
+        'outputLimit',
+        'reasoningEffort',
+        'agentKey',
+        'host',
+        'port',
+        'pathname',
+        'protocol',
+        'isLocal',
+      ]) {
+        assert.ok(key in settings, `settings must still carry "${key}"`);
+      }
+      assert.equal(settings.protocol, 'http:');
+    });
+  });
+
   describe('resolveOpencodeSettings — isLocal / explicitBaseURL branching', () => {
     it('never assumes LM Studio with zero config (no shipped DEFAULT_FALLBACK_MODEL)', () => {
       const settings = resolveOpencodeSettings(null);

@@ -59,6 +59,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  formatCliError,
+  safeExitCode,
   checkGitIntegrity,
   classifyFailure,
   createSessionLogger,
@@ -97,12 +99,9 @@ import {
  * @property {string} modelId
  * @property {string} providerName
  * @property {string} baseURL
- * @property {string} apiKey
  * @property {number} contextLimit
  * @property {number} outputLimit
- * @property {number} temperature
  * @property {string|null} reasoningEffort
- * @property {string|null} agentPrompt
  * @property {string} agentKey Resolved default agent key from opencode.jsonc.
  * @property {string|null} host Null when the endpoint is a remote/unconfigured cloud provider
  *   whose real address this script has no way to know.
@@ -164,7 +163,6 @@ export const DEFAULT_LM_STUDIO_HOST = '127.0.0.1';
 export const DEFAULT_LM_STUDIO_PORT = 1234;
 export const DEFAULT_CONTEXT_LIMIT = 81920;
 export const DEFAULT_OUTPUT_LIMIT = 8192;
-export const DEFAULT_TEMPERATURE = 0.2;
 export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
 
 /**
@@ -914,20 +912,12 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
       ? `http://${DEFAULT_LM_STUDIO_HOST}:${DEFAULT_LM_STUDIO_PORT}/v1`
       : null;
 
-  const apiKey =
-    process.env.LM_STUDIO_API_KEY ||
-    providerConfig.options?.apiKey ||
-    providerConfig.apiKey ||
-    'lm-studio';
-
   const modelConfig = providerConfig.models?.[modelKey] || {};
   const contextLimit = modelConfig.limit?.context || DEFAULT_CONTEXT_LIMIT;
   const outputLimit = modelConfig.limit?.output || DEFAULT_OUTPUT_LIMIT;
 
   // Pass the already-read config to avoid re-reading the file.
   const defaultAgentKey = resolveDefaultAgent(parsed);
-  const agentConfig = parsed.agent?.[defaultAgentKey] || {};
-  const temperature = agentConfig.temperature ?? modelConfig.options?.temperature ?? DEFAULT_TEMPERATURE;
   const reasoningEffort =
     modelConfig.options?.reasoningEffort || modelConfig.options?.reasoning_effort || null;
 
@@ -973,12 +963,9 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
     modelId: modelKey,
     providerName,
     baseURL,
-    apiKey,
     contextLimit,
     outputLimit,
-    temperature,
     reasoningEffort,
-    agentPrompt: agentConfig.prompt || null,
     agentKey: defaultAgentKey,
     host,
     port,
@@ -1518,11 +1505,13 @@ export async function main() {
     }
     process.exit(res.exitCode);
   } catch (err) {
-    console.error(`\n[dispatch] ERROR: ${err.message}`);
-    if (err.stderr && err.stderr.trim()) {
-      console.error(`\n--- Subprocess Stderr ---\n${err.stderr.trim()}`);
+    console.error(formatCliError(err));
+    // Read once: a getter that succeeds then throws would re-throw on a second access.
+    const stderr = typeof err?.stderr === 'string' ? err.stderr.trim() : '';
+    if (stderr) {
+      console.error(`\n--- Subprocess Stderr ---\n${stderr}`);
     }
-    process.exit(typeof err.code === 'number' ? err.code : 1);
+    process.exit(safeExitCode(err));
   }
 }
 

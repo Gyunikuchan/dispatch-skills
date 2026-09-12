@@ -20,6 +20,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  formatCliError,
+  safeExitCode,
   getGitStatus,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
@@ -399,11 +401,6 @@ export async function main() {
     return;
   }
 
-  if (noConfig && !options.provider) {
-    console.error('Error: --no-config ignores cascade membership entirely and requires --provider.');
-    process.exit(1);
-  }
-
   const pipedStdin = await readStdin();
   let finalPrompt = options.prompt.trim();
   if (pipedStdin) {
@@ -438,8 +435,8 @@ export async function main() {
 
     process.exit(result.exitCode ?? 0);
   } catch (err) {
-    console.error(`\n[dispatch] ERROR: ${err.message}`);
-    const exitCode = typeof err.code === 'number' ? err.code : 1;
+    console.error(formatCliError(err));
+    const exitCode = safeExitCode(err);
     process.exit(exitCode);
   }
 }
@@ -597,11 +594,6 @@ export async function executeProvider(provider, runnerOptions) {
   }
   return await runner(runnerOptions);
 }
-
-// ============================================================================
-// SECTION: Orchestrator Detection
-// ============================================================================
-
 
 // ============================================================================
 // SECTION: Module Execution Guard

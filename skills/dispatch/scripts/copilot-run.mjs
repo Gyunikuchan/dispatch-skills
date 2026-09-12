@@ -19,6 +19,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  formatCliError,
+  safeExitCode,
   buildFormattedPrompt,
   checkGitIntegrity,
   classifyFailure,
@@ -451,8 +453,8 @@ export async function main() {
     }
     process.exit(res.exitCode);
   } catch (err) {
-    console.error(`\n[dispatch] ERROR: ${err.message}`);
-    process.exit(typeof err.code === 'number' ? err.code : 1);
+    console.error(formatCliError(err));
+    process.exit(safeExitCode(err));
   }
 }
 
