@@ -57,7 +57,11 @@ dispatch → (nothing)
 
 ## Documentation Standards
 
-Differentiate repository hub documentation from individual skill manuals:
+Differentiate human documentation, agent execution contracts, and non-operational background notes:
+
+- **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized strictly for the human developer. Inclusion filter: *Is this something the human user of the skill needs to know?* If not, exclude or relocate it.
+- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focused exclusively on operational context, decision paths, and checkable execution bounds.
+- **Non-Operational Notes (`skills/*/references/notes.md`)**: Secondary holding area under skill directories for architectural rationale, background decisions, or maintainer context that are neither needed by human end-users nor required for agent runtime execution.
 
 ### Root README (`README.md`)
 High-level entry point designed to entice and orient without overwhelming:
@@ -68,14 +72,14 @@ High-level entry point designed to entice and orient without overwhelming:
 - **Architecture Highlights**: Key design pillars (structural read-only, context hygiene, evidence-based review).
 
 ### Skill Manuals (`skills/*/README.md`)
-Targeted strictly at the human developer using the specific skill:
+Targeted strictly at the human developer using the specific skill (filter: *Is this something the human user of the skill needs to know?*):
 - **What It Does**: Clear explanation of purpose, core concepts, and key features.
 - **How to Use It**: Prerequisites, installation command, realistic invocation examples (slash commands / prompt templates), and configuration options.
 - **Nuances, Quirks & Troubleshooting**: CLI provider quirks, scratch log inspection, error modes, and edge cases.
 
 ## Authoring & Cross-Platform Standards
 
-Format skills as Markdown with YAML frontmatter (`name`, `description`) following `writing-for-agents`. Prune duplicate meaning, maintain single sources of truth, and phrase instructions positively. Leverage plans and walkthroughs created by Antigravity.
+Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` whenever creating or editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs), except `README.md` files which are optimized for human users. Prune duplicate meaning, maintain single sources of truth, and phrase instructions positively. Leverage plans and walkthroughs created by Antigravity.
 
 Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, Copilot, and OpenCode:
 
@@ -108,4 +112,5 @@ End completed tasks with:
 1. **Delivered behaviour** — structural, logic, or documentation change, concisely.
 2. **Verification status** — commands executed and test results.
 3. **Skill Retrospective / Friction** — actionable friction, ambiguous instructions, or workflow inefficiencies observed during skill execution (omit section if clean). High-confidence improvements should be applied directly to the owning doc or skill.
+4. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.
 
