@@ -29,7 +29,7 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
-const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf', 'toolTurns'];
+const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf'];
 /** Knobs that may be omitted entirely; every other knob must define at least one level. */
 const OPTIONAL_KNOBS = ['includeSelf'];
 
@@ -262,11 +262,6 @@ function validateKnob(section, name, knob, problems) {
           problems.push(`${where}.${key} must be a boolean (${DIFF_HINT}).`);
         }
         break;
-      case 'toolTurns':
-        if (!Number.isInteger(value) || value < 1) {
-          problems.push(`${where}.${key} must be a positive integer (${DIFF_HINT}).`);
-        }
-        break;
     }
   }
 }
@@ -473,7 +468,6 @@ export function resolveFlow(options, liveness, config) {
     const targetCount = resolveLevelScalar(section.targetCount, level);
     const consensus = resolveLevelScalar(section.consensus, level);
     const includeSelf = resolveLevelScalar(section.includeSelf, level) ?? false;
-    const toolTurns = resolveLevelScalar(section.toolTurns, level);
 
     // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
     // does so callers have a single sentinel: `maxRounds === 0`. Pins override breadth
@@ -501,7 +495,7 @@ export function resolveFlow(options, liveness, config) {
       if (dropped.length > 0) droppedPins[sectionName] = dropped;
     }
 
-    return { targets, maxRounds, consensus, toolTurns };
+    return { targets, maxRounds, consensus };
   }
 
   const planReview = buildReviewSection('plan-review');

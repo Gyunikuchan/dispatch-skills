@@ -15,6 +15,10 @@ Orchestrate feature and fix implementations with multi-agent review loops across
 
 If an optional skill is absent, name its absence in the handoff and proceed with the reduced flow.
 
+**Ruling resets rounds.** A user ruling on a round-cap escalation resets that phase's round counter to 0. `maxRounds` bounds *unattended* rounds only — added scope or a user decision restarts the budget.
+
+**Budget sizes to the work.** The `Tool Turn Budget` handed to each reviewer is computed per dispatch, not configured: `6 + <units under review>`, where a unit is a changed file (code review) or a `## Proposed Changes` entry (plan review). On a re-review round, count only the units changed since the previous round. Reviewers get what the job takes; there is no ceiling.
+
 ## Invocation
 
 ```
@@ -63,10 +67,10 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['plan-review'].maxRounds === 0`.*
 
-1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget: flow['plan-review'].toolTurns`. The review skill fills its own prompt template, builds the invocations, and appends the round log.
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
 2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
 3. **Consensus & approval**:
-   - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap.
+   - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap (**Ruling resets rounds**).
    - `consensus: false`: Orchestrator may reject unverified claims directly.
    - Rewrite each ruled `[Disputed]` line in the plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`.
    - **User approval gate**: Solicit user approval on the refined post-review plan before writing code.
@@ -89,7 +93,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 *Skip if `flow['code-review'].maxRounds === 0`.*
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s template if skipped).
-2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget: flow['code-review'].toolTurns`. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
+2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
 
@@ -109,10 +113,10 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 7. Re-Review Loop
 
 While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget: flow['code-review'].toolTurns`.
+1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget` per **Budget sizes to the work**.
 2. Apply accepted fixes and settle disputes per Step 6.
 
-Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets that phase's round counter to 0, allowing further rounds).
+Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (**Ruling resets rounds**).
 
 **Done when:** Consensus is reached, no modifications remain, or user rules on deadlock.
 

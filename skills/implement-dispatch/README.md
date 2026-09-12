@@ -143,7 +143,7 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 
 ## Review Levels
 
-Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), tool-turn budgets (`toolTurns`), self-review eligibility (`includeSelf`), and model/effort selection for each phase.
+Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), self-review eligibility (`includeSelf`), and model/effort selection for each phase.
 
 Choose a level based on the risk and complexity of your change:
 
@@ -183,7 +183,6 @@ The three sections (`plan-review`, `implementation`, `code-review`) each nest th
 | `targetCount` | How many platforms an unpinned wave dispatches to — a whole number or `"all"` |
 | `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
 | `includeSelf` | When `true`, the host CLI is an eligible reviewer (sorted last). Optional; defaults to `false` |
-| `toolTurns` | Tool-turn budget handed to each reviewer |
 
 Either `maxRounds: 0` or `targetCount: 0` skips a phase entirely. When `targetCount` is `0`, the resolver normalizes `maxRounds` to `0` as well, so `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
 
@@ -196,7 +195,6 @@ Illustrative (not the shipped defaults):
     "targetCount": { "low": 0, "medium": 1, "max": "all" },
     "consensus": { "low": false, "high": true },
     "includeSelf": { "low": false, "max": true },
-    "toolTurns": { "low": 3, "medium": 4, "high": 6, "max": 8 },
     "platforms": {
       "claude": {
         "low": { "model": "claude-opus-5", "effort": "low" },
@@ -220,7 +218,6 @@ Illustrative (not the shipped defaults):
     "targetCount": { "low": 0, "medium": 1, "max": "all" },
     "consensus": { "low": false, "high": true },
     "includeSelf": { "low": false, "max": true },
-    "toolTurns": { "low": 3, "medium": 4, "high": 6, "max": 8 },
     "platforms": {
       "claude": {
         "low": { "model": "claude-opus-5", "effort": "low" },
@@ -279,7 +276,10 @@ If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implemen
 ### Round Cap Escalation & Resumption
 When a review phase exhausts its allotted round budget before reaching full consensus:
 1. The orchestrator halts and presents the remaining disputed findings to you.
-2. Answering the escalation resets the round counter for that phase, allowing additional review iterations if needed.
+2. Answering the escalation resets the round counter for that phase, allowing additional review iterations if needed. `maxRounds` bounds unattended rounds only — adding scope mid-run, or ruling on a dispute, restarts the budget.
+
+### Reviewer Tool Budgets
+Tool-turn budgets are not configured. Each dispatch hands the reviewer `6 + <units under review>` turns — a changed file for code review, a `## Proposed Changes` entry for plan review — so a large diff gets a large budget and there is no ceiling. Reviewers are told the budget covers every tool call and that test results are already in the walkthrough, so they read the recorded results instead of re-running the suite.
 
 ### Fast Direct Execution for Trivial Tasks
 For mechanical one-line changes or renames classified as `trivial`, the orchestrator skips spawning background subagents and applies the edit directly, saving round-trip latency.

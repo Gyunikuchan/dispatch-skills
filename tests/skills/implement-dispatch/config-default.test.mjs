@@ -66,15 +66,6 @@ describe('shipped config', () => {
     }
   });
 
-  it('ladders the tool-turn budget across levels', () => {
-    const config = loadConfig(undefined, { defaultOnly: true });
-    const expected = { low: 3, medium: 4, high: 6, xhigh: 8, max: 10 };
-    for (const [level, turns] of Object.entries(expected)) {
-      const flow = resolveFlow({ platform: 'claude', level }, LIVE_ALL, config);
-      assert.equal(flow['plan-review'].toolTurns, turns, `plan-review at ${level}`);
-      assert.equal(flow['code-review'].toolTurns, turns, `code-review at ${level}`);
-    }
-  });
 });
 
 describe('loadConfig', () => {

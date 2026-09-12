@@ -25,7 +25,6 @@
  *   includeSelf — when true, the orchestrator's own platform is an eligible reviewer
  *                 (sorted last, so a narrow targetCount never yields a self-only
  *                 review). Optional; defaults to false.
- *   toolTurns   — tool-turn budget handed to each reviewer.
  *
  * Either `maxRounds: 0` or `targetCount: 0` skips the phase entirely. When
  * `targetCount: 0`, the resolver normalizes `maxRounds` to `0` so `maxRounds === 0`
@@ -61,13 +60,6 @@
     "includeSelf": {
       "low": false,
       "high": true,
-    },
-    "toolTurns": {
-      "low": 3,
-      "medium": 4,
-      "high": 6,
-      "xhigh": 8,
-      "max": 10,
     },
     "platforms": {
       "claude": {
@@ -157,13 +149,6 @@
     "includeSelf": {
       "low": false,
       "max": true,
-    },
-    "toolTurns": {
-      "low": 3,
-      "medium": 4,
-      "high": 6,
-      "xhigh": 8,
-      "max": 10,
     },
     "platforms": {
       "claude": {

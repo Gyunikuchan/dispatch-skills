@@ -30,9 +30,10 @@ Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the wo
 #### 1. Inspect Changes
 1. Run `git status --short`; inspect unstaged (`git diff`), staged (`git diff --staged`), and untracked (`??`) files, reading untracked source/text files in full (skip generated, vendored, or binary files). Fall back to `git diff HEAD~1` only when nothing outside `.scratch/` is modified or untracked.
 2. Cross-reference changes against the attached walkthrough and implementation plan (if provided) to verify intent fidelity, completeness, and test coverage.
-3. Targeted inspection: inspect targeted diffs (`git diff --staged -- <paths>` / `git diff -- <paths>`) and check adjacent call sites, interfaces, or tests to verify contracts and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Read diff hunks plus the call sites, interfaces, and tests they touch; stop at that blast radius.
-4. Honour Review Scope: on a re-review round, confine the six axes to the paths it names plus their call sites, confirm each logged resolution actually landed, and treat lines settled in earlier rounds as closed.
-5. Complete inspection within Tool Turn Budget when it names a number; otherwise spend 3–4 tool turns for focused tasks, up to 8 for broad refactors or cross-cutting changes, and fewer on a re-review round. Spend a constrained budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
+3. Test results are already given to you: read the walkthrough's `## Verification & Validation` for the verify command and its output, and spend your turns on the diff.
+4. Targeted inspection: inspect targeted diffs (`git diff --staged -- <paths>` / `git diff -- <paths>`) and check adjacent call sites, interfaces, or tests to verify contracts and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Read diff hunks plus the call sites, interfaces, and tests they touch; stop at that blast radius.
+5. Honour Review Scope: on a re-review round, confine the six axes to the paths it names plus their call sites, confirm each logged resolution actually landed, and treat lines settled in earlier rounds as closed.
+6. Tool Turn Budget counts every tool call, verification runs included. Complete inspection within it when it names a number; otherwise budget `6 + <changed files>` turns, counting only files changed since the previous round on a re-review. Spend a tight budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
 
 #### 2. Six-Axis Evaluation
 - **Architecture & Module Design** (`shallow`, `seam`, `adapter`, `coupling`):

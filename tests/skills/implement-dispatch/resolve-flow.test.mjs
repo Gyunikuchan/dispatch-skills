@@ -25,7 +25,6 @@ const BASE_CONFIG = {
     targetCount: { low: 0, medium: 1, max: 'all' },
     consensus: { low: false, high: true },
     includeSelf: { low: false, max: true },
-    toolTurns: { low: 3, medium: 4, high: 6, max: 8 },
     platforms: { ...PLAN_PLATFORMS },
   },
   implementation: {
@@ -40,7 +39,6 @@ const BASE_CONFIG = {
     targetCount: { low: 1, high: 'all' },
     consensus: { low: false, high: true },
     includeSelf: { low: false, max: true },
-    toolTurns: { low: 3, medium: 4, high: 6, max: 8 },
     platforms: { ...PLAN_PLATFORMS },
   },
 };
@@ -81,12 +79,6 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.model, 'claude-opus-5');
       assert.equal(out.implementation.effort, 'medium');
     });
-
-    it('reports the toolTurns budget per review section', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['plan-review'].toolTurns, 3);
-      assert.equal(out['code-review'].toolTurns, 3);
-    });
   });
 
   describe('level: medium', () => {
@@ -103,11 +95,6 @@ describe('resolveFlow', () => {
       assert.equal(out['code-review'].maxRounds, 3);
       assert.equal(out['code-review'].consensus, false);
       assert.equal(out['code-review'].targets.length, 1);
-    });
-
-    it('resolves toolTurns by rounding down to the nearest defined level', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].toolTurns, 4);
     });
   });
 
@@ -772,15 +759,13 @@ describe('resolveFlow', () => {
           maxRounds: { low: -1 },
           targetCount: { low: 'two' },
           consensus: { low: 'yes' },
-          toolTurns: { low: 0 },
         },
       });
       const problems = validateConfig(config);
-      assert.equal(problems.length, 4);
+      assert.equal(problems.length, 3);
       assert.match(problems.join('\n'), /maxRounds\.low must be a non-negative integer/);
       assert.match(problems.join('\n'), /targetCount\.low must be a non-negative integer or "all"/);
       assert.match(problems.join('\n'), /consensus\.low must be a boolean/);
-      assert.match(problems.join('\n'), /toolTurns\.low must be a positive integer/);
     });
 
     it('rejects an unknown level key on a knob', () => {

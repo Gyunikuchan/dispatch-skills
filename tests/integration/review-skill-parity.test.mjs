@@ -83,9 +83,9 @@ function normalizeReReviewTemplate(template) {
     .replace('<changed paths>', '<changed SCOPE>');
 }
 
-/** Extracts the "otherwise spend ... Then emit the report immediately." tool-turn budget sentence. */
+/** Extracts the "Tool Turn Budget counts ... Then emit the report immediately." budget sentence. */
 function extractToolTurnBudget(text) {
-  const anchor = 'otherwise spend 3';
+  const anchor = 'Tool Turn Budget counts every tool call';
   const at = text.indexOf(anchor);
   assert.ok(at !== -1, 'tool-turn budget anchor not found');
   const end = text.indexOf('Then emit the report immediately.', at);
@@ -93,9 +93,15 @@ function extractToolTurnBudget(text) {
   return text.slice(at, end + 'Then emit the report immediately.'.length);
 }
 
-/** Normalizes the "cross-cutting migrations" / "cross-cutting changes" wording to a shared placeholder. */
+/** Normalizes the per-skill review unit and the code-only verification clause to shared placeholders. */
 function normalizeToolTurnBudget(sentence) {
-  return sentence.replace(/cross-cutting \w+/, 'cross-cutting SCOPE');
+  return sentence
+    .replace('Complete grounding within it', 'Complete ACTION within it')
+    .replace('Complete inspection within it', 'Complete ACTION within it')
+    .replace(', verification runs included', '')
+    .replace(/Complete (?:grounding|inspection) within it/, 'Complete WORK within it')
+    .replace(/`6 \+ <[^>]+>`/, '`6 + <UNIT>`')
+    .replace(/counting only [^.]+ since the previous round/, 'counting only UNITs since the previous round');
 }
 
 /** Extracts the "stop at that blast radius" inspection-bound sentence. */

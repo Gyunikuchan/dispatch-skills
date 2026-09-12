@@ -29,7 +29,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the wo
 1. Read the attached plan in full.
 2. Targeted inspection: inspect files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts, patterns, and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Read the files named in proposed changes plus their call sites, interfaces, and tests; stop at that blast radius.
 3. Honour Review Scope: on a re-review round, confine the seven axes to the sections it names plus their contracts, confirm each logged resolution actually landed, and treat sections settled in earlier rounds as closed.
-4. Complete grounding within Tool Turn Budget when it names a number; otherwise spend 3–4 tool turns for focused tasks, up to 8 for broad refactors or cross-cutting migrations, and fewer on a re-review round. Spend a constrained budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
+4. Tool Turn Budget counts every tool call. Complete grounding within it when it names a number; otherwise budget `6 + <## Proposed Changes entries>` turns, counting only entries changed since the previous round on a re-review. Spend a tight budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
 
 #### 2. Seven-Axis Evaluation
 - **Requirement & Intent Fidelity** (`traceability`, `user-gap`, `scope-creep`):
