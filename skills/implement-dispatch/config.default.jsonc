@@ -2,8 +2,8 @@
  * This file is the default configuration for the implement-dispatch agent.
  * It defines the flow policy and the platforms/models to use for plan review,
  * implementation, and code review.
- * You can override this configuration by creating a config.jsonc file in your local
- * environment; a local config replaces this file wholly rather than merging into it.
+ * Override by creating `config.local.jsonc` (highest precedence) or `config.jsonc` beside
+ * this file; a local config replaces this file wholly rather than merging into it.
  * You may find the list of available models and their capabilities below
  * claude: https://code.claude.com/docs/en/model-config
  * agy: https://antigravity.google/docs/models/

@@ -6,6 +6,7 @@
  *   node resolve-flow.mjs --platform <key>
  *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...|all>]
  *   node resolve-flow.mjs --validate-only
+ *   node resolve-flow.mjs --help
  *
  * Outputs JSON to stdout describing plan-review, implementation, and code-review
  * targets and run diagnostics. Artifact paths are resolved separately by
@@ -16,7 +17,7 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { PROJECT_ROOT, isMainModule, getConfigCandidates, loadSkillConfig } from '../../dispatch/scripts/common.mjs';
+import { KNOWN_PROVIDERS, isMainModule, getConfigCandidates, loadSkillConfig } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,16 @@ const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf', 'toolTurns'];
 /** Knobs that may be omitted entirely; every other knob must define at least one level. */
 const OPTIONAL_KNOBS = ['includeSelf'];
+
+const USAGE = `Usage:
+  node resolve-flow.mjs --platform <key> [--level <level>] [--pins <list>] [--validate-only]
+
+  --platform <key>   orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
+  --level <level>    ${LEVELS.join(' | ')} (default: medium)
+  --pins <list>      comma-separated provider keys, or "all"
+  --validate-only    validate the config schema and exit
+  -h, --help         show this help
+`;
 
 /**
  * Normalizes a raw pin string (provider key or alias, case-insensitive) to its
@@ -166,6 +177,12 @@ function validatePlatforms(section, platforms, problems) {
   for (const key of keys) {
     if (key === 'all') {
       problems.push(`${where} cannot use reserved pin keyword "all" as a platform key (${DIFF_HINT}).`);
+      continue;
+    }
+    // Aliases (e.g. `claudecode`) normalize first; anything else non-canonical (a typo, the
+    // retired `local`) would otherwise validate clean and silently never be live.
+    if (!KNOWN_PROVIDERS.includes(normalizePin(key))) {
+      problems.push(`${where}: unknown platform "${key}" (expected ${KNOWN_PROVIDERS.join(', ')}).`);
       continue;
     }
     const entry = platforms[key];
@@ -338,8 +355,6 @@ export async function defaultLiveness() {
       }
     })
   );
-  // NOTE: back-compat alias for stale config.jsonc files that still use the old 'local' key.
-  results.local = results.opencode;
   return results;
 }
 
@@ -358,7 +373,9 @@ export async function defaultLiveness() {
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
-  const { platform, level = 'medium', pins: rawPins } = options;
+  const { level = 'medium', pins: rawPins } = options;
+  // Same alias normalization as pins, so `claudecode` still self-excludes `claude`.
+  const platform = options.platform ? normalizePin(options.platform) : options.platform;
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
   // to one target instead of being treated as unrecognized or as two separate targets.
@@ -376,7 +393,14 @@ export function resolveFlow(options, liveness, config) {
     throw new Error(`Invalid config:\n- ${problems.join('\n- ')}`);
   }
 
-  const platformsOf = section => config[section].platforms;
+  // Validation accepts alias keys, so resolve over canonical keys to match liveness and pins.
+  const canonicalPlatforms = Object.fromEntries(
+    SECTIONS.map(s => [
+      s,
+      Object.fromEntries(Object.entries(config[s].platforms).map(([k, v]) => [normalizePin(k), v])),
+    ])
+  );
+  const platformsOf = section => canonicalPlatforms[section];
 
   // Validate pins against the union of both review sections' platform keys
   if (pins && pins.length > 0) {
@@ -545,6 +569,8 @@ function parseArgs(args) {
         i++;
         break;
       case '--validate-only': opts.validateOnly = true; break;
+      case '-h':
+      case '--help': opts.help = true; break;
       default:
         throw new Error(`Unrecognized argument "${arg}"`);
     }
@@ -559,6 +585,11 @@ async function main() {
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
+  }
+
+  if (opts.help) {
+    process.stdout.write(USAGE);
+    process.exit(0);
   }
 
   let config;
@@ -612,7 +643,9 @@ async function main() {
   }
   if (opts.pins && opts.pins.length > 0) {
     const normalizedPins = opts.pins.map(normalizePin);
-    const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {})));
+    const allKeys = new Set(
+      REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {}).map(normalizePin))
+    );
     const unknown = normalizedPins.filter(p => p !== 'all' && !allKeys.has(p));
     if (unknown.length > 0) {
       process.stderr.write(

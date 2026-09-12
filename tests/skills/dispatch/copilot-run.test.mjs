@@ -19,6 +19,7 @@ import {
   probeCopilotModes,
   isCopilotAvailable,
   classifyCopilotFailure,
+  classifyCopilotResult,
 } from '../../../skills/dispatch/scripts/copilot-run.mjs';
 
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
@@ -131,6 +132,22 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
         classifyCopilotFailure('Please run `gh auth login` to authenticate'),
         'auth',
       );
+    });
+  });
+
+  describe('classifyCopilotResult (stdout only on non-zero exit)', () => {
+    const authText = 'Copilot can be authenticated with GitHub using an OAuth Token.';
+
+    it('exit 0 with auth text only on stdout -> null', () => {
+      assert.equal(classifyCopilotResult({ exitCode: 0, stderr: '', stdout: `Review notes: ${authText}` }), null);
+    });
+
+    it('exit 0 with auth text on stderr -> auth', () => {
+      assert.equal(classifyCopilotResult({ exitCode: 0, stderr: authText, stdout: 'answer' }), 'auth');
+    });
+
+    it('non-zero exit with auth text on stdout -> auth', () => {
+      assert.equal(classifyCopilotResult({ exitCode: 1, stderr: '', stdout: authText }), 'auth');
     });
   });
 

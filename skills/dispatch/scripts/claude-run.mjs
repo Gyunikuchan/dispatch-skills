@@ -25,6 +25,7 @@ import {
   classifyFailure,
   createSessionLogger,
   createTraceWriter,
+  DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
   emitCompletionBanner,
   emitInitBanner,
@@ -103,12 +104,15 @@ import {
 
 /**
  * Structural read-only enforcement: only these tools are available to the delegate.
- * Covers file reading, git inspection, and text search — no write, edit, or
- * unrestricted shell access.
+ * Covers file reading, git inspection, and text search — no write, edit, network, or
+ * unrestricted shell access. Commands that can write or execute through their own
+ * arguments (`find -exec/-delete`, `awk system()`, `sort -o`) and web tools are excluded;
+ * `--permission-mode plan` and `--disallowedTools` back this up (see buildClaudeArgs).
  */
 export const READ_ONLY_ALLOWED_TOOLS = [
   'Read',
   'Glob',
+  'Grep',
   'LS',
   'Bash(git diff*)',
   'Bash(git status*)',
@@ -119,16 +123,13 @@ export const READ_ONLY_ALLOWED_TOOLS = [
   'Bash(git ls-files*)',
   'Bash(grep *)',
   'Bash(rg *)',
-  'Bash(find *)',
   'Bash(ls *)',
   'Bash(head *)',
   'Bash(tail *)',
   'Bash(wc *)',
   'Bash(file *)',
   'Bash(jq *)',
-  'Bash(awk *)',
   'Bash(diff *)',
-  'Bash(sort *)',
   'Bash(uniq *)',
   'Bash(cut *)',
   'Bash(tr *)',
@@ -143,10 +144,11 @@ export const READ_ONLY_ALLOWED_TOOLS = [
   'Bash(column *)',
   'Bash(paste *)',
   'Bash(npm ls*)',
-  'WebFetch',
-  'WebSearch',
   'TodoWrite',
 ];
+
+/** Write-capable tools denied outright, independent of the allowlist above. */
+export const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
 
 /**
  * Execution modes in cascade preference order: Claude Desktop > VS Code Extension > CLI.
@@ -179,7 +181,7 @@ export async function runClaude(options = {}) {
     model = null,
     effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     claudeMode = null,
   } = options;
@@ -279,17 +281,21 @@ export async function runClaude(options = {}) {
 /**
  * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
  * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
+ * `--permission-mode plan` and `--disallowedTools` layer on the allowlist so a write tool
+ * stays denied even if a future CLI widens what the allowlist implies.
  * @param {string} argvPrompt
  * @param {{ model?: string|null, effort?: string|null }} [opts]
  * @returns {string[]}
  */
 export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
-  const args = ['-p', argvPrompt, '--output-format', 'json'];
+  const args = ['-p', argvPrompt, '--output-format', 'json', '--permission-mode', 'plan'];
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
   for (const tool of READ_ONLY_ALLOWED_TOOLS) {
     args.push('--allowedTools', tool);
   }
+  // Variadic flag: kept last so its tool list cannot swallow a later positional.
+  args.push('--disallowedTools', ...DISALLOWED_WRITE_TOOLS);
   return args;
 }
 
@@ -307,7 +313,9 @@ export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinne
     if (!isLastTarget && !pinned) return 'next-target';
     return 'throw';
   }
-  if (result.exitCode === 0 && !result.failureKind) return 'return';
+  // resolveRunnerExitCode already maps an error envelope, empty output, and truncation to
+  // non-zero, so exit 0 is a real answer whatever label failureKind carries.
+  if (result.exitCode === 0) return 'return';
   if (!isLastModel) return 'next-model';
   const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
   if (isQuotaOrAuth && !isLastTarget && !pinned) return 'next-target';
@@ -372,7 +380,9 @@ function executeOnTarget({
   initialGitStatus,
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
-  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude');
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude', {
+    binary: target.bin,
+  });
   const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort });
 
   emitInitBanner({
@@ -464,8 +474,9 @@ function executeOnTarget({
         sessionId,
         sessionLink,
         truncated,
+        // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
         failureKind:
-          envelope.subtype ||
+          (envelope.isError && envelope.subtype) ||
           classifyFailure(`${stderrBuffer}\n${envelope.text}`) ||
           (truncated ? truncated : null),
         gitIntegrityViolation: gitIntegrity.violation,
@@ -489,7 +500,10 @@ function executeOnTarget({
 // ============================================================================
 
 export async function main() {
-  const options = parseCommonArgs(process.argv);
+  const options = parseCommonArgs(process.argv, {
+    valueFlags: ['--claude-mode', '--mode'],
+    booleanFlags: ['--test-modes', '--probe-modes', '--reachability'],
+  });
   const { requestedMode, testModes } = parseModeFlags(process.argv.slice(2));
 
   if (testModes) {

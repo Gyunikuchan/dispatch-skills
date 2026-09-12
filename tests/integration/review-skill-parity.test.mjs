@@ -1,24 +1,33 @@
 import assert from 'node:assert/strict';
+import cp from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
+import { extractTemplate } from '../../skills/dispatch/scripts/fill-template.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const PLAN_REVIEW_PATH = 'skills/dispatch-plan-review/SKILL.md';
 const CODE_REVIEW_PATH = 'skills/dispatch-code-review/SKILL.md';
+const PLAN_PROMPT_PATH = 'skills/dispatch-plan-review/references/prompt-template.md';
+const CODE_PROMPT_PATH = 'skills/dispatch-code-review/references/prompt-template.md';
 const PLAN_REVIEW_README_PATH = 'skills/dispatch-plan-review/README.md';
 const CODE_REVIEW_README_PATH = 'skills/dispatch-code-review/README.md';
+const ALIGNMENT_PATH = 'skills/dispatch/references/alignment.md';
+const IMPLEMENT_PATH = 'skills/implement-dispatch/SKILL.md';
+const FILL_TEMPLATE_SCRIPT = path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', 'fill-template.mjs');
 
 /**
- * The two review skills' delegate-facing prompt templates stay inline (not
- * pushed into `dispatch`'s shared alignment.md) so an external delegate reads
- * a single self-contained prompt with no cross-file lookup. This suite is the
- * drift guard for that duplication: it extracts the pieces that are supposed
- * to be identical wording and asserts they match, modulo a small declared
- * substitution map for the wording that is legitimately different (plan vs.
- * code terminology). Anything not covered by the map must match verbatim.
+ * Each review skill owns its delegate-facing prompt template in its own
+ * `references/prompt-template.md` (not pushed into `dispatch`, which keeps skills
+ * downward-independent), so an external delegate still reads one self-contained
+ * prompt. This suite is the drift guard for the duplication between the two: it
+ * extracts the pieces that are supposed to be identical wording and asserts they
+ * match, modulo a small declared substitution map for the wording that is
+ * legitimately different (plan vs. code terminology). Anything not covered by the
+ * map must match verbatim.
  */
 
 function readSkill(rel) {
@@ -38,7 +47,7 @@ function extractFindingGrammar(text) {
 
 /** Normalizes a finding-grammar line's locus term to a shared placeholder. */
 function normalizeLocus(line) {
-  return line.replace('## <Section>', '<LOCUS>').replace('<file>:L<line>', '<LOCUS>');
+  return line.replace('§ <Section>', '<LOCUS>').replace('<file>:L<line>', '<LOCUS>');
 }
 
 /** Extracts the bullet-heading tokens under "Structure your review as:", excluding the final (intentionally divergent) bullet. */
@@ -89,9 +98,16 @@ function normalizeToolTurnBudget(sentence) {
   return sentence.replace(/cross-cutting \w+/, 'cross-cutting SCOPE');
 }
 
+/** Extracts the "stop at that blast radius" inspection-bound sentence. */
+function extractBlastRadiusBound(text) {
+  const match = text.match(/Read ([^.]*?); stop at that blast radius\./);
+  assert.ok(match, 'blast-radius bound sentence not found');
+  return match[0];
+}
+
 const CONVENTIONS_LINE = "Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the workspace)";
 
-/** Extracts `- **<Axis>** (\`tag\`, ...)` bullets from a SKILL.md's axis list. */
+/** Extracts `- **<Axis>** (\`tag\`, ...)` bullets from a prompt template's axis list. */
 function extractSkillAxes(text) {
   return [...text.matchAll(/^- \*\*([^*]+)\*\* \(((?:`[^`]+`,?\s*)+)\):/gm)].map(([, axis, tags]) => ({
     axis: axis.trim(),
@@ -108,17 +124,17 @@ function extractReadmeAxes(text) {
 }
 
 describe('review skill prompt template parity', () => {
-  const planText = readSkill(PLAN_REVIEW_PATH);
-  const codeText = readSkill(CODE_REVIEW_PATH);
+  const planText = readSkill(PLAN_PROMPT_PATH);
+  const codeText = readSkill(CODE_PROMPT_PATH);
 
   it('neither template names `.claude/CLAUDE.md` (host-agnostic convention path)', () => {
-    assert.ok(!planText.includes('.claude/CLAUDE.md'), `${PLAN_REVIEW_PATH} still references .claude/CLAUDE.md`);
-    assert.ok(!codeText.includes('.claude/CLAUDE.md'), `${CODE_REVIEW_PATH} still references .claude/CLAUDE.md`);
+    assert.ok(!planText.includes('.claude/CLAUDE.md'), `${PLAN_PROMPT_PATH} still references .claude/CLAUDE.md`);
+    assert.ok(!codeText.includes('.claude/CLAUDE.md'), `${CODE_PROMPT_PATH} still references .claude/CLAUDE.md`);
   });
 
   it('both templates read the same conventions line', () => {
-    assert.ok(planText.includes(CONVENTIONS_LINE), `${PLAN_REVIEW_PATH} missing shared conventions line`);
-    assert.ok(codeText.includes(CONVENTIONS_LINE), `${CODE_REVIEW_PATH} missing shared conventions line`);
+    assert.ok(planText.includes(CONVENTIONS_LINE), `${PLAN_PROMPT_PATH} missing shared conventions line`);
+    assert.ok(codeText.includes(CONVENTIONS_LINE), `${CODE_PROMPT_PATH} missing shared conventions line`);
   });
 
   it('share the finding-grammar shape modulo the locus term', () => {
@@ -144,20 +160,94 @@ describe('review skill prompt template parity', () => {
     const codeBudget = normalizeToolTurnBudget(extractToolTurnBudget(codeText));
     assert.equal(planBudget, codeBudget);
   });
+
+  it('both bound inspection with a parallel "stop at that blast radius" sentence', () => {
+    assert.ok(extractBlastRadiusBound(planText));
+    assert.ok(extractBlastRadiusBound(codeText));
+  });
 });
 
-describe('review skill axis/tag parity: SKILL.md vs README.md', () => {
-  it('dispatch-plan-review: SKILL.md axes match README.md table rows, same names, tags, and order', () => {
-    const skillAxes = extractSkillAxes(readSkill(PLAN_REVIEW_PATH));
+describe('review skill templates live in references/', () => {
+  for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+    it(`${skillPath}: SKILL.md no longer inlines a fenced template`, () => {
+      const text = readSkill(skillPath);
+      assert.ok(!text.includes('````'), `${skillPath} still contains a 4-backtick template fence`);
+      assert.throws(() => extractTemplate(text), /not found/);
+      assert.ok(text.includes('references/prompt-template.md'), `${skillPath} does not point at references/prompt-template.md`);
+    });
+  }
+
+  it('extracts declared variables and an intact template from dispatch-plan-review', () => {
+    const { variables, template } = extractTemplate(readSkill(PLAN_PROMPT_PATH));
+    assert.deepEqual(variables, ['Plan Path', 'Requirement', 'User Focus Areas', 'Review Scope', 'Tool Turn Budget']);
+    assert.ok(template.includes('<Plan Path>'));
+    assert.ok(template.includes('### Context & Objective'));
+  });
+
+  it('extracts declared variables and an intact template from dispatch-code-review', () => {
+    const { variables, template } = extractTemplate(readSkill(CODE_PROMPT_PATH));
+    assert.deepEqual(variables, [
+      'Task Summary',
+      'Walkthrough Path',
+      'Plan Path',
+      'User Focus Areas',
+      'Review Scope',
+      'Tool Turn Budget',
+    ]);
+    assert.ok(template.includes('<Walkthrough Path>'));
+  });
+
+  it('preserves inner fenced code blocks inside the outer 4-backtick fence', () => {
+    const { template } = extractTemplate(readSkill(CODE_PROMPT_PATH));
+    // An inner ``` fence surviving proves the scanner closed on the matching (>=4-backtick) fence.
+    assert.ok(/```/.test(template), 'expected an inner fence to survive extraction');
+  });
+
+  it('fill-template --list reads the code-review references file', () => {
+    const result = cp.spawnSync(process.execPath, [FILL_TEMPLATE_SCRIPT, '--skill', path.join(REPO_ROOT, CODE_PROMPT_PATH), '--list'], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), [
+      'Task Summary',
+      'Walkthrough Path',
+      'Plan Path',
+      'User Focus Areas',
+      'Review Scope',
+      'Tool Turn Budget',
+    ]);
+  });
+});
+
+describe('orchestrated handover contract', () => {
+  it('alignment detection names targets; review skills and implement-dispatch use "targets"; implement-dispatch no longer fills templates', () => {
+    const alignment = readSkill(ALIGNMENT_PATH);
+    const modes = alignment.slice(alignment.indexOf('## Invocation Modes'), alignment.indexOf('## Prompt Template Filling'));
+    assert.match(modes, /Detection:[^\n]*\*\*targets\*\*/, `${ALIGNMENT_PATH} § Invocation Modes detection does not name targets`);
+
+    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      assert.match(readSkill(skillPath), /\*\*targets\*\* list/, `${skillPath} mode detection does not name the targets list`);
+    }
+
+    const implement = readSkill(IMPLEMENT_PATH);
+    assert.ok(implement.includes('`targets`'), `${IMPLEMENT_PATH} does not hand over targets`);
+    assert.ok(!implement.includes('fill-template'), `${IMPLEMENT_PATH} still instructs fill-template`);
+    assert.ok(!implement.includes('--prompt-file'), `${IMPLEMENT_PATH} still instructs --prompt-file`);
+  });
+});
+
+describe('review skill axis/tag parity: prompt template vs README.md', () => {
+  it('dispatch-plan-review: template axes match README.md table rows, same names, tags, and order', () => {
+    const skillAxes = extractSkillAxes(readSkill(PLAN_PROMPT_PATH));
     const readmeAxes = extractReadmeAxes(readSkill(PLAN_REVIEW_README_PATH));
-    assert.ok(skillAxes.length > 0, `${PLAN_REVIEW_PATH} defines no axis bullets`);
+    assert.ok(skillAxes.length > 0, `${PLAN_PROMPT_PATH} defines no axis bullets`);
     assert.deepEqual(readmeAxes, skillAxes);
   });
 
-  it('dispatch-code-review: SKILL.md axes match README.md table rows, same names, tags, and order', () => {
-    const skillAxes = extractSkillAxes(readSkill(CODE_REVIEW_PATH));
+  it('dispatch-code-review: template axes match README.md table rows, same names, tags, and order', () => {
+    const skillAxes = extractSkillAxes(readSkill(CODE_PROMPT_PATH));
     const readmeAxes = extractReadmeAxes(readSkill(CODE_REVIEW_README_PATH));
-    assert.ok(skillAxes.length > 0, `${CODE_REVIEW_PATH} defines no axis bullets`);
+    assert.ok(skillAxes.length > 0, `${CODE_PROMPT_PATH} defines no axis bullets`);
     assert.deepEqual(readmeAxes, skillAxes);
   });
 });

@@ -32,6 +32,13 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.ok(!READ_ONLY_ALLOWED_TOOLS.includes('Edit'));
     });
 
+    it('READ_ONLY_ALLOWED_TOOLS excludes find/awk/sort/WebFetch/WebSearch', () => {
+      for (const tool of ['Bash(find *)', 'Bash(awk *)', 'Bash(sort *)', 'WebFetch', 'WebSearch']) {
+        assert.ok(!READ_ONLY_ALLOWED_TOOLS.includes(tool), `${tool} must not be allowed`);
+      }
+      assert.ok(READ_ONLY_ALLOWED_TOOLS.includes('Grep'));
+    });
+
     it('defines modes in preference order desktop > vscode > cli', () => {
       assert.deepEqual(
         MODE_DEFINITIONS.map((m) => m.mode),
@@ -210,6 +217,15 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.equal(args[args.indexOf('--model') + 1], 'claude-opus-5');
       assert.equal(args[args.indexOf('--effort') + 1], 'high');
     });
+
+    it('buildClaudeArgs pins --permission-mode plan and disallows write tools', () => {
+      const args = buildClaudeArgs('hello', { model: 'm', effort: 'e' });
+      assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
+      const disallowedIndex = args.indexOf('--disallowedTools');
+      assert.ok(disallowedIndex !== -1);
+      // Variadic flag last, so its values cannot swallow anything that follows.
+      assert.deepEqual(args.slice(disallowedIndex + 1), ['Write', 'Edit', 'NotebookEdit']);
+    });
   });
 
   describe('nextClaudeStep (pure cascade decision)', () => {
@@ -218,6 +234,13 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
     it('success (exit 0, no failureKind) -> return', () => {
       const step = nextClaudeStep({ ...base, result: { exitCode: 0, failureKind: null }, error: null });
       assert.equal(step, 'return');
+    });
+
+    it("nextClaudeStep: exit 0 with failureKind 'success', not last model -> return", () => {
+      for (const failureKind of ['success', 'quota', 'auth', 'timeout']) {
+        const step = nextClaudeStep({ ...base, result: { exitCode: 0, failureKind }, error: null });
+        assert.equal(step, 'return', `exit 0 with ${failureKind} must not re-run a real answer`);
+      }
     });
 
     it('failure, not last model -> next-model', () => {

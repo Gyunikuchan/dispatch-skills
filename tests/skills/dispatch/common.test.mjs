@@ -17,6 +17,8 @@ import {
   emitInitBanner,
   emitCompletionBanner,
   buildAttachmentBlock,
+  findSensitiveMatch,
+  isBatchLauncher,
   readAttachment,
   preparePromptForArgv,
   createBriefFile,
@@ -129,6 +131,35 @@ describe('common: argument parsing', () => {
   it('parses help flag', () => {
     const opts = parseCommonArgs(['node', 'd.mjs', '--help']);
     assert.equal(opts.help, true);
+  });
+
+  it('parseCommonArgs rejects an unknown flag', () => {
+    assert.throws(() => parseCommonArgs(['node', 'd.mjs', '--bogus', 'prompt']), /Unknown flag: --bogus/);
+    // An undeclared `--name=value` form of a runner flag is still unknown to a caller that didn't declare it.
+    assert.throws(() => parseCommonArgs(['node', 'd.mjs', '--claude-mode=cli', 'p']), /Unknown flag: --claude-mode=cli/);
+  });
+
+  it('rejects a value flag followed by another flag', () => {
+    assert.throws(() => parseCommonArgs(['node', 'd.mjs', '-m', '--json', 'p']), /-m requires a value/);
+    assert.throws(() => parseCommonArgs(['node', 'd.mjs', 'p', '--provider']), /--provider requires a value/);
+    assert.throws(
+      () => parseCommonArgs(['node', 'd.mjs', '--agy-mode', '--json'], { valueFlags: ['--agy-mode'] }),
+      /--agy-mode requires a value/,
+    );
+  });
+
+  it('accepts declared runner flags', () => {
+    const opts = parseCommonArgs(
+      ['node', 'claude-run.mjs', '--claude-mode', 'cli', '--test-modes', '--mode=vscode', 'the', 'prompt'],
+      { valueFlags: ['--claude-mode', '--mode'], booleanFlags: ['--test-modes'] },
+    );
+    // The declared value is consumed, so it no longer leaks into the positional prompt.
+    assert.equal(opts.prompt, 'the prompt');
+  });
+
+  it('treats everything after -- as positional prompt text', () => {
+    const opts = parseCommonArgs(['node', 'd.mjs', '--', '-leading', 'dash']);
+    assert.equal(opts.prompt, '-leading dash');
   });
 });
 
@@ -251,6 +282,36 @@ describe('common: prompt formatting & response extraction', () => {
     assert.equal(extractCleanResponse(''), '');
     assert.equal(extractCleanResponse(null), '');
     assert.equal(extractCleanResponse(undefined), '');
+  });
+
+  it('keeps body content when a "$ " example appears mid-answer', () => {
+    const output = [
+      '## Summary',
+      'Tests were run with:',
+      '$ npm test',
+      'and all passed.',
+    ].join('\n');
+    assert.equal(extractCleanResponse(output), output);
+  });
+
+  it('trace, blank, plain answer paragraph with later "$ " example keeps the whole paragraph', () => {
+    const output = [
+      '→ Read src/a.mjs',
+      '',
+      'The loop is correct.',
+      '$ node --test',
+      'Confirms it.',
+    ].join('\n');
+    assert.equal(
+      extractCleanResponse(output),
+      ['The loop is correct.', '$ node --test', 'Confirms it.'].join('\n'),
+    );
+  });
+
+  it('classifyFailure detects "No models loaded"', () => {
+    assert.equal(classifyFailure('Error: No models loaded. Please load a model in LM Studio.'), 'model-not-loaded');
+    assert.equal(classifyFailure('model is not loaded'), 'model-not-loaded');
+    assert.equal(classifyFailure('ENOENT: no such file or directory'), 'not-found');
   });
 });
 
@@ -438,6 +499,49 @@ describe('common: attachments, brief files & spill', () => {
     assert.ok(fs.existsSync(briefFile));
   });
 
+  it('pointer prompt is single-line', () => {
+    const { pointerPrompt, briefFile } = createBriefFile('line one\nline two', 'claude');
+    created.push(briefFile);
+    assert.ok(!/[\r\n]/.test(pointerPrompt), 'pointer must survive a batch launcher argv');
+    assert.ok(!pointerPrompt.slice(0, pointerPrompt.indexOf('Brief file: ')).includes('%'));
+  });
+
+  it('preparePromptForArgv spills a multi-line prompt for a .cmd binary on win32', { skip: process.platform !== 'win32' }, () => {
+    assert.equal(isBatchLauncher('C:\\npm\\claude.cmd'), true);
+    const multi = preparePromptForArgv('line one\nline two', 'claude', { binary: 'C:\\npm\\claude.cmd' });
+    assert.ok(multi.briefFile !== null);
+    created.push(multi.briefFile);
+    assert.equal(fs.readFileSync(multi.briefFile, 'utf8'), 'line one\nline two');
+
+    const percent = preparePromptForArgv('uses %PATH% literally', 'claude', { binary: 'x.bat' });
+    assert.ok(percent.briefFile !== null);
+    created.push(percent.briefFile);
+
+    const big = preparePromptForArgv('z'.repeat(8001), 'claude', { binary: 'x.cmd' });
+    assert.ok(big.briefFile !== null);
+    created.push(big.briefFile);
+
+    const exe = preparePromptForArgv('line one\nline two', 'claude', { binary: 'C:\\bin\\claude.exe' });
+    assert.equal(exe.briefFile, null);
+  });
+
+  it('readAttachment rejects a symlink targeting a denylisted file', (t) => {
+    const target = scratchFile('id_ed25519', 'PRIVATE KEY');
+    const link = path.join(scratchDir, 'innocent-notes.md');
+    try {
+      fs.symlinkSync(target, link, 'file');
+    } catch (err) {
+      if (err.code === 'EPERM') return t.skip('symlink creation needs elevated rights here');
+      throw err;
+    }
+    try {
+      assert.equal(findSensitiveMatch(link), 'file');
+      assert.equal(readAttachment(link), null);
+    } finally {
+      fs.rmSync(link, { force: true });
+    }
+  });
+
   it('rejects sensitive files matching SENSITIVE_FILE_PATTERNS in buildAttachmentBlock', () => {
     const tokenFile = scratchFile('token.txt', 'secret-token-value');
     const safeFile = scratchFile('safe.txt', 'safe content');
@@ -484,6 +588,50 @@ describe('common: session logging & process spawning', () => {
       assert.equal(out.trim(), 'async');
       done();
     });
+  });
+
+  it('createSessionLogger: write after close does not throw or emit', async () => {
+    const logger = createSessionLogger('test-after-close');
+    logger.write('before-close\n');
+    logger.close();
+    assert.doesNotThrow(() => logger.write('after-close\n'));
+    assert.doesNotThrow(() => logger.close());
+
+    // The stream flushes asynchronously; wait for the pre-close line before asserting.
+    let content = '';
+    for (let i = 0; i < 50 && !content.includes('before-close'); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+      content = fs.readFileSync(logger.logFile, 'utf8');
+    }
+    assert.ok(content.includes('before-close'));
+    assert.ok(!content.includes('after-close'));
+    fs.unlinkSync(logger.logFile);
+  });
+
+  it('spawnCli rejects a newline argument for a .cmd launcher', { skip: process.platform !== 'win32' }, () => {
+    assert.throws(
+      () => spawnCli('C:\\fake\\tool.cmd', ['line1\nline2', 'after']),
+      /batch launcher argument contains a newline/,
+    );
+    assert.throws(
+      () => spawnCliSync('C:\\fake\\tool.cmd', ['a\rb']),
+      /batch launcher argument contains a newline/,
+    );
+  });
+
+  it('round-trips a single-line metacharacter argument through a real .cmd launcher', { skip: process.platform !== 'win32' }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cmd-echo-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'echo.js'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
+      const launcher = path.join(dir, 'echo.cmd');
+      fs.writeFileSync(launcher, `@"${process.execPath}" "%~dp0echo.js" %*\r\n`);
+      const arg = 'a & b " c ^ d <e> | f (g) !h!';
+      const res = spawnCliSync(launcher, [arg, 'second'], { encoding: 'utf8' });
+      assert.equal(res.status, 0, res.stderr);
+      assert.deepEqual(JSON.parse(res.stdout), [arg, 'second']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('emitInitBanner formats standard banner with provider, model, effort, session, mode, and log', () => {

@@ -15,11 +15,9 @@ import {
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 
 /**
- * Expected flow policy per level, hardcoded from the pre-change LEVEL_CONFIG table so
- * that parity with the deleted constant is a checked-in assertion rather than a
- * one-shot manual diff. Its `none` / `one` / `all` breadth vocabulary maps to
- * `targetCount` as 0 / 1 / "all"; `targets` is the resulting target count under
- * LIVE_ALL (agy + opencode live, copilot dead, claude the orchestrator).
+ * Snapshot of the shipped per-level flow policy, so a change to config.default.jsonc
+ * is a deliberate, checked-in assertion update. `targets` is the resulting target
+ * count under LIVE_ALL (agy + opencode live, copilot dead, claude the orchestrator).
  */
 const LEVEL_PARITY = {
   low: {
@@ -49,7 +47,7 @@ describe('shipped config', () => {
     assert.deepEqual(validateConfig(loadConfig(undefined, { defaultOnly: true })), []);
   });
 
-  describe('level parity with the pre-change LEVEL_CONFIG', () => {
+  describe('shipped level policy snapshot', () => {
     for (const [level, sections] of Object.entries(LEVEL_PARITY)) {
       it(`reproduces ${level}`, () => {
         const config = loadConfig(undefined, { defaultOnly: true });

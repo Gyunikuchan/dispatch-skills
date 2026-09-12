@@ -22,7 +22,7 @@ Otherwise, resolve each artifact kind (`plan`, `walkthrough`) independently in t
 node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>] [--kind plan|walkthrough|both] [--orchestrator <name>]
 ```
 
-Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`).
+Resolve `<skills-dir>` as `dispatch` does (the parent of the loaded skill directory; see `dispatch` Step 2).
 
 Outputs JSON: `{ slug, slugSource, date, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`, where `tier` is `native`, `scratch-existing`, or `scratch-new`, and `slugSource` is `explicit`, `branch`, or `conversation`.
 
@@ -56,37 +56,39 @@ Base grammar, shared by both standalone review skills:
 
 ## Invocation Modes
 
-Detection: a review skill runs **orchestrated** when an orchestrating skill hands over both an artifact path and dispatch invocations; otherwise it runs **standalone**.
+Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort?, allowSameAgent? }` entries), with `Review Scope` and `Tool Turn Budget`; otherwise it runs **standalone**. The orchestrator hands over data only; the review skill builds invocations, fills its prompt, and owns the round log.
 
 | Review step | Standalone | Orchestrated |
 |---|---|---|
 | Resolve artifact paths | Run resolver | Skip — use handed-over path |
 | Author artifact if absent | Yes (skill template) | No — orchestrator authored it |
-| Build dispatch invocations | From pins / cascade | Use handed-over invocations as-is |
-| Populate prompt template | Yes (§ Prompt Template Filling) | Yes (§ Prompt Template Filling; orchestrator supplies Review Scope, Tool Turn Budget) |
+| Build dispatch invocations | From pins / cascade (§ Invocation) | One backgrounded `dispatch --provider <platform> --no-config [-m <model>] [-e <effort>] [--allow-same-agent] --prompt-file <filled>` per handed-over target |
+| Populate prompt template | Yes (§ Prompt Template Filling) | Yes (§ Prompt Template Filling; uses the handed-over Review Scope / Tool Turn Budget) |
 | Adjudicate (shared table) | Yes | Yes |
 | Escalate disputes | Immediately | Per orchestrator's consensus rule |
-| Fold findings + log resolutions | Yes | Yes |
+| Fold findings + log resolutions | Yes | Yes — the review skill appends the round log in both modes; an orchestrator only rewrites its ruled `[Disputed]` lines to `[Resolved Dispute]` |
 | Apply code fixes (code review) | Yes | No — orchestrator applies (its fix step) |
 | Report to user | Full report | None — orchestrator's handoff covers it |
 | Artifact lifecycle | Retain in place | Orchestrator decides |
 
+**Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` only when the target carries `model`, `effort`, or `allowSameAgent: true`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional.
+
 ## Prompt Template Filling
 
-How the two review skills turn their inline `#### Prompt template` block into a concrete dispatch prompt, without an ad-hoc extraction script or shell-quoting a multi-line, backtick-heavy prompt.
+How the two review skills turn their `## Prompt template` block into a concrete dispatch prompt, without an ad-hoc extraction script or shell-quoting a multi-line, backtick-heavy prompt.
 
-Templates **stay inline** in each review SKILL.md — `tests/integration/review-skill-parity.test.mjs` documents that choice and guards drift. `dispatch`'s `fill-template.mjs` reads the template from the SKILL.md rather than relocating it.
+Each review skill owns its template in its own `references/prompt-template.md` (skill-owned, not shared); `dispatch` holds no template content. `tests/integration/review-skill-parity.test.mjs` guards drift between the two.
 
 ### Script
 
 ```bash
-node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/<review-skill>/SKILL.md \
+node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/<review-skill>/references/prompt-template.md \
   [--section "Prompt template"] (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
 ```
 
-Resolve `<skills-dir>` as `dispatch` does (`.agents/skills`, `.claude/skills`, or `~/.agents/skills`).
+Resolve `<skills-dir>` as `dispatch` does (the parent of the loaded skill directory; see `dispatch` Step 2).
 
-- **Variable derivation**: required variables are the backtick-quoted `` `<Name>` `` bullets between the `Prompt template` heading and its fenced block — read directly off the SKILL.md, never hand-maintained. `--list` prints them as a JSON array.
+- **Variable derivation**: required variables are the backtick-quoted `` `<Name>` `` bullets between the `Prompt template` heading and its fenced block — read directly off the template file, never hand-maintained. `--list` prints them as a JSON array.
 - **Fill**: `--var Name=Value` (repeatable) or `--vars <json file>` (a JSON object of strings; supports multi-line values, e.g. a verbatim `<Requirement>`) supplies every declared variable; `--var` wins over `--vars` on a name collision. Substitution is single-pass over declared names only, so a supplied value is never re-scanned and ungoverned grammar placeholders in the template body (`<file>:L<line>`, `<tag>`, `<axis>`, `<Section>`) are left untouched.
 - **Output**: `--out <path>` writes the filled prompt (recommended: `.scratch/plan/<date>-<slug>-<kind>-review-prompt[-<target>].md`) and prints the path; omitted, the filled prompt prints to stdout.
 
@@ -111,7 +113,7 @@ Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendat
 
 ## Resolutions Log
 
-Append this round's complete adjudication log under `## Review Findings & Resolutions` in the artifact, one line per finding:
+Append this round's complete adjudication log under `## Review Findings & Resolutions` in the artifact (create the heading at the end of the artifact when absent), one line per finding:
 
 - `- **[Accepted]** <locus> — <tag>: <defect> → <resolution & where applied>`
 - `- **[Resolved Dispute]** <locus> — <tag>: <defect> → <user ruling & action>`

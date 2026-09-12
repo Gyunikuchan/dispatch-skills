@@ -6,7 +6,7 @@ Get a rigorous second opinion on an implementation plan **before** any code is w
 
 ## What It Does
 
-Writing code against an untested or flawed plan leads to wasted cycles, rework, and subtle regressions. `dispatch-plan-review` automates cross-agent plan evaluation by delegating the review of implementation plans to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or Local OpenCode).
+Writing code against an untested or flawed plan leads to wasted cycles, rework, and subtle regressions. `dispatch-plan-review` automates cross-agent plan evaluation by delegating the review of implementation plans to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or OpenCode).
 
 The core philosophy is **claim vs. verdict**:
 1. **Delegate produces claims**: An external delegate CLI inspects the plan and targeted codebase context, returning structured claims across seven architectural and domain axes.
@@ -141,11 +141,13 @@ Every plan is evaluated across seven rigorous dimensions:
 
 ### Standard Finding Grammar
 
-Every finding returned by the reviewer follows a strict single-line grammar:
+Every finding returned by the reviewer follows a strict single-line grammar, where `<Section>` is the target plan heading:
 
 ```
-## <Section> — <tag>: <defect> → <required change>
+§ <Section> — <tag>: <defect> → <required change>
 ```
+
+The full delegate prompt lives in [references/prompt-template.md](references/prompt-template.md), and the structure used when a plan is auto-authored in [references/plan-template.md](references/plan-template.md); edit those files to customize either.
 
 Example report:
 ```markdown
@@ -162,13 +164,13 @@ Testability & Success Criteria: 1 finding
 Simplicity & Failure Modes: 1 finding
 
 ## MUST-FIX
-## Proposed Changes — blast-radius: bumps PERSISTED_FORMAT_VERSION with no decoder for v3 payloads → add a v3→v4 migration path before the bump.
+- § Proposed Changes — blast-radius: bumps PERSISTED_FORMAT_VERSION with no decoder for v3 payloads → add a v3→v4 migration path before the bump.
 
 ## SHOULD-FIX
-## Verification Plan — testability: "allocation looks right" is not checkable → specify exact test fixture and balance assertion in src/tests/allocation.test.ts.
+- § Verification Plan — testability: "allocation looks right" is not checkable → specify exact test fixture and balance assertion in src/tests/allocation.test.ts.
 
 ## CONSIDER
-## Proposed Changes — simplicity: new `AllocationVisitor` has only one implementation → inline it until a second strategy is needed.
+- § Proposed Changes — simplicity: new `AllocationVisitor` has only one implementation → inline it until a second strategy is needed.
 
 ## Shorter Path
 None — the plan is already minimal.
@@ -190,7 +192,7 @@ The orchestrator maps each claim to an adjudication action:
 ## Nuances, Quirks & Troubleshooting
 
 ### Self-Skipping Runner Behavior
-By default, the underlying `dispatch` runner will avoid delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) in order to obtain a truly differentiated second opinion. If only one CLI is installed, request `--allow-same-agent` or let it degrade to native subagents.
+By default, the underlying `dispatch` runner will avoid delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) in order to obtain a truly differentiated second opinion. With one CLI installed, pin it explicitly (`/dispatch-plan-review (claude)`), even from the same platform, or let the review fall back to a read-only subagent.
 
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.

@@ -32,17 +32,14 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 1. Scope & Setup
 
 1. **Understand ask**: Restate requirements as checkable success criteria. If preceded by user questioning/interviews (e.g. `grilling`), fold settled decisions directly into criteria and assumptions without intermediate approval gates.
-2. **Scope gate**: Classify change to set effective level:
-   - `trivial` (single-file mechanical edit, rename, comment/typo, simple constant) → downshift to `low`.
-   - `focused` or `cross-cutting` → keep requested level.
-   *(Explicit levels remain fixed; automatic classification only downshifts unpinned defaults to `low`).*
-3. **Resolve flow**:
+2. **Scope gate**: Classify the change as `trivial` (single-file mechanical edit, rename, comment/typo, simple constant), `focused`, or `cross-cutting`. When the user gave no `<level>` and scope is `trivial`, run at `low`; otherwise use the requested (or default `medium`) level. Pins do not affect this.
+3. **Resolve flow** (`<skills-dir>` resolves per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution):
 
    ```bash
    node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <pins>]
    ```
 
-   Halt immediately if non-zero; store output as `flow`.
+   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`). Halt immediately if non-zero; store output as `flow`.
 4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
 
    ```bash
@@ -66,11 +63,12 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['plan-review'].maxRounds === 0`.*
 
-1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode** (hand over plan path, targets from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` from `flow['plan-review'].toolTurns`). Fill its prompt template via `dispatch`'s `fill-template.mjs` (`<skills-dir>/dispatch/scripts/fill-template.mjs`) per `alignment.md` § Prompt Template Filling, and pass the written file to each dispatch with `--prompt-file`.
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget: flow['plan-review'].toolTurns`. The review skill fills its own prompt template, builds the invocations, and appends the round log.
 2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
 3. **Consensus & approval**:
    - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap.
    - `consensus: false`: Orchestrator may reject unverified claims directly.
+   - Rewrite each ruled `[Disputed]` line in the plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`.
    - **User approval gate**: Solicit user approval on the refined post-review plan before writing code.
 
 **Done when:** Plan reflects all accepted findings, disputes are resolved, and refined plan is approved by the user.
@@ -91,7 +89,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 *Skip if `flow['code-review'].maxRounds === 0`.*
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s template if skipped).
-2. Invoke `dispatch-code-review` in **orchestrated mode** (hand over walkthrough path, plan path, targets from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget`). Fill its prompt template via `dispatch`'s `fill-template.mjs` per `alignment.md` § Prompt Template Filling and pass the written file to each dispatch with `--prompt-file`. The review skill returns claims without applying code fixes.
+2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget: flow['code-review'].toolTurns`. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
 
@@ -100,7 +98,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 6. Apply Fixes & Settle Disputes
 
 1. Apply accepted findings directly as the orchestrator.
-2. Update the walkthrough (`## Changes Made`, `## Verification & Validation`, and append round logs under `## Review Findings & Resolutions`).
+2. Update the walkthrough's `## Changes Made` and `## Verification & Validation`; rewrite each ruled `[Disputed]` line to `[Resolved Dispute]` (the review skill appends each round's log).
 3. Re-run the host verify command until green.
 4. Enforce consensus against returned `[Disputed]` items: rebut with counter-evidence, accept, or escalate to the user with interactive questions citing lines and counter-readings.
 
@@ -111,7 +109,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 7. Re-Review Loop
 
 While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode with `Review Scope: Re-review round <n>` naming modified lines, routing re-reviews to citing delegates (target affinity). Re-fill the prompt template (`fill-template.mjs` per `alignment.md` § Prompt Template Filling) with the updated `Review Scope` and pass it with `--prompt-file`.
+1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget: flow['code-review'].toolTurns`.
 2. Apply accepted fixes and settle disputes per Step 6.
 
 Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (user input resets that phase's round counter to 0, allowing further rounds).
@@ -146,7 +144,7 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
 | `opencode` | Direct execution |
 
 ### Dispatch Invocation Rules
-- **Flags**: Pass `--provider <target.platform> --no-config`. Pass `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` when present in target config. Attach context with `-f "<path>"`. Pass a filled review prompt with `--prompt-file "<path>"` (see `dispatch`'s `fill-template.mjs`, `alignment.md` § Prompt Template Filling) instead of `-p`/positional.
+- **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
-- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools). Orchestrator / native subagents alone write code.
+- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). Orchestrator / native subagents alone write code.
 - **Fallback**: Provider failures fall back to `dispatch`'s in-process read-only subagent.

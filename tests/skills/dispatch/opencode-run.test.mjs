@@ -21,7 +21,12 @@ import {
   DEFAULT_LM_STUDIO_PORT,
   DEFAULT_OUTPUT_LIMIT,
   GPU_LOCK_FILE_NAME,
+  LM_STUDIO_NO_LOADED_MODEL_WARNING,
+  buildBwrapArgs,
   buildCommand,
+  describeLMStudioModelState,
+  findLastErrorLine,
+  resolveOpencodeBinary,
   getLMStudioEndpoint,
   getOpencodeEnv,
   isLocalEndpointHost,
@@ -55,16 +60,52 @@ describe('opencode-run', () => {
       }, /does not exist/);
     });
 
-    it('rejects an existing sensitive file inside an allowed boundary', () => {
+    /** Runs `fn` with process.stderr captured; returns `{ result, stderr }`. */
+    function captureStderr(fn) {
+      let stderr = '';
+      const original = process.stderr.write;
+      process.stderr.write = (chunk) => {
+        stderr += chunk;
+        return true;
+      };
+      try {
+        return { result: fn(), stderr };
+      } finally {
+        process.stderr.write = original;
+      }
+    }
+
+    it('skips an existing sensitive file inside an allowed boundary with a warning', () => {
       const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-run-test');
       fs.writeFileSync(sensitivePath, 'SECRET=1\n');
       try {
-        assert.throws(
-          () => resolveContextFiles([sensitivePath]),
-          /matches sensitive denylist pattern/,
+        const { result, stderr } = captureStderr(() =>
+          resolveContextFiles([sensitivePath, 'package.json']),
         );
+        assert.deepEqual(result, [path.resolve('package.json')]);
+        assert.match(stderr, /Attachment rejected: .* matches sensitive file denylist/);
       } finally {
         fs.unlinkSync(sensitivePath);
+      }
+    });
+
+    it('skips a symlink whose target is a denylisted file', (t) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-run-symlink-'));
+      try {
+        const target = path.join(dir, 'id_rsa');
+        fs.writeFileSync(target, 'PRIVATE KEY\n');
+        const link = path.join(dir, 'notes.md');
+        try {
+          fs.symlinkSync(target, link, 'file');
+        } catch (err) {
+          if (err.code === 'EPERM') return t.skip('symlink creation needs elevated rights here');
+          throw err;
+        }
+        const { result, stderr } = captureStderr(() => resolveContextFiles([link]));
+        assert.deepEqual(result, []);
+        assert.match(stderr, /matches sensitive file denylist/);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 
@@ -84,7 +125,7 @@ describe('opencode-run', () => {
       }
     });
 
-    it('rejects a context file inside a sensitive directory (e.g. .kube)', () => {
+    it('skips a context file inside a sensitive directory (e.g. .kube) with a warning', () => {
       // .kube (unlike .ssh) is only on SENSITIVE_DIR_PATTERNS, not SENSITIVE_FILE_PATTERNS,
       // so this exercises the directory check specifically rather than the file-pattern one.
       const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-run-test-'));
@@ -93,10 +134,9 @@ describe('opencode-run', () => {
       const sensitivePath = path.join(sshDir, 'config');
       fs.writeFileSync(sensitivePath, 'Host example.com\n');
       try {
-        assert.throws(
-          () => resolveContextFiles([sensitivePath]),
-          /sensitive directory/,
-        );
+        const { result, stderr } = captureStderr(() => resolveContextFiles([sensitivePath]));
+        assert.deepEqual(result, []);
+        assert.match(stderr, /sensitive directory/);
       } finally {
         fs.rmSync(parentDir, { recursive: true, force: true });
       }
@@ -392,6 +432,9 @@ describe('opencode-run', () => {
       mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
       assert.equal(isOpencodeBinaryAvailable(), true);
 
+      // NOTE: restore before re-mocking — a stacked mock.method makes restoreAll reinstate the
+      // first mock rather than the real cp.spawnSync, leaking it into later tests.
+      mock.restoreAll();
       mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
       assert.equal(isOpencodeBinaryAvailable(), false);
     });
@@ -835,6 +878,102 @@ describe('opencode-run', () => {
       assert.ok(res.args.includes('--agent'));
       assert.ok(res.args.includes('custom-agent'));
     });
+
+    it('buildCommand passes --variant when effort is set, omits it otherwise', () => {
+      const withEffort = buildCommand({ prompt: 'x', agent: 'delegate', effort: 'high' });
+      const variantIndex = withEffort.args.indexOf('--variant');
+      assert.ok(variantIndex !== -1);
+      assert.equal(withEffort.args[variantIndex + 1], 'high');
+
+      const withoutEffort = buildCommand({ prompt: 'x', agent: 'delegate' });
+      assert.ok(!withoutEffort.args.includes('--variant'));
+    });
+  });
+
+  describe('buildBwrapArgs (Linux sandbox argv, pure)', () => {
+    const base = {
+      opencodeArgs: ['run', '--', 'prompt'],
+      projectRoot: '/home/u/repo',
+      home: '/home/u',
+      env: {},
+    };
+    const bindTargets = (args, flag) =>
+      args.flatMap((a, i) => (a === flag ? [args[i + 1]] : []));
+
+    it('buildBwrapArgs binds brief dir after tmpfs', () => {
+      const args = buildBwrapArgs({ ...base, briefFile: '/tmp/dispatch-brief-opencode-abc/brief.md' });
+      const tmpfsIndex = args.findIndex((a, i) => a === '--tmpfs' && args[i + 1] === '/tmp');
+      const briefIndex = args.findIndex(
+        (a, i) => a === '--ro-bind' && args[i + 1] === '/tmp/dispatch-brief-opencode-abc',
+      );
+      assert.ok(tmpfsIndex !== -1 && briefIndex > tmpfsIndex, 'brief dir must be re-bound after the /tmp tmpfs');
+      assert.equal(args[briefIndex + 2], '/tmp/dispatch-brief-opencode-abc');
+      assert.deepEqual(args.slice(-4), ['opencode', 'run', '--', 'prompt']);
+    });
+
+    it('buildBwrapArgs binds opencode XDG dirs writable', () => {
+      const defaults = bindTargets(buildBwrapArgs(base), '--bind');
+      assert.deepEqual(defaults, [
+        '/home/u/.local/share/opencode',
+        '/home/u/.cache/opencode',
+        '/home/u/.local/state/opencode',
+      ]);
+
+      const custom = bindTargets(
+        buildBwrapArgs({ ...base, env: { XDG_DATA_HOME: '/data', XDG_CACHE_HOME: '/cache', XDG_STATE_HOME: '/state' } }),
+        '--bind',
+      );
+      assert.deepEqual(custom, ['/data/opencode', '/cache/opencode', '/state/opencode']);
+    });
+
+    it('buildBwrapArgs treats sibling dir with root prefix as outside', () => {
+      const args = buildBwrapArgs({
+        ...base,
+        files: ['/home/u/repo-other/notes.md', '/home/u/repo/src/a.mjs'],
+      });
+      const roBinds = bindTargets(args, '--ro-bind');
+      assert.ok(roBinds.includes('/home/u/repo-other/notes.md'));
+      assert.ok(!roBinds.includes('/home/u/repo/src/a.mjs'));
+    });
+  });
+
+  describe('resolveOpencodeBinary (win32 where.exe preference)', () => {
+    it('prefers opencode.cmd over the extensionless npm shim', { skip: process.platform !== 'win32' }, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-where-'));
+      const originalPath = process.env.PATH;
+      try {
+        fs.writeFileSync(path.join(dir, 'opencode'), '#!/bin/sh\n');
+        fs.writeFileSync(path.join(dir, 'opencode.cmd'), '@echo off\r\n');
+        process.env.PATH = `${dir};${path.join(process.env.SystemRoot || 'C:\\Windows', 'System32')}`;
+        assert.equal(resolveOpencodeBinary().toLowerCase(), path.join(dir, 'opencode.cmd').toLowerCase());
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('LM Studio no-loaded-model diagnosis', () => {
+    it('warns only when a v0 model list has no loaded entry', () => {
+      assert.equal(
+        describeLMStudioModelState(JSON.stringify({ data: [{ id: 'a', state: 'not-loaded' }] })),
+        LM_STUDIO_NO_LOADED_MODEL_WARNING,
+      );
+      assert.equal(
+        describeLMStudioModelState(JSON.stringify({ data: [{ id: 'a', state: 'not-loaded' }, { id: 'b', state: 'loaded' }] })),
+        null,
+      );
+      assert.equal(describeLMStudioModelState('not json'), null);
+      assert.equal(describeLMStudioModelState(JSON.stringify({ models: [] })), null);
+    });
+
+    it('findLastErrorLine returns the last Error: line without ANSI colour', () => {
+      assert.equal(
+        findLastErrorLine('ok\nError: first\nmore\n\x1b[31mError: No models loaded\x1b[0m\n'),
+        'Error: No models loaded',
+      );
+      assert.equal(findLastErrorLine('all good\n'), null);
+    });
   });
 
   describe('Offline Resilience & Health Check Mocking', () => {
@@ -929,7 +1068,7 @@ describe('opencode-run', () => {
       assert.ok(!fs.existsSync(lockFile) || fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid));
     });
 
-    it('runOpencode releases the lock when an attachment hits the denylist', async () => {
+    it('runOpencode skips a denylisted attachment, runs, and releases the lock', async () => {
       mock.method(http, 'get', (...args) => {
         const callback = typeof args[1] === 'function' ? args[1] : args[2];
         const emitter = new EventEmitter();
@@ -939,25 +1078,58 @@ describe('opencode-run', () => {
         });
         return emitter;
       });
+      const spawn = mock.method(cp, 'spawn', () => {
+        const child = new EventEmitter();
+        child.stdin = { end: () => {} };
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        process.nextTick(() => {
+          child.stdout.emit('data', Buffer.from('## Review\nok\n'));
+          child.emit('close', 0, null);
+        });
+        return child;
+      });
 
       const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-lock-test');
       fs.writeFileSync(sensitivePath, 'SECRET=1\n');
       const lockFile = path.join(os.tmpdir(), GPU_LOCK_FILE_NAME);
 
       try {
-        await assert.rejects(
-          runOpencode({ prompt: 'Review this', files: [sensitivePath] }),
-          /matches sensitive denylist pattern/,
-        );
+        const result = await runOpencode({ prompt: 'Review this', files: [sensitivePath] });
+        assert.equal(result.exitCode, 0);
+        const spawnedArgs = spawn.mock.calls[0].arguments[1].join(' ');
+        assert.ok(!spawnedArgs.includes('.env.opencode-lock-test'), 'denylisted file must not reach opencode');
 
         assert.ok(
           !fs.existsSync(lockFile) ||
             fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid),
-          'lock must be released when resolveContextFiles throws',
+          'lock must be released after the run',
         );
       } finally {
         fs.unlinkSync(sensitivePath);
       }
+    });
+
+    it('runOpencode surfaces the last "Error:" output line on a non-zero exit with silent stderr', async () => {
+      mock.method(http, 'get', () => {
+        throw new Error('preflight must not run for a remote endpoint');
+      });
+      mock.method(cp, 'spawn', () => {
+        const child = new EventEmitter();
+        child.stdin = { end: () => {} };
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        process.nextTick(() => {
+          child.stdout.emit('data', Buffer.from('starting\n\x1b[31mError: No models loaded. Please load a model.\x1b[0m\n'));
+          child.emit('close', 1, null);
+        });
+        return child;
+      });
+
+      const result = await runOpencode({ prompt: 'Review this', model: 'anthropic/claude-opus-5' });
+      assert.equal(result.exitCode, 1);
+      assert.match(result.stderr, /Error: No models loaded/);
+      assert.equal(result.failureKind, 'model-not-loaded');
     });
 
     it('runOpencode rejects an empty prompt before any preflight or lock side effect', async () => {

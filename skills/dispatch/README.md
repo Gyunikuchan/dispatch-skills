@@ -9,7 +9,7 @@ Hand bounded, read-only tasks to external coding-agent CLIs and receive clean, s
 When working with an AI coding assistant (the **orchestrator**—like Claude Code, Antigravity, or GitHub Copilot), complex investigations, code trace requests, or plan reviews can flood the context window with hundreds of lines of raw search outputs and intermediate tool calls.
 
 `dispatch` solves this by acting as a **cross-agent delegation bridge**:
-1. **Delegates bounded read-only work** to an external agent CLI (Claude Code, Antigravity 2.0, Copilot, or Local OpenCode).
+1. **Delegates bounded read-only work** to an external agent CLI (Claude Code, Antigravity 2.0, Copilot, or OpenCode).
 2. **Runs in isolation** in the background, redirecting verbose execution traces to OS temp logs.
 3. **Returns only the synthesized answer** along with a persistent session handle or canvas deep-link.
 4. **Preserves the orchestrator's role**: The orchestrator keeps the user brief, judgment, workspace file edits, and git commits.
@@ -19,7 +19,7 @@ flowchart TD
     User(["👤 User Prompt"]) --> Orchestrator["🤖 Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
     Orchestrator -->|"Delegates read-only task"| Dispatch["⚡ dispatch"]
     
-    Dispatch -->|"Selects available CLI"| Delegate["🔍 External Delegate CLI<br/>(Claude Code / Antigravity / Copilot / Local)"]
+    Dispatch -->|"Selects available CLI"| Delegate["🔍 External Delegate CLI<br/>(Claude Code / Antigravity / Copilot / OpenCode)"]
     
     Delegate -.->|"Streams raw tool traces"| Logs[("📝 OS Temp Logs<br/>(Keeps context clean)")]
     Delegate -->|"Returns clean answer & session link"| Orchestrator
@@ -117,7 +117,7 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | `--prompt-file <path>` | Read the prompt from a file (cannot combine with `-p` or a positional prompt); pairs with `fill-template.mjs` output. | `/dispatch --prompt-file <path to filled prompt>` |
 | `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
 | `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
-| `-e <level>` | Override reasoning effort (`low`, `medium`, `high`, `max`). | `/dispatch -e max Verify crypto primitives` |
+| `-e <level>` | Override reasoning effort; values are CLI-specific (e.g. Antigravity accepts `low`/`medium`/`high`; OpenCode receives it as `--variant`). | `/dispatch -e max Verify crypto primitives` |
 | `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `/dispatch -t 300 Quick dependency check` |
 | `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `/dispatch --allow-same-agent Analyze query plan` |
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
@@ -155,14 +155,14 @@ Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to 
 ## High-Level Behavior & Invariants
 
 - **Automatic Self-Skipping**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It skips delegating to the host platform by default to engage a differentiated platform/model for a different opinion and behavior, unless explicitly permitted via `--allow-same-agent`.
-- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; read-only tool whitelists on Claude Code; dead-end WAN proxies and credential stripping on Local OpenCode). Delegates **cannot** modify project files or make git commits. Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode — this only affects permission prompts, not the `--mode plan` write block.
-- **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (`.system_generated/logs` / OS temp). The orchestrating agent receives only the final synthesized summary and session link.
+- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; `--permission-mode plan` with read-only tool allowlists and denied write tools on Claude Code; Bubblewrap read-only mounts, credential stripping, and, for a local endpoint, dead-end WAN proxies on OpenCode). Exception: OpenCode on macOS/Windows has no structural boundary and relies on prompt guardrails plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode — this only affects permission prompts, not the `--mode plan` write block.
+- **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (OS temp). The orchestrating agent receives only the final synthesized summary and session link.
 - **Session Continuity & Deep-Links**: When supported, `dispatch` captures and returns session identifiers:
   - **Antigravity 2.0**: `conversation://<id>` deep-links that open directly in the Antigravity desktop canvas.
   - **Claude Code**: `claude --resume <session_id>` command handles.
   - **GitHub Copilot**: `copilot --resume <session_id>` command handles.
 - **Pre/Post Git Integrity Checks**: A `git status --porcelain` snapshot is taken before and after every dispatch. Any file modifications created during the run are immediately flagged as integrity warnings.
-- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner falls back seamlessly to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code) or local direct execution without crashing the workflow.
+- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner exits `NO_DISPATCH_AVAILABLE` and the orchestrator falls back to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code) or local direct execution without crashing the workflow.
 
 ---
 
@@ -178,6 +178,10 @@ When Claude Code dispatches a task to Antigravity, it executes the runner with `
 If a complex dispatch is taking several minutes, you can inspect the real-time activity log emitted in the launch banner:
 ```bash
 tail -n 30 "<logFilePath>"
+```
+PowerShell:
+```powershell
+Get-Content -Tail 30 "<logFilePath>"
 ```
 
 ### Git Integrity False Positives

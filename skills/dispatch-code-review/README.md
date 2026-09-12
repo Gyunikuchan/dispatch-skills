@@ -6,7 +6,7 @@ Get a rigorous cross-agent second opinion on code changes in your working tree, 
 
 ## What It Does
 
-Reviewing your own code or relying solely on a single agent often leaves blind spots in domain edge cases, security seams, and architectural drift. `dispatch-code-review` automates cross-agent code review by delegating inspection of recent session changes or working-tree diffs to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or Local OpenCode).
+Reviewing your own code or relying solely on a single agent often leaves blind spots in domain edge cases, security seams, and architectural drift. `dispatch-code-review` automates cross-agent code review by delegating inspection of recent session changes or working-tree diffs to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or OpenCode).
 
 The core philosophy is **claim vs. verdict**:
 1. **Delegate produces claims**: An external delegate CLI inspects uncommitted or recent git diffs, adjacent call sites, and attached walkthroughs/plans across six software engineering axes.
@@ -61,18 +61,14 @@ npx skills add Gyunikuchan/dispatch-skills --all
 
 ## How to Use
 
-Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, inspect diffs, dispatch the task, adjudicate the findings, and update the walkthrough.
+Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, inspect diffs, dispatch the task, adjudicate the findings, update the walkthrough, and, when run standalone, apply accepted must-fix changes to your working tree.
 
 ### 1. Basic Code Review
 
-Review current uncommitted working-tree changes (staged and unstaged):
+Review current uncommitted working-tree changes (staged, unstaged, and untracked):
 
 ```markdown
 /dispatch-code-review
-```
-
-```markdown
-/dispatch-code-review review recent changes
 ```
 
 ### 2. Targeting Specific Review Focus Areas
@@ -113,7 +109,7 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 
 - **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
 - **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
-- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff` and `git diff --staged`), falling back to `git diff HEAD~1` only when the working tree is clean.
+- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff`, `git diff --staged`, and untracked source/text files read in full), falling back to `git diff HEAD~1` only when nothing outside `.scratch/` is modified or untracked.
 - **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
@@ -146,6 +142,8 @@ Every finding returned by the reviewer follows a strict single-line grammar citi
 ```
 <file>:L<line> — <tag>: <defect> → <required change>
 ```
+
+The full delegate prompt lives in [references/prompt-template.md](references/prompt-template.md), and the structure used when a walkthrough is auto-authored in [references/walkthrough-template.md](references/walkthrough-template.md); edit those files to customize either.
 
 Example report:
 ```markdown
@@ -191,10 +189,10 @@ The orchestrator maps each claim to an adjudication action by inspecting the cit
 ## Nuances, Quirks & Troubleshooting
 
 ### Self-Skipping Runner Behavior
-By default, the underlying `dispatch` runner avoids delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) to ensure a genuinely independent second opinion. If only one CLI is installed, request `--allow-same-agent` or allow fallback to native subagents.
+By default, the underlying `dispatch` runner avoids delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) to ensure a genuinely independent second opinion. With one CLI installed, pin it explicitly (`/dispatch-code-review (claude)`), even from the same platform, or let the review fall back to a read-only subagent.
 
 ### Inspecting Uncommitted Diffs
-Delegates run in a structurally read-only mode and inspect the current working tree (`git diff` and `git diff --staged`). Ensure your changes are saved to disk before triggering review.
+Delegates run in a structurally read-only mode and inspect the current working tree (`git diff`, `git diff --staged`, and untracked files). Ensure your changes are saved to disk before triggering review.
 
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.

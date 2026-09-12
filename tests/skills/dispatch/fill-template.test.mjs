@@ -9,50 +9,20 @@ import { extractTemplate, fillTemplate } from '../../../skills/dispatch/scripts/
 import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
 
 const FILL_TEMPLATE_SCRIPT = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'scripts', 'fill-template.mjs');
-const PLAN_REVIEW_SKILL = path.join(PROJECT_ROOT, 'skills', 'dispatch-plan-review', 'SKILL.md');
-const CODE_REVIEW_SKILL = path.join(PROJECT_ROOT, 'skills', 'dispatch-code-review', 'SKILL.md');
+
+// NOTE: extraction against the real review skills' templates lives in
+// tests/integration/review-skill-parity.test.mjs, keeping this suite free of downstream skills.
 
 // ---------------------------------------------------------------------------
-// SECTION: Extraction against real review SKILL.md files
+// SECTION: Extraction
 // ---------------------------------------------------------------------------
 
-describe('fill-template: extraction on real review skills', () => {
-  it('extracts declared variables and an intact template from dispatch-plan-review', () => {
-    const markdown = fs.readFileSync(PLAN_REVIEW_SKILL, 'utf8');
-    const { variables, template } = extractTemplate(markdown);
-
-    assert.deepEqual(variables, [
-      'Plan Path',
-      'Requirement',
-      'User Focus Areas',
-      'Review Scope',
-      'Tool Turn Budget',
-    ]);
-    assert.ok(template.includes('<Plan Path>'));
-    assert.ok(template.includes('### Context & Objective'));
-  });
-
-  it('extracts declared variables and an intact template from dispatch-code-review', () => {
-    const markdown = fs.readFileSync(CODE_REVIEW_SKILL, 'utf8');
-    const { variables, template } = extractTemplate(markdown);
-
-    assert.deepEqual(variables, [
-      'Task Summary',
-      'Walkthrough Path',
-      'Plan Path',
-      'User Focus Areas',
-      'Review Scope',
-      'Tool Turn Budget',
-    ]);
-    assert.ok(template.includes('<Walkthrough Path>'));
-  });
-
+describe('fill-template: extraction', () => {
   it('preserves inner fenced code blocks inside the outer 4-backtick fence', () => {
-    const markdown = fs.readFileSync(CODE_REVIEW_SKILL, 'utf8');
+    const markdown = '## Prompt template\n\n- `<Name>` — a value.\n\n````markdown\nHello <Name>\n\n```\ninner\n```\n````\n';
     const { template } = extractTemplate(markdown);
-    // The template body should still contain at least one inner ``` fence marker, proving the
-    // scanner closed on the matching (>=4-backtick) fence rather than the first ``` it saw.
-    assert.ok(/```/.test(template), 'expected an inner fence to survive extraction');
+    // The inner ``` fence surviving proves the scanner closed on the matching (>=4-backtick) fence.
+    assert.ok(/```\ninner\n```/.test(template), 'expected an inner fence to survive extraction');
   });
 
   it('throws when the section is not found', () => {
@@ -152,17 +122,13 @@ describe('fill-template: CLI', () => {
   const run = (args) => cp.spawnSync(process.execPath, [FILL_TEMPLATE_SCRIPT, ...args], { encoding: 'utf8' });
 
   it('--list prints declared variable names as a JSON array and exits 0', () => {
-    const result = run(['--skill', CODE_REVIEW_SKILL, '--list']);
+    const skill = writeFixture(
+      'FIXTURE_LIST.md',
+      '## Prompt template\n\n- `<Plan Path>` — path.\n- `<Review Scope>` — scope.\n\n```\n<Plan Path> <Review Scope>\n```\n',
+    );
+    const result = run(['--skill', skill, '--list']);
     assert.equal(result.status, 0);
-    const parsed = JSON.parse(result.stdout.trim());
-    assert.deepEqual(parsed, [
-      'Task Summary',
-      'Walkthrough Path',
-      'Plan Path',
-      'User Focus Areas',
-      'Review Scope',
-      'Tool Turn Budget',
-    ]);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), ['Plan Path', 'Review Scope']);
   });
 
   it('fills via --vars JSON file supporting a multi-line value', () => {

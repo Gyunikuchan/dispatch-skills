@@ -10,7 +10,6 @@ import {
   dispatchTask,
   providerProbes,
   providerRunners,
-  workspaceProbes,
   PROVIDER_ALIASES,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { KNOWN_PROVIDERS } from '../../../skills/dispatch/scripts/common.mjs';

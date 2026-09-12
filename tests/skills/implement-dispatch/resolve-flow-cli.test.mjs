@@ -126,6 +126,15 @@ describe('resolve-flow CLI', () => {
     assert.deepEqual(JSON.parse(spaced.stdout), JSON.parse(equals.stdout));
   });
 
+  it('prints usage and exits 0 on --help / -h', () => {
+    for (const flag of ['--help', '-h']) {
+      const { status, stdout } = run(flag);
+      assert.equal(status, 0);
+      assert.match(stdout, /Usage:/);
+      assert.match(stdout, /--platform <key>/);
+    }
+  });
+
   it('rejects an unrecognized --flag=value argument', () => {
     const { status, stderr } = run('--platform', 'claude', '--rounds=3');
     assert.equal(status, 1);

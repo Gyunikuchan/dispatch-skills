@@ -6,7 +6,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 ## 1. Provider Specifications
 
-Model and reasoning-effort defaults are no longer hardcoded in the runner scripts — they come from [`config.default.jsonc`](../config.default.jsonc) (or a project/machine override; see [Configuration](../SKILL.md#configuration) in `SKILL.md`). A runner given no model/effort (no CLI flag, no config entry) omits `-m`/`-e` entirely and lets the underlying CLI apply its own default.
+Model and reasoning-effort defaults come from [`config.default.jsonc`](../config.default.jsonc) (or a project/machine override; see [Configuration](../SKILL.md#configuration) in `SKILL.md`). A runner given no model/effort (no CLI flag, no config entry) omits `-m`/`-e` entirely and lets the underlying CLI apply its own default.
 
 | Provider | Key | CLI Binary | Direct Runner | Default Mode | Session Handle |
 |----------|-----|------------|---------------|--------------|----------------|
@@ -21,7 +21,7 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
 
 ### Defaults & Overrides
 - **Model/Effort**: from `config.default.jsonc`'s `platforms.claude` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m` means no `-m` flag reaches `claude` at all.
-- **Default Mode**: Read-only (`--allowedTools`)
+- **Default Mode**: Read-only (`--permission-mode plan`, `--allowedTools`, `--disallowedTools`)
 - **Mode Override**: `--claude-mode <desktop|vscode|cli>` (explicit execution mode)
 - **Reachability Probe**: `--test-modes` (tests reachability via `--version` across all modes without token consumption)
 
@@ -42,7 +42,7 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
    - Windows: `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, system `PATH` (`where.exe`)
 
 ### Sandboxing & Isolation
-- **Tool Restriction**: Passed `--allowedTools` restricts tool types (`Read`, `Bash(grep *)`, `Bash(find *)`), not individual filesystem paths.
+- **Tool Restriction**: `--permission-mode plan` plus `--allowedTools` restricts tool types (`Read`, `Glob`, `Grep`, `Bash(git diff*)`, `Bash(grep *)`, …), not individual filesystem paths; commands that write or execute through their own arguments (`find`, `awk`, `sort`) and web tools (`WebFetch`, `WebSearch`) are excluded, and `--disallowedTools Write Edit NotebookEdit` denies write tools outright.
 - **Safety Prompt**: Restricts denied directories (`.ssh/`, `.aws/`, `.gnupg/`, `.docker/`, `.kube/`, `.password-store/`) and denied file patterns (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `.npmrc`, `*token*`, `*secret*`).
 - **Sandbox Boundary**: Delegate session inherits the host process sandbox boundaries.
 - **Model & Mode Cascade**: Discovery probes test `--version` without token spend. If a model is not available or fails, `runClaude` falls back across whatever candidate models were configured (an array `model` in `config.default.jsonc`'s `platforms.claude`, or a single `-m` override). On `auth` or `quota` exhaustion across models, it cascades to the next available mode unless pinned.
@@ -63,15 +63,15 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
 - **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
 
 ### Order of Preference
-1. **Antigravity Desktop (`desktop`)**:
+1. **Antigravity Desktop (`antigravity-2.0`)**:
    - macOS: `~/.gemini/antigravity/bin/agy`, `/Applications/Antigravity.app/Contents/Resources/bin/agy`
    - Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`, `%APPDATA%\Google\Antigravity\bin\agy.exe`, `%ProgramFiles%\Antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity/bin/agy`, `/opt/Antigravity/agy`
-2. **Antigravity VS Code Extension (`vscode`)**:
+2. **Antigravity VS Code Extension (`antigravity-vscode`)**:
    - macOS: `~/.gemini/antigravity-ide/bin/agy`, `~/Library/Application Support/Code/User/globalStorage/google.google-antigravity/bin/agy`
    - Windows: `%APPDATA%\Code\User\globalStorage\google.google-antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity-ide/bin/agy`, `~/.config/Code/User/globalStorage/google.google-antigravity/bin/agy`
-3. **Antigravity CLI (`cli`)**:
+3. **Antigravity CLI (`antigravity-cli`)**:
    - Cross-platform: `~/.gemini/bin/agy`, `~/.local/bin/agy`, system `$PATH`
 
 ### Sandboxing & Isolation
@@ -121,7 +121,7 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
   (`isLocalEndpointHost`). Local (an `lmstudio/...` model resolved to its loopback endpoint, or any
@@ -145,12 +145,13 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
 ### Sandboxing & Isolation
 - **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.
 - **Credential Stripping**: Environment variables are filtered through `SAFE_ENV_WHITELIST`, removing API tokens, SSH keys, and cloud credentials, regardless of provider. A remote provider's own credentials belong in `opencode.jsonc`'s `provider.<name>.options.apiKey`, resolved by `opencode`'s own subprocess — not in this process's environment.
-- **Attachment Boundary**: File attachments (`-f`) are confined to workspace root, Antigravity brain, agent config directories, and OS temp dir.
-- **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS and Windows enforce read-only boundaries through prompt guardrails and pre/post git integrity checks.
+- **Attachment Boundary**: File attachments (`-f`) outside the workspace root, Antigravity brain, agent config directories, and OS temp dir are read with a warning; the sensitive-file denylist (checked against the resolved real path) is the gate, and a denylisted file is skipped with the same warning.
+- **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS and Windows rely on prompt guardrails and pre/post git integrity checks — no structural read-only boundary.
+- **Accepted risk**: every run passes `opencode run --auto`, which auto-approves any permission not explicitly denied. It is kept because headless runs cannot answer permission prompts. Residual boundary: Linux with `bwrap` — read-only mounts; macOS/Windows (and Linux without `bwrap`) — the prompt guardrail plus the git integrity check only.
 - **GPU Concurrency Lock**: only acquired when the resolved endpoint is local (prevents concurrent hooks from thrashing local VRAM); a remote API call has no such contention and is not serialized behind it.
 
 ### Session Monitoring
-- **Server Endpoint**: Monitored via local server endpoint at `http://127.0.0.1:1234`.
+- **Server Endpoint**: Monitored via the resolved LM Studio endpoint (default `http://127.0.0.1:1234`) when the endpoint is local.
 - **Session Logs**: Stored via runner session loggers in the OS temp directory (`agent-dispatch-logs`).
 - **Git Integrity**: Detects workspace changes across runs via `git status --porcelain` diffs.
 
@@ -178,8 +179,9 @@ Model and reasoning-effort defaults are no longer hardcoded in the runner script
 | Kind | Trigger | Cascade Behaviour |
 |------|---------|-------------------|
 | `quota` | Usage limit, rate limit, credit balance, HTTP 429 | Cascade to next provider with independent limits |
-| `context-overflow` | Prompt too long, context length exceeded | Cascade to next provider; shrink attachments on repeat |
+| `context-overflow` | Prompt too long, context length exceeded | Cascade to next provider |
 | `auth` | 401/403, invalid key, unauthenticated session | Report non-retryable error, cascade |
+| `model-not-loaded` | `No models loaded`, `model not loaded` (local backend with no model in memory; OpenCode preflight also warns when LM Studio reports no loaded model — run `lms load <model>`) | Non-retryable on OpenCode; cascades to the next provider like any other failure (unpinned runs follow the normal cascade; pinned runs return it) |
 | `not-found` | Missing binary, `ENOENT` | Report non-retryable error, cascade |
 | `timeout` | Execution timeout | Retain and return partial output if no fallback succeeds |
 

@@ -7,6 +7,7 @@ import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
 
 import {
   diffStatus,
+  filterAuditStatus,
   frontmatterDescription,
   relTo,
   resolveRunDirs,
@@ -50,6 +51,22 @@ describe('audit-dispatch-skills shared helpers', () => {
 
     it('returns an empty array for identical snapshots', () => {
       assert.deepEqual(diffStatus('a\nb', 'a\nb'), []);
+    });
+  });
+
+  describe('filterAuditStatus', () => {
+    it('filters a modified audit path whose status starts with a space', () => {
+      assert.equal(filterAuditStatus(' M .scratch/audit/x/report.md\n'), '');
+    });
+
+    it('keeps a modified non-audit path intact', () => {
+      assert.equal(filterAuditStatus(' M src/a.mjs\n'), ' M src/a.mjs');
+    });
+
+    it('filters a rename into audit output and strips both quotes', () => {
+      assert.equal(filterAuditStatus('R  notes.md -> .scratch/audit/x/notes.md\n'), '');
+      assert.equal(filterAuditStatus('?? ".scratch/audit/x/has space.md"\n'), '');
+      assert.equal(filterAuditStatus('?? "src/has space.md"\n'), '?? "src/has space.md"');
     });
   });
 

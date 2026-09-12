@@ -88,12 +88,20 @@ export function frontmatterDescription(text) {
 export function auditGitStatus(root) {
   const res = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root, encoding: 'utf8' });
   if (res.status !== 0) return null;
-  return res.stdout
+  return filterAuditStatus(res.stdout);
+}
+
+/**
+ * Drops blank lines and audit-output entries from `git status --porcelain` stdout; sorted output.
+ * The two-char status column is fixed-width (` M`, `??`), so lines are sliced untrimmed; a rename
+ * (`R  old -> new`) is judged by its destination, and C-quoted paths lose both quotes.
+ */
+export function filterAuditStatus(stdout) {
+  return stdout
     .split('\n')
     .filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      const entryPath = trimmed.slice(3).replace(/^"/, '');
+      if (!line.trim()) return false;
+      const entryPath = line.slice(3).split(' -> ').pop().replace(/^"|"$/g, '');
       return !entryPath.startsWith(AUDIT_PREFIX);
     })
     .sort()

@@ -41,10 +41,15 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
   function addIfFound(filePath, type) {
     if (!filePath) return;
     const resolved = path.resolve(filePath);
-    if (!seenPaths.has(resolved) && fs.existsSync(resolved)) {
+    // Keyed on the real path so a symlinked or case-variant alias of one file is validated once.
+    let identity = resolved;
+    try {
+      identity = fs.realpathSync(resolved);
+    } catch {}
+    if (!seenPaths.has(identity) && fs.existsSync(resolved)) {
       try {
         if (fs.statSync(resolved).isFile()) {
-          seenPaths.add(resolved);
+          seenPaths.add(identity);
           found.push({ path: resolved, type });
         }
       } catch {}
@@ -245,7 +250,7 @@ export function validateAllConfigs(options = {}) {
     const { valid, problems } = validateConfigFile(filePath, type);
     return {
       path: filePath,
-      relativePath: relativePath.startsWith('.') ? relativePath : relativePath,
+      relativePath,
       type,
       valid,
       problems,

@@ -1,13 +1,13 @@
 {
-  "SKILL.md": "8088cde2faf2b15144652b93c6aa5211f2f6671dba6ee3d9fb27b4e17864b2bd",
-  "references/alignment.md": "1f57fc9c1e74a8d7fa7113c4bfe8c0a5e6bd377e16d4c03f6d6e23999c6f2a5a",
-  "references/providers.md": "8c7f42fa8f73db12858602ffbe8f2126dc27ee28ee405a54e017d20163f6989d",
-  "scripts/agy-run.mjs": "f4e9fbd561bcaaa35c9eb8fab7086c9f1b4245eb6919577aea789c40018b6f99",
-  "scripts/claude-run.mjs": "f8b83b8fb7bcc1f47e53566e39c328778c06f9d30ed0f7b003694fe434b1eb9c",
-  "scripts/common.mjs": "e4187db7ba7b9a1cdab7e4be83e69db05995d7d5f6b7792f29dafb77bcffb17a",
-  "scripts/copilot-run.mjs": "0ba5da512fcdf9797c66a04cf9c5ae4de9b381152177120eb4df40c1c9ceed8a",
-  "scripts/dispatch.mjs": "2318cc4c6b33ec1ee7a7ea09edc56ef7a7332d200ab00cce4cd10f4976572e26",
+  "SKILL.md": "e9c6bcfb69ad618ea5709fe93938739473e59a712d0405fec214466968c13ddc",
+  "references/alignment.md": "8acb56f56407fc2cf4b39ddbb894a65c6bd7187f48ad251fa179705eed753d28",
+  "references/providers.md": "d035b0e8a9ccb12571783cd79dbd4648dfde2cb6150a7ec549a30351498f5ec1",
+  "scripts/agy-run.mjs": "4f16823fbf338e3401fc3ec506860812911219de44e1cc83037949b04876c97f",
+  "scripts/claude-run.mjs": "8a1760daa1cb6bec57113c1f2b729666030f6e6cad60029ef07d07d4acd68b8c",
+  "scripts/common.mjs": "54c42802c477bb25b135174d1d19fe145835518a621a6543f3e37c255b17cd65",
+  "scripts/copilot-run.mjs": "68a310dd825b244babdd2c17ebb06b3082ba11e8dac82edce8b97f9a0f4a057a",
+  "scripts/dispatch.mjs": "528db1dace217a003d86c4f467e22c32db490babad45793cf5667387b14c0709",
   "scripts/fill-template.mjs": "de959577a885b82a088258ad9cedf990d505f8bcf0bd7614bc4758456eb59e18",
-  "scripts/opencode-run.mjs": "c550a19988c4cb2513b827288f773e5e3ab40946e7d8223c7e96a790de11a183",
+  "scripts/opencode-run.mjs": "589c9f6d172ada24ec7dfd09e12e1783b811d0027eaa6e4a6d3d42738cee561b",
   "scripts/resolve-artifact-paths.mjs": "28fed940cd6f0c22d13350564dd267097ed86039063be31b3f9cd5bfe109ce1c"
 }

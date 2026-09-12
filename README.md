@@ -22,7 +22,7 @@ Add `-g` for a user-level install.
 
 | Skill | What it does | Depends on |
 |-------|--------------|------------|
-| [`dispatch`](skills/dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only by default, execution logs kept out of your context. | nothing |
+| [`dispatch`](skills/dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only (no write mode), execution logs kept out of your context. | nothing |
 | [`dispatch-plan-review`](skills/dispatch-plan-review) | 7-axis review of an implementation plan **before** code exists; folds accepted findings into the plan on disk. | `dispatch` |
 | [`dispatch-code-review`](skills/dispatch-code-review) | 6-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
 | [`implement-dispatch`](skills/implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
@@ -49,7 +49,7 @@ Review what you just changed:
 /dispatch-code-review the current changes, focus on the allocation math
 ```
 
-Run the whole development loop with two reviewers (`<effort> (<providers>): <task>`):
+Run the whole development loop with two reviewers (`<level> (<pins>): <ask>`):
 
 ```
 /implement-dispatch high (claude,agy): migrate the persisted schema to v4
@@ -57,7 +57,7 @@ Run the whole development loop with two reviewers (`<effort> (<providers>): <tas
 
 ## Design
 
-- **Always read-only.** Reviews and delegation never write — delegates are structurally read-only. Workspace writes belong to the orchestrator.
+- **Delegates are read-only.** External CLIs never write; the orchestrator alone edits (plan review folds findings into the plan; standalone code review applies accepted fixes).
 - **Context hygiene.** Execution traces stream to a temp log; the orchestrator receives the banner, the log path, and the final answer.
 - **Evidence over votes.** A finding the code confirms is accepted however few delegates raised it; one the code refutes is rejected even if every delegate raised it.
 - **Host-neutral.** No opinions about your codebase are baked in. The delegate reads your project's conventions directly from `AGENTS.md` / `CLAUDE.md` in the workspace and falls back to industry best practices.

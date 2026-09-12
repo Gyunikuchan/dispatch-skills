@@ -322,10 +322,29 @@ export function buildFormattedPrompt(prompt, files = []) {
   return formatSafetyPrompt(fullPrompt, { workspaceRoot: PROJECT_ROOT, attachedFiles: files });
 }
 
+// Common value flags: each consumes the next token (or its `--name=value` form).
+const COMMON_VALUE_FLAGS = new Set([
+  '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
+  '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
+  '--max-buffer', '--orchestrator', '--provider',
+]);
+
+// Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
+const LEGACY_SILENT_FLAGS = new Set([
+  '--allow-write', '--write', '--read-only', '-i', '--interactive', '-w', '--watch',
+  '--watch-terminal', '--headless', '--no-watch', '--no-terminal',
+]);
+
 /**
- * Parses common CLI arguments.
+ * Parses common CLI arguments strictly: an undeclared `-`-prefixed token throws
+ * `Unknown flag`, and a value flag that is last or followed by a `--` token throws
+ * `<flag> requires a value`. Runner-specific flags are declared by the caller (and
+ * parsed by the caller); `--` ends option parsing.
+ *
+ * @param {string[]} argv - full process.argv (node + script + args)
+ * @param {{ booleanFlags?: string[], valueFlags?: string[] }} [declared]
  */
-export function parseCommonArgs(argv) {
+export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {}) {
   const options = {
     prompt: '',
     files: [],
@@ -345,53 +364,72 @@ export function parseCommonArgs(argv) {
 
   const positional = [];
   const args = argv.slice(2);
+  const declaredBoolean = new Set(booleanFlags);
+  const declaredValue = new Set(valueFlags);
+
+  const takeValue = (i) => {
+    const next = args[i + 1];
+    if (next === undefined || next.startsWith('--')) {
+      throw new Error(`${args[i]} requires a value`);
+    }
+    return next;
+  };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (arg === '-h' || arg === '--help') {
+    if (arg === '--') {
+      positional.push(...args.slice(i + 1));
+      break;
+    }
+
+    if (COMMON_VALUE_FLAGS.has(arg)) {
+      const value = takeValue(i);
+      i++;
+      if (arg === '-p' || arg === '--prompt') {
+        options.prompt = value;
+      } else if (arg === '--prompt-file') {
+        options.promptFile = value;
+      } else if (arg === '-f' || arg === '--file' || arg === '--artifact') {
+        options.files.push(value);
+      } else if (arg === '-m' || arg === '--model') {
+        options.model = value;
+      } else if (arg === '-e' || arg === '--effort' || arg === '--reasoning-effort') {
+        options.effort = value;
+      } else if (arg === '-a' || arg === '--agent') {
+        options.agent = value;
+      } else if (arg === '-t' || arg === '--timeout') {
+        const parsedTimeout = parseInt(value, 10);
+        if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
+          options.timeout = parsedTimeout;
+        }
+      } else if (arg === '--max-buffer') {
+        const parsedMb = parseInt(value, 10);
+        if (!Number.isNaN(parsedMb) && parsedMb > 0) {
+          options.maxBufferMb = parsedMb;
+        }
+      } else if (arg === '--orchestrator') {
+        options.orchestrator = value;
+      } else if (arg === '--provider') {
+        options.provider = value;
+      }
+    } else if (arg === '-h' || arg === '--help') {
       options.help = true;
-    } else if (arg === '-p' || arg === '--prompt') {
-      options.prompt = args[++i] || '';
-    } else if (arg === '--prompt-file') {
-      options.promptFile = args[++i] || null;
-    } else if (arg === '-f' || arg === '--file' || arg === '--artifact') {
-      const fileArg = args[++i];
-      if (fileArg) options.files.push(fileArg);
-    } else if (arg === '-m' || arg === '--model') {
-      options.model = args[++i] || null;
-    } else if (arg === '-e' || arg === '--effort' || arg === '--reasoning-effort') {
-      options.effort = args[++i] || null;
-    } else if (arg === '-a' || arg === '--agent') {
-      options.agent = args[++i] || null;
-    } else if (arg === '-t' || arg === '--timeout') {
-      const parsedTimeout = parseInt(args[++i], 10);
-      if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
-        options.timeout = parsedTimeout;
-      }
-    } else if (arg === '--max-buffer') {
-      const parsedMb = parseInt(args[++i], 10);
-      if (!Number.isNaN(parsedMb) && parsedMb > 0) {
-        options.maxBufferMb = parsedMb;
-      }
-    } else if (arg === '--allow-write' || arg === '--write' || arg === '--read-only') {
-      // Write mode removed from dispatch — delegates are always read-only.
-      // Flag accepted silently for backward compatibility.
+    } else if (LEGACY_SILENT_FLAGS.has(arg)) {
+      // Accepted silently for backward compatibility (see LEGACY_SILENT_FLAGS).
     } else if (arg === '--allow-same-agent') {
       options.allowSameAgent = true;
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '-v' || arg === '--verbose') {
       options.verbose = true;
-    } else if (arg === '-i' || arg === '--interactive') {
-      // Interactive mode removed — delegates are always headless. Accepted silently.
-    } else if (arg === '-w' || arg === '--watch' || arg === '--watch-terminal' ||
-               arg === '--headless' || arg === '--no-watch' || arg === '--no-terminal') {
-      // Watch-terminal removed to eliminate injection surface. Accepted silently.
-    } else if (arg === '--orchestrator') {
-      options.orchestrator = args[++i] || null;
-    } else if (arg === '--provider') {
-      options.provider = args[++i] || null;
+    } else if (declaredBoolean.has(arg)) {
+      // Runner-declared boolean flag; the runner reads it itself.
+    } else if (declaredValue.has(arg)) {
+      takeValue(i);
+      i++;
+    } else if (arg.startsWith('--') && arg.includes('=') && declaredValue.has(arg.slice(0, arg.indexOf('=')))) {
+      // Runner-declared `--name=value` form; the runner reads it itself.
     } else if (arg.startsWith('--file=')) {
       options.files.push(arg.slice('--file='.length));
     } else if (arg.startsWith('--artifact=')) {
@@ -422,6 +460,8 @@ export function parseCommonArgs(argv) {
       options.promptFile = arg.slice('--prompt-file='.length);
     } else if (!arg.startsWith('-')) {
       positional.push(arg);
+    } else {
+      throw new Error(`Unknown flag: ${arg}`);
     }
   }
 
@@ -549,6 +589,14 @@ function escapeCmdArgument(argument, doubleEscapeMetaChars) {
 }
 
 /**
+ * True for a Windows `.bat`/`.cmd` launcher, whose arguments cmd.exe re-parses.
+ * @param {string|null|undefined} binary
+ */
+export function isBatchLauncher(binary) {
+  return process.platform === 'win32' && typeof binary === 'string' && /\.(?:bat|cmd)$/i.test(binary);
+}
+
+/**
  * Builds the concrete spawn invocation for a delegate CLI.
  *
  * Node refuses to execute a Windows `.cmd`/`.bat` launcher without a shell
@@ -557,10 +605,15 @@ function escapeCmdArgument(argument, doubleEscapeMetaChars) {
  * quotes or `&`. So batch launchers are routed through cmd.exe with arguments
  * escaped here and `windowsVerbatimArguments` suppressing Node's re-quoting.
  */
-function resolveCliInvocation(binary, args, options) {
-  const isBatchLauncher = process.platform === 'win32' && /\.(?:bat|cmd)$/i.test(binary);
-  if (!isBatchLauncher) {
+export function resolveCliInvocation(binary, args, options) {
+  if (!isBatchLauncher(binary)) {
     return { command: binary, args, options: { ...options, shell: false } };
+  }
+
+  // NOTE: cmd.exe ends the command at a raw newline, silently dropping the rest of that
+  // argument and every argument after it — callers must spill multi-line text to a brief file.
+  if (args.some((arg) => /[\r\n]/.test(String(arg)))) {
+    throw new Error('batch launcher argument contains a newline; spill it to a brief file');
   }
 
   const commandLine = [
@@ -623,33 +676,49 @@ export function terminateProcessTree(child) {
  * Reads one attachment, capping its size so a large file cannot exhaust the delegate's
  * context window. Returns null when the file is unreadable.
  */
+/**
+ * Classifies a path against the sensitive denylists, checking both the resolved path and its
+ * symlink-resolved real path so an innocuously named link cannot smuggle out a denylisted target.
+ *
+ * @param {string} filePath
+ * @returns {'file'|'dir'|null} which denylist matched, or null when the path is allowed
+ */
+export function findSensitiveMatch(filePath) {
+  const abs = path.resolve(filePath);
+  let real = abs;
+  try {
+    real = fs.realpathSync(abs);
+  } catch {
+    // Missing/unreadable path: the resolved path is all there is to check.
+  }
+  const candidates = real === abs ? [abs] : [abs, real];
+
+  for (const candidate of candidates) {
+    const baseName = path.basename(candidate);
+    if (SENSITIVE_FILE_PATTERNS.some((p) => p.test(candidate) || p.test(baseName))) return 'file';
+    if (SENSITIVE_FILE_BASENAME_PATTERNS.some((p) => p.test(baseName))) return 'file';
+  }
+  for (const candidate of candidates) {
+    if (SENSITIVE_DIR_PATTERNS.some((p) => p.test(candidate))) return 'dir';
+  }
+  return null;
+}
+
 export function readAttachment(filePath, maxBytes = MAX_ATTACHMENT_BYTES_PER_FILE) {
   const abs = path.resolve(filePath);
 
-  const baseName = path.basename(abs);
-  for (const pattern of SENSITIVE_FILE_PATTERNS) {
-    if (pattern.test(abs) || pattern.test(baseName)) {
-      process.stderr.write(
-        `[dispatch] Attachment rejected: '${filePath}' matches sensitive file denylist.\n`,
-      );
-      return null;
-    }
+  const sensitive = findSensitiveMatch(abs);
+  if (sensitive === 'file') {
+    process.stderr.write(
+      `[dispatch] Attachment rejected: '${filePath}' matches sensitive file denylist.\n`,
+    );
+    return null;
   }
-  for (const pattern of SENSITIVE_FILE_BASENAME_PATTERNS) {
-    if (pattern.test(baseName)) {
-      process.stderr.write(
-        `[dispatch] Attachment rejected: '${filePath}' matches sensitive file denylist.\n`,
-      );
-      return null;
-    }
-  }
-  for (const pattern of SENSITIVE_DIR_PATTERNS) {
-    if (pattern.test(abs)) {
-      process.stderr.write(
-        `[dispatch] Attachment rejected: '${filePath}' is inside a sensitive directory.\n`,
-      );
-      return null;
-    }
+  if (sensitive === 'dir') {
+    process.stderr.write(
+      `[dispatch] Attachment rejected: '${filePath}' is inside a sensitive directory.\n`,
+    );
+    return null;
   }
   // Boundary awareness (warn, not reject): the orchestrator's own workspace, agent-config
   // directories, and the OS temp dir (where relocated artifacts like a walkthrough.md live)
@@ -765,19 +834,31 @@ export function createBriefFile(prompt, providerName) {
   const briefFile = path.join(briefDir, 'brief.md');
   fs.writeFileSync(briefFile, prompt, { encoding: 'utf8', mode: 0o600 });
 
+  // Single line with no `%`: the pointer itself must survive a Windows batch launcher's argv.
   const pointerPrompt =
-    `Your full task brief exceeds the command-line length limit and has been written to a file.\n` +
-    `FIRST ACTION: read this file in full, then carry out the instructions it contains.\n\n` +
-    `Brief file: ${briefFile.split(path.sep).join('/')}\n`;
+    `Your full task brief was written to a file to keep it off the command line. ` +
+    `FIRST ACTION: read this file in full, then carry out the instructions it contains. ` +
+    `Brief file: ${briefFile.split(path.sep).join('/')}`;
 
   return { briefFile, pointerPrompt };
 }
 
+// cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
+const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
+
 /**
- * Returns the prompt to place on argv, spilling to a brief file when it would overflow.
+ * Returns the prompt to place on argv, spilling to a brief file when it would overflow — or,
+ * for a Windows batch launcher, when cmd.exe would corrupt it (newlines truncate, `%` expands).
+ *
+ * @param {string} prompt
+ * @param {string} providerName
+ * @param {{ binary?: string|null }} [opts] - resolved delegate binary
  */
-export function preparePromptForArgv(prompt, providerName) {
-  if (Buffer.byteLength(prompt, 'utf8') <= getArgvByteLimit()) {
+export function preparePromptForArgv(prompt, providerName, { binary } = {}) {
+  const bytes = Buffer.byteLength(prompt, 'utf8');
+  const unsafeForBatch =
+    isBatchLauncher(binary) && (/[\r\n%]/.test(prompt) || bytes > BATCH_LAUNCHER_ARG_BYTE_LIMIT);
+  if (bytes <= getArgvByteLimit() && !unsafeForBatch) {
     return { prompt, briefFile: null };
   }
 
@@ -796,26 +877,33 @@ export function preparePromptForArgv(prompt, providerName) {
 export function createSessionLogger(providerName) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const logDir = path.join(os.tmpdir(), 'agent-dispatch-logs');
+  // Logs hold full delegate transcripts; owner-only modes (ignored on Windows) keep them private.
   try {
     if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+      fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
     }
   } catch {}
 
   const logFile = path.join(logDir, `${providerName}-${timestamp}-${process.pid}.log`);
   try {
-    fs.writeFileSync(logFile, '', { flag: 'a' });
+    fs.writeFileSync(logFile, '', { flag: 'a', mode: 0o600 });
   } catch {}
-  const logStream = fs.createWriteStream(logFile, { flags: 'a', encoding: 'utf8' });
+  const logStream = fs.createWriteStream(logFile, { flags: 'a', encoding: 'utf8', mode: 0o600 });
+  // An unwritable log must never crash the run: an unhandled stream 'error' would.
+  logStream.on('error', () => {});
+  let closed = false;
 
   return {
     logFile,
     write(chunk) {
+      if (closed) return;
       try {
         logStream.write(chunk);
       } catch {}
     },
     close() {
+      if (closed) return;
+      closed = true;
       try {
         logStream.end();
       } catch {}
@@ -898,6 +986,8 @@ export function extractCleanResponse(rawOutput) {
   const lines = trimmed.split(/\r?\n/);
   let firstMessageLineIndex = 0;
   let inToolTrace = false;
+  let sawContent = false;
+  let previousWasBlank = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -912,11 +1002,16 @@ export function extractCleanResponse(rawOutput) {
       line.startsWith('✱ ') ||
       line.startsWith('[dispatch]')
     ) {
+      // A trace-like line after the answer began is body content (e.g. a `$ npm test`
+      // example), so suppression turns off for the rest; the start index is already final.
+      if (sawContent) break;
       inToolTrace = true;
+      previousWasBlank = false;
       firstMessageLineIndex = i + 1;
       continue;
     }
 
+    const isBlank = !line.trim();
     if (inToolTrace) {
       if (
         line.startsWith('# ') ||
@@ -928,9 +1023,17 @@ export function extractCleanResponse(rawOutput) {
         firstMessageLineIndex = i;
         break;
       }
-      if (!line.trim()) {
+      if (isBlank) {
         firstMessageLineIndex = i + 1;
+        previousWasBlank = true;
+      } else if (previousWasBlank) {
+        // Blank line then plain text ends the trace: the answer starts here.
+        firstMessageLineIndex = i;
+        inToolTrace = false;
+        sawContent = true;
       }
+    } else if (!isBlank) {
+      sawContent = true;
     }
   }
 
@@ -1515,7 +1618,10 @@ export function isMainModule(importMetaUrl) {
  * Classifies a delegate failure so the cascade can tell a retry-elsewhere condition
  * (quota, rate limit, context overflow) from a terminal one (auth, missing CLI).
  *
- * @returns {'quota'|'context-overflow'|'auth'|'not-found'|'timeout'|null}
+ * `model-not-loaded` (a local backend with no model in memory) is checked before `not-found`
+ * and, like every kind, is only a label: dispatch cascades on it unless pinned.
+ *
+ * @returns {'quota'|'context-overflow'|'auth'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyFailure(text) {
   if (!text || typeof text !== 'string') return null;
@@ -1528,6 +1634,9 @@ export function classifyFailure(text) {
   }
   if (/(unauthorized|not authenticated|authentication failed|no authentication|invalid api key|please (log|sign) in|\b401\b|\b403\b)/i.test(text)) {
     return 'auth';
+  }
+  if (/no models loaded|model (is )?not loaded/i.test(text)) {
+    return 'model-not-loaded';
   }
   if (/(command not found|is not recognized|ENOENT|no such file or directory)/i.test(text)) {
     return 'not-found';

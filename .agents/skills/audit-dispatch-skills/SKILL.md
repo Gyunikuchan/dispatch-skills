@@ -18,7 +18,7 @@ Paths are relative to the repo root. `<skill>` is this skill's directory (`.agen
 node <skill>/scripts/baseline.mjs --run .scratch/audit/<run>
 ```
 
-Writes to `work/`: `git-status.txt` (repo snapshot, audit output excluded), `tests.txt` (full suite with coverage, skipping `npm test`'s pretest hash write), and `metrics.md` (doc token footprint, broken links/anchors, script structure, exports no test names, test counts, hash drift). Prints a digest; a failing test is audit evidence, not a stop.
+Writes to `work/`: `git-status.txt` (repo snapshot, audit output excluded), `tests.txt` (full suite with coverage, no hash write), and `metrics.md` (doc token footprint, broken links/anchors, script structure, exports no test names, test counts, hash drift). Prints a digest; a failing test is audit evidence, not a stop.
 
 **Done when:** the three files exist and the printed digest is noted for the report summary.
 
@@ -54,7 +54,7 @@ Return only: finding counts by severity and the findings path.
 
 ## 4. Synthesize
 
-Read every findings file and `work/dispatch/summary.md` (wait for all subagents and the background probe to finish first).
+Read every findings file and `work/dispatch/summary.md` (wait for all subagents and the background probe to finish first). If `summary.md` is missing, the probe crashed: report `probe crashed: <message from probe output>` in the dispatch-platforms section.
 
 1. **Dedupe**: merge findings that name the same defect — same location, or one root cause across locations. Keep every source scope and the highest severity the evidence supports.
 2. **Verify** each merged finding by opening its cited locations. Confirmed → `Verified`. Contradicted by the code → refuted, moved to the appendix with the reason. Settled only by a run you cannot do here (another OS, a missing CLI) → `Unverified` plus what would settle it. Evidence decides, not how many scopes raised it.

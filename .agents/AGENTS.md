@@ -10,7 +10,7 @@ Deliver high-confidence cross-agent delegation and review with minimal token ove
 
 - **Trade-off Hierarchy (Correctness > Token Efficiency > Speed)**: Spend tokens to verify code rather than guess or skip; never sacrifice correctness for efficiency. Optimize context hygiene and token density before raw execution speed.
 - **Claims, Not Verdicts (Review Rigor)**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: a verified finding is accepted regardless of vote count; an unverified finding is rejected even if unanimous. Axis coverage is explicit and visible.
-- **Structural Least Privilege (Security & Isolation)**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools). File writes and destructive actions belong exclusively to the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
+- **Structural Least Privilege (Security & Isolation)**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). File writes and destructive actions belong exclusively to the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
 - **Context Hygiene & Token Density (Efficiency)**: Protect the orchestrator's context window. Execution traces and subprocess logs stream out-of-context to temp logs (`.scratch/` or OS temp); only concise syntheses, banners, and log paths reach the orchestrator. High token density via progressive disclosure.
 - **Autonomous One-Shot Reliability (Rigor & Consensus)**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without requiring user interventions.
 - **Host Neutrality & Composability (Portability & Modularity)**: Zero assumptions about the host repository. Delegates read the target workspace's `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and install standalone or together. Shared conventions among the review-flow skills (`dispatch`'s `references/alignment.md`) govern only those skills' own behaviour and artifacts; host `AGENTS.md` / `CLAUDE.md` always wins, and skills never write conventions into the host repo.
@@ -99,7 +99,7 @@ Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
 - **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
-- **Verify**: Run `npm test` (which triggers `scripts/generate-hashes.mjs`) before completing any task.
+- **Verify**: Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Dev/test tooling needs Node 22+ (the quoted test glob); skill runtime stays Node 18+.
 
 ### Handoff Format
 

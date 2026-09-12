@@ -60,6 +60,10 @@ async function main() {
 // ============================================================================
 
 function runTests(root) {
+  // Node < 22 treats the quoted glob as a literal path and runs nothing; report that, not a false 0/0.
+  if (Number(process.versions.node.split('.')[0]) < 22) {
+    return { output: '', status: null, totals: 'skipped: Node <22 cannot expand the test glob' };
+  }
   // Node expands the quoted glob itself, so the same argv works under bash, zsh, and PowerShell.
   const res = spawnSync(
     process.execPath,

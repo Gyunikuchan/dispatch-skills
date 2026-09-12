@@ -85,6 +85,7 @@ import {
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
+  findSensitiveMatch,
   formatSafetyPrompt,
   getAllowedBoundaryRoots,
   getGitStatus,
@@ -95,11 +96,10 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  resolveCliInvocation,
   resolveRunnerExitCode,
   SAFE_ENV_WHITELIST,
-  SENSITIVE_DIR_PATTERNS,
   SENSITIVE_ENV_KEY_PATTERN,
-  SENSITIVE_FILE_BASENAME_PATTERNS,
   SENSITIVE_FILE_PATTERNS,
   terminateProcessTree,
 } from './common.mjs';
@@ -143,9 +143,8 @@ import {
  * @property {string[]} [files]
  * @property {string|null} [model] Overrides opencode.jsonc's configured model.
  * @property {string|null} [agent] Overrides opencode.jsonc's configured agent.
- * @property {string|null} [effort] Overrides the model's configured reasoningEffort. opencode's
- *   own CLI has no flag/env var for this — it only affects `OpencodeSettings.reasoningEffort` for
- *   any consumer that reads it (e.g. future CLI support, or diagnostics).
+ * @property {string|null} [effort] Forwarded verbatim as `opencode run --variant <effort>`
+ *   (provider-specific reasoning effort, e.g. high, max, minimal); omitted when null.
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [json]
@@ -220,6 +219,12 @@ export const GPU_LOCK_STALE_MS = 360000;
 export const GPU_LOCK_MAX_WAIT_MS = 15000;
 export const GPU_LOCK_POLL_MS = 500;
 
+// Enough to hold opencode's closing error block without retaining a whole transcript twice.
+const LOG_TAIL_CHARS = 16 * 1024;
+
+export const LM_STUDIO_NO_LOADED_MODEL_WARNING =
+  "LM Studio reports no loaded model; JIT loading may be off — run 'lms load <model>'";
+
 // ============================================================================
 // SECTION: Main API — runOpencode()
 // ============================================================================
@@ -258,9 +263,7 @@ export async function runOpencode(options = {}) {
   // input.
   const rawConfig = readOpencodeConfig();
   const settings = resolveOpencodeSettings(model ? { ...rawConfig, model } : rawConfig);
-  // opencode's CLI has no reasoning-effort flag/env var (unlike claude/agy/copilot's `-e`), so an
-  // `effort` override can only be recorded on `settings` for any downstream consumer — it cannot
-  // be forwarded to the opencode subprocess itself.
+  // Recorded for the banner; the subprocess receives it as `--variant` (see buildCommand).
   if (effort) settings.reasoningEffort = effort;
   const { isLocal } = settings;
   const endpoint = isLocal ? getLMStudioEndpoint(settings) : null;
@@ -303,6 +306,13 @@ export async function runOpencode(options = {}) {
       const err = new Error(offlineMessage);
       err.code = 'SERVER_OFFLINE';
       throw err;
+    }
+    // `/v1/models` lists downloaded models (JIT), so it cannot tell "not loaded"; warn only,
+    // since JIT loading may still succeed on demand.
+    const modelWarning = await checkLMStudioLoadedModel(endpoint);
+    if (modelWarning) {
+      process.stderr.write(`[dispatch] WARNING: ${modelWarning}\n`);
+      sessionLogger.write(`[dispatch] WARNING: ${modelWarning}\n`);
     }
   }
 
@@ -347,6 +357,7 @@ export async function runOpencode(options = {}) {
       files: contextFiles,
       model: effectiveModel,
       agent: effectiveAgent,
+      effort,
       json,
     });
 
@@ -441,16 +452,24 @@ function spawnOpencode({
     let settled = false;
     let stdoutBuffer = '';
     let stderrBuffer = '';
+    // Arrival-ordered tail of both streams, mirroring the session log's end for diagnostics.
+    let logTail = '';
     let totalOutputBytes = 0;
     let isTimedOut = false;
     let isBufferExceeded = false;
+    const appendTail = (chunk) => {
+      logTail = (logTail + chunk.toString('utf8')).slice(-LOG_TAIL_CHARS);
+    };
 
-    const child = cp.spawn(command, args, {
+    // NOTE: common's invocation builder (not spawnCli) so an npm `.cmd` shim is routed through
+    // cmd.exe safely while `cp.spawn` stays mockable in tests.
+    const invocation = resolveCliInvocation(command, args, {
       cwd: PROJECT_ROOT,
       env: getOpencodeEnv(settings),
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
+    const child = cp.spawn(invocation.command, invocation.args, invocation.options);
 
     // Close stdin at once — opencode reads from its flags, not stdin.
     if (child.stdin) {
@@ -472,12 +491,14 @@ function spawnOpencode({
         return;
       }
       stdoutBuffer += chunk.toString('utf8');
+      appendTail(chunk);
       sessionLogger.write(chunk);
       if (trace) trace(chunk);
     });
 
     child.stderr.on('data', (chunk) => {
       stderrBuffer += chunk.toString('utf8');
+      appendTail(chunk);
       sessionLogger.write(chunk);
       if (trace) trace(chunk);
     });
@@ -503,8 +524,20 @@ function spawnOpencode({
 
       const cleanStdout = json ? stdoutBuffer : extractCleanResponse(stdoutBuffer);
       const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
-      const failureKind =
+      let failureKind =
         classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || (truncated ? truncated : null);
+
+      // opencode can fail with its cause only in the output stream, leaving stderr silent; surface
+      // the last `Error:` line so the orchestrator sees why instead of a bare exit code.
+      let stderrOut = stderrBuffer;
+      if (exitCode !== 0 && !classifyFailure(stderrBuffer)) {
+        const lastError = findLastErrorLine(logTail);
+        if (lastError && !stderrBuffer.includes(lastError)) {
+          stderrOut = stderrBuffer ? `${stderrBuffer.replace(/\s+$/, '')}\n${lastError}\n` : `${lastError}\n`;
+          process.stderr.write(`[dispatch] OpenCode reported: ${lastError}\n`);
+          failureKind = failureKind || classifyFailure(lastError);
+        }
+      }
 
       emitCompletionBanner({
         provider: describeProvider(settings),
@@ -522,7 +555,7 @@ function spawnOpencode({
         engineType,
         stdout: cleanStdout,
         rawStdout: stdoutBuffer,
-        stderr: stderrBuffer,
+        stderr: stderrOut,
         exitCode,
         logFile: sessionLogger.logFile,
         briefFile,
@@ -1020,16 +1053,91 @@ export async function preflightLMStudioCheck(timeoutMs = 2000, endpoint) {
   });
 }
 
+/**
+ * Interprets an LM Studio `/api/v0/models` body. Returns the no-loaded-model warning only when
+ * the body parses to a model list in which no entry has `state === 'loaded'`; anything else
+ * (unparseable, unexpected shape, a loaded model) returns null.
+ * @param {string} body
+ * @returns {string|null}
+ */
+export function describeLMStudioModelState(body) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  const models = Array.isArray(parsed?.data) ? parsed.data : null;
+  if (!models) return null;
+  return models.some((m) => m && m.state === 'loaded') ? null : LM_STUDIO_NO_LOADED_MODEL_WARNING;
+}
+
+/**
+ * Asks LM Studio's v0 REST API whether any model is loaded. Never fails the run: a non-2xx,
+ * timeout, network error, or unparseable body resolves null (older LM Studio lacks `/api/v0`).
+ * @param {LMStudioEndpoint} endpoint
+ * @param {number} [timeoutMs]
+ * @returns {Promise<string|null>} warning text, or null
+ */
+export function checkLMStudioLoadedModel(endpoint, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      req = http.get(
+        { host: endpoint.host, port: endpoint.port, path: '/api/v0/models', timeout: timeoutMs },
+        (res) => {
+          if (!res || res.statusCode < 200 || res.statusCode >= 300 || typeof res.on !== 'function') {
+            if (res && typeof res.resume === 'function') res.resume();
+            resolve(null);
+            return;
+          }
+          let body = '';
+          res.setEncoding?.('utf8');
+          res.on('data', (chunk) => {
+            body += chunk;
+          });
+          res.on('end', () => resolve(describeLMStudioModelState(body)));
+          res.on('error', () => resolve(null));
+        },
+      );
+    } catch {
+      resolve(null);
+      return;
+    }
+    req.on?.('timeout', () => {
+      req.destroy?.();
+      resolve(null);
+    });
+    req.on?.('error', () => resolve(null));
+  });
+}
+
+/**
+ * Returns the last line carrying an `Error:` marker (ANSI colour stripped), or null.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function findLastErrorLine(text) {
+  if (!text) return null;
+  const lines = text
+    .replace(/\x1b\[[0-9;]*m/g, '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => /\bError:/.test(l));
+  return lines.length > 0 ? lines[lines.length - 1] : null;
+}
+
 // ============================================================================
 // SECTION: Path & Boundary Utilities
 // ============================================================================
 
 /**
- * Validates and resolves context file paths against sensitive-file rules; warns (does not
- * reject) on paths outside the usual boundary roots (`getAllowedBoundaryRoots` in common.mjs),
- * matching `readAttachment`'s posture for the other three providers — `-f` is always an
- * explicit orchestrator choice, so reviewing a file outside the workspace that isn't on the
- * denylist must keep working.
+ * Validates and resolves context file paths against sensitive-file rules (resolved and
+ * symlink-real paths, via common's `findSensitiveMatch`). A denylisted file is skipped with a
+ * warning — the same posture and message as `readAttachment` for the other three providers, so
+ * the outcome does not depend on which provider the cascade reaches. A missing file still throws.
+ * Paths outside the usual boundary roots (`getAllowedBoundaryRoots`) warn but are kept — `-f` is
+ * always an explicit orchestrator choice.
  * @param {string[]} files
  * @returns {string[]}
  */
@@ -1043,25 +1151,18 @@ export function resolveContextFiles(files) {
       throw new Error(`Context file does not exist: ${rawPath} (resolved: ${absPath})`);
     }
 
-    const baseName = path.basename(absPath);
-    for (const pattern of SENSITIVE_FILE_PATTERNS) {
-      if (pattern.test(absPath) || pattern.test(baseName)) {
-        throw new Error(
-          `Access rejected: Context file matches sensitive denylist pattern: ${rawPath}`,
-        );
-      }
-    }
-    for (const pattern of SENSITIVE_FILE_BASENAME_PATTERNS) {
-      if (pattern.test(baseName)) {
-        throw new Error(
-          `Access rejected: Context file matches sensitive denylist pattern: ${rawPath}`,
-        );
-      }
-    }
-    if (SENSITIVE_DIR_PATTERNS.some((p) => p.test(absPath))) {
-      throw new Error(
-        `Access rejected: Context file is inside a sensitive directory: ${rawPath}`,
+    const sensitive = findSensitiveMatch(absPath);
+    if (sensitive === 'file') {
+      process.stderr.write(
+        `[dispatch] Attachment rejected: '${rawPath}' matches sensitive file denylist.\n`,
       );
+      continue;
+    }
+    if (sensitive === 'dir') {
+      process.stderr.write(
+        `[dispatch] Attachment rejected: '${rawPath}' is inside a sensitive directory.\n`,
+      );
+      continue;
     }
 
     if (!allowedRoots.some((root) => isPathInside(absPath, root))) {
@@ -1190,8 +1291,18 @@ function probeOpencodeOnPath() {
   const res = cp.spawnSync(lookupCommand, ['opencode'], { encoding: 'utf8' });
   if (res.status !== 0 || !res.stdout.trim()) return null;
 
-  const firstLine = res.stdout.trim().split(/\r?\n/)[0];
-  return firstLine || null;
+  const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  // [OS: Windows] An npm global install lists the extensionless POSIX shim first, which cannot be
+  // spawned; prefer a real .exe, then a .cmd/.bat launcher (spawned safely through cmd.exe).
+  if (process.platform === 'win32') {
+    return (
+      lines.find((l) => /\.exe$/i.test(l)) ||
+      lines.find((l) => /\.(?:cmd|bat)$/i.test(l)) ||
+      lines[0] ||
+      null
+    );
+  }
+  return lines[0] || null;
 }
 
 /**
@@ -1215,24 +1326,111 @@ export function isOpencodeBinaryAvailable() {
 }
 
 /**
+ * opencode's writable state dirs (XDG data/cache/state, each with an `opencode` leaf). Pure: takes
+ * `home`/`env` and joins with POSIX separators, since only the Linux bwrap sandbox consumes it.
+ * @param {{ home: string, env?: NodeJS.ProcessEnv }} params
+ * @returns {string[]}
+ */
+export function resolveOpencodeStateDirs({ home, env = {} }) {
+  return [
+    path.posix.join(env.XDG_DATA_HOME || path.posix.join(home, '.local', 'share'), 'opencode'),
+    path.posix.join(env.XDG_CACHE_HOME || path.posix.join(home, '.cache'), 'opencode'),
+    path.posix.join(env.XDG_STATE_HOME || path.posix.join(home, '.local', 'state'), 'opencode'),
+  ];
+}
+
+/**
+ * Builds the Linux bwrap argv wrapping `opencode <opencodeArgs>`. Pure (no fs access) and
+ * POSIX-path based, so it is testable on any OS. Mount order matters — later mounts win:
+ * read-only root, fresh /tmp and /run, the project read-only, out-of-project attachments, then
+ * the brief file's directory re-bound read-only (the /tmp tmpfs would otherwise hide it), and
+ * finally opencode's own state dirs writable (callers must create them first).
+ *
+ * @param {object} params
+ * @param {string[]} params.opencodeArgs
+ * @param {string[]} [params.files]
+ * @param {string|null} [params.briefFile]
+ * @param {string} params.projectRoot
+ * @param {string} params.home
+ * @param {NodeJS.ProcessEnv} [params.env]
+ * @returns {string[]}
+ */
+export function buildBwrapArgs({ opencodeArgs, files = [], briefFile = null, projectRoot, home, env = {} }) {
+  const bwrapArgs = [
+    '--ro-bind', '/', '/',
+    '--dev', '/dev',
+    '--proc', '/proc',
+    '--tmpfs', '/tmp',
+    '--tmpfs', '/run',
+    '--unshare-user',
+    '--unshare-ipc',
+    '--unshare-pid',
+    '--unshare-uts',
+  ];
+
+  bwrapArgs.push('--ro-bind', projectRoot, projectRoot);
+
+  // POSIX equivalent of common's isPathInside: a bare prefix test would treat a sibling like
+  // `<root>-other` as inside and skip binding it.
+  const isInsideProject = (f) => {
+    const rel = path.posix.relative(projectRoot, path.posix.resolve(projectRoot, f));
+    return rel === '' || (!rel.startsWith('..') && !path.posix.isAbsolute(rel));
+  };
+  for (const f of files) {
+    if (!isInsideProject(f)) {
+      bwrapArgs.push('--ro-bind', f, f);
+    }
+  }
+
+  if (briefFile) {
+    const briefDir = path.posix.dirname(briefFile);
+    bwrapArgs.push('--ro-bind', briefDir, briefDir);
+  }
+
+  for (const dir of resolveOpencodeStateDirs({ home, env })) {
+    bwrapArgs.push('--bind', dir, dir);
+  }
+
+  bwrapArgs.push('--chdir', projectRoot);
+  bwrapArgs.push('opencode', ...opencodeArgs);
+  return bwrapArgs;
+}
+
+/**
  * Constructs the execution command and arguments for OpenCode or Linux bwrap.
  * @param {object} [params]
  * @param {string} [params.prompt]
  * @param {string[]} [params.files]
  * @param {string|null} [params.model]
  * @param {string|null} [params.agent]
+ * @param {string|null} [params.effort] Passed as `--variant` when set.
  * @param {boolean} [params.json]
  */
-export function buildCommand({ prompt = '', files = [], model = null, agent = null, json = false } = {}) {
+export function buildCommand({
+  prompt = '',
+  files = [],
+  model = null,
+  agent = null,
+  effort = null,
+  json = false,
+} = {}) {
   const isLinux = process.platform === 'linux';
   const checkBwrap = isLinux ? cp.spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
   const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
+
+  // Resolved before the prompt is prepared: a Windows .cmd shim forces a brief-file spill.
+  const binary = hasLinuxBwrap ? 'opencode' : resolveOpencodeBinary();
 
   const formattedPrompt = formatSafetyPrompt(prompt, {
     workspaceRoot: PROJECT_ROOT,
     attachedFiles: files,
   });
-  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'opencode');
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'opencode', {
+    binary,
+  });
+  // NOTE: accepted risk — headless runs cannot answer permission prompts, so `--auto` stays;
+  // read-only on macOS/Windows rests on the prompt guardrail + git integrity check (see
+  // references/providers.md).
   const opencodeArgs = ['run', '--auto', '--pure'];
 
   const effectiveAgent = agent || resolveDefaultAgent();
@@ -1243,6 +1441,10 @@ export function buildCommand({ prompt = '', files = [], model = null, agent = nu
   const effectiveModel = model || resolveDefaultModel();
   if (effectiveModel) {
     opencodeArgs.push('-m', effectiveModel);
+  }
+
+  if (effort) {
+    opencodeArgs.push('--variant', effort);
   }
 
   if (json) {
@@ -1256,34 +1458,28 @@ export function buildCommand({ prompt = '', files = [], model = null, agent = nu
   opencodeArgs.push('--', argvPrompt);
 
   if (hasLinuxBwrap) {
-    const bwrapArgs = [
-      '--ro-bind', '/', '/',
-      '--dev', '/dev',
-      '--proc', '/proc',
-      '--tmpfs', '/tmp',
-      '--tmpfs', '/run',
-      '--unshare-user',
-      '--unshare-ipc',
-      '--unshare-pid',
-      '--unshare-uts',
-    ];
-
-    bwrapArgs.push('--ro-bind', PROJECT_ROOT, PROJECT_ROOT);
-
-    for (const f of files) {
-      if (!f.startsWith(PROJECT_ROOT)) {
-        bwrapArgs.push('--ro-bind', f, f);
-      }
+    const home = os.homedir();
+    const env = process.env;
+    // bwrap cannot bind a missing source, and opencode needs these writable on first run.
+    for (const dir of resolveOpencodeStateDirs({ home, env })) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+      } catch {}
     }
-
-    bwrapArgs.push('--chdir', PROJECT_ROOT);
-    bwrapArgs.push('opencode', ...opencodeArgs);
+    const bwrapArgs = buildBwrapArgs({
+      opencodeArgs,
+      files,
+      briefFile,
+      projectRoot: PROJECT_ROOT,
+      home,
+      env,
+    });
 
     return { command: 'bwrap', args: bwrapArgs, engineType: 'linux-bwrap', briefFile };
   }
 
   return {
-    command: resolveOpencodeBinary(),
+    command: binary,
     args: opencodeArgs,
     engineType: 'process-hardened',
     briefFile,
@@ -1347,6 +1543,7 @@ Options:
   -f, --file, --artifact      Attach a context file or Antigravity artifact path (can repeat)
   -a, --agent <name>          Override agent (defaults to 'delegate' from opencode.jsonc)
   -m, --model <provider/name> Override model (defaults to opencode.jsonc model)
+  -e, --effort <variant>      Passed as opencode run --variant (provider-specific reasoning effort)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --json                      Emit raw JSON event stream

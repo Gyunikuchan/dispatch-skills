@@ -23,6 +23,7 @@ import {
   classifyFailure,
   createSessionLogger,
   createTraceWriter,
+  DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
   emitCompletionBanner,
   emitInitBanner,
@@ -141,7 +142,7 @@ export async function runAgy(options = {}) {
     model = null,
     effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     modeVariant = null,
     agyMode = null,
@@ -307,7 +308,7 @@ function executeAgyInMode(mode, options) {
     model = null,
     effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     sessionLogger,
     initialGitStatus,
@@ -336,7 +337,7 @@ function executeAgyInMode(mode, options) {
   };
 
   // Headless execution (interactive mode removed — delegates are always headless)
-  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'agy');
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'agy', { binary: bin });
   const agyArgs = buildAgyArgs(argvPrompt, briefFile, { model: effectiveModel, effort: effectiveEffort, timeout });
 
   emitInitBanner({
@@ -489,7 +490,10 @@ export async function main() {
 
 /** Parses arguments with additional agy mode flags. */
 function parseAgyArgs(argv) {
-  const common = parseCommonArgs(argv);
+  const common = parseCommonArgs(argv, {
+    valueFlags: ['--agy-mode', '--mode-variant'],
+    booleanFlags: ['--test-reachability', '--test-modes'],
+  });
   const extra = {
     modeVariant: null,
     testReachability: false,

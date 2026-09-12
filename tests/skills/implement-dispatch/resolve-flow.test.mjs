@@ -640,6 +640,22 @@ describe('resolveFlow', () => {
       assert.deepEqual(validateConfig(BASE_CONFIG), []);
     });
 
+    it('rejects an unknown platform key (e.g. local)', () => {
+      const config = withSections({
+        'plan-review': { platforms: { ...PLAN_PLATFORMS, local: {}, cladue: {} } },
+      });
+      const problems = validateConfig(config).join('\n');
+      assert.match(problems, /unknown platform "local" \(expected claude, agy, copilot, opencode\)/);
+      assert.match(problems, /unknown platform "cladue"/);
+    });
+
+    it('accepts an alias platform key that normalizes to a canonical provider', () => {
+      const config = withSections({
+        'plan-review': { platforms: { claudecode: { model: 'claude-opus-5' }, agy: {} } },
+      });
+      assert.deepEqual(validateConfig(config), []);
+    });
+
     it('rejects a misspelled key inside a level override', () => {
       const config = withSections({
         'code-review': { platforms: { agy: { low: { modle: 'gemini-3.8-flash' } } } },
@@ -815,6 +831,19 @@ describe('resolveFlow', () => {
       const config = withSections({ 'code-review': { platforms: { agy: { effort: 7 } } } });
       const problems = validateConfig(config);
       assert.match(problems.join('\n'), /code-review\.platforms\.agy\.effort must be a string/);
+    });
+  });
+
+  describe('platform alias normalization', () => {
+    it('normalizes --platform aliases before self-exclusion', () => {
+      const out = resolveFlow({ platform: 'claudecode', level: 'low' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.implementation.platform, 'claude');
+      assert.equal(out.implementation.model, 'claude-opus-5');
+      assert.ok(out['code-review'].targets.every(t => t.platform !== 'claude'));
+    });
+
+    it('does not throw when platform is omitted', () => {
+      assert.doesNotThrow(() => resolveFlow({ level: 'low' }, LIVE_ALL, BASE_CONFIG));
     });
   });
 

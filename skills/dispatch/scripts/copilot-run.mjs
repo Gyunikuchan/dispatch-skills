@@ -24,6 +24,7 @@ import {
   classifyFailure,
   createSessionLogger,
   createTraceWriter,
+  DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
   emitCompletionBanner,
   emitInitBanner,
@@ -131,7 +132,7 @@ export async function runCopilot(options = {}) {
     model = null,
     effort = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     copilotMode = 'auto',
   } = options;
@@ -288,7 +289,9 @@ function executeOnTarget({
   initialGitStatus,
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
-  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot');
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot', {
+    binary: target.binary,
+  });
   const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort });
 
   const modeLabel = { desktop: 'copilot desktop', vscode: 'copilot vscode', cli: 'copilot cli' }[target.mode];
@@ -356,7 +359,8 @@ function executeOnTarget({
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
       const cleanStdout = extractCleanResponse(stdoutBuffer);
       const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
-      const failureKind = classifyCopilotFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
+      const failureKind =
+        classifyCopilotResult({ exitCode, stderr: stderrBuffer, stdout: stdoutBuffer }) || truncated;
 
       emitCompletionBanner({ provider: providerLabel, sessionLink, exitCode, truncated });
 
@@ -445,7 +449,10 @@ export async function main() {
 
 /** Parses the runner-specific `--copilot-mode` and `--test`/`--probe` flags. */
 function parseCopilotArgs(argv) {
-  const options = parseCommonArgs(argv);
+  const options = parseCommonArgs(argv, {
+    valueFlags: ['--copilot-mode'],
+    booleanFlags: ['--test', '--probe', '--check', '--test-modes'],
+  });
   options.copilotMode = 'auto';
   options.probeOnly = false;
 
@@ -930,7 +937,7 @@ export function extractCopilotSessionId(text) {
  * but not subscribed or lacks tokens, then falls back to the shared classifier.
  *
  * @param {string} text Raw stdout and stderr
- * @returns {'quota'|'context-overflow'|'auth'|'not-found'|'timeout'|null}
+ * @returns {'quota'|'context-overflow'|'auth'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyCopilotFailure(text) {
   if (!text || typeof text !== 'string') return null;
@@ -947,6 +954,20 @@ export function classifyCopilotFailure(text) {
   }
 
   return classifyFailure(text);
+}
+
+/**
+ * Classifies one finished run. Stdout is consulted only on a non-zero (effective) exit: a
+ * successful review body that merely mentions "OAuth token" must not read as an auth failure,
+ * while an auth/quota message on stderr still classifies (and cascades) even on exit 0.
+ *
+ * @param {{ exitCode: number, stderr: string, stdout: string }} run
+ * @returns {ReturnType<typeof classifyCopilotFailure>}
+ */
+export function classifyCopilotResult({ exitCode, stderr = '', stdout = '' }) {
+  return exitCode === 0
+    ? classifyCopilotFailure(stderr)
+    : classifyCopilotFailure(`${stderr}\n${stdout}`);
 }
 
 // ============================================================================

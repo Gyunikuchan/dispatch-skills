@@ -9,7 +9,7 @@ Implement features or fixes with multi-agent review loops across external coding
 When working with an AI coding assistant (the **orchestrator**—like Claude Code, Antigravity, or GitHub Copilot), complex features and fixes benefit immensely from second opinions. However, manually coordinating multiple agent CLIs, managing review templates, resolving contradictory feedback, and tracking re-reviews across iterations is tedious and error-prone.
 
 `implement-dispatch` acts as the **orchestrator and control loop** for end-to-end multi-agent development:
-1. **Plans & Reviews First**: Drafts a structured implementation plan, then fans out to external agent CLIs (Claude Code, Antigravity 2.0, Copilot, or Local OpenCode) for pre-implementation critique.
+1. **Plans & Reviews First**: Drafts a structured implementation plan, then fans out to external agent CLIs (Claude Code, Antigravity 2.0, Copilot, or OpenCode) for pre-implementation critique.
 2. **Adjudicates & Implements**: Evaluates reviewer claims against repository ground truth, folds accepted changes into the plan, and implements code test-first via native subagents.
 3. **Reviews Code & Re-Reviews**: Generates a detailed walkthrough, collects multi-agent code reviews, applies accepted fixes, and loops with reviewers until reaching consensus.
 4. **Maintains Strict Boundaries**: External delegates act strictly as read-only reviewers; the orchestrating agent alone owns decision-making, code edits, verification, and git operations.
@@ -56,9 +56,10 @@ flowchart TD
 
 ### Installation
 
-Install `implement-dispatch` into your current project workspace:
+Install `implement-dispatch` and its required `dispatch` runner into your current project workspace (add the two review skills too, or use `--all` below):
 
 ```bash
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 npx skills add Gyunikuchan/dispatch-skills --skill implement-dispatch
 ```
 
@@ -159,7 +160,7 @@ Choose a level based on the risk and complexity of your change:
 - **Consensus Enforcement**:
   - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists.
   - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a finding. Every dispute must be accepted, escalated to the user, or rebutted with verified counter-evidence during re-dispatch.
-- **Automatic Scope Downshifting**: Trivial changes (single-file mechanical edits, typo/comment fixes, simple constant changes) are automatically downshifted to `low` to avoid unnecessary review overhead. Explicitly requested levels are never overridden upward.
+- **Automatic Scope Downshifting**: Trivial changes (single-file mechanical edits, typo/comment fixes, simple constant changes) are automatically downshifted to `low` to avoid unnecessary review overhead. An explicitly requested level is always honoured.
 
 ---
 
@@ -186,7 +187,7 @@ The three sections (`plan-review`, `implementation`, `code-review`) each nest th
 
 Either `maxRounds: 0` or `targetCount: 0` skips a phase entirely. When `targetCount` is `0`, the resolver normalizes `maxRounds` to `0` as well, so `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
 
-> **Upgrading an existing `config.jsonc`**: per-platform entries used to sit directly under each section; they now nest under `platforms`. A pre-existing flat config fails validation with errors like `plan-review.platforms must be an object` and `unrecognized key "claude"` — both mean the entries need moving under `platforms`. Run `--validate-only` (below) to check before your next run.
+Illustrative (not the shipped defaults):
 
 ```jsonc
 {

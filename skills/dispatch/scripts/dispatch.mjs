@@ -23,7 +23,6 @@ import {
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
-  getGitStatus,
   isEmptyResult,
   isMainModule,
   KNOWN_PROVIDERS,
@@ -56,7 +55,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string} [agent]
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
- * @property {boolean} [json] Structured JSON output (local provider only).
+ * @property {boolean} [json] Structured JSON output (opencode provider only).
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
@@ -108,15 +107,6 @@ export const providerRunners = {
   copilot: runCopilot,
 };
 
-/**
- * Workspace state probe, indirected through an object so the write-mode cascade guard can be
- * exercised without a working `git` binary (CI images such as `node:*-alpine` ship without one,
- * which silently disabled the guard and let the cascade run on).
- */
-export const workspaceProbes = {
-  getGitStatus,
-};
-
 // ============================================================================
 // SECTION: Main API — dispatchTask()
 // ============================================================================
@@ -134,7 +124,7 @@ export async function dispatchTask(options = {}) {
     effort = null,
     agent = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
-    maxBufferMb = 10,
+    maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
     verbose = false,
     orchestrator = null,
@@ -177,8 +167,7 @@ export async function dispatchTask(options = {}) {
   if (candidates.length === 0) {
     const err = new Error(
       'No alternative dispatch agent available.\n' +
-        '- OpenCode is offline or unavailable.\n' +
-        '- No alternative external agents on other platforms were found and ready.\n' +
+        '- No external agents on configured platforms were found and ready.\n' +
         'Proceeding to orchestrator subagent fallback.',
     );
     err.code = 'NO_DISPATCH_AVAILABLE';
@@ -315,7 +304,7 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
 // ============================================================================
 
 export async function main() {
-  const options = parseCommonArgs(process.argv);
+  const options = parseCommonArgs(process.argv, { booleanFlags: ['--no-config', '--validate-only'] });
   const { noConfig, validateOnly } = parseDispatchFlags(process.argv);
 
   if (options.help) {
@@ -429,12 +418,13 @@ Options:
   -e, --effort <level>        Override reasoning effort (takes precedence over config)
   -a, --agent <name>          Override agent name
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
   --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
   --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
-  --json                      Request structured JSON output (local provider only)
+  --json                      Request structured JSON output (opencode provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
 `);
