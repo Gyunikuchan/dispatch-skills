@@ -32,7 +32,7 @@ Confirm with the user which run you are working if the printed path is not the o
 node <skill>/scripts/status.mjs batch --size 8
 ```
 
-Prints the next open findings — highest severity first, grouped by the file they touch — with full Location / Claim / Evidence / Proposal. For **each** finding in the batch, open the cited locations and decide:
+Prints the next open findings — highest severity first, grouped by the file they touch — with full Location / Claim / Evidence / Proposal. The batch is filled to `--size` findings: the group sharing the highest-severity finding's file leads, and the rest of the open pool tops it up in rank order. For **each** finding in the batch, open the cited locations and decide:
 
 | Verdict | Action |
 |---|---|

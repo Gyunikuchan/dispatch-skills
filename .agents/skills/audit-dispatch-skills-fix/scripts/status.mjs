@@ -19,16 +19,25 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-const STATUSES = ['open', 'fixed', 'false-positive', 'decision', 'deferred'];
-const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit'];
+export const STATUSES = ['open', 'fixed', 'false-positive', 'decision', 'deferred'];
+export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit'];
 const AUDIT_DIR = '.scratch/audits';
-const COUNTS_PREFIX = '> Fix status:';
+export const COUNTS_PREFIX = '> Fix status:';
 
 // ============================================================================
 // SECTION: Paths
 // ============================================================================
 
+/** Converts platform path separators to forward slashes. */
+export function toPosix(p) {
+  return p.split(path.sep).join('/');
+}
+
+// NOTE: Duplicates `resolveRepoRoot` in the sibling audit-dispatch-skills' `shared.mjs`, deliberately.
+// Importing it would reference another skill by path — which the repo guide forbids — and would make
+// this skill fail to load wherever that one is not installed alongside it.
 function repoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   if (res.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
@@ -66,7 +75,7 @@ function flag(argv, name, fallback = null) {
  * Splits the report into lines plus the half-open line range of `## 3. Findings`, so every edit
  * rewrites one line in place and the rest of the report — summary, appendix — stays byte-identical.
  */
-function loadReport(file) {
+export function loadReport(file) {
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
   const start = lines.findIndex((line) => /^## 3\. Findings\s*$/.test(line));
   if (start === -1) throw new Error(`${file} has no "## 3. Findings" section.`);
@@ -80,7 +89,7 @@ function loadReport(file) {
  * claims never enter the fix run. The shape parsed here is the report contract fixed in
  * audit-dispatch-skills § "5. Write the report"; a report that drifts from it fails loudly.
  */
-function parseFindings(report) {
+export function parseFindings(report) {
   const { lines, start, end } = report;
   const heads = [];
   for (let i = start; i < end; i += 1) {
@@ -145,18 +154,18 @@ function parseFindings(report) {
 }
 
 /** First path in the `Location` field, used to batch findings that touch the same file. */
-function primaryFile(location) {
+export function primaryFile(location) {
   const match = /`([^`:]+)/.exec(location);
   return match ? match[1] : '(unlocated)';
 }
 
-function severityRank(severity) {
+export function severityRank(severity) {
   const index = SEVERITIES.indexOf(severity);
   return index === -1 ? SEVERITIES.length : index;
 }
 
 /** Highest severity first, then stable by id, so a batch leads with what matters most. */
-function ranked(findings) {
+export function ranked(findings) {
   return [...findings].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity) || a.id.localeCompare(b.id, 'en', { numeric: true }),
   );
@@ -166,7 +175,7 @@ function ranked(findings) {
 // SECTION: Report writing
 // ============================================================================
 
-function statusLine(status, note) {
+export function statusLine(status, note) {
   return note ? `- **Status**: ${status} — ${note}` : `- **Status**: ${status}`;
 }
 
@@ -174,7 +183,7 @@ function statusLine(status, note) {
  * Applies status edits and the counts blockquote to the report. Edits are keyed by absolute line
  * index and inserts are applied last, back to front, so earlier indices stay valid.
  */
-function writeReport(report, { replace = new Map(), insertAfter = new Map() } = {}) {
+export function writeReport(report, { replace = new Map(), insertAfter = new Map() } = {}) {
   const lines = [...report.lines];
   for (const [index, text] of replace) lines[index] = text;
   for (const [index, text] of [...insertAfter].sort((a, b) => b[0] - a[0])) lines.splice(index + 1, 0, text);
@@ -182,18 +191,37 @@ function writeReport(report, { replace = new Map(), insertAfter = new Map() } = 
 }
 
 /** Rewrites (or inserts) the counts blockquote directly under the `## 3. Findings` heading. */
-function refreshCounts(reportFile) {
+export function refreshCounts(reportFile) {
   const report = loadReport(reportFile);
   const findings = parseFindings(report);
   const counts = Object.fromEntries(STATUSES.map((s) => [s, findings.filter((f) => f.status === s).length]));
   const text = `${COUNTS_PREFIX} ${STATUSES.map((s) => `${s} ${counts[s]}`).join(', ')} (total ${findings.length}).`;
 
   const lines = [...report.lines];
-  const existing = lines.findIndex(
-    (line, i) => i > report.start && i < report.start + 4 && line.startsWith(COUNTS_PREFIX),
-  );
-  if (existing !== -1) lines[existing] = text;
-  else lines.splice(report.start + 1, 0, '', text);
+  // Search the section preamble — heading to first `###`/`####` — not a fixed line window: prose
+  // added under the heading (a legend) pushes the blockquote out of a window, and a second one then
+  // gets inserted on every refresh. Stopping at the first heading keeps the search off finding
+  // bodies, where a Claim or Evidence line quoting this script's own banner would otherwise be
+  // matched and overwritten with the counts text.
+  let limit = report.end;
+  for (let i = report.start + 1; i < report.end; i += 1) {
+    if (/^#{1,4} /.test(lines[i])) {
+      limit = i;
+      break;
+    }
+  }
+  const existing = [];
+  for (let i = report.start + 1; i < limit; i += 1) {
+    if (lines[i].startsWith(COUNTS_PREFIX)) existing.push(i);
+  }
+  if (existing.length > 0) {
+    lines[existing[0]] = text;
+    // A report already carrying duplicates from the superseded fixed-window search converges back
+    // to one line here; rewriting only the first would leave the contradicting ones in place.
+    for (let i = existing.length - 1; i > 0; i -= 1) lines.splice(existing[i], 1);
+  } else {
+    lines.splice(report.start + 1, 0, '', text);
+  }
   fs.writeFileSync(report.file, lines.join('\n'), 'utf8');
   return { counts, total: findings.length };
 }
@@ -202,7 +230,7 @@ function refreshCounts(reportFile) {
 // SECTION: Commands
 // ============================================================================
 
-function cmdInit(root, reportFile) {
+export function cmdInit(root, reportFile) {
   const report = loadReport(reportFile);
   const findings = parseFindings(report);
   const insertAfter = new Map();
@@ -211,11 +239,11 @@ function cmdInit(root, reportFile) {
   }
   writeReport(report, { insertAfter });
   const { counts, total } = refreshCounts(reportFile);
-  console.log(`Report: ${path.relative(root, report.file).split(path.sep).join('/')}`);
+  console.log(`Report: ${toPosix(path.relative(root, report.file))}`);
   console.log(`${total} findings (${insertAfter.size} newly marked open) — ${STATUSES.map((s) => `${s} ${counts[s]}`).join(', ')}`);
 }
 
-function cmdList(root, reportFile, argv) {
+export function cmdList(root, reportFile, argv) {
   const status = flag(argv, '--status');
   const severities = flag(argv, '--severity')?.split(',').map((s) => s.trim());
   const full = argv.includes('--full');
@@ -231,25 +259,44 @@ function cmdList(root, reportFile, argv) {
 }
 
 /**
+ * Composes a batch of `size` open findings: the group sharing the highest-severity finding's file
+ * leads, then the rest of the pool in rank order tops it up. `size` is a size, not a ceiling the
+ * lead group may silently undercut — a two-finding lead group must not turn `--size 8` into two.
+ */
+export function selectBatch(open, size) {
+  if (open.length === 0) return [];
+  const lead = primaryFile(open[0].location);
+  const sameFile = open.filter((f) => primaryFile(f.location) === lead);
+  // A lone finding in its file is not a group; fall back to plain rank order.
+  const batch = (sameFile.length >= 2 ? sameFile : open).slice(0, size);
+  if (batch.length < size) {
+    const taken = new Set(batch.map((f) => f.id));
+    for (const finding of open) {
+      if (batch.length >= size) break;
+      if (!taken.has(finding.id)) batch.push(finding);
+    }
+  }
+  return batch;
+}
+
+/**
  * Prints the next batch of open findings: highest severity first, then grouped by the file they
  * touch, so one batch lands in one area of the tree.
  */
-function cmdBatch(root, reportFile, argv) {
+export function cmdBatch(root, reportFile, argv) {
   const size = Number(flag(argv, '--size', '8'));
   const open = ranked(parseFindings(loadReport(reportFile))).filter((f) => f.status === 'open');
   if (open.length === 0) {
     console.log('No open findings.');
     return;
   }
-  const lead = primaryFile(open[0].location);
-  const sameFile = open.filter((f) => primaryFile(f.location) === lead);
-  const batch = (sameFile.length >= 2 ? sameFile : open).slice(0, size);
+  const batch = selectBatch(open, size);
   console.log(`# Batch: ${batch.map((f) => f.id).join(', ')} (${open.length} open)\n`);
   for (const row of batch) console.log(`${row.body}\n`);
 }
 
 /** Argv minus the command, every `--flag` and each flag's value — so `--run`/`--note` may sit anywhere. */
-function positionals(argv) {
+export function positionals(argv) {
   const out = [];
   for (let i = 1; i < argv.length; i += 1) {
     if (argv[i].startsWith('--')) i += 1;
@@ -258,14 +305,14 @@ function positionals(argv) {
   return out;
 }
 
-function cmdSet(root, reportFile, argv) {
+export function cmdSet(root, reportFile, argv) {
   const [id, status] = positionals(argv);
   if (!id || !STATUSES.includes(status)) {
     throw new Error(`Usage: status.mjs set <A-n> <${STATUSES.join('|')}> [--note "..."]`);
   }
   const report = loadReport(reportFile);
   const finding = parseFindings(report).find((f) => f.id === id);
-  if (!finding) throw new Error(`${id} is not in ${path.relative(root, report.file).split(path.sep).join('/')}.`);
+  if (!finding) throw new Error(`${id} is not in ${toPosix(path.relative(root, report.file))}.`);
   // A note given now replaces the old one; omitting --note keeps whatever the line already carried.
   const note = flag(argv, '--note') ?? finding.note;
   const text = statusLine(status, note.replace(/\r?\n/g, ' ').trim());
@@ -287,9 +334,32 @@ function main() {
   throw new Error('Usage: status.mjs <init|list|batch|set> [...]');
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
+/**
+ * Whether this module is the process entry point, so importing it for tests does not run the CLI.
+ * Compares realpaths, not URLs: Node resolves symlinks when computing a module's URL, so a plain
+ * `import.meta.url === pathToFileURL(process.argv[1]).href` goes false whenever the script is
+ * reached through a symlinked skills directory — and the CLI would exit 0 having done nothing.
+ *
+ * NOTE: mirrors `isMainModule` in the shipped dispatch skill's `common.mjs` rather than importing
+ * it, for the reason recorded above `repoRoot`.
+ */
+export function isMain(importMetaUrl) {
+  if (!process.argv[1] || !importMetaUrl) return false;
+  try {
+    const entry = path.resolve(process.argv[1]);
+    const self = path.resolve(fileURLToPath(importMetaUrl));
+    if (entry === self) return true;
+    return fs.realpathSync(entry) === fs.realpathSync(self);
+  } catch {
+    return false;
+  }
+}
+
+if (isMain(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
 }
