@@ -261,7 +261,7 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
   - **Verify command**: The test/lint command that must remain green across all iterations.
   - **Escalation triggers**: Domain-specific decisions that require immediate user input.
 - **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are moved to the OS temp directory (never deleted); if a run terminates in deadlock or requires user intervention, they are preserved in place for easy resumption.
-- **Single Plan Approval Gate**: When preceded by interactive user questioning or requirements interviews, questioning finishes first, followed immediately by plan authoring and multi-agent plan review. The orchestrator solicits user approval only once on the refined, post-review plan rather than asking twice.
+- **Single Plan Approval Gate**: You are asked to approve the plan exactly once, immediately before any code is written — never twice. When preceded by interactive questioning or a requirements interview, questioning finishes first, then plan authoring and plan review run without interrupting you; the gate comes after them. Because it sits at the implementation step rather than inside plan review, it still fires on runs that skip plan review entirely (level `low`, or `dispatch-plan-review` not installed), where you approve the plan as authored instead of a reviewed one.
 - **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
 
 ---
@@ -275,7 +275,7 @@ Because an inherited value would silently reshape a real run, the variable is ar
 
 ### Graceful Degradation Without Companion Skills
 If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implement-dispatch` continues running seamlessly:
-- Missing `dispatch-plan-review`: Skips Step 3 (Plan Review) and proceeds directly to implementation.
+- Missing `dispatch-plan-review`: Skips Step 3 (Plan Review) and proceeds to implementation. You are still asked to approve the plan first — the approval gate sits at the implementation step, so it survives a skipped review.
 - Missing `dispatch-code-review`: Skips Steps 5–7 (Code Review & Re-review) and completes after implementation verification.
 - The handoff report explicitly lists any omitted review phases.
 

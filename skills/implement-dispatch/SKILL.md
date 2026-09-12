@@ -59,7 +59,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 2. Author Plan
 
 1. Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s [plan template](../dispatch-plan-review/references/plan-template.md). External delegates read this file as their sole context. When `dispatch-plan-review` is absent, that template is not installed: author the plan under these headings instead — `## Key Decisions & Context`, `## Proposed Changes` (grouped by file, each tagged `[NEW]` / `[MODIFY]` / `[DELETE]`), `## Rollback & Blast Radius`, `## Verification Plan`, `## Out of Scope`.
-2. **Single approval gate**: Transition directly to Step 3's review loop; solicit user approval once on the refined plan at the end of Step 3 (especially post-`grilling`).
+2. **Single approval gate**: Transition directly to Step 3's review loop. Approval is solicited exactly once, at Step 4, before any code is written — never here and never twice (especially post-`grilling`).
 
 **Done when:** Plan file exists on disk with all template sections populated.
 
@@ -71,27 +71,28 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
 2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
-3. **Consensus & approval**:
+3. **Consensus**:
    - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap (**Ruling resets rounds**).
    - `consensus: false`: Orchestrator may reject unverified claims directly.
    - Rewrite each ruled `[Disputed]` line in the plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`.
-   - **User approval gate**: Solicit user approval on the refined post-review plan before writing code.
 
-**Done when:** Plan reflects all accepted findings, disputes are resolved, and refined plan is approved by the user.
+**Done when:** Plan reflects all accepted findings and disputes are resolved.
 
 ---
 
 ### 4. Implement
 
-1. **Snapshot the boundary**: record `git status --porcelain` and `git stash list` before dispatching, and confirm the plan file from Step 1 is on disk. These are the before-values Step 4.4 compares against.
+**User approval gate**: before writing code or dispatching implementation, solicit user approval on the plan as it stands — the refined post-review plan when Step 3 ran, the plan as authored when Step 3 was skipped (`maxRounds: 0`, or `dispatch-plan-review` absent). This is the run's only approval gate, and it sits here because Step 4 is the first step that writes anything: every path into implementation passes through it.
+
+1. **Snapshot the boundary**: record `git status --porcelain` and `git stash list` before dispatching, and confirm the plan file authored in Step 2 is on disk. These are the before-values Step 4.4 compares against.
 2. **Dispatch implementation**: Dispatch test-first to the platform's native write subagent (Reference below), configured with `flow.implementation` hints, the plan path, and the resolved walkthrough path from Step 1. Instruct it to implement the plan's Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough at the resolved path following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) — that template is the single source of truth for the headings. When `dispatch-code-review` is absent, skip the walkthrough entirely and let Step 8's diagnostics go to the plan instead.
 3. **Git guard** (hand to the subagent verbatim): confine every git command to read-only inspection — `git status`, `git diff`, `git log`, `git show`. To compare before/after state (e.g. test counts), run the verify command and read its output. Anything that rewrites or discards the working tree or index is out of bounds — `git stash`, `git reset`, `git checkout -- <path>`, `git clean` and their kin — because the plan and walkthrough are untracked and not git-ignored, so such a command silently destroys them.
 4. **Verify the boundary held**: re-read `git status --porcelain` and `git stash list`. Every entry present in Step 4.1 must still be present, and the stash list must be unchanged. If either moved, halt and report — the scratch artifacts may have been swept up.
 5. **Verify completion**: confirm the host verification command passes green, and that the walkthrough exists on disk (unless skipped in 4.2).
 
-**Fallback**: for `trivial` scope, direct execution, or subagent failure, the orchestrator implements and authors directly — sub-steps 1, 3, 4 and 5 still apply to its own work.
+**Fallback**: for `trivial` scope, direct execution, or subagent failure, the orchestrator implements and authors directly — the approval gate above and sub-steps 1, 3, 4 and 5 all still apply to its own work. Writing the code yourself is not a reason to skip the gate; `trivial` scope is precisely where level `low` skips plan review, so this path would otherwise reach code with no approval sought at all.
 
-**Done when:** Code changes are complete, the pre-dispatch git entries and stash list are intact, host verification passes green, and the baseline walkthrough exists on disk (or was skipped because `dispatch-code-review` is absent).
+**Done when:** The user has approved the plan, code changes are complete, the pre-dispatch git entries and stash list are intact, host verification passes green, and the baseline walkthrough exists on disk (or was skipped because `dispatch-code-review` is absent).
 
 ---
 
@@ -102,7 +103,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
 2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
 
-**Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
+**Done when:** Walkthrough exists on disk, every target's dispatch has returned, and round 1 claims are in hand for Step 6.
 
 ---
 
@@ -123,9 +124,7 @@ While previous round modified code and code review round count < `flow['code-rev
 1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget` per **Budget sizes to the work**.
 2. Apply accepted fixes and settle disputes per Step 6.
 
-Proceed to Handoff when consensus is reached, no modifications remain, or user rules on round-cap escalation (**Ruling resets rounds**).
-
-**Done when:** Consensus is reached, no modifications remain, or user rules on deadlock.
+**Done when:** Consensus is reached, no modifications remain, or the user rules on round-cap escalation (**Ruling resets rounds**) — then proceed to Handoff.
 
 ---
 
