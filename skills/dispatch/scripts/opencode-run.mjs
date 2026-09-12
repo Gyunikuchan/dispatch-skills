@@ -1245,9 +1245,11 @@ export function getOpencodeEnv(settings) {
   // reason to reach WAN at all, so trapping it behind a dead 127.0.0.1:0 proxy (with only the
   // local endpoint NO_PROXY-exempted) is safe. A remote provider's entire purpose is reaching
   // WAN — trapping it behind a NO_PROXY exemption whose enforcement this script can't verify
-  // across every HTTP client opencode's provider SDKs use would be the wrong shape, so a remote/
-  // unknown-host provider gets no proxy variables at all, matching how claude-run.mjs/
-  // agy-run.mjs/copilot-run.mjs already let their delegates reach their own service unimpeded.
+  // across every HTTP client opencode's provider SDKs use would be the wrong shape, so this
+  // function sets no proxy variable for a remote/unknown-host provider: it inherits whatever
+  // ambient proxy the whitelist passed through (a corporate proxy it may need to traverse),
+  // matching how claude-run.mjs/agy-run.mjs/copilot-run.mjs let their delegates reach their
+  // own service unimpeded.
   if (s.isLocal) {
     const endpoint = getLMStudioEndpoint(s);
     const localHosts = `127.0.0.1,localhost,127.0.0.1:${endpoint.port},localhost:${endpoint.port},${endpoint.host},${endpoint.host}:${endpoint.port},::1`;

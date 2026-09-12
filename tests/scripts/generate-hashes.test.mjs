@@ -49,6 +49,12 @@ describe('generate-hashes script', () => {
           `${skill} manifest omits its prompt template`,
         );
       }
+      // Every references/*.md is hashed, not just the prompt template.
+      for (const file of fs.readdirSync(path.join(PROJECT_ROOT, 'skills', skill, 'references'))) {
+        if (file.endsWith('.md')) {
+          assert.ok(`references/${file}` in manifest, `${skill} manifest omits references/${file}`);
+        }
+      }
     }
   });
 

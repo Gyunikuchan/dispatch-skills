@@ -362,6 +362,15 @@ describe('opencode-run', () => {
     });
   });
 
+  // Every proxy-shaped key the trap touches; kept in one place so a name added to
+  // SAFE_ENV_WHITELIST is cleared and asserted by both tests below.
+  const PROXY_KEYS = [
+    'NO_PROXY', 'no_proxy',
+    'HTTP_PROXY', 'http_proxy',
+    'HTTPS_PROXY', 'https_proxy',
+    'ALL_PROXY', 'all_proxy',
+  ];
+
   describe('getOpencodeEnv — WAN proxy trap gated on locality', () => {
     it('omits NO_PROXY/HTTP_PROXY/HTTPS_PROXY entirely when settings.isLocal is false', () => {
       const oldEnv = process.env;
@@ -369,7 +378,7 @@ describe('opencode-run', () => {
         process.env = { ...oldEnv };
         // LM_STUDIO_URL outranks the config's model when resolving locality, so an ambient
         // one would flip isLocal and decide this test's outcome.
-        for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'LM_STUDIO_URL']) {
+        for (const key of [...PROXY_KEYS, 'LM_STUDIO_URL']) {
           delete process.env[key];
         }
         const remoteSettings = resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' });
@@ -377,7 +386,7 @@ describe('opencode-run', () => {
 
         const env = getOpencodeEnv(remoteSettings);
 
-        for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy']) {
+        for (const key of PROXY_KEYS) {
           assert.equal(key in env, false, `${key} must not be set for a remote/unknown-host provider`);
         }
       } finally {

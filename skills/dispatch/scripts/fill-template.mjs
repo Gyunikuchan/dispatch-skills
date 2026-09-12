@@ -41,7 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { isMainModule, verifySkillIntegrity } from './common.mjs';
+import { hashFile, isMainModule, verifySkillIntegrity } from './common.mjs';
 
 const DEFAULT_SECTION = 'Prompt template';
 
@@ -168,19 +168,48 @@ export function resolveSkillRoot(templatePath) {
 }
 
 /**
- * Aborts when the manifest flags the template being filled; other drift in the same skill only
- * warns, because editing a sibling `SKILL.md` is the normal way these skills get tuned and
- * must not block a review. Skills without a manifest (a standalone template, or one outside the
- * hashed skills) fill unchecked — the absence is a packaging choice, not a violation.
+ * Aborts when the template being filled drifted from its recorded hash, or when the manifest
+ * that would record it is unreadable — the decisive check hashes the template directly rather
+ * than reading a verdict off the whole skill, so a corrupt manifest cannot pass as "some other
+ * file drifted". Drift in a sibling file only warns: editing a sibling `SKILL.md` is the normal
+ * way these skills get tuned and must not block a review. Skills without a manifest (a
+ * standalone template, or one outside the hashed skills) fill unchecked — the absence is a
+ * packaging choice, not a violation.
  */
 function assertTemplateIntegrity(templatePath) {
   const skillRoot = resolveSkillRoot(templatePath);
-  if (!fs.existsSync(path.join(skillRoot, 'skill-hashes.json'))) return;
+  const manifestPath = path.join(skillRoot, 'skill-hashes.json');
+  if (!fs.existsSync(manifestPath)) return;
 
-  const integrity = verifySkillIntegrity(skillRoot);
-  if (integrity.valid) return;
+  const abort = (reason) => {
+    process.stderr.write(`Error: ${reason} Refusing to fill the template.\n`);
+    process.exit(1);
+  };
+
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    abort(`${manifestPath} is not readable JSON (${err.message}).`);
+  }
 
   const templateKey = path.relative(skillRoot, path.resolve(templatePath)).split(path.sep).join('/');
+  const expected = manifest?.[templateKey];
+  if (typeof expected !== 'string') {
+    // An unlisted template is drift in the manifest, not in the template: warn, don't block a
+    // host repo that added its own template file next to the shipped ones.
+    process.stderr.write(
+      `[fill-template] WARNING: ${templateKey} is not listed in ${manifestPath}; ` +
+        'filling it unverified.\n',
+    );
+    return;
+  }
+  if (hashFile(path.resolve(templatePath)) !== expected) {
+    abort(`${templateKey} no longer matches its recorded hash in ${manifestPath}.`);
+  }
+
+  // Decisive check passed; report the rest of the skill as advisory only.
+  const integrity = verifySkillIntegrity(skillRoot);
   const others = integrity.violations.filter((v) => v !== templateKey);
   if (others.length > 0) {
     process.stderr.write(
@@ -188,13 +217,6 @@ function assertTemplateIntegrity(templatePath) {
         `${others.join(', ')}. Run \`node scripts/generate-hashes.mjs\` if the change was intended.\n`,
     );
   }
-  if (!integrity.violations.includes(templateKey)) return;
-
-  process.stderr.write(
-    `Error: skill file integrity check failed for ${templateKey} in ${skillRoot}.\n` +
-      'The template no longer matches its recorded hash; refusing to fill it.\n',
-  );
-  process.exit(1);
 }
 
 function parseArgs(args) {

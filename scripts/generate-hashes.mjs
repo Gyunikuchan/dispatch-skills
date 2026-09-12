@@ -40,11 +40,13 @@ for (let i = 0; i < argv.length; i++) {
       console.error(`${arg} requires a value`);
       process.exit(2);
     }
-    if (arg === '--out') outPath = path.resolve(value);
-    else if (skillName) {
-      console.error('--skill may be given only once');
+    const seen = arg === '--out' ? outPath : skillName;
+    if (seen) {
+      console.error(`${arg} may be given only once`);
       process.exit(2);
-    } else skillName = value;
+    }
+    if (arg === '--out') outPath = path.resolve(value);
+    else skillName = value;
   } else {
     console.error(`Unknown argument: ${arg}`);
     process.exit(2);
