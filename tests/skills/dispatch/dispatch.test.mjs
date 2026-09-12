@@ -308,6 +308,110 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       );
     });
 
+    it('surfaces a failed provider gitIntegrityViolation on the succeeding result', async () => {
+      // The breach a failed provider caused used to vanish with its discarded result, and the next
+      // provider's own baseline absorbed the write.
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '',
+        exitCode: 1,
+        gitIntegrityViolation: true,
+        gitIntegrityDetails: 'M src/app.ts',
+      }));
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'Clean review from copilot',
+        exitCode: 0,
+        gitIntegrityViolation: false,
+      }));
+
+      const result = await dispatchTask({ prompt: 'Review' });
+      assert.equal(result.provider, 'copilot');
+      assert.equal(result.gitIntegrityViolation, true);
+      assert.match(result.gitIntegrityDetails, /agy:/);
+      assert.match(result.gitIntegrityDetails, /src\/app\.ts/);
+    });
+
+    it('surfaces a gitIntegrityViolation on the NO_DISPATCH_AVAILABLE error when every provider fails', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+
+      mock.method(providerRunners, 'agy', async () => ({
+        provider: 'agy',
+        stdout: '',
+        exitCode: 1,
+        gitIntegrityViolation: true,
+        gitIntegrityDetails: '?? leaked.txt',
+      }));
+
+      const err = await dispatchTask({ prompt: 'Review' }).then(
+        () => null,
+        (e) => e,
+      );
+      assert.ok(err, 'the cascade rejects when nothing answers');
+      assert.equal(err.code, 'NO_DISPATCH_AVAILABLE');
+      assert.equal(err.gitIntegrityViolation, true);
+      assert.match(err.gitIntegrityDetails, /leaked\.txt/);
+    });
+
+    it('passes one cascade-level git baseline to every runner', async () => {
+      // Per-runner baselines cannot span a write made by an earlier provider.
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      const seen = [];
+      mock.method(providerRunners, 'agy', async (opts) => {
+        seen.push(opts.initialGitStatus);
+        return { provider: 'agy', stdout: '', exitCode: 1 };
+      });
+      mock.method(providerRunners, 'copilot', async (opts) => {
+        seen.push(opts.initialGitStatus);
+        return { provider: 'copilot', stdout: 'ok', exitCode: 0 };
+      });
+
+      await dispatchTask({ prompt: 'Review' });
+      assert.equal(seen.length, 2);
+      assert.equal(seen[0], seen[1], 'both runners receive the identical baseline');
+    });
+
+    it('aborts before probing when the pinned provider is absent from config', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+      let probed = false;
+      const countProbe = async () => {
+        probed = true;
+        return true;
+      };
+      mock.method(providerProbes, 'isAgyAvailable', countProbe);
+      mock.method(providerProbes, 'isCopilotAvailable', countProbe);
+      mock.method(providerProbes, 'isOpencodeAvailable', countProbe);
+      mock.method(providerProbes, 'isClaudeAvailable', countProbe);
+
+      // getCandidateProviders is the seam that takes an injected config; dispatchTask always loads
+      // its own, so the pinned-provider rejection is asserted at the level that can be isolated.
+      await assert.rejects(
+        getCandidateProviders({
+          explicitProvider: 'copilot',
+          config: { platforms: { agy: {} } },
+          configPath: 'x.jsonc',
+        }),
+        /is not configured in/,
+      );
+      assert.equal(probed, false, 'a config rejection short-circuits before any provider probe');
+    });
+
     it('cascades past a provider that exits 0 with no output', async () => {
       clearOrchestratorEnv();
       process.env.CLAUDECODE = '1';

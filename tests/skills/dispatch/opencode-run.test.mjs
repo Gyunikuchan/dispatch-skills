@@ -364,13 +364,44 @@ describe('opencode-run', () => {
 
   describe('getOpencodeEnv — WAN proxy trap gated on locality', () => {
     it('omits NO_PROXY/HTTP_PROXY/HTTPS_PROXY entirely when settings.isLocal is false', () => {
-      const remoteSettings = resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' });
-      assert.equal(remoteSettings.isLocal, false);
+      const oldEnv = process.env;
+      try {
+        process.env = { ...oldEnv };
+        // LM_STUDIO_URL outranks the config's model when resolving locality, so an ambient
+        // one would flip isLocal and decide this test's outcome.
+        for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'LM_STUDIO_URL']) {
+          delete process.env[key];
+        }
+        const remoteSettings = resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' });
+        assert.equal(remoteSettings.isLocal, false);
 
-      const env = getOpencodeEnv(remoteSettings);
+        const env = getOpencodeEnv(remoteSettings);
 
-      for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy']) {
-        assert.equal(key in env, false, `${key} must not be set for a remote/unknown-host provider`);
+        for (const key of ['NO_PROXY', 'no_proxy', 'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy']) {
+          assert.equal(key in env, false, `${key} must not be set for a remote/unknown-host provider`);
+        }
+      } finally {
+        process.env = oldEnv;
+      }
+    });
+
+    it('inherits an ambient proxy for a remote provider but traps it for a local one', () => {
+      const oldEnv = process.env;
+      try {
+        process.env = { ...oldEnv };
+        delete process.env.LM_STUDIO_URL; // outranks the model when resolving locality
+        process.env.HTTPS_PROXY = 'http://corp-proxy:8080';
+        process.env.ALL_PROXY = 'http://corp-proxy:8080';
+
+        const remote = getOpencodeEnv(resolveOpencodeSettings({ model: 'anthropic/claude-opus-5' }));
+        assert.equal(remote.HTTPS_PROXY, 'http://corp-proxy:8080');
+        assert.equal(remote.ALL_PROXY, 'http://corp-proxy:8080');
+
+        const local = getOpencodeEnv(resolveOpencodeSettings({ model: 'lmstudio/qwen3.8-27b-ridge' }));
+        assert.equal(local.HTTPS_PROXY, 'http://127.0.0.1:0');
+        assert.equal(local.ALL_PROXY, 'http://127.0.0.1:0');
+      } finally {
+        process.env = oldEnv;
       }
     });
 

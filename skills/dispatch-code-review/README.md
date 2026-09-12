@@ -109,7 +109,7 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 
 - **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
 - **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
-- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff`, `git diff --staged`, and untracked source/text files read in full), falling back to `git diff HEAD~1` only when nothing outside `.scratch/` is modified or untracked.
+- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff`, `git diff --staged`, and untracked source/text files read in full). When nothing outside `.scratch/` is modified or untracked, the work is already committed, so the whole branch is reviewed instead — the diff from its merge-base with the base branch (`origin/HEAD`, `main`, or `master`) up to `HEAD`, covering every commit rather than only the most recent one. On the base branch itself, or on a detached HEAD, that range is empty and the review falls back to `git diff HEAD~1`.
 - **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
@@ -175,14 +175,7 @@ src/features/plan/allocation-panel.tsx:L62 — reuse: reimplements `formatSgd` f
 
 ### Adjudication Decision Table
 
-The orchestrator maps each claim to an adjudication action by inspecting the cited code:
-
-| Verdict | Criterion | Orchestrator Action |
-|---|---|---|
-| **Accept** | Code confirms the defect and its stated impact. | Apply fix or report to user; log under `## Review Findings & Resolutions`. |
-| **Reject** | Cited code contradicts claim, line does not exist, or fix is already present. | Drop from changes; record rejection rationale in walkthrough resolutions log. |
-| **Downgrade** | Real but trivial (style, taste, or speculative). | Fold into next steps or drop; record in walkthrough resolutions log. |
-| **Disputed** | Unsettleable from code alone (intent, trade-offs, unverified figures). | Escalate to user via interactive prompt; apply user decision verbatim. |
+Every claim is checked against the code it cites and then accepted, rejected, downgraded, or marked disputed — and whichever way it goes, the outcome is logged under `## Review Findings & Resolutions` in the walkthrough. A disputed claim is one the code alone cannot settle (intent, a trade-off, an unverified figure); standalone runs put it to you, while an orchestrated run returns it for the orchestrator's consensus rule to handle. The exact criteria, the resolution order, and the escalation mechanics live in one place — `dispatch`'s `references/alignment.md` § Adjudication — rather than being restated here, where they drift.
 
 ---
 
@@ -197,5 +190,8 @@ Delegates run in a structurally read-only mode and inspect the current working t
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 
+### A Standalone Review Edits Your Working Tree
+Run on its own, this skill does not stop at reporting: it applies the fixes it accepts, re-runs your project's verify command until green, and updates the walkthrough on disk. Delegates stay read-only throughout — the edits come from the orchestrator, after it has verified each claim against the cited lines. Accepted findings it does not apply are listed under `## Follow-ups` in the walkthrough rather than dropped. Commit or stash anything you want protected first, and review the resulting diff as you would any other change. Driven by an orchestrating skill instead, the review applies nothing itself — the orchestrator owns its own fix step.
+
 ### Reviewing Transient Antigravity Walkthroughs
-When running inside Antigravity, the orchestrator automatically detects the active `walkthrough.md` and `implementation_plan.md` artifacts from the session brain directory. You do not need to copy or export them manually.
+When running inside Antigravity, the orchestrator picks up the active `walkthrough.md` and `implementation_plan.md` from the session brain directory — no manual copy or export. One caveat: it identifies the session exactly only when `ANTIGRAVITY_CONVERSATION_ID` is set. Without it, the lookup falls back to whichever conversation directory was touched most recently, which can belong to a different session if several are open. Check the resolved paths in the run banner, or pass them explicitly, when more than one Antigravity conversation is live.

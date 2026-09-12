@@ -29,6 +29,7 @@ import {
   getNewestBrainConversationId,
   runAgy,
   buildAgyArgs,
+  parseAgyEnvelope,
   isSubscriptionOrTokenIssue,
   nextAgyStep,
 } from '../../../skills/dispatch/scripts/agy-run.mjs';
@@ -47,6 +48,12 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(args[args.indexOf('--model') + 1], 'gemini-3.8-flash');
       assert.ok(args.includes('--effort'));
       assert.equal(args[args.indexOf('--effort') + 1], 'medium');
+    });
+
+    it('requests a JSON envelope so the conversation id is reported, not guessed', () => {
+      const args = buildAgyArgs('prompt', null, { model: null, effort: null, timeout: 60 });
+      assert.ok(args.includes('--output-format'));
+      assert.equal(args[args.indexOf('--output-format') + 1], 'json');
     });
 
     it('enforces preference order: Antigravity 2.0 > VS Code Extension > CLI', () => {
@@ -304,6 +311,42 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
         hasNextMode: false,
       });
       assert.equal(step, 'return');
+    });
+  });
+
+  describe('parseAgyEnvelope', () => {
+    it('extracts the conversation id and response text from the envelope', () => {
+      const parsed = parseAgyEnvelope(
+        JSON.stringify({ conversationId: 'abc-123', response: 'The review body.' }),
+      );
+      assert.equal(parsed.conversationId, 'abc-123');
+      assert.equal(parsed.text, 'The review body.');
+    });
+
+    it('accepts snake_case and nested conversation shapes', () => {
+      assert.equal(parseAgyEnvelope('{"conversation_id":"s1","result":"x"}').conversationId, 's1');
+      assert.equal(parseAgyEnvelope('{"conversation":{"id":"n1"},"text":"x"}').conversationId, 'n1');
+    });
+
+    it('skips a banner line preceding the envelope', () => {
+      const parsed = parseAgyEnvelope('Starting agy...\n{"conversationId":"b1","response":"body"}');
+      assert.equal(parsed.conversationId, 'b1');
+      assert.equal(parsed.text, 'body');
+    });
+
+    it('returns nulls for non-JSON output so the caller can fall back', () => {
+      // An older agy ignores --output-format; losing the run would be worse than losing the id.
+      for (const raw of ['', '   ', 'plain text answer', '{not json']) {
+        const parsed = parseAgyEnvelope(raw);
+        assert.equal(parsed.conversationId, null);
+        assert.equal(parsed.text, null);
+      }
+    });
+
+    it('returns a null id when the envelope omits one', () => {
+      const parsed = parseAgyEnvelope('{"response":"body"}');
+      assert.equal(parsed.conversationId, null);
+      assert.equal(parsed.text, 'body');
     });
   });
 });

@@ -8,7 +8,16 @@ disable-model-invocation: true
 
 A **report-only** audit of the `dispatch-skills` repository. The standard is `.agents/AGENTS.md`; skills are verified for behavioral flow, correctness, and goal fulfillment; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
 
-Paths are relative to the repo root. `<skill>` is this skill's directory (`.agents/skills/audit-dispatch-skills` in Antigravity, `.claude/skills/audit-dispatch-skills` in Claude Code). `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start.
+Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start. `<skill>` is this skill's own directory, which differs per host:
+
+| Host | `<skill>` | Backgrounding a command | Subagent mechanism |
+|---|---|---|---|
+| Antigravity | `.agents/skills/audit-dispatch-skills` | run the command with `&` | spawn parallel subagents |
+| Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool, one call per scope |
+| Copilot | `.github/skills/audit-dispatch-skills` | run the command with `&` | run scopes sequentially; Copilot has no subagent fan-out |
+| OpenCode | `.opencode/skill/audit-dispatch-skills` | run the command with `&` | `task` tool, one call per scope |
+
+If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives. Where a host offers no parallel fan-out, run the scopes one after another — the report is identical, only slower.
 
 **Containment**: every working file (baseline, probe captures, findings) lives under `.scratch/audits/<run>-work/`; the report is `.scratch/audits/<run>-audit.md`. Step 6 relocates the work directory to OS temp, leaving only the report in the repository. A run that stops early keeps it in place for resumption.
 
@@ -28,7 +37,7 @@ Writes to the work directory: `git-status.txt` (repo snapshot, audit output excl
 node <skill>/scripts/probe-dispatch.mjs --run <run>
 ```
 
-Run it **backgrounded** (live prompts take minutes). Claude Code: Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket). Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows a re-run.
+Run it **backgrounded** (live prompts take minutes) — see the per-host table above. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows a re-run.
 
 Continue to step 3 without waiting.
 

@@ -257,3 +257,99 @@ describe('review skill axis/tag parity: prompt template vs README.md', () => {
     assert.deepEqual(readmeAxes, skillAxes);
   });
 });
+
+// ---------------------------------------------------------------------------
+// SECTION: Cross-skill prose contracts
+//
+// These headings and counts are duplicated across skills as prose, so nothing but
+// a test stops them drifting apart. Each case below pins one such duplication.
+// ---------------------------------------------------------------------------
+
+const PLAN_TEMPLATE_PATH = 'skills/dispatch-plan-review/references/plan-template.md';
+const WALKTHROUGH_TEMPLATE_PATH = 'skills/dispatch-code-review/references/walkthrough-template.md';
+
+/** Returns the fenced example block of a plan/walkthrough template file. */
+function templateBody(rel) {
+  const match = readSkill(rel).match(/^````+markdown\n(.*?)\n````+/ms);
+  assert.ok(match, `${rel} has no fenced template block`);
+  return match[1];
+}
+
+/** Collects the `## ` headings declared inside a template file's fenced example block. */
+function extractTemplateHeadings(rel) {
+  return [...templateBody(rel).matchAll(/^## (.+)$/gm)].map((m) => m[1].trim());
+}
+
+/** Spells out a small cardinal number the way the prose does. */
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+
+describe('cross-skill prose contracts', () => {
+  it('every plan section dispatch-plan-review Step 3 names is a plan-template heading', () => {
+    const headings = extractTemplateHeadings(PLAN_TEMPLATE_PATH);
+    const step3 = readSkill(PLAN_REVIEW_PATH);
+    const at = step3.indexOf('### 3. Fold findings into the plan');
+    assert.ok(at !== -1, 'plan-review Step 3 heading not found');
+    const section = step3.slice(at);
+
+    // Step 3 folds accepted findings into named sections; a name the template lacks folds nowhere.
+    for (const named of ['Proposed Changes', 'Verification Plan', 'Rollback & Blast Radius', 'Out of Scope', 'Review Findings & Resolutions']) {
+      if (!section.includes(named)) continue;
+      assert.ok(
+        headings.includes(named),
+        `plan-review Step 3 folds into "${named}", absent from ${PLAN_TEMPLATE_PATH}`,
+      );
+    }
+  });
+
+  it('walkthrough headings named by the review skills exist in the walkthrough template', () => {
+    const headings = extractTemplateHeadings(WALKTHROUGH_TEMPLATE_PATH);
+    const codeReview = readSkill(CODE_REVIEW_PATH);
+
+    for (const named of ['Changes Made', 'Verification & Validation', 'Review Findings & Resolutions', 'Follow-ups']) {
+      if (!codeReview.includes(named)) continue;
+      assert.ok(
+        headings.includes(named),
+        `dispatch-code-review names "${named}", absent from ${WALKTHROUGH_TEMPLATE_PATH}`,
+      );
+    }
+  });
+
+  it('the walkthrough template declares every tag its own Changes Made example uses', () => {
+    const body = templateBody(WALKTHROUGH_TEMPLATE_PATH);
+    for (const tag of ['[NEW]', '[MODIFY]', '[DELETE]']) {
+      assert.ok(body.includes(tag), `${WALKTHROUGH_TEMPLATE_PATH} omits the ${tag} tag`);
+    }
+  });
+
+  it('each prompt template axis count word matches the axes it actually declares', () => {
+    for (const rel of [PLAN_PROMPT_PATH, CODE_PROMPT_PATH]) {
+      const text = readSkill(rel);
+      const declared = extractSkillAxes(text).length;
+      const word = NUMBER_WORDS[declared];
+      assert.ok(word, `unexpected axis count ${declared} in ${rel}`);
+
+      // Both the opening line and the evaluation heading spell the count out.
+      const heading = new RegExp(`#### 2\\. ${word}-Axis Evaluation`, 'i');
+      assert.match(text, heading, `${rel} evaluation heading disagrees with its ${declared} axes`);
+      assert.match(
+        extractTemplate(text).template,
+        new RegExp(`across ${word} axes`, 'i'),
+        `${rel} opening line disagrees with its ${declared} axes`,
+      );
+    }
+  });
+
+  it('the code-review skill description axis count matches its prompt template', () => {
+    const declared = extractSkillAxes(readSkill(CODE_PROMPT_PATH)).length;
+    const description = readSkill(CODE_REVIEW_PATH).split('\n').find((l) => l.startsWith('description:'));
+    assert.ok(description, 'dispatch-code-review frontmatter has no description');
+    const stated = description.match(/across (\d+) axes/);
+    if (stated) {
+      assert.equal(
+        Number(stated[1]),
+        declared,
+        'dispatch-code-review description axis count disagrees with its prompt template',
+      );
+    }
+  });
+});

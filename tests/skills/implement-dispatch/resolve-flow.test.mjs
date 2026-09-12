@@ -6,6 +6,9 @@ import {
   resolveLevelEntry,
   resolveLevelScalar,
   validateConfig,
+  selectLevel,
+  normalizePin,
+  probeCandidates,
 } from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
 
 // Stub liveness: all available except 'copilot'
@@ -915,5 +918,71 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_NONE_EXTERNAL, BASE_CONFIG);
       assert.deepEqual(out['code-review'].targets, []);
     });
+  });
+});
+
+describe('selectLevel', () => {
+  it('picks the highest defined level at or below the requested one', () => {
+    assert.equal(selectLevel(['low', 'high'], 'max'), 'high');
+    assert.equal(selectLevel(['low', 'high'], 'medium'), 'low');
+  });
+
+  it('falls forward to the lowest defined level above the requested one', () => {
+    // A config defining only `high` still has to answer a `low` request with something.
+    assert.equal(selectLevel(['high', 'max'], 'low'), 'high');
+  });
+
+  it('sorts unordered level lists rather than trusting key order', () => {
+    // Object key order is whatever the JSONC author typed; the ladder is LEVELS, not insertion.
+    assert.equal(selectLevel(['max', 'low', 'high'], 'high'), 'high');
+    assert.equal(selectLevel(['xhigh', 'low'], 'max'), 'xhigh');
+  });
+
+  it('returns undefined for an empty level list', () => {
+    assert.equal(selectLevel([], 'medium'), undefined);
+  });
+});
+
+describe('normalizePin', () => {
+  it('canonicalizes provider aliases case-insensitively', () => {
+    assert.equal(normalizePin('claudecode'), 'claude');
+    assert.equal(normalizePin('ANTIGRAVITY'), 'agy');
+  });
+
+  it('passes an already-canonical key through', () => {
+    assert.equal(normalizePin('agy'), 'agy');
+  });
+
+  it('preserves the reserved "all" keyword', () => {
+    assert.equal(normalizePin('all'), 'all');
+    assert.equal(normalizePin('ALL'), 'all');
+  });
+
+  it('passes an unknown key through unchanged, for the caller to reject by name', () => {
+    // Lowercasing it here would make the error message disagree with what the user typed.
+    assert.equal(normalizePin('Bogus'), 'Bogus');
+  });
+});
+
+describe('probeCandidates', () => {
+  const config = {
+    'plan-review': { platforms: { agy: {}, copilot: {} } },
+    implementation: { platforms: { claude: {} } },
+    'code-review': { platforms: { agy: {} } },
+  };
+
+  it('returns every configured platform plus the orchestrator when unpinned', () => {
+    const keys = probeCandidates({ platform: 'claude' }, config).sort();
+    assert.deepEqual(keys, ['agy', 'claude', 'copilot']);
+  });
+
+  it('narrows to the pinned platforms, keeping the orchestrator', () => {
+    const keys = probeCandidates({ platform: 'claude', pins: ['agy'] }, config).sort();
+    assert.deepEqual(keys, ['agy', 'claude']);
+  });
+
+  it('treats the "all" pin as unpinned breadth', () => {
+    const keys = probeCandidates({ platform: 'claude', pins: ['all'] }, config).sort();
+    assert.deepEqual(keys, ['agy', 'claude', 'copilot']);
   });
 });

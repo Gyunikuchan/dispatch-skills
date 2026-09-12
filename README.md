@@ -27,7 +27,7 @@ Add `-g` for a user-level install.
 | [`dispatch-code-review`](skills/dispatch-code-review) | 6-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
 | [`implement-dispatch`](skills/implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
 
-Dependencies point one way and never back. `dispatch` references nothing; the review skills reference only `dispatch`; `implement-dispatch` references all three **by skill name**, so nothing breaks when they install to different paths. Install only what you want.
+Dependencies point one way and never back. `dispatch` references nothing; the review skills reference only `dispatch`; `implement-dispatch` references all three **by skill name**, never by hard-coded path. Install only what you want — but install whatever you do want to the **same scope**, all global or all project-local: the scripts locate each other as siblings in one skills directory, so a split install (global `dispatch`, project-local `implement-dispatch`) fails to start.
 
 ## Quick start
 

@@ -15,6 +15,8 @@ Orchestrate feature and fix implementations with multi-agent review loops across
 
 If an optional skill is absent, name its absence in the handoff and proceed with the reduced flow.
 
+**Install them side by side.** `resolve-flow.mjs` imports `dispatch`'s scripts by sibling path, so every skill above must live in one `<skills-dir>`. A split install (say `dispatch` global, `implement-dispatch` project-local) fails at import. Install all of them to the same scope — `npx skills add Gyunikuchan/dispatch-skills --all`, with `-g` on every skill or on none.
+
 **Ruling resets rounds.** A user ruling on a round-cap escalation resets that phase's round counter to 0. `maxRounds` bounds *unattended* rounds only — added scope or a user decision restarts the budget.
 
 **Budget sizes to the work.** The `Tool Turn Budget` handed to each reviewer is computed per dispatch, not configured: `6 + <units under review>`, where a unit is a changed file (code review) or a `## Proposed Changes` entry (plan review). On a re-review round, count only the units changed since the previous round. Reviewers get what the job takes; there is no ceiling.
@@ -56,7 +58,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 2. Author Plan
 
-1. Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s plan template. External delegates read this file as their sole context.
+1. Write the plan at the path resolved in Step 1 following `dispatch-plan-review`'s [plan template](../dispatch-plan-review/references/plan-template.md). External delegates read this file as their sole context. When `dispatch-plan-review` is absent, that template is not installed: author the plan under these headings instead — `## Key Decisions & Context`, `## Proposed Changes` (grouped by file, each tagged `[NEW]` / `[MODIFY]` / `[DELETE]`), `## Rollback & Blast Radius`, `## Verification Plan`, `## Out of Scope`.
 2. **Single approval gate**: Transition directly to Step 3's review loop; solicit user approval once on the refined plan at the end of Step 3 (especially post-`grilling`).
 
 **Done when:** Plan file exists on disk with all template sections populated.
@@ -81,10 +83,15 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 4. Implement
 
-1. **Dispatch implementation**: Dispatch test-first to platform's native write subagent (Reference below) configured with `flow.implementation` hints and the resolved walkthrough path from Step 1. Instruct the subagent to implement Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough directly at the resolved path following `dispatch-code-review`'s template (`## Changes Made` with `[NEW]`/`[MODIFY]`/`[DELETE]` tags, `## Verification & Validation`, `## Key Deviations`, and `## Review Findings & Resolutions: *No reviews conducted yet.*`). For `trivial` scope, direct execution, or subagent failure, orchestrator implements and authors directly. **Git guard**: the write subagent must never run `git stash`, `git reset`, `git checkout -- <path>`, `git clean`, or any other command that rewrites or discards the working tree/index — untracked scratch artifacts (plan, walkthrough) are not git-ignored and would be swept up. To compare before/after state (e.g. test counts), it runs the verify command and reads its output, or inspects `git diff` / `git status --porcelain` read-only.
-2. **Verify completion**: Confirm code changes pass host verification tests green and baseline walkthrough exists on disk.
+1. **Snapshot the boundary**: record `git status --porcelain` and `git stash list` before dispatching, and confirm the plan file from Step 1 is on disk. These are the before-values Step 4.4 compares against.
+2. **Dispatch implementation**: Dispatch test-first to the platform's native write subagent (Reference below), configured with `flow.implementation` hints, the plan path, and the resolved walkthrough path from Step 1. Instruct it to implement the plan's Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough at the resolved path following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) — that template is the single source of truth for the headings. When `dispatch-code-review` is absent, skip the walkthrough entirely and let Step 8's diagnostics go to the plan instead.
+3. **Git guard** (hand to the subagent verbatim): confine every git command to read-only inspection — `git status`, `git diff`, `git log`, `git show`. To compare before/after state (e.g. test counts), run the verify command and read its output. Anything that rewrites or discards the working tree or index is out of bounds — `git stash`, `git reset`, `git checkout -- <path>`, `git clean` and their kin — because the plan and walkthrough are untracked and not git-ignored, so such a command silently destroys them.
+4. **Verify the boundary held**: re-read `git status --porcelain` and `git stash list`. Every entry present in Step 4.1 must still be present, and the stash list must be unchanged. If either moved, halt and report — the scratch artifacts may have been swept up.
+5. **Verify completion**: confirm the host verification command passes green, and that the walkthrough exists on disk (unless skipped in 4.2).
 
-**Done when:** Code changes are complete, host verification tests pass green, and baseline walkthrough exists on disk.
+**Fallback**: for `trivial` scope, direct execution, or subagent failure, the orchestrator implements and authors directly — sub-steps 1, 3, 4 and 5 still apply to its own work.
+
+**Done when:** Code changes are complete, the pre-dispatch git entries and stash list are intact, host verification passes green, and the baseline walkthrough exists on disk (or was skipped because `dispatch-code-review` is absent).
 
 ---
 
@@ -92,7 +99,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['code-review'].maxRounds === 0`.*
 
-1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s template if skipped).
+1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
 2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, dispatches completed, and round 1 claims are adjudicated.
@@ -130,7 +137,13 @@ Proceed to Handoff when consensus is reached, no modifications remain, or user r
    - Rounds spent per phase vs `maxRounds`.
    - Active, failed, dropped, or unavailable delegates (`flow.diagnostics`).
    - Summary of accepted/rejected findings and verification command status.
-2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp (`os.tmpdir()`) on completion. If unresolved/halted, retain in place with reasons stated.
+2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
+
+   ```bash
+   node -e "const fs=require('fs'),os=require('os'),path=require('path');for(const f of process.argv.slice(1)){if(!fs.existsSync(f))continue;const d=path.join(os.tmpdir(),path.basename(f));try{fs.renameSync(f,d)}catch(e){if(e.code!=='EXDEV')throw e;fs.copyFileSync(f,d);fs.rmSync(f)}console.log(d)}" "<plan path>" "<walkthrough path>"
+   ```
+
+   If the run is unresolved or halted, retain the artifacts in place and state why.
 3. **Report to user**: Present run diagnostics and a link to the artifact (omit full inline artifact content). Git operations (commit, push, PR) remain for the user.
 
 **Done when:** Diagnostics are appended, scratch artifacts relocated (or retained with stated reason), and handoff report delivered.

@@ -114,6 +114,7 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | Option / Flag | Description | Example Slash Command / Usage |
 |---|---|---|
 | `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
+| `-p <string>` | Pass the prompt as a flag instead of positionally. | `/dispatch -p "Trace the retry path"` |
 | `--prompt-file <path>` | Read the prompt from a file (cannot combine with `-p` or a positional prompt); pairs with `fill-template.mjs` output. | `/dispatch --prompt-file <path to filled prompt>` |
 | `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
 | `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
@@ -122,9 +123,11 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `/dispatch --allow-same-agent Analyze query plan` |
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
 | `--json` | Request structured JSON output (OpenCode provider only). | `/dispatch --provider opencode --json Parse AST` |
+| `-a <name>` | Override the delegate agent name (opencode provider only). | `/dispatch --provider opencode -a delegate ...` |
 | `-v` | Stream live verbose execution traces to the active terminal. | `/dispatch -v Run complex benchmark trace` |
 | `--no-config` | Skip loading the cascade config; requires `--provider`. | `/dispatch --no-config --provider claude ...` |
 | `--validate-only` | Validate the loaded config and exit. | `node scripts/dispatch.mjs --validate-only` |
+| `--max-buffer <MB>` | Raise the subprocess output cap (default: `10`) when a delegate's trace is truncated. | `/dispatch --max-buffer 25 ...` |
 
 ---
 
@@ -183,6 +186,9 @@ PowerShell:
 ```powershell
 Get-Content -Tail 30 "<logFilePath>"
 ```
+
+### Delegate Environment & Authentication
+Delegates get a whitelisted environment: non-secret reachability and identity vars pass through (`HTTP(S)_PROXY`/`NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, `XDG_*`, `CLAUDE_CONFIG_DIR`, `USER`, `TZ`), everything credential-shaped is stripped. So **sign each CLI in interactively once** (`claude`, `agy`, `copilot`) — API-key and token env vars are not inherited, and `opencode` reads its provider credentials from `opencode.jsonc`. For a local `opencode` endpoint the proxy vars are replaced by the WAN trap rather than inherited.
 
 ### Git Integrity False Positives
 `dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.

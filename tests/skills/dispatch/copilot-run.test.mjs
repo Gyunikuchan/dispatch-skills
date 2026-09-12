@@ -191,18 +191,23 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       );
     });
 
-    it('quota/auth failure with cascade available -> next-target', () => {
+    it('quota failure with cascade available -> next-target', () => {
       assert.equal(
         nextCopilotStep({ result: { failureKind: 'quota' }, error: null, canCascade: true }),
         'next-target',
       );
+    });
+
+    it('auth failure -> return even with cascade available', () => {
+      // Every mode is spawned with the same env and reads one credential store, so a second mode
+      // would fail identically. Cascading on auth is pure latency.
       assert.equal(
         nextCopilotStep({ result: { failureKind: 'auth' }, error: null, canCascade: true }),
-        'next-target',
+        'return',
       );
     });
 
-    it('quota/auth failure without cascade available -> return', () => {
+    it('quota failure without cascade available -> return', () => {
       assert.equal(
         nextCopilotStep({ result: { failureKind: 'quota' }, error: null, canCascade: false }),
         'return',

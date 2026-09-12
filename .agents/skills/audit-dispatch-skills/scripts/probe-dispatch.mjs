@@ -25,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { isMainModule, terminateProcessTree } from '../../../../skills/dispatch/scripts/common.mjs';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
@@ -81,12 +82,34 @@ async function main() {
   let fixture = null;
   if (!opts.discoverOnly) {
     fixture = createFixture(repoRoot);
+
+    // `finally` never runs when the process is signalled, and the fixture holds nonce files in the
+    // user's home directory — Ctrl-C during a slow probe used to leave them there.
+    let removed = false;
+    const removeFixture = () => {
+      if (removed) return;
+      removed = true;
+      try {
+        fs.rmSync(fixture.dir, { recursive: true, force: true });
+      } catch {}
+    };
+    const onSignal = (signal) => {
+      removeFixture();
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      process.kill(process.pid, signal);
+    };
+    process.once('SIGINT', onSignal);
+    process.once('SIGTERM', onSignal);
+
     try {
       const targets = buildTargets(rows, { modes: opts.modes, config, scriptsDir });
       const ctx = { repoRoot, outDir, fixture, timeout: opts.timeout, classifyFailure: mods.common.classifyFailure };
       live = await Promise.all(targets.map((t) => runTarget(t, ctx)));
     } finally {
-      fs.rmSync(fixture.dir, { recursive: true, force: true });
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      removeFixture();
     }
   }
 
@@ -134,7 +157,7 @@ async function discover({ claude, agy, copilot, opencode }) {
   return rows;
 }
 
-function statusOf(row) {
+export function statusOf(row) {
   if (!row.bin) return 'NOT FOUND';
   return row.reachable ? 'REACHABLE' : 'UNREACHABLE';
 }
@@ -149,7 +172,7 @@ function statusOf(row) {
  * frequently resolve to the same executable and a duplicate prompt proves nothing new.
  * @returns {Target[]}
  */
-function buildTargets(rows, { modes, config, scriptsDir }) {
+export function buildTargets(rows, { modes, config, scriptsDir }) {
   const targets = [];
 
   for (const provider of PROVIDERS) {
@@ -233,7 +256,12 @@ async function runTarget(target, { repoRoot, outDir, fixture, timeout, classifyF
     seconds: read.seconds,
     checks,
     denylistBehaviour: checks.denylist ? (deny.code === 0 ? 'skipped file' : 'aborted run') : 'not rejected',
-    failure: pass ? null : classifyFailure(`${read.stderr}\n${read.stdout}\n${logTail}`) ?? 'unclassified — read the captures',
+    // The denylist run has its own captures; a failure that only shows up there (an aborted run,
+    // a rejection worded unexpectedly) was invisible when only the read run was classified.
+    failure: pass
+      ? null
+      : classifyFailure(`${read.stderr}\n${read.stdout}\n${deny.stderr}\n${deny.stdout}\n${logTail}`) ??
+        'unclassified — read the captures',
     pass,
     log,
     captures: `${stem}.{read,denylist}.{stdout,stderr}.txt`,
@@ -315,15 +343,32 @@ function cell(text) {
 // SECTION: Utilities
 // ============================================================================
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const opts = { modes: false, only: null, timeout: DEFAULT_TIMEOUT_SECONDS, discoverOnly: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--run') i++; // consumed by resolveRunDirs
     else if (arg === '--modes') opts.modes = true;
-    else if (arg === '--only') opts.only = argv[++i].split(',').map((s) => s.trim());
-    else if (arg === '--timeout') opts.timeout = Number.parseInt(argv[++i], 10) || DEFAULT_TIMEOUT_SECONDS;
-    else if (arg === '--discover-only') opts.discoverOnly = true;
+    else if (arg === '--only') {
+      // A bare `--only` used to crash on `undefined.split`; a typo'd provider silently probed nothing.
+      const value = argv[++i];
+      if (value === undefined) throw new Error('--only requires a comma-separated provider list');
+      const keys = value.split(',').map((s) => s.trim()).filter(Boolean);
+      const unknown = keys.filter((k) => !PROVIDERS.includes(k));
+      if (keys.length === 0) throw new Error('--only requires at least one provider');
+      if (unknown.length > 0) {
+        throw new Error(`--only: unknown provider(s) ${unknown.join(', ')}. Valid: ${PROVIDERS.join(', ')}`);
+      }
+      opts.only = keys;
+    } else if (arg === '--timeout') {
+      // `|| DEFAULT` used to swallow a typo'd value, so a run silently ignored the flag.
+      const value = argv[++i];
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error(`--timeout requires a positive number of seconds, got "${value}"`);
+      }
+      opts.timeout = parsed;
+    } else if (arg === '--discover-only') opts.discoverOnly = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
   return opts;
@@ -354,7 +399,7 @@ function spawnCapture(command, args, { cwd, killAfterMs }) {
     child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
     const timer = setTimeout(() => {
       stderr += `\n[probe] killed after ${killAfterMs}ms\n`;
-      child.kill();
+      terminateProcessTree(child);
     }, killAfterMs);
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -363,7 +408,10 @@ function spawnCapture(command, args, { cwd, killAfterMs }) {
   });
 }
 
-main().catch((err) => {
-  process.stderr.write(`[probe] ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// Guarded so buildTargets/parseArgs can be imported and unit-tested without probing real CLIs.
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    process.stderr.write(`[probe] ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

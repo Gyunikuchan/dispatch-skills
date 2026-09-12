@@ -35,8 +35,9 @@
  * priority order candidates are selected in. Flat model/effort keys alongside level
  * keys act as defaults the matched level overrides.
  *
- * Accepted effort values are platform-dependent: low, medium, high, and max are
- * universal; Claude Code also accepts xhigh between high and max.
+ * Accepted effort values are CLI-specific: Antigravity takes low/medium/high;
+ * Claude Code adds xhigh; OpenCode receives the value as `--variant`. An effort a
+ * CLI does not recognize is that CLI's error, not this config's.
  */
 {
   "plan-review": {

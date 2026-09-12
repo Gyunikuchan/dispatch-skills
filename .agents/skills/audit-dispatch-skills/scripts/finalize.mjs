@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isMainModule } from '../../../../skills/dispatch/scripts/common.mjs';
 import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
@@ -65,7 +66,7 @@ function main() {
 // SECTION: Utilities
 // ============================================================================
 
-function moveEntry(from, to) {
+export function moveEntry(from, to) {
   try {
     fs.renameSync(from, to);
   } catch (err) {
@@ -76,9 +77,12 @@ function moveEntry(from, to) {
   }
 }
 
-try {
-  main();
-} catch (err) {
-  process.stderr.write(`[finalize] ${err.message}\n`);
-  process.exit(1);
+// Guarded so moveEntry can be imported and unit-tested without finalizing a run.
+if (isMainModule(import.meta.url)) {
+  try {
+    main();
+  } catch (err) {
+    process.stderr.write(`[finalize] ${err.message}\n`);
+    process.exit(1);
+  }
 }

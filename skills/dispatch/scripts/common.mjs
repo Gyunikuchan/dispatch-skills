@@ -172,8 +172,34 @@ export const SAFE_ENV_WHITELIST = new Set([
   'SHELL',
   'COMSPEC',
   'GIT_EXEC_PATH',
+  // Non-secret reachability and identity vars: without these a delegate behind a corporate
+  // proxy or a custom CA can't reach its own service, and a CLI whose state lives in an
+  // XDG/config-dir override re-onboards instead of finding its interactive login. Credentials
+  // are still stripped — these carry endpoints and paths, never tokens.
+  'HTTP_PROXY',
+  'http_proxy',
+  'HTTPS_PROXY',
+  'https_proxy',
+  'ALL_PROXY',
+  'all_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'USER',
+  'USERNAME',
+  'LOGNAME',
+  'TZ',
 ]);
 
+// Redundant against SAFE_ENV_WHITELIST by construction, and kept that way on purpose: the
+// whitelist is edited by hand, and this catches a credential-shaped name added to it by mistake.
 export const SENSITIVE_ENV_KEY_PATTERN = /(KEY|SECRET|TOKEN|PASSWORD|AUTH|CREDENTIAL|PRIVATE)/i;
 
 /**
@@ -633,7 +659,12 @@ export function resolveCliInvocation(binary, args, options) {
  */
 export function spawnCli(binary, args = [], options = {}) {
   const invocation = resolveCliInvocation(binary, args, options);
-  return spawn(invocation.command, invocation.args, invocation.options);
+  return spawn(invocation.command, invocation.args, {
+    // Own process group on POSIX so a timeout can terminate the delegate's whole tree
+    // (see terminateProcessTree). Windows gets the same reach from `taskkill /T`.
+    detached: process.platform !== 'win32',
+    ...invocation.options,
+  });
 }
 
 /**
@@ -657,11 +688,26 @@ export function terminateProcessTree(child) {
       });
     } catch {}
   } else {
+    // Signal the whole process group, not just the direct child: every runner spawns a launcher
+    // that forks the real CLI, and `child.kill` leaves those grandchildren running — burning tokens
+    // long after the timeout fired. `spawnCli` starts POSIX children detached (their own group), so
+    // the negative pid reaches the launcher and its descendants alike.
+    const signalGroup = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+        return true;
+      } catch {
+        // ESRCH: the group is already gone, or this child was not spawned detached (Node exposes no
+        // readable `detached` flag, so the attempt is the test). EPERM: not ours to signal.
+        return false;
+      }
+    };
+
     try {
-      child.kill('SIGTERM');
+      if (!signalGroup('SIGTERM')) child.kill('SIGTERM');
       setTimeout(() => {
         try {
-          child.kill('SIGKILL');
+          if (!signalGroup('SIGKILL')) child.kill('SIGKILL');
         } catch {}
       }, 1000).unref();
     } catch {}
@@ -1133,34 +1179,103 @@ export function generateSkillHashes(skillDir) {
   return manifest;
 }
 
+/** Recorded in place of a content hash for a path with no worktree file (a deletion). */
+const DELETED_FINGERPRINT = '-';
+
 /**
- * Captures Git porcelain status to verify read-only integrity.
+ * Parses `git status --porcelain=v1 -uall -z` output into `{ xy, entryPath }` records.
+ *
+ * NUL-delimited rather than line-delimited because a path containing a newline would otherwise
+ * split into two bogus entries. A rename or copy (`R`/`C`) is emitted as *two* NUL-terminated
+ * tokens — `XY<space>new` then `old` — so the origin token is consumed here and the destination is
+ * what gets fingerprinted.
+ */
+function parsePorcelainZ(stdout) {
+  const tokens = stdout.split('\0').filter((token) => token.length > 0);
+  const entries = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.length < 4) continue;
+    const xy = token.slice(0, 2);
+    entries.push({ xy, entryPath: token.slice(3) });
+    // A rename/copy carries its origin path in the following token; skip it.
+    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') i++;
+  }
+
+  return entries;
+}
+
+/**
+ * Captures a content-addressed fingerprint of the working tree, to verify read-only integrity.
+ *
+ * Status lines alone are not enough: a delegate that edits an already-` M` file leaves the porcelain
+ * output byte-identical, so a second edit reads as no change at all. Each entry therefore carries a
+ * hash of its current worktree content. `-uall` keeps new files under an untracked directory from
+ * collapsing into one `?? dir/` line (this repo's `.scratch/` is untracked and not git-ignored).
+ *
+ * Hashing runs in-process rather than through `git hash-object` per entry — a dirty tree of N files
+ * would otherwise cost N extra process spawns on every dispatch.
+ *
+ * @returns {string|null} Newline-joined `XY <hash> <path>` records sorted by path, or null when the
+ *   cwd is not a usable git repository.
  */
 export function getGitStatus(cwd = PROJECT_ROOT) {
   try {
-    const res = spawnSync('git', ['status', '--porcelain'], {
+    const res = spawnSync('git', ['status', '--porcelain=v1', '-uall', '-z'], {
       cwd,
       encoding: 'utf8',
       timeout: 5000,
     });
-    return res.status === 0 ? res.stdout.trim() : null;
+    if (res.status !== 0) return null;
+
+    return parsePorcelainZ(res.stdout)
+      .sort((a, b) => (a.entryPath < b.entryPath ? -1 : a.entryPath > b.entryPath ? 1 : 0))
+      .map(({ xy, entryPath }) => {
+        let fingerprint = DELETED_FINGERPRINT;
+        try {
+          // A deleted (or otherwise absent) path has no content to hash; the tombstone stands in,
+          // and still differs from any hash a later re-creation of that path would produce.
+          fingerprint = hashFile(path.join(cwd, entryPath));
+        } catch {}
+        return `${xy} ${fingerprint} ${entryPath}`;
+      })
+      .join('\n');
   } catch {
     return null;
   }
 }
 
 /**
- * Returns a human-readable description of files that changed between two
- * `git status --porcelain` snapshots.
+ * Returns a human-readable description of what changed between two `getGitStatus` fingerprints.
+ *
+ * Reports entries that disappeared as well as ones that appeared, so deleting an untracked file is
+ * described rather than reported as a violation with no detail. Paths are deduplicated: a file whose
+ * content changed between snapshots occupies a record in both, and is one change, not two.
  */
 export function describeGitStatusDiff(before, after) {
   if (before === null || after === null) return null;
+
   const parse = (raw) => new Set(raw.split('\n').filter(Boolean));
   const beforeSet = parse(before);
   const afterSet = parse(after);
-  const added = [...afterSet].filter((line) => !beforeSet.has(line));
-  if (added.length === 0) return null;
-  return added.map((line) => line.trim()).join('\n');
+
+  // `XY <hash> <path>` → `XY <path>`: the hash drives detection, but it is noise to a reader. The
+  // status column is fixed-width two chars and may lead with a space (` M`), so slice rather than
+  // split on whitespace.
+  const display = (record) => {
+    const rest = record.slice(3);
+    const hashEnd = rest.indexOf(' ');
+    if (hashEnd === -1) return record.trim();
+    return `${record.slice(0, 2)} ${rest.slice(hashEnd + 1)}`.trim();
+  };
+
+  const changed = new Set();
+  for (const record of afterSet) if (!beforeSet.has(record)) changed.add(display(record));
+  for (const record of beforeSet) if (!afterSet.has(record)) changed.add(display(record));
+
+  if (changed.size === 0) return null;
+  return [...changed].sort().join('\n');
 }
 
 /**
@@ -1237,44 +1352,78 @@ export function getAllowedBoundaryRoots() {
  * `['claude.cmd', 'claude.exe']` to prefer the batch launcher's nested-exe logic without missing
  * a PATH-only `claude.exe` install).
  *
+ * Pass `{ pathFirst: false }` to invert that precedence for a mode-specific lookup: a mode that names
+ * its own install location (a VS Code extension's bundled CLI, say) must resolve to *that* binary,
+ * not to whichever build happens to be on PATH — otherwise every mode collapses onto one executable
+ * and the mode cascade retries the same thing repeatedly.
+ *
  * @param {string|string[]} binName
  * @param {string[]} [extraCandidates]
+ * @param {{ pathFirst?: boolean }} [options]
  */
-export function findBinary(binName, extraCandidates = []) {
+export function findBinary(binName, extraCandidates = [], { pathFirst = true } = {}) {
   const names = Array.isArray(binName) ? binName : [binName];
   const lookupCmd = process.platform === 'win32' ? 'where.exe' : 'which';
 
-  // Check system PATH, one name at a time, in order.
-  for (const name of names) {
-    try {
-      const res = spawnSync(lookupCmd, [name], { encoding: 'utf8' });
-      if (res.status === 0 && res.stdout.trim()) {
-        const firstMatch = res.stdout.trim().split(/\r?\n/)[0];
-        if (firstMatch && fs.existsSync(firstMatch)) {
-          return firstMatch;
-        }
-      }
-    } catch {}
-  }
-
-  // Check custom candidate paths
-  const homeDir = os.homedir();
-  const expandedCandidates = extraCandidates.map((p) =>
-    p.replace(/^~(?=$|\/|\\)/, homeDir),
-  );
-
-  for (const candidate of expandedCandidates) {
-    if (fs.existsSync(candidate)) {
+  const fromPath = () => {
+    // Check system PATH, one name at a time, in order.
+    for (const name of names) {
       try {
-        const stat = fs.statSync(candidate);
-        if (stat.isFile()) {
-          return candidate;
+        const res = spawnSync(lookupCmd, [name], { encoding: 'utf8' });
+        if (res.status === 0 && res.stdout.trim()) {
+          const firstMatch = res.stdout.trim().split(/\r?\n/)[0];
+          if (firstMatch && fs.existsSync(firstMatch)) {
+            return firstMatch;
+          }
         }
       } catch {}
     }
-  }
+    return null;
+  };
 
-  return null;
+  const fromCandidates = () => {
+    const homeDir = os.homedir();
+    const expandedCandidates = extraCandidates.map((p) => p.replace(/^~(?=$|\/|\\)/, homeDir));
+
+    for (const candidate of expandedCandidates) {
+      if (fs.existsSync(candidate)) {
+        try {
+          const stat = fs.statSync(candidate);
+          if (stat.isFile()) {
+            return candidate;
+          }
+        } catch {}
+      }
+    }
+    return null;
+  };
+
+  return pathFirst ? (fromPath() ?? fromCandidates()) : (fromCandidates() ?? fromPath());
+}
+
+/**
+ * Drops targets whose binary another, higher-preference target already resolved to.
+ *
+ * Mode cascades exist to survive one broken install, but several modes routinely discover the *same*
+ * executable (a PATH lookup answering for "desktop" and "cli" alike). Retrying such a mode re-runs an
+ * identical command and fails identically — pure latency. First occurrence wins, preserving
+ * preference order.
+ *
+ * @template T
+ * @param {T[]} targets
+ * @param {(target: T) => string|null|undefined} binaryOf
+ * @returns {T[]}
+ */
+export function dedupeTargetsByBinary(targets, binaryOf) {
+  const seen = new Set();
+  return targets.filter((target) => {
+    const bin = binaryOf(target);
+    if (!bin) return true;
+    const key = normalizePath(bin);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -1678,3 +1827,39 @@ export function resolveRunnerExitCode({ code, signal, truncated, cleanStdout, is
   return raw;
 }
 
+/**
+ * Detects the orchestrator runtime from environment variables.
+ *
+ * Claude Code exports `CLAUDECODE` / `CLAUDE_CODE_*`; probing only the `CLAUDE_CODE` and
+ * `CLAUDE_SESSION_ID` that never existed made detection return null there, so the cascade
+ * delegated straight back to the orchestrator's own platform. The VS Code heuristic went for
+ * the same reason: `VSCODE_PID` is set in any VS Code terminal, whichever agent drives it.
+ * `--orchestrator` overrides whatever this returns.
+ * @returns {string|null} Provider key, or null when no host marker is present.
+ */
+export function detectOrchestrator() {
+  if (
+    process.env.ANTIGRAVITY_AGENT ||
+    process.env.ANTIGRAVITY_CONVERSATION_ID ||
+    process.env.ANTIGRAVITY_SESSION_ID ||
+    process.env.GEMINI_CLI
+  ) {
+    return 'agy';
+  }
+  if (
+    process.env.CLAUDECODE ||
+    process.env.CLAUDE_CODE ||
+    process.env.CLAUDE_CODE_SESSION_ID ||
+    process.env.CLAUDE_SESSION_ID ||
+    process.env.CLAUDE_CODE_ENTRYPOINT
+  ) {
+    return 'claude';
+  }
+  if (process.env.COPILOT_AGENT || process.env.COPILOT_CLI_SESSION_ID) {
+    return 'copilot';
+  }
+  if (process.env.OPENCODE_PORT || process.env.OPENCODE_AGENT) {
+    return 'opencode';
+  }
+  return null;
+}

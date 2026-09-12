@@ -27,6 +27,7 @@ import {
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
+  dedupeTargetsByBinary,
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
@@ -184,6 +185,7 @@ export async function runClaude(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     claudeMode = null,
+    initialGitStatus: baselineGitStatus = null,
   } = options;
 
   const viableTargets = findViableTargets(claudeMode);
@@ -192,7 +194,9 @@ export async function runClaude(options = {}) {
   }
 
   const sessionLogger = createSessionLogger('claude');
-  const initialGitStatus = getGitStatus();
+  // Prefer the dispatch-level baseline: taken once before the cascade, it still spans a write made
+  // by an earlier provider that failed. Self-baseline only when run standalone via this CLI.
+  const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const modelsToTry = resolveModelsToTry(model);
   const effectiveEffort = effort || null;
@@ -348,7 +352,8 @@ function findViableTargets(claudeMode) {
       viable.push({ mode: candidate.mode, name: candidate.name, bin });
     }
   }
-  return viable;
+  // Desktop and VS Code routinely resolve to the same executable; retrying it is pure latency.
+  return dedupeTargetsByBinary(viable, (t) => t.bin);
 }
 
 function createNoTargetsError() {

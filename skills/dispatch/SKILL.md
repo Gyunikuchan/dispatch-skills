@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Dispatch a bounded read-only task to another agent CLI (Claude Code, Antigravity, Copilot, OpenCode) with provider fallback. Use on /dispatch or when delegating investigation, research, or review to another agent.
+description: Delegate a bounded read-only task to a different agent CLI, with provider cascade and a git integrity check. Use on /dispatch, or when investigation or research is better run outside this context window.
 ---
 
 # Dispatch
@@ -99,6 +99,7 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 | Flag | Description | Example |
 |------|-------------|---------|
 | `-f <path>` | Attach context file or artifact (repeatable, capped) | `-f "src/domain/types.ts"` |
+| `-p <string>` | Pass the prompt as a flag instead of positionally | `-p "Trace the retry path"` |
 | `--prompt-file <path>` | Read the prompt from a file instead of `-p`/positional (cannot combine with either) | `--prompt-file "<path to filled prompt>"` |
 | `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`opencode`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
@@ -111,6 +112,7 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 | `-v` | Stream live trace (terminal debugging only; suppressed when piped) | `-v` |
 | `--no-config` | Skip loading the cascade config entirely; requires `--provider` | `--no-config --provider claude` |
 | `--validate-only` | Validate the loaded config and exit (no dispatch) | `--validate-only` |
+| `--max-buffer <MB>` | Raise the subprocess output cap (default: 10) when a delegate's trace is truncated | `--max-buffer 25` |
 
 ---
 

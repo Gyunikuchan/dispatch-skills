@@ -17,8 +17,8 @@
  *    provider's credentials belong in opencode.jsonc's `provider.<name>.options.apiKey`, resolved
  *    by opencode's own subprocess, not in the orchestrator's ambient environment.
  * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
- * 5. Strict boundary enforcement (confines attachments to workspace, Antigravity brain,
- *    agent configs, and OS temp)
+ * 5. Attachment boundary warning (an attachment outside the workspace, Antigravity brain, agent
+ *    configs, or OS temp is kept but flagged — `-f` is orchestrator-chosen, not delegate-chosen)
  * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched)
  * 7. GPU concurrency lockfile for local backends only (prevents concurrent hooks from thrashing
  *    local VRAM; a remote API call has no such contention and is not serialized behind it)
@@ -45,24 +45,7 @@
  *   `readOpencodeConfig`'s doc comment for why).
  * - Optional: `bwrap` (Bubblewrap) on Linux for filesystem-level read-only mounts.
  *
- * =============================================================================
- * USAGE & EXAMPLES:
- * =============================================================================
- *
- * 1. Simple prompt execution:
- *    $ node scripts/opencode-run.mjs "Summarize recent project changes"
- *
- * 2. Verbose mode:
- *    $ node scripts/opencode-run.mjs -v "Explain simulation loop"
- *
- * 3. Piped input:
- *    $ git diff HEAD~1 | node scripts/opencode-run.mjs "Perform code review on this diff"
- *
- * 4. With attached context files:
- *    $ node scripts/opencode-run.mjs --file CONTEXT.md "Check adherence"
- *
- * 5. With custom model, agent, and timeout:
- *    $ node scripts/opencode-run.mjs --agent delegate --model "qwen3.8-27b-ridge" --timeout 180 "Explain loop"
+ * Usage examples live in this script's `--help` output, which cannot drift from the parser.
  */
 
 // NOTE: imported as a namespace (not destructured) so tests can `mock.method(cp, 'spawn', ...)` /
@@ -164,7 +147,8 @@ import {
  * @property {string} logFile
  * @property {string|null} briefFile Temp file the prompt was spilled to when over the argv byte
  *   limit; null when the prompt was passed directly.
- * @property {string} sessionLink LM Studio endpoint URL.
+ * @property {string} sessionLink Endpoint URL of whatever backend resolved, or an
+ *   `opencode:<provider>/<model>` descriptor when no host is known.
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
  * @property {boolean} gitIntegrityViolation
@@ -207,7 +191,6 @@ export const OPENCODE_EXTRA_ENV_ALLOWLIST = new Set([
   'OPENCODE_CACHE_DIR',
   'OPENCODE_DISABLE_UPDATE_CHECK',
   'OPENCODE_PORT',
-  'XDG_CONFIG_HOME',
 ]);
 
 // NOTE: GPU lockfile name is pinned to this legacy value — os.tmpdir() is machine-global and
@@ -251,6 +234,7 @@ export async function runOpencode(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
     verbose = false,
+    initialGitStatus: baselineGitStatus = null,
   } = options;
 
   if (!prompt.trim()) {
@@ -370,9 +354,10 @@ export async function runOpencode(options = {}) {
     const trace = createTraceWriter(verbose);
     const maxBufferBytes = maxBufferMb * 1024 * 1024;
 
-    // Step 8: snapshot git state immediately before spawn so any delegate write falls inside
-    // the compared window.
-    const initialGitStatus = getGitStatus();
+    // Step 8: prefer the dispatch-level baseline, taken once before the cascade so a write by an
+    // earlier failed provider still falls inside the compared window; otherwise snapshot here,
+    // immediately before spawn.
+    const initialGitStatus = baselineGitStatus ?? getGitStatus();
 
     // Steps 9-11: spawn, stream into logger + trace, and resolve on close.
     return await spawnOpencode({
@@ -468,6 +453,9 @@ function spawnOpencode({
       env: getOpencodeEnv(settings),
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      // Set here rather than inherited from spawnCli (which this deliberately bypasses): without an
+      // own process group, a timeout leaves opencode's grandchildren running on POSIX.
+      detached: process.platform !== 'win32',
     });
     const child = cp.spawn(invocation.command, invocation.args, invocation.options);
 
@@ -1266,10 +1254,15 @@ export function getOpencodeEnv(settings) {
 
     cleanEnv.NO_PROXY = localHosts;
     cleanEnv.no_proxy = localHosts;
-    cleanEnv.HTTP_PROXY = 'http://127.0.0.1:0';
-    cleanEnv.http_proxy = 'http://127.0.0.1:0';
-    cleanEnv.HTTPS_PROXY = 'http://127.0.0.1:0';
-    cleanEnv.https_proxy = 'http://127.0.0.1:0';
+    // Every proxy-shaped whitelisted key is overwritten, derived from the whitelist rather than
+    // re-listed here: SAFE_ENV_WHITELIST passes the user's real proxy through, so a name added
+    // there later (FTP_PROXY, GRPC_PROXY) must not silently restore WAN reachability for a
+    // local run. NO_PROXY above is set first and excluded — it is the exemption, not a trap.
+    for (const key of [...SAFE_ENV_WHITELIST, ...OPENCODE_EXTRA_ENV_ALLOWLIST]) {
+      if (/_PROXY$/i.test(key) && !/^NO_PROXY$/i.test(key)) {
+        cleanEnv[key] = 'http://127.0.0.1:0';
+      }
+    }
   }
 
   return cleanEnv;

@@ -331,18 +331,47 @@ export function validateConfig(config) {
 // SECTION: Liveness
 // ============================================================================
 
-export async function defaultLiveness() {
-  const results = {};
-  const runners = {
-    claude: 'claude-run.mjs',
-    agy: 'agy-run.mjs',
-    copilot: 'copilot-run.mjs',
-    opencode: 'opencode-run.mjs',
-  };
+const RUNNER_FILES = {
+  claude: 'claude-run.mjs',
+  agy: 'agy-run.mjs',
+  copilot: 'copilot-run.mjs',
+  opencode: 'opencode-run.mjs',
+};
+
+/**
+ * Test-only override: a JSON object of `{ provider: boolean }` replacing the real probes.
+ *
+ * Each real probe spawns a provider CLI and waits on it, so a CLI test suite that exercises a
+ * dozen argument combinations spends most of its runtime re-discovering the same binaries — and
+ * its assertions then depend on what happens to be installed on the machine running it.
+ */
+const LIVENESS_ENV_VAR = 'IMPLEMENT_DISPATCH_LIVENESS_JSON';
+
+/**
+ * Probes which providers are reachable.
+ *
+ * @param {string[]} [only] Restrict probing to these provider keys; omit to probe all of them.
+ *   Probing a provider no phase can dispatch to is wasted latency.
+ */
+export async function defaultLiveness(only) {
+  const override = process.env[LIVENESS_ENV_VAR];
+  if (override) {
+    let parsed;
+    try {
+      parsed = JSON.parse(override);
+    } catch {
+      throw new Error(`${LIVENESS_ENV_VAR} is not valid JSON`);
+    }
+    return Object.fromEntries(Object.keys(RUNNER_FILES).map((key) => [key, !!parsed[key]]));
+  }
+
+  const keys = only?.length ? Object.keys(RUNNER_FILES).filter((k) => only.includes(k)) : Object.keys(RUNNER_FILES);
+  const results = Object.fromEntries(Object.keys(RUNNER_FILES).map((key) => [key, false]));
+
   await Promise.all(
-    Object.entries(runners).map(async ([key, file]) => {
+    keys.map(async (key) => {
       try {
-        const mod = await import(pathToFileURL(path.join(DISPATCH_SCRIPTS, file)).href);
+        const mod = await import(pathToFileURL(path.join(DISPATCH_SCRIPTS, RUNNER_FILES[key])).href);
         const fnName = `is${key.charAt(0).toUpperCase()}${key.slice(1)}Available`;
         results[key] = !!(await mod[fnName]?.());
       } catch {
@@ -351,6 +380,23 @@ export async function defaultLiveness() {
     })
   );
   return results;
+}
+
+/**
+ * Provider keys any enabled phase could actually dispatch to, given the config and pins.
+ * Anything outside this set cannot appear in the resolved flow, so probing it is pure latency.
+ */
+export function probeCandidates(opts, config) {
+  const configured = new Set(
+    SECTIONS.flatMap((section) => Object.keys(config?.[section]?.platforms ?? {}).map(normalizePin))
+  );
+  if (opts.platform) configured.add(normalizePin(opts.platform));
+
+  const pins = (opts.pins ?? []).map(normalizePin);
+  if (pins.length > 0 && !pins.includes('all')) {
+    return [...configured].filter((key) => pins.includes(key) || key === normalizePin(opts.platform));
+  }
+  return [...configured];
 }
 
 // ============================================================================
@@ -595,7 +641,6 @@ async function main() {
   }
 
   // `--validate-only` short-circuits before liveness so it spawns no provider probes.
-  // Every other path lets `resolveFlow` validate, keeping one validation call per run.
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
@@ -651,7 +696,7 @@ async function main() {
 
   let liveness;
   try {
-    liveness = await defaultLiveness();
+    liveness = await defaultLiveness(probeCandidates(opts, config));
   } catch (err) {
     process.stderr.write(`Error checking liveness: ${err.message}\n`);
     process.exit(1);

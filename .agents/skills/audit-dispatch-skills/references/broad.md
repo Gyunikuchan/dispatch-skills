@@ -2,7 +2,7 @@
 
 You audit **across** skills and the repository around them; deep auditors own each skill's internals. Open skill files to check relationships between them, not to re-audit one in isolation.
 
-Scope: how `skills/*` fit together; `.agents/AGENTS.md` (`.claude/CLAUDE.md` symlinks to it); root `README.md`; `scripts/`; `tests/integration/`, `tests/scripts/`, and the test tree layout; `package.json`, `.husky/`, `.gitignore`, `.gitattributes`, `skills-lock.json`, `.opencode/`, `.vscode/`, `.agents/hooks.json`, `.agents/mcp_config.json`.
+Scope: how `skills/*` fit together; `.agents/AGENTS.md` (`.claude/CLAUDE.md` symlinks to it); root `README.md`; `scripts/`; `tests/integration/`, `tests/scripts/`, and the test tree layout; `package.json`, `.husky/`, `.gitignore`, `.gitattributes`, `skills-lock.json`, `.opencode/`, `.vscode/`.
 
 Read first: `.agents/AGENTS.md` (the standard), `.agents/skills/writing-for-agents/SKILL.md` and its `SKILL-MECHANICS.md`, then `skills/dispatch/references/alignment.md` and each skill's `SKILL.md` frontmatter and section headings. Use the work dir's `metrics.md` and `tests.txt` as leads. Test evidence is the work dir's `tests.txt`; re-run a single file with `node --test <file>` only — never `npm test`/`npm run hashes`.
 

@@ -176,16 +176,9 @@ Simplicity & Failure Modes: 1 finding
 None — the plan is already minimal.
 ```
 
-### Adjudication Decision Table
+### Adjudication
 
-The orchestrator maps each claim to an adjudication action:
-
-| Verdict | Criterion | Orchestrator Action |
-|---|---|---|
-| **Accept** | Requirement or repository rule confirms the defect. | Apply changes directly into plan sections; log under `## Review Findings & Resolutions`. |
-| **Reject** | Contradicted by plan/code, target section missing, already planned, or unverifiable. | Drop from plan; record rejection rationale in resolutions log. |
-| **Downgrade** | Real but trivial (style, cosmetic, or speculative). | Fold into *Out of Scope* or drop; log in resolutions log. |
-| **Disputed** | Unsettleable from plan alone (intent, deliberate trade-off). | Escalate to user via interactive prompt; apply user decision verbatim. |
+Every claim is checked against the requirement and your repository's own rules, then accepted, rejected, downgraded, or marked disputed — and whichever way it goes, the outcome is logged under `## Review Findings & Resolutions` in the plan. A disputed claim is one the plan alone cannot settle (intent, a deliberate trade-off); standalone runs put it to you, while an orchestrated run returns it for the orchestrator's consensus rule to handle. The exact criteria, the resolution order, and the escalation mechanics live in one place — `dispatch`'s `references/alignment.md` § Adjudication — rather than being restated here, where they drift.
 
 ---
 
@@ -198,7 +191,16 @@ By default, the underlying `dispatch` runner will avoid delegating to the orches
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.
 
 ### Reviewing Transient Antigravity Plans
-When running inside Antigravity, the orchestrator automatically detects the active `implementation_plan.md` artifact from the current session brain directory. You do not need to copy or export it manually.
+When running inside Antigravity, the orchestrator picks up the active `implementation_plan.md` from the session brain directory — no manual copy or export. One caveat: it identifies the session exactly only when `ANTIGRAVITY_CONVERSATION_ID` is set. Without it, the lookup falls back to whichever conversation directory was touched most recently, which can be a different session's plan if several are open. Check the resolved path in the run banner, or pass the plan path explicitly, when more than one Antigravity conversation is live.
+
+### Working on `main` or a Detached HEAD
+The plan path's slug normally comes from your branch name, which is what lets a plan review today and a code review tomorrow land on the same file with no coordination. On a protected branch (`main`, `master`, `develop`, `trunk`) or a detached HEAD, a branch slug would collide across unrelated work, so the slug falls back to your conversation id — meaning only *this* session finds that plan automatically; a later session needs the path or an explicit `--slug`. Under OpenCode, which exposes no conversation id, both derivations fail on a protected branch and the resolver exits non-zero: pass `--slug <kebab-case-slug>`, or give the plan path directly.
+
+### Inspecting a Running Review
+Each dispatch prints a banner naming its provider, model, and session log path. Tail that log to watch a review in progress (`tail -f "<logFilePath>"`, or `Get-Content -Wait -Tail 30 "<logFilePath>"` in PowerShell). The filled prompt actually sent to the delegate is written next to it — useful when a review answers a question you did not think you asked. Both are under your OS temp directory, not the repo.
+
+### No Reviewer Available
+If every configured platform is missing, unauthenticated, or out of quota, the dispatch fails with `NO_DISPATCH_AVAILABLE` and the review falls back to an in-process read-only subagent on your own platform. Its findings are prefixed `[Subagent Fallback]` — that prefix means the second opinion came from the same model that wrote the plan, so it is a self-check rather than a genuinely independent review. Treat those findings with more scepticism, and re-run with a real delegate once one is reachable.
 
 ### False Claims on Uncommitted Code
 Delegates inspect the files present on disk. If your plan refers to code changes from an uncommitted draft branch or unstaged stash that is not present in the workspace, the delegate may flag them as missing symbols. Ensure workspace dependencies and referenced files exist before running review.

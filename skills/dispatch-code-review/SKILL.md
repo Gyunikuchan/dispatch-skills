@@ -1,6 +1,6 @@
 ---
 name: dispatch-code-review
-description: Review session code changes across 6 axes through external agent CLIs, then adjudicate returned claims. Use on /dispatch-code-review or when code changes need a cross-agent review.
+description: Get a cross-agent review of working-tree code changes, verifying every returned claim against the cited lines. Use on /dispatch-code-review, or when a diff needs a second opinion from another agent CLI.
 ---
 
 # dispatch-code-review
@@ -21,13 +21,19 @@ Attach the change walkthrough and implementation plan (if present), plus any use
 
 Resolve context files in order. Plan and walkthrough share one slug and one resolver call:
 
-1. **User- or orchestrator-supplied plan/walkthrough** when an explicit path is passed or an orchestrating skill hands one over — skip the script for that kind.
+1. **User- or orchestrator-supplied plan/walkthrough** when an explicit path is passed or an orchestrating skill hands one over — skip the script for that kind. When only *one* kind is supplied and it is a canonical scratch path (`.scratch/plan/<yyyy-mm-dd>-<slug>.md` for a plan, `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` for a walkthrough), resolve the other kind from the same slug rather than letting the branch derive a different one — otherwise an explicitly named walkthrough gets paired with an unrelated plan, or none:
+   ```bash
+   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --kind <other kind> --slug <slug from the supplied filename>
+   ```
+   When the supplied path is not a canonical scratch path, there is no slug to share: resolve the other kind normally, and attach nothing for it if it does not exist.
 2. **Otherwise**, run the resolver once for both kinds per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (it derives the slug; add `--slug <kebab-slug>` only when the user names one or derivation fails):
    ```bash
    node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
    ```
    For `plan`: `tier: native` or `scratch-existing` means a plan already exists — attach it (e.g. from a prior planning phase); `tier: scratch-new` (`exists: false`) — omit `-f` for the plan, none exists.
    For `walkthrough`: `tier: native` or `scratch-existing` means one already exists — attach it as-is; `tier: scratch-new` — author the returned path following [references/walkthrough-template.md](references/walkthrough-template.md) before dispatching.
+
+**Re-review round** (standalone): derive `<Review Scope>` from the resolved walkthrough, not from a caller. No rounds logged under `## Review Findings & Resolutions` means `Full review`; `n` logged rounds means `Re-review round <n+1>`, naming the code changed since that last round.
 
 **Prompt**: fill [references/prompt-template.md](references/prompt-template.md) (its variable bullets say what each value holds; orchestrated mode takes `Review Scope` and `Tool Turn Budget` from the handover) via `dispatch`'s `fill-template.mjs` per `references/alignment.md` § Prompt Template Filling: `node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/dispatch-code-review/references/prompt-template.md --vars <json file> --out <path>` (a JSON vars file carries multi-line values such as `<Task Summary>`), then `dispatch --prompt-file <out>`.
 
@@ -51,9 +57,10 @@ Locus note: ground truth for a code claim is the cited `<file>:L<line>` plus eno
 
 ### 3. Fold findings into walkthrough and report
 
-1. **Apply fixes** (standalone mode only — an orchestrated caller owns its own fix step): apply accepted `MUST-FIX` items and approved modifications to the codebase. When fixes modify additional code or verification results, update `## Changes Made` and `## Verification & Validation` in the walkthrough accordingly.
-2. **Record review outcomes**: append this round's log under `## Review Findings & Resolutions` in the walkthrough file per `dispatch`'s `references/alignment.md` § Resolutions Log (create the heading at the end of the walkthrough when absent).
+1. **Apply fixes** (standalone mode only — an orchestrated caller owns its own fix step): apply every accepted finding to the codebase — `MUST-FIX` items and any accepted `SHOULD-FIX` small enough to land safely now. Record each accepted `SHOULD-FIX` / `CONSIDER` item you do *not* apply under `## Follow-ups` in the walkthrough, with a one-line reason; an accepted finding with no destination is a finding that gets lost. Update `## Changes Made` and `## Verification & Validation` when fixes change code or results.
+2. **Re-verify** (standalone mode only): re-run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green. Fixes applied in step 1 are unreviewed code; shipping them without re-running the suite is how a review leaves the tree redder than it found it. Record the command and its result in `## Verification & Validation`.
+3. **Record review outcomes**: append this round's log under `## Review Findings & Resolutions` in the walkthrough file per `dispatch`'s `references/alignment.md` § Resolutions Log (create the heading at the end of the walkthrough when absent).
 
-**Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip both fix application and the user report — the orchestrator applies its own fixes and its handoff covers reporting.
+**Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip fix application, re-verification and the user report — the orchestrator applies its own fixes, runs its own verification, and its handoff covers reporting.
 
-**Done when:** (standalone only) accepted fixes are applied, `## Review Findings & Resolutions` is updated with this round's adjudications, and (standalone only) the user report is delivered with provider prefix.
+**Done when:** (standalone only) accepted fixes are applied, undeferred items are recorded under `## Follow-ups`, and the host verify command is green; `## Review Findings & Resolutions` is updated with this round's adjudications; and (standalone only) the user report is delivered with provider prefix.

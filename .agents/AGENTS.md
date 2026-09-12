@@ -36,6 +36,10 @@ skills/dispatch/                 runner + provider cascade; scripts/ and referen
 skills/dispatch-plan-review/     plan review criteria and adjudication
 skills/dispatch-code-review/     code review criteria and adjudication
 skills/implement-dispatch/       control flow: plan → review → implement → review → consensus
+.agents/skills/                  repo-development skills (audit-dispatch-skills), not shipped
+scripts/                         repo tooling (hash generation, config validation)
+tests/                           mirrors the tree under test: tests/skills/<skill>/, tests/scripts/,
+                                 tests/integration/ for cross-skill invariants
 ```
 
 ### Unidirectional Dependency Flow
@@ -63,14 +67,13 @@ Differentiate human documentation, agent execution contracts, and non-operationa
 
 ## Authoring & Cross-Platform Standards
 
-Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs). Leverage plans and walkthroughs created by Antigravity.
+Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs).
 
 Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, Copilot, and OpenCode:
 
 - **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `skills/dispatch/references/alignment.md`. Ensure alignment, downward independence, and compatibility across standalone and orchestrated invocations.
 - **Naming**: kebab-case for skill identifiers and filenames.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
-- **Line endings**: LF normalized via `.gitattributes`.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
 - **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`. Orchestrators owning the full lifecycle relocate scratch artifacts to OS temp on completion; standalone reviews retain theirs (see `skills/dispatch/references/alignment.md` § Artifact Lifecycle). Note: `.scratch/` is intentionally not git-ignored; review `git status` before committing.
 

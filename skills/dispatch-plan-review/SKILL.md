@@ -1,6 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Review an implementation plan through external agent CLIs before code is written, then adjudicate returned claims. Use on /dispatch-plan-review or when a plan needs a pre-implementation cross-agent review.
+description: Get a cross-agent review of an implementation plan before any code is written, verifying every returned claim against the requirement and the repository's rules. Use on /dispatch-plan-review, or when a plan needs a second opinion from another agent CLI.
 ---
 
 # dispatch-plan-review
@@ -10,6 +10,16 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 ## Invocation
 
 `dispatch`'s `references/alignment.md` § Invocation is the base grammar (`/dispatch-plan-review (<pins>) [<artifact path>] [<focus>]`); the artifact path here is always the plan.
+
+**Reading the trailing arguments.** The base grammar's one trailing slot has to serve three prompt variables, so split it by shape:
+
+| Trailing text | Fills |
+|---|---|
+| First token that names an existing file, or ends in `.md` | `<artifact path>` — the plan |
+| Prose describing a change to make, when no plan exists yet | `<Requirement>` — and the plan is authored from it |
+| Anything else (e.g. "focus on the migration path") | `<User Focus Areas>` |
+
+When a plan already exists, `<Requirement>` comes from the plan's own goal statement, not the trailing text. Set `<User Focus Areas>` to `General review` when nothing remains.
 
 ## Process
 
@@ -25,6 +35,10 @@ Attach the plan file plus any user-specified files with `-f "<path>"` (forward s
    node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --kind plan
    ```
    `tier: native` or `scratch-existing` means an artifact already exists — attach it as-is, no authoring. `tier: scratch-new` means none exists: write the returned path following [references/plan-template.md](references/plan-template.md) before dispatching.
+
+   **Stale-plan guard**: `scratch-existing` matches the branch slug at *any* date, so a plan from earlier work on this branch resolves even when the user asked to review something new. When the trailing text is a `<Requirement>` (a change to plan) and the resolved plan does not cover it, stop and ask whether to overwrite that plan, review it as-is, or author a new one under a fresh `--slug`. Never silently review a plan that answers a different question.
+
+   **Re-review round**: derive `<Review Scope>` from the resolved plan, not from a caller. A plan whose `## Review Findings & Resolutions` holds no rounds gets `Full review`; one with `n` logged rounds gets `Re-review round <n+1>`, naming the sections edited since that last round.
 
 **Prompt**: fill [references/prompt-template.md](references/prompt-template.md) (its variable bullets say what each value holds; orchestrated mode takes `Review Scope` and `Tool Turn Budget` from the handover) via `dispatch`'s `fill-template.mjs` per `references/alignment.md` § Prompt Template Filling: `node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/dispatch-plan-review/references/prompt-template.md --vars <json file> --out <path>` (a JSON vars file carries multi-line values such as `<Requirement>`), then `dispatch --prompt-file <out>`.
 

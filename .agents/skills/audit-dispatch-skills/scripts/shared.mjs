@@ -11,8 +11,16 @@ import path from 'node:path';
 
 // Audit output is excluded from integrity snapshots: `.scratch/` is tracked-visible, and the
 // audit's own writes would otherwise read as repo changes.
+// ==========================================================================
+// SECTION: Constants
+// ==========================================================================
+
 const AUDIT_PREFIX = '.scratch/audits/';
 const RUN_ID = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
+
+// ==========================================================================
+// SECTION: Paths & Run Directories
+// ==========================================================================
 
 export function resolveRepoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
@@ -50,6 +58,10 @@ export function resolveRunDirs(root, argv) {
     rel: relTo(root),
   };
 }
+
+// ==========================================================================
+// SECTION: Markdown Frontmatter
+// ==========================================================================
 
 /**
  * Parses a frontmatter `description:` field as either a single-line scalar or a YAML
@@ -89,6 +101,10 @@ export function frontmatterDescription(text) {
 
   return continuation.join(isFolded ? ' ' : '\n').trim();
 }
+
+// ==========================================================================
+// SECTION: Git Status Snapshots
+// ==========================================================================
 
 /**
  * `git status --porcelain` with every untracked file listed individually (a collapsed `?? dir/`

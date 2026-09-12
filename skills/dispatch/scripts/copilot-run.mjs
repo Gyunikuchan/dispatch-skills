@@ -26,6 +26,7 @@ import {
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
   DEFAULT_TIMEOUT_SECONDS,
+  dedupeTargetsByBinary,
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
@@ -135,6 +136,7 @@ export async function runCopilot(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     copilotMode = 'auto',
+    initialGitStatus: baselineGitStatus = null,
   } = options;
 
   const viableTargets = findViableTargets(copilotMode);
@@ -143,15 +145,17 @@ export async function runCopilot(options = {}) {
   }
 
   const sessionLogger = createSessionLogger('copilot');
-  const initialGitStatus = getGitStatus();
+  // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
+  const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const effectiveModel = model || null;
   const effectiveEffort = effort || null;
 
   let lastResult = null;
 
-  // Cascade across viable targets in priority order. A quota/auth failure advances
-  // to the next target; any other outcome is returned immediately.
+  // Cascade across viable targets in priority order. A quota failure or a spawn error advances to
+  // the next target; any other outcome — an auth failure included — is returned immediately.
+  // See nextCopilotStep for why auth does not cascade.
   for (let i = 0; i < viableTargets.length; i++) {
     const target = viableTargets[i];
     const isLastTarget = i === viableTargets.length - 1;
@@ -173,7 +177,7 @@ export async function runCopilot(options = {}) {
       const step = nextCopilotStep({ result, error: null, canCascade });
       if (step === 'next-target') {
         process.stderr.write(
-          `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed or token missing).\n` +
+          `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed).\n` +
             `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
         );
         lastResult = result;
@@ -203,7 +207,8 @@ export async function runCopilot(options = {}) {
 /**
  * Returns viable Copilot targets in preference order, each probed up to executable
  * reachability. Falls back to on-disk presence (without reachability) if no probe
- * succeeds — covers sandboxes where `--version` invocation is inconclusive.
+ * succeeds — covers sandboxes where `--version` invocation is inconclusive. Modes resolving to one
+ * binary are collapsed (see dedupeTargetsByBinary).
  * @param {'auto'|CopilotMode} copilotMode
  * @returns {CopilotTarget[]}
  */
@@ -220,13 +225,13 @@ function findViableTargets(copilotMode) {
       viable.push({ mode: candidate.mode, name: candidate.name, binary: bin, version: probe.version });
     }
   }
-  if (viable.length > 0) return viable;
+  if (viable.length > 0) return dedupeTargetsByBinary(viable, (t) => t.binary);
 
   for (const candidate of candidates) {
     const bin = candidate.fn();
     if (bin) viable.push({ mode: candidate.mode, name: candidate.name, binary: bin, version: null });
   }
-  return viable;
+  return dedupeTargetsByBinary(viable, (t) => t.binary);
 }
 
 /**
@@ -239,8 +244,12 @@ function findViableTargets(copilotMode) {
  */
 export function nextCopilotStep({ result, error, canCascade }) {
   if (error) return canCascade ? 'next-target' : 'throw';
-  const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
-  if (isQuotaOrAuth && canCascade) return 'next-target';
+  // `auth` is deliberately absent: every mode is spawned with the same getSanitizedEnv(), so all
+  // three binaries read one per-user credential store (~/.copilot). A login failure is account
+  // state, identical for each mode, and retrying it only burns time — the audit's probe measured
+  // three identical `No authentication information found` runs. Restore `auth` here if a mode ever
+  // gains its own HOME/config-dir. `quota` still cascades, and a spawn error (above) always does.
+  if (result.failureKind === 'quota' && canCascade) return 'next-target';
   return 'return';
 }
 

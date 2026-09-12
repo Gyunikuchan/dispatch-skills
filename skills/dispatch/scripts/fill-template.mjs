@@ -27,6 +27,13 @@
  * in the template body (`<file>:L<line>`, `<tag>`, `<axis>`, `<Section>`) are left untouched
  * because they were never declared.
  *
+ * Before filling, the owning skill's `skill-hashes.json` (one directory up from a
+ * `references/` template) is checked when present: drift in the template itself aborts the
+ * fill, drift elsewhere in the skill only warns. This detects an unnoticed or accidental
+ * modification before the prompt reaches a delegate — it is not tamper resistance, since
+ * whoever can edit the template can also rewrite the unhashed manifest. A skill with no
+ * manifest is filled without a check.
+ *
  * `--out <path>` writes the filled prompt as UTF-8 (creating parent directories) and prints the
  * path; omitted, the filled prompt is printed to stdout.
  */
@@ -34,7 +41,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { isMainModule } from './common.mjs';
+import { isMainModule, verifySkillIntegrity } from './common.mjs';
 
 const DEFAULT_SECTION = 'Prompt template';
 
@@ -151,6 +158,45 @@ export function fillTemplate(template, variables, values) {
 // SECTION: CLI entry point
 // ============================================================================
 
+/**
+ * Resolves the skill root owning a template path: `<skill>/references/x.md` and
+ * `<skill>/SKILL.md` both resolve to `<skill>`.
+ */
+export function resolveSkillRoot(templatePath) {
+  const dir = path.dirname(path.resolve(templatePath));
+  return path.basename(dir) === 'references' ? path.dirname(dir) : dir;
+}
+
+/**
+ * Aborts when the manifest flags the template being filled; other drift in the same skill only
+ * warns, because editing a sibling `SKILL.md` is the normal way these skills get tuned and
+ * must not block a review. Skills without a manifest (a standalone template, or one outside the
+ * hashed skills) fill unchecked — the absence is a packaging choice, not a violation.
+ */
+function assertTemplateIntegrity(templatePath) {
+  const skillRoot = resolveSkillRoot(templatePath);
+  if (!fs.existsSync(path.join(skillRoot, 'skill-hashes.json'))) return;
+
+  const integrity = verifySkillIntegrity(skillRoot);
+  if (integrity.valid) return;
+
+  const templateKey = path.relative(skillRoot, path.resolve(templatePath)).split(path.sep).join('/');
+  const others = integrity.violations.filter((v) => v !== templateKey);
+  if (others.length > 0) {
+    process.stderr.write(
+      `[fill-template] WARNING: ${skillRoot} has modified files not covered by this fill: ` +
+        `${others.join(', ')}. Run \`node scripts/generate-hashes.mjs\` if the change was intended.\n`,
+    );
+  }
+  if (!integrity.violations.includes(templateKey)) return;
+
+  process.stderr.write(
+    `Error: skill file integrity check failed for ${templateKey} in ${skillRoot}.\n` +
+      'The template no longer matches its recorded hash; refusing to fill it.\n',
+  );
+  process.exit(1);
+}
+
 function parseArgs(args) {
   const opts = { section: DEFAULT_SECTION, vars: [], varsFile: null, out: null, list: false };
 
@@ -225,6 +271,8 @@ function main() {
     process.stderr.write(`Error: SKILL.md not found: ${opts.skill}\n`);
     process.exit(1);
   }
+
+  assertTemplateIntegrity(opts.skill);
 
   const markdown = fs.readFileSync(opts.skill, 'utf8');
 

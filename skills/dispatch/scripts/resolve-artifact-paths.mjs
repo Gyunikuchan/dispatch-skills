@@ -36,8 +36,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { PROJECT_ROOT, isMainModule, spawnCliSync } from './common.mjs';
-import { detectOrchestrator } from './dispatch.mjs';
+import { PROJECT_ROOT, detectOrchestrator, isMainModule, spawnCliSync } from './common.mjs';
 import { AGY_MODE_DATA_DIRS } from './agy-run.mjs';
 
 export const SCRATCH_DIR = '.scratch/plan';

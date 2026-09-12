@@ -159,7 +159,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 
 ## 6. Orchestrator Detection
 
-`detectOrchestrator()` in [`scripts/dispatch.mjs`](../scripts/dispatch.mjs) inspects host CLI environment markers to skip dispatching back to the orchestrator's own platform:
+`detectOrchestrator()` in [`scripts/common.mjs`](../scripts/common.mjs) (re-exported by `dispatch.mjs`) inspects host CLI environment markers to skip dispatching back to the orchestrator's own platform:
 
 | Orchestrator | Markers |
 |--------------|---------|

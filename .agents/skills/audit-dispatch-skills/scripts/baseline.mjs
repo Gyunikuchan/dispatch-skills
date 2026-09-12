@@ -17,6 +17,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { isMainModule } from '../../../../skills/dispatch/scripts/common.mjs';
 import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
@@ -35,6 +36,19 @@ const TEST_TIMEOUT_MS = 10 * 60 * 1000;
 async function main() {
   const root = resolveRepoRoot();
   const { workDir, rel } = resolveRunDirs(root, process.argv);
+
+  // Re-running step 1 to resume an audit used to overwrite the baseline it was resuming from,
+  // silently replacing the pre-audit git status and test output the finalize step compares against.
+  const existing = fs.existsSync(path.join(workDir, 'git-status.txt'));
+  if (existing && !process.argv.includes('--force')) {
+    throw new Error(
+      `A baseline already exists at ${rel(workDir)}.\n` +
+        'Resuming an audit should reuse it — re-running this step would replace the pre-audit ' +
+        'snapshot that finalize compares against.\n' +
+        'Pass --force to overwrite deliberately, or --run <id> to start a separate run.',
+    );
+  }
+
   fs.mkdirSync(workDir, { recursive: true });
 
   fs.writeFileSync(path.join(workDir, 'git-status.txt'), auditGitStatus(root) ?? '', 'utf8');
@@ -144,7 +158,7 @@ async function buildMetrics(root) {
 // ============================================================================
 
 /** Repo-authored skills under `.agents/skills`: real directories not installed via skills-lock.json. */
-function authoredSkillDirs(root) {
+export function authoredSkillDirs(root) {
   const base = path.join(root, '.agents', 'skills');
   let vendored = new Set();
   try {
@@ -178,19 +192,37 @@ function walk(dir) {
 // SECTION: Link Checking
 // ============================================================================
 
-function brokenLinks(file) {
+export function brokenLinks(file) {
   const problems = [];
   let inFence = false;
   fs.readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
-    if (/^\s*```/.test(line)) inFence = !inFence;
+    // A fence delimiter toggles and is itself skipped; code fences routinely show placeholder
+    // link syntax that is not meant to resolve.
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
     if (inFence) return;
+
     for (const [, target] of line.matchAll(/\]\(([^)\s]+)\)/g)) {
-      if (/^[a-z]+:/i.test(target)) continue;
+      if (/^[a-z]+:/i.test(target)) continue; // http(s):, mailto:, etc.
       const [targetPath, anchor] = target.split('#');
-      const resolved = targetPath ? path.resolve(path.dirname(file), decodeURIComponent(targetPath)) : file;
+
+      if (!targetPath) {
+        // Same-file #anchor link.
+        if (anchor && file.endsWith('.md') && !headingSlugs(file).has(anchor)) {
+          problems.push({ line: i + 1, target, reason: 'missing anchor' });
+        }
+        continue;
+      }
+
+      const resolved = path.resolve(path.dirname(file), decodeURIComponent(targetPath));
       if (!fs.existsSync(resolved)) {
         problems.push({ line: i + 1, target, reason: 'missing file' });
-      } else if (anchor && resolved.endsWith('.md') && !headingSlugs(resolved).has(anchor)) {
+        continue;
+      }
+      // A link may legitimately target a directory; only a file can carry heading anchors.
+      if (anchor && resolved.endsWith('.md') && fs.statSync(resolved).isFile() && !headingSlugs(resolved).has(anchor)) {
         problems.push({ line: i + 1, target, reason: 'missing anchor' });
       }
     }
@@ -199,7 +231,7 @@ function brokenLinks(file) {
 }
 
 /** GitHub-style heading slugs. */
-function headingSlugs(file) {
+export function headingSlugs(file) {
   const slugs = new Set();
   for (const [, heading] of fs.readFileSync(file, 'utf8').matchAll(/^#{1,6}\s+(.+)$/gm)) {
     slugs.add(heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/g, '-'));
@@ -211,11 +243,14 @@ function headingSlugs(file) {
 // SECTION: Utilities
 // ============================================================================
 
-function loc(text) {
+export function loc(text) {
   return text.split('\n').filter((l) => l.trim()).length;
 }
 
-main().catch((err) => {
-  process.stderr.write(`[baseline] ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// Guarded so the helpers above can be imported and unit-tested without running a full baseline.
+if (isMainModule(import.meta.url)) {
+  main().catch((err) => {
+    process.stderr.write(`[baseline] ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

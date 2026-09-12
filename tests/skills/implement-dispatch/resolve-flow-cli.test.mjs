@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -8,17 +10,33 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const SCRIPT = path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/resolve-flow.mjs');
 
 /**
+ * Every provider reported reachable, so a run's outcome depends on the arguments under test
+ * rather than on what happens to be installed. One real-probe smoke test below opts out.
+ */
+const ALL_LIVE = JSON.stringify({ claude: true, agy: true, copilot: true, opencode: true });
+
+/**
  * Runs the resolver CLI and returns `{ status, stdout, stderr }`.
  *
- * A real run reaches `defaultLiveness`, which shells out to the provider CLIs; one of
- * those probes blocking would otherwise wedge the suite with no diagnostic, so the
- * spawn is bounded and a timed-out run fails loudly instead of hanging.
+ * Liveness is stubbed through the script's env seam: a real run shells out to each provider CLI,
+ * costing seconds per case and making assertions depend on the host's installed agents. Pass
+ * `{ liveness }` to vary what is reachable, or `{ realProbes: true }` to exercise the real path.
+ * The spawn stays bounded so a wedged probe fails loudly instead of hanging the suite.
  */
 function run(...args) {
+  const opts = typeof args.at(-1) === 'object' ? args.pop() : {};
+  const env = { ...process.env };
+  if (opts.realProbes) {
+    delete env.IMPLEMENT_DISPATCH_LIVENESS_JSON;
+  } else {
+    env.IMPLEMENT_DISPATCH_LIVENESS_JSON = opts.liveness ?? ALL_LIVE;
+  }
+
   const result = spawnSync(process.execPath, [SCRIPT, ...args], {
     encoding: 'utf8',
     timeout: 60_000,
     killSignal: 'SIGKILL',
+    env,
   });
   assert.equal(
     result.status !== null,
@@ -139,5 +157,87 @@ describe('resolve-flow CLI', () => {
     const { status, stderr } = run('--platform', 'claude', '--rounds=3');
     assert.equal(status, 1);
     assert.match(stderr, /Unrecognized argument "--rounds"/);
+  });
+
+  it('exits 1 when every pinned platform is dead', () => {
+    const { status, stderr } = run('--platform', 'claude', '--pins', 'agy', {
+      liveness: JSON.stringify({ claude: true, agy: false, copilot: false, opencode: false }),
+    });
+    assert.equal(status, 1);
+    assert.match(stderr, /agy/);
+  });
+
+  it('exits 1 when the liveness seam yields unparsable JSON', () => {
+    const { status, stderr } = run('--platform', 'claude', { liveness: '{not json' });
+    assert.equal(status, 1);
+    assert.match(stderr, /liveness/i);
+  });
+
+  it('reports a pinned platform that is unreachable in diagnostics', () => {
+    const { status, stdout } = run('--platform', 'claude', '--pins', 'agy,copilot', {
+      liveness: JSON.stringify({ claude: true, agy: true, copilot: false, opencode: false }),
+    });
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.ok(
+      JSON.stringify(flow.diagnostics).includes('copilot'),
+      'a dead pin is named in diagnostics rather than silently dropped',
+    );
+  });
+
+  it(
+    'probes real providers when the seam is absent',
+    { skip: process.env.RUN_LIVE_PROVIDER_PROBES ? false : 'set RUN_LIVE_PROVIDER_PROBES=1 to run' },
+    () => {
+      const { status, stdout } = run('--platform', 'claude', { realProbes: true });
+      assert.equal(status, 0);
+      assert.ok(JSON.parse(stdout).diagnostics);
+    },
+  );
+});
+
+describe('resolve-flow CLI: invalid config', () => {
+  /**
+   * Points the loader at a config directory of our own, so an invalid schema can be exercised
+   * without editing the shipped one.
+   */
+  const withConfig = (contents, ...args) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-cfg-'));
+    const skillDir = path.join(dir, 'implement-dispatch');
+    fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'config.jsonc'), contents);
+    // The script resolves its config relative to its own location, so it has to run from a copy.
+    fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
+    fs.cpSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
+      path.join(skillDir, 'config.default.jsonc'),
+    );
+    fs.cpSync(path.join(REPO_ROOT, 'skills/dispatch'), path.join(dir, 'dispatch'), { recursive: true });
+
+    try {
+      const result = spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
+        encoding: 'utf8',
+        timeout: 60_000,
+        killSignal: 'SIGKILL',
+        env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE },
+      });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
+  const INVALID = '{ "plan-review": { "platforms": {}, "maxRounds": {}, "targetCount": {}, "consensus": {}, "bogusKey": 1 } }';
+
+  it('--validate-only exits 1 for an invalid config', () => {
+    const { status, stderr } = withConfig(INVALID, '--validate-only');
+    assert.equal(status, 1);
+    assert.match(stderr, /Invalid config|unrecognized key/i);
+  });
+
+  it('the run path exits 1 on an invalid config before probing', () => {
+    const { status, stderr } = withConfig(INVALID, '--platform', 'claude');
+    assert.equal(status, 1);
+    assert.match(stderr, /Invalid config|unrecognized key/i);
   });
 });

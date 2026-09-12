@@ -20,8 +20,10 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  getGitStatus,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
+  detectOrchestrator,
   DEFAULT_TIMEOUT_SECONDS,
   isEmptyResult,
   isMainModule,
@@ -32,6 +34,10 @@ import {
   validateDispatchConfig,
   verifySkillIntegrity,
 } from './common.mjs';
+
+// Re-exported: it lives in common.mjs so resolve-artifact-paths.mjs can detect the host
+// without importing this module (and, through it, every provider runner).
+export { detectOrchestrator };
 import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
@@ -174,6 +180,11 @@ export async function dispatchTask(options = {}) {
     throw err;
   }
 
+  // One baseline for the whole cascade, taken before any provider runs. Per-runner baselines let a
+  // write by a provider that then failed become the *next* provider's clean starting point, so the
+  // breach was reported by nobody.
+  const initialGitStatus = getGitStatus();
+
   // Per-candidate: a CLI `-m`/`-e` override wins, else the config entry for that specific
   // provider, else null (the provider CLI's own default). Distinct models per provider are
   // required once config supplies them — a single shared `model` cannot express that.
@@ -181,6 +192,7 @@ export async function dispatchTask(options = {}) {
     const entry = config?.platforms?.[candidateProvider] ?? {};
     return {
       prompt,
+      initialGitStatus,
       files,
       agent,
       timeout,
@@ -230,6 +242,33 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
   const attemptFailures = [];
   let bestPartial = null;
 
+  // A provider that wrote to the workspace and *then* failed still breached read-only isolation.
+  // Its result is discarded by the cascade, so the violation is accumulated here and stamped onto
+  // whatever the cascade ultimately returns or throws.
+  let sawViolation = false;
+  const violationDetails = [];
+
+  /** Records any integrity breach reported by one attempt, whoever ends up answering. */
+  const absorbViolation = (outcome) => {
+    if (!outcome?.gitIntegrityViolation) return;
+    sawViolation = true;
+    const provider = outcome.provider ?? 'unknown';
+    const detail = outcome.gitIntegrityDetails
+      ? `${provider}:\n${outcome.gitIntegrityDetails}`
+      : `${provider}: (no detail)`;
+    if (!violationDetails.includes(detail)) violationDetails.push(detail);
+  };
+
+  /** Stamps the accumulated integrity state onto the cascade's answer. */
+  const withViolations = (result) => {
+    if (!result || !sawViolation) return result;
+    return {
+      ...result,
+      gitIntegrityViolation: true,
+      gitIntegrityDetails: violationDetails.join('\n') || null,
+    };
+  };
+
   for (let i = 0; i < candidates.length; i++) {
     const currentProvider = candidates[i];
     const nextProvider = candidates[i + 1] ?? null;
@@ -259,14 +298,17 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
 
       // A CLI that reports quota exhaustion or a refusal on stderr and still exits 0 is a
       // failure, not a silent success.
+      absorbViolation(result);
+
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
-        if (!shouldCascade('exited 0 with no output', kind)) return { ...result, exitCode: 1 };
+        if (!shouldCascade('exited 0 with no output', kind))
+          return withViolations({ ...result, exitCode: 1 });
         continue;
       }
 
       if (result.exitCode === 0) {
-        return result;
+        return withViolations(result);
       }
 
       if (!isEmptyResult(result)) {
@@ -275,8 +317,10 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
 
       const kind =
         result.failureKind || classifyFailure(`${result.stderr || ''}\n${result.stdout || ''}`);
-      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) return result;
+      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) return withViolations(result);
     } catch (err) {
+      // A runner can throw after the delegate already wrote; the error carries the same fields.
+      absorbViolation(err);
       const kind = err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`);
       if (!shouldCascade(err.message, kind)) throw err;
     }
@@ -286,7 +330,7 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
     process.stderr.write(
       `[dispatch] All providers failed; returning partial output from '${bestPartial.provider}'.\n`,
     );
-    return bestPartial;
+    return withViolations(bestPartial);
   }
 
   const err = new Error(
@@ -296,6 +340,9 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
   );
   err.code = 'NO_DISPATCH_AVAILABLE';
   err.failures = attemptFailures;
+  // Nobody answered, but somebody may still have written; the caller must hear about it.
+  err.gitIntegrityViolation = sawViolation;
+  err.gitIntegrityDetails = sawViolation ? violationDetails.join('\n') : null;
   throw err;
 }
 
@@ -416,7 +463,7 @@ Options:
   -f, --file, --artifact      Attach context file or artifact (repeatable)
   -m, --model <name>          Override model identifier (takes precedence over config)
   -e, --effort <level>        Override reasoning effort (takes precedence over config)
-  -a, --agent <name>          Override agent name
+  -a, --agent <name>          Override agent name (opencode provider only)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
@@ -494,10 +541,12 @@ export async function getCandidateProviders(params = {}) {
   const effectiveOrchestrator = orchestrator || detectOrchestrator();
   const alternatives = order.filter((p) => p !== effectiveOrchestrator);
 
-  const candidates = [];
-  for (const name of alternatives) {
-    if (await isProviderAvailable(name)) candidates.push(name);
-  }
+  // Probe concurrently: each probe spawns a CLI and waits on it, so serially they add up to seconds
+  // of pure latency before the first delegate starts. Cascade order is preserved by filtering the
+  // original list against the resolved results rather than by completion order. A pinned
+  // `--provider` never reaches here — that path returns above, probing nothing.
+  const availability = await Promise.all(alternatives.map((name) => isProviderAvailable(name)));
+  const candidates = alternatives.filter((_, i) => availability[i]);
 
   // Same agent as orchestrator (only if explicitly allowed, and a cascade member), tried last.
   if (
@@ -553,42 +602,6 @@ export async function executeProvider(provider, runnerOptions) {
 // SECTION: Orchestrator Detection
 // ============================================================================
 
-/**
- * Detects the orchestrator runtime from environment variables.
- *
- * Claude Code exports `CLAUDECODE` / `CLAUDE_CODE_*`; probing only the `CLAUDE_CODE` and
- * `CLAUDE_SESSION_ID` that never existed made detection return null there, so the cascade
- * delegated straight back to the orchestrator's own platform. The VS Code heuristic went for
- * the same reason: `VSCODE_PID` is set in any VS Code terminal, whichever agent drives it.
- * `--orchestrator` overrides whatever this returns.
- * @returns {Provider|null}
- */
-export function detectOrchestrator() {
-  if (
-    process.env.ANTIGRAVITY_AGENT ||
-    process.env.ANTIGRAVITY_CONVERSATION_ID ||
-    process.env.ANTIGRAVITY_SESSION_ID ||
-    process.env.GEMINI_CLI
-  ) {
-    return 'agy';
-  }
-  if (
-    process.env.CLAUDECODE ||
-    process.env.CLAUDE_CODE ||
-    process.env.CLAUDE_CODE_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    process.env.CLAUDE_CODE_ENTRYPOINT
-  ) {
-    return 'claude';
-  }
-  if (process.env.COPILOT_AGENT || process.env.COPILOT_CLI_SESSION_ID) {
-    return 'copilot';
-  }
-  if (process.env.OPENCODE_PORT || process.env.OPENCODE_AGENT) {
-    return 'opencode';
-  }
-  return null;
-}
 
 // ============================================================================
 // SECTION: Module Execution Guard

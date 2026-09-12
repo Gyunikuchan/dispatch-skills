@@ -26,4 +26,7 @@ Deviations from original plan or design intent, with rationale (or "None").
 ## Review Findings & Resolutions
 <!-- Populated during code review cycles -->
 *No reviews conducted yet.*
+
+## Follow-ups
+Accepted SHOULD-FIX / CONSIDER items not applied in this pass, each with a one-line reason (or "None").
 ````

@@ -28,7 +28,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the wo
 ### Instructions
 
 #### 1. Inspect Changes
-1. Run `git status --short`; inspect unstaged (`git diff`), staged (`git diff --staged`), and untracked (`??`) files, reading untracked source/text files in full (skip generated, vendored, or binary files). Fall back to `git diff HEAD~1` only when nothing outside `.scratch/` is modified or untracked.
+1. Run `git status --short`; inspect unstaged (`git diff`), staged (`git diff --staged`), and untracked (`??`) files, reading untracked source/text files in full (skip generated, vendored, or binary files). When nothing outside `.scratch/` is modified or untracked, the work is already committed: review the whole branch instead. Resolve the base branch — `origin/HEAD`, else `main`, else `master` — take its merge-base with `HEAD`, and diff that against `HEAD` so every commit on the branch is covered, not just the last one. If the merge-base *is* `HEAD` (you are on the base branch, or detached), that range is empty — review `git diff HEAD~1` instead.
 2. Cross-reference changes against the attached walkthrough and implementation plan (if provided) to verify intent fidelity, completeness, and test coverage.
 3. Test results are already given to you: read the walkthrough's `## Verification & Validation` for the verify command and its output, and spend your turns on the diff.
 4. Targeted inspection: inspect targeted diffs (`git diff --staged -- <paths>` / `git diff -- <paths>`) and check adjacent call sites, interfaces, or tests to verify contracts and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Read diff hunks plus the call sites, interfaces, and tests they touch; stop at that blast radius.

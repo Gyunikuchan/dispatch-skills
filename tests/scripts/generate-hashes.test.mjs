@@ -38,6 +38,72 @@ describe('generate-hashes script', () => {
     }
   });
 
+  it('the committed manifests cover dispatch and both review skills, including their templates', () => {
+    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review']) {
+      const manifestPath = path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      assert.ok('SKILL.md' in manifest, `${skill} manifest omits SKILL.md`);
+      if (skill !== 'dispatch') {
+        assert.ok(
+          'references/prompt-template.md' in manifest,
+          `${skill} manifest omits its prompt template`,
+        );
+      }
+    }
+  });
+
+  it('--skill writes just that skill, matching its committed manifest', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-hashes-skill-'));
+    const outPath = path.join(tmpDir, 'skill-hashes.json');
+    try {
+      const res = spawnSync(
+        process.execPath,
+        [scriptPath, '--skill', 'dispatch-code-review', '--out', outPath],
+        { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 10_000 },
+      );
+      assert.equal(res.status, 0, res.stderr);
+
+      const written = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+      const committed = JSON.parse(
+        fs.readFileSync(path.join(PROJECT_ROOT, 'skills', 'dispatch-code-review', 'skill-hashes.json'), 'utf8'),
+      );
+      assert.deepEqual(written, committed);
+      assert.ok(!('scripts/dispatch.mjs' in written), 'wrote another skill\'s files');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects --out combined with --check, which would narrow the drift check', () => {
+    const res = spawnSync(process.execPath, [scriptPath, '--check', '--out', 'x.json'], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /--out cannot combine with --check/);
+  });
+
+  it('rejects a repeated --skill', () => {
+    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch', '--skill', 'dispatch-plan-review'], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /only once/);
+  });
+
+  it('rejects an unknown --skill', () => {
+    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'implement-dispatch'], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /Unknown skill/);
+  });
+
   it('committed skill-hashes.json matches the skill files (--check exits 0)', () => {
     const res = spawnSync(process.execPath, [scriptPath, '--check'], {
       cwd: PROJECT_ROOT,

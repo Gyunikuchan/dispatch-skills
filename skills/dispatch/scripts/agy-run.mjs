@@ -146,6 +146,7 @@ export async function runAgy(options = {}) {
     verbose = false,
     modeVariant = null,
     agyMode = null,
+    initialGitStatus: baselineGitStatus = null,
   } = options;
 
   const bin = getAgyBinary();
@@ -171,7 +172,8 @@ export async function runAgy(options = {}) {
   }
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
-  const initialGitStatus = getGitStatus();
+  // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
+  const initialGitStatus = baselineGitStatus ?? getGitStatus();
 
   let lastResult = null;
   let lastError = null;
@@ -289,13 +291,52 @@ export function nextAgyStep({ result, hasNextMode }) {
  * @param {number} opts.timeout
  */
 export function buildAgyArgs(argvPrompt, briefFile, { model, effort, timeout }) {
-  const args = ['--print', argvPrompt, `--print-timeout=${timeout}s`];
+  // JSON output carries the conversation id explicitly. Without it the id can only be guessed from
+  // the newest brain-directory mtime, which hands two concurrent dispatches the same conversation
+  // (see parseAgyEnvelope and getNewestBrainConversationId).
+  const args = ['--print', argvPrompt, '--output-format', 'json', `--print-timeout=${timeout}s`];
   if (briefFile) args.push('--add-dir', path.dirname(briefFile));
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
   args.push('--mode', 'plan');
   args.push('--dangerously-skip-permissions');
   return args;
+}
+
+/**
+ * Extracts the conversation id and response text from an `--output-format json` envelope.
+ *
+ * Returns nulls rather than throwing when stdout is not the expected envelope — an older `agy`
+ * ignoring the flag, or a non-JSON error path — so callers can fall back to plain-text stdout and
+ * the brain-directory scan instead of losing the run.
+ *
+ * @param {string} stdout
+ * @returns {{ conversationId: string|null, text: string|null }}
+ */
+export function parseAgyEnvelope(stdout) {
+  const empty = { conversationId: null, text: null };
+  if (!stdout || !stdout.trim()) return empty;
+
+  // The envelope is normally the whole of stdout, but a banner or warning line can precede it.
+  const start = stdout.indexOf('{');
+  if (start === -1) return empty;
+
+  let envelope;
+  try {
+    envelope = JSON.parse(stdout.slice(start));
+  } catch {
+    return empty;
+  }
+  if (!envelope || typeof envelope !== 'object') return empty;
+
+  const conversationId =
+    envelope.conversationId ?? envelope.conversation_id ?? envelope.conversation?.id ?? null;
+  const text = envelope.response ?? envelope.result ?? envelope.text ?? envelope.output ?? null;
+
+  return {
+    conversationId: typeof conversationId === 'string' && conversationId ? conversationId : null,
+    text: typeof text === 'string' ? text : null,
+  };
 }
 
 /**
@@ -394,13 +435,16 @@ function executeAgyInMode(mode, options) {
       clearTimeout(timer);
       sessionLogger.close();
 
-      const conversationId = getNewestBrainConversationId(startTime, mode);
+      // The envelope names its own conversation; the mtime scan is the fallback for an older agy
+      // that ignored --output-format, and it cannot tell two concurrent dispatches apart.
+      const envelope = parseAgyEnvelope(stdoutBuffer);
+      const conversationId = envelope.conversationId ?? getNewestBrainConversationId(startTime, mode);
       const sessionLink = conversationId ? `conversation://${conversationId}` : null;
 
       const gitIntegrity = checkGitIntegrity(initialGitStatus);
 
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const cleanStdout = extractCleanResponse(stdoutBuffer);
+      const cleanStdout = envelope.text ?? extractCleanResponse(stdoutBuffer);
       const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
       const failureKind = classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
 
