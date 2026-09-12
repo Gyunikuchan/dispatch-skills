@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Audit Dispatch Skills
 
-A **report-only** audit of the `dispatch-skills` repository. The standard is `.agents/AGENTS.md`; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
+A **report-only** audit of the `dispatch-skills` repository. The standard is `.agents/AGENTS.md`; skills are verified for behavioral flow, correctness, and goal fulfillment; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
 
 Paths are relative to the repo root. `<skill>` is this skill's directory (`.agents/skills/audit-dispatch-skills` in Antigravity, `.claude/skills/audit-dispatch-skills` in Claude Code). `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start.
 
