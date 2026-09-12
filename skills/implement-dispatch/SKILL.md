@@ -98,7 +98,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 5. Code Review
 
-*Skip if `flow['code-review'].maxRounds === 0`.*
+*Skip Steps 5–7 if `flow['code-review'].maxRounds === 0`* — the same span `dispatch-code-review`'s absence skips. Skipping Step 5 alone would strand Step 6 with no claims to adjudicate and a completion bound it could never satisfy.
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
 2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.

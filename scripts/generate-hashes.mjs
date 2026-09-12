@@ -24,6 +24,10 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const skillsRoot = path.resolve(currentDir, '..', 'skills');
 
 // Skills carrying an integrity manifest. Keep in sync with `.husky/pre-commit`'s path pattern.
+// A skill is listed here only when something verifies its manifest: `dispatch` checks its own via
+// `assertSkillIntegrity`, and the review skills' templates are checked by `fill-template.mjs`.
+// `implement-dispatch` is deliberately absent — nothing reads such a manifest, so generating one
+// would ship a file no consumer checks.
 const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review'];
 
 const argv = process.argv.slice(2);
