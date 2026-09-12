@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
   buildTargets,
+  cell,
+  classifyDenylistBehaviour,
+  drainStaging,
   parseArgs,
+  renderSummary,
   statusOf,
 } from '../../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs';
 
@@ -129,5 +135,180 @@ describe('probe-dispatch: statusOf', () => {
   it('classifies an unreachable row differently', () => {
     const present = statusOf(row('claude', 'cli', '/bin/claude', false));
     assert.notEqual(present, statusOf(row('claude', 'cli', '/bin/claude')));
+  });
+});
+
+describe('probe-dispatch: cell', () => {
+  it('flattens newlines so a cell cannot break the table row', () => {
+    assert.equal(cell('a\r\nb\nc'), 'a b c');
+  });
+
+  it('escapes pipes so a value cannot forge a column', () => {
+    assert.equal(cell('a|b'), 'a\\|b');
+  });
+
+  it('truncates to 160 characters', () => {
+    assert.equal(cell('x'.repeat(400)).length, 160);
+  });
+
+  it('stringifies non-strings', () => {
+    assert.equal(cell(7), '7');
+  });
+});
+
+describe('probe-dispatch: classifyDenylistBehaviour', () => {
+  it('reports a skipped file for a clean rejection that exited 0', () => {
+    assert.equal(
+      classifyDenylistBehaviour({
+        rejected: true,
+        stderr: "[dispatch] Attachment rejected: 'probe-token.txt' matches sensitive file denylist.\nunreadable probe-token.txt\n",
+        code: 0,
+        failureKind: null,
+      }),
+      'skipped file',
+    );
+  });
+
+  it('does not blame the denylist for an unrelated failure alongside a rejection', () => {
+    assert.equal(
+      classifyDenylistBehaviour({
+        rejected: true,
+        stderr: "[dispatch] Attachment rejected: 'probe-token.txt' matches sensitive file denylist.\nunreadable probe-token.txt\n[dispatch] 401 unauthorized\n",
+        code: 1,
+        failureKind: 'auth',
+      }),
+      'rejected; run failed for another reason',
+    );
+  });
+
+  it('trusts the runner wording over a non-zero exit when no failure was classified', () => {
+    assert.equal(
+      classifyDenylistBehaviour({ rejected: true, stderr: 'unreadable probe-token.txt\n', code: 2, failureKind: null }),
+      'skipped file',
+    );
+  });
+
+  it('falls back to the exit code when the runner said nothing about what it did', () => {
+    assert.equal(
+      classifyDenylistBehaviour({ rejected: true, stderr: 'rejected\n', code: 3, failureKind: null }),
+      'aborted run',
+    );
+    assert.equal(
+      classifyDenylistBehaviour({ rejected: true, stderr: 'rejected\n', code: 0, failureKind: null }),
+      'skipped file',
+    );
+  });
+
+  it('reports an unrejected denylisted file regardless of wording or failure', () => {
+    assert.equal(
+      classifyDenylistBehaviour({ rejected: false, stderr: 'unreadable x\n', code: 0, failureKind: 'auth' }),
+      'not rejected',
+    );
+  });
+});
+
+describe('probe-dispatch: renderSummary', () => {
+  const rows = [row('claude', 'cli', '/bin/claude'), row('agy', 'antigravity-cli', null, false)];
+  const config = { platforms: { claude: {} } };
+  const fixture = { dir: '/home/u/.dispatch-audit-probe-x' };
+
+  /** One `runTarget` result, overridable per assertion. */
+  const result = (over = {}) => ({
+    id: 'claude',
+    via: 'dispatch',
+    aliases: ['cli'],
+    exitCode: 0,
+    seconds: 12,
+    checks: { exit: true, attached: true, sibling: true, denylist: true, readonly: true },
+    denylistBehaviour: 'skipped file',
+    failure: null,
+    pass: true,
+    log: '/tmp/read.log',
+    logs: { read: '/tmp/read.log', denylist: '/tmp/deny.log' },
+    captures: 'claude.{read,denylist}.{stdout,stderr}.txt',
+    ...over,
+  });
+
+  it('returns after discovery under --discover-only, with no live section', () => {
+    const out = renderSummary({
+      rows,
+      live: [],
+      fixture: null,
+      config,
+      opts: { discoverOnly: true, modes: false },
+    });
+    assert.match(out, /## Discovery \(token-free\)/);
+    assert.match(out, /## Not found \/ unreachable/);
+    assert.ok(!out.includes('## Live probe'), 'discover-only must not render the live section');
+  });
+
+  it('renders a Read-only column and marks a tripped integrity guard as FAIL', () => {
+    const out = renderSummary({
+      rows,
+      live: [
+        result({
+          checks: { exit: true, attached: true, sibling: true, denylist: true, readonly: false },
+          pass: false,
+          failure: 'unclassified — read the captures',
+        }),
+      ],
+      fixture,
+      config,
+      opts: { discoverOnly: false, modes: false },
+    });
+    assert.match(out, /\| Read-only \|/);
+    assert.match(out, /FAIL \(unclassified — read the captures\)/);
+  });
+
+  it('lists both session logs, and a shared log path only once', () => {
+    const both = renderSummary({
+      rows,
+      live: [result()],
+      fixture,
+      config,
+      opts: { discoverOnly: false, modes: false },
+    });
+    assert.match(both, /\/tmp\/read\.log/);
+    assert.match(both, /\/tmp\/deny\.log/);
+
+    const shared = renderSummary({
+      rows,
+      live: [result({ logs: { read: '/tmp/same.log', denylist: '/tmp/same.log' } })],
+      fixture,
+      config,
+      opts: { discoverOnly: false, modes: false },
+    });
+    assert.equal(shared.match(/\/tmp\/same\.log/g).length, 1);
+  });
+});
+
+describe('probe-dispatch: drainStaging', () => {
+  it('moves every staged capture into the output dir and removes the staging dir', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
+    const stageDir = path.join(base, 'stage');
+    const outDir = path.join(base, 'out');
+    fs.mkdirSync(stageDir);
+    fs.mkdirSync(outDir);
+    try {
+      fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
+      fs.writeFileSync(path.join(stageDir, 'claude.denylist.stderr.txt'), 'two', 'utf8');
+
+      drainStaging(stageDir, outDir);
+
+      assert.deepEqual(fs.readdirSync(outDir).sort(), ['claude.denylist.stderr.txt', 'claude.read.stdout.txt']);
+      assert.equal(fs.readFileSync(path.join(outDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
+      assert.equal(fs.existsSync(stageDir), false);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it('is a no-op when nothing was staged', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
+    try {
+      assert.doesNotThrow(() => drainStaging(path.join(base, 'absent'), base));
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });

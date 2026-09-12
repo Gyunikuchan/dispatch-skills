@@ -75,13 +75,17 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
 
   const providers = opts.only ?? PROVIDERS;
-  const rows = (await discover(mods)).filter((r) => providers.includes(r.provider));
+  const rows = await discover(mods, providers);
   const config = loadConfig(mods, repoRoot);
 
   let live = [];
   let fixture = null;
   if (!opts.discoverOnly) {
     fixture = createFixture(repoRoot);
+    // Captures are staged outside the repo: `outDir` is under `.scratch/`, which is deliberately
+    // not git-ignored, so a capture landing there while a sibling dispatch is live trips that
+    // delegate's read-only `git status` guard — the probe would manufacture the violation it checks.
+    const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-captures-'));
 
     // `finally` never runs when the process is signalled, and the fixture holds nonce files in the
     // user's home directory — Ctrl-C during a slow probe used to leave them there.
@@ -95,6 +99,12 @@ async function main() {
     };
     const onSignal = (signal) => {
       removeFixture();
+      // Signals bypass the `finally`, so the staged captures are discarded here rather than
+      // drained: an interrupted probe has no complete result to file, and the dir would otherwise
+      // be orphaned in OS temp once per interrupt. Only this path discards them.
+      try {
+        fs.rmSync(stageDir, { recursive: true, force: true });
+      } catch {}
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
       process.kill(process.pid, signal);
@@ -104,12 +114,20 @@ async function main() {
 
     try {
       const targets = buildTargets(rows, { modes: opts.modes, config, scriptsDir });
-      const ctx = { repoRoot, outDir, fixture, timeout: opts.timeout, classifyFailure: mods.common.classifyFailure };
-      live = await Promise.all(targets.map((t) => runTarget(t, ctx)));
+      const ctx = { repoRoot, stageDir, fixture, timeout: opts.timeout, classifyFailure: mods.common.classifyFailure };
+      // `allSettled`, not `all`: `all` rejects on the first failure while sibling delegates are
+      // still running, so the `finally` below would drain captures into the repo mid-flight and
+      // trip exactly the read-only guard this staging exists to protect.
+      const settled = await Promise.allSettled(targets.map((t) => runTarget(t, ctx)));
+      const failed = settled.find((s) => s.status === 'rejected');
+      if (failed) throw failed.reason;
+      live = settled.map((s) => s.value);
     } finally {
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
       removeFixture();
+      // Every delegate has settled by now, so the captures can land in the repo.
+      drainStaging(stageDir, outDir);
     }
   }
 
@@ -123,36 +141,49 @@ async function main() {
 // SECTION: Discovery (token-free)
 // ============================================================================
 
-/** @returns {Promise<ModeRow[]>} */
-async function discover({ claude, agy, copilot, opencode }) {
+/**
+ * Each provider's block is gated on `providers`, so `--only` narrows the run itself rather than
+ * filtering rows after every binary has already been shelled out to.
+ * @returns {Promise<ModeRow[]>}
+ */
+async function discover({ claude, agy, copilot, opencode }, providers = PROVIDERS) {
+  const wanted = new Set(providers);
   const rows = [];
 
-  for (const r of claude.probeAllClaudeModes()) {
-    rows.push({ provider: 'claude', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.version || r.error || '' });
+  if (wanted.has('claude')) {
+    for (const r of claude.probeAllClaudeModes()) {
+      rows.push({ provider: 'claude', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.version || r.error || '' });
+    }
   }
 
-  for (const r of agy.probeAllAgyModes()) {
-    rows.push({ provider: 'agy', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.error || '' });
+  if (wanted.has('agy')) {
+    for (const r of agy.probeAllAgyModes()) {
+      rows.push({ provider: 'agy', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.error || '' });
+    }
   }
 
-  const copilotModes = copilot.probeCopilotModes();
-  for (const mode of ['desktop', 'vscode', 'cli']) {
-    const r = copilotModes[mode] ?? {};
-    rows.push({ provider: 'copilot', mode, bin: r.binary ?? null, reachable: !!r.reachable, detail: r.version || r.error || '' });
+  if (wanted.has('copilot')) {
+    const copilotModes = copilot.probeCopilotModes();
+    for (const mode of ['desktop', 'vscode', 'cli']) {
+      const r = copilotModes[mode] ?? {};
+      rows.push({ provider: 'copilot', mode, bin: r.binary ?? null, reachable: !!r.reachable, detail: r.version || r.error || '' });
+    }
   }
 
-  // opencode has one binary; its "mode" is whether the resolved endpoint is local.
-  const settings = opencode.resolveOpencodeSettings();
-  const hasBinary = opencode.isOpencodeBinaryAvailable();
-  rows.push({
-    provider: 'opencode',
-    mode: settings.isLocal ? 'local' : 'remote',
-    bin: hasBinary ? 'opencode (PATH)' : null,
-    reachable: hasBinary && (await opencode.isOpencodeAvailable(settings)),
-    detail: settings.rawModel
-      ? `${settings.rawModel}${settings.isLocal ? ` @ ${settings.baseURL}` : ''}`
-      : 'no model configured (CLI default)',
-  });
+  if (wanted.has('opencode')) {
+    // opencode has one binary; its "mode" is whether the resolved endpoint is local.
+    const settings = opencode.resolveOpencodeSettings();
+    const hasBinary = opencode.isOpencodeBinaryAvailable();
+    rows.push({
+      provider: 'opencode',
+      mode: settings.isLocal ? 'local' : 'remote',
+      bin: hasBinary ? 'opencode (PATH)' : null,
+      reachable: hasBinary && (await opencode.isOpencodeAvailable(settings)),
+      detail: settings.rawModel
+        ? `${settings.rawModel}${settings.isLocal ? ` @ ${settings.baseURL}` : ''}`
+        : 'no model configured (CLI default)',
+    });
+  }
 
   return rows;
 }
@@ -221,14 +252,15 @@ export function buildTargets(rows, { modes, config, scriptsDir }) {
   return targets;
 }
 
-async function runTarget(target, { repoRoot, outDir, fixture, timeout, classifyFailure }) {
+async function runTarget(target, { repoRoot, stageDir, fixture, timeout, classifyFailure }) {
   const stem = target.id.replace(/[^a-z0-9.-]+/gi, '_');
   const invoke = async (kind, file, prompt) => {
     const started = Date.now();
     const argv = [target.script, ...target.baseArgs, '-t', String(timeout), '-f', file, prompt];
     const res = await spawnCapture(process.execPath, argv, { cwd: repoRoot, killAfterMs: timeout * 1000 + KILL_GRACE_MS });
-    fs.writeFileSync(path.join(outDir, `${stem}.${kind}.stdout.txt`), res.stdout, 'utf8');
-    fs.writeFileSync(path.join(outDir, `${stem}.${kind}.stderr.txt`), res.stderr, 'utf8');
+    // Staged, not written into the run directory: see the staging note in main().
+    fs.writeFileSync(path.join(stageDir, `${stem}.${kind}.stdout.txt`), res.stdout, 'utf8');
+    fs.writeFileSync(path.join(stageDir, `${stem}.${kind}.stderr.txt`), res.stderr, 'utf8');
     return { ...res, seconds: Math.round((Date.now() - started) / 1000) };
   };
 
@@ -243,11 +275,19 @@ async function runTarget(target, { repoRoot, outDir, fixture, timeout, classifyF
     sibling: read.stdout.includes(fixture.nonces.sibling),
     // Rejected at the runner, so the delegate never sees the nonce; runners word the rejection differently.
     denylist: !deny.stdout.includes(fixture.nonces.denylisted) && /rejected|denylist/i.test(deny.stderr),
+    // The delegate's own read-only integrity guard: a run that modified the working tree cannot PASS.
+    readonly: !/Workspace was modified during READ-ONLY execution/.test(`${read.stderr}${deny.stderr}`),
   };
   const pass = Object.values(checks).every(Boolean);
-  const log = /\| Log: (.+)$/m.exec(read.stderr)?.[1]?.trim() ?? null;
+  const logOf = (res) => /\| Log: (.+)$/m.exec(res.stderr)?.[1]?.trim() ?? null;
+  const logs = { read: logOf(read), denylist: logOf(deny) };
   // Runner notices paraphrase the cause; the session log carries the CLI's own error text.
-  const logTail = log && fs.existsSync(log) ? fs.readFileSync(log, 'utf8').slice(-8000) : '';
+  const tailOf = (file) => (file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').slice(-8000) : '');
+  const logTail = tailOf(logs.read);
+  // A cause living only in the denylist run's log was unreachable while only the read log was read.
+  const denyFailed = !checks.denylist || deny.code !== 0;
+  const denyLogTail = denyFailed && logs.denylist !== logs.read ? tailOf(logs.denylist) : '';
+  const denyFailureKind = classifyFailure(`${deny.stderr}\n${deny.stdout}\n${denyLogTail}`);
   return {
     id: target.id,
     via: target.via,
@@ -255,17 +295,61 @@ async function runTarget(target, { repoRoot, outDir, fixture, timeout, classifyF
     exitCode: read.code,
     seconds: read.seconds,
     checks,
-    denylistBehaviour: checks.denylist ? (deny.code === 0 ? 'skipped file' : 'aborted run') : 'not rejected',
+    denylistBehaviour: classifyDenylistBehaviour({
+      rejected: checks.denylist,
+      stderr: deny.stderr,
+      code: deny.code,
+      failureKind: denyFailureKind,
+    }),
     // The denylist run has its own captures; a failure that only shows up there (an aborted run,
     // a rejection worded unexpectedly) was invisible when only the read run was classified.
     failure: pass
       ? null
-      : classifyFailure(`${read.stderr}\n${read.stdout}\n${deny.stderr}\n${deny.stdout}\n${logTail}`) ??
+      : classifyFailure(`${read.stderr}\n${read.stdout}\n${deny.stderr}\n${deny.stdout}\n${logTail}\n${denyLogTail}`) ??
         'unclassified — read the captures',
     pass,
-    log,
+    log: logs.read,
+    logs,
     captures: `${stem}.{read,denylist}.{stdout,stderr}.txt`,
   };
+}
+
+/**
+ * The runners state what they did with a denylisted attachment (`Attachment rejected`, then
+ * `unreadable <file>` when the run continued); the exit code conflates that with an unrelated
+ * failure, so wording is read first and the exit code is only the fallback.
+ */
+export function classifyDenylistBehaviour({ rejected, stderr, code, failureKind }) {
+  // An unrejected denylisted file is the serious case and is never masked by wording.
+  if (!rejected) return 'not rejected';
+  // A classified failure alongside the rejection means the exit code says nothing about the denylist.
+  if (failureKind) return 'rejected; run failed for another reason';
+  if (/\bunreadable\b|\bskipp(?:ed|ing)\b|reading anyway/i.test(stderr)) return 'skipped file';
+  return code === 0 ? 'skipped file' : 'aborted run';
+}
+
+/**
+ * Moves staged captures into the run's output directory. `rename` fails with `EXDEV` when OS temp
+ * and the repo sit on different devices, so it falls back to copy+unlink.
+ */
+export function drainStaging(stageDir, outDir) {
+  if (!fs.existsSync(stageDir)) return;
+  // `finally`, so an EBUSY/EPERM on one file does not orphan the whole staging dir in OS temp.
+  try {
+    for (const name of fs.readdirSync(stageDir)) {
+      const from = path.join(stageDir, name);
+      const to = path.join(outDir, name);
+      try {
+        fs.renameSync(from, to);
+      } catch (err) {
+        if (err.code !== 'EXDEV') throw err;
+        fs.copyFileSync(from, to);
+        fs.unlinkSync(from);
+      }
+    }
+  } finally {
+    fs.rmSync(stageDir, { recursive: true, force: true });
+  }
 }
 
 // ============================================================================
@@ -307,7 +391,7 @@ function createFixture(repoRoot) {
 // SECTION: Rendering
 // ============================================================================
 
-function renderSummary({ rows, live, fixture, config, opts }) {
+export function renderSummary({ rows, live, fixture, config, opts }) {
   const mark = (ok) => (ok ? '✓' : '✗');
   const lines = ['# Dispatch Platform Probe', '', `Host: ${process.platform} · node ${process.version}`, ''];
 
@@ -325,17 +409,21 @@ function renderSummary({ rows, live, fixture, config, opts }) {
 
   lines.push('', `## Live probe (${opts.modes ? 'per binary, via runner' : 'per provider, via dispatch.mjs'})`, '');
   lines.push(`Outside-repo fixture: \`${fixture.dir}\` (removed after the run)`, '');
-  lines.push('| Target | Modes covered | Exit | -f outside repo | Delegate file read | Denylist | Secs | Result |', '|---|---|---|---|---|---|---|---|');
+  lines.push('| Target | Modes covered | Exit | -f outside repo | Delegate file read | Denylist | Read-only | Secs | Result |', '|---|---|---|---|---|---|---|---|---|');
   for (const r of live) {
     const c = r.checks;
     const result = r.pass ? 'PASS' : `FAIL (${r.failure})`;
-    lines.push(`| ${r.id} | ${r.aliases.join(', ')} | ${r.exitCode} | ${mark(c.attached)} | ${mark(c.sibling)} | ${mark(c.denylist)} ${r.denylistBehaviour} | ${r.seconds} | ${result} |`);
+    lines.push(`| ${r.id} | ${r.aliases.join(', ')} | ${r.exitCode} | ${mark(c.attached)} | ${mark(c.sibling)} | ${mark(c.denylist)} ${r.denylistBehaviour} | ${mark(c.readonly)} | ${r.seconds} | ${result} |`);
   }
-  lines.push('', 'Logs:', ...live.map((r) => `- ${r.id}: ${r.log ?? 'no banner'} · captures: ${r.captures}`));
+  lines.push('', 'Logs:', ...live.map((r) => {
+    // Both runs open their own session log; a target whose runs share one renders it once.
+    const paths = [...new Set([r.logs?.read ?? r.log, r.logs?.denylist].filter(Boolean))];
+    return `- ${r.id}: ${paths.join(' · ') || 'no banner'} · captures: ${r.captures}`;
+  }));
   return `${lines.join('\n')}\n`;
 }
 
-function cell(text) {
+export function cell(text) {
   return String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').slice(0, 160);
 }
 

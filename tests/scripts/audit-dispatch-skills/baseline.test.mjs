@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 
 import {
+  authoredSkillDirs,
   brokenLinks,
   headingSlugs,
   loc,
@@ -94,5 +95,57 @@ describe('baseline: loc', () => {
 
   it('counts an empty string as zero', () => {
     assert.equal(loc(''), 0);
+  });
+});
+
+describe('baseline: authoredSkillDirs', () => {
+  /** Builds a repo-shaped fixture: `.agents/skills/<name>` dirs plus a skills-lock.json. */
+  const makeRepo = (names, vendored = []) => {
+    const base = path.join(dir, '.agents', 'skills');
+    for (const name of names) fs.mkdirSync(path.join(base, name), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'skills-lock.json'),
+      JSON.stringify({ skills: Object.fromEntries(vendored.map((n) => [n, {}])) }),
+      'utf8',
+    );
+    return base;
+  };
+
+  it('returns repo-authored skill directories', () => {
+    makeRepo(['audit-dispatch-skills', 'other-skill']);
+    assert.deepEqual(
+      authoredSkillDirs(dir).map((p) => path.basename(p)).sort(),
+      ['audit-dispatch-skills', 'other-skill'],
+    );
+  });
+
+  it('excludes skills listed in skills-lock.json as vendored', () => {
+    makeRepo(['authored', 'vendored-one'], ['vendored-one']);
+    assert.deepEqual(authoredSkillDirs(dir).map((p) => path.basename(p)), ['authored']);
+  });
+
+  it('excludes loose files, keeping only directories', () => {
+    const base = makeRepo(['authored']);
+    fs.writeFileSync(path.join(base, 'README.md'), 'x', 'utf8');
+    assert.deepEqual(authoredSkillDirs(dir).map((p) => path.basename(p)), ['authored']);
+  });
+
+  it('excludes a symlinked skill directory', (t) => {
+    const base = makeRepo(['authored']);
+    const target = path.join(dir, 'elsewhere');
+    fs.mkdirSync(target, { recursive: true });
+    try {
+      // Windows needs SeCreateSymbolicLinkPrivilege (or developer mode) for this.
+      fs.symlinkSync(target, path.join(base, 'linked'), 'junction');
+    } catch {
+      return t.skip('symlink creation requires privileges on this host');
+    }
+    assert.deepEqual(authoredSkillDirs(dir).map((p) => path.basename(p)), ['authored']);
+  });
+
+  it('treats a missing skills-lock.json as nothing vendored', () => {
+    const base = path.join(dir, '.agents', 'skills');
+    fs.mkdirSync(path.join(base, 'authored'), { recursive: true });
+    assert.deepEqual(authoredSkillDirs(dir).map((p) => path.basename(p)), ['authored']);
   });
 });

@@ -37,7 +37,7 @@ Writes to the work directory: `git-status.txt` (repo snapshot, audit output excl
 node <skill>/scripts/probe-dispatch.mjs --run <run>
 ```
 
-Run it **backgrounded** (live prompts take minutes) — see the per-host table above. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows a re-run.
+Run it **backgrounded** (live prompts take minutes) — see the per-host table above. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows the whole re-run: an excluded provider is neither discovered nor probed, so it costs nothing and gets no row.
 
 Continue to step 3 without waiting.
 

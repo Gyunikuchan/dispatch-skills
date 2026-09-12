@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -6,6 +9,7 @@ import { describe, it } from 'node:test';
 import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
 
 import {
+  auditGitStatus,
   diffStatus,
   filterAuditStatus,
   frontmatterDescription,
@@ -112,5 +116,41 @@ describe('audit-dispatch-skills shared helpers', () => {
       const text = '---\nname: foo\n---\nbody';
       assert.equal(frontmatterDescription(text), '');
     });
+  });
+});
+
+describe('audit-dispatch-skills auditGitStatus', () => {
+  /** A throwaway git repo; `git status` needs no commit and no identity. */
+  const makeRepo = () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'audit-gitstatus-')));
+    const res = spawnSync('git', ['init', '--quiet'], { cwd: dir, encoding: 'utf8' });
+    return res.status === 0 ? dir : null;
+  };
+
+  it('lists untracked files individually and excludes audit output', (t) => {
+    const dir = makeRepo();
+    if (!dir) return t.skip('git unavailable');
+    try {
+      fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'src', 'a.txt'), 'a', 'utf8');
+      fs.mkdirSync(path.join(dir, '.scratch', 'audits'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '.scratch', 'audits', '2026-01-01-0000-audit.md'), 'x', 'utf8');
+
+      const status = auditGitStatus(dir);
+      // `--untracked-files=all` rather than a collapsed `?? src/`.
+      assert.match(status, /\?\? src\/a\.txt/);
+      assert.ok(!status.includes('.scratch/audits'), `audit output leaked into the snapshot: ${status}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when the directory is not a git repository', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-nogit-'));
+    try {
+      assert.equal(auditGitStatus(path.join(dir, 'missing')), null);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
