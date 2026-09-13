@@ -109,7 +109,7 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 
 - **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
 - **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
-- **Working-Tree Diff Prioritization**: Inspects uncommitted changes first (`git diff`, `git diff --staged`, and untracked source/text files read in full). When nothing outside `.scratch/` is modified or untracked, the work is already committed, so the whole branch is reviewed instead — the diff from its merge-base with the base branch (`origin/HEAD`, `main`, or `master`) up to `HEAD`, covering every commit rather than only the most recent one. On the base branch itself, or on a detached HEAD, that range is empty and the review falls back to `git diff HEAD~1`.
+- **Working-Tree Diff Prioritization**: Uncommitted changes are reviewed first. When everything is already committed, the review covers the whole branch since it diverged from its base — not just the last commit. The exact resolution lives in [references/prompt-template.md](references/prompt-template.md).
 - **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
@@ -145,33 +145,12 @@ Every finding returned by the reviewer follows a strict single-line grammar citi
 
 The full delegate prompt lives in [references/prompt-template.md](references/prompt-template.md), and the structure used when a walkthrough is auto-authored in [references/walkthrough-template.md](references/walkthrough-template.md); edit those files to customize either.
 
-Example report:
-```markdown
-## Verdict
-Two blocking defects in the allocation path; the rest is sound.
-
-## Axis Coverage
-Architecture & Module Design: clean
-Domain & Business Logic: 2 findings
-Security & Resource Safety: clean
-Simplicity & Anti-Bloat: 1 finding
-Blast Radius & Compatibility: clean
-Test Quality & UI/UX: clean
-
-## MUST-FIX
-src/domain/cpf.ts:L118 — unit: annual ceiling compared against a monthly wage → divide the ceiling by 12, or lift the wage to annual.
-src/domain/cpf.ts:L204 — runtime: `tiers[0]` unguarded when age falls below lowest tier → return floor tier explicitly.
-
-## SHOULD-FIX
-None.
-
-## CONSIDER
-src/features/plan/allocation-panel.tsx:L62 — reuse: reimplements `formatSgd` from shared/format → import it.
-
-## Actionable Next Steps
-1. Fix the unit mismatch at src/domain/cpf.ts:L118 and add a regression test.
-2. Guard the tier lookup at src/domain/cpf.ts:L204.
+A finding looks like this in practice:
 ```
+src/domain/cpf.ts:L118 — unit: annual ceiling compared against a monthly wage → divide the ceiling by 12, or lift the wage to annual.
+```
+
+The full report skeleton — every heading, in order — lives in [references/prompt-template.md](references/prompt-template.md).
 
 ### Adjudication Decision Table
 

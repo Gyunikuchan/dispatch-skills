@@ -166,7 +166,7 @@ export function authoredSkillDirs(root) {
   } catch {}
   return fs
     .readdirSync(base, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.isSymbolicLink() && !vendored.has(e.name))
+    .filter((e) => e.isDirectory() && !vendored.has(e.name))
     .map((e) => path.join(base, e.name));
 }
 

@@ -119,11 +119,12 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 
 ## Configuration
 
-Cascade order and per-provider model/effort come from a JSONC config, loaded wholly (no merging) from the first of, in precedence order: `config.local.jsonc` next to this skill, `config.jsonc` next to this skill, then the shipped [config.default.jsonc](config.default.jsonc). Copy the default and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it.
+Cascade order and per-provider model/effort come from a JSONC config. [config.default.jsonc](config.default.jsonc) is the single source of truth for the schema, the override locations and their precedence, and what each field means — read it there rather than from a copy here. Copy it and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it.
 
-Schema: `{ "platforms": { "<claude|agy|copilot|opencode>": { "model"?: string | string[], "effort"?: string } } }`. Key order is cascade order; a platform key omitted entirely means "never dispatched" (distinct from an empty `{}` entry, which dispatches with no `-m`/`-e` override). `model` may be an array for `claude` only, tried in order as fallback models within that one cascade slot. CLI `-m`/`-e` always win over the config entry for the resolved provider.
+Two runtime facts that file cannot state:
 
-Run `node <skill-path>/scripts/dispatch.mjs --validate-only` to check the loaded config's shape without dispatching anything.
+- CLI `-m`/`-e` always win over the config entry for the resolved provider.
+- `node <skill-path>/scripts/dispatch.mjs --validate-only` checks the loaded config's shape without dispatching anything.
 
 ---
 

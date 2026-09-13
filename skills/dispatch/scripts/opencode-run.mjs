@@ -55,6 +55,7 @@
 import cp from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -117,6 +118,7 @@ import {
  * @property {string} host
  * @property {number} port
  * @property {string} pathname
+ * @property {string} protocol URL scheme (`'http:'`/`'https:'`); `'http:'` when none was resolved.
  */
 
 /**
@@ -282,7 +284,7 @@ export async function runOpencode(options = {}) {
     const isServerReady = await preflightLMStudioCheck(2000, endpoint);
     if (!isServerReady) {
       const offlineMessage =
-        `LM Studio local server is not reachable at http://${endpoint.host}:${endpoint.port}.\n` +
+        `LM Studio local server is not reachable at ${endpoint.protocol}//${endpoint.host}:${endpoint.port}.\n` +
         `Please ensure LM Studio is running and the local server is started.`;
       failLogger(sessionLogger, offlineMessage);
       const err = new Error(offlineMessage);
@@ -341,6 +343,7 @@ export async function runOpencode(options = {}) {
       agent: effectiveAgent,
       effort,
       json,
+      config: rawConfig,
     });
 
     if (verbose) {
@@ -988,10 +991,13 @@ export function getLMStudioEndpoint(settings) {
       host: process.env.LM_STUDIO_HOST,
       port: parseInt(process.env.LM_STUDIO_PORT, 10),
       pathname: process.env.LM_STUDIO_PATH || '/v1',
+      // The env override carries no scheme, so plain http is the only thing it can mean.
+      protocol: 'http:',
     };
   }
   const s = settings ?? resolveOpencodeSettings();
-  return { host: s.host, port: s.port, pathname: s.pathname };
+  // `protocol` is null when no host was resolved at all; every caller below speaks http by default.
+  return { host: s.host, port: s.port, pathname: s.pathname, protocol: s.protocol ?? 'http:' };
 }
 
 /**
@@ -1004,8 +1010,10 @@ export async function preflightLMStudioCheck(timeoutMs = 2000, endpoint) {
   const ep = endpoint ?? getLMStudioEndpoint();
   const targetPath = ep.pathname.replace(/\/+$/, '') + '/models';
 
+  const agent = ep.protocol === 'https:' ? https : http;
+
   return new Promise((resolve) => {
-    const req = http.get(
+    const req = agent.get(
       {
         host: ep.host,
         port: ep.port,
@@ -1058,7 +1066,7 @@ export function checkLMStudioLoadedModel(endpoint, timeoutMs = 1500) {
   return new Promise((resolve) => {
     let req;
     try {
-      req = http.get(
+      req = (endpoint.protocol === 'https:' ? https : http).get(
         { host: endpoint.host, port: endpoint.port, path: '/api/v0/models', timeout: timeoutMs },
         (res) => {
           if (!res || res.statusCode < 200 || res.statusCode >= 300 || typeof res.on !== 'function') {
@@ -1387,6 +1395,8 @@ export function buildBwrapArgs({ opencodeArgs, files = [], briefFile = null, pro
  * @param {string|null} [params.agent]
  * @param {string|null} [params.effort] Passed as `--variant` when set.
  * @param {boolean} [params.json]
+ * @param {object|null} [params.config] Config `runOpencode` already parsed; passing it keeps the
+ *   single parse threaded through, instead of re-reading and re-merging the tiers from disk here.
  */
 export function buildCommand({
   prompt = '',
@@ -1395,6 +1405,7 @@ export function buildCommand({
   agent = null,
   effort = null,
   json = false,
+  config = null,
 } = {}) {
   const isLinux = process.platform === 'linux';
   const checkBwrap = isLinux ? cp.spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
@@ -1415,12 +1426,12 @@ export function buildCommand({
   // references/providers.md).
   const opencodeArgs = ['run', '--auto', '--pure'];
 
-  const effectiveAgent = agent || resolveDefaultAgent();
+  const effectiveAgent = agent || (config ? resolveDefaultAgent(config) : resolveDefaultAgent());
   if (effectiveAgent) {
     opencodeArgs.push('--agent', effectiveAgent);
   }
 
-  const effectiveModel = model || resolveDefaultModel();
+  const effectiveModel = model || (config ? resolveDefaultModel(config) : resolveDefaultModel());
   if (effectiveModel) {
     opencodeArgs.push('-m', effectiveModel);
   }

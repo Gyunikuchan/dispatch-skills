@@ -50,6 +50,8 @@ Prints the next open findings — highest severity first, grouped by the file th
 | The proposal is one of several defensible designs, changes a public interface, adds a dependency, or trades off against a pillar in `.agents/AGENTS.md` | `set <id> decision --note "<the question, and your recommendation>"` |
 | Real, but out of this run's scope (needs another OS, another repo, a CLI you cannot reach) | `set <id> deferred --note "<what would settle it>"` |
 
+A finding whose note begins `dispatched` was handed to `implement-dispatch` by an earlier run that did not get to record the result. Check the cited location against the tree before re-dispatching it — the fix may already be there.
+
 ```bash
 node <skill>/scripts/status.mjs set A-7 false-positive --note "SKILL.md:90 already reads `git status --short` (fixed in e2eafb6)"
 ```
@@ -62,13 +64,21 @@ If the batch produced any `decision` findings, put them to the user as **one** q
 
 If no finding in the batch is still `open` — all triaged to `false-positive`, `deferred` or `decision` — skip this step entirely and go to step 4; never invoke `implement-dispatch` with an empty list.
 
-Hand the still-`open` findings of this batch to `implement-dispatch`, quoting each finding's ID, Location, Claim and Proposal in the ask, plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `.agents/AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
+First mark the batch, so an interruption between here and step 4 is recoverable:
+
+```bash
+node <skill>/scripts/status.mjs set A-3 open --note "dispatched <run or batch label>"
+```
+
+Without it the batch has no identity in the report between dispatch and step 4's `set … fixed`: a run interrupted in that window makes step 2's `batch` reprint the already-fixed findings byte-identically, and the work gets dispatched twice.
+
+Then hand the still-`open` findings of this batch to `implement-dispatch`, quoting each finding's ID, Location, Claim and Proposal in the ask, plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `.agents/AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
 
 ```
 /implement-dispatch <level>: Fix audit findings A-3, A-12, A-14 from .scratch/audits/<run>-audit.md
 ```
 
-Pick `<level>` from the batch: `low` for a single mechanical edit, `medium` by default, `high` for a fix that crosses runners, skills or platforms.
+Pick `<level>` from the batch: `low` for a single mechanical edit, `medium` by default, `high` for a fix that crosses runners, skills or platforms, `xhigh` for a batch that changes a shared schema or the dispatch contract itself.
 
 The report is state, not a work product: `implement-dispatch` fixes the repository and never edits the report — every status change goes through `status.mjs set`. A finding whose fix it refutes during its own plan review goes back to step 2's table as `false-positive`, with the reviewing agent's reason in the note.
 

@@ -63,8 +63,7 @@ Differentiate human documentation, agent execution contracts, and non-operationa
 - **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human developers. Filter: *Is this something the human user of the skill needs to know?*
   - **Root `README.md`**: Core value proposition (2–3 sentences), quick install (`npx skills add ...`), skills catalog table, quick start prompt examples, and architecture highlights.
   - **Skill Manuals (`skills/*/README.md`)**: Purpose and core concepts, prerequisites/installation, realistic invocation examples (slash commands / prompt templates), configuration, and CLI quirks/troubleshooting.
-- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus exclusively on operational context, decision paths, and checkable execution bounds.
-- **Non-Operational Notes (`skills/*/references/notes.md`)**: Holding area for architectural rationale, background decisions, or maintainer context neither needed by human end-users nor required for agent runtime execution.
+- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus exclusively on operational context, decision paths, and checkable execution bounds. Architectural rationale and maintainer context that is neither human-facing nor needed at runtime belongs in a `references/notes.md` when a skill accumulates enough of it to need one.
 
 ## Authoring & Cross-Platform Standards
 

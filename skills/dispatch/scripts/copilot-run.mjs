@@ -458,12 +458,15 @@ export async function main() {
   }
 }
 
+/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
+export const CLI_FLAGS = {
+  valueFlags: ['--copilot-mode'],
+  booleanFlags: ['--test', '--probe', '--check', '--test-modes'],
+};
+
 /** Parses the runner-specific `--copilot-mode` and `--test`/`--probe` flags. */
 function parseCopilotArgs(argv) {
-  const options = parseCommonArgs(argv, {
-    valueFlags: ['--copilot-mode'],
-    booleanFlags: ['--test', '--probe', '--check', '--test-modes'],
-  });
+  const options = parseCommonArgs(argv, CLI_FLAGS);
   options.copilotMode = 'auto';
   options.probeOnly = false;
 
@@ -522,10 +525,14 @@ Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
   -m, --model <name>            Override Copilot model (no default here — see dispatch's config.default.jsonc)
-  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
+  -e, --effort, --reasoning-effort <level>
+                                Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --prompt-file <path>          Read the prompt from a file instead of an argument
+  --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
   --copilot-mode <mode>         Explicit mode preference: 'desktop', 'vscode', 'cli', or 'auto' (default: auto)
-  --test, --probe               Test reachability across modes without requiring tokens or prompt
+  --test, --probe, --check, --test-modes
+                                Test reachability across modes without requiring tokens or prompt
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 

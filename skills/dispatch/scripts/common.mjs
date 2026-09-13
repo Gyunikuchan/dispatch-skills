@@ -349,17 +349,31 @@ export function buildFormattedPrompt(prompt, files = []) {
 }
 
 // Common value flags: each consumes the next token (or its `--name=value` form).
-const COMMON_VALUE_FLAGS = new Set([
+export const COMMON_VALUE_FLAGS = new Set([
   '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
   '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
   '--max-buffer', '--orchestrator', '--provider',
 ]);
 
 // Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
-const LEGACY_SILENT_FLAGS = new Set([
+export const LEGACY_SILENT_FLAGS = new Set([
   '--allow-write', '--write', '--read-only', '-i', '--interactive', '-w', '--watch',
   '--watch-terminal', '--headless', '--no-watch', '--no-terminal',
 ]);
+
+// Common flags every runner's `--help` must name. Not all of COMMON_VALUE_FLAGS belongs here:
+// `--orchestrator` / `--provider` are dispatch.mjs's cascade controls and mean nothing to a runner
+// invoked directly, `-a`/`--agent` is opencode-only, and LEGACY_SILENT_FLAGS are accepted precisely
+// so old invocations keep working — documenting them would advertise what we removed. Additions to
+// COMMON_VALUE_FLAGS must land in this list or in RUNNER_IRRELEVANT_COMMON_FLAGS; the flag-parity
+// test fails on a flag that is in neither.
+export const DOCUMENTED_COMMON_FLAGS = [
+  '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
+  '-e', '--effort', '--reasoning-effort', '-t', '--timeout', '--max-buffer',
+];
+
+/** Common flags deliberately absent from every runner's help — see DOCUMENTED_COMMON_FLAGS. */
+export const RUNNER_IRRELEVANT_COMMON_FLAGS = ['-a', '--agent', '--orchestrator', '--provider'];
 
 /**
  * Parses common CLI arguments strictly: an undeclared `-`-prefixed token throws
@@ -1884,10 +1898,12 @@ export function resolveRunnerExitCode({ code, signal, truncated, cleanStdout, is
 /**
  * Detects the orchestrator runtime from environment variables.
  *
- * Claude Code exports `CLAUDECODE` / `CLAUDE_CODE_*`; probing only the `CLAUDE_CODE` and
- * `CLAUDE_SESSION_ID` that never existed made detection return null there, so the cascade
- * delegated straight back to the orchestrator's own platform. The VS Code heuristic went for
- * the same reason: `VSCODE_PID` is set in any VS Code terminal, whichever agent drives it.
+ * Claude Code exports `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CODE_ENTRYPOINT`;
+ * probing only the `CLAUDE_CODE` / `CLAUDE_SESSION_ID` spellings once made detection return null
+ * there, so the cascade delegated straight back to the orchestrator's own platform. Both are kept
+ * below as belt-and-braces: two dead `process.env` reads cost nothing, a missed host costs a
+ * delegate dispatched to itself. The VS Code heuristic was dropped instead, because `VSCODE_PID`
+ * is set in any VS Code terminal whichever agent drives it — a false positive, not a miss.
  * `--orchestrator` overrides whatever this returns.
  * @returns {string|null} Provider key, or null when no host marker is present.
  */

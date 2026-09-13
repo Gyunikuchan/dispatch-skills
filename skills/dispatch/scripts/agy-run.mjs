@@ -550,12 +550,15 @@ export async function main() {
   }
 }
 
+/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
+export const CLI_FLAGS = {
+  valueFlags: ['--agy-mode', '--mode-variant'],
+  booleanFlags: ['--test-reachability', '--test-modes'],
+};
+
 /** Parses arguments with additional agy mode flags. */
 function parseAgyArgs(argv) {
-  const common = parseCommonArgs(argv, {
-    valueFlags: ['--agy-mode', '--mode-variant'],
-    booleanFlags: ['--test-reachability', '--test-modes'],
-  });
+  const common = parseCommonArgs(argv, CLI_FLAGS);
   const extra = {
     modeVariant: null,
     testReachability: false,
@@ -602,10 +605,14 @@ Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
   -m, --model <name>            Override Antigravity model (no default here — see dispatch's config.default.jsonc)
-  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
+  -e, --effort, --reasoning-effort <level>
+                                Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
+  --prompt-file <path>          Read the prompt from a file instead of an argument
+  --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
   --agy-mode, --mode-variant    Force mode: antigravity-2.0 | antigravity-vscode | antigravity-cli | auto
-  --test-reachability           Test and report reachability for all modes without consuming tokens
+  --test-reachability, --test-modes
+                                Test and report reachability for all modes without consuming tokens
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 

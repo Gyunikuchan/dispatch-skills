@@ -209,20 +209,28 @@ describe('review skill templates live in references/', () => {
     assert.ok(/```/.test(template), 'expected an inner fence to survive extraction');
   });
 
-  it('fill-template --list reads the code-review references file', () => {
-    const result = cp.spawnSync(process.execPath, [FILL_TEMPLATE_SCRIPT, '--skill', path.join(REPO_ROOT, CODE_PROMPT_PATH), '--list'], {
-      encoding: 'utf8',
+  // Both templates go through the spawned CLI, not just the in-process reader: --skill resolution
+  // and the integrity gate that must fail closed on hash drift are only exercised on this path.
+  for (const [label, templatePath, expected] of [
+    [
+      'code-review',
+      CODE_PROMPT_PATH,
+      ['Task Summary', 'Walkthrough Path', 'Plan Path', 'User Focus Areas', 'Review Scope', 'Tool Turn Budget'],
+    ],
+    [
+      'plan-review',
+      PLAN_PROMPT_PATH,
+      ['Plan Path', 'Requirement', 'User Focus Areas', 'Review Scope', 'Tool Turn Budget'],
+    ],
+  ]) {
+    it(`fill-template --list reads the ${label} references file`, () => {
+      const result = cp.spawnSync(process.execPath, [FILL_TEMPLATE_SCRIPT, '--skill', path.join(REPO_ROOT, templatePath), '--list'], {
+        encoding: 'utf8',
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout.trim()), expected);
     });
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout.trim()), [
-      'Task Summary',
-      'Walkthrough Path',
-      'Plan Path',
-      'User Focus Areas',
-      'Review Scope',
-      'Tool Turn Budget',
-    ]);
-  });
+  }
 });
 
 describe('orchestrated handover contract', () => {

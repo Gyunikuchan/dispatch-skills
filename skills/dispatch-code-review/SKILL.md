@@ -43,7 +43,7 @@ Resolve context files in order. Plan and walkthrough share one slug and one reso
 
 Two declared variables have no source in the handover, and `fill-template.mjs` hard-fails on any declared variable left unsupplied: `<Task Summary>` comes from the user's ask in standalone mode, and in orchestrated mode is derived from the walkthrough's own summary paragraph and `## Changes Made`. `<User Focus Areas>` is `General review` when the caller supplies none.
 
-**Dispatch**: orchestrated — build one invocation per handed-over target per `dispatch`'s `references/alignment.md` § Invocation Modes; standalone — one per pin, or one cascade dispatch without pins, per § Invocation. Launch every invocation backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring. Dispatch runs structurally read-only.
+**Dispatch**: orchestrated — build one invocation per handed-over target per `dispatch`'s `references/alignment.md` § Invocation Modes; standalone — one per pin, or one cascade dispatch without pins, per § Invocation. Launch every invocation backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring.
 
 **Done when:** the walkthrough and plan (if present) are resolved (or walkthrough authored), attached, the prompt is populated, and dispatch is launched backgrounded with the turn yielded.
 

@@ -9,8 +9,6 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-// Audit output is excluded from integrity snapshots: `.scratch/` is tracked-visible, and the
-// audit's own writes would otherwise read as repo changes.
 // ==========================================================================
 // SECTION: Constants
 // ==========================================================================
@@ -118,6 +116,8 @@ export function auditGitStatus(root) {
 
 /**
  * Drops blank lines and audit-output entries from `git status --porcelain` stdout; sorted output.
+ * Audit output is excluded because `.scratch/` is tracked-visible, so the audit's own writes would
+ * otherwise read as repo changes.
  * The two-char status column is fixed-width (` M`, `??`), so lines are sliced untrimmed; a rename
  * (`R  old -> new`) is judged by its destination, and C-quoted paths lose both quotes.
  */

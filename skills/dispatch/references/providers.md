@@ -164,7 +164,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 | Orchestrator | Markers |
 |--------------|---------|
 | Antigravity | `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `ANTIGRAVITY_SESSION_ID`, `GEMINI_CLI` |
-| Claude Code | `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` |
+| Claude Code | `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` |
 | Copilot CLI | `COPILOT_AGENT`, `COPILOT_CLI_SESSION_ID` |
 | OpenCode | `OPENCODE_PORT`, `OPENCODE_AGENT` |
 

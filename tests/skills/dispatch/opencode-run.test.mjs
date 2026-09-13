@@ -617,6 +617,34 @@ describe('opencode-run', () => {
       assert.equal(endpoint.host, '127.0.0.1');
       assert.equal(endpoint.port, 1234);
       assert.equal(endpoint.pathname, '/v1');
+      // Default stays plain http, so every existing local install is unaffected by the scheme work.
+      assert.equal(endpoint.protocol, 'http:');
+    });
+
+    it('carries an https baseURL scheme onto the endpoint instead of flattening it to http', () => {
+      // A self-hosted TLS backend on loopback is still classified local, so it reaches the
+      // preflight; dropping its scheme made a working provider read as offline.
+      const settings = resolveOpencodeSettings({
+        model: 'lmstudio/qwen3.8-27b-ridge',
+        provider: { lmstudio: { options: { baseURL: 'https://127.0.0.1:1234/v1' } } },
+      });
+      const endpoint = getLMStudioEndpoint(settings);
+      assert.equal(endpoint.protocol, 'https:');
+      assert.equal(endpoint.host, '127.0.0.1');
+    });
+
+    it('the LM_STUDIO_HOST/PORT env override reports http, the only scheme it can mean', () => {
+      const saved = { h: process.env.LM_STUDIO_HOST, p: process.env.LM_STUDIO_PORT };
+      process.env.LM_STUDIO_HOST = '127.0.0.1';
+      process.env.LM_STUDIO_PORT = '4321';
+      try {
+        assert.equal(getLMStudioEndpoint().protocol, 'http:');
+      } finally {
+        if (saved.h === undefined) delete process.env.LM_STUDIO_HOST;
+        else process.env.LM_STUDIO_HOST = saved.h;
+        if (saved.p === undefined) delete process.env.LM_STUDIO_PORT;
+        else process.env.LM_STUDIO_PORT = saved.p;
+      }
     });
 
     it('no model configured anywhere: settings target neither LM Studio nor any provider', () => {
@@ -961,6 +989,27 @@ describe('opencode-run', () => {
 
       assert.ok(res.args.includes('--agent'));
       assert.ok(res.args.includes('custom-agent'));
+    });
+
+    it('uses the config it is handed instead of re-reading it from disk', () => {
+      // runOpencode states its one config parse is threaded through every step; buildCommand
+      // re-resolved agent/model with default args, re-reading the tiers mid-run whenever the
+      // config named neither.
+      const spy = mock.method(fs, 'readFileSync');
+      try {
+        const res = buildCommand({ prompt: 'x', config: { agent: { delegate: {} }, model: 'lmstudio/m' } });
+        assert.ok(res.args.includes('--agent'), 'agent came from the handed-in config');
+        assert.ok(res.args.includes('-m'), 'model came from the handed-in config');
+        assert.equal(spy.mock.callCount(), 0, 'no config file was read back off disk');
+      } finally {
+        spy.mock.restore();
+      }
+    });
+
+    it('omitting config keeps the previous behaviour for standalone callers', () => {
+      const withConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m' });
+      const withoutConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', config: null });
+      assert.deepEqual(withoutConfig.args, withConfig.args);
     });
 
     it('buildCommand passes --variant when effort is set, omits it otherwise', () => {

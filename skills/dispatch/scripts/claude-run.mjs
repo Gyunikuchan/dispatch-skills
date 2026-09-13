@@ -522,11 +522,14 @@ function executeOnTarget({
 // SECTION: CLI Entry Point
 // ============================================================================
 
+/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
+export const CLI_FLAGS = {
+  valueFlags: ['--claude-mode', '--mode'],
+  booleanFlags: ['--test-modes', '--probe-modes', '--reachability'],
+};
+
 export async function main() {
-  const options = parseCommonArgs(process.argv, {
-    valueFlags: ['--claude-mode', '--mode'],
-    booleanFlags: ['--test-modes', '--probe-modes', '--reachability'],
-  });
+  const options = parseCommonArgs(process.argv, CLI_FLAGS);
   const { requestedMode, testModes } = parseModeFlags(process.argv.slice(2));
 
   if (testModes) {
@@ -620,10 +623,14 @@ Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
   -m, --model <name>            Override Claude model (no default here — see dispatch's config.default.jsonc)
-  -e, --effort <level>          Override reasoning effort (no default here — see dispatch's config.default.jsonc)
+  -e, --effort, --reasoning-effort <level>
+                                Override reasoning effort (no default here — see dispatch's config.default.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
-  --claude-mode <mode>          Select execution mode: desktop | vscode | cli
-  --test-modes, --reachability  Test reachability of all modes (--version) without token consumption
+  --prompt-file <path>          Read the prompt from a file instead of an argument
+  --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
+  --claude-mode, --mode <mode>  Select execution mode: desktop | vscode | cli
+  --test-modes, --probe-modes, --reachability
+                                Test reachability of all modes (--version) without token consumption
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 
