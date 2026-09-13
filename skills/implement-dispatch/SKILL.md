@@ -69,8 +69,8 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['plan-review'].maxRounds === 0`.*
 
-1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` from `flow['plan-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
-2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke with `Review Scope: Re-review round <n>` naming changed sections.
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
+2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke `dispatch-plan-review` in orchestrated mode, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Re-review round <n>` naming changed sections, and `Tool Turn Budget` per **Budget sizes to the work**.
 3. **Consensus**:
    - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap (**Ruling resets rounds**).
    - `consensus: false`: Orchestrator may reject unverified claims directly.
@@ -101,7 +101,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 *Skip Steps 5–7 if `flow['code-review'].maxRounds === 0`* — the same span `dispatch-code-review`'s absence skips. Skipping Step 5 alone would strand Step 6 with no claims to adjudicate and a completion bound it could never satisfy.
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
-2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` from `flow['code-review'].targets`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
+2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` and `reserves` from `flow['code-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
 
 **Done when:** Walkthrough exists on disk, every target's dispatch has returned, and round 1 claims are in hand for Step 6.
 
@@ -121,7 +121,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 7. Re-Review Loop
 
 While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget` per **Budget sizes to the work**.
+1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `reserves` from `flow['code-review']`, `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget` per **Budget sizes to the work**.
 2. Apply accepted fixes and settle disputes per Step 6.
 
 **Done when:** Consensus is reached, no modifications remain, or the user rules on round-cap escalation (**Ruling resets rounds**) — then proceed to Handoff.
@@ -134,7 +134,7 @@ While previous round modified code and code review round count < `flow['code-rev
    - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
    - Rounds spent per phase vs `maxRounds`.
-   - Active, failed, dropped, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `droppedPins`, `clamped`, `livenessSource`).
+   - Active, failed, substituted, dropped, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `droppedPins`, `clamped`, `livenessSource`; substitutions as recorded by the review skill).
    - Summary of accepted/rejected findings and verification command status.
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
 
@@ -163,4 +163,4 @@ While previous round modified code and code review round count < `flow['code-rev
 - **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
 - **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). Orchestrator / native subagents alone write code.
-- **Fallback**: Provider failures fall back to `dispatch`'s in-process read-only subagent.
+- **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned runs only — pinned runs carry none); once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.

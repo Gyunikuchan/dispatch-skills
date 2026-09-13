@@ -138,8 +138,9 @@
     },
     "targetCount": {
       "low": 1,
-      "high": 2,
-      "xhigh": 3,
+      "medium": 2,
+      "high": 3,
+      "xhigh": 4,
       "max": "all",
     },
     "consensus": {

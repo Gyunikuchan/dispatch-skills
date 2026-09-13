@@ -15,7 +15,7 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a walkthrough path plus a **targets** list (with `Review Scope` and `Tool Turn Budget`), **standalone** otherwise. Standalone resolves context files below; orchestrated uses the handed-over paths, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a walkthrough path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves context files below; orchestrated uses the handed-over paths, skipping resolution.
 
 Attach the change walkthrough and implementation plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
 

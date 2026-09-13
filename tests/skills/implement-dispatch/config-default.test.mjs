@@ -17,28 +17,29 @@ const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 /**
  * Snapshot of the shipped per-level flow policy, so a change to config.default.jsonc
  * is a deliberate, checked-in assertion update. `targets` is the resulting target
- * count under LIVE_ALL (agy + opencode live, copilot dead, claude the orchestrator).
+ * count under LIVE_ALL (agy + opencode live, copilot dead, claude the orchestrator);
+ * `reserves` is the count of leftover live candidates kept as substitutes.
  */
 const LEVEL_PARITY = {
   low: {
-    'plan-review': { maxRounds: 0, targetCount: 0, consensus: false, targets: 0 },
-    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, targets: 1 },
+    'plan-review': { maxRounds: 0, targetCount: 0, consensus: false, targets: 0, reserves: 0 },
+    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, targets: 1, reserves: 4 },
   },
   medium: {
-    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, targets: 1 },
-    'code-review': { maxRounds: 3, targetCount: 1, consensus: true, targets: 1 },
+    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, targets: 1, reserves: 4 },
+    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 3 },
   },
   high: {
-    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2 },
-    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2 },
+    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 3 },
+    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 2 },
   },
   xhigh: {
-    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3 },
-    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3 },
+    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 2 },
+    'code-review': { maxRounds: 3, targetCount: 4, consensus: true, targets: 4, reserves: 1 },
   },
   max: {
-    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5 },
-    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5 },
+    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5, reserves: 0 },
+    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5, reserves: 0 },
   },
 };
 
@@ -59,6 +60,7 @@ describe('shipped config', () => {
           // effect: re-reading it with `resolveLevelScalar` here would re-implement
           // the resolver and pass even if `buildReviewSection` stopped consuming it.
           assert.equal(flow[section].targets.length, expected.targets, `${section} targets`);
+          assert.equal(flow[section].reserves.length, expected.reserves, `${section} reserves`);
           // targetCount:0 normalizes to maxRounds:0; assert the single sentinel.
           assert.equal(flow[section].maxRounds === 0, expected.targetCount === 0 || expected.maxRounds === 0, `${section} phase-off`);
         }

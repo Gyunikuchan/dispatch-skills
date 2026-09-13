@@ -56,7 +56,7 @@ Base grammar, shared by both standalone review skills:
 
 ## Invocation Modes
 
-Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope` and `Tool Turn Budget`; otherwise it runs **standalone**. The orchestrator hands over data only; the review skill builds invocations, fills its prompt, and owns the round log.
+Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope` and `Tool Turn Budget` and optionally an ordered **reserves** list of the same shape; otherwise it runs **standalone**. The orchestrator hands over data only; the review skill builds invocations, fills its prompt, and owns the round log.
 
 | Review step | Standalone | Orchestrated |
 |---|---|---|
@@ -71,7 +71,9 @@ Detection: a review skill runs **orchestrated** when an orchestrating skill hand
 | Report to user | Full report | None — orchestrator's handoff covers it |
 | Artifact lifecycle | Retain in place | Orchestrator decides |
 
-**Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>` and `-e <target.effort>` only when the target carries `model` or `effort`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional.
+**Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>` and `-e <target.effort>` only when the target carries `model` or `effort`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional. Redirect each invocation's stdout/stderr to OS temp, not into the repo — a log file inside the workspace trips the delegate's own read-only integrity check.
+
+**Reserve substitution** (orchestrated): each target is pinned (`--no-config`), so `dispatch` never cascades a failed target to another platform — the reserves list does. When a target's dispatch ends without a report for a reason that is not `INTEGRITY_VIOLATION` or a workspace-modified warning (e.g. `[auth]`, `[quota]`, non-zero exit, no output), dispatch the first unused reserve whose platform is not already in the wave (active or substituted); if none qualifies, the first unused reserve. A reserve is unusable when it matches — same platform, model and effort — any target already dispatched in the wave, including the failed one; re-review rounds can carry an earlier substitute in `targets` while it is still listed in `reserves`. Repeat until that slot yields a report or reserves run out, then apply the `dispatch` subagent fallback for the slot. Each reserve is used at most once per wave. Record every substitution (`<failed target> → <reserve>: <reason>`) for the orchestrator's diagnostics.
 
 ## Prompt Template Filling
 
@@ -110,7 +112,7 @@ Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendat
 
 **Evidence over votes**: when aggregating multi-delegate reports, dedupe duplicate claims pointing to the same defect at the same locus into a single finding, then verify against the requirement, repository rules, and cited code. Accept valid findings regardless of delegate count; reject refuted findings even if unanimous. Provider agreement is context, never evidence.
 
-**Terminal outcomes**: a dispatch may end without producing a report — `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, a platform that is not configured, a runner that exits non-zero or on a usage error, or a workspace-modified warning. Handle each per `dispatch` Step 3. When **no** invocation in a wave produced a report, there is nothing to adjudicate: skip adjudication and the resolutions log entirely and append nothing to the artifact — an empty round log reads as a review that found nothing, which is worse than a review that visibly did not run. Reporting follows the § Invocation Modes split: **standalone** names which providers were tried and how each ended; **orchestrated** returns that outcome to the caller and reports nothing directly.
+**Terminal outcomes**: a dispatch may end without producing a report — `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, a platform that is not configured, a runner that exits non-zero or on a usage error, or a workspace-modified warning. Handle each per `dispatch` Step 3, after exhausting § Invocation Modes **Reserve substitution** in orchestrated mode. When **no** invocation in a wave produced a report, there is nothing to adjudicate: skip adjudication and the resolutions log entirely and append nothing to the artifact — an empty round log reads as a review that found nothing, which is worse than a review that visibly did not run. Reporting follows the § Invocation Modes split: **standalone** names which providers were tried and how each ended; **orchestrated** returns that outcome to the caller and reports nothing directly.
 
 **Dispute escalation**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before applying a **Disputed** finding. Batch up to 4 questions per invocation (successive batches for more); quote the locus, state the delegate's claim, and provide a counter-reading with accept / reject / defer options. Apply the user's choice verbatim as final. Mandatory escalation triggers: repository-named domain authorities, persisted schema, shared URL state, or an explicit user request. In orchestrated mode, escalation instead defers to the orchestrator's consensus rule — return Disputed findings unescalated to the caller (see § Resolutions Log).
 

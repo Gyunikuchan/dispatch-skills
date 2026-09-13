@@ -205,6 +205,11 @@ describe('resolveFlow', () => {
       assert.equal(out['code-review'].targets[0].platform, 'claude');
     });
 
+    it('pinned runs carry no reserves: pins name the whole reviewer set', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['agy'] }, LIVE_ALL, BASE_CONFIG);
+      assert.deepEqual(out['code-review'].reserves, []);
+    });
+
     it('throws when all pinned platforms are unavailable', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['copilot'] }, LIVE_ALL, BASE_CONFIG),
@@ -354,6 +359,28 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
       assert.equal(out['code-review'].targets.length, 3);
       assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 4, resolved: 3 });
+    });
+
+    it('returns the live candidates beyond targetCount as ordered reserves', () => {
+      const config = withSections({ 'code-review': { targetCount: { low: 1 } } });
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+      assert.deepEqual(out['code-review'].reserves, [
+        { platform: 'opencode', model: 'lmstudio/qwen3.8-27b-ridge' },
+        { platform: 'claude', model: 'claude-opus-5', effort: 'medium' },
+      ]);
+    });
+
+    it('returns no reserves when every candidate is already a target', () => {
+      const config = withSections({ 'code-review': { targetCount: { low: 'all' } } });
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
+      assert.deepEqual(out['code-review'].reserves, []);
+    });
+
+    it('returns no reserves for a phase that is off', () => {
+      const config = withSections({ 'code-review': { maxRounds: { low: 0 } } });
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
+      assert.deepEqual(out['code-review'].reserves, []);
     });
 
     it('records no clamp when the count is satisfied', () => {

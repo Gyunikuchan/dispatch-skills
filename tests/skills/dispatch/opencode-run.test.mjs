@@ -155,6 +155,11 @@ describe('opencode-run', () => {
     });
   });
 
+  // The shipped config sets no `model`, so locality is never implied: tests about the local backend
+  // build their settings from an explicit lmstudio fixture instead of the live repo/user config.
+  const LOCAL_CONFIG = { model: 'lmstudio/fixture-model' };
+  const LOCAL_ENDPOINT = { host: '127.0.0.1', port: 1234, pathname: '/v1', protocol: 'http:' };
+
   describe('getOpencodeEnv & WAN Network Confinement', () => {
     it('whitelists safe variables and purges sensitive tokens/keys', () => {
       const oldEnv = { ...process.env };
@@ -165,7 +170,8 @@ describe('opencode-run', () => {
         process.env.AWS_SECRET_ACCESS_KEY = 'test-aws-secret';
         process.env.MY_SECRET_PASSWORD = 'password123';
 
-        const cleanEnv = getOpencodeEnv();
+        delete process.env.LM_STUDIO_URL;
+        const cleanEnv = getOpencodeEnv(resolveOpencodeSettings(LOCAL_CONFIG));
 
         assert.ok(!('ANTHROPIC_API_KEY' in cleanEnv));
         assert.ok(!('OPENAI_API_KEY' in cleanEnv));
@@ -568,7 +574,7 @@ describe('opencode-run', () => {
       });
 
       await assert.rejects(
-        runOpencode({ prompt: 'Test prompt when offline' }),
+        runOpencode({ prompt: 'Test prompt when offline', model: LOCAL_CONFIG.model }),
         (err) => {
           assert.ok(err.message.includes('LM Studio local server is not reachable'));
           assert.ok(err.message.includes('127.0.0.1'));
@@ -669,11 +675,29 @@ describe('opencode-run', () => {
       assert.equal(settings.port, null);
     });
 
-    it('reads the real repo .opencode/opencode.jsonc that the runner names a prerequisite', () => {
-      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-realrepo-home-'));
+    it('reads a project .opencode/opencode.jsonc and resolves its model limits and local endpoint', () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-project-home-'));
+      const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-project-'));
       try {
-        const config = readOpencodeConfig(PROJECT_ROOT, { env: {}, homeDir: isolatedHome });
-        assert.ok(config, '.opencode/opencode.jsonc must be readable — the runner requires it');
+        fs.mkdirSync(path.join(projectRoot, '.opencode'));
+        fs.writeFileSync(
+          path.join(projectRoot, '.opencode', 'opencode.jsonc'),
+          JSON.stringify({
+            model: 'lmstudio/fixture-model',
+            provider: {
+              lmstudio: {
+                options: { baseURL: 'http://127.0.0.1:1234/v1' },
+                models: { 'fixture-model': { limit: { context: 73728, output: 8192 } } },
+              },
+            },
+          }),
+        );
+        const config = readOpencodeConfig(projectRoot, {
+          env: {},
+          homeDir: isolatedHome,
+          managedConfigDir: isolatedHome,
+        });
+        assert.ok(config, 'project .opencode/opencode.jsonc must be readable');
 
         const oldEnv = process.env;
         try {
@@ -690,6 +714,7 @@ describe('opencode-run', () => {
         }
       } finally {
         fs.rmSync(isolatedHome, { recursive: true, force: true });
+        fs.rmSync(projectRoot, { recursive: true, force: true });
       }
     });
 
@@ -966,8 +991,9 @@ describe('opencode-run', () => {
   });
 
   describe('buildCommand', () => {
-    it('builds proper command and args for OpenCode execution with default delegate agent', () => {
+    it('builds proper command and args for OpenCode execution with the default fallback agent', () => {
       const res = buildCommand({
+        config: {},
         prompt: 'Analyze invariants',
         files: [path.resolve('CONTEXT.md')],
         model: 'lmstudio/qwen3.8-27b@iq4_xs',
@@ -979,7 +1005,7 @@ describe('opencode-run', () => {
       assert.ok(res.args.includes('--auto'));
       assert.ok(res.args.includes('--pure'));
       assert.ok(res.args.includes('--agent'));
-      assert.ok(res.args.includes('delegate'));
+      assert.ok(res.args.includes(DEFAULT_FALLBACK_AGENT));
       assert.ok(res.args.includes('-m'));
       assert.ok(res.args.includes('lmstudio/qwen3.8-27b@iq4_xs'));
       assert.ok(res.args.includes('--format'));
@@ -1145,7 +1171,7 @@ describe('opencode-run', () => {
         return emitter;
       });
 
-      const isReady = await preflightLMStudioCheck(100);
+      const isReady = await preflightLMStudioCheck(100, LOCAL_ENDPOINT);
       assert.equal(isReady, false);
     });
 
@@ -1160,7 +1186,7 @@ describe('opencode-run', () => {
         return emitter;
       });
 
-      const isReady = await preflightLMStudioCheck(100);
+      const isReady = await preflightLMStudioCheck(100, LOCAL_ENDPOINT);
       assert.equal(isReady, true);
     });
 
@@ -1172,7 +1198,7 @@ describe('opencode-run', () => {
         return emitter;
       });
 
-      const available = await isOpencodeAvailable();
+      const available = await isOpencodeAvailable(resolveOpencodeSettings(LOCAL_CONFIG));
       assert.equal(available, false);
     });
 
@@ -1185,7 +1211,7 @@ describe('opencode-run', () => {
       });
 
       await assert.rejects(
-        runOpencode({ prompt: 'Test prompt when offline' }),
+        runOpencode({ prompt: 'Test prompt when offline', model: LOCAL_CONFIG.model }),
         (err) => {
           assert.ok(err.message.includes('LM Studio local server is not reachable'));
           assert.ok(err.message.includes('127.0.0.1'));

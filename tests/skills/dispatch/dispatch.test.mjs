@@ -477,6 +477,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('returns partial output when every provider fails', async () => {
       clearOrchestratorEnv();
       process.env.CLAUDECODE = '1';
+      // Unmocked, a live local claude is appended as the orchestrator candidate and really spawned.
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
       mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
       mock.method(providerProbes, 'isAgyAvailable', async () => true);
       mock.method(providerProbes, 'isCopilotAvailable', async () => true);

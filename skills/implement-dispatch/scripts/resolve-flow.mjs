@@ -616,7 +616,8 @@ export function resolveFlow(options, liveness, config) {
           targets.push(target);
         }
       }
-      return targets;
+      // Pins name the whole reviewer set, so there is nothing to substitute from.
+      return { targets, reserves: [] };
     }
 
     // Unpinned: gather live candidates for each configured platform
@@ -642,7 +643,9 @@ export function resolveFlow(options, liveness, config) {
     const requested = targetCount === 'all' ? orderedCandidates.length : targetCount;
     const resolved = Math.min(requested, orderedCandidates.length);
     if (resolved < requested) clamped[sectionName] = { requested, resolved };
-    return orderedCandidates.slice(0, resolved);
+    // Liveness only proves a CLI runs, not that it is authenticated or has quota, so the
+    // candidates beyond targetCount are kept as ordered substitutes for a target that fails.
+    return { targets: orderedCandidates.slice(0, resolved), reserves: orderedCandidates.slice(resolved) };
   }
 
   function buildReviewSection(sectionName) {
@@ -661,7 +664,8 @@ export function resolveFlow(options, liveness, config) {
     // `maxRounds > 0` means platforms are unavailable — the in-process fallback applies.
     // `maxRounds` caps total fan-out waves including the first review; each wave
     // dispatches every target in `targets`.
-    const targets = maxRounds === 0 ? [] : getCandidates(sectionName, targetCount);
+    const { targets, reserves } =
+      maxRounds === 0 ? { targets: [], reserves: [] } : getCandidates(sectionName, targetCount);
 
     // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
     // every pin by construction, which is not a diagnostic worth reporting. Covers
@@ -674,7 +678,7 @@ export function resolveFlow(options, liveness, config) {
       if (dropped.length > 0) droppedPins[sectionName] = dropped;
     }
 
-    return { targets, maxRounds, consensus };
+    return { targets, reserves, maxRounds, consensus };
   }
 
   const planReview = buildReviewSection('plan-review');

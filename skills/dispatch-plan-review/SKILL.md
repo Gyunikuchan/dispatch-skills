@@ -29,7 +29,7 @@ When a plan already exists, `<Requirement>` comes from the plan's own goal state
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a plan path plus a **targets** list (with `Review Scope` and `Tool Turn Budget`), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over path, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a plan path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over path, skipping resolution.
 
 Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
 
