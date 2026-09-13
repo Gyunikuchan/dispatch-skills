@@ -73,6 +73,7 @@ import {
   extractCleanResponse,
   findSensitiveMatch,
   formatSafetyPrompt,
+  buildFormattedPrompt,
   getAllowedBoundaryRoots,
   getGitStatus,
   isMainModule,
@@ -315,17 +316,17 @@ export async function runOpencode(options = {}) {
   };
 
   try {
-    // Step 5: resolve context files.
-    const contextFiles = resolveContextFiles(files);
+    // Step 5: format prompt with attachments (inlines context files with nonce delimiters and byte caps).
+    const formattedPrompt = buildFormattedPrompt(prompt, files);
 
     // Step 6: prompt-budget check — ~3.5 chars/token, loose estimate to catch gross overruns.
     // Fail before spawning rather than letting the model report a context overflow.
     const promptBudgetChars = Math.floor(
       (settings.contextLimit - settings.outputLimit) * CHARS_PER_TOKEN_ESTIMATE,
     );
-    if (prompt.length > promptBudgetChars) {
+    if (formattedPrompt.length > promptBudgetChars) {
       const err = new Error(
-        `Prompt is ${prompt.length} chars, over the ~${promptBudgetChars} char budget for a ` +
+        `Prompt is ${formattedPrompt.length} chars, over the ~${promptBudgetChars} char budget for a ` +
           `${settings.contextLimit}-token context reserving ${settings.outputLimit} tokens for output. ` +
           `Shorten the prompt or attach fewer files.`,
       );
@@ -337,8 +338,7 @@ export async function runOpencode(options = {}) {
     const effectiveModel = model || resolveDefaultModel(rawConfig);
     const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
     const { command, args, engineType, briefFile } = buildCommand({
-      prompt,
-      files: contextFiles,
+      prompt: formattedPrompt,
       model: effectiveModel,
       agent: effectiveAgent,
       effort,
@@ -1411,11 +1411,11 @@ export function buildCommand({
   // Resolved before the prompt is prepared: a Windows .cmd shim forces a brief-file spill.
   const binary = hasLinuxBwrap ? 'opencode' : resolveOpencodeBinary();
 
-  const formattedPrompt = formatSafetyPrompt(prompt, {
-    workspaceRoot: PROJECT_ROOT,
-    attachedFiles: files,
-  });
-  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'opencode', {
+  const finalFormattedPrompt =
+    prompt.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]')
+      ? prompt
+      : buildFormattedPrompt(prompt, files);
+  const { prompt: argvPrompt, briefFile } = preparePromptForArgv(finalFormattedPrompt, 'opencode', {
     binary,
   });
   // NOTE: accepted risk — headless runs cannot answer permission prompts, so `--auto` stays;
@@ -1439,10 +1439,6 @@ export function buildCommand({
 
   if (json) {
     opencodeArgs.push('--format', 'json');
-  }
-
-  for (const file of files) {
-    opencodeArgs.push(`--file=${file}`);
   }
 
   opencodeArgs.push('--', argvPrompt);

@@ -4,10 +4,10 @@
   "references/providers.md": "672948c77edd42c1918525af5a573ee33f7af0342efb4ff5c5f302847985772b",
   "scripts/agy-run.mjs": "8f2bacaa54b2f37889ea1c5b35d095ac5383dfafd3e7eda8b4fc5f6e87e0cf16",
   "scripts/claude-run.mjs": "dc670e3708c1cafd5c570908a735204cfce6e4ca9b71cdd4e6011edb816d33a0",
-  "scripts/common.mjs": "ce550c81c0d5b7300eb86f554a790bec194418be2279072a346dc42bdb5029f7",
+  "scripts/common.mjs": "d5e23c90dec7d1701238bdc9c2b876596f14ad867ab035500b5755e7a971aeba",
   "scripts/copilot-run.mjs": "939a3a39ebbf78b2d7c32d63138a92884f0d300dce87c472cb8a56498c7aa3b4",
   "scripts/dispatch.mjs": "69930202f3762d8693bf6b1b94c2f17d2b44969d54eb2047efb2a0e68ed2182b",
   "scripts/fill-template.mjs": "64e050d86f418b0bd58984eeda669e3748e636827b1fcf041dc6e7c79f739464",
-  "scripts/opencode-run.mjs": "3ed63212512229d8dcc4cf36139e58a0d3b9bd9590af11171f6aa4b589ce8ccd",
+  "scripts/opencode-run.mjs": "05ad8b50e3f423c78ba69a57edea20ba672f59df64cc45e52a3f75cc6e36a7db",
   "scripts/resolve-artifact-paths.mjs": "19211c0dfcd66fbea20434292bd01a2087c3c2200fb715440933be32cab74c4f"
 }

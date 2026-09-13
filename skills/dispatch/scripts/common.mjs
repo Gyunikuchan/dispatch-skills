@@ -344,7 +344,10 @@ export function buildFormattedPrompt(prompt, files = []) {
     process.stderr.write(`[dispatch] Attachment ${note}\n`);
   }
   const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
-  return formatSafetyPrompt(fullPrompt, { workspaceRoot: PROJECT_ROOT, attachedFiles: files });
+  return formatSafetyPrompt(fullPrompt, {
+    workspaceRoot: PROJECT_ROOT,
+    attachedFiles: attachments.attachedFiles,
+  });
 }
 
 // Common value flags: each consumes the next token (or its `--name=value` form).
@@ -836,6 +839,7 @@ export function buildAttachmentBlock(files = [], limits = {}) {
 
   const snippets = [];
   const notes = [];
+  const attachedFiles = [];
   let usedBytes = 0;
 
   for (const file of files) {
@@ -851,6 +855,7 @@ export function buildAttachmentBlock(files = [], limits = {}) {
       continue;
     }
 
+    attachedFiles.push(file);
     usedBytes += Buffer.byteLength(attachment.content, 'utf8');
     const nonce = crypto.randomBytes(8).toString('hex');
     const tag = `attached-file-data-${nonce}`;
@@ -863,7 +868,7 @@ export function buildAttachmentBlock(files = [], limits = {}) {
     }
   }
 
-  return { text: snippets.join('\n\n'), notes, usedBytes };
+  return { text: snippets.join('\n\n'), notes, usedBytes, attachedFiles };
 }
 
 /**
