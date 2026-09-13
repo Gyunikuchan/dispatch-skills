@@ -131,3 +131,22 @@ describe('runner flag parity (--help vs the flags each runner accepts)', () => {
     assert.deepEqual([...COMMON_VALUE_FLAGS].filter((f) => !accounted.has(f)), []);
   });
 });
+
+// dispatch/SKILL.md Troubleshooting teaches `--help` as the diagnostic move for a misbehaving
+// script. Two of the four authored CLIs used to exit 1 with `Unrecognized argument "--help"` —
+// and they were the two whose flag surface lives only in a header comment.
+describe('every authored CLI answers --help', () => {
+  for (const script of [
+    ['skills', 'dispatch', 'scripts', 'dispatch.mjs'],
+    ['skills', 'dispatch', 'scripts', 'resolve-artifact-paths.mjs'],
+    ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
+    ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],
+  ]) {
+    const name = script[script.length - 1];
+    it(`${name} --help exits 0 and prints usage`, () => {
+      const res = spawnSync(process.execPath, [path.join(REPO_ROOT, ...script), '--help'], { encoding: 'utf8' });
+      assert.equal(res.status, 0, res.stderr);
+      assert.match(res.stdout, /Usage:/);
+    });
+  }
+});

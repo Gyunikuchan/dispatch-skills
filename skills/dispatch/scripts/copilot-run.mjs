@@ -139,14 +139,20 @@ export async function runCopilot(options = {}) {
     verbose = false,
     copilotMode = 'auto',
     initialGitStatus: baselineGitStatus = null,
+    // Test seams: each defaults to the real implementation, so production calls are unchanged.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
+    // opens a session log and runs a git integrity check.
+    execute = executeOnTarget,
+    discoverTargets = findViableTargets,
+    createLogger = createSessionLogger,
   } = options;
 
-  const viableTargets = findViableTargets(copilotMode);
+  const viableTargets = discoverTargets(copilotMode);
   if (viableTargets.length === 0) {
     throw createNoTargetsError();
   }
 
-  const sessionLogger = createSessionLogger('copilot');
+  const sessionLogger = createLogger('copilot');
   // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
   const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
@@ -164,7 +170,7 @@ export async function runCopilot(options = {}) {
     const canCascade = !isLastTarget && (!copilotMode || copilotMode === 'auto');
 
     try {
-      const result = await executeOnTarget({
+      const result = await execute({
         target,
         model: effectiveModel,
         formattedPrompt,

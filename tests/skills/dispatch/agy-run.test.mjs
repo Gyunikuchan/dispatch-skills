@@ -27,6 +27,7 @@ import {
   testAgyBinaryReachability,
   probeAllAgyModes,
   getNewestBrainConversationId,
+  runAgy,
 
   buildAgyArgs,
   parseAgyEnvelope,
@@ -411,5 +412,97 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(parsed.conversationId, null);
       assert.equal(parsed.text, 'body');
     });
+  });
+});
+
+// The cascade loop was uncovered because executeAgyInMode spawns a subprocess, opens a session
+// log and runs a git integrity check. runAgy now takes those as seams, so these tests assert what
+// the loop itself decides — nothing about subprocess plumbing.
+describe('runAgy cascade loop', () => {
+  const MODES = [AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE, AGY_MODES.ANTIGRAVITY_CLI];
+
+  /** A result the loop reads as "reached the mode, but out of tokens" — the cascade trigger. */
+  const quotaResult = (mode) => ({ exitCode: 1, failureKind: 'quota', stdout: '', stderr: 'usage limit reached', mode });
+  const okResult = (mode) => ({ exitCode: 0, failureKind: null, stdout: 'done', stderr: '', mode });
+
+  function harness({ results = [], modes = MODES } = {}) {
+    const calls = [];
+    let probed = 0;
+    return {
+      calls,
+      probedCount: () => probed,
+      options: {
+        prompt: 'x',
+        initialGitStatus: '',
+        getBinary: () => '/fake/agy',
+        getAvailableModes: async () => {
+          probed += 1;
+          return modes;
+        },
+        createLogger: () => ({ logFile: null, write() {}, close() {} }),
+        execute: async (mode) => {
+          calls.push(mode);
+          const next = results[calls.length - 1];
+          if (next instanceof Error) throw next;
+          return next ?? okResult(mode);
+        },
+      },
+    };
+  }
+
+  // The bug this finding exists for: the guard read `!requestedMode` where `!pinnedMode` was meant.
+  // 'auto' is truthy but pins nothing, so it — and only it — exposed the inversion. With no mode
+  // given (`null`) or a real mode pinned, the buggy guard behaved correctly.
+  for (const key of ['modeVariant', 'agyMode']) {
+    it(`cascades when ${key} is 'auto' and mode 1 is out of tokens`, async () => {
+      const h = harness({ results: [quotaResult(MODES[0]), okResult(MODES[1])] });
+      const result = await runAgy({ ...h.options, [key]: 'auto' });
+      assert.deepEqual(h.calls, [MODES[0], MODES[1]]);
+      assert.equal(result.exitCode, 0);
+    });
+  }
+
+  it('cascades past a quota result and returns the mode that succeeded', async () => {
+    const h = harness({ results: [quotaResult(MODES[0]), okResult(MODES[1])] });
+    const result = await runAgy(h.options);
+    assert.deepEqual(h.calls, [MODES[0], MODES[1]]);
+    assert.equal(result.mode, MODES[1]);
+  });
+
+  it('returns the first success without touching later modes', async () => {
+    const h = harness({ results: [okResult(MODES[0])] });
+    await runAgy(h.options);
+    assert.deepEqual(h.calls, [MODES[0]]);
+  });
+
+  it('a pinned mode never advances, and the availability probe is never run', async () => {
+    const h = harness({ results: [quotaResult(MODES[0])] });
+    const result = await runAgy({ ...h.options, modeVariant: MODES[0] });
+    assert.deepEqual(h.calls, [MODES[0]], 'pinned mode must not cascade');
+    assert.equal(h.probedCount(), 0, 'pinning must skip the probe entirely');
+    assert.equal(result.failureKind, 'quota', 'the pinned mode result is returned as-is');
+  });
+
+  it('a thrown error advances while modes remain and propagates on the last', async () => {
+    const boom = new Error('spawn failed');
+    const h = harness({ results: [boom, okResult(MODES[1])] });
+    assert.equal((await runAgy(h.options)).exitCode, 0);
+
+    const allFail = harness({ results: [boom, boom, boom] });
+    await assert.rejects(() => runAgy(allFail.options), /spawn failed/);
+    assert.deepEqual(allFail.calls, MODES, 'every mode is tried before giving up');
+  });
+
+  it('returns the last result when every mode was reached but none succeeded', async () => {
+    const h = harness({ results: MODES.map(quotaResult) });
+    const result = await runAgy(h.options);
+    assert.deepEqual(h.calls, MODES);
+    assert.equal(result.mode, MODES[2], 'the last attempt is what comes back');
+  });
+
+  it('throws CLI_NOT_FOUND before the loop when no binary is present', async () => {
+    const h = harness();
+    await assert.rejects(() => runAgy({ ...h.options, getBinary: () => null }), (err) => err.code === 'CLI_NOT_FOUND');
+    assert.deepEqual(h.calls, [], 'the executor is never reached');
   });
 });

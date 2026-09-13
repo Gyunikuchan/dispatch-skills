@@ -20,6 +20,7 @@ import {
   isCopilotAvailable,
   classifyCopilotFailure,
   classifyCopilotResult,
+  runCopilot,
 } from '../../../skills/dispatch/scripts/copilot-run.mjs';
 
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
@@ -234,5 +235,84 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
         'throw',
       );
     });
+  });
+});
+
+// Uncovered for the same reason as the other two loops. Copilot's rule differs from claude's:
+// auth does not cascade (see nextCopilotStep), so that asymmetry is what these pin.
+describe('runCopilot cascade loop', () => {
+  const target = (name) => ({ name, mode: name });
+
+  const quotaResult = () => ({ exitCode: 1, failureKind: 'quota', stdout: '', stderr: '' });
+  const authResult = () => ({ exitCode: 1, failureKind: 'auth', stdout: '', stderr: '' });
+  const okResult = () => ({ exitCode: 0, failureKind: null, stdout: 'done', stderr: '' });
+
+  function harness({ results = [], targets = [target('desktop'), target('vscode')] } = {}) {
+    const calls = [];
+    let closed = 0;
+    return {
+      calls,
+      closedCount: () => closed,
+      options: {
+        prompt: 'x',
+        initialGitStatus: '',
+        discoverTargets: () => targets,
+        createLogger: () => ({ logFile: null, write() {}, close() { closed += 1; } }),
+        execute: async ({ target: t }) => {
+          calls.push(t.name);
+          const next = results[calls.length - 1];
+          if (next instanceof Error) throw next;
+          return next ?? okResult();
+        },
+      },
+    };
+  }
+
+  it('cascades to the next target on a quota result', async () => {
+    const h = harness({ results: [quotaResult(), okResult()] });
+    const result = await runCopilot(h.options);
+    assert.deepEqual(h.calls, ['desktop', 'vscode']);
+    assert.equal(result.exitCode, 0);
+  });
+
+  it('cascades on a spawn error', async () => {
+    const h = harness({ results: [new Error('spawn failed'), okResult()] });
+    await runCopilot(h.options);
+    assert.deepEqual(h.calls, ['desktop', 'vscode']);
+  });
+
+  it('does not cascade on auth — an authenticated-but-unsubscribed target is answered, not retried', async () => {
+    const h = harness({ results: [authResult(), okResult()] });
+    const result = await runCopilot(h.options);
+    assert.deepEqual(h.calls, ['desktop'], 'auth must not advance the cascade');
+    assert.equal(result.failureKind, 'auth');
+  });
+
+  it('a pinned mode suppresses cascade', async () => {
+    const h = harness({ results: [quotaResult(), okResult()], targets: [target('desktop')] });
+    const result = await runCopilot({ ...h.options, copilotMode: 'desktop' });
+    assert.deepEqual(h.calls, ['desktop']);
+    assert.equal(result.failureKind, 'quota');
+  });
+
+  it('returns the last result when every target is spent', async () => {
+    const h = harness({ results: [quotaResult(), quotaResult()] });
+    const result = await runCopilot(h.options);
+    assert.deepEqual(h.calls, ['desktop', 'vscode']);
+    assert.equal(result.failureKind, 'quota');
+  });
+
+  it('closes the session logger on success, on exhaustion, and on a propagated throw', async () => {
+    const ok = harness({ results: [okResult()] });
+    await runCopilot(ok.options);
+    assert.equal(ok.closedCount(), 1);
+
+    const spent = harness({ results: [quotaResult(), quotaResult()] });
+    await runCopilot(spent.options);
+    assert.equal(spent.closedCount(), 1);
+
+    const boom = harness({ results: [new Error('boom'), new Error('boom')] });
+    await assert.rejects(() => runCopilot(boom.options));
+    assert.equal(boom.closedCount(), 1);
   });
 });

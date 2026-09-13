@@ -61,7 +61,7 @@ npx skills add Gyunikuchan/dispatch-skills --all
 
 ## How to Use
 
-Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, inspect diffs, dispatch the task, adjudicate the findings, update the walkthrough, and, when run standalone, apply accepted must-fix changes to your working tree.
+Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, dispatch the review, adjudicate the findings against your code, update the walkthrough, and, when run standalone, apply accepted must-fix changes to your working tree.
 
 ### 1. Basic Code Review
 
@@ -112,7 +112,7 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 - **Working-Tree Diff Prioritization**: Uncommitted changes are reviewed first. When everything is already committed, the review covers the whole branch since it diverged from its base — not just the last commit. The exact resolution lives in [references/prompt-template.md](references/prompt-template.md).
 - **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
-- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (`ask_question`) before modifying code.
+- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (your agent's interactive question tool) before modifying code.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only modified files, adjacent call sites, and contracts via code graphs) rather than unbounded codebase scans.
 - **Artifact Lifecycle**: standalone runs always retain the walkthrough file in place; only an orchestrator owning the full implement-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
 

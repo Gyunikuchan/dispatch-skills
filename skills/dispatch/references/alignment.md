@@ -31,7 +31,7 @@ Outputs JSON: `{ slug, slugSource, date, plan?: { tier, path, exists }, walkthro
 `--slug` is optional; pass it only when the user names one. Otherwise the script derives it, in order:
 
 1. **Branch**: the current git branch name (a `feature/`, `fix/`, `chore/`, etc. prefix is stripped, the remainder kebab-cased). This is what lets two independent invocations — a plan review today, a code review tomorrow, no orchestrator in between — land on the same file without any coordination: same branch, same derived slug, same resolved path.
-2. **Conversation**: on a protected branch (`main`, `master`, `develop`, `trunk`) or detached HEAD, where a branch slug would collide across unrelated changes, `conversation-<first 8 chars>` of the active orchestrator's conversation id. Only this conversation finds that artifact automatically; a later session needs the path or slug.
+2. **Conversation**: on a protected branch (`main`, `master`, `develop`, `trunk`, `head`) or detached HEAD, where a branch slug would collide across unrelated changes, `conversation-<first 8 chars>` of the active orchestrator's conversation id. Only this conversation finds that artifact automatically; a later session needs the path or slug.
 
 Derivation fails (script exits non-zero) only when both fail — e.g. OpenCode, which exposes no conversation id, on a protected branch. Pass `--slug <kebab-case-slug>` explicitly then. An explicit user- or orchestrator-supplied path always takes priority over derivation.
 

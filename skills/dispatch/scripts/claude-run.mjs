@@ -188,14 +188,20 @@ export async function runClaude(options = {}) {
     verbose = false,
     claudeMode = null,
     initialGitStatus: baselineGitStatus = null,
+    // Test seams: each defaults to the real implementation, so production calls are unchanged.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
+    // opens a session log and runs a git integrity check.
+    execute = executeOnTarget,
+    discoverTargets = findViableTargets,
+    createLogger = createSessionLogger,
   } = options;
 
-  const viableTargets = findViableTargets(claudeMode);
+  const viableTargets = discoverTargets(claudeMode);
   if (viableTargets.length === 0) {
     throw createNoTargetsError();
   }
 
-  const sessionLogger = createSessionLogger('claude');
+  const sessionLogger = createLogger('claude');
   // Prefer the dispatch-level baseline: taken once before the cascade, it still spans a write made
   // by an earlier provider that failed. Self-baseline only when run standalone via this CLI.
   const initialGitStatus = baselineGitStatus ?? getGitStatus();
@@ -217,7 +223,7 @@ export async function runClaude(options = {}) {
       const isLastModel = m === modelsToTry.length - 1;
 
       try {
-        const result = await executeOnTarget({
+        const result = await execute({
           target,
           model: currentModel,
           formattedPrompt,

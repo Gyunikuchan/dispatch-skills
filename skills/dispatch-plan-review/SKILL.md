@@ -1,6 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Get a cross-agent review of an implementation plan before any code is written, verifying every returned claim against the requirement and the repository's rules. Use on /dispatch-plan-review, or when a plan needs a second opinion from another agent CLI.
+description: Get a cross-agent review of an implementation plan before any code is written, verifying every returned claim. Use on /dispatch-plan-review, or when a plan needs a second opinion from another agent CLI.
 ---
 
 # dispatch-plan-review

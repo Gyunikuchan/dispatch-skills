@@ -279,7 +279,38 @@ function loadVarsFile(varsFile) {
   return parsed;
 }
 
+/**
+ * Usage text for `--help`. `dispatch`'s SKILL.md Troubleshooting teaches `--help` as the
+ * diagnostic move for a misbehaving script, so every authored CLI answers it.
+ */
+function printHelp() {
+  console.log(`
+Fill a review skill's prompt template (fill-template.mjs)
+
+Usage:
+  node fill-template.mjs --skill <template path> [--section "Prompt template"]
+                         (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
+
+Options:
+  --skill <template path>   The template file to read. Spelled --skill for callers' sake, but
+                            its value is a references/prompt-template.md path, not a SKILL.md.
+  --section <heading>       Heading holding the template (default: "Prompt template").
+  --var Name=Value          One substitution; repeatable. Wins over --vars on a collision.
+  --vars <json file>        A JSON object of string values; use it for multi-line values.
+  --out <path>              Write the filled prompt here instead of stdout.
+  --list                    Print the declared variable names as JSON and exit.
+  -h, --help                Show this help.
+
+Every declared variable must be supplied and no undeclared name may be.
+`);
+}
+
 function main() {
+  if (process.argv.slice(2).some((a) => a === '-h' || a === '--help')) {
+    printHelp();
+    process.exit(0);
+  }
+
   let opts;
   try {
     opts = parseArgs(process.argv.slice(2));

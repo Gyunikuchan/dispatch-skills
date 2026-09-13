@@ -149,9 +149,16 @@ export async function runAgy(options = {}) {
     modeVariant = null,
     agyMode = null,
     initialGitStatus: baselineGitStatus = null,
+    // Test seams: each defaults to the real implementation, so production calls are unchanged.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
+    // opens a session log and runs a git integrity check.
+    execute = executeAgyInMode,
+    getAvailableModes = getAvailableAgyModes,
+    getBinary = getAgyBinary,
+    createLogger = createSessionLogger,
   } = options;
 
-  const bin = getAgyBinary();
+  const bin = getBinary();
   if (!bin) {
     const err = new Error(
       'Google Antigravity CLI (agy) was not found in PATH or ~/.gemini/bin/agy.\n' +
@@ -170,7 +177,7 @@ export async function runAgy(options = {}) {
   // Preferred cascade: Antigravity 2.0 > VS Code Extension > CLI
   const { modesToTry } = pinnedMode
     ? { modesToTry: [pinnedMode] }
-    : resolveModePlan({ requestedMode, availableModes: await getAvailableAgyModes() });
+    : resolveModePlan({ requestedMode, availableModes: await getAvailableModes() });
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
@@ -181,10 +188,10 @@ export async function runAgy(options = {}) {
 
   for (let i = 0; i < modesToTry.length; i++) {
     const currentMode = modesToTry[i];
-    const sessionLogger = createSessionLogger('agy');
+    const sessionLogger = createLogger('agy');
 
     try {
-      const result = await executeAgyInMode(currentMode, {
+      const result = await execute(currentMode, {
         model,
         effort,
         timeout,
@@ -1160,11 +1167,10 @@ function findAgyOrAntigravityBinary(candidates) {
 /**
  * Finds the newest conversation ID in the Antigravity brain directory for a given mode.
  * Supports cross-platform path resolution across macOS, Windows, and Linux.
- * @param {number} [beforeTimestamp=0] - Only consider conversations modified after this timestamp
  * @param {AgyMode|null} [mode=null] - Optional mode to narrow search
  * @returns {string|null} Newest conversation ID or null
  */
-export function getNewestBrainConversationId(beforeTimestamp = 0, mode = null) {
+export function getNewestBrainConversationId(modifiedAfterMs = 0, mode = null) {
   const homeDir = os.homedir();
   const isWin = process.platform === 'win32';
 
@@ -1199,7 +1205,7 @@ export function getNewestBrainConversationId(beforeTimestamp = 0, mode = null) {
   }
 
   let newestId = null;
-  let maxMtime = beforeTimestamp;
+  let maxMtime = modifiedAfterMs;
 
   for (const brainDir of candidateDirs) {
     if (!fs.existsSync(brainDir)) continue;

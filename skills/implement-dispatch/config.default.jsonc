@@ -172,7 +172,7 @@
         "max": {
           "model": "claude-fable-5.1",
           "effort": "medium",
-        },        
+        },
       },
       "agy": {
         "low": {

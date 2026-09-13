@@ -19,6 +19,7 @@ import {
   probeAllClaudeModes,
   resolveClaudeTarget,
   resolveModelsToTry,
+  runClaude,
   testClaudeBinaryReachability,
 } from '../../../skills/dispatch/scripts/claude-run.mjs';
 
@@ -327,5 +328,97 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       });
       assert.equal(step, 'throw');
     });
+  });
+});
+
+// Uncovered for the same reason as the agy loop. runClaude cascades in two dimensions — targets
+// outer, models inner — so the call *sequence* is the contract, not just the final result.
+describe('runClaude cascade loop', () => {
+  const target = (name) => ({ name, mode: name });
+
+  const quotaResult = () => ({ exitCode: 1, failureKind: 'quota', stdout: '', stderr: '' });
+  const modelFailResult = () => ({ exitCode: 1, failureKind: null, stdout: '', stderr: 'model not available' });
+  const okResult = () => ({ exitCode: 0, failureKind: null, stdout: 'done', stderr: '' });
+
+  function harness({ results = [], targets = [target('desktop'), target('vscode')] } = {}) {
+    const calls = [];
+    let closed = 0;
+    return {
+      calls,
+      closedCount: () => closed,
+      options: {
+        prompt: 'x',
+        model: ['model-a', 'model-b'],
+        initialGitStatus: '',
+        discoverTargets: () => targets,
+        createLogger: () => ({ logFile: null, write() {}, close() { closed += 1; } }),
+        execute: async ({ target: t, model }) => {
+          calls.push(`${t.name}:${model}`);
+          const next = results[calls.length - 1];
+          if (next instanceof Error) throw next;
+          return next ?? okResult();
+        },
+      },
+    };
+  }
+
+  // nextClaudeStep tests `!isLastModel` BEFORE the quota/auth check, so the inner loop always
+  // runs to the end of the model list first, whatever the failure kind. Target advance is a
+  // last-model-only decision. These three pin that ordering, which the call sequence exposes
+  // and a result-only assertion would not.
+  it('tries every model on a target before considering the next target', async () => {
+    // model-a is out of quota — the condition that abandons a target — yet model-b on the same
+    // target is still tried first, because the model loop is inner.
+    const h = harness({ results: [quotaResult(), quotaResult(), okResult()] });
+    await runClaude(h.options);
+    assert.deepEqual(h.calls, ['desktop:model-a', 'desktop:model-b', 'vscode:model-a']);
+  });
+
+  it('advances the target only after the last model, and only on quota or auth', async () => {
+    const cascades = harness({ results: [modelFailResult(), quotaResult(), okResult()] });
+    await runClaude(cascades.options);
+    assert.deepEqual(cascades.calls, ['desktop:model-a', 'desktop:model-b', 'vscode:model-a']);
+
+    // Same shape, but the last model fails for an ordinary reason: that result is returned
+    // rather than cascading, because only quota/auth means "this target is unusable".
+    const stops = harness({ results: [modelFailResult(), modelFailResult(), okResult()] });
+    const result = await runClaude(stops.options);
+    assert.deepEqual(stops.calls, ['desktop:model-a', 'desktop:model-b'], 'vscode is never reached');
+    assert.equal(result.exitCode, 1);
+  });
+
+  it('a pinned mode suppresses target advance but not model fallback', async () => {
+    const h = harness({ results: [quotaResult(), quotaResult()] });
+    const result = await runClaude({ ...h.options, claudeMode: 'desktop' });
+    assert.deepEqual(h.calls, ['desktop:model-a', 'desktop:model-b'], 'pinning does not disable model fallback');
+    assert.equal(result.failureKind, 'quota', 'the pinned target result is returned, not cascaded');
+  });
+
+  it('returns the last result rather than throwing when the cascade is exhausted', async () => {
+    const h = harness({ results: [quotaResult(), quotaResult(), quotaResult(), quotaResult()] });
+    const result = await runClaude(h.options);
+    assert.deepEqual(h.calls, ['desktop:model-a', 'desktop:model-b', 'vscode:model-a', 'vscode:model-b']);
+    assert.ok(result, 'an exhausted cascade still returns lastResult');
+    assert.equal(result.failureKind, 'quota');
+  });
+
+  it('closes the session logger on success, on exhaustion, and on a propagated throw', async () => {
+    const ok = harness({ results: [okResult()] });
+    await runClaude(ok.options);
+    assert.equal(ok.closedCount(), 1, 'closed on success');
+
+    const spent = harness({ results: [quotaResult(), quotaResult(), quotaResult(), quotaResult()] });
+    await runClaude(spent.options);
+    assert.equal(spent.closedCount(), 1, 'closed on exhaustion');
+
+    const boom = harness({ results: [new Error('spawn failed'), new Error('spawn failed'), new Error('spawn failed'), new Error('spawn failed')] });
+    await assert.rejects(() => runClaude(boom.options));
+    assert.equal(boom.closedCount(), 1, 'closed before rethrowing');
+  });
+
+  it('throws when no target is viable, before any execution', async () => {
+    const h = harness({ targets: [] });
+    await assert.rejects(() => runClaude(h.options));
+    assert.deepEqual(h.calls, []);
   });
 });

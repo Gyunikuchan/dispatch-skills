@@ -18,7 +18,7 @@
  * `--slug` is optional: when omitted it is derived, in order, from (1) the current git
  * branch (prefix stripped, kebab-cased) or (2) the active orchestrator's own
  * conversation/session id (truncated to 8 chars, prefixed `conversation-`). Branch
- * derivation fails on a protected branch (main/master/develop/trunk) or detached HEAD;
+ * derivation fails on a protected branch (main/master/develop/trunk/head) or detached HEAD;
  * conversation-id derivation fails when the orchestrator exposes no such env var (e.g.
  * OpenCode, today) — pass `--slug` explicitly if both fail.
  *
@@ -109,7 +109,7 @@ export function sanitizeSlug(raw) {
 /**
  * Derives a kebab-case slug from a branch name, stripping a common type prefix
  * (`feature/`, `fix/`, ...) first. Returns null on a protected branch name
- * (main/master/develop/trunk) or when nothing sanitizable remains — callers
+ * (main/master/develop/trunk/head) or when nothing sanitizable remains — callers
  * fall back to an explicit `--slug` in that case.
  *
  * @param {string|null} branch
@@ -457,7 +457,38 @@ function parseArgs(args) {
   return opts;
 }
 
+/**
+ * Usage text for `--help`. `dispatch`'s SKILL.md Troubleshooting teaches `--help` as the
+ * diagnostic move for a misbehaving script, so every authored CLI answers it.
+ */
+function printHelp() {
+  console.log(`
+Resolve plan/walkthrough artifact paths (resolve-artifact-paths.mjs)
+
+Usage:
+  node resolve-artifact-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>]
+                                  [--kind plan|walkthrough|both] [--orchestrator <name>]
+
+Options:
+  --slug <kebab-slug>       Artifact slug. Derived from the git branch, else the orchestrator's
+                            conversation id, when omitted.
+  --date <yyyy-mm-dd>       Date component of a scratch-new path (default: today).
+  --kind <kind>             plan | walkthrough | both (default: both).
+  --orchestrator <name>     Override orchestrator detection; gates native-tier scanning.
+  -h, --help                Show this help.
+
+Outputs JSON: { slug, slugSource, date, plan?: { tier, path, exists }, walkthrough?: { ... } }.
+Resolution order per kind: platform-native artifact, then an existing scratch artifact
+matching the slug at any date, then the deterministic scratch-new path.
+`);
+}
+
 function main() {
+  if (process.argv.slice(2).some((a) => a === '-h' || a === '--help')) {
+    printHelp();
+    process.exit(0);
+  }
+
   let opts;
   try {
     opts = parseArgs(process.argv.slice(2));
