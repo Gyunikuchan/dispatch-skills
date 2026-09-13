@@ -160,7 +160,7 @@ import {
 // SECTION: Constants (tweak these)
 // ============================================================================
 
-export const DEFAULT_FALLBACK_AGENT = 'delegate';
+export const DEFAULT_FALLBACK_AGENT = 'plan';
 export const DEFAULT_LM_STUDIO_HOST = '127.0.0.1';
 export const DEFAULT_LM_STUDIO_PORT = 1234;
 export const DEFAULT_CONTEXT_LIMIT = 81920;
@@ -800,18 +800,15 @@ export function readOpencodeConfig(
 
 /**
  * Resolves the default agent identifier from opencode config or fallback.
- * Returns `'local'` for `config.agent.local` — that is a user-owned opencode.jsonc
- * agent key, not a provider key, and is intentionally outside the provider rename.
+ * Checks for a configured `plan` agent, then an agent with `mode === 'primary'`,
+ * then the first declared agent, falling back to {@link DEFAULT_FALLBACK_AGENT} ('plan').
  * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
  * @returns {string}
  */
 export function resolveDefaultAgent(config = readOpencodeConfig()) {
   if (config && config.agent && typeof config.agent === 'object') {
-    if (config.agent.delegate) {
-      return 'delegate';
-    }
-    if (config.agent.local) {
-      return 'local';
+    if (config.agent.plan) {
+      return 'plan';
     }
     const primaryKey = Object.keys(config.agent).find(
       (key) => config.agent[key]?.mode === 'primary',
@@ -1536,7 +1533,7 @@ Usage:
 Options:
   -p, --prompt <string>       The prompt message to send to the agent
   -f, --file, --artifact      Attach a context file or Antigravity artifact path (can repeat)
-  -a, --agent <name>          Override agent (defaults to 'delegate' from opencode.jsonc)
+  -a, --agent <name>          Override agent (auto-resolved from opencode config, fallback 'plan')
   -m, --model <provider/name> Override model (defaults to opencode.jsonc model)
   -e, --effort <variant>      Passed as opencode run --variant (provider-specific reasoning effort)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})

@@ -592,9 +592,20 @@ describe('opencode-run', () => {
     });
 
     it('returns fallback agent when no opencode config is present', () => {
-      assert.equal(DEFAULT_FALLBACK_AGENT, 'delegate');
-      const agent = resolveDefaultAgent();
-      assert.equal(agent, DEFAULT_FALLBACK_AGENT);
+      assert.equal(DEFAULT_FALLBACK_AGENT, 'plan');
+      assert.equal(resolveDefaultAgent(null), DEFAULT_FALLBACK_AGENT);
+      assert.equal(resolveDefaultAgent({}), DEFAULT_FALLBACK_AGENT);
+    });
+
+    it('resolves agent according to cascade: plan, primary mode, first key, fallback', () => {
+      assert.equal(resolveDefaultAgent({ agent: { plan: {} } }), 'plan');
+      assert.equal(resolveDefaultAgent({ agent: { plan: {}, custom: { mode: 'primary' } } }), 'plan');
+      assert.equal(resolveDefaultAgent({ agent: { plan: false, custom: { mode: 'primary' } } }), 'custom');
+      assert.equal(resolveDefaultAgent({ agent: { custom: { mode: 'primary' }, other: {} } }), 'custom');
+      assert.equal(resolveDefaultAgent({ agent: { explore: {}, other: {} } }), 'explore');
+      assert.equal(resolveDefaultAgent({ agent: {} }), 'plan');
+      assert.equal(resolveDefaultAgent({ agent: 'invalid' }), 'plan');
+      assert.equal(resolveDefaultAgent(null), 'plan');
     });
 
     it('returns null from readOpencodeConfig when no config file exists', () => {

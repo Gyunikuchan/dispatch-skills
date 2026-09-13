@@ -8,6 +8,6 @@
   "scripts/copilot-run.mjs": "939a3a39ebbf78b2d7c32d63138a92884f0d300dce87c472cb8a56498c7aa3b4",
   "scripts/dispatch.mjs": "69930202f3762d8693bf6b1b94c2f17d2b44969d54eb2047efb2a0e68ed2182b",
   "scripts/fill-template.mjs": "64e050d86f418b0bd58984eeda669e3748e636827b1fcf041dc6e7c79f739464",
-  "scripts/opencode-run.mjs": "7afd7d256b72cc42ed6e9f2cd5b726829ebf19049bacb328f49b900641809ccc",
+  "scripts/opencode-run.mjs": "3ed63212512229d8dcc4cf36139e58a0d3b9bd9590af11171f6aa4b589ce8ccd",
   "scripts/resolve-artifact-paths.mjs": "19211c0dfcd66fbea20434292bd01a2087c3c2200fb715440933be32cab74c4f"
 }
