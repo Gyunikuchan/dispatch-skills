@@ -38,10 +38,10 @@ Confirm with the user which run you are working if the printed path is not the o
 ## 2. Triage the next batch
 
 ```bash
-node <skill>/scripts/status.mjs batch --size 8
+node <skill>/scripts/status.mjs batch
 ```
 
-Prints the next open findings — highest severity first, grouped by the file they touch — with full Location / Claim / Evidence / Proposal. The batch is filled to `--size` findings: the group sharing the highest-severity finding's file leads, and the rest of the open pool tops it up in rank order. For **each** finding in the batch, open the cited locations and decide:
+Prints the next open findings — highest severity first, grouped by the file they touch — with full Location / Claim / Evidence / Proposal. Sized dynamically based on the 5-batch target (`ceil(total / 5)`), lead finding severity, and lead-file cluster size (keeping same-file clusters intact up to 25; override with `--size <n>` or `--batches <n>`): the group sharing the highest-severity finding's file leads, and the rest of the open pool tops it up in rank order. For **each** finding in the batch, open the cited locations and decide:
 
 | Verdict | Action |
 |---|---|

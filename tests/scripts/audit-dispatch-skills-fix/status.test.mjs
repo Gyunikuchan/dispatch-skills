@@ -7,8 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   COUNTS_PREFIX,
+  DEFAULT_MAX_BATCHES,
+  MAX_SAFE_BATCH_SIZE,
+  MIN_SAFE_BATCH_SIZE,
   SEVERITIES,
+  SEVERITY_BATCH_TARGETS,
   STATUSES,
+  cmdBatch,
   cmdInit,
   cmdSet,
   isMain,
@@ -18,6 +23,7 @@ import {
   primaryFile,
   ranked,
   refreshCounts,
+  resolveBatchSize,
   selectBatch,
   statusLine,
   toPosix,
@@ -341,6 +347,113 @@ describe('selectBatch', () => {
 });
 
 // ============================================================================
+// SECTION: Dynamic batch sizing (max 5 batches)
+// ============================================================================
+
+describe('resolveBatchSize', () => {
+  const dummyFindings = (n, { severity = 'medium', file = null } = {}) =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `A-${i + 1}`,
+      severity: typeof severity === 'function' ? severity(i) : severity,
+      location: `\`${file ? (typeof file === 'function' ? file(i) : file) : `file_${i + 1}.mjs`}:${i + 1}\``,
+    }));
+
+  it('bounds by lead finding severity targets when lead is a lone file', () => {
+    assert.equal(DEFAULT_MAX_BATCHES, 5);
+    assert.equal(MAX_SAFE_BATCH_SIZE, 25);
+    assert.equal(MIN_SAFE_BATCH_SIZE, 4);
+
+    // 100 total findings in report (each in its own file); dynamic target is ceil(100/5) = 20
+    const all = dummyFindings(100);
+
+    // Critical lead on lone file -> target is 6
+    const criticalOpen = [
+      { id: 'A-1', severity: 'critical', location: '`crit.mjs:1`' },
+      ...dummyFindings(99, { severity: 'medium', file: 'other.mjs' }),
+    ];
+    assert.equal(resolveBatchSize(all, criticalOpen, []), 6);
+
+    // High lead on lone file -> target is 8
+    const highOpen = [
+      { id: 'A-1', severity: 'high', location: '`high.mjs:1`' },
+      ...dummyFindings(99, { severity: 'medium', file: 'other.mjs' }),
+    ];
+    assert.equal(resolveBatchSize(all, highOpen, []), 8);
+
+    // Medium lead on lone file -> target is 12
+    const medOpen = [
+      { id: 'A-1', severity: 'medium', location: '`med.mjs:1`' },
+      ...dummyFindings(99, { severity: 'low', file: 'other.mjs' }),
+    ];
+    assert.equal(resolveBatchSize(all, medOpen, []), 12);
+
+    // Low lead -> min(20, 20) = 20
+    const lowOpen = dummyFindings(100, { severity: 'low' });
+    assert.equal(resolveBatchSize(all, lowOpen, []), 20);
+
+    // Nit lead -> min(20, 25) = 20
+    const nitOpen = dummyFindings(100, { severity: 'nit' });
+    assert.equal(resolveBatchSize(all, nitOpen, []), 20);
+  });
+
+  it('expands batch size to keep lead same-file cluster intact up to MAX_SAFE_BATCH_SIZE', () => {
+    const all = dummyFindings(100);
+
+    // Lead file has 8 critical/high findings: expands from 6 to 8 to avoid fragmenting the file
+    const clusterLead = [
+      ...dummyFindings(8, { severity: 'critical', file: 'lead.mjs' }),
+      ...dummyFindings(92, { severity: 'medium', file: 'other.mjs' }),
+    ];
+    assert.equal(resolveBatchSize(all, clusterLead, []), 8);
+
+    // Lead file has 30 findings: capped at MAX_SAFE_BATCH_SIZE (25)
+    const giantCluster = [
+      ...dummyFindings(30, { severity: 'high', file: 'lead.mjs' }),
+      ...dummyFindings(70, { severity: 'medium', file: 'other.mjs' }),
+    ];
+    assert.equal(resolveBatchSize(all, giantCluster, []), 25);
+  });
+
+  it('applies MIN_SAFE_BATCH_SIZE floor for small reports', () => {
+    // 15 findings total -> ceil(15/5) = 3; floor applies -> 4
+    const all = dummyFindings(15, { severity: 'medium' });
+    assert.equal(resolveBatchSize(all, all, []), 4);
+
+    // 1 finding total -> min(4, 1) = 1
+    const single = dummyFindings(1);
+    assert.equal(resolveBatchSize(single, single, []), 1);
+
+    // Empty findings -> 1
+    assert.equal(resolveBatchSize([], [], []), 1);
+  });
+
+  it('respects --batches flag override', () => {
+    // 100 findings with --batches 3 for nit lead -> min(ceil(100/3), 25) = 25
+    assert.equal(
+      resolveBatchSize(dummyFindings(100, { severity: 'nit' }), dummyFindings(100, { severity: 'nit' }), ['--batches', '3']),
+      25,
+    );
+  });
+
+  it('respects explicit --size flag override', () => {
+    // --size overrides severity / cluster / batches
+    assert.equal(resolveBatchSize(dummyFindings(100), dummyFindings(100), ['--size', '15']), 15);
+    assert.equal(resolveBatchSize(dummyFindings(100), dummyFindings(100), ['--batches', '3', '--size', '12']), 12);
+  });
+
+  it('throws on invalid flag values instead of silently coercing', () => {
+    const all = dummyFindings(10);
+    assert.throws(() => resolveBatchSize(all, all, ['--size', '0']), /Invalid --size/);
+    assert.throws(() => resolveBatchSize(all, all, ['--size', 'abc']), /Invalid --size/);
+    assert.throws(() => resolveBatchSize(all, all, ['--size', '-5']), /Invalid --size/);
+    assert.throws(() => resolveBatchSize(all, all, ['--size']), /requires a value/);
+    assert.throws(() => resolveBatchSize(all, all, ['--size', '--batches', '3']), /requires a value/);
+    assert.throws(() => resolveBatchSize(all, all, ['--batches', '0']), /Invalid --batches/);
+    assert.throws(() => resolveBatchSize(all, all, ['--batches', 'xyz']), /Invalid --batches/);
+  });
+});
+
+// ============================================================================
 // SECTION: Commands
 // ============================================================================
 
@@ -369,6 +482,14 @@ describe('cmdSet', () => {
     const a1 = findings.find((f) => f.id === 'A-1');
     assert.equal(a1.status, 'fixed');
     assert.equal(a1.note, 'landed in abc123');
+  });
+
+  it('accepts a note whose text begins with a dash or markdown bullet', () => {
+    const file = fixture(report([finding({ id: 'A-1', status: 'open' })]));
+    cmdSet(path.dirname(file), file, ['set', 'A-1', 'fixed', '--note', '--reverted in PR 123']);
+    const findings = readFindings(file);
+    const a1 = findings.find((f) => f.id === 'A-1');
+    assert.equal(a1.note, '--reverted in PR 123');
   });
 
   it('preserves the existing note when --note is omitted', () => {
@@ -404,5 +525,38 @@ describe('cmdSet', () => {
     const after = fs.readFileSync(file, 'utf8');
     const tail = (text) => text.slice(text.indexOf('## 4. Appendix'));
     assert.equal(tail(after), tail(before));
+  });
+});
+
+describe('cmdBatch', () => {
+  it('prints dynamically sized batch header and finding bodies', () => {
+    const list = Array.from({ length: 25 }, (_, i) =>
+      finding({ id: `A-${i + 1}`, file: `file${Math.floor(i / 5)}.mjs`, severity: 'high' }),
+    );
+    const file = fixture(report(list));
+    const captured = [];
+    const origLog = console.log;
+    try {
+      console.log = (msg) => captured.push(msg);
+      cmdBatch(path.dirname(file), file, ['batch']);
+    } finally {
+      console.log = origLog;
+    }
+    // 25 total -> ceil(25/5) = batch size 5
+    assert.ok(captured[0].includes('25 open, batch size 5'));
+    assert.ok(captured[0].includes('A-1, A-2, A-3, A-4, A-5'));
+  });
+
+  it('prints "No open findings." when all findings are settled', () => {
+    const file = fixture(report([finding({ id: 'A-1', status: 'fixed' })]));
+    const captured = [];
+    const origLog = console.log;
+    try {
+      console.log = (msg) => captured.push(msg);
+      cmdBatch(path.dirname(file), file, ['batch']);
+    } finally {
+      console.log = origLog;
+    }
+    assert.deepEqual(captured, ['No open findings.']);
   });
 });

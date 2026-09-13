@@ -12,7 +12,7 @@
  * Usage:
  *   node <skill>/scripts/status.mjs init [--run <yyyy-mm-dd-hhmm>]
  *   node <skill>/scripts/status.mjs list [--run <run>] [--status open] [--severity critical,high] [--full]
- *   node <skill>/scripts/status.mjs batch [--run <run>] [--size 8]
+ *   node <skill>/scripts/status.mjs batch [--run <run>] [--batches 5] [--size <n>]
  *   node <skill>/scripts/status.mjs set A-3 fixed [--note "..."] [--run <run>]
  */
 
@@ -25,6 +25,16 @@ export const STATUSES = ['open', 'fixed', 'false-positive', 'decision', 'deferre
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit'];
 const AUDIT_DIR = '.scratch/audits';
 export const COUNTS_PREFIX = '> Fix status:';
+export const DEFAULT_MAX_BATCHES = 5;
+export const SEVERITY_BATCH_TARGETS = {
+  critical: 6,
+  high: 8,
+  medium: 12,
+  low: 20,
+  nit: 25,
+};
+export const MAX_SAFE_BATCH_SIZE = 25;
+export const MIN_SAFE_BATCH_SIZE = 4;
 
 // ============================================================================
 // SECTION: Paths
@@ -62,9 +72,16 @@ function resolveReport(root, argv) {
   return path.join(auditDir, reports[reports.length - 1]);
 }
 
+export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--full', '--size', '--batches', '--note'];
+
 function flag(argv, name, fallback = null) {
   const index = argv.indexOf(name);
-  return index === -1 || !argv[index + 1] ? fallback : argv[index + 1];
+  if (index === -1) return fallback;
+  const value = argv[index + 1];
+  if (!value || KNOWN_FLAGS.includes(value)) {
+    throw new Error(`Flag ${name} requires a value.`);
+  }
+  return value;
 }
 
 // ============================================================================
@@ -283,18 +300,72 @@ export function selectBatch(open, size) {
 }
 
 /**
+ * Resolves batch size: explicit `--size` wins; otherwise sizes dynamically based on the 5-batch
+ * target (`ceil(total / batches)`), the lead finding's severity, and the lead-file cluster size.
+ *
+ * If the lead file has a cluster of findings (>= 2), the batch size expands up to MAX_SAFE_BATCH_SIZE
+ * to keep the cluster intact in a single dispatch rather than fragmenting same-file edits.
+ */
+export function resolveBatchSize(allFindings, openFindings, argv = []) {
+  const explicitSize = flag(argv, '--size');
+  if (explicitSize !== null) {
+    const parsed = Number(explicitSize);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(`Invalid --size "${explicitSize}": expected a positive integer.`);
+    }
+    return parsed;
+  }
+  const explicitBatches = flag(argv, '--batches');
+  let batches = DEFAULT_MAX_BATCHES;
+  if (explicitBatches !== null) {
+    const parsed = Number(explicitBatches);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(`Invalid --batches "${explicitBatches}": expected a positive integer.`);
+    }
+    batches = parsed;
+  }
+
+  const total = allFindings.length;
+  if (total === 0 || openFindings.length === 0) return 1;
+
+  // 1. Base dynamic target to complete the report in at most `batches` (default 5) batches.
+  // Uses total findings so batch size remains stable across resumptions rather than decaying exponentially.
+  const dynamicTarget = Math.ceil(total / batches);
+
+  // 2. Severity-informed target from the lead open finding
+  const leadSeverity = openFindings[0].severity;
+  const severityTarget = SEVERITY_BATCH_TARGETS[leadSeverity];
+
+  // Bounded by severity target, with a minimum floor of MIN_SAFE_BATCH_SIZE (or total)
+  let target = Math.min(dynamicTarget, severityTarget);
+  target = Math.max(Math.min(MIN_SAFE_BATCH_SIZE, total), target);
+
+  // 3. Lead-cluster expansion: if the lead file holds a cluster (>= 2), keep the cluster intact
+  // rather than slicing same-file edits across multiple dispatches
+  const leadFile = primaryFile(openFindings[0].location);
+  const leadClusterSize = openFindings.filter((f) => primaryFile(f.location) === leadFile).length;
+  if (leadClusterSize >= 2) {
+    target = Math.max(target, Math.min(leadClusterSize, MAX_SAFE_BATCH_SIZE));
+  }
+
+  return Math.min(target, MAX_SAFE_BATCH_SIZE);
+}
+
+/**
  * Prints the next batch of open findings: highest severity first, then grouped by the file they
- * touch, so one batch lands in one area of the tree.
+ * touch, so one batch lands in one area of the tree. Sized dynamically to finish the report in at
+ * most 5 batches (or `--batches <n>`), unless overridden with `--size <n>`.
  */
 export function cmdBatch(root, reportFile, argv) {
-  const size = Number(flag(argv, '--size', '8'));
-  const open = ranked(parseFindings(loadReport(reportFile))).filter((f) => f.status === 'open');
+  const all = parseFindings(loadReport(reportFile));
+  const open = ranked(all).filter((f) => f.status === 'open');
   if (open.length === 0) {
     console.log('No open findings.');
     return;
   }
+  const size = resolveBatchSize(all, open, argv);
   const batch = selectBatch(open, size);
-  console.log(`# Batch: ${batch.map((f) => f.id).join(', ')} (${open.length} open)\n`);
+  console.log(`# Batch: ${batch.map((f) => f.id).join(', ')} (${open.length} open, batch size ${size})\n`);
   for (const row of batch) console.log(`${row.body}\n`);
 }
 
