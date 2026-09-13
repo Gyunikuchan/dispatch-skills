@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 /**
- * Extracts and fills the `#### Prompt template` fenced block from a skill's SKILL.md, so
- * orchestrators stop hand-rolling an extraction/substitution script per dispatch and stop
- * piping a multi-line, backtick-heavy prompt through shell quoting. Templates stay inline in
- * the owning SKILL.md — this script reads them, it never relocates them (see
- * `references/alignment.md` § Prompt Template Filling).
+ * Extracts and fills the `#### Prompt template` fenced block from a template file — each review
+ * skill's own `references/prompt-template.md` — so orchestrators stop hand-rolling an
+ * extraction/substitution script per dispatch and stop piping a multi-line, backtick-heavy prompt
+ * through shell quoting. The template stays in the skill that owns it; this script reads it, and
+ * never relocates it (see `references/alignment.md` § Prompt Template Filling).
+ *
+ * NOTE: the flag is spelled `--skill` for callers' sake, but its value is the template file's
+ * path, not a SKILL.md.
  *
  * Usage:
- *   node fill-template.mjs --skill <SKILL.md path> [--section "Prompt template"]
+ *   node fill-template.mjs --skill <template path> [--section "Prompt template"]
  *                           (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
  *
  * `--section` defaults to "Prompt template" and matches any heading level (`#`-`######`) with
@@ -286,11 +289,11 @@ function main() {
   }
 
   if (!opts.skill) {
-    process.stderr.write('Error: --skill <SKILL.md path> is required\n');
+    process.stderr.write('Error: --skill <template path> is required\n');
     process.exit(1);
   }
   if (!fs.existsSync(opts.skill)) {
-    process.stderr.write(`Error: SKILL.md not found: ${opts.skill}\n`);
+    process.stderr.write(`Error: Template file not found: ${opts.skill}\n`);
     process.exit(1);
   }
 

@@ -251,6 +251,9 @@ export function cmdList(root, reportFile, argv) {
   const rows = all.filter(
     (f) => (!status || f.status === status) && (!severities || severities.includes(f.severity)),
   );
+  // Mirrors `cmdBatch`: an empty result says so on stdout, so a caller — or a SKILL.md completion
+  // check — can test for it. The stderr tally below is always printed and so cannot serve.
+  if (rows.length === 0) console.log(status === 'open' ? 'No open findings.' : 'No matching findings.');
   for (const row of rows) {
     if (full) console.log(`${row.body}\n`);
     else console.log(`${row.id}\t${row.severity}\t${row.status}\t${primaryFile(row.location)}\t${row.title}`);

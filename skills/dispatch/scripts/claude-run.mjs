@@ -277,14 +277,6 @@ export async function runClaude(options = {}) {
 }
 
 /**
- * Resolves the models to try, in priority order, from the raw `model` option.
- * Accepts an array, a comma-separated string, or a single model id. `null`/empty means
- * no model is configured anywhere — a single-element `[null]` list omits `--model`
- * entirely so the Claude CLI's own default applies.
- * @param {string|string[]|null} model
- * @returns {(string|null)[]}
- */
-/**
  * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
  * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
  * `--permission-mode plan` and `--disallowedTools` layer on the allowlist so a write tool
@@ -293,6 +285,18 @@ export async function runClaude(options = {}) {
  * @param {{ model?: string|null, effort?: string|null }} [opts]
  * @returns {string[]}
  */
+/**
+ * Byte length of every argument `buildClaudeArgs` adds around the prompt, plus a separator per
+ * argument. Used to reserve room against the batch-launcher command-line ceiling.
+ *
+ * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @returns {number}
+ */
+export function claudeFixedArgBytes({ model, effort } = {}) {
+  const withPrompt = buildClaudeArgs('', { model, effort });
+  return withPrompt.reduce((sum, arg) => sum + Buffer.byteLength(String(arg), 'utf8') + 1, 0);
+}
+
 export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
   const args = ['-p', argvPrompt, '--output-format', 'json', '--permission-mode', 'plan'];
   if (model) args.push('--model', model);
@@ -328,6 +332,14 @@ export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinne
   return 'return';
 }
 
+/**
+ * Resolves the models to try, in priority order, from the raw `model` option.
+ * Accepts an array, a comma-separated string, or a single model id. `null`/empty means
+ * no model is configured anywhere — a single-element `[null]` list omits `--model`
+ * entirely so the Claude CLI's own default applies.
+ * @param {string|string[]|null} model
+ * @returns {(string|null)[]}
+ */
 export function resolveModelsToTry(model) {
   let models = [];
   if (Array.isArray(model)) {
@@ -389,6 +401,10 @@ function executeOnTarget({
   // Headless print mode (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude', {
     binary: target.bin,
+    // `buildClaudeArgs` appends an `--allowedTools` pair per read-only tool plus the variadic
+    // `--disallowedTools` list; measured here so the batch-launcher check budgets the whole
+    // command line rather than the prompt alone.
+    reservedBytes: claudeFixedArgBytes({ model, effort }),
   });
   const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort });
 

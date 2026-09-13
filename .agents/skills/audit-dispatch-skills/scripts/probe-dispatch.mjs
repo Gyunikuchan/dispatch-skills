@@ -73,6 +73,9 @@ async function main() {
   const mods = await loadDispatchModules(scriptsDir);
   const outDir = path.join(workDir, 'dispatch');
   fs.mkdirSync(outDir, { recursive: true });
+  // Liveness marker: `summary.md` lands only at the very end, so without this a probe still working
+  // through minutes of live prompts is indistinguishable from one that died on startup.
+  fs.writeFileSync(path.join(outDir, 'started.txt'), `${new Date().toISOString()}\n`, 'utf8');
 
   const providers = opts.only ?? PROVIDERS;
   const rows = await discover(mods, providers);

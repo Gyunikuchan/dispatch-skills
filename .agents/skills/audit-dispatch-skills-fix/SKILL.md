@@ -10,7 +10,16 @@ Closes out an `audit-dispatch-skills` report. The report holds **claims** that w
 
 The report **is** the state of the run, not the conversation: each finding carries a `- **Status**: open | fixed | false-positive | decision | deferred` line that `<skill>/scripts/status.mjs` reads and rewrites in place. There is no second state file. A run that stops anywhere resumes from the report.
 
-Paths are relative to the repo root. `<skill>` is this skill's directory (`.agents/skills/audit-dispatch-skills-fix` in Antigravity, `.claude/skills/audit-dispatch-skills-fix` in Claude Code). Findings are cited by ID (`A-7`), never by pasted body.
+Paths are relative to the repo root. Findings are cited by ID (`A-7`), never by pasted body. `<skill>` is this skill's own directory, which differs per host:
+
+| Host | `<skill>` |
+|---|---|
+| Antigravity | `.agents/skills/audit-dispatch-skills-fix` |
+| Claude Code | `.claude/skills/audit-dispatch-skills-fix` |
+| Copilot | `.github/skills/audit-dispatch-skills-fix` |
+| OpenCode | `.opencode/skill/audit-dispatch-skills-fix` |
+
+If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives.
 
 ## 1. Open the report
 
@@ -74,7 +83,7 @@ node <skill>/scripts/status.mjs list --status open
 
 Return to step 2 while any finding is `open`. Statuses land in the report per finding as each one is settled, so an interrupted run never loses the batch.
 
-**Done when:** `list --status open` prints nothing.
+**Done when:** `list --status open` prints `No open findings.` and no finding rows. (It always writes a `<n> of <total> findings listed.` tally to stderr, which most hosts merge into the same output — so "prints nothing" is never literally true.)
 
 ## 5. Hand off
 

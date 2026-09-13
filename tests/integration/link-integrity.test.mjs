@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 
 // Single source of truth: the audit's baseline scanner. Keeping a second copy here is how the
 // two quietly diverged (the audit's missed directory targets and same-file anchors).
-import { brokenLinks } from '../../.agents/skills/audit-dispatch-skills/scripts/baseline.mjs';
+import { authoredSkillDirs, brokenLinks } from '../../.agents/skills/audit-dispatch-skills/scripts/baseline.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -23,7 +23,7 @@ const SCAN_FILES = [
   path.join(REPO_ROOT, '.agents', 'AGENTS.md'),
 ];
 
-// `skills/**/*.md` and `.agents/skills/audit-dispatch-skills/**/*.md`
+// `skills/**/*.md` and every repo-authored `.agents/skills/*/**/*.md`
 function walkMarkdown(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -34,7 +34,9 @@ function walkMarkdown(dir) {
 }
 
 SCAN_FILES.push(...walkMarkdown(path.join(REPO_ROOT, 'skills')));
-SCAN_FILES.push(...walkMarkdown(path.join(REPO_ROOT, '.agents', 'skills', 'audit-dispatch-skills')));
+// Derived, not hardcoded: naming one skill here is what let a second `.agents` skill escape the
+// guard entirely while this file still claimed the baseline scanner as its single source of truth.
+SCAN_FILES.push(...authoredSkillDirs(REPO_ROOT).flatMap(walkMarkdown));
 
 describe('link integrity guard (authored markdown)', () => {
   it('resolves every relative link and anchor in authored markdown', () => {

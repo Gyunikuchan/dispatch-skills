@@ -185,7 +185,7 @@ The three sections (`plan-review`, `implementation`, `code-review`) each nest th
 | `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
 | `includeSelf` | When `true`, the host CLI is an eligible reviewer (sorted last). Optional; defaults to `false` |
 
-Either `maxRounds: 0` or `targetCount: 0` skips a phase entirely. When `targetCount` is `0`, the resolver normalizes `maxRounds` to `0` as well, so `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
+The two sentinels differ in whether pins can override them. `maxRounds: 0` turns a phase off outright — pins cannot resurrect it. `targetCount: 0` turns it off for *unpinned* runs only; naming providers explicitly still runs the phase, because pins override breadth. On an unpinned run the resolver normalizes `targetCount: 0` to `maxRounds: 0`, so after resolution `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
 
 Illustrative (not the shipped defaults):
 

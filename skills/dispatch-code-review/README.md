@@ -187,6 +187,12 @@ By default, the underlying `dispatch` runner avoids delegating to the orchestrat
 ### Inspecting Uncommitted Diffs
 Delegates run in a structurally read-only mode and inspect the current working tree (`git diff`, `git diff --staged`, and untracked files). Ensure your changes are saved to disk before triggering review.
 
+### Working on `main` or a Detached HEAD
+The walkthrough path's slug normally comes from your branch name, which is what lets a plan review today and a code review tomorrow land on the same pair of files with no coordination. On a protected branch (`main`, `master`, `develop`, `trunk`) or a detached HEAD, a branch slug would collide across unrelated work, so the slug falls back to your conversation id — meaning only *this* session finds that walkthrough automatically; a later session needs the path or an explicit `--slug`. Under OpenCode, which exposes no conversation id, both derivations fail on a protected branch and the resolver exits non-zero: pass `--slug <kebab-case-slug>`, or give the walkthrough path directly.
+
+### No Reviewer Available
+If every configured platform is missing, unauthenticated, or out of quota, the dispatch fails with `NO_DISPATCH_AVAILABLE` and the review falls back to an in-process read-only subagent on your own platform. Its findings are prefixed `[Subagent Fallback]` — that prefix means the second opinion came from the same model that wrote the code, so it is a self-check rather than a genuinely independent review. Treat those findings with more scepticism, and re-run with a real delegate once one is reachable.
+
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 

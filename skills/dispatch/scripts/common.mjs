@@ -719,10 +719,6 @@ export function terminateProcessTree(child) {
 // ============================================================================
 
 /**
- * Reads one attachment, capping its size so a large file cannot exhaust the delegate's
- * context window. Returns null when the file is unreadable.
- */
-/**
  * Classifies a path against the sensitive denylists, checking both the resolved path and its
  * symlink-resolved real path so an innocuously named link cannot smuggle out a denylisted target.
  *
@@ -750,6 +746,10 @@ export function findSensitiveMatch(filePath) {
   return null;
 }
 
+/**
+ * Reads one attachment, capping its size so a large file cannot exhaust the delegate's
+ * context window. Returns null when the file is unreadable.
+ */
 export function readAttachment(filePath, maxBytes = MAX_ATTACHMENT_BYTES_PER_FILE) {
   const abs = path.resolve(filePath);
 
@@ -898,12 +898,17 @@ const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
  *
  * @param {string} prompt
  * @param {string} providerName
- * @param {{ binary?: string|null }} [opts] - resolved delegate binary
+ * @param {{ binary?: string|null, reservedBytes?: number }} [opts] - resolved delegate binary, and
+ *   the byte length of the fixed arguments the caller appends after the prompt. The batch ceiling
+ *   is cmd.exe's whole command line, not the prompt alone: a runner that follows the prompt with
+ *   dozens of `--allowedTools` pairs spends that budget too, so a prompt sized against the bare
+ *   limit still gets truncated by the launcher.
  */
-export function preparePromptForArgv(prompt, providerName, { binary } = {}) {
+export function preparePromptForArgv(prompt, providerName, { binary, reservedBytes = 0 } = {}) {
   const bytes = Buffer.byteLength(prompt, 'utf8');
+  const batchLimit = Math.max(0, BATCH_LAUNCHER_ARG_BYTE_LIMIT - reservedBytes);
   const unsafeForBatch =
-    isBatchLauncher(binary) && (/[\r\n%]/.test(prompt) || bytes > BATCH_LAUNCHER_ARG_BYTE_LIMIT);
+    isBatchLauncher(binary) && (/[\r\n%]/.test(prompt) || bytes > batchLimit);
   if (bytes <= getArgvByteLimit() && !unsafeForBatch) {
     return { prompt, briefFile: null };
   }

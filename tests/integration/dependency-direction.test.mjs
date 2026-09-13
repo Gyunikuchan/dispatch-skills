@@ -86,6 +86,22 @@ describe('dependency direction guard', () => {
     assert.deepEqual(formatOffenders(offenders), []);
   });
 
+  it('no shipped skill markdown hard-codes a host install path', () => {
+    // `.agents/AGENTS.md` § Architecture permits a relative link to a sibling inside the one
+    // skills directory, but never a host-specific install path: those break the moment the skill
+    // is installed under a different host's directory name.
+    const hostPaths = /(?:\.claude|\.agents|\.github)\/skills\/|\.opencode\/skill\//g;
+    const offenders = walkTextFiles(path.join(REPO_ROOT, 'skills'))
+      .filter((file) => file.endsWith('.md'))
+      .flatMap((file) => findMatches(file, new RegExp(hostPaths.source, 'g')))
+      // Defining `<skill-path>` / `<skills-dir>` means naming the per-host directories they stand
+      // in for. That is the portable mechanism, not a breach of it — the breach is *resolving* a
+      // path through one host's layout instead of through those variables.
+      .filter((m) => !/<skill-path>|<skills-dir>/.test(m.text));
+
+    assert.deepEqual(formatOffenders(offenders), []);
+  });
+
   it('dispatch-plan-review/ and dispatch-code-review/ never name implement-dispatch', () => {
     const reviewSkillDirs = ['dispatch-plan-review', 'dispatch-code-review'].map((name) =>
       path.join(REPO_ROOT, 'skills', name),

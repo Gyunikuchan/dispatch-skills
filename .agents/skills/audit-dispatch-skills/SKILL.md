@@ -29,15 +29,17 @@ node <skill>/scripts/baseline.mjs --run <run>
 
 Writes to the work directory: `git-status.txt` (repo snapshot, audit output excluded), `tests.txt` (full suite with coverage, no hash write), and `metrics.md` (doc token footprint, broken links/anchors, script structure, exports no test names, test counts, hash drift). Prints a digest; a failing test is audit evidence, not a stop.
 
+Resuming a stopped run into an existing work directory throws rather than overwrite it; add `--force` to reuse the directory deliberately.
+
 **Done when:** the three files exist and the printed digest is noted for the report summary.
 
 ## 2. Launch the dispatch probe
 
 ```bash
-node <skill>/scripts/probe-dispatch.mjs --run <run>
+node <skill>/scripts/probe-dispatch.mjs --run <run> > .scratch/audits/<run>-work/probe-stdout.txt 2>&1
 ```
 
-Run it **backgrounded** (live prompts take minutes) — see the per-host table above. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows the whole re-run: an excluded provider is neither discovered nor probed, so it costs nothing and gets no row.
+Run it **backgrounded** (live prompts take minutes) — see the per-host table above. The redirection is not optional: it is the only capture of the probe's output, and Step 4 quotes it when the probe dies. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows the whole re-run: an excluded provider is neither discovered nor probed, so it costs nothing and gets no row. `--discover-only` stops after token-free discovery, skipping every live prompt — the fastest way to refresh the platform matrix. `--timeout <s>` caps each live probe.
 
 Continue to step 3 without waiting.
 
@@ -63,7 +65,13 @@ Return only: finding counts by severity and the findings path.
 
 ## 4. Synthesize
 
-Read every findings file and `<run>-work/dispatch/summary.md` (wait for all subagents and the background probe to finish first). If `summary.md` is missing, the probe crashed: report `probe crashed: <message from probe output>` in the dispatch-platforms section.
+Read every findings file and `<run>-work/dispatch/summary.md` (wait for all subagents to finish first). Test the probe's state three ways, since a slow probe and a dead one look alike from the outside:
+
+| On disk | State | Action |
+|---|---|---|
+| `dispatch/summary.md` exists | finished | read it |
+| `dispatch/started.txt` only | still running | wait, then re-test |
+| neither | crashed before the live loop | report `probe crashed: <last lines of probe-stdout.txt>` in the dispatch-platforms section |
 
 1. **Dedupe**: merge findings that name the same defect — same location, or one root cause across locations. Keep every source scope and the highest severity the evidence supports.
 2. **Verify** each merged finding by opening its cited locations. Confirmed → `Verified`. Contradicted by the code → refuted, moved to the appendix with the reason. Settled only by a run you cannot do here (another OS, a missing CLI) → `Unverified` plus what would settle it. Evidence decides, not how many scopes raised it.

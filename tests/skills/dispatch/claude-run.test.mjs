@@ -7,6 +7,7 @@ import {
   READ_ONLY_ALLOWED_TOOLS,
   MODE_DEFINITIONS,
   buildClaudeArgs,
+  claudeFixedArgBytes,
   extractClaudeSessionId,
   getClaudeBinary,
   getClaudeDesktopBinary,
@@ -190,6 +191,21 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
 
     it('forces exit code 1 when claude exits 0 with empty stdout', () => {
       assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+    });
+  });
+
+  describe('claudeFixedArgBytes (batch-launcher budget)', () => {
+    it('measures the arguments buildClaudeArgs adds around the prompt', () => {
+      const bytes = claudeFixedArgBytes({ model: 'claude-sonnet-5', effort: 'medium' });
+      assert.ok(bytes > 200, `expected the read-only tool list to be substantial, got ${bytes}`);
+      assert.ok(claudeFixedArgBytes({ model: 'm', effort: 'e' }) > claudeFixedArgBytes({}));
+    });
+
+    it('excludes the prompt, so the reservation cannot double-count it', () => {
+      assert.equal(claudeFixedArgBytes({}), claudeFixedArgBytes({}));
+      const fixed = claudeFixedArgBytes({});
+      const whole = buildClaudeArgs('z'.repeat(500), {}).reduce((n, a) => n + Buffer.byteLength(String(a), 'utf8') + 1, 0);
+      assert.equal(whole - fixed, 500, 'the only difference must be the prompt itself');
     });
   });
 

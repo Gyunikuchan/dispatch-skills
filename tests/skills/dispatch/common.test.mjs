@@ -529,6 +529,18 @@ describe('common: attachments, brief files & spill', () => {
     assert.equal(exe.briefFile, null);
   });
 
+  it('preparePromptForArgv counts the caller\'s fixed args against the batch ceiling', { skip: process.platform !== 'win32' }, () => {
+    // A prompt just under the bare 8000-byte batch limit fits on its own...
+    const nearLimit = 'z'.repeat(7900);
+    const bare = preparePromptForArgv(nearLimit, 'claude', { binary: 'x.cmd' });
+    assert.equal(bare.briefFile, null);
+    // ...but not once the runner's own arguments are counted, which is what cmd.exe actually
+    // measures. Without reservedBytes this passed the check and was then truncated.
+    const reserved = preparePromptForArgv(nearLimit, 'claude', { binary: 'x.cmd', reservedBytes: 1200 });
+    assert.ok(reserved.briefFile !== null, 'fixed args must consume the same budget as the prompt');
+    created.push(reserved.briefFile);
+  });
+
   it('readAttachment rejects a symlink targeting a denylisted file', (t) => {
     const target = scratchFile('id_ed25519', 'PRIVATE KEY');
     const link = path.join(scratchDir, 'innocent-notes.md');

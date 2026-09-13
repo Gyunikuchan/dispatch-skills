@@ -36,7 +36,8 @@ skills/dispatch/                 runner + provider cascade; scripts/ and referen
 skills/dispatch-plan-review/     plan review criteria and adjudication
 skills/dispatch-code-review/     code review criteria and adjudication
 skills/implement-dispatch/       control flow: plan → review → implement → review → consensus
-.agents/skills/                  repo-development skills (audit-dispatch-skills), not shipped
+.agents/skills/                  repo-development skills (audit-dispatch-skills, -fix), vendored
+                                 skills (tracked in skills-lock.json), and symlinks to skills/; none shipped
 scripts/                         repo tooling (hash generation, config validation)
 tests/                           mirrors the tree under test: tests/skills/<skill>/, tests/scripts/,
                                  tests/integration/ for cross-skill invariants
@@ -50,7 +51,7 @@ dispatch-plan-review, dispatch-code-review → dispatch
 dispatch → (nothing)
 ```
 
-- **Reference by skill name, never by path.**
+- **Name the skill, not its install path.** Refer to another skill by name; a sibling file inside the same `<skills-dir>` may be linked relatively (as `implement-dispatch` links the review skills' templates, keeping them single-source). Host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) and absolute paths never appear in skill markdown — they break the moment the skill is installed to a different host.
 - **Assume dependencies are installed**: Downstream skills assume upstream dependencies exist and invoke them directly.
 - **Upstream skills never name downstream skills** in prose or frontmatter, except `skills/dispatch/references/alignment.md` and the gated "Skill Alignment" pointer section in `skills/dispatch/SKILL.md` (which serve `implement-dispatch`, `dispatch-plan-review`, `dispatch-code-review`).
 - **Graceful degradation**: State absence of optional dependencies and run the reduced flow.

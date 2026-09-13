@@ -116,7 +116,15 @@ Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendat
 
 ## Resolutions Log
 
-Append this round's complete adjudication log under `## Review Findings & Resolutions` in the artifact (create the heading at the end of the artifact when absent), one line per finding:
+Append this round's complete adjudication log under `## Review Findings & Resolutions` in the artifact (create the heading at the end of the artifact when absent).
+
+Open each round with a marker heading, then one line per finding:
+
+```markdown
+### Round <n> — <provider(s)>, <yyyy-mm-dd>
+```
+
+**Write the marker even when the round was clean**, with `- *No actionable findings.*` beneath it. The marker is what makes rounds countable: the bullet forms below are per *finding*, so without it a round is indistinguishable from a finding, and a round that accepts nothing leaves no trace at all — the next invocation then counts zero rounds, derives `Full review`, and re-raises ground already settled.
 
 - `- **[Accepted]** <locus> — <tag>: <defect> → <resolution & where applied>`
 - `- **[Resolved Dispute]** <locus> — <tag>: <defect> → <user ruling & action>`

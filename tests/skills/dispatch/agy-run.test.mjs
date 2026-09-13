@@ -27,7 +27,7 @@ import {
   testAgyBinaryReachability,
   probeAllAgyModes,
   getNewestBrainConversationId,
-  runAgy,
+
   buildAgyArgs,
   parseAgyEnvelope,
   isSubscriptionOrTokenIssue,
@@ -156,9 +156,6 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(typeof overall, 'boolean');
     });
 
-    it('runAgy is a function', () => {
-      assert.equal(typeof runAgy, 'function');
-    });
   });
 
   describe('argument construction: brief file and safety flags', () => {
