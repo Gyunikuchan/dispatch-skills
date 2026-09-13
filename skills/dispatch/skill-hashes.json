@@ -6,7 +6,7 @@
   "scripts/claude-run.mjs": "dc670e3708c1cafd5c570908a735204cfce6e4ca9b71cdd4e6011edb816d33a0",
   "scripts/common.mjs": "3b0056be7391ddbcb765912a9ffb4ecf0f7bea5570364d1451ed1e6e758de72e",
   "scripts/copilot-run.mjs": "939a3a39ebbf78b2d7c32d63138a92884f0d300dce87c472cb8a56498c7aa3b4",
-  "scripts/dispatch.mjs": "fabb620eb59de48879555f8a4746113be9834b109bdd2d33f5287de6b4b7509d",
+  "scripts/dispatch.mjs": "70175d63011aff39f334f3ae53fa671c980ee8d3df59d2fbb33cace3336b9533",
   "scripts/fill-template.mjs": "64e050d86f418b0bd58984eeda669e3748e636827b1fcf041dc6e7c79f739464",
   "scripts/opencode-run.mjs": "7afd7d256b72cc42ed6e9f2cd5b726829ebf19049bacb328f49b900641809ccc",
   "scripts/resolve-artifact-paths.mjs": "19211c0dfcd66fbea20434292bd01a2087c3c2200fb715440933be32cab74c4f"

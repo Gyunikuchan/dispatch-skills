@@ -406,11 +406,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isOpencodeAvailable', countProbe);
       mock.method(providerProbes, 'isClaudeAvailable', countProbe);
 
-      // getCandidateProviders is the seam that takes an injected config; dispatchTask always loads
-      // its own, so the pinned-provider rejection is asserted at the level that can be isolated.
       await assert.rejects(
-        getCandidateProviders({
-          explicitProvider: 'copilot',
+        dispatchTask({
+          prompt: 'Review',
+          provider: 'copilot',
           config: { platforms: { agy: {} } },
           configPath: 'x.jsonc',
         }),
@@ -642,9 +641,20 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
     assert.equal(err.code, 'NO_CONFIG_REQUIRES_PROVIDER');
   });
 
-  // Regression pin on the predicate INVALID_DISPATCH_CONFIG wraps: the throw site itself is
-  // unreachable in-process (getCandidateProviders skips validation for an injected config, and
-  // dispatchTask reads the hardcoded loader).
+  it('sets INVALID_DISPATCH_CONFIG at the dispatchTask throw site when injected config is malformed', async () => {
+    const err = await dispatchTask({
+      prompt: 'x',
+      config: { platforms: 'not-an-object', bogus: 1 },
+      configPath: 'x.jsonc',
+    }).then(
+      () => null,
+      (e) => e,
+    );
+    assert.ok(err, 'malformed config throws');
+    assert.equal(err.code, 'INVALID_DISPATCH_CONFIG');
+    assert.match(err.message, /x\.jsonc/);
+  });
+
   it('pins the INVALID_DISPATCH_CONFIG predicate: validateDispatchConfig reports problems', () => {
     const problems = validateDispatchConfig({ platforms: 'not-an-object', bogus: 1 });
     assert.ok(problems.length > 0, 'a malformed config yields a non-empty problems list');

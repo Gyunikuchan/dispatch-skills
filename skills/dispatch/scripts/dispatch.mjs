@@ -70,6 +70,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {boolean} [allowSameAgent] Allow falling back to the orchestrator's own CLI.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
+ * @property {object} [config] Injected config object (bypasses loading config from disk).
+ * @property {string} [configPath] Display path for the injected config.
  */
 
 /**
@@ -139,6 +141,8 @@ export async function dispatchTask(options = {}) {
     provider = null,
     allowSameAgent = false,
     noConfig = false,
+    config: injectedConfig = undefined,
+    configPath: injectedConfigPath = undefined,
   } = options;
 
   assertSkillIntegrity();
@@ -149,12 +153,15 @@ export async function dispatchTask(options = {}) {
     throw err;
   }
 
-  let config = null;
-  let configPath = null;
-  if (!noConfig) {
+  let config = injectedConfig;
+  let configPath = injectedConfigPath ?? (injectedConfig ? '<injected>' : null);
+  if (!noConfig && config === undefined) {
     const loaded = loadDispatchConfig();
     config = loaded.config;
     configPath = loaded.path;
+  }
+
+  if (!noConfig && config) {
     const problems = validateDispatchConfig(config);
     if (problems.length > 0) {
       const err = new Error(`Invalid dispatch config (${configPath}):\n- ${problems.join('\n- ')}`);
@@ -513,11 +520,14 @@ export async function getCandidateProviders(params = {}) {
   const { explicitProvider = null, orchestrator = null, allowSameAgent = false, noConfig = false } = params;
 
   let config = params.config;
-  let configPath = params.configPath;
+  let configPath = params.configPath ?? (config ? '<injected>' : null);
   if (!noConfig && config === undefined) {
     const loaded = loadDispatchConfig();
     config = loaded.config;
     configPath = loaded.path;
+  }
+
+  if (!noConfig && config) {
     const problems = validateDispatchConfig(config);
     if (problems.length > 0) {
       const err = new Error(`Invalid dispatch config (${configPath}):\n- ${problems.join('\n- ')}`);
