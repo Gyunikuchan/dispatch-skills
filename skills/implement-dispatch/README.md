@@ -143,7 +143,7 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 
 ## Review Levels
 
-Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), self-review eligibility (`includeSelf`), and model/effort selection for each phase.
+Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), and model/effort selection for each phase.
 
 Choose a level based on the risk and complexity of your change:
 
@@ -155,7 +155,7 @@ Choose a level based on the risk and complexity of your change:
 
 ### Key Execution Mechanics
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
-- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a same-agent target (`allowSameAgent: true`). Pins do not resurrect a phase configured off (`maxRounds: 0`).
+- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a target. Pins do not resurrect a phase configured off (`maxRounds: 0`).
 - **Breadth Clamping**: When a level asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
 - **Consensus Enforcement**:
@@ -176,14 +176,15 @@ Config files are loaded fully (without merging) based on this order of precedenc
 
 A local config omitting a platform under a section's `platforms` map (e.g. dropping `opencode` after it's added to `config.default.jsonc`) is intentional and supported — not every user wants every platform configured, and an omitted platform is simply never picked as a candidate. This differs from omitting a required top-level knob (`maxRounds`, `targetCount`, etc.), which does fail validation.
 
-The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. The two review sections additionally carry four level-keyed knobs:
+The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. Each platform entry can be a single model/effort object or an array of objects to run multiple candidates on that platform (e.g. OpenCode running both a remote model and a local LLM). The two review sections additionally carry three level-keyed knobs:
 
 | Knob | Meaning |
 |---|---|
 | `maxRounds` | Cap on total fan-out waves for the phase, counting the first review |
-| `targetCount` | How many platforms an unpinned wave dispatches to — a whole number or `"all"` |
+| `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"` |
 | `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
-| `includeSelf` | When `true`, the host CLI is an eligible reviewer (sorted last). Optional; defaults to `false` |
+
+When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last, fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.
 
 The two sentinels differ in whether pins can override them. `maxRounds: 0` turns a phase off outright — pins cannot resurrect it. `targetCount: 0` turns it off for *unpinned* runs only; naming providers explicitly still runs the phase, because pins override breadth. On an unpinned run the resolver normalizes `targetCount: 0` to `maxRounds: 0`, so after resolution `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
 
@@ -195,7 +196,6 @@ Illustrative (not the shipped defaults):
     "maxRounds": { "low": 0, "medium": 1, "max": 3 },
     "targetCount": { "low": 0, "medium": 1, "max": "all" },
     "consensus": { "low": false, "high": true },
-    "includeSelf": { "low": false, "max": true },
     "platforms": {
       "claude": {
         "low": { "model": "claude-opus-5", "effort": "low" },
@@ -218,7 +218,6 @@ Illustrative (not the shipped defaults):
     "maxRounds": { "low": 0, "medium": 1, "max": 3 },
     "targetCount": { "low": 0, "medium": 1, "max": "all" },
     "consensus": { "low": false, "high": true },
-    "includeSelf": { "low": false, "max": true },
     "platforms": {
       "claude": {
         "low": { "model": "claude-opus-5", "effort": "low" },

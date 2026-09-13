@@ -21,24 +21,24 @@ const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
  */
 const LEVEL_PARITY = {
   low: {
-    'plan-review': { maxRounds: 0, targetCount: 0, consensus: false, includeSelf: false, targets: 0 },
-    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, includeSelf: false, targets: 1 },
+    'plan-review': { maxRounds: 0, targetCount: 0, consensus: false, targets: 0 },
+    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, targets: 1 },
   },
   medium: {
-    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, includeSelf: false, targets: 1 },
-    'code-review': { maxRounds: 3, targetCount: 1, consensus: true, includeSelf: false, targets: 1 },
+    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, targets: 1 },
+    'code-review': { maxRounds: 3, targetCount: 1, consensus: true, targets: 1 },
   },
   high: {
-    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, includeSelf: true, targets: 2 },
-    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, includeSelf: false, targets: 2 },
+    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2 },
+    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2 },
   },
   xhigh: {
-    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, includeSelf: true, targets: 3 },
-    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, includeSelf: false, targets: 2 },
+    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3 },
+    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3 },
   },
   max: {
-    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, includeSelf: true, targets: 3 },
-    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, includeSelf: true, targets: 3 },
+    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5 },
+    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5 },
   },
 };
 
@@ -55,9 +55,9 @@ describe('shipped config', () => {
         for (const [section, expected] of Object.entries(sections)) {
           assert.equal(flow[section].maxRounds, expected.maxRounds, `${section} maxRounds`);
           assert.equal(flow[section].consensus, expected.consensus, `${section} consensus`);
-          // `targetCount` and `includeSelf` are asserted only through their observable
-          // effect: re-reading them with `resolveLevelScalar` here would re-implement
-          // the resolver and pass even if `buildReviewSection` stopped consuming them.
+          // `targetCount` is asserted only through its observable
+          // effect: re-reading it with `resolveLevelScalar` here would re-implement
+          // the resolver and pass even if `buildReviewSection` stopped consuming it.
           assert.equal(flow[section].targets.length, expected.targets, `${section} targets`);
           // targetCount:0 normalizes to maxRounds:0; assert the single sentinel.
           assert.equal(flow[section].maxRounds === 0, expected.targetCount === 0 || expected.maxRounds === 0, `${section} phase-off`);

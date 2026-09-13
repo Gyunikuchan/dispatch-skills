@@ -29,9 +29,9 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
-const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus', 'includeSelf'];
+const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
 /** Knobs that may be omitted entirely; every other knob must define at least one level. */
-const OPTIONAL_KNOBS = ['includeSelf'];
+const OPTIONAL_KNOBS = [];
 
 const USAGE = `Usage:
   node resolve-flow.mjs --platform <key> [--level <level>] [--pins <list>] [--validate-only]
@@ -113,6 +113,59 @@ export function resolveLevelEntry(entry, level) {
 }
 
 /**
+ * Resolves the candidates for one platform entry.
+ * An entry may be:
+ * - A single object: { model?, effort?, ...levelOverrides }
+ * - An array of objects: [ { model?, effort?, ... }, ... ]
+ * In addition, within a level override, the value may be an object or an array of objects.
+ *
+ * @param {object | object[]} entry
+ * @param {string} level
+ * @returns {Array<{ model?: string, effort?: string }>}
+ */
+export function resolvePlatformCandidates(entry, level) {
+  if (!entry) return [];
+  if (Array.isArray(entry)) {
+    return entry.flatMap(item => resolvePlatformCandidates(item, level));
+  }
+  if (typeof entry !== 'object') return [];
+
+  const base = {};
+  if (entry.model !== undefined) base.model = entry.model;
+  if (entry.effort !== undefined) base.effort = entry.effort;
+
+  const overrides = {};
+  for (const [key, value] of Object.entries(entry)) {
+    if (key === 'model' || key === 'effort') continue;
+    if (!LEVELS.includes(key)) continue;
+    if (!value || typeof value !== 'object') continue;
+    overrides[key] = value;
+  }
+
+  const chosen = selectLevel(LEVELS.filter(l => overrides[l] !== undefined), level);
+  if (chosen === undefined) return [base];
+
+  const override = overrides[chosen];
+  if (Array.isArray(override)) {
+    return override.map(item => {
+      const resolved = { ...base };
+      if (item && typeof item === 'object') {
+        if (item.model !== undefined) resolved.model = item.model;
+        if (item.effort !== undefined) resolved.effort = item.effort;
+      }
+      return resolved;
+    });
+  }
+
+  const resolved = { ...base };
+  if (override && typeof override === 'object') {
+    if (override.model !== undefined) resolved.model = override.model;
+    if (override.effort !== undefined) resolved.effort = override.effort;
+  }
+  return [resolved];
+}
+
+/**
  * Resolves a level-keyed scalar knob (`maxRounds`, `targetCount`, `consensus`, ...)
  * under the same exact → below → above rule as level entries.
  *
@@ -164,6 +217,65 @@ function isNonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0;
 }
 
+function validateCandidateObject(where, value, problems) {
+  if (!isPlainObject(value)) {
+    problems.push(`${where} must be an object with model/effort (${DIFF_HINT}).`);
+    return;
+  }
+  if (Object.keys(value).length === 0) {
+    problems.push(`${where} must set at least one of model, effort (${DIFF_HINT}).`);
+  }
+  for (const [inner, innerValue] of Object.entries(value)) {
+    if (inner !== 'model' && inner !== 'effort') {
+      problems.push(
+        `${where} has unrecognized key "${inner}". Valid keys: model, effort (${DIFF_HINT}).`
+      );
+    } else if (typeof innerValue !== 'string') {
+      problems.push(`${where}.${inner} must be a string (${DIFF_HINT}).`);
+    }
+  }
+}
+
+function validateSinglePlatformEntry(where, entry, problems, allowArrays = true) {
+  if (!isPlainObject(entry)) {
+    problems.push(`${where} must be an object (${DIFF_HINT}).`);
+    return;
+  }
+  for (const [field, value] of Object.entries(entry)) {
+    if (field === 'model' || field === 'effort') {
+      if (typeof value !== 'string') {
+        problems.push(`${where}.${field} must be a string (${DIFF_HINT}).`);
+      }
+      continue;
+    }
+    if (!LEVELS.includes(field)) {
+      problems.push(
+        `${where} has unrecognized key "${field}". Valid keys: model, effort, ${LEVELS.join(', ')} (${DIFF_HINT}).`
+      );
+      continue;
+    }
+    if (Array.isArray(value)) {
+      if (!allowArrays) {
+        problems.push(`${where}.${field} must be an object with model/effort (${DIFF_HINT}).`);
+        continue;
+      }
+      if (value.length === 0) {
+        problems.push(`${where}.${field} must define at least one candidate (${DIFF_HINT}).`);
+        continue;
+      }
+      for (let i = 0; i < value.length; i++) {
+        validateCandidateObject(`${where}.${field}[${i}]`, value[i], problems);
+      }
+      continue;
+    }
+    if (!isPlainObject(value)) {
+      problems.push(`${where}.${field} must be an object with model/effort (${DIFF_HINT}).`);
+      continue;
+    }
+    validateCandidateObject(`${where}.${field}`, value, problems);
+  }
+}
+
 function validatePlatforms(section, platforms, problems) {
   const where = `${section}.platforms`;
   if (!isPlainObject(platforms)) {
@@ -186,44 +298,29 @@ function validatePlatforms(section, platforms, problems) {
       continue;
     }
     const entry = platforms[key];
+    if (section === 'implementation') {
+      if (!isPlainObject(entry)) {
+        problems.push(`${where}.${key} must be an object (${DIFF_HINT}).`);
+        continue;
+      }
+      validateSinglePlatformEntry(`${where}.${key}`, entry, problems, false);
+      continue;
+    }
+    if (Array.isArray(entry)) {
+      if (entry.length === 0) {
+        problems.push(`${where}.${key} must define at least one candidate (${DIFF_HINT}).`);
+        continue;
+      }
+      for (let i = 0; i < entry.length; i++) {
+        validateSinglePlatformEntry(`${where}.${key}[${i}]`, entry[i], problems, false);
+      }
+      continue;
+    }
     if (!isPlainObject(entry)) {
       problems.push(`${where}.${key} must be an object (${DIFF_HINT}).`);
       continue;
     }
-    for (const [field, value] of Object.entries(entry)) {
-      if (field === 'model' || field === 'effort') {
-        if (typeof value !== 'string') {
-          problems.push(`${where}.${key}.${field} must be a string (${DIFF_HINT}).`);
-        }
-        continue;
-      }
-      if (!LEVELS.includes(field)) {
-        problems.push(
-          `${where}.${key} has unrecognized key "${field}". Valid keys: model, effort, ${LEVELS.join(', ')} (${DIFF_HINT}).`
-        );
-        continue;
-      }
-      if (!isPlainObject(value)) {
-        problems.push(`${where}.${key}.${field} must be an object with model/effort (${DIFF_HINT}).`);
-        continue;
-      }
-      // A level override carries only model/effort; a typo or an empty object here
-      // would otherwise validate clean and silently resolve to no hint at all.
-      if (Object.keys(value).length === 0) {
-        problems.push(
-          `${where}.${key}.${field} must set at least one of model, effort (${DIFF_HINT}).`
-        );
-      }
-      for (const [inner, innerValue] of Object.entries(value)) {
-        if (inner !== 'model' && inner !== 'effort') {
-          problems.push(
-            `${where}.${key}.${field} has unrecognized key "${inner}". Valid keys: model, effort (${DIFF_HINT}).`
-          );
-        } else if (typeof innerValue !== 'string') {
-          problems.push(`${where}.${key}.${field}.${inner} must be a string (${DIFF_HINT}).`);
-        }
-      }
-    }
+    validateSinglePlatformEntry(`${where}.${key}`, entry, problems);
   }
 }
 
@@ -257,7 +354,6 @@ function validateKnob(section, name, knob, problems) {
         }
         break;
       case 'consensus':
-      case 'includeSelf':
         if (typeof value !== 'boolean') {
           problems.push(`${where}.${key} must be a boolean (${DIFF_HINT}).`);
         }
@@ -496,10 +592,10 @@ export function resolveFlow(options, liveness, config) {
 
   /**
    * Builds the live candidate list for one review section.
-   * Pins override `targetCount` and `includeSelf`; unpinned runs sort the
-   * orchestrator last so a narrow count cannot silently yield a self-only review.
+   * Pins override `targetCount`; unpinned runs sort the orchestrator last
+   * to prioritize external reviewers while using the orchestrator to satisfy targetCount.
    */
-  function getCandidates(sectionName, targetCount, includeSelf) {
+  function getCandidates(sectionName, targetCount) {
     const platforms = platformsOf(sectionName);
     const allKeys = Object.keys(platforms);
 
@@ -510,31 +606,43 @@ export function resolveFlow(options, liveness, config) {
       if (validPins.length > 0 && livePins.length === 0) {
         throw new Error(`All pinned platforms unavailable: ${validPins.join(', ')}`);
       }
-      return livePins;
+      const targets = [];
+      for (const p of livePins) {
+        const candidates = resolvePlatformCandidates(platforms[p], level);
+        for (const c of candidates) {
+          const target = { platform: p };
+          if (c.model !== undefined) target.model = c.model;
+          if (c.effort !== undefined) target.effort = c.effort;
+          targets.push(target);
+        }
+      }
+      return targets;
     }
 
-    // Liveness filter — require explicit true; undefined (unknown platform) is unavailable
-    let keys = allKeys.filter(k => liveness[k] === true);
-    if (includeSelf) {
-      keys = [...keys.filter(k => k !== platform), ...keys.filter(k => k === platform)];
-    } else {
-      keys = keys.filter(k => k !== platform);
+    // Unpinned: gather live candidates for each configured platform
+    const externalCandidates = [];
+    const orchestratorCandidates = [];
+
+    for (const k of allKeys) {
+      if (liveness[k] !== true) continue;
+      const candidates = resolvePlatformCandidates(platforms[k], level);
+      for (const c of candidates) {
+        const target = { platform: k };
+        if (c.model !== undefined) target.model = c.model;
+        if (c.effort !== undefined) target.effort = c.effort;
+        if (k === platform) {
+          orchestratorCandidates.push(target);
+        } else {
+          externalCandidates.push(target);
+        }
+      }
     }
 
-    const requested = targetCount === 'all' ? keys.length : targetCount;
-    const resolved = Math.min(requested, keys.length);
+    const orderedCandidates = [...externalCandidates, ...orchestratorCandidates];
+    const requested = targetCount === 'all' ? orderedCandidates.length : targetCount;
+    const resolved = Math.min(requested, orderedCandidates.length);
     if (resolved < requested) clamped[sectionName] = { requested, resolved };
-    return keys.slice(0, resolved);
-  }
-
-  function buildTarget(sectionName, key) {
-    const hints = resolveLevelEntry(platformsOf(sectionName)[key] ?? {}, level);
-    const target = { platform: key };
-    if (hints.model !== undefined) target.model = hints.model;
-    if (hints.effort !== undefined) target.effort = hints.effort;
-    // Flag same-agent reviews (orchestrator is a target)
-    if (key === platform) target.allowSameAgent = true;
-    return target;
+    return orderedCandidates.slice(0, resolved);
   }
 
   function buildReviewSection(sectionName) {
@@ -542,7 +650,6 @@ export function resolveFlow(options, liveness, config) {
     let maxRounds = resolveLevelScalar(section.maxRounds, level);
     const targetCount = resolveLevelScalar(section.targetCount, level);
     const consensus = resolveLevelScalar(section.consensus, level);
-    const includeSelf = resolveLevelScalar(section.includeSelf, level) ?? false;
 
     // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
     // does so callers have a single sentinel: `maxRounds === 0`. Pins override breadth
@@ -554,10 +661,7 @@ export function resolveFlow(options, liveness, config) {
     // `maxRounds > 0` means platforms are unavailable — the in-process fallback applies.
     // `maxRounds` caps total fan-out waves including the first review; each wave
     // dispatches every target in `targets`.
-    const targets =
-      maxRounds === 0
-        ? []
-        : getCandidates(sectionName, targetCount, includeSelf).map(k => buildTarget(sectionName, k));
+    const targets = maxRounds === 0 ? [] : getCandidates(sectionName, targetCount);
 
     // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
     // every pin by construction, which is not a diagnostic worth reporting. Covers

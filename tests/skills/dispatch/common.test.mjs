@@ -126,9 +126,8 @@ describe('common: argument parsing', () => {
     assert.equal(opts.prompt, 'prompt text');
   });
 
-  it('parses allow-same-agent and json flags', () => {
-    const opts = parseCommonArgs(['node', 'd.mjs', '--allow-same-agent', '--json', 'prompt']);
-    assert.equal(opts.allowSameAgent, true);
+  it('parses json flag', () => {
+    const opts = parseCommonArgs(['node', 'd.mjs', '--json', 'prompt']);
     assert.equal(opts.json, true);
   });
 

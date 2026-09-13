@@ -7,6 +7,7 @@ import {
   resolveFlow,
   resolveLevelEntry,
   resolveLevelScalar,
+  resolvePlatformCandidates,
   validateConfig,
   selectLevel,
   normalizePin,
@@ -35,7 +36,6 @@ const BASE_CONFIG = {
     maxRounds: { low: 0, medium: 1, max: 3 },
     targetCount: { low: 0, medium: 1, max: 'all' },
     consensus: { low: false, high: true },
-    includeSelf: { low: false, max: true },
     platforms: { ...PLAN_PLATFORMS },
   },
   implementation: {
@@ -49,7 +49,6 @@ const BASE_CONFIG = {
     maxRounds: { low: 1, medium: 3, max: 5 },
     targetCount: { low: 1, high: 'all' },
     consensus: { low: false, high: true },
-    includeSelf: { low: false, max: true },
     platforms: { ...PLAN_PLATFORMS },
   },
 };
@@ -121,8 +120,8 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);
       assert.equal(out['code-review'].maxRounds, 3);
       assert.equal(out['code-review'].consensus, true);
-      // agy and opencode available; copilot excluded (not live); claude excluded (orchestrator)
-      assert.equal(out['code-review'].targets.length, 2);
+      // agy, opencode, and claude (orchestrator) available
+      assert.equal(out['code-review'].targets.length, 3);
     });
   });
 
@@ -138,7 +137,7 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'xhigh' }, LIVE_ALL, BASE_CONFIG);
       assert.equal(out['code-review'].maxRounds, 3);
       assert.equal(out['code-review'].consensus, true);
-      assert.equal(out['code-review'].targets.length, 2);
+      assert.equal(out['code-review'].targets.length, 3);
     });
   });
 
@@ -150,7 +149,7 @@ describe('resolveFlow', () => {
       // agy, opencode live; copilot not live; claude is orchestrator but included at max
       assert.equal(out['plan-review'].targets.length, 3);
       const self = out['plan-review'].targets.find(t => t.platform === 'claude');
-      assert.equal(self?.allowSameAgent, true);
+      assert.ok(self);
     });
 
     it('code-review: all targets including self, maxRounds=5, consensus=true', () => {
@@ -159,10 +158,10 @@ describe('resolveFlow', () => {
       assert.equal(out['code-review'].consensus, true);
       assert.equal(out['code-review'].targets.length, 3);
       const self = out['code-review'].targets.find(t => t.platform === 'claude');
-      assert.equal(self?.allowSameAgent, true);
+      assert.ok(self);
     });
 
-    it('sorts the orchestrator last when includeSelf is set', () => {
+    it('sorts the orchestrator last when targetCount includes it', () => {
       const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
       assert.equal(out['code-review'].targets.at(-1).platform, 'claude');
     });
@@ -200,11 +199,10 @@ describe('resolveFlow', () => {
       assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
     });
 
-    it('pin on orchestrator platform: target includes allowSameAgent=true in output', () => {
+    it('pin on orchestrator platform: targets orchestrator platform directly', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['claude'] }, LIVE_ALL, BASE_CONFIG);
       assert.equal(out['code-review'].targets.length, 1);
       assert.equal(out['code-review'].targets[0].platform, 'claude');
-      assert.equal(out['code-review'].targets[0].allowSameAgent, true);
     });
 
     it('throws when all pinned platforms are unavailable', () => {
@@ -262,7 +260,7 @@ describe('resolveFlow', () => {
         ['claude', 'agy', 'opencode']
       );
       const selfTarget = out['code-review'].targets.find(t => t.platform === 'claude');
-      assert.equal(selfTarget?.allowSameAgent, true);
+      assert.ok(selfTarget);
       // plan-review at level low has maxRounds=0, so targets is empty
       assert.deepEqual(out['plan-review'].targets, []);
 
@@ -348,14 +346,14 @@ describe('resolveFlow', () => {
     it('"all" selects every live candidate', () => {
       const config = withSections({ 'code-review': { targetCount: { low: 'all' } } });
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
-      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'opencode']);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'opencode', 'claude']);
     });
 
     it('clamps to the available candidates and records the clamp', () => {
-      const config = withSections({ 'code-review': { targetCount: { low: 3 } } });
+      const config = withSections({ 'code-review': { targetCount: { low: 4 } } });
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
-      assert.equal(out['code-review'].targets.length, 2);
-      assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 3, resolved: 2 });
+      assert.equal(out['code-review'].targets.length, 3);
+      assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 4, resolved: 3 });
     });
 
     it('records no clamp when the count is satisfied', () => {
@@ -363,12 +361,22 @@ describe('resolveFlow', () => {
       assert.equal(out.diagnostics.clamped['code-review'], undefined);
     });
 
-    it('never yields a self-only review when a narrow count meets includeSelf', () => {
+    it('prioritizes external candidates over orchestrator when targetCount is narrow', () => {
       const config = withSections({
-        'code-review': { targetCount: { low: 1 }, includeSelf: { low: true } },
+        'code-review': { targetCount: { low: 1 } },
       });
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
       assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+    });
+
+    it('fulfills targetCount with orchestrator when external candidates are insufficient', () => {
+      // Only agy is live externally; targetCount: 2 pulls in orchestrator claude
+      const liveAgyOnly = { claude: true, agy: true, copilot: false, opencode: false };
+      const config = withSections({
+        'code-review': { targetCount: { low: 2 } },
+      });
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, liveAgyOnly, config);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'claude']);
     });
   });
 
@@ -443,7 +451,8 @@ describe('resolveFlow', () => {
     });
 
     it('returns maxRounds > 0 with empty targets when platforms are unavailable', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_NONE_EXTERNAL, BASE_CONFIG);
+      const allDead = { claude: false, agy: false, copilot: false, opencode: false };
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, allDead, BASE_CONFIG);
       assert.deepEqual(out['code-review'].targets, []);
       assert.ok(out['code-review'].maxRounds > 0);
     });
@@ -749,10 +758,9 @@ describe('resolveFlow', () => {
       assert.match(problems[0], /reserved pin keyword "all"/);
     });
 
-    it('requires every knob except includeSelf', () => {
+    it('requires all review knobs (maxRounds, targetCount, consensus)', () => {
       const section = { ...BASE_CONFIG['code-review'] };
       delete section.maxRounds;
-      delete section.includeSelf;
       const config = { ...BASE_CONFIG, 'code-review': section };
       const problems = validateConfig(config);
       assert.equal(problems.length, 1);
@@ -954,8 +962,8 @@ describe('resolveFlow', () => {
 
     it('leaves maxRounds independent of how many targets a wave dispatches', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);
-      // 2 live non-orchestrator targets, but the budget stays at 3 waves
-      assert.equal(out['code-review'].targets.length, 2);
+      // 3 live targets, but the budget stays at 3 waves
+      assert.equal(out['code-review'].targets.length, 3);
       assert.equal(out['code-review'].maxRounds, 3);
     });
 
@@ -966,11 +974,180 @@ describe('resolveFlow', () => {
     });
   });
 
-  describe('no non-orchestrator candidates', () => {
-    it('returns empty targets (not an error) when no external platforms live', () => {
+  describe('orchestrator fulfillment & liveness', () => {
+    it('fulfills targetCount with orchestrator when no external platforms are live', () => {
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_NONE_EXTERNAL, BASE_CONFIG);
+      assert.equal(out['code-review'].targets.length, 1);
+      assert.equal(out['code-review'].targets[0].platform, 'claude');
+    });
+
+    it('returns empty targets (not an error) when all platforms are dead', () => {
+      const allDead = { claude: false, agy: false, copilot: false, opencode: false };
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, allDead, BASE_CONFIG);
       assert.deepEqual(out['code-review'].targets, []);
     });
+  });
+
+  describe('multi-candidate platform arrays', () => {
+    it('supports array of candidate objects on a platform', () => {
+      const config = withSections({
+        'code-review': {
+          targetCount: { low: 2 },
+          platforms: {
+            opencode: [
+              { model: 'glm-5.3-flash', effort: 'high' },
+              { model: 'lmstudio/qwen3.8-27b-ridge' },
+            ],
+            claude: { model: 'claude-opus-5' },
+          },
+        },
+      });
+      const live = { claude: true, agy: false, copilot: false, opencode: true };
+      const out = resolveFlow({ platform: 'claude', level: 'low' }, live, config);
+      assert.equal(out['code-review'].targets.length, 2);
+      assert.deepEqual(out['code-review'].targets, [
+        { platform: 'opencode', model: 'glm-5.3-flash', effort: 'high' },
+        { platform: 'opencode', model: 'lmstudio/qwen3.8-27b-ridge' },
+      ]);
+    });
+
+    it('supports level-keyed candidate array inside a platform entry', () => {
+      const config = withSections({
+        'code-review': {
+          targetCount: { low: 1, high: 2 },
+          platforms: {
+            opencode: {
+              low: { model: 'lmstudio/qwen3.8-27b-ridge' },
+              high: [
+                { model: 'glm-5.3-flash' },
+                { model: 'lmstudio/qwen3.8-27b-ridge' },
+              ],
+            },
+          },
+        },
+      });
+      const live = { claude: false, agy: false, copilot: false, opencode: true };
+      const lowOut = resolveFlow({ platform: 'claude', level: 'low' }, live, config);
+      assert.equal(lowOut['code-review'].targets.length, 1);
+      assert.equal(lowOut['code-review'].targets[0].model, 'lmstudio/qwen3.8-27b-ridge');
+
+      const highOut = resolveFlow({ platform: 'claude', level: 'high' }, live, config);
+      assert.equal(highOut['code-review'].targets.length, 2);
+      assert.deepEqual(highOut['code-review'].targets.map(t => t.model), [
+        'glm-5.3-flash',
+        'lmstudio/qwen3.8-27b-ridge',
+      ]);
+    });
+
+    it('pins dispatch all candidates configured for the pinned platform', () => {
+      const config = withSections({
+        'code-review': {
+          platforms: {
+            opencode: [
+              { model: 'glm-5.3-flash' },
+              { model: 'lmstudio/qwen3.8-27b-ridge' },
+            ],
+            claude: { model: 'claude-opus-5' },
+          },
+        },
+      });
+      const live = { claude: true, agy: false, copilot: false, opencode: true };
+      const out = resolveFlow({ platform: 'claude', level: 'low', pins: ['opencode'] }, live, config);
+      assert.equal(out['code-review'].targets.length, 2);
+      assert.equal(out['code-review'].targets[0].model, 'glm-5.3-flash');
+      assert.equal(out['code-review'].targets[1].model, 'lmstudio/qwen3.8-27b-ridge');
+    });
+
+    it('rejects an empty candidates array in validation', () => {
+      const config = withSections({
+        'code-review': {
+          platforms: {
+            opencode: [],
+          },
+        },
+      });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /code-review\.platforms\.opencode must define at least one candidate/);
+    });
+
+    it('rejects candidate arrays in implementation section', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            claude: [{ model: 'claude-opus-5' }],
+          },
+        },
+      });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /implementation\.platforms\.claude must be an object/);
+    });
+
+    it('rejects candidate array level overrides in implementation section', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            claude: {
+              high: [{ model: 'claude-opus-5' }],
+            },
+          },
+        },
+      });
+      const problems = validateConfig(config);
+      assert.match(problems.join('\n'), /implementation\.platforms\.claude\.high must be an object with model\/effort/);
+    });
+  });
+});
+
+describe('resolvePlatformCandidates', () => {
+  it('returns single candidate from flat object', () => {
+    const entry = { model: 'claude-opus-5', effort: 'medium' };
+    const candidates = resolvePlatformCandidates(entry, 'high');
+    assert.deepEqual(candidates, [{ model: 'claude-opus-5', effort: 'medium' }]);
+  });
+
+  it('inherits top-level defaults into flat candidate array', () => {
+    const entry = [
+      { model: 'glm-5.3-flash' },
+      { model: 'qwen3.8-27b', effort: 'low' },
+    ];
+    const candidates = resolvePlatformCandidates(entry, 'high');
+    assert.deepEqual(candidates, [
+      { model: 'glm-5.3-flash' },
+      { model: 'qwen3.8-27b', effort: 'low' },
+    ]);
+  });
+
+  it('resolves level-keyed candidate array inside object', () => {
+    const entry = {
+      model: 'default-model',
+      effort: 'medium',
+      high: [
+        { model: 'model-a' },
+        { model: 'model-b', effort: 'max' },
+      ],
+    };
+    const candidates = resolvePlatformCandidates(entry, 'high');
+    assert.deepEqual(candidates, [
+      { model: 'model-a', effort: 'medium' },
+      { model: 'model-b', effort: 'max' },
+    ]);
+  });
+
+  it('falls back to flat defaults when requested level has no override', () => {
+    const entry = {
+      model: 'default-model',
+      effort: 'low',
+      high: [{ model: 'model-high' }],
+    };
+    const candidates = resolvePlatformCandidates(entry, 'min');
+    // 'min' rounds up to 'high' because no levels below min exist
+    assert.deepEqual(candidates, [{ model: 'model-high', effort: 'low' }]);
+  });
+
+  it('returns empty array for missing or non-object entry', () => {
+    assert.deepEqual(resolvePlatformCandidates(null, 'high'), []);
+    assert.deepEqual(resolvePlatformCandidates('string', 'high'), []);
+    assert.deepEqual(resolvePlatformCandidates({}, 'high'), [{}]);
   });
 });
 

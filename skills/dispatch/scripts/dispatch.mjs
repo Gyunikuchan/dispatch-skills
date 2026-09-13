@@ -9,7 +9,7 @@
  * 2. Antigravity 2.0 (`agy`)
  * 3. GitHub Copilot (`copilot`)
  * 4. OpenCode (`opencode`) if online
- * (skipping current orchestrator unless --allow-same-agent, which runs as last resort)
+ * (alternative providers tried first; orchestrator platform tried last)
  * 5. Fallback signal for built-in subagent invocation
  *
  * Zero context pollution: logs full execution to dedicated session files,
@@ -67,7 +67,6 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
- * @property {boolean} [allowSameAgent] Allow falling back to the orchestrator's own CLI.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
  * @property {object} [config] Injected config object (bypasses loading config from disk).
@@ -139,7 +138,6 @@ export async function dispatchTask(options = {}) {
     verbose = false,
     orchestrator = null,
     provider = null,
-    allowSameAgent = false,
     noConfig = false,
     config: injectedConfig = undefined,
     configPath: injectedConfigPath = undefined,
@@ -173,7 +171,6 @@ export async function dispatchTask(options = {}) {
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
     orchestrator,
-    allowSameAgent,
     noConfig,
     config,
     configPath,
@@ -182,7 +179,7 @@ export async function dispatchTask(options = {}) {
   if (candidates.length === 0) {
     const err = new Error(
       'No alternative dispatch agent available.\n' +
-        '- No external agents on configured platforms were found and ready.\n' +
+        '- Neither alternative platforms nor the orchestrator platform were found and ready.\n' +
         'Proceeding to orchestrator subagent fallback.',
     );
     err.code = 'NO_DISPATCH_AVAILABLE';
@@ -379,7 +376,6 @@ export async function main() {
     if (options.agent !== null) ignored.push('--agent');
     if (options.timeout !== DEFAULT_TIMEOUT_SECONDS) ignored.push('--timeout');
     if (options.maxBufferMb !== DEFAULT_MAX_BUFFER_MB) ignored.push('--max-buffer');
-    if (options.allowSameAgent) ignored.push('--allow-same-agent');
     if (options.json) ignored.push('--json');
     if (options.verbose) ignored.push('--verbose');
     if (options.orchestrator !== null) ignored.push('--orchestrator');
@@ -470,7 +466,6 @@ Options:
   -a, --agent <name>          Override agent name (opencode provider only)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
-  --allow-same-agent          Allow fallback to same agent CLI if no alternative is available
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
   --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
@@ -500,7 +495,7 @@ function parseDispatchFlags(argv) {
  * Returns an ordered array of viable candidate providers based on the preference cascade:
  * 1. Alternative providers in cascade order (the loaded dispatch config's `platforms` key
  *    order, skipping orchestrator; falls back to {@link KNOWN_PROVIDERS} when `noConfig`)
- * 2. Same agent as orchestrator (only if `allowSameAgent` is true, and it is a cascade member)
+ * 2. Same agent as orchestrator (tried last, if a cascade member and available)
  *
  * A pinned `explicitProvider` absent from the loaded config is a hard error unless `noConfig`
  * is set — cascade membership rule 3 (dispatch config is the source of truth) applies to
@@ -509,7 +504,6 @@ function parseDispatchFlags(argv) {
  * @param {object} [params]
  * @param {string|null} [params.explicitProvider]
  * @param {string|null} [params.orchestrator]
- * @param {boolean} [params.allowSameAgent]
  * @param {boolean} [params.noConfig] Skip config entirely; only valid alongside `explicitProvider`.
  * @param {object|null} [params.config] Pre-loaded dispatch config; loaded fresh when omitted
  *   (and `noConfig` is false) so direct callers/tests need not load it themselves.
@@ -517,7 +511,7 @@ function parseDispatchFlags(argv) {
  * @returns {Promise<Provider[]>}
  */
 export async function getCandidateProviders(params = {}) {
-  const { explicitProvider = null, orchestrator = null, allowSameAgent = false, noConfig = false } = params;
+  const { explicitProvider = null, orchestrator = null, noConfig = false } = params;
 
   let config = params.config;
   let configPath = params.configPath ?? (config ? '<injected>' : null);
@@ -546,22 +540,16 @@ export async function getCandidateProviders(params = {}) {
 
   const order = config ? Object.keys(config.platforms) : KNOWN_PROVIDERS;
   const effectiveOrchestrator = orchestrator || detectOrchestrator();
-  const alternatives = order.filter((p) => p !== effectiveOrchestrator);
 
   // Probe concurrently: each probe spawns a CLI and waits on it, so serially they add up to seconds
   // of pure latency before the first delegate starts. Cascade order is preserved by filtering the
-  // original list against the resolved results rather than by completion order. A pinned
-  // `--provider` never reaches here — that path returns above, probing nothing.
-  const availability = await Promise.all(alternatives.map((name) => isProviderAvailable(name)));
-  const candidates = alternatives.filter((_, i) => availability[i]);
+  // alternative providers first, and appending the orchestrator platform last if configured and
+  // available. A pinned `--provider` never reaches here — that path returns above, probing nothing.
+  const availability = await Promise.all(order.map((name) => isProviderAvailable(name)));
+  const availableSet = new Set(order.filter((_, i) => availability[i]));
 
-  // Same agent as orchestrator (only if explicitly allowed, and a cascade member), tried last.
-  if (
-    allowSameAgent &&
-    effectiveOrchestrator &&
-    order.includes(effectiveOrchestrator) &&
-    (await isProviderAvailable(effectiveOrchestrator))
-  ) {
+  const candidates = order.filter((p) => p !== effectiveOrchestrator && availableSet.has(p));
+  if (effectiveOrchestrator && availableSet.has(effectiveOrchestrator)) {
     candidates.push(effectiveOrchestrator);
   }
 

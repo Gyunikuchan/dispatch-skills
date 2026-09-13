@@ -8,6 +8,7 @@
  * claude: https://code.claude.com/docs/en/model-config
  * agy: https://antigravity.google/docs/models/
  * copilot: https://docs.github.com/en/copilot/reference/ai-models/supported-models
+ * opencode: https://opencode.ai/zen/go/v1/models
  *
  * Every knob and every platform entry may key its value by level (low, medium, high,
  * xhigh, max). Levels need not all be defined: the requested level is matched exactly, else
@@ -18,13 +19,11 @@
  *
  * Review-section knobs:
  *   maxRounds   — cap on total fan-out waves for the phase, counting the first review.
- *   targetCount — how many platforms a wave dispatches to when unpinned; a whole
- *                 number or "all". Pinned runs dispatch to every live pin instead,
- *                 ignoring this knob.
+ *   targetCount — how many review candidates a wave dispatches to when unpinned; a whole
+ *                 number or "all". The orchestrator's own platform is always eligible to
+ *                 fulfil targetCount, but is sorted last so external reviewers are preferred.
+ *                 Pinned runs dispatch to every live pin instead, ignoring this knob.
  *   consensus   — when true, no finding may be dismissed without counter-evidence.
- *   includeSelf — when true, the orchestrator's own platform is an eligible reviewer
- *                 (sorted last, so a narrow targetCount never yields a self-only
- *                 review). Optional; defaults to false.
  *
  * Either `maxRounds: 0` or `targetCount: 0` skips the phase entirely. When
  * `targetCount: 0`, the resolver normalizes `maxRounds` to `0` so `maxRounds === 0`
@@ -32,8 +31,10 @@
  * `> 0` with an empty targets list.
  *
  * `platforms` holds the per-platform model/effort settings; its key order is the
- * priority order candidates are selected in. Flat model/effort keys alongside level
- * keys act as defaults the matched level overrides.
+ * priority order candidates are selected in. Each platform entry can be a single
+ * model/effort object or an array of objects to run multiple candidates on that platform
+ * (e.g. OpenCode running both a remote model and a local LLM). Flat model/effort keys
+ * alongside level keys act as defaults the matched level overrides.
  *
  * Accepted effort values are CLI-specific: Antigravity takes low/medium/high;
  * Claude Code adds xhigh; OpenCode receives the value as `--variant`. An effort a
@@ -57,10 +58,6 @@
     "consensus": {
       "low": false,
       "medium": true,
-    },
-    "includeSelf": {
-      "low": false,
-      "high": true,
     },
     "platforms": {
       "claude": {
@@ -87,9 +84,19 @@
         "model": "gpt-5.6-luna",
         "effort": "max",
       },
-      "opencode": {
-        "model": "lmstudio/qwen3.8-27b-ridge",
-      },
+      "opencode": [
+        {
+          "model": "glm-5.3-flash",
+          "effort": "max",
+        },
+        {
+          "model": "deepseek-v4.1-flash",
+          "effort": "max",
+        },
+        {
+          "model": "lmstudio/qwen3.8-27b-ridge",
+        },
+      ],
     },
   },
   // Only native subagents can be used for implementation.
@@ -139,10 +146,6 @@
       "low": false,
       "medium": true,
     },
-    "includeSelf": {
-      "low": false,
-      "max": true,
-    },
     "platforms": {
       "claude": {
         "low": {
@@ -168,9 +171,19 @@
         "model": "gpt-5.6-luna",
         "effort": "max",
       },
-      "opencode": {
-        "model": "lmstudio/qwen3.8-27b-ridge",
-      },
+      "opencode": [
+        {
+          "model": "glm-5.3-flash",
+          "effort": "max",
+        },
+        {
+          "model": "deepseek-v4.1-flash",
+          "effort": "max",
+        },
+        {
+          "model": "lmstudio/qwen3.8-27b-ridge",
+        },
+      ],
     },
   },
 }

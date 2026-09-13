@@ -32,7 +32,6 @@ import { fileURLToPath } from 'node:url';
  * @property {boolean} verbose
  * @property {string|null} orchestrator
  * @property {string|null} provider
- * @property {boolean} allowSameAgent
  * @property {boolean} help
  * @property {string|null} promptFile
  */
@@ -397,7 +396,6 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     verbose: false,
     orchestrator: null,
     provider: null,
-    allowSameAgent: false,
     help: false,
     promptFile: null,
   };
@@ -457,8 +455,6 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
       options.help = true;
     } else if (LEGACY_SILENT_FLAGS.has(arg)) {
       // Accepted silently for backward compatibility (see LEGACY_SILENT_FLAGS).
-    } else if (arg === '--allow-same-agent') {
-      options.allowSameAgent = true;
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '-v' || arg === '--verbose') {

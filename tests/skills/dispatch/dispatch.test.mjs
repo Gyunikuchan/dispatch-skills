@@ -194,7 +194,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(provider, 'agy');
     });
 
-    it('returns null (subagent fallback) when no alternative agent is available', async () => {
+    it('cascades to orchestrator as a last resort when no alternative agent is available', async () => {
       clearOrchestratorEnv();
       mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
       process.env.CLAUDE_CODE = '1';
@@ -204,19 +204,6 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isClaudeAvailable', async () => true);
 
       const provider = await resolveProvider();
-      assert.equal(provider, null);
-    });
-
-    it('falls back to same agent when allowSameAgent is explicitly true', async () => {
-      clearOrchestratorEnv();
-      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
-      process.env.CLAUDE_CODE = '1';
-
-      mock.method(providerProbes, 'isAgyAvailable', async () => false);
-      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
-      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
-
-      const provider = await resolveProvider({ allowSameAgent: true });
       assert.equal(provider, 'claude');
     });
 
@@ -259,16 +246,17 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.deepEqual(candidates, ['claude', 'agy', 'copilot', 'opencode']);
     });
 
-    it('returns ordered candidates for fallback passes skipping orchestrator', async () => {
+    it('returns ordered candidates for fallback passes appending orchestrator last', async () => {
       clearOrchestratorEnv();
       process.env.CLAUDE_CODE = '1';
 
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
       mock.method(providerProbes, 'isAgyAvailable', async () => true);
       mock.method(providerProbes, 'isCopilotAvailable', async () => true);
       mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
       const candidates = await getCandidateProviders();
-      assert.deepEqual(candidates, ['agy', 'copilot', 'opencode']);
+      assert.deepEqual(candidates, ['agy', 'copilot', 'opencode', 'claude']);
     });
   });
 
@@ -299,6 +287,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
     it('throws NO_DISPATCH_AVAILABLE when all candidate passes fail', async () => {
       clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
       mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
       process.env.CLAUDE_CODE = '1';
 
@@ -348,6 +337,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('surfaces a gitIntegrityViolation on the NO_DISPATCH_AVAILABLE error when every provider fails', async () => {
       clearOrchestratorEnv();
       process.env.CLAUDE_CODE = '1';
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
       mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
       mock.method(providerProbes, 'isAgyAvailable', async () => true);
       mock.method(providerProbes, 'isCopilotAvailable', async () => false);

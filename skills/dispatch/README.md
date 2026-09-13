@@ -120,7 +120,6 @@ When invoking `/dispatch` (or reviewing execution plans), the following flags ar
 | `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
 | `-e <level>` | Override reasoning effort; values are CLI-specific (e.g. Antigravity accepts `low`/`medium`/`high`; OpenCode receives it as `--variant`). | `/dispatch -e max Verify crypto primitives` |
 | `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `/dispatch -t 300 Quick dependency check` |
-| `--allow-same-agent` | Allow cascading back to the orchestrator's own CLI as a last resort. | `/dispatch --allow-same-agent Analyze query plan` |
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
 | `--json` | Request structured JSON output (OpenCode provider only). | `/dispatch --provider opencode --json Parse AST` |
 | `-a <name>` | Override the delegate agent name (opencode provider only). | `/dispatch --provider opencode -a delegate ...` |
@@ -157,7 +156,7 @@ Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to 
 
 ## High-Level Behavior & Invariants
 
-- **Automatic Self-Skipping**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It skips delegating to the host platform by default to engage a differentiated platform/model for a different opinion and behavior, unless explicitly permitted via `--allow-same-agent`.
+- **Alternative Platforms Prioritized**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It tries alternative platforms first to engage a differentiated platform/model for a different opinion, cascading to the host platform only as a last resort before falling back to an in-process subagent.
 - **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; `--permission-mode plan` with read-only tool allowlists and denied write tools on Claude Code; Bubblewrap read-only mounts, credential stripping, and, for a local endpoint, dead-end WAN proxies on OpenCode). Exception: OpenCode on macOS/Windows has no structural boundary and relies on prompt guardrails plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode — this only affects permission prompts, not the `--mode plan` write block.
 - **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (OS temp). The orchestrating agent receives only the final synthesized summary and session link.
 - **Session Continuity & Deep-Links**: When supported, `dispatch` captures and returns session identifiers:

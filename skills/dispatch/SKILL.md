@@ -14,7 +14,7 @@ The cascade order and per-provider model/effort come from [config.default.jsonc]
 3. **GitHub Copilot** (`copilot`).
 4. **OpenCode** (`opencode`) against whatever provider/model `opencode.jsonc` configures, or opencode's own CLI default when unconfigured — dispatch assumes no particular provider.
 
-A platform omitted from the loaded config is never dispatched, regardless of order. The orchestrator's own platform is skipped (tried last only with `--allow-same-agent`). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
+A platform omitted from the loaded config is never dispatched, regardless of order. Alternative providers are attempted first; the orchestrator's own platform is tried last. If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
@@ -102,7 +102,6 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 | `-f <path>` | Attach context file or artifact (repeatable, capped) | `-f "src/domain/types.ts"` |
 | `-p <string>` | Pass the prompt as a flag instead of positionally | `-p "Trace the retry path"` |
 | `--prompt-file <path>` | Read the prompt from a file instead of `-p`/positional (cannot combine with either) | `--prompt-file "<path to filled prompt>"` |
-| `--allow-same-agent` | Permit fallback to orchestrator's own CLI | `--allow-same-agent` |
 | `--provider <name>` | Pin provider (`opencode`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |
 | `-e <effort>` | Override reasoning effort; passed through verbatim to the target CLI (OpenCode receives it as `--variant`; values are platform-specific; user-requested only) | `-e "high"` |

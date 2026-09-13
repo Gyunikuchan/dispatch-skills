@@ -56,13 +56,13 @@ Base grammar, shared by both standalone review skills:
 
 ## Invocation Modes
 
-Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort?, allowSameAgent? }` entries), with `Review Scope` and `Tool Turn Budget`; otherwise it runs **standalone**. The orchestrator hands over data only; the review skill builds invocations, fills its prompt, and owns the round log.
+Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope` and `Tool Turn Budget`; otherwise it runs **standalone**. The orchestrator hands over data only; the review skill builds invocations, fills its prompt, and owns the round log.
 
 | Review step | Standalone | Orchestrated |
 |---|---|---|
 | Resolve artifact paths | Run resolver | Skip — use handed-over path |
 | Author artifact if absent | Yes (skill template) | No — orchestrator authored it |
-| Build dispatch invocations | From pins / cascade (§ Invocation) | One backgrounded `dispatch --provider <platform> --no-config [-m <model>] [-e <effort>] [--allow-same-agent] --prompt-file <filled>` per handed-over target |
+| Build dispatch invocations | From pins / cascade (§ Invocation) | One backgrounded `dispatch --provider <platform> --no-config [-m <model>] [-e <effort>] --prompt-file <filled>` per handed-over target |
 | Populate prompt template | Yes (§ Prompt Template Filling) | Yes (§ Prompt Template Filling; uses the handed-over Review Scope / Tool Turn Budget) |
 | Adjudicate (shared table) | Yes | Yes |
 | Escalate disputes | Immediately | Per orchestrator's consensus rule |
@@ -71,7 +71,7 @@ Detection: a review skill runs **orchestrated** when an orchestrating skill hand
 | Report to user | Full report | None — orchestrator's handoff covers it |
 | Artifact lifecycle | Retain in place | Orchestrator decides |
 
-**Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>`, `-e <target.effort>`, and `--allow-same-agent` only when the target carries `model`, `effort`, or `allowSameAgent: true`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional.
+**Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>` and `-e <target.effort>` only when the target carries `model` or `effort`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional.
 
 ## Prompt Template Filling
 
