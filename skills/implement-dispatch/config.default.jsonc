@@ -86,11 +86,11 @@
       },
       "opencode": [
         {
-          "model": "glm-5.3-flash",
+          "model": "opencode-go/glm-5.3-flash",
           "effort": "max",
         },
         {
-          "model": "deepseek-v4.1-flash",
+          "model": "opencode-go/deepseek-v4.1-flash",
           "effort": "max",
         },
         {
@@ -173,11 +173,11 @@
       },
       "opencode": [
         {
-          "model": "glm-5.3-flash",
+          "model": "opencode-go/glm-5.3-flash",
           "effort": "max",
         },
         {
-          "model": "deepseek-v4.1-flash",
+          "model": "opencode-go/deepseek-v4.1-flash",
           "effort": "max",
         },
         {

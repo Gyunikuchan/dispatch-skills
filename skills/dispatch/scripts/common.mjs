@@ -1735,11 +1735,8 @@ export function loadSkillConfig({ skillRoot, defaultOnly = false } = {}) {
 const DISPATCH_CONFIG_DIFF_HINT = 'diff against config.default.jsonc';
 
 /**
- * Validates a parsed dispatch config against the `{ platforms: { <key>: { model?, effort? } } }`
+ * Validates a parsed dispatch config against the `{ platforms: { <key>: { model?, effort? } | Array<{ model?, effort? }> } }`
  * schema. Reports every problem in one pass; callers join and throw.
- *
- * `model` may be a string array only for `claude` — the sole runner with model-fallback
- * support; every other platform's `model` must be a plain string.
  *
  * @param {object} config
  * @returns {string[]} problem descriptions, empty when the config is valid
@@ -1770,38 +1767,49 @@ export function validateDispatchConfig(config) {
     problems.push(`"platforms" must define at least one platform (${hint}).`);
   }
 
+  function validateCandidate(key, candidate, where) {
+    if (!isPlainObject(candidate)) {
+      problems.push(`${where} must be an object (${hint}).`);
+      return;
+    }
+    for (const [field, value] of Object.entries(candidate)) {
+      if (field === 'model') {
+        const isString = typeof value === 'string';
+        const isStringArray = Array.isArray(value) && value.length > 0 && value.every((m) => typeof m === 'string');
+        if (!isString && !isStringArray) {
+          problems.push(`${where}.model must be a string or non-empty array of strings (${hint}).`);
+        }
+      } else if (field === 'effort') {
+        if (typeof value !== 'string') {
+          problems.push(`${where}.effort must be a string (${hint}).`);
+        }
+      } else {
+        problems.push(`${where} has unrecognized key "${field}". Valid keys: model, effort (${hint}).`);
+      }
+    }
+  }
+
   for (const key of keys) {
     if (!KNOWN_PROVIDERS.includes(key)) {
       problems.push(`platforms has unrecognized key "${key}". Valid keys: ${KNOWN_PROVIDERS.join(', ')} (${hint}).`);
       continue;
     }
     const entry = platforms[key];
-    if (!isPlainObject(entry)) {
-      problems.push(`platforms.${key} must be an object (${hint}).`);
+    if (Array.isArray(entry)) {
+      if (entry.length === 0) {
+        problems.push(`platforms.${key} must define at least one candidate (${hint}).`);
+        continue;
+      }
+      for (let i = 0; i < entry.length; i++) {
+        validateCandidate(key, entry[i], `platforms.${key}[${i}]`);
+      }
       continue;
     }
-    for (const [field, value] of Object.entries(entry)) {
-      if (field === 'model') {
-        if (typeof value === 'string') continue;
-        if (Array.isArray(value)) {
-          if (key !== 'claude') {
-            problems.push(`platforms.${key}.model may only be an array for "claude" (${hint}).`);
-          } else if (value.length === 0 || !value.every((v) => typeof v === 'string')) {
-            problems.push(`platforms.${key}.model array must be a non-empty array of strings (${hint}).`);
-          }
-          continue;
-        }
-        problems.push(
-          `platforms.${key}.model must be a string${key === 'claude' ? ' or a non-empty string array' : ''} (${hint}).`,
-        );
-      } else if (field === 'effort') {
-        if (typeof value !== 'string') {
-          problems.push(`platforms.${key}.effort must be a string (${hint}).`);
-        }
-      } else {
-        problems.push(`platforms.${key} has unrecognized key "${field}". Valid keys: model, effort (${hint}).`);
-      }
+    if (!isPlainObject(entry)) {
+      problems.push(`platforms.${key} must be an object or array of candidate objects (${hint}).`);
+      continue;
     }
+    validateCandidate(key, entry, `platforms.${key}`);
   }
 
   return problems;

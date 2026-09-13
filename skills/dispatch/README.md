@@ -142,13 +142,17 @@ Schema:
     // Key order is cascade order. A platform key absent here is never dispatched.
     "claude": { "model": ["claude-opus-5", "claude-sonnet-5"], "effort": "high" },
     "agy": {},
-    "copilot": { "model": "gpt-5.6-luna" }
-    // "opencode" omitted: never reached by the cascade in this example.
+    "copilot": { "model": "gpt-5.6-luna" },
+    "opencode": [
+      { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
+      { "model": "opencode-go/deepseek-v4.1-flash", "effort": "max" },
+      { "model": "lmstudio/qwen3.8-27b-ridge" }
+    ]
   }
 }
 ```
 
-`model` accepts an array only for `claude` (tried in order as fallback models within that one cascade slot); every other platform takes a single string. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
+Each platform entry can be a single object or an array of candidate objects (which are attempted in order before cascading to the next platform). `model` accepts a string or an array of strings inside candidate objects (e.g. for fallback models within that candidate slot). An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
 
 Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, and edit it to change the cascade.
 

@@ -116,19 +116,24 @@ describe('validateDispatchConfig', () => {
 
   it('rejects a non-string, non-array model', () => {
     const problems = validateDispatchConfig({ platforms: { agy: { model: 5 } } });
-    assert.match(problems.join('\n'), /platforms\.agy\.model must be a string/);
+    assert.match(problems.join('\n'), /platforms\.agy\.model must be a string or non-empty array of strings/);
   });
 
-  it('rejects a model array on any platform other than claude', () => {
-    const problems = validateDispatchConfig({ platforms: { agy: { model: ['a', 'b'] } } });
-    assert.match(problems.join('\n'), /may only be an array for "claude"/);
+  it('accepts a model array on any platform', () => {
+    assert.deepEqual(
+      validateDispatchConfig({
+        platforms: {
+          claude: { model: ['a', 'b'] },
+          agy: { model: ['gemini-3.8-flash', 'gemini-3.7-flash'] },
+          copilot: { model: ['gpt-5.6-luna'] },
+          opencode: { model: ['glm-5.3-flash', 'deepseek-v4.1-flash'] },
+        },
+      }),
+      [],
+    );
   });
 
-  it('accepts a model array for claude', () => {
-    assert.deepEqual(validateDispatchConfig({ platforms: { claude: { model: ['a', 'b'] } } }), []);
-  });
-
-  it('rejects an empty model array for claude', () => {
+  it('rejects an empty model array', () => {
     const problems = validateDispatchConfig({ platforms: { claude: { model: [] } } });
     assert.match(problems.join('\n'), /non-empty array of strings/);
   });
@@ -141,6 +146,36 @@ describe('validateDispatchConfig', () => {
   it('rejects an unrecognized key inside a platform entry', () => {
     const problems = validateDispatchConfig({ platforms: { claude: { timeout: 10 } } });
     assert.match(problems.join('\n'), /unrecognized key "timeout"/);
+  });
+
+  it('accepts a platform entry as an array of candidate objects, including model arrays', () => {
+    assert.deepEqual(
+      validateDispatchConfig({
+        platforms: {
+          claude: [{ model: ['a', 'b'], effort: 'medium' }, { model: 'c' }],
+          opencode: [
+            { model: ['glm-5.3-flash', 'glm-4-flash'], effort: 'max' },
+            { model: 'lmstudio/qwen3.8-27b-ridge' },
+          ],
+        },
+      }),
+      [],
+    );
+  });
+
+  it('rejects an empty candidate array for a platform', () => {
+    const problems = validateDispatchConfig({ platforms: { opencode: [] } });
+    assert.match(problems.join('\n'), /platforms\.opencode must define at least one candidate/);
+  });
+
+  it('rejects a non-object candidate item in an array', () => {
+    const problems = validateDispatchConfig({ platforms: { opencode: ['not-an-object'] } });
+    assert.match(problems.join('\n'), /platforms\.opencode\[0\] must be an object/);
+  });
+
+  it('rejects an unrecognized key inside a candidate array item', () => {
+    const problems = validateDispatchConfig({ platforms: { opencode: [{ model: 'x', timeout: 10 }] } });
+    assert.match(problems.join('\n'), /platforms\.opencode\[0\] has unrecognized key "timeout"/);
   });
 
   it('reports every problem in one pass', () => {

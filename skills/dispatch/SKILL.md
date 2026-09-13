@@ -12,7 +12,7 @@ The cascade order and per-provider model/effort come from [config.default.jsonc]
 1. **Claude Code** (`claude`).
 2. **Antigravity 2.0** (`agy`).
 3. **GitHub Copilot** (`copilot`).
-4. **OpenCode** (`opencode`) against whatever provider/model `opencode.jsonc` configures, or opencode's own CLI default when unconfigured — dispatch assumes no particular provider.
+4. **OpenCode** (`opencode`) — cascading across models configured in `config.default.jsonc` (defaulting to GLM → DeepSeek → local LM Studio) or falling back to `opencode.jsonc`'s configured model / CLI default.
 
 A platform omitted from the loaded config is never dispatched, regardless of order. Alternative providers are attempted first; the orchestrator's own platform is tried last. If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 

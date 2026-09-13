@@ -121,7 +121,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`). Supports an array of candidate entries to cascade across multiple models (e.g. the shipped default of OpenCode Go GLM (`opencode-go/glm-5.3-flash`) -> DeepSeek (`opencode-go/deepseek-v4.1-flash`) -> LM Studio (`lmstudio/qwen3.8-27b-ridge`)). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
   (`isLocalEndpointHost`). Local (an `lmstudio/...` model resolved to its loopback endpoint, or any
@@ -139,8 +139,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
    - Cross-platform: `opencode` binary on system `$PATH`, connecting to whatever provider endpoint
      resolves from the configured `model` (`lmstudio/...` resolves to local `http://127.0.0.1:1234/v1`
      by convention; any other `provider/model` string resolves elsewhere). With no `model`
-     configured anywhere, `opencode`'s own CLI default applies — dispatch assumes no particular
-     provider.
+     configured anywhere, `opencode`'s own CLI default applies.
 
 ### Sandboxing & Isolation
 - **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.

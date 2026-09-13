@@ -58,7 +58,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @typedef {object} DispatchTaskOptions
  * @property {string} prompt
  * @property {string[]} [files]
- * @property {string} [model]
+ * @property {string|string[]} [model]
  * @property {string} [effort]
  * @property {string} [agent]
  * @property {number} [timeout] Seconds before the delegate is killed.
@@ -191,11 +191,43 @@ export async function dispatchTask(options = {}) {
   // breach was reported by nobody.
   const initialGitStatus = getGitStatus();
 
-  // Per-candidate: a CLI `-m`/`-e` override wins, else the config entry for that specific
-  // provider, else null (the provider CLI's own default). Distinct models per provider are
-  // required once config supplies them — a single shared `model` cannot express that.
-  const runnerOptionsFor = (candidateProvider) => {
-    const entry = config?.platforms?.[candidateProvider] ?? {};
+  // Build target candidates list: expanding array platform entries when no CLI -m/-e override
+  // is passed; CLI -m/-e overrides collapse a platform to a single candidate target.
+  const targetCandidates = [];
+  for (const candidateProvider of candidates) {
+    const entry = config?.platforms?.[candidateProvider];
+    if (model !== null || effort !== null) {
+      const fallbackEntry = Array.isArray(entry) ? (entry[0] ?? {}) : (entry ?? {});
+      targetCandidates.push({
+        provider: candidateProvider,
+        model: model ?? fallbackEntry.model ?? null,
+        effort: effort ?? fallbackEntry.effort ?? null,
+        label: candidateProvider,
+      });
+    } else if (Array.isArray(entry)) {
+      for (const c of entry) {
+        const cModel = c?.model ?? null;
+        const cEffort = c?.effort ?? null;
+        const modelLabel = Array.isArray(cModel) ? cModel.join(', ') : cModel;
+        targetCandidates.push({
+          provider: candidateProvider,
+          model: cModel,
+          effort: cEffort,
+          label: modelLabel ? `${candidateProvider} (${modelLabel})` : candidateProvider,
+        });
+      }
+    } else {
+      const singleEntry = entry ?? {};
+      targetCandidates.push({
+        provider: candidateProvider,
+        model: singleEntry.model ?? null,
+        effort: singleEntry.effort ?? null,
+        label: candidateProvider,
+      });
+    }
+  }
+
+  const runnerOptionsFor = (candidate) => {
     return {
       prompt,
       initialGitStatus,
@@ -205,12 +237,12 @@ export async function dispatchTask(options = {}) {
       maxBufferMb,
       json,
       verbose,
-      model: model ?? entry.model ?? null,
-      effort: effort ?? entry.effort ?? null,
+      model: candidate.model,
+      effort: candidate.effort,
     };
   };
 
-  return await runCascade(candidates, runnerOptionsFor, { pinned: Boolean(provider) });
+  return await runCascade(targetCandidates, runnerOptionsFor, { pinned: Boolean(provider) });
 }
 
 /** Loads the dispatch cascade config via the shared skill-config loader. */
@@ -234,17 +266,16 @@ function assertSkillIntegrity() {
 }
 
 /**
- * Runs `runnerOptions` through `candidates` in order, cascading to the next provider on
- * failure. A truncated or empty run is still worth returning if nothing better follows:
- * without `bestPartial`, a 9-minute analysis that timed out one step short was discarded
- * outright.
- * @param {Provider[]} candidates
- * @param {(provider: Provider) => object} runnerOptionsFor Resolves per-candidate runner options
- *   (distinct model/effort per provider).
+ * Runs `runnerOptions` through `targetCandidates` in order, cascading to the next candidate on
+ * failure. When pinned, cascades only among candidates of the pinned provider. A truncated or
+ * empty run is still worth returning if nothing better follows: without `bestPartial`, a 9-minute
+ * analysis that timed out one step short was discarded outright.
+ * @param {Array<{ provider: Provider, model: string|null, effort: string|null, label: string }>} targetCandidates
+ * @param {(candidate: { provider: Provider, model: string|null, effort: string|null, label: string }) => object} runnerOptionsFor
  * @param {{ pinned: boolean }} cascadeOptions
  * @returns {Promise<DispatchTaskResult>}
  */
-async function runCascade(candidates, runnerOptionsFor, { pinned }) {
+async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   const attemptFailures = [];
   let bestPartial = null;
 
@@ -275,32 +306,42 @@ async function runCascade(candidates, runnerOptionsFor, { pinned }) {
     };
   };
 
-  for (let i = 0; i < candidates.length; i++) {
-    const currentProvider = candidates[i];
-    const nextProvider = candidates[i + 1] ?? null;
+  for (let i = 0; i < targetCandidates.length; i++) {
+    const current = targetCandidates[i];
+    const next = targetCandidates[i + 1] ?? null;
+    const currentProvider = current.provider;
+    const currentLabel = current.label;
+    const nextLabel = next?.label ?? null;
+    const isSameProviderNext = next && next.provider === currentProvider;
 
     /** Records the failure and reports whether the cascade should continue. */
     const shouldCascade = (reason, kind) => {
-      attemptFailures.push(`${currentProvider}: ${reason}${kind ? ` [${kind}]` : ''}`);
+      attemptFailures.push(`${currentLabel}: ${reason}${kind ? ` [${kind}]` : ''}`);
 
       if (pinned) {
+        if (isSameProviderNext) {
+          process.stderr.write(
+            `[dispatch] Provider '${currentLabel}' ${reason}${kind ? ` [${kind}]` : ''}. Cascading to '${nextLabel}'...\n`,
+          );
+          return true;
+        }
         process.stderr.write(
-          `[dispatch] Provider '${currentProvider}' ${reason}${kind ? ` [${kind}]` : ''}. ` +
+          `[dispatch] Provider '${currentLabel}' ${reason}${kind ? ` [${kind}]` : ''}. ` +
             `Pinned with --provider, so not cascading — see the session log.\n`,
         );
         return false;
       }
 
-      if (nextProvider) {
+      if (next) {
         process.stderr.write(
-          `[dispatch] Provider '${currentProvider}' ${reason}${kind ? ` [${kind}]` : ''}. Cascading to '${nextProvider}'...\n`,
+          `[dispatch] Provider '${currentLabel}' ${reason}${kind ? ` [${kind}]` : ''}. Cascading to '${nextLabel}'...\n`,
         );
       }
       return true;
     };
 
     try {
-      const result = await executeProvider(currentProvider, runnerOptionsFor(currentProvider));
+      const result = await executeProvider(currentProvider, runnerOptionsFor(current));
 
       // A CLI that reports quota exhaustion or a refusal on stderr and still exits 0 is a
       // failure, not a silent success.

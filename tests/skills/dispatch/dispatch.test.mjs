@@ -601,6 +601,109 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(passedOpts.effort, 'low');
     });
 
+    it('cascades across multiple candidate models within a platform array', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+
+      const opencodeConfig = {
+        platforms: {
+          opencode: [
+            { model: 'glm-5.3-flash', effort: 'max' },
+            { model: 'deepseek-v4.1-flash', effort: 'max' },
+            { model: 'lmstudio/qwen3.8-27b-ridge' },
+          ],
+        },
+      };
+
+      const calls = [];
+      mock.method(providerRunners, 'opencode', async (opts) => {
+        calls.push({ model: opts.model, effort: opts.effort });
+        if (opts.model === 'glm-5.3-flash') {
+          return { provider: 'opencode', stdout: '', exitCode: 1, failureKind: 'model-not-loaded' };
+        }
+        if (opts.model === 'deepseek-v4.1-flash') {
+          return { provider: 'opencode', stdout: '', exitCode: 1, failureKind: 'quota' };
+        }
+        return { provider: 'opencode', stdout: 'Success from local LLM', exitCode: 0 };
+      });
+
+      const result = await dispatchTask({ prompt: 'Test task', config: opencodeConfig, configPath: 'custom.jsonc' });
+      assert.equal(result.provider, 'opencode');
+      assert.equal(result.stdout, 'Success from local LLM');
+      assert.equal(calls.length, 3);
+      assert.deepEqual(calls, [
+        { model: 'glm-5.3-flash', effort: 'max' },
+        { model: 'deepseek-v4.1-flash', effort: 'max' },
+        { model: 'lmstudio/qwen3.8-27b-ridge', effort: null },
+      ]);
+    });
+
+    it('cascades within a pinned platform array but stops without cascading to other providers', async () => {
+      clearOrchestratorEnv();
+      const multiConfig = {
+        platforms: {
+          opencode: [
+            { model: 'glm-5.3-flash' },
+            { model: 'deepseek-v4.1-flash' },
+          ],
+          copilot: { model: 'gpt-5.6-luna' },
+        },
+      };
+
+      const opencodeCalls = [];
+      mock.method(providerRunners, 'opencode', async (opts) => {
+        opencodeCalls.push(opts.model);
+        return { provider: 'opencode', stdout: '', exitCode: 1, failureKind: 'quota' };
+      });
+
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'Should not run',
+        exitCode: 0,
+      }));
+
+      const result = await dispatchTask({
+        prompt: 'Test',
+        provider: 'opencode',
+        config: multiConfig,
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(result.provider, 'opencode');
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(opencodeCalls, ['glm-5.3-flash', 'deepseek-v4.1-flash']);
+      assert.equal(copilotRunner.mock.calls.length, 0, 'did not cascade to copilot');
+    });
+
+    it('CLI -m flag collapses candidate array to a single target invocation', async () => {
+      clearOrchestratorEnv();
+      const multiConfig = {
+        platforms: {
+          opencode: [
+            { model: 'glm-5.3-flash' },
+            { model: 'deepseek-v4.1-flash' },
+          ],
+        },
+      };
+
+      const opencodeCalls = [];
+      mock.method(providerRunners, 'opencode', async (opts) => {
+        opencodeCalls.push(opts.model);
+        return { provider: 'opencode', stdout: 'Success with single override', exitCode: 0 };
+      });
+
+      const result = await dispatchTask({
+        prompt: 'Test',
+        provider: 'opencode',
+        model: 'custom-override',
+        config: multiConfig,
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(result.stdout, 'Success with single override');
+      assert.deepEqual(opencodeCalls, ['custom-override']);
+    });
+
     it('dispatchTask rejects --no-config without --provider', async () => {
       await assert.rejects(
         dispatchTask({ prompt: 'Test', noConfig: true }),
