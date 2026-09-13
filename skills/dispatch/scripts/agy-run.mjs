@@ -231,6 +231,12 @@ export async function runAgy(options = {}) {
         continue;
       }
       throw err;
+    } finally {
+      // This loop owns the logger it created, matching runClaude/runCopilot. executeAgyInMode
+      // closes it on the child's 'close'/'error' events, but a throw before the child is spawned
+      // reaches neither - and the loop would then cascade and open another. close() is idempotent,
+      // so the usual path's double call is a no-op.
+      sessionLogger.close();
     }
   }
 

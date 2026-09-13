@@ -2,7 +2,7 @@
   "SKILL.md": "7f977a31240199f32ebe0f8ab5096ef292caa69cd5570ba1e17d06345f6727da",
   "references/alignment.md": "06a9b53157faed9e0a969391f1dfdf795782b50783424792f14992303bec0b1e",
   "references/providers.md": "978f423c4c1d306a4bb29b48ff3800c76bd98ac35be7c375af81ac06c90a1db6",
-  "scripts/agy-run.mjs": "9cc7f0aa5881601f0b2467800b3c79c533ae38491b81608d9cf60c87b09ed7e5",
+  "scripts/agy-run.mjs": "8f2bacaa54b2f37889ea1c5b35d095ac5383dfafd3e7eda8b4fc5f6e87e0cf16",
   "scripts/claude-run.mjs": "dc670e3708c1cafd5c570908a735204cfce6e4ca9b71cdd4e6011edb816d33a0",
   "scripts/common.mjs": "3b0056be7391ddbcb765912a9ffb4ecf0f7bea5570364d1451ed1e6e758de72e",
   "scripts/copilot-run.mjs": "939a3a39ebbf78b2d7c32d63138a92884f0d300dce87c472cb8a56498c7aa3b4",

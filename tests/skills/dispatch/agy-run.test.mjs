@@ -428,9 +428,13 @@ describe('runAgy cascade loop', () => {
   function harness({ results = [], modes = MODES } = {}) {
     const calls = [];
     let probed = 0;
+    let opened = 0;
+    let closed = 0;
     return {
       calls,
       probedCount: () => probed,
+      openedCount: () => opened,
+      closedCount: () => closed,
       options: {
         prompt: 'x',
         initialGitStatus: '',
@@ -439,7 +443,12 @@ describe('runAgy cascade loop', () => {
           probed += 1;
           return modes;
         },
-        createLogger: () => ({ logFile: null, write() {}, close() {} }),
+        createLogger: () => {
+          opened += 1;
+          let isClosed = false;
+          // Mirrors createSessionLogger's idempotent close, so a double call counts once.
+          return { logFile: null, write() {}, close() { if (!isClosed) { isClosed = true; closed += 1; } } };
+        },
         execute: async (mode) => {
           calls.push(mode);
           const next = results[calls.length - 1];
@@ -498,6 +507,26 @@ describe('runAgy cascade loop', () => {
     const result = await runAgy(h.options);
     assert.deepEqual(h.calls, MODES);
     assert.equal(result.mode, MODES[2], 'the last attempt is what comes back');
+  });
+
+  // runAgy creates a logger per attempt and executeAgyInMode closes it on the child's
+  // 'close'/'error' events. A throw before the child is spawned reaches neither, and the loop
+  // then cascades and opens another - so the loop itself has to guarantee the close.
+  it('closes every attempt logger it opened, including when the executor throws', async () => {
+    const boom = new Error('spawn failed');
+
+    const cascaded = harness({ results: [boom, quotaResult(MODES[1]), okResult(MODES[2])] });
+    await runAgy(cascaded.options);
+    assert.equal(cascaded.openedCount(), 3, 'one logger per attempt');
+    assert.equal(cascaded.closedCount(), 3, 'no attempt leaks its logger');
+
+    const allThrow = harness({ results: [boom, boom, boom] });
+    await assert.rejects(() => runAgy(allThrow.options));
+    assert.equal(allThrow.closedCount(), allThrow.openedCount(), 'the rethrowing path closes too');
+
+    const success = harness({ results: [okResult(MODES[0])] });
+    await runAgy(success.options);
+    assert.equal(success.closedCount(), 1, 'the success path closes exactly once');
   });
 
   it('throws CLI_NOT_FOUND before the loop when no binary is present', async () => {
