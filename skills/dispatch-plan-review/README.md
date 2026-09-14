@@ -6,20 +6,28 @@ Get a rigorous second opinion on an implementation plan **before** any code is w
 
 ## What It Does
 
-Writing code against an untested or flawed plan leads to wasted cycles, rework, and subtle regressions. `dispatch-plan-review` automates cross-agent plan evaluation by delegating the review of implementation plans to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or OpenCode).
+Writing code against an untested or flawed plan leads to wasted cycles, rework, and subtle regressions. `dispatch-plan-review` automates cross-agent plan evaluation by delegating the review of implementation plans to an external coding-agent CLI (such as Claude Code, Antigravity, GitHub Copilot, or OpenCode).
 
 The core philosophy is **claim vs. verdict**:
 1. **Delegate produces claims**: An external delegate CLI inspects the plan and targeted codebase context, returning structured claims across seven architectural and domain axes.
-2. **Orchestrator adjudicates**: Your primary orchestrator agent (who holds the conversation history and full context) verifies every claim against the original requirement, repository rules (`AGENTS.md` / `CLAUDE.md`), and actual code lines.
-3. **Plan updated in place**: Accepted findings are directly folded into the implementation plan file on disk, logging resolutions and escalating true ambiguities to the user.
+2. **Orchestrator adjudicates**: Your primary orchestrator agent (holding conversation history, workspace context, and tool access) verifies every claim against the original requirement, repository rules (`AGENTS.md` / `CLAUDE.md`), and actual code lines.
+3. **Plan updated in place**: Accepted findings are directly folded into the implementation plan file on disk, logging resolutions and escalating true ambiguities interactively to the user.
 
 ```mermaid
 flowchart TD
-    User(["👤 User"]) -->|"1. Plan prompt"| Orchestrator["🤖 Orchestrator Agent"]
-    Orchestrator -->|"2. Dispatches review"| Delegate["🔍 Delegate CLI (7 Axes)"]
-    Delegate -->|"3. Structured claims"| Orchestrator
-    Orchestrator -->|"4. Adjudicates & updates"| Plan[("📄 Plan on Disk")]
-    Orchestrator -->|"5. Final verdict"| User
+    Prompt(["👤 1. User Prompt / Plan"]) --> Orchestrator["🤖 2. Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
+    
+    Orchestrator -->|"Resolves or authors"| Plan[("📄 3. Plan on Disk<br/>(Scratch or Native)")]
+    Plan -->|"Dispatches with -f"| Dispatch["⚡ 4. dispatch runner"]
+    
+    Dispatch -->|"Cascade / pinned CLI"| Delegate["🔍 5. Delegate CLI<br/>(7 Evaluation Axes)"]
+    Delegate -.->|"Streams raw traces"| Logs[("📝 OS Temp Logs<br/>(Protects context)")]
+    
+    Delegate -->|"Structured claims"| Adjudicate["⚖️ 6. Claim Adjudication<br/>(Verified against code & rules)"]
+    Codebase[("💻 Workspace Rules & Code")] -->|"Ground truth"| Adjudicate
+    
+    Adjudicate -->|"Folds fixes & logs resolutions"| UpdatedPlan[("📄 7. Updated Plan on Disk")]
+    Adjudicate -->|"Presents report"| Report(["👤 8. Final Report to User"])
 ```
 
 ---
@@ -33,7 +41,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (any provider/model; see `dispatch`).
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (supports local LLMs like LM Studio or remote providers like Anthropic/OpenRouter).
 
 ### Installation
 
@@ -43,25 +51,36 @@ Install `dispatch-plan-review` alongside `dispatch`:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
 ```
 
-To install the complete suite across all skills (`--all`, add `-g` for global):
+To install globally for all your projects:
+
+```bash
+npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
+```
+
+To install the complete suite of dispatch skills:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
+> [!NOTE]
+> When using multiple skills from this repository, ensure they are installed in the **same scope** (all project-local or all global) so sibling runner scripts and prompt templates can locate each other.
+
 ---
 
 ## How to Use
 
-Trigger `dispatch-plan-review` directly via the slash command `/dispatch-plan-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, dispatch the task, adjudicate the findings, and update the plan.
+Trigger `dispatch-plan-review` directly via the `/dispatch-plan-review` slash command or natural language inside your agent chat session. The orchestrator agent automatically handles plan resolution or authoring, background execution, claim adjudication, and on-disk plan updates.
 
 ### 1. Basic Plan Review
 
-Review the current active plan or an existing plan file:
+Review the current active plan file:
 
 ```markdown
 /dispatch-plan-review
 ```
+
+Or target an explicit plan file path:
 
 ```markdown
 /dispatch-plan-review .scratch/plan/2026-09-08-billing-engine.md
@@ -69,7 +88,7 @@ Review the current active plan or an existing plan file:
 
 ### 2. Targeting Specific Review Focus Areas
 
-Pass focus areas directly after the command:
+Pass focus areas directly after the command to steer delegate attention:
 
 ```markdown
 /dispatch-plan-review focus on backward compatibility and data migrations
@@ -81,7 +100,7 @@ Pass focus areas directly after the command:
 
 ### 3. Pinning Reviewer Providers
 
-Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separated provider keys, no level (standalone reviews run a single round):
+Fan out review to specific external CLIs in parallel using `(<pins>)` (comma-separated provider keys `claude`, `agy`, `copilot`, `opencode`):
 
 ```markdown
 /dispatch-plan-review (claude)
@@ -91,25 +110,42 @@ Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separate
 /dispatch-plan-review (claude,agy) focus on state-machine lifecycles
 ```
 
-### 4. Reviewing Without a Pre-Existing Plan File
+> [!TIP]
+> Unpinned invocations automatically use `dispatch`'s diversity-sorted cascade, trying external platforms first and demoting the host orchestrator's platform to avoid echo chambers.
 
-If no plan file exists yet, simply describe the feature and request a plan review. The orchestrator will automatically author a structured plan under `.scratch/plan/<yyyy-mm-dd>-<slug>.md` before dispatching it:
+### 4. Authoring and Reviewing on the Fly
+
+No special instructions or file paths are needed. If no plan file exists yet, simply describe what you want to build in plain English. The orchestrator automatically drafts the structured plan file under `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and immediately dispatches it for review:
 
 ```markdown
-/dispatch-plan-review Create a plan for replacing redis-pubsub with Postgres LISTEN/NOTIFY
+/dispatch-plan-review Replace redis-pubsub with Postgres LISTEN/NOTIFY
 ```
+
+```markdown
+/dispatch-plan-review Add token bucket rate limiting to /api/v1/auth endpoints
+```
+
+### 5. Multi-Round Re-Reviews
+
+When you iterate on a plan, running `/dispatch-plan-review` again automatically detects previous review rounds (by counting `### Round` headings under `## Review Findings & Resolutions`). It scopes subsequent delegate grounding to verify prior resolutions and review only sections modified since the last round.
 
 ---
 
 ## High-Level Behavior & Invariants
 
-- **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. The orchestrator independently verifies every defect citation against lines of code and requirements before accepting it.
-- **Evidence Over Votes**: Provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
-- **Plan File Updated on Disk**: Accepted changes are not just printed in the chat; they are actively written back to the target plan file (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
-- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (your agent's interactive question tool) before modifying the plan.
-- **Structured Plan Resolution**: Follows `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (host convention and explicit user paths override; then resolves across tiers: *platform-native* → *existing scratch* matching branch slug → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`).
-- **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only files named in proposed changes and immediate call sites) rather than unbounded codebase scans, keeping turnaround quick and tokens focused.
-- **Artifact Lifecycle**: standalone runs always retain the plan file in place; only an orchestrator owning the full plan-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
+- **Claim vs. Verdict Separation**: The external delegate's report is strictly a set of *claims*, not an authoritative verdict. The orchestrator independently verifies every defect citation against actual lines of code, domain requirements, and repository conventions before accepting it.
+- **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate uncovers a subtle domain edge case, the orchestrator accepts it.
+- **Plan File Updated on Disk**: Accepted findings and resolved disputes are directly folded into the target plan sections on disk (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
+- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, architectural trade-offs, or unverified external assumptions, the orchestrator pauses and presents interactive questions (using the agent's interactive question tool) before modifying the plan.
+- **Structured Plan Resolution**: Resolves target plans through a predictable precedence ladder:
+  1. *Host repository convention* (`AGENTS.md` / `CLAUDE.md` path overrides).
+  2. *Explicit user-provided path*.
+  3. *Platform-native session artifact* (e.g. Antigravity session brain `implementation_plan.md`).
+  4. *Existing scratch plan* matching branch slug (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`).
+  5. *Auto-authored scratch plan* following the standard template.
+- **Targeted Grounding & Tool Budgeting**: Delegates perform bounded inspections—reading only files named in proposed changes, adjacent call sites, and contracts via AST / code-graph tools (`codegraph`, `graphify`) within a strict tool turn budget rather than performing unbounded codebase scans.
+- **Delegate Text Sanitization**: Delegate claims are rewritten in the orchestrator's own words before being logged or applied to the plan. Imperatives addressed to readers, fenced instruction blocks, and raw tool calls are stripped to prevent prompt injection into subsequent planning contexts.
+- **Artifact Lifecycle**: Standalone review runs always retain scratch plan files in place. Only an orchestrator managing an end-to-end workflow relocates completed artifacts to OS temp upon final consensus.
 
 ---
 
@@ -119,19 +155,19 @@ Every plan is evaluated across seven rigorous dimensions:
 
 | Axis | Focus Tags | What Is Evaluated |
 |---|---|---|
-| **Requirement & Intent Fidelity** | `traceability`, `user-gap`, `scope-creep` | Bidirectional mapping between requirements and proposed changes; catches premise flaws, XY problems, and unrequested scope creep. |
-| **Domain & Business Logic** | `domain-logic`, `invariant`, `state-machine` | Business rule adherence, sign/unit discrepancies, domain invariant preservation across multi-step mutations, and valid lifecycle states. |
-| **Plan Coherence & Architecture** | `coherence`, `approach`, `standards` | Producer-consumer contract alignment, correct sequencing, modular layering boundaries, and repository conventions (`AGENTS.md` / `CLAUDE.md`). |
-| **Security & Permissions** | `security`, `auth`, `validation` | Trust boundaries, tenant isolation, authentication/authorization flows, role checks, and input sanitization boundaries. |
+| **Requirement & Intent Fidelity** | `traceability`, `user-gap`, `scope-creep` | Bidirectional mapping between requirements and proposed changes; catches premise flaws, XY problems, missing prerequisites, and unrequested scope creep. |
+| **Domain & Business Logic** | `domain-logic`, `invariant`, `state-machine` | Adversarial audit against project context and domain rules (`AGENTS.md` / `CLAUDE.md`); unit/sign discrepancies (monthly vs. annual, debit vs. credit); invariant preservation; valid lifecycle transitions. |
+| **Plan Coherence & Architecture** | `coherence`, `approach`, `standards` | Producer-consumer contract alignment (signatures, payloads, types); execution sequencing; layering boundaries; repository conventions. |
+| **Security & Permissions** | `security`, `auth`, `validation` | Component trust boundaries, credential exposure, tenant isolation, authentication/authorization checks, and input sanitization boundaries. |
 | **Blast Radius & Reversibility** | `blast-radius`, `migration`, `compat` | Downstream caller impact, persisted schema migrations, serialization compatibility, and concrete rollback/reversibility strategies. |
 | **Testability & Success Criteria** | `testability`, `spec-gap` | Checkable acceptance criteria, named automated tests (unit/integration/e2e), and clear pass/fail definitions. |
-| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Simplicity ladder (delete requirement → reuse existing helpers → standard library → new code), YAGNI violations, and boundary/error failure modes. |
+| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Simplicity ladder (delete requirement → reuse existing helper → standard library → new code); YAGNI violations; boundary values and error recovery paths. |
 
 ---
 
-## Finding Grammar & Adjudication Table
+## Findings Grammar & Adjudication Table
 
-### Standard Finding Grammar
+### Standard Findings Grammar
 
 Every finding returned by the reviewer follows a strict single-line grammar, where `<Section>` is the target plan heading:
 
@@ -139,12 +175,13 @@ Every finding returned by the reviewer follows a strict single-line grammar, whe
 § <Section> — <tag>: <defect> → <required change>
 ```
 
-The full delegate prompt lives in [references/prompt-template.md](references/prompt-template.md), and the structure used when a plan is auto-authored in [references/plan-template.md](references/plan-template.md); edit those files to customize either.
+When referencing existing code, line citations (`<file>:L<line>`) are included inline.
 
-Example report:
+#### Example Reviewer Output
+
 ```markdown
 ## Verdict
-Safe to implement once the two MUST-FIX items land.
+Safe to implement once the one MUST-FIX item lands.
 
 ## Axis Coverage
 Requirement & Intent Fidelity: clean
@@ -153,7 +190,7 @@ Plan Coherence & Architecture: clean
 Security & Permissions: clean
 Blast Radius & Reversibility: 1 finding
 Testability & Success Criteria: 1 finding
-Simplicity & Failure Modes: 1 finding
+Simplicity & Failure Modes: clean
 
 ## MUST-FIX
 - § Proposed Changes — blast-radius: bumps PERSISTED_FORMAT_VERSION with no decoder for v3 payloads → add a v3→v4 migration path before the bump.
@@ -168,31 +205,62 @@ Simplicity & Failure Modes: 1 finding
 None — the plan is already minimal.
 ```
 
-### Adjudication
+### Adjudication Decision Table
 
-Every claim is checked against the requirement and your repository's own rules, then accepted, rejected, downgraded, or marked disputed — and whichever way it goes, the outcome is logged under `## Review Findings & Resolutions` in the plan. A disputed claim is one the plan alone cannot settle (intent, a deliberate trade-off); standalone runs put it to you, while an orchestrated run returns it for the orchestrator's consensus rule to handle. The exact criteria, the resolution order, and the escalation mechanics live in one place — `dispatch`'s `references/alignment.md` § Adjudication — rather than being restated here, where they drift.
+Every claim is verified against requirements and repository rules, then categorized:
+
+| Verdict | Criterion | Action | Log Entry Syntax |
+|---|---|---|---|
+| **Accept** | Requirement, repo rules, or cited code confirms the defect. | Fold change directly into plan body; log resolution. | `- **[Accepted]** § <Section> — <tag>: <defect> → <resolution & where applied>` |
+| **Reject** | Contradicted by code/plan, locus missing, already handled, or ungrounded. | Drop from changes; log rejection rationale. | `- **[Rejected / Downgraded]** § <Section> — <tag>: <defect> → <rejection rationale>` |
+| **Downgrade** | Real but trivial or subjective (style, minor preference). | Move to `## Out of Scope` or drop; log rationale. | `- **[Rejected / Downgraded]** § <Section> — <tag> (CONSIDER): <defect> → <rationale>` |
+| **Disputed** | Unsettleable from plan/code alone (ambiguous intent, trade-offs). | Query user interactively before modifying plan. | `- **[Resolved Dispute]** § <Section> — <tag>: <defect> → <user ruling & action>` |
+
+All adjudications are appended to the plan file under `## Review Findings & Resolutions`:
+
+```markdown
+### Round 1 — claude, 2026-09-08
+- **[Accepted]** § Proposed Changes — blast-radius: bumps PERSISTED_FORMAT_VERSION without v3 decoder → added v3→v4 migration path in src/storage/decoder.ts.
+- **[Accepted]** § Verification Plan — testability: allocation assertion was vague → added concrete assertions to test_allocation_balance().
+- **[Rejected / Downgraded]** § Proposed Changes — simplicity (CONSIDER): suggested inlining AllocationVisitor → rejected; visitor pattern is required by repo architecture guidelines for multi-engine dispatch.
+```
 
 ---
 
 ## Nuances, Quirks & Troubleshooting
 
 ### Orchestrator Platform Ordering
-Unpinned, the underlying `dispatch` runner tries the other configured platforms first and the orchestrator's own platform last (e.g. Claude Code tries every other reachable CLI before dispatching to Claude Code) — so a same-platform review is possible when nothing else answers. Pin a delegate to force it (`/dispatch-plan-review (claude)`), even from the same platform. The review falls back to a read-only subagent only when no dispatch succeeds (`NO_DISPATCH_AVAILABLE`).
+When unpinned, `dispatch` tries alternative platforms before resorting to the host agent's own platform (e.g. Claude Code tries Antigravity, Copilot, and OpenCode before Claude Code). This ensures genuine cross-agent diversity. To force delegation to a specific platform, use explicit pins like `/dispatch-plan-review (claude)`.
 
 ### Host Convention Reading
-Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.
+Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 
 ### Reviewing Transient Antigravity Plans
-When running inside Antigravity, the orchestrator picks up the active `implementation_plan.md` from the session brain directory — no manual copy or export. One caveat: it identifies the session exactly only when `ANTIGRAVITY_CONVERSATION_ID` is set. Without it, the lookup falls back to whichever conversation directory was touched most recently, which can be a different session's plan if several are open. Check the resolved path in the run banner, or pass the plan path explicitly, when more than one Antigravity conversation is live.
+When running inside Antigravity, the orchestrator automatically picks up the active `implementation_plan.md` from the session brain directory without requiring manual copying. If `ANTIGRAVITY_CONVERSATION_ID` is set in your environment, it targets that exact session; otherwise, it resolves the most recently updated conversation directory.
 
 ### Working on `main` or a Detached HEAD
-The plan path's slug normally comes from your branch name, which is what lets a plan review today and a code review tomorrow land on the same file with no coordination. On a protected branch (`main`, `master`, `develop`, `trunk`) or a detached HEAD, a branch slug would collide across unrelated work, so the slug falls back to your conversation id — meaning only *this* session finds that plan automatically; a later session needs the path or an explicit `--slug`. Under OpenCode, which exposes no conversation id, both derivations fail on a protected branch and the resolver exits non-zero: pass `--slug <kebab-case-slug>`, or give the plan path directly.
+Plan slugs are normally derived from your active git branch name (e.g. `feature/billing-v2` → `billing-v2`). On protected branches (`main`, `master`, `develop`, `trunk`) or a detached HEAD, the slug falls back to your conversation ID (`conversation-<first 8 chars>`). Under OpenCode (which exposes no conversation ID), pass an explicit path or `--slug <kebab-slug>` to avoid derivation errors.
+
+### Stale-Plan Guard
+When you pass a new requirement prose to `/dispatch-plan-review` on a branch where an existing plan file already exists, the orchestrator checks whether the existing plan matches your new requirement. If there is a mismatch, it pauses to ask whether you want to overwrite the existing plan, review it as-is, or author under a fresh slug.
 
 ### Inspecting a Running Review
-Each dispatch prints a banner naming its provider, model, and session log path. Tail that log to watch a review in progress (`tail -f "<logFilePath>"`, or `Get-Content -Wait -Tail 30 "<logFilePath>"` in PowerShell). The filled prompt actually sent to the delegate is written wherever `fill-template.mjs --out` pointed — by convention in your OS temp directory (`os.tmpdir()`), keeping the workspace scratch directory clean for the plan and walkthrough. It is useful when a review answers a question you did not think you asked. The session log itself lives under your OS temp directory as well. (A prompt too large for the command line additionally spills to a brief file in its own temp directory; the banner names that file when it happens.)
+Each dispatch run prints a launch banner naming the provider, model, and OS temp log path. You can monitor live reviewer execution in real time:
+
+**macOS / Linux:**
+```bash
+tail -f "<logFilePath>"
+```
+
+**Windows PowerShell:**
+```powershell
+Get-Content -Wait -Tail 30 "<logFilePath>"
+```
+
+The rendered prompt sent to the delegate is stored in OS temp (`os.tmpdir()`), keeping your project workspace clean.
 
 ### No Reviewer Available
-If every configured platform is missing, unauthenticated, or out of quota, the dispatch fails with `NO_DISPATCH_AVAILABLE` and the review falls back to an in-process read-only subagent on your own platform. Its findings are prefixed `[Subagent Fallback]` — that prefix means the second opinion came from the same model that wrote the plan, so it is a self-check rather than a genuinely independent review. Treat those findings with more scepticism, and re-run with a real delegate once one is reachable.
+If all external CLIs are unavailable, unauthenticated, or out of quota, the runner exits `NO_DISPATCH_AVAILABLE`. The orchestrator falls back to an in-process read-only subagent (prefixed with `[Subagent Fallback]`). Note that because fallback subagents run on the host model, they provide a self-check rather than an independent cross-agent review.
 
-### False Claims on Uncommitted Code
-Delegates inspect the files present on disk. If your plan refers to code changes from an uncommitted draft branch or unstaged stash that is not present in the workspace, the delegate may flag them as missing symbols. Ensure workspace dependencies and referenced files exist before running review.
+### False Claims on Uncommitted Changes
+Delegate CLIs inspect the repository state as committed or present on disk. If your plan assumes changes from uncommitted branches or unstaged stashes that are not present in the active workspace, the delegate may report missing files or symbols. Ensure dependent code is present in the workspace before reviewing.
