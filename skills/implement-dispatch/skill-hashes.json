@@ -1,6 +1,6 @@
 {
-  "SKILL.md": "4311e6af07cc93e174cd521c58ff64ab3e50f88acf53ef7c4427ea161cd3fb1d",
-  "references/notes.md": "04dea8d1b06ef7ec27b3d95a2a0c09dd8ac5b810be9be9305da6deb75dad1626",
+  "SKILL.md": "2c666f4f0819fc69a930c608925746bf3a2b7bdba2ce8580b8934ef9a52447b5",
+  "references/notes.md": "0c93ce1cc84ffbe0f7b9ca743d0987a92c1cf885ea0bfa159eb2fe427c0024c7",
   "scripts/check-consensus.mjs": "ed70bab6a5fc80e21e358ec22fc50e4b204e81f5a0132deb97d2b203f49c5395",
   "scripts/resolve-flow.mjs": "aed53fff222b5f858afdd91be77f5bb92e5c4eec90c9517cca52f6258f779dcf"
 }

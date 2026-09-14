@@ -4,7 +4,69 @@ Developer documentation, test harness hooks, and internal maintainer notes. Not 
 
 ---
 
-## 1. Test Harness Environment Hooks
+## 1. Architecture & Lifecycle
+
+`implement-dispatch` orchestrates multi-agent implementation and review loops across external agent CLIs, owning control flow while delegating criteria and prompt generation to upstream skills:
+
+```
+implement-dispatch
+  ├── dispatch                (Required: runner execution, cascade, CLI flags, fallback)
+  ├── dispatch-plan-review    (Optional: plan template, review axes, plan adjudication)
+  └── dispatch-code-review    (Optional: walkthrough template, review axes, code adjudication)
+```
+
+### Execution Pipeline
+
+1. **Scope & Setup**: Success criteria formulation, scope gating (`trivial` → `low`, `focused` → `medium`, `cross-cutting` → `high`), flow resolution (`resolve-flow.mjs`), and artifact path derivation (`resolve-artifact-paths.mjs`).
+2. **Author Plan**: Baseline plan creation from `dispatch-plan-review` template.
+3. **Plan Review Loop**: Multi-agent review waves via `dispatch-plan-review` (orchestrated mode) until consensus or wave cap (`maxRounds`).
+4. **Implement**: Single user approval gate, git boundary snapshot, native write subagent dispatch (test-first with git guard), boundary verification.
+5. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
+6. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
+7. **Re-Review Loop**: Re-dispatch narrowed by target affinity to live citing delegates until `check-consensus.mjs` exits 0 or wave cap reached.
+8. **Handoff & Cleanup**: Await all review dispatches, record run diagnostics, relocate scratch artifacts to OS temp, deliver user summary.
+
+---
+
+## 2. Script Contracts & Exit Codes
+
+### Flow Resolver (`scripts/resolve-flow.mjs`)
+
+Resolves reviewer candidate targets, reserve lists, level knobs, and platform hints into a single JSON execution flow plan.
+
+- **CLI Usage**:
+  ```bash
+  node resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <low|medium|high|xhigh|max>]
+                        [--pins <keys|all|n>] [--exclude <keys>] [--validate-only]
+  ```
+- **Exit Codes**:
+  - `0`: Valid flow JSON emitted to `stdout` (or config schema valid under `--validate-only`).
+  - `1`: Invalid arguments, configuration schema violation, integrity check failure, or unresolvable pins.
+- **Candidate Ordering & Diversity Sorting**:
+  - Live external candidates sorted across platforms (each platform's first candidate before any platform's second).
+  - Orchestrator candidates placed last, with distinct models diversity-sorted before same-model matches (demoted to dead last).
+  - Candidates beyond `targetCount` populate `reserves` in order for dynamic substitution during `[auth]` / `[quota]` failures.
+
+### Consensus Gate (`scripts/check-consensus.mjs`)
+
+Validates whether an artifact's `## Review Findings & Resolutions` section has converged on clean consensus.
+
+- **CLI Usage**:
+  ```bash
+  node check-consensus.mjs <artifact path>
+  ```
+- **Exit Codes**:
+  - `0`: Settled (`Consensus: settled`) — no unsettled lines found, or `## Review Findings & Resolutions` section absent.
+  - `1`: Unsettled (`Consensus: <n> unsettled line(s)`) — lists active `[Disputed]` or `[Rejected — pending confirmation]` lines.
+  - `2`: Usage error, missing arguments, or unreadable artifact file.
+- **Parsing Invariants**:
+  - CommonMark-compliant fenced code block skipping (prevents example templates from triggering false positives).
+  - Unclosed fence detection triggers fail-closed scan across the entire file.
+  - Regex accepts em-dash, en-dash, and hyphens in `[Rejected — pending confirmation]`.
+
+---
+
+## 3. Test Harness Environment Hooks
 
 ### Liveness Override (`IMPLEMENT_DISPATCH_LIVENESS_JSON`)
 
@@ -13,10 +75,26 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
 - **Safety Guard**: Armed only when `IMPLEMENT_DISPATCH_TEST_MODE=1` is set alongside it. Setting the JSON map alone throws an error explicitly naming both variables to prevent accidental test-state inheritance in production runs.
 - **Diagnostics**: A run using this override sets `flow.diagnostics.livenessSource: "env-override"`; real runs report `"probe"`.
 
+### Test Suite Structure
+
+- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate sorting, diversity ordering, level-knob fallback, pin normalization, candidate array expansion, and platform exclusions.
+- `tests/skills/implement-dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
+- `tests/skills/implement-dispatch/check-consensus.test.mjs`: Consensus parser tests, fenced markdown handling, dash variations, and exit codes.
+- `tests/skills/implement-dispatch/config-default.test.mjs`: Schema validation of `config.default.jsonc`.
+
 ---
 
-## 2. Integrity Gate Behavior
+## 4. Integrity Gate Behavior
 
 The flow resolver verifies its own files against `skill-hashes.json` before loading configuration:
 - A missing `skill-hashes.json` prints a warning and proceeds.
-- A modified `SKILL.md` or script aborts execution with a list of modified files. Regenerate hashes with `npm run hashes` in development.
+- A modified `SKILL.md` or script aborts execution with a list of modified files.
+- Regenerate hashes with `npm run hashes` after editing skill files or scripts.
+
+---
+
+## 5. Maintainer Troubleshooting
+
+- **Sibling Import Failures**: `resolve-flow.mjs` imports `../../dispatch/scripts/common.mjs` and `dispatch.mjs` via relative paths. All skills must reside in the same `<skills-dir>`.
+- **Platform Exclusions**: When a delegate encounters `[auth]` or `[quota]`, `implement-dispatch` adds its platform to `--exclude <platform>` on subsequent `resolve-flow.mjs` calls. Exclusion is platform-wide (excludes all models on that provider).
+- **Target Affinity on Re-Review**: Re-review dispatches target only delegates that authored findings being re-evaluated, avoiding unnecessary token expenditure across uninvolved providers.
