@@ -18,7 +18,6 @@ import {
   parseClaudeEnvelope,
   probeAllClaudeModes,
   resolveClaudeTarget,
-  resolveModelsToTry,
   runClaude,
   testClaudeBinaryReachability,
 } from '../../../skills/dispatch/scripts/claude-run.mjs';
@@ -85,29 +84,6 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
     it('does not match short prose after the word session', () => {
       assert.equal(extractClaudeSessionId('The session: ended cleanly'), null);
       assert.equal(extractClaudeSessionId('{"session_id":"uuid-value-1"}'), 'uuid-value-1');
-    });
-  });
-
-  describe('resolveModelsToTry (no hardcoded default)', () => {
-    it('returns [null] when no model is configured anywhere, omitting --model', () => {
-      assert.deepEqual(resolveModelsToTry(null), [null]);
-      assert.deepEqual(resolveModelsToTry(undefined), [null]);
-      assert.deepEqual(resolveModelsToTry(''), [null]);
-    });
-
-    it('returns the array as-is (ordered fallback list) when given an array', () => {
-      assert.deepEqual(resolveModelsToTry(['claude-opus-5', 'bedrock.claude-opus-5']), [
-        'claude-opus-5',
-        'bedrock.claude-opus-5',
-      ]);
-    });
-
-    it('splits a comma-separated string into an ordered fallback list', () => {
-      assert.deepEqual(resolveModelsToTry('a, b ,c'), ['a', 'b', 'c']);
-    });
-
-    it('wraps a single model string', () => {
-      assert.deepEqual(resolveModelsToTry('claude-opus-5'), ['claude-opus-5']);
     });
   });
 
@@ -326,6 +302,22 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
         result: null,
         error: new Error('boom'),
       });
+      assert.equal(step, 'throw');
+    });
+
+    // The workspace was written: retrying on another model or target would hide the violation.
+    it('git-integrity violation on a result, not last model/target -> return', () => {
+      const step = nextClaudeStep({
+        ...base,
+        result: { exitCode: 1, failureKind: 'quota', gitIntegrityViolation: true },
+        error: null,
+      });
+      assert.equal(step, 'return');
+    });
+
+    it('git-integrity violation on a thrown error, not last model/target -> throw', () => {
+      const error = Object.assign(new Error('written'), { gitIntegrityViolation: true });
+      const step = nextClaudeStep({ ...base, result: null, error });
       assert.equal(step, 'throw');
     });
   });

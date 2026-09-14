@@ -55,7 +55,146 @@ import {
   isMainModule,
   readStdin,
   resolveRunnerExitCode,
+  resolveModelsToTry,
+  cascadeModels,
 } from '../../../skills/dispatch/scripts/common.mjs';
+
+// ---------------------------------------------------------------------------
+// SECTION: Model cascade
+// ---------------------------------------------------------------------------
+
+describe('common: resolveModelsToTry (no hardcoded default)', () => {
+  it('returns [null] for null/undefined/empty so the CLI default applies', () => {
+    assert.deepEqual(resolveModelsToTry(null), [null]);
+    assert.deepEqual(resolveModelsToTry(undefined), [null]);
+    assert.deepEqual(resolveModelsToTry(''), [null]);
+  });
+
+  it('keeps an array in order, dropping empty entries', () => {
+    assert.deepEqual(resolveModelsToTry(['claude-opus-5', '', 'bedrock.claude-opus-5']), [
+      'claude-opus-5',
+      'bedrock.claude-opus-5',
+    ]);
+  });
+
+  it('splits a comma-separated string', () => {
+    assert.deepEqual(resolveModelsToTry('a, b ,c'), ['a', 'b', 'c']);
+  });
+
+  it('wraps a single model id', () => {
+    assert.deepEqual(resolveModelsToTry('claude-opus-5'), ['claude-opus-5']);
+  });
+});
+
+describe('common: cascadeModels', () => {
+  it('rejects an empty models list instead of resolving undefined', async () => {
+    await assert.rejects(() => cascadeModels([], async () => ({ exitCode: 0 }), { label: 'X' }), /non-empty/);
+  });
+
+  /** Runs `fn` with process.stderr captured; returns `{ value, stderr }` or rethrows with `stderr` attached. */
+  async function captureStderr(fn) {
+    let stderr = '';
+    const original = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderr += chunk;
+      return true;
+    };
+    try {
+      return { value: await fn(), stderr };
+    } catch (err) {
+      err.capturedStderr = stderr;
+      throw err;
+    } finally {
+      process.stderr.write = original;
+    }
+  }
+
+  const ok = (model) => ({ exitCode: 0, failureKind: null, model });
+  const fail = (model, failureKind = null) => ({ exitCode: 1, failureKind, model });
+
+  it('stops at the first model that succeeds', async () => {
+    const calls = [];
+    const { value, stderr } = await captureStderr(() =>
+      cascadeModels(['a', 'b'], async (m) => (calls.push(m), ok(m)), { label: 'X' }),
+    );
+    assert.deepEqual(calls, ['a']);
+    assert.equal(value.model, 'a');
+    assert.equal(stderr, '');
+  });
+
+  it('advances past a non-zero exit, with the pinned notice', async () => {
+    const calls = [];
+    const { value, stderr } = await captureStderr(() =>
+      cascadeModels(['a', 'b'], async (m) => (calls.push(m), m === 'a' ? fail(m, 'quota') : ok(m)), { label: 'X' }),
+    );
+    assert.deepEqual(calls, ['a', 'b']);
+    assert.equal(value.model, 'b');
+    assert.equal(
+      stderr,
+      "[dispatch] Notice: Model 'a' failed on X (exit 1, failure: quota). Trying fallback model 'b'...\n",
+    );
+  });
+
+  it('advances past a thrown error, with the pinned warning', async () => {
+    const calls = [];
+    const { value, stderr } = await captureStderr(() =>
+      cascadeModels(
+        ['a', 'b'],
+        async (m) => {
+          calls.push(m);
+          if (m === 'a') throw new Error('boom');
+          return ok(m);
+        },
+        { label: 'X' },
+      ),
+    );
+    assert.deepEqual(calls, ['a', 'b']);
+    assert.equal(value.model, 'b');
+    assert.equal(stderr, "[dispatch] Warning: Model 'a' execution failed on X (boom). Trying fallback model 'b'...\n");
+  });
+
+  it('never retries after a git-integrity violation (result or thrown)', async () => {
+    const calls = [];
+    const violated = { ...fail('a'), gitIntegrityViolation: true };
+    const { value } = await captureStderr(() =>
+      cascadeModels(['a', 'b'], async (m) => (calls.push(m), violated), { label: 'X' }),
+    );
+    assert.deepEqual(calls, ['a']);
+    assert.equal(value, violated);
+
+    const thrownCalls = [];
+    const err = Object.assign(new Error('written'), { gitIntegrityViolation: true });
+    await assert.rejects(
+      captureStderr(() => cascadeModels(['a', 'b'], async (m) => { thrownCalls.push(m); throw err; }, { label: 'X' })),
+      (e) => e === err,
+    );
+    assert.deepEqual(thrownCalls, ['a']);
+  });
+
+  it('returns / throws the last model outcome unchanged', async () => {
+    const last = fail('b', 'other');
+    const { value } = await captureStderr(() =>
+      cascadeModels(['a', 'b'], async (m) => (m === 'a' ? fail(m) : last), { label: 'X' }),
+    );
+    assert.equal(value, last);
+
+    const lastErr = new Error('last');
+    await assert.rejects(
+      captureStderr(() =>
+        cascadeModels(['a', 'b'], async (m) => { throw m === 'a' ? new Error('first') : lastErr; }, { label: 'X' }),
+      ),
+      (e) => e === lastErr,
+    );
+  });
+
+  it('[null] is a single attempt with a null model', async () => {
+    const calls = [];
+    const failed = fail(null);
+    const value = await cascadeModels([null], async (m) => (calls.push(m), failed), { label: 'X' });
+    assert.deepEqual(calls, [null]);
+    assert.equal(value, failed);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // SECTION: Argument Parsing & Defaults
@@ -784,14 +923,15 @@ setInterval(() => {}, 1000);`,
 describe('common: security & git integrity', () => {
   it('getSanitizedEnv strips sensitive keys and preserves safe ones', () => {
     const origKey = process.env.ANTHROPIC_API_KEY;
-    const origPath = process.env.PATH;
+    // Windows spells the key `Path`; the whitelist carries both spellings, so match the platform's own.
+    const pathKey = Object.keys(process.env).find((k) => /^path$/i.test(k));
     try {
       process.env.ANTHROPIC_API_KEY = 'sk-ant-test-12345';
       const clean = getSanitizedEnv();
 
       assert.ok(!('ANTHROPIC_API_KEY' in clean));
-      if (origPath !== undefined) {
-        assert.equal(clean.PATH, origPath);
+      if (pathKey !== undefined) {
+        assert.equal(clean[pathKey], process.env[pathKey]);
       }
     } finally {
       if (origKey === undefined) {

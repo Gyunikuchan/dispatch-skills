@@ -70,7 +70,7 @@ Map the runner outcome to exactly one row. A terminal error prints its sentinel 
 | Exit 0 | Success: capture stdout and session handle, then proceed to Step 4. |
 | Truncated or partial output (`WARNING: Output truncated`, `returning partial output`) | Use it if it fulfils the brief; otherwise re-dispatch a narrowed task. |
 | `NO_DISPATCH_AVAILABLE`, or a pinned (`--provider`) run exiting non-zero | Fall back in-process to the platform's read-only subagent (table below), with identical prompt and attachments. |
-| `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, `NO_CONFIG_REQUIRES_PROVIDER`, or platform not configured | Stop and report the error to the user. |
+| `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, `NO_CONFIG_REQUIRES_PROVIDER`, or `PLATFORM_NOT_CONFIGURED` | Stop and report the error to the user. |
 | Any other bracketed `[<CODE>]` (runner-originated codes such as `CLI_NOT_FOUND`, `SERVER_OFFLINE`, `CONTEXT_BUDGET_EXCEEDED` surface here, rethrown through the cascade) | Dispatch failure: same action as a pinned run exiting non-zero. |
 | `Workspace was modified during READ-ONLY execution!` | Run `git status`, report the modified files, and relay the result flagged as workspace-modified. |
 

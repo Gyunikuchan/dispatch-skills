@@ -1882,6 +1882,64 @@ export function isEmptyResult(result) {
 }
 
 /**
+ * Resolves the models to try, in priority order, from the raw `model` option.
+ * Accepts an array, a comma-separated string, or a single model id. `null`/empty means
+ * no model is configured anywhere — a single-element `[null]` list omits the model flag
+ * entirely so the CLI's own default applies.
+ * @param {string|string[]|null} model
+ * @returns {(string|null)[]}
+ */
+export function resolveModelsToTry(model) {
+  let models = [];
+  if (Array.isArray(model)) {
+    models = model.filter(Boolean);
+  } else if (typeof model === 'string' && model.includes(',')) {
+    models = model.split(',').map((m) => m.trim()).filter(Boolean);
+  } else if (typeof model === 'string' && model.trim()) {
+    models = [model.trim()];
+  }
+  return models.length > 0 ? models : [null];
+}
+
+/**
+ * Runs `attempt(model)` for each model in order. Advances on a thrown error or a non-zero exit;
+ * the last model's outcome is returned/thrown unchanged, so a single-model list behaves exactly
+ * like one direct call. Never retries after a git-integrity violation: the workspace was written,
+ * and another attempt would hide it.
+ * @template T
+ * @param {(string|null)[]} models Non-empty; use {@link resolveModelsToTry}.
+ * @param {(model: string|null) => Promise<T>} attempt Resolves a result carrying a numeric `exitCode`.
+ * @param {{ label: string }} opts Provider name used in the fallback notices.
+ * @returns {Promise<T>}
+ */
+export async function cascadeModels(models, attempt, { label }) {
+  if (!Array.isArray(models) || models.length === 0) {
+    throw new Error('cascadeModels requires a non-empty models list');
+  }
+  for (let m = 0; m < models.length; m++) {
+    const current = models[m];
+    const next = models[m + 1];
+    const isLast = m === models.length - 1;
+    let result;
+    try {
+      result = await attempt(current);
+    } catch (err) {
+      if (isLast || err?.gitIntegrityViolation) throw err;
+      process.stderr.write(
+        `[dispatch] Warning: Model '${current}' execution failed on ${label} (${err?.message ?? err}). Trying fallback model '${next}'...\n`,
+      );
+      continue;
+    }
+    if (isLast || result?.gitIntegrityViolation || result?.exitCode === 0) return result;
+    process.stderr.write(
+      `[dispatch] Notice: Model '${current}' failed on ${label} (exit ${result?.exitCode}${result?.failureKind ? `, failure: ${result.failureKind}` : ''}). Trying fallback model '${next}'...\n`,
+    );
+  }
+  // Unreachable: the last model always returns or throws above.
+  return undefined;
+}
+
+/**
  * Resolves the effective exit code for a delegate subprocess run.
  * Forces exit code 1 when a process exited 0 but produced no usable output or
  * reported an error envelope. Truncations map to 124 (timeout) or 137 (buffer cap).

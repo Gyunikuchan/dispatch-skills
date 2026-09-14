@@ -184,8 +184,8 @@ Every claim is checked against the requirement and your repository's own rules, 
 
 ## Nuances, Quirks & Troubleshooting
 
-### Self-Skipping Runner Behavior
-By default, the underlying `dispatch` runner will avoid delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) in order to obtain a truly differentiated second opinion. With one CLI installed, pin it explicitly (`/dispatch-plan-review (claude)`), even from the same platform, or let the review fall back to a read-only subagent.
+### Orchestrator Platform Ordering
+Unpinned, the underlying `dispatch` runner tries the other configured platforms first and the orchestrator's own platform last (e.g. Claude Code tries every other reachable CLI before dispatching to Claude Code) — so a same-platform review is possible when nothing else answers. Pin a delegate to force it (`/dispatch-plan-review (claude)`), even from the same platform. The review falls back to a read-only subagent only when no dispatch succeeds (`NO_DISPATCH_AVAILABLE`).
 
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate your repository-specific idioms, architectural constraints, and coding standards.

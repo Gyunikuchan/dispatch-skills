@@ -315,4 +315,45 @@ describe('runCopilot cascade loop', () => {
     await assert.rejects(() => runCopilot(boom.options));
     assert.equal(boom.closedCount(), 1);
   });
+
+  it('an array model tries each model in order, one string --model per attempt', async () => {
+    const models = [];
+    let discovered = 0;
+    const h = harness({ targets: [target('cli')] });
+    const result = await runCopilot({
+      ...h.options,
+      model: ['m-a', 'm-b'],
+      discoverTargets: () => (discovered++, [target('cli')]),
+      execute: async ({ model }) => {
+        models.push(model);
+        return model === 'm-a' ? { exitCode: 1, failureKind: 'other', stdout: '', stderr: '' } : okResult();
+      },
+    });
+    assert.deepEqual(models, ['m-a', 'm-b']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(discovered, 1, 'target discovery runs once, outside the model cascade');
+    for (const m of models) assert.ok(!buildCopilotArgs('p', { model: m }).some((a) => a.includes(',')));
+  });
+
+  it('a spawn error on model 1 leaves model 2 an open logger of its own', async () => {
+    const loggers = [];
+    const h = harness({ targets: [target('cli')] });
+    await runCopilot({
+      ...h.options,
+      model: ['m-a', 'm-b'],
+      createLogger: () => {
+        const logger = { closed: false, writes: 0, logFile: null, write() { if (this.closed) throw new Error('write after close'); this.writes += 1; }, close() { this.closed = true; } };
+        loggers.push(logger);
+        return logger;
+      },
+      execute: async ({ model, sessionLogger }) => {
+        sessionLogger.write('x');
+        if (model === 'm-a') throw new Error('spawn failed');
+        return okResult();
+      },
+    });
+    assert.equal(loggers.length, 2, 'one logger per model attempt');
+    assert.equal(loggers[1].writes, 1);
+    assert.ok(loggers.every((l) => l.closed));
+  });
 });

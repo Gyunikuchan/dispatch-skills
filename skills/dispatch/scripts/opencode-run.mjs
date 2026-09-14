@@ -60,6 +60,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  cascadeModels,
+  resolveModelsToTry,
   formatCliError,
   safeExitCode,
   checkGitIntegrity,
@@ -71,13 +73,10 @@ import {
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
-  findSensitiveMatch,
   formatSafetyPrompt,
   buildFormattedPrompt,
-  getAllowedBoundaryRoots,
   getGitStatus,
   isMainModule,
-  isPathInside,
   parseCommonArgs,
   parseJsonc,
   preparePromptForArgv,
@@ -126,7 +125,7 @@ import {
  * @typedef {object} RunOpencodeOptions
  * @property {string} prompt
  * @property {string[]} [files]
- * @property {string|null} [model] Overrides opencode.jsonc's configured model.
+ * @property {string|string[]|null} [model] Overrides opencode.jsonc's configured model; a list is tried in order.
  * @property {string|null} [agent] Overrides opencode.jsonc's configured agent.
  * @property {string|null} [effort] Forwarded verbatim as `opencode run --variant <effort>`
  *   (provider-specific reasoning effort, e.g. high, max, minimal); omitted when null.
@@ -221,10 +220,40 @@ export const LM_STUDIO_NO_LOADED_MODEL_WARNING =
  * LM Studio failure still produces a session log (mirrors the previous two-file
  * split's ordering from the pre-consolidation two-file architecture).
  *
+ * An array (or comma-separated) `model` is tried in order, each model as a full single-model run
+ * (settings, preflight and GPU lock re-resolved per model, since the model decides locality).
+ *
  * @param {RunOpencodeOptions} options
  * @returns {Promise<RunOpencodeResult>}
  */
 export async function runOpencode(options = {}) {
+  const {
+    prompt = '',
+    model = null,
+    initialGitStatus: baselineGitStatus = null,
+    // Test seam: defaults to the real single-model run, so production calls are unchanged.
+    runSingle = runOpencodeSingle,
+  } = options;
+
+  if (!prompt.trim()) {
+    throw new Error('No prompt provided for opencode agent execution.');
+  }
+
+  // One baseline spans every model attempt, so a write by an earlier attempt stays visible.
+  const initialGitStatus = baselineGitStatus ?? getGitStatus();
+  return cascadeModels(
+    resolveModelsToTry(model),
+    (currentModel) => runSingle({ ...options, model: currentModel, initialGitStatus }),
+    { label: 'OpenCode' },
+  );
+}
+
+/**
+ * Single-model body of {@link runOpencode}.
+ * @param {RunOpencodeOptions} options
+ * @returns {Promise<RunOpencodeResult>}
+ */
+async function runOpencodeSingle(options = {}) {
   const {
     prompt = '',
     files = [],
@@ -237,10 +266,6 @@ export async function runOpencode(options = {}) {
     verbose = false,
     initialGitStatus: baselineGitStatus = null,
   } = options;
-
-  if (!prompt.trim()) {
-    throw new Error('No prompt provided for opencode agent execution.');
-  }
 
   // Step 1: one config parse, threaded through every step below. A CLI -m override is folded in
   // before settings resolve, so it can change providerName/isLocal before the preflight/lock
@@ -355,9 +380,9 @@ export async function runOpencode(options = {}) {
     const trace = createTraceWriter(verbose);
     const maxBufferBytes = maxBufferMb * 1024 * 1024;
 
-    // Step 8: prefer the dispatch-level baseline, taken once before the cascade so a write by an
-    // earlier failed provider still falls inside the compared window; otherwise snapshot here,
-    // immediately before spawn.
+    // Step 8: `runOpencode` owns the baseline (dispatch-level, else one snapshot before the model
+    // cascade) so a write by an earlier failed provider or model stays inside the compared window;
+    // the fallback only serves a direct `runSingle` call.
     const initialGitStatus = baselineGitStatus ?? getGitStatus();
 
     // Steps 9-11: spawn, stream into logger + trace, and resolve on close.
@@ -642,7 +667,7 @@ export function mergeConfigDeep(base, overlay) {
  * Reads and parses one opencode config file (JSON or JSONC). Returns `null` on a missing,
  * unreadable, unparsable, or denylisted path — every source in the precedence chain is
  * best-effort, matching this file's existing security posture (`SENSITIVE_FILE_PATTERNS`, the
- * same denylist `resolveContextFiles` enforces for `-f` attachments).
+ * same denylist `buildFormattedPrompt` applies when inlining `-f` attachments).
  * @param {string} filePath
  * @returns {object|null}
  */
@@ -1005,6 +1030,8 @@ export function getLMStudioEndpoint(settings) {
  */
 export async function preflightLMStudioCheck(timeoutMs = 2000, endpoint) {
   const ep = endpoint ?? getLMStudioEndpoint();
+  // No resolvable endpoint (no model configured) means nothing to probe, not a crash.
+  if (!ep?.host || !ep?.pathname) return false;
   const targetPath = ep.pathname.replace(/\/+$/, '') + '/models';
 
   const agent = ep.protocol === 'https:' ? https : http;
@@ -1105,56 +1132,6 @@ export function findLastErrorLine(text) {
     .map((l) => l.trim())
     .filter((l) => /\bError:/.test(l));
   return lines.length > 0 ? lines[lines.length - 1] : null;
-}
-
-// ============================================================================
-// SECTION: Path & Boundary Utilities
-// ============================================================================
-
-/**
- * Validates and resolves context file paths against sensitive-file rules (resolved and
- * symlink-real paths, via common's `findSensitiveMatch`). A denylisted file is skipped with a
- * warning — the same posture and message as `readAttachment` for the other three providers, so
- * the outcome does not depend on which provider the cascade reaches. A missing file still throws.
- * Paths outside the usual boundary roots (`getAllowedBoundaryRoots`) warn but are kept — `-f` is
- * always an explicit orchestrator choice.
- * @param {string[]} files
- * @returns {string[]}
- */
-export function resolveContextFiles(files) {
-  const resolved = [];
-  const allowedRoots = getAllowedBoundaryRoots();
-
-  for (const rawPath of files) {
-    const absPath = path.resolve(rawPath);
-    if (!fs.existsSync(absPath)) {
-      throw new Error(`Context file does not exist: ${rawPath} (resolved: ${absPath})`);
-    }
-
-    const sensitive = findSensitiveMatch(absPath);
-    if (sensitive === 'file') {
-      process.stderr.write(
-        `[dispatch] Attachment rejected: '${rawPath}' matches sensitive file denylist.\n`,
-      );
-      continue;
-    }
-    if (sensitive === 'dir') {
-      process.stderr.write(
-        `[dispatch] Attachment rejected: '${rawPath}' is inside a sensitive directory.\n`,
-      );
-      continue;
-    }
-
-    if (!allowedRoots.some((root) => isPathInside(absPath, root))) {
-      process.stderr.write(
-        `[opencode] Context file '${rawPath}' is outside the usual workspace/artifact boundaries; reading anyway (not on the sensitive denylist).\n`,
-      );
-    }
-
-    resolved.push(absPath);
-  }
-
-  return resolved;
 }
 
 // ============================================================================

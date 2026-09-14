@@ -24,6 +24,13 @@ import {
 } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 import { AGY_MODE_DATA_DIRS } from '../../../skills/dispatch/scripts/agy-run.mjs';
 
+// Env vars detectOrchestrator()/deriveConversationKey() consult; stripped so the host agent's session cannot leak into slug derivation.
+const CONVERSATION_ENV_KEYS = [
+  'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
+  'CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
+  'COPILOT_CLI_SESSION_ID',
+];
+
 const SCRIPT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs'
@@ -608,13 +615,37 @@ describe('resolve-artifact-paths CLI', () => {
   });
 
   it('derives slugSource "branch" when --slug is omitted and the branch yields a slug', () => {
-    const res = runCli(['--date', '2026-09-11']);
-    assert.equal(res.status, 0);
+    // Deterministic fixture: a temp repo checked out on a non-protected branch, with every
+    // conversation marker stripped, so neither the live repo's branch nor the host agent leaks in.
+    const strippedEnv = { ...process.env };
+    for (const key of CONVERSATION_ENV_KEYS) {
+      delete strippedEnv[key];
+    }
+    const repo = path.join(isolatedHome, 'repo');
+    mkdirSync(repo);
+    const git = (...args) =>
+      spawnSync('git', ['-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', ...args], {
+        cwd: repo,
+        encoding: 'utf8',
+      });
+    assert.equal(git('init', '-q').status, 0);
+    assert.equal(git('checkout', '-q', '-b', 'feature/branch-slug-fixture').status, 0);
+    assert.equal(git('commit', '-q', '--allow-empty', '--no-gpg-sign', '-m', 'fixture').status, 0);
+
+    const res = spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-11'], {
+      encoding: 'utf8',
+      env: {
+        ...strippedEnv,
+        HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+        APPDATA: path.join(isolatedHome, 'AppData', 'Roaming'),
+        LOCALAPPDATA: path.join(isolatedHome, 'AppData', 'Local'),
+      },
+      cwd: repo,
+    });
+    assert.equal(res.status, 0, res.stderr);
     const result = JSON.parse(res.stdout);
-    // This repo runs on `main` in CI/dev, which is a protected branch — so the real
-    // fallback here is the conversation key (or, absent one, a hard error); assert
-    // whichever this environment actually produces rather than assuming branch success.
-    assert.ok(['branch', 'conversation'].includes(result.slugSource));
+    assert.equal(result.slugSource, 'branch');
   });
 
   it('errors when --slug is omitted and both branch and conversation-id derivation fail', () => {
@@ -622,11 +653,7 @@ describe('resolve-artifact-paths CLI', () => {
     // suite itself runs under Claude Code, whose own CLAUDE_CODE_SESSION_ID etc. would
     // otherwise leak in via ...process.env and let conversation-id derivation succeed.
     const strippedEnv = { ...process.env };
-    for (const key of [
-      'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
-      'CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
-      'COPILOT_CLI_SESSION_ID',
-    ]) {
+    for (const key of CONVERSATION_ENV_KEYS) {
       delete strippedEnv[key];
     }
     const res = spawnSync(process.execPath, [SCRIPT, '--date', '2026-09-11'], {

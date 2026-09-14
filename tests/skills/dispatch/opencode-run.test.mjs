@@ -36,7 +36,6 @@ import {
   mergeConfigDeep,
   preflightLMStudioCheck,
   readOpencodeConfig,
-  resolveContextFiles,
   resolveDefaultAgent,
   resolveDefaultModel,
   resolveManagedConfigDir,
@@ -45,70 +44,7 @@ import {
 } from '../../../skills/dispatch/scripts/opencode-run.mjs';
 
 describe('opencode-run', () => {
-  describe('resolveContextFiles & Denylist Security', () => {
-    it('resolves valid files within PROJECT_ROOT', () => {
-      const resolved = resolveContextFiles(['package.json', 'README.md']);
-
-      assert.equal(resolved.length, 2);
-      assert.equal(resolved[0], path.resolve('package.json'));
-      assert.equal(resolved[1], path.resolve('README.md'));
-    });
-
-    it('rejects non-existent files', () => {
-      assert.throws(() => {
-        resolveContextFiles(['non-existent-file-xyz.md']);
-      }, /does not exist/);
-    });
-
-    /** Runs `fn` with process.stderr captured; returns `{ result, stderr }`. */
-    function captureStderr(fn) {
-      let stderr = '';
-      const original = process.stderr.write;
-      process.stderr.write = (chunk) => {
-        stderr += chunk;
-        return true;
-      };
-      try {
-        return { result: fn(), stderr };
-      } finally {
-        process.stderr.write = original;
-      }
-    }
-
-    it('skips an existing sensitive file inside an allowed boundary with a warning', () => {
-      const sensitivePath = path.join(PROJECT_ROOT, '.env.opencode-run-test');
-      fs.writeFileSync(sensitivePath, 'SECRET=1\n');
-      try {
-        const { result, stderr } = captureStderr(() =>
-          resolveContextFiles([sensitivePath, 'package.json']),
-        );
-        assert.deepEqual(result, [path.resolve('package.json')]);
-        assert.match(stderr, /Attachment rejected: .* matches sensitive file denylist/);
-      } finally {
-        fs.unlinkSync(sensitivePath);
-      }
-    });
-
-    it('skips a symlink whose target is a denylisted file', (t) => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-run-symlink-'));
-      try {
-        const target = path.join(dir, 'id_rsa');
-        fs.writeFileSync(target, 'PRIVATE KEY\n');
-        const link = path.join(dir, 'notes.md');
-        try {
-          fs.symlinkSync(target, link, 'file');
-        } catch (err) {
-          if (err.code === 'EPERM') return t.skip('symlink creation needs elevated rights here');
-          throw err;
-        }
-        const { result, stderr } = captureStderr(() => resolveContextFiles([link]));
-        assert.deepEqual(result, []);
-        assert.match(stderr, /matches sensitive file denylist/);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
+  describe('Sensitive file denylist', () => {
     it('covers the documented sensitive filename shapes', () => {
       const sensitiveFiles = [
         '.env', '.env.local', '.env.production',
@@ -122,35 +58,6 @@ describe('opencode-run', () => {
           SENSITIVE_FILE_PATTERNS.some((p) => p.test(file)) ||
           SENSITIVE_FILE_BASENAME_PATTERNS.some((p) => p.test(file));
         assert.ok(matches, `Expected ${file} to match sensitive file pattern`);
-      }
-    });
-
-    it('skips a context file inside a sensitive directory (e.g. .kube) with a warning', () => {
-      // .kube (unlike .ssh) is only on SENSITIVE_DIR_PATTERNS, not SENSITIVE_FILE_PATTERNS,
-      // so this exercises the directory check specifically rather than the file-pattern one.
-      const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-run-test-'));
-      const sshDir = path.join(parentDir, '.kube');
-      fs.mkdirSync(sshDir, { recursive: true });
-      const sensitivePath = path.join(sshDir, 'config');
-      fs.writeFileSync(sensitivePath, 'Host example.com\n');
-      try {
-        const { result, stderr } = captureStderr(() => resolveContextFiles([sensitivePath]));
-        assert.deepEqual(result, []);
-        assert.match(stderr, /sensitive directory/);
-      } finally {
-        fs.rmSync(parentDir, { recursive: true, force: true });
-      }
-    });
-
-    it('reads files outside allowed boundaries with a warning, not a rejection', () => {
-      const outOfBoundsPath =
-        process.platform === 'win32'
-          ? 'C:\\Windows\\system32\\drivers\\etc\\hosts'
-          : '/etc/hosts';
-
-      if (fs.existsSync(outOfBoundsPath)) {
-        const resolved = resolveContextFiles([outOfBoundsPath]);
-        assert.equal(resolved[0], path.resolve(outOfBoundsPath));
       }
     });
   });
@@ -583,6 +490,42 @@ describe('opencode-run', () => {
           return true;
         },
       );
+    });
+
+    it('an array model runs one single-model attempt per model, in order, sharing one git baseline', async () => {
+      const attempts = [];
+      const result = await runOpencode({
+        prompt: 'Review this diff',
+        model: ['anthropic/model-a', 'anthropic/model-b'],
+        initialGitStatus: 'BASELINE',
+        runSingle: async (opts) => {
+          attempts.push({ model: opts.model, baseline: opts.initialGitStatus });
+          return opts.model === 'anthropic/model-a'
+            ? { exitCode: 1, failureKind: 'other' }
+            : { exitCode: 0, failureKind: null, model: opts.model };
+        },
+      });
+      assert.deepEqual(attempts, [
+        { model: 'anthropic/model-a', baseline: 'BASELINE' },
+        { model: 'anthropic/model-b', baseline: 'BASELINE' },
+      ]);
+      assert.equal(result.model, 'anthropic/model-b');
+    });
+
+    it('an array model never reaches opencode as a joined -m token', async () => {
+      mock.method(http, 'get', () => {
+        throw new Error('preflight must not run for a remote endpoint');
+      });
+      let n = 0;
+      const spawn = mock.method(cp, 'spawn', () => createImmediateChild(n++ === 0 ? 1 : 0));
+
+      await runOpencode({ prompt: 'Review this diff', model: ['anthropic/model-a', 'anthropic/model-b'] });
+
+      // Joined, not indexed: a Windows `.cmd` shim routes argv through cmd.exe as one string.
+      const argLines = spawn.mock.calls.map((c) => c.arguments[1].join(' '));
+      assert.equal(argLines.length, 2);
+      assert.ok(argLines[0].includes('anthropic/model-a') && !argLines[0].includes('model-b'));
+      assert.ok(argLines[1].includes('anthropic/model-b') && !argLines[1].includes('model-a'));
     });
   });
 
@@ -1188,6 +1131,15 @@ describe('opencode-run', () => {
 
       const isReady = await preflightLMStudioCheck(100, LOCAL_ENDPOINT);
       assert.equal(isReady, true);
+    });
+
+    it('preflightLMStudioCheck resolves false with no network call for an unresolved endpoint', async () => {
+      const httpGet = mock.method(http, 'get', () => {
+        throw new Error('no request may be made without a host');
+      });
+      const isReady = await preflightLMStudioCheck(100, { host: null, port: null, pathname: null });
+      assert.equal(isReady, false);
+      assert.equal(httpGet.mock.callCount(), 0);
     });
 
     it('isOpencodeAvailable returns false when preflight fails', async () => {

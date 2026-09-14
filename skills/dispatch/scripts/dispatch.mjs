@@ -574,7 +574,9 @@ export async function getCandidateProviders(params = {}) {
   if (explicitProvider) {
     const resolved = resolveExplicitProvider(explicitProvider);
     if (config && !Object.prototype.hasOwnProperty.call(config.platforms, resolved)) {
-      throw new Error(`platform "${resolved}" is not configured in ${configPath}`);
+      const err = new Error(`platform "${resolved}" is not configured in ${configPath}`);
+      err.code = 'PLATFORM_NOT_CONFIGURED';
+      throw err;
     }
     return [resolved];
   }

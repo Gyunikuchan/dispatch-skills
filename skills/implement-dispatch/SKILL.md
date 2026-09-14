@@ -67,7 +67,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 3. Plan Review Loop
 
-*Skip if `flow['plan-review'].maxRounds === 0`.*
+*Skip if `flow['plan-review'].maxRounds === 0`.* When `maxRounds > 0` but `flow['plan-review'].targets` is empty (every review platform is unavailable), do not invoke the review skill with no targets — it would complete with zero review. Run one in-process review round instead via `dispatch`'s read-only subagent fallback, and record the substitution in the plan's round log and Step 8 diagnostics.
 
 1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
 2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke `dispatch-plan-review` in orchestrated mode, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Re-review round <n>` naming changed sections, and `Tool Turn Budget` per **Budget sizes to the work**.
@@ -98,7 +98,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 5. Code Review
 
-*Skip Steps 5–7 if `flow['code-review'].maxRounds === 0`* — the same span `dispatch-code-review`'s absence skips. Skipping Step 5 alone would strand Step 6 with no claims to adjudicate and a completion bound it could never satisfy.
+*Skip Steps 5–7 if `flow['code-review'].maxRounds === 0`* — the same span `dispatch-code-review`'s absence skips. Skipping Step 5 alone would strand Step 6 with no claims to adjudicate and a completion bound it could never satisfy. When `maxRounds > 0` but `flow['code-review'].targets` is empty, run one in-process review round via `dispatch`'s read-only subagent fallback instead of invoking the review skill with no targets, and record the substitution in the walkthrough's round log and Step 8 diagnostics.
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
 2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` and `reserves` from `flow['code-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
@@ -139,7 +139,7 @@ While previous round modified code and code review round count < `flow['code-rev
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
 
    ```bash
-   node -e "const fs=require('fs'),os=require('os'),path=require('path');for(const f of process.argv.slice(1)){if(!fs.existsSync(f))continue;const d=path.join(os.tmpdir(),path.basename(f));try{fs.renameSync(f,d)}catch(e){if(e.code!=='EXDEV')throw e;fs.copyFileSync(f,d);fs.rmSync(f)}console.log(d)}" "<plan path>" "<walkthrough path>"
+   node -e "const fs=require('fs'),os=require('os'),path=require('path');for(const f of process.argv.slice(1)){if(!fs.existsSync(f))continue;const d=path.join(os.tmpdir(),path.basename(f));try{fs.renameSync(f,d)}catch(e){if(!['EXDEV','EPERM','EBUSY'].includes(e.code))throw e;fs.copyFileSync(f,d);fs.rmSync(f)}console.log(d)}" "<plan path>" "<walkthrough path>"
    ```
 
    If the run is unresolved or halted, retain the artifacts in place and state why.

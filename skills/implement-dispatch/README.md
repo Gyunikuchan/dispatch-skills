@@ -21,7 +21,8 @@ flowchart TD
     
     Plan --> PlanRev["3️⃣ Plan Review Wave<br/>(Fan out via dispatch)"]
     PlanRev -->|External CLIs critique| PlanAdj{"Adjudicate Plan Claims"}
-    PlanAdj -->|Update plan on disk| Impl["4️⃣ Test-First Implementation<br/>(Native subagent / Orchestrator)"]
+    PlanAdj -->|Update plan on disk| Gate{"Single Plan Approval Gate"}
+    Gate -->|User approves| Impl["4️⃣ Test-First Implementation<br/>(Native subagent / Orchestrator)"]
     
     Impl --> CodeRev["5️⃣ Code Review Wave<br/>(Fan out walkthrough via dispatch)"]
     CodeRev -->|External CLIs review code| CodeAdj{"Adjudicate Code Claims"}
@@ -32,6 +33,7 @@ flowchart TD
     ReRev -->|Findings remaining| CodeRev
     ReRev -->|Consensus reached| Handoff["8️⃣ Handoff & Cleanup<br/>(Summary report & relocate scratch)"]
     ReRev -->|Cap reached / Deadlock| Escalate(["❓ Escalate to User"])
+    Escalate -->|Ruling resets rounds| ReRev
     
     Handoff --> User
 ```

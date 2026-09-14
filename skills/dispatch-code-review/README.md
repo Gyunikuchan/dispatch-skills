@@ -160,8 +160,8 @@ Every claim is checked against the code it cites and then accepted, rejected, do
 
 ## Nuances, Quirks & Troubleshooting
 
-### Self-Skipping Runner Behavior
-By default, the underlying `dispatch` runner avoids delegating to the orchestrator's own platform (e.g. Claude Code will not dispatch to Claude Code) to ensure a genuinely independent second opinion. With one CLI installed, pin it explicitly (`/dispatch-code-review (claude)`), even from the same platform, or let the review fall back to a read-only subagent.
+### Orchestrator Platform Ordering
+Unpinned, the underlying `dispatch` runner tries the other configured platforms first and the orchestrator's own platform last (e.g. Claude Code tries every other reachable CLI before dispatching to Claude Code) — so a same-platform review is possible when nothing else answers. Pin a delegate to force it (`/dispatch-code-review (claude)`), even from the same platform. The review falls back to a read-only subagent only when no dispatch succeeds (`NO_DISPATCH_AVAILABLE`).
 
 ### Inspecting Uncommitted Diffs
 Delegates run in a structurally read-only mode and inspect the current working tree (`git diff`, `git diff --staged`, and untracked files). Ensure your changes are saved to disk before triggering review.

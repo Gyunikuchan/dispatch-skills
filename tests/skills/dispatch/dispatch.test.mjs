@@ -557,6 +557,17 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       );
     });
 
+    it('tags a pinned recognized provider absent from config with PLATFORM_NOT_CONFIGURED', async () => {
+      await assert.rejects(
+        getCandidateProviders({
+          explicitProvider: 'claude',
+          config: { platforms: { agy: {} } },
+          configPath: '/fake/agy-only.jsonc',
+        }),
+        (err) => err.code === 'PLATFORM_NOT_CONFIGURED' && /platform "claude" is not configured/.test(err.message),
+      );
+    });
+
     it('allows a pinned provider absent from config when noConfig is set', async () => {
       const candidates = await getCandidateProviders({ explicitProvider: 'copilot', noConfig: true });
       assert.deepEqual(candidates, ['copilot']);

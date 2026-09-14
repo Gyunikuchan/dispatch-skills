@@ -18,6 +18,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  cascadeModels,
+  resolveModelsToTry,
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
@@ -183,69 +185,74 @@ export async function runAgy(options = {}) {
   // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
   const initialGitStatus = baselineGitStatus ?? getGitStatus();
 
-  let lastResult = null;
-  let lastError = null;
+  // Each configured model gets the full mode cascade; discovery and the baseline above run once.
+  return cascadeModels(resolveModelsToTry(model), runModeCascade, { label: 'Google Antigravity' });
 
-  for (let i = 0; i < modesToTry.length; i++) {
-    const currentMode = modesToTry[i];
-    const sessionLogger = createLogger('agy');
+  async function runModeCascade(currentModel) {
+    let lastResult = null;
+    let lastError = null;
 
-    try {
-      const result = await execute(currentMode, {
-        model,
-        effort,
-        timeout,
-        maxBufferMb,
-        verbose,
-        sessionLogger,
-        initialGitStatus,
-        formattedPrompt,
-      });
+    for (let i = 0; i < modesToTry.length; i++) {
+      const currentMode = modesToTry[i];
+      const sessionLogger = createLogger('agy');
 
-      lastResult = result;
+      try {
+        const result = await execute(currentMode, {
+          model: currentModel,
+          effort,
+          timeout,
+          maxBufferMb,
+          verbose,
+          sessionLogger,
+          initialGitStatus,
+          formattedPrompt,
+        });
 
-      // If execution reached the mode but encountered token/subscription issues,
-      // cascade to the next available mode if one remains.
-      const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
-      const step = nextAgyStep({ result, hasNextMode });
+        lastResult = result;
 
-      if (step === 'next-mode') {
-        process.stderr.write(
-          `[dispatch] Antigravity mode '${currentMode}' reached but lacked tokens/subscription (${result.failureKind || 'quota/auth'}).\n` +
-            `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
-        );
-        continue;
+        // If execution reached the mode but encountered token/subscription issues,
+        // cascade to the next available mode if one remains.
+        const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
+        const step = nextAgyStep({ result, hasNextMode });
+
+        if (step === 'next-mode') {
+          process.stderr.write(
+            `[dispatch] Antigravity mode '${currentMode}' reached but lacked tokens/subscription (${result.failureKind || 'quota/auth'}).\n` +
+              `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
+          );
+          continue;
+        }
+
+        // Covers both the success return and the "no further cascade" return (including
+        // a workspace integrity violation in read-only mode) — both return the captured result.
+        return result;
+      } catch (err) {
+        lastError = err;
+        const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
+        if (hasNextMode) {
+          process.stderr.write(
+            `[dispatch] Antigravity mode '${currentMode}' failed execution: ${err.message}.\n` +
+              `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
+          );
+          continue;
+        }
+        throw err;
+      } finally {
+        // This loop owns the logger it created, matching runClaude/runCopilot. executeAgyInMode
+        // closes it on the child's 'close'/'error' events, but a throw before the child is spawned
+        // reaches neither - and the loop would then cascade and open another. close() is idempotent,
+        // so the usual path's double call is a no-op.
+        sessionLogger.close();
       }
-
-      // Covers both the success return and the "no further cascade" return (including
-      // a workspace integrity violation in read-only mode) — both return the captured result.
-      return result;
-    } catch (err) {
-      lastError = err;
-      const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
-      if (hasNextMode) {
-        process.stderr.write(
-          `[dispatch] Antigravity mode '${currentMode}' failed execution: ${err.message}.\n` +
-            `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
-        );
-        continue;
-      }
-      throw err;
-    } finally {
-      // This loop owns the logger it created, matching runClaude/runCopilot. executeAgyInMode
-      // closes it on the child's 'close'/'error' events, but a throw before the child is spawned
-      // reaches neither - and the loop would then cascade and open another. close() is idempotent,
-      // so the usual path's double call is a no-op.
-      sessionLogger.close();
     }
+
+    if (lastResult) return lastResult;
+    if (lastError) throw lastError;
+
+    const err = new Error('No Antigravity mode was able to execute the request.');
+    err.code = 1;
+    throw err;
   }
-
-  if (lastResult) return lastResult;
-  if (lastError) throw lastError;
-
-  const err = new Error('No Antigravity mode was able to execute the request.');
-  err.code = 1;
-  throw err;
 }
 
 /**

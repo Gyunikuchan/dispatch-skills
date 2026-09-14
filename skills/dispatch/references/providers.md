@@ -57,7 +57,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 ## 3. Antigravity 2.0 (`agy`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`). No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--agy-mode <antigravity-2.0|antigravity-vscode|antigravity-cli|auto>`
 - **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
@@ -88,7 +88,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 ## 4. GitHub Copilot (`copilot`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`). No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--copilot-mode <desktop|vscode|cli|auto>` (explicit execution mode)
 - **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
@@ -121,7 +121,7 @@ Model and reasoning-effort defaults come from [`config.default.jsonc`](../config
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`). Supports an array of candidate entries to cascade across multiple models (e.g. the shipped default of OpenCode Go GLM (`opencode-go/glm-5.3-flash`) -> DeepSeek (`opencode-go/deepseek-v4.1-flash`) -> LM Studio (`lmstudio/qwen3.8-27b-ridge`)). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`); `model` may be an array inside a candidate entry, tried in order as fallback models within that one cascade slot (each model re-resolves locality, preflight and GPU lock). Supports an array of candidate entries to cascade across multiple models (e.g. the shipped default of OpenCode Go GLM (`opencode-go/glm-5.3-flash`) -> DeepSeek (`opencode-go/deepseek-v4.1-flash`) -> LM Studio (`lmstudio/qwen3.8-27b-ridge`)). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
   (`isLocalEndpointHost`). Local (an `lmstudio/...` model resolved to its loopback endpoint, or any

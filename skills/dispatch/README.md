@@ -152,7 +152,7 @@ Schema:
 }
 ```
 
-Each platform entry can be a single object or an array of candidate objects (which are attempted in order before cascading to the next platform). `model` accepts a string or an array of strings inside candidate objects (e.g. for fallback models within that candidate slot). An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
+Each platform entry can be a single object or an array of candidate objects (which are attempted in order before cascading to the next platform). `model` accepts a string or an array of strings inside candidate objects; every runner (claude, agy, copilot, opencode) tries an array's models in order as fallbacks within that candidate slot. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
 
 Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, and edit it to change the cascade.
 

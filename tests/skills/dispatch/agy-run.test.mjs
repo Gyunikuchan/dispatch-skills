@@ -529,6 +529,24 @@ describe('runAgy cascade loop', () => {
     assert.equal(success.closedCount(), 1, 'the success path closes exactly once');
   });
 
+  it('an array model tries each model in order, one string --model per attempt', async () => {
+    const seen = [];
+    const h = harness();
+    const result = await runAgy({
+      ...h.options,
+      modeVariant: MODES[0],
+      model: ['m-a', 'm-b'],
+      execute: async (mode, { model }) => {
+        assert.equal(typeof model, 'string');
+        assert.ok(!model.includes(','), 'each attempt receives one model');
+        seen.push(model);
+        return model === 'm-a' ? { exitCode: 1, failureKind: 'other', stdout: '', stderr: '', mode } : okResult(mode);
+      },
+    });
+    assert.deepEqual(seen, ['m-a', 'm-b']);
+    assert.equal(result.exitCode, 0);
+  });
+
   it('throws CLI_NOT_FOUND before the loop when no binary is present', async () => {
     const h = harness();
     await assert.rejects(() => runAgy({ ...h.options, getBinary: () => null }), (err) => err.code === 'CLI_NOT_FOUND');

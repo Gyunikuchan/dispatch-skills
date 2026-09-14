@@ -20,6 +20,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  resolveModelsToTry,
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
@@ -324,6 +325,9 @@ export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
  * @returns {'return'|'throw'|'next-model'|'next-target'}
  */
 export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinned }) {
+  // A git-integrity violation means the workspace was written; retrying would hide it.
+  if (error?.gitIntegrityViolation) return 'throw';
+  if (result?.gitIntegrityViolation) return 'return';
   if (error) {
     if (!isLastModel) return 'next-model';
     if (!isLastTarget && !pinned) return 'next-target';
@@ -336,26 +340,6 @@ export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinne
   const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
   if (isQuotaOrAuth && !isLastTarget && !pinned) return 'next-target';
   return 'return';
-}
-
-/**
- * Resolves the models to try, in priority order, from the raw `model` option.
- * Accepts an array, a comma-separated string, or a single model id. `null`/empty means
- * no model is configured anywhere — a single-element `[null]` list omits `--model`
- * entirely so the Claude CLI's own default applies.
- * @param {string|string[]|null} model
- * @returns {(string|null)[]}
- */
-export function resolveModelsToTry(model) {
-  let models = [];
-  if (Array.isArray(model)) {
-    models = model.filter(Boolean);
-  } else if (typeof model === 'string' && model.includes(',')) {
-    models = model.split(',').map((m) => m.trim()).filter(Boolean);
-  } else if (typeof model === 'string' && model.trim()) {
-    models = [model.trim()];
-  }
-  return models.length > 0 ? models : [null];
 }
 
 

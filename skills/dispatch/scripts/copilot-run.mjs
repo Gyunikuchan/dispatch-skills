@@ -19,6 +19,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  cascadeModels,
+  resolveModelsToTry,
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
@@ -152,63 +154,75 @@ export async function runCopilot(options = {}) {
     throw createNoTargetsError();
   }
 
-  const sessionLogger = createLogger('copilot');
   // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
   const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
-  const effectiveModel = model || null;
   const effectiveEffort = effort || null;
 
-  let lastResult = null;
-
-  // Cascade across viable targets in priority order. A quota failure or a spawn error advances to
-  // the next target; any other outcome — an auth failure included — is returned immediately.
-  // See nextCopilotStep for why auth does not cascade.
-  for (let i = 0; i < viableTargets.length; i++) {
-    const target = viableTargets[i];
-    const isLastTarget = i === viableTargets.length - 1;
-    const canCascade = !isLastTarget && (!copilotMode || copilotMode === 'auto');
-
-    try {
-      const result = await execute({
-        target,
-        model: effectiveModel,
-        formattedPrompt,
-        effort: effectiveEffort,
-        timeout,
-        maxBufferMb,
-        verbose,
-        sessionLogger,
-        initialGitStatus,
-      });
-
-      const step = nextCopilotStep({ result, error: null, canCascade });
-      if (step === 'next-target') {
-        process.stderr.write(
-          `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed).\n` +
-            `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
-        );
-        lastResult = result;
-        continue;
+  // Each configured model gets the full target cascade; the attempt owns its logger, so a
+  // fallback model never writes to a logger an earlier attempt closed.
+  return cascadeModels(
+    resolveModelsToTry(model),
+    async (currentModel) => {
+      const sessionLogger = createLogger('copilot');
+      try {
+        return await runTargetCascade({ currentModel, sessionLogger });
+      } finally {
+        sessionLogger.close();
       }
+    },
+    { label: 'GitHub Copilot' },
+  );
 
-      sessionLogger.close();
-      return result;
-    } catch (err) {
-      const step = nextCopilotStep({ result: null, error: err, canCascade });
-      if (step === 'next-target') {
-        process.stderr.write(
-          `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
-        );
-        continue;
+  async function runTargetCascade({ currentModel, sessionLogger }) {
+    let lastResult = null;
+
+    // Cascade across viable targets in priority order. A quota failure or a spawn error advances to
+    // the next target; any other outcome — an auth failure included — is returned immediately.
+    // See nextCopilotStep for why auth does not cascade.
+    for (let i = 0; i < viableTargets.length; i++) {
+      const target = viableTargets[i];
+      const isLastTarget = i === viableTargets.length - 1;
+      const canCascade = !isLastTarget && (!copilotMode || copilotMode === 'auto');
+
+      try {
+        const result = await execute({
+          target,
+          model: currentModel,
+          formattedPrompt,
+          effort: effectiveEffort,
+          timeout,
+          maxBufferMb,
+          verbose,
+          sessionLogger,
+          initialGitStatus,
+        });
+
+        const step = nextCopilotStep({ result, error: null, canCascade });
+        if (step === 'next-target') {
+          process.stderr.write(
+            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed).\n` +
+              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
+          );
+          lastResult = result;
+          continue;
+        }
+
+        return result;
+      } catch (err) {
+        const step = nextCopilotStep({ result: null, error: err, canCascade });
+        if (step === 'next-target') {
+          process.stderr.write(
+            `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
+          );
+          continue;
+        }
+        throw err;
       }
-      sessionLogger.close();
-      throw err;
     }
-  }
 
-  sessionLogger.close();
-  return lastResult;
+    return lastResult;
+  }
 }
 
 
@@ -403,7 +417,6 @@ function executeOnTarget({
     child.on('error', (err) => {
       clearTimeout(timer);
       terminateProcessTree(child);
-      sessionLogger.close();
       err.code = 1;
       err.stderr = stderrBuffer;
       err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
