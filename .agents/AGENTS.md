@@ -6,10 +6,10 @@ Agent skills for delegating work to external coding-agent CLIs and reviewing res
 
 Deliver high-confidence cross-agent delegation and review with minimal token overhead and zero human babysitting.
 
-- **Trade-offs (Correctness > Token Efficiency > Speed)**: Spend tokens to verify code rather than guess or skip; never sacrifice correctness for efficiency. Optimize context hygiene and token density before raw execution speed.
+- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens to verify code rather than guess or skip; optimize context hygiene and token density before raw speed.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of vote count; reject unverified findings even if unanimous. Axis coverage is explicit and visible.
 - **Structural Least Privilege**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools), except OpenCode off Linux (accepted risk; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
-- **Context Hygiene & Token Density**: Protect the orchestrator's context window. Stream execution traces and subprocess logs out-of-context to temp logs (`.scratch/` or OS temp); pass only concise syntheses, banners, and log paths to the orchestrator. High token density via progressive disclosure.
+- **Context Hygiene & Token Density**: Protect the orchestrator's context window. Stream execution traces and subprocess logs out-of-context to temp logs (`.scratch/` or OS temp); pass only concise syntheses, banners, and log paths to the orchestrator. Progressive disclosure drives high token density.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without user intervention.
 - **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and work standalone or together. Shared conventions (`skills/dispatch/references/alignment.md`) govern only review-flow skills; host conventions always win, and skills never write conventions into the host repo.
 
@@ -61,17 +61,17 @@ dispatch → (nothing)
 Differentiate human documentation, agent execution contracts, and non-operational background notes:
 
 - **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human developers. Filter: *Is this something the human user of the skill needs to know?*
-  - **Root `README.md`**: Core value proposition (2–3 sentences), quick install (`npx skills add ...`), skills catalog table, quick start prompt examples, and architecture highlights.
-  - **Skill Manuals (`skills/*/README.md`)**: Purpose and core concepts, prerequisites/installation, realistic invocation examples (slash commands / prompt templates), configuration, and CLI quirks/troubleshooting.
-- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus exclusively on operational context, decision paths, and checkable execution bounds. Architectural rationale and maintainer context that is neither human-facing nor needed at runtime belongs in a `references/notes.md` when a skill accumulates enough of it to need one.
+  - **Root `README.md`**: Core value proposition (2–3 sentences), quick install (`npx skills add ...`), skills catalog table, quick start prompts, architecture highlights.
+  - **Skill Manuals (`skills/*/README.md`)**: Purpose and core concepts, prerequisites/installation, realistic invocation examples (slash commands / prompt templates), configuration, CLI quirks/troubleshooting.
+- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus exclusively on operational context, decision paths, and checkable execution bounds. Non-operational maintainer context belongs in `references/notes.md`.
 
 ## Authoring & Cross-Platform Standards
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs).
 
-Portable by default across macOS, Windows, and Linux (zsh, bash, PowerShell) and across Antigravity, Claude Code, Copilot, and OpenCode:
+Portable by default across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
 
-- **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `skills/dispatch/references/alignment.md`. Ensure alignment, downward independence, and compatibility across standalone and orchestrated invocations.
+- **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `skills/dispatch/references/alignment.md` to ensure downward independence and cross-invocation compatibility.
 - **Naming**: kebab-case for skill identifiers and filenames.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
@@ -98,6 +98,5 @@ End completed tasks with:
 
 1. **Delivered behaviour** — structural, logic, or documentation change, concisely.
 2. **Verification status** — commands executed and test results.
-3. **Skill Retrospective / Friction** — actionable friction, ambiguous instructions, or workflow inefficiencies observed during skill execution (omit section if clean). High-confidence improvements should be applied directly to the owning doc or skill.
+3. **Skill Retrospective / Friction** — actionable friction, ambiguous instructions, workflow inefficiencies, or token hotspots / refactoring opportunities with proposed solutions (omit section if clean). Apply high-confidence improvements directly to the owning doc or skill.
 4. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.
-
