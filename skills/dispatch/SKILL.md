@@ -70,7 +70,7 @@ Map the runner outcome to exactly one row. A terminal error prints its sentinel 
 | `claude` | `Explore` |
 | `agy` | `research` |
 | `copilot` | `self` (read-only tool set) |
-| `opencode` | orchestrator executes directly |
+| `opencode` | `explore` |
 
 For brief tasks or when subagents are unavailable, execute directly in the current session.
 

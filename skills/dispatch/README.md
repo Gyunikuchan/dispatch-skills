@@ -169,7 +169,7 @@ Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to 
   - **Claude Code**: `claude --resume <session_id>` command handles.
   - **GitHub Copilot**: `copilot --resume <session_id>` command handles.
 - **Pre/Post Git Integrity Checks**: A `git status --porcelain` snapshot is taken before and after every dispatch. Any file modifications created during the run are immediately flagged as integrity warnings.
-- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner exits `NO_DISPATCH_AVAILABLE` and the orchestrator falls back to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code) or local direct execution without crashing the workflow.
+- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner exits `NO_DISPATCH_AVAILABLE` and the orchestrator falls back to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code, `explore` in OpenCode) or local direct execution without crashing the workflow.
 
 ---
 
