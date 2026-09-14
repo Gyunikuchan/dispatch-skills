@@ -100,7 +100,7 @@ function normalizeToolTurnBudget(sentence) {
     .replace('Complete inspection within it', 'Complete ACTION within it')
     .replace(', verification runs included', '')
     .replace(/Complete (?:grounding|inspection) within it/, 'Complete WORK within it')
-    .replace(/`6 \+ <[^>]+>`/, '`6 + <UNIT>`')
+    .replace(/`\d+ \+ (?:\d+ × )?<[^>]+>`/, '`N + <UNIT>`')
     .replace(/counting only [^.]+ since the previous round/, 'counting only UNITs since the previous round');
 }
 

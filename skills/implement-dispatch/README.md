@@ -290,7 +290,7 @@ When a review phase exhausts its allotted round budget before reaching full cons
 2. Answering the escalation resets the round counter for that phase, allowing additional review iterations if needed. `maxRounds` bounds unattended rounds only — adding scope mid-run, or ruling on a dispute, restarts the budget.
 
 ### Reviewer Tool Budgets
-Tool-turn budgets are not configured. Each dispatch hands the reviewer `6 + <units under review>` turns — a changed file for code review, a `## Proposed Changes` entry for plan review — so a large diff gets a large budget and there is no ceiling. Reviewers are told the budget covers every tool call and that test results are already in the walkthrough, so they read the recorded results instead of re-running the suite.
+Tool-turn budgets are not configured. Each dispatch hands the reviewer `8 + 2 × <units under review>` turns — a changed file for code review, a `## Proposed Changes` entry for plan review — so a large diff gets a large budget and there is no ceiling. Reviewers are told the budget covers every tool call and that test results are already in the walkthrough, so they read the recorded results instead of re-running the suite.
 
 ### Fast Direct Execution for Trivial Tasks
 For mechanical one-line changes or renames classified as `trivial`, the orchestrator skips spawning background subagents and applies the edit directly, saving round-trip latency.

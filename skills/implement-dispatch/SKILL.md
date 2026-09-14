@@ -31,7 +31,7 @@ Exit 0 means settled (or no `## Review Findings & Resolutions` section); exit 1 
 
 **Exclude failed platforms.** When a review wave records a target (or substitute) that failed `[auth]` or `[quota]`, add its platform to the run's exclusion set and re-run Step 1.3's `resolve-flow.mjs` with `--exclude <set>` before the next wave or phase, using the new `targets` / `reserves`. Exclusion is platform-granular: a `[quota]` on one model excludes that platform's other models too. Target affinity still narrows re-review targets to citing delegates that remain live.
 
-**Budget sizes to the work.** The `Tool Turn Budget` handed to each reviewer is computed per dispatch, not configured: `6 + <units under review>`, where a unit is a changed file (code review) or a `## Proposed Changes` entry (plan review). On a re-review round, count only the units changed since the previous round. Reviewers get what the job takes; there is no ceiling.
+**Budget sizes to the work.** The `Tool Turn Budget` handed to each reviewer is computed per dispatch, not configured: `8 + 2 × <units under review>`, where a unit is a changed file (code review) or a `## Proposed Changes` entry (plan review). On a re-review round, count only the units changed since the previous round. Reviewers get what the job takes; there is no ceiling.
 
 ## Invocation
 

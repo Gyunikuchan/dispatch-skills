@@ -12,7 +12,7 @@
 				"qwen3.8-27b-ridge": {
 					"name": "Qwen 3.8 27B Local",
 					"limit": {
-						"context": 73728,
+						"context": 65536,
 						"output": 8192
 					},
 				}
