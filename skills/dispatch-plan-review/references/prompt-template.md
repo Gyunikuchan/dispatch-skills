@@ -27,7 +27,7 @@ Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the wo
 
 #### 1. Ground the Plan
 1. Read the attached plan in full.
-2. Targeted inspection: inspect files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts, patterns, and blast radius (use AST / code-graph tools if available, e.g. codegraph, graphify). Read the files named in proposed changes plus their call sites, interfaces, and tests; stop at that blast radius.
+2. Targeted inspection: inspect files named in proposed changes and key adjacent call sites or interfaces to verify existing contracts and patterns (use AST / code-graph tools if available, e.g. codegraph, graphify). Read the files named in proposed changes plus their call sites, interfaces, and tests; stop at that blast radius.
 3. Honour Review Scope: on a re-review round, confine the seven axes to the sections it names plus their contracts, confirm each logged resolution actually landed, and treat sections settled in earlier rounds as closed.
 4. Tool Turn Budget counts every tool call. Complete grounding within it when it names a number; otherwise budget `8 + 2 × <## Proposed Changes entries>` turns, counting only entries changed since the previous round on a re-review. Spend a tight budget on AST / code-graph queries (`codegraph`, `graphify`) rather than full-file reads. Then emit the report immediately.
 5. A plan with no `## Proposed Changes` heading is not template-shaped — the budget above would read as `8 + 0`. Count its top-level change sections instead, never zero.

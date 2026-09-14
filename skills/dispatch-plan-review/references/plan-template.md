@@ -11,10 +11,10 @@ Brief problem description, background context, and what the change accomplishes.
 Settled architectural choices, trade-offs, and rationale (e.g. from prior grilling or alignment sessions).
 
 ## User Review Required
-Breaking changes, critical design decisions, or trade-offs requiring user attention.
+Breaking changes, critical design decisions, or trade-offs requiring user attention (or "None").
 
 ## Open Questions & Assumptions
-Clarifying questions, settling assumptions, or explicit defaults.
+Clarifying questions, settling assumptions, or explicit defaults (or "None").
 
 ## Proposed Changes
 
@@ -32,7 +32,7 @@ Summary of component changes, separated by files (use relative paths with forwar
 - Deleted symbols and migration/cleanup steps.
 
 ## Rollback & Blast Radius
-Downstream caller impacts, data migrations, and fallback/rollback paths (or "None").
+Downstream caller impacts, data/schema migrations, and fallback/rollback paths (or "None").
 
 ## Verification Plan
 ### Automated Tests
@@ -45,5 +45,5 @@ Downstream caller impacts, data migrations, and fallback/rollback paths (or "Non
 *No reviews conducted yet.*
 
 ## Out of Scope
-Explicitly unhandled features or deferred follow-ups.
+Explicitly unhandled features, non-goals, or deferred follow-ups.
 ````
