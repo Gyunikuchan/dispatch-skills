@@ -103,8 +103,9 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
   addIfFound(path.join(projectRoot, '.opencode', 'opencode.jsonc'), 'opencode');
   addIfFound(path.join(projectRoot, '.opencode', 'opencode.json'), 'opencode');
 
-  // 3. Skill hash manifests, for every skill that ships one
-  for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review']) {
+  // 3. Skill hash manifests, for every skill that ships one (same order as HASHED_SKILLS in
+  // scripts/generate-hashes.mjs)
+  for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'implement-dispatch']) {
     for (const base of ['skills', path.join('.agents', 'skills'), path.join('.claude', 'skills')]) {
       addIfFound(path.join(projectRoot, base, skill, 'skill-hashes.json'), 'skill-hashes');
     }

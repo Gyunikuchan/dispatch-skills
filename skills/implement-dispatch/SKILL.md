@@ -41,7 +41,7 @@ Exit 0 means settled (or no `## Review Findings & Resolutions` section); exit 1 
 
 Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<level>` and `(<pins>)` are optional:
 - `<level>`: `low`, `medium` *(default)*, `high`, `xhigh`, `max`. Controls wave caps, reviewer breadth, consensus gates, and model budgets.
-- `(<pins>)`: Comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), `--provider` aliases, or `all`. Overrides breadth to target specified platforms.
+- `(<pins>)`: Comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), `--provider` aliases, or `all`. Overrides breadth to target specified platforms. Or a single reviewer count `n ≥ 1` (alone), which replaces the level's `targetCount` for both review phases. Selection, reserves and clamping stay as in an unpinned run.
 
 ---
 
@@ -57,7 +57,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
    node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>] [--pins <pins>] [--exclude <keys>]
    ```
 
-   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`); `--orchestrator-model` optionally overrides the auto-detected orchestrator model. `--exclude` carries the run's exclusion set (**Exclude failed platforms**); omit it on the first run. Candidates come back diversity-sorted: every platform's first model before any platform's second, the orchestrator's platform last (with same platform + model matches placed dead last). Halt immediately if non-zero; store output as `flow`.
+   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`); `--orchestrator-model` optionally overrides the auto-detected orchestrator model. `--exclude` carries the run's exclusion set (**Exclude failed platforms**); omit it on the first run. Candidates come back diversity-sorted: every platform's first model before any platform's second, the orchestrator's platform last (with same platform + model matches placed dead last). The resolver also checks the skill's own `skill-hashes.json` before loading config; on an integrity failure (non-zero exit), report the modified files to the user. Halt immediately if non-zero; store output as `flow`.
 4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
 
    ```bash
@@ -148,7 +148,7 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
    - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
    - Rounds spent per phase vs `maxRounds`.
-   - Active, failed, substituted, dropped, excluded, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `excluded`, `droppedPins`, `clamped`, `livenessSource`; substitutions as recorded by the review skill; the run's exclusion set with each platform's `[auth]` / `[quota]` reason).
+   - Active, failed, substituted, dropped, excluded, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `excluded`, `droppedPins`, `clamped`, `targetCountPin`, `livenessSource`; substitutions as recorded by the review skill; the run's exclusion set with each platform's `[auth]` / `[quota]` reason).
    - Summary of accepted/rejected findings, rebuttals confirmed by citing delegates, and verification command status.
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
 
@@ -177,4 +177,4 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
 - **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
 - **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). Orchestrator / native subagents alone write code.
-- **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned runs only — pinned runs carry none), taking the next unused reserve in order; once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.
+- **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned and count-pinned runs only — provider-pinned runs carry none), taking the next unused reserve in order; once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.

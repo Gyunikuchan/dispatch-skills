@@ -11,6 +11,7 @@ import {
   validateConfig,
   selectLevel,
   normalizePin,
+  parsePins,
   probeCandidates,
   RUNNER_FILES,
 } from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
@@ -326,6 +327,118 @@ describe('resolveFlow', () => {
         out['code-review'].targets.map(t => t.platform),
         ['agy', 'claude', 'opencode']
       );
+    });
+  });
+
+  describe('count pins', () => {
+    it('a count of 2 at a level whose targetCount is 1 gives 2 targets plus reserves, orchestrator last', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['2'] }, LIVE_ALL, BASE_CONFIG);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'opencode']);
+      assert.deepEqual(out['code-review'].reserves.map(t => t.platform), ['claude']);
+    });
+
+    it('clamps a count above live candidates and records clamped', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['9'] }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out['code-review'].targets.length, 3);
+      assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 9, resolved: 3 });
+    });
+
+    it('forces a phase whose targetCount is 0 to run when maxRounds > 0', () => {
+      const config = withSections({ 'code-review': { targetCount: { medium: 0 }, maxRounds: { medium: 2 } } });
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['2'] }, LIVE_ALL, config);
+      assert.equal(out['code-review'].maxRounds, 2);
+      assert.equal(out['code-review'].targets.length, 2);
+    });
+
+    it('keeps a phase off when maxRounds is 0 — counts never resurrect it', () => {
+      const config = withSections({ 'code-review': { maxRounds: { medium: 0 } } });
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['2'] }, LIVE_ALL, config);
+      assert.equal(out['code-review'].maxRounds, 0);
+      assert.deepEqual(out['code-review'].targets, []);
+    });
+
+    it('respects exclude with a count pin', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['2'], exclude: ['agy'] },
+        LIVE_ALL,
+        BASE_CONFIG
+      );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['opencode', 'claude']);
+    });
+
+    it('reports diagnostics.targetCountPin for a count-pinned run', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['3'] }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.diagnostics.targetCountPin, 3);
+    });
+
+    it('reports diagnostics.targetCountPin as null otherwise', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.diagnostics.targetCountPin, null);
+      const pinnedOut = resolveFlow({ platform: 'claude', level: 'medium', pins: ['agy'] }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(pinnedOut.diagnostics.targetCountPin, null);
+    });
+
+    it('throws on a count pin of 0', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['0'] }, LIVE_ALL, BASE_CONFIG),
+        /Reviewer count pin must be an integer from 1 to/
+      );
+    });
+
+    it('throws when a count pin is mixed with a provider key', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['2', 'claude'] }, LIVE_ALL, BASE_CONFIG),
+        /A reviewer count pin must stand alone/
+      );
+    });
+
+    it('throws when a count pin is mixed with "all"', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['all', '2'] }, LIVE_ALL, BASE_CONFIG),
+        /A reviewer count pin must stand alone/
+      );
+    });
+
+    it('throws on two count pins', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['2', '3'] }, LIVE_ALL, BASE_CONFIG),
+        /A reviewer count pin must stand alone/
+      );
+    });
+  });
+
+  describe('parsePins', () => {
+    it('returns undefined keys and count for absent or empty input', () => {
+      assert.deepEqual(parsePins(undefined), { keys: undefined, count: undefined });
+      assert.deepEqual(parsePins([]), { keys: undefined, count: undefined });
+    });
+
+    it('coerces and trims a numeric element', () => {
+      assert.deepEqual(parsePins([' 3 ']), { keys: undefined, count: 3 });
+      assert.deepEqual(parsePins([3]), { keys: undefined, count: 3 });
+    });
+
+    it('passes a provider-key list through unchanged', () => {
+      assert.deepEqual(parsePins(['agy', 'claude']), { keys: ['agy', 'claude'], count: undefined });
+    });
+
+    it('passes the "all" keyword through unchanged', () => {
+      assert.deepEqual(parsePins(['all']), { keys: ['all'], count: undefined });
+    });
+
+    it('throws when a count is below 1', () => {
+      assert.throws(() => parsePins(['0']), /Reviewer count pin must be an integer from 1 to/);
+      assert.throws(() => parsePins(['-1']), /Reviewer count pin must be an integer from 1 to/);
+    });
+
+    it('throws when a count is not a safe integer', () => {
+      assert.throws(() => parsePins(['99999999999999999999']), /Reviewer count pin must be an integer from 1 to/);
+    });
+
+    it('throws when a count pin is combined with anything else', () => {
+      assert.throws(() => parsePins(['2', 'claude']), /A reviewer count pin must stand alone/);
+      assert.throws(() => parsePins(['all', '2']), /A reviewer count pin must stand alone/);
+      assert.throws(() => parsePins(['2', '3']), /A reviewer count pin must stand alone/);
     });
   });
 
@@ -1449,6 +1562,11 @@ describe('probeCandidates', () => {
   it('skips excluded platforms', () => {
     const keys = probeCandidates({ platform: 'claude', exclude: ['copilot'] }, config).sort();
     assert.deepEqual(keys, ['agy', 'claude']);
+  });
+
+  it('treats a count pin as unpinned breadth', () => {
+    const keys = probeCandidates({ platform: 'claude', pins: ['3'] }, config).sort();
+    assert.deepEqual(keys, ['agy', 'claude', 'copilot']);
   });
 });
 

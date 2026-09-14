@@ -52,7 +52,7 @@ Base grammar, shared by both standalone review skills:
 - **No pins**: fall back to `dispatch`'s default cascade (one dispatch, cascading through providers on failure).
 - **Pins given**: fan out one backgrounded `dispatch --provider <key>` per pin, in parallel — never `--no-config`, so model/effort come from `dispatch`'s own config for each pinned provider.
 - A failed pin falls back to `dispatch`'s in-process read-only subagent (Step 3's table) for that pin only — never substituted with another platform, since a pin names a delegate the user specifically asked for.
-- `implement-dispatch` extends this grammar with `<level>`, `: <ask>`, and pinning `all` across configured platforms (unavailable in standalone reviews; see its own `## Invocation`); its round/consensus mechanics are its own, not part of this base grammar.
+- `implement-dispatch` extends this grammar with `<level>`, `: <ask>`, and pinning `all` across configured platforms or a reviewer count (unavailable in standalone reviews; see its own `## Invocation`); its round/consensus mechanics are its own, not part of this base grammar.
 
 ## Invocation Modes
 

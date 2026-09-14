@@ -4,8 +4,8 @@
  *
  * Usage:
  *   node resolve-flow.mjs --platform <key>
- *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...|all>]
- *                         [--exclude <key,key,...>]
+ *                         [--level <low|medium|high|xhigh|max>]
+ *                         [--pins <key,key,...|all|n>] [--exclude <key,key,...>]
  *   node resolve-flow.mjs --validate-only
  *   node resolve-flow.mjs --help
  *
@@ -26,6 +26,7 @@ import {
   loadSkillConfig,
   detectOrchestratorModel,
   isSameModel,
+  verifySkillIntegrity,
 } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
@@ -49,7 +50,7 @@ const USAGE = `Usage:
   --platform <key>            orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator-model <name> orchestrator's active model (sorts same platform+model last)
   --level <level>             ${LEVELS.join(' | ')} (default: medium)
-  --pins <list>               comma-separated provider keys, or "all"
+  --pins <list>               comma-separated provider keys, "all", or a single reviewer count
   --exclude <list>            comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
   --validate-only             validate the config schema and exit
   -h, --help                  show this help
@@ -62,6 +63,31 @@ const USAGE = `Usage:
 export function normalizePin(rawPin) {
   const lower = rawPin.toLowerCase();
   return PROVIDER_ALIASES[lower] ?? (lower === 'all' ? 'all' : rawPin);
+}
+
+/**
+ * Splits a raw `--pins` list into either provider keys (and/or "all") or a single reviewer
+ * count. The two forms never mix: a count pin replaces breadth entirely, so pairing it with a
+ * provider key or a second count would be ambiguous about how many reviewers to run.
+ *
+ * @param {Array<string|number>|undefined} rawPins
+ * @returns {{ keys: string[] | undefined, count: number | undefined }}
+ */
+export function parsePins(rawPins) {
+  if (!rawPins || rawPins.length === 0) return { keys: undefined, count: undefined };
+  const trimmed = rawPins.map(p => String(p).trim());
+  const isCountLike = s => /^-?\d+$/.test(s);
+  if (trimmed.some(isCountLike)) {
+    if (rawPins.length > 1) {
+      throw new Error(`A reviewer count pin must stand alone: ${rawPins.join(', ')}`);
+    }
+    const count = Number(trimmed[0]);
+    if (!Number.isSafeInteger(count) || count < 1) {
+      throw new Error(`Reviewer count pin must be an integer from 1 to ${Number.MAX_SAFE_INTEGER}`);
+    }
+    return { keys: undefined, count };
+  }
+  return { keys: rawPins, count: undefined };
 }
 
 // ============================================================================
@@ -522,8 +548,11 @@ export function probeCandidates(opts, config) {
   if (platform) configured.add(platform);
 
   const excluded = new Set(normalizeExcludeKeys(opts.exclude));
-  const pins = (opts.pins ?? []).map(normalizePin);
-  const keys = pins.length > 0 && !pins.includes('all')
+  // A count pin probes like unpinned breadth: it names how many reviewers, not which ones, so
+  // narrowing the probe set the way a provider-key pin does would starve candidate selection.
+  const { keys: pinKeys, count } = parsePins(opts.pins);
+  const pins = (pinKeys ?? []).map(normalizePin);
+  const keys = count === undefined && pins.length > 0 && !pins.includes('all')
     ? [...configured].filter((key) => pins.includes(key) || key === platform)
     : [...configured];
   return keys.filter((key) => !excluded.has(key));
@@ -602,10 +631,13 @@ export function resolveFlow(options, liveness, config) {
       `Unknown platform "${options.platform}". Valid platforms: ${KNOWN_PROVIDERS.join(', ')}`
     );
   }
+  // A count pin (e.g. `(3)`) replaces provider-key pins entirely; parsePins throws on any
+  // mix of the two forms before either is normalized.
+  const { keys: pinKeys, count } = parsePins(rawPins);
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
   // to one target instead of being treated as unrecognized or as two separate targets.
-  const normalizedPins = rawPins?.map(normalizePin);
+  const normalizedPins = pinKeys?.map(normalizePin);
   // Dedupe once at entry so a repeated `--pins x,x` cannot produce duplicate
   // dispatch targets in the same wave.
   const pins = normalizedPins ? [...new Set(normalizedPins)] : normalizedPins;
@@ -731,13 +763,15 @@ export function resolveFlow(options, liveness, config) {
   function buildReviewSection(sectionName) {
     const section = config[sectionName];
     let maxRounds = resolveLevelScalar(section.maxRounds, level);
-    const targetCount = resolveLevelScalar(section.targetCount, level);
+    // A count pin overrides the level's targetCount outright, the same way a provider-key
+    // pin overrides breadth by naming candidates instead of a count.
+    const targetCount = count ?? resolveLevelScalar(section.targetCount, level);
     const consensus = resolveLevelScalar(section.consensus, level);
 
     // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
     // does so callers have a single sentinel: `maxRounds === 0`. Pins override breadth
     // entirely (per the Invocation grammar), so an explicit pin still runs the phase
-    // even when the level's targetCount is 0.
+    // even when the level's targetCount is 0; a count pin is always ≥ 1, so it never trips this.
     if ((!pins || pins.length === 0) && targetCount === 0) maxRounds = 0;
 
     // `maxRounds === 0` means the phase is configured off; `targets` empty with
@@ -785,6 +819,7 @@ export function resolveFlow(options, liveness, config) {
       excluded,
       droppedPins,
       clamped,
+      targetCountPin: count ?? null,
       livenessSource: options.livenessSource ?? 'probe',
     },
   };
@@ -867,6 +902,20 @@ async function main() {
     process.exit(0);
   }
 
+  // Integrity gate, mirroring `dispatch.mjs`'s `assertSkillIntegrity`: a missing manifest warns
+  // and proceeds (e.g. an install that predates this manifest), a drifted one aborts before any
+  // config load or provider probe.
+  const integrity = verifySkillIntegrity(path.resolve(__dirname, '..'));
+  if (!integrity.valid && !integrity.missing) {
+    process.stderr.write(
+      `[implement-dispatch] WARNING: Skill file integrity check failed! Modified files:\n` +
+        integrity.violations.map((v) => `  - ${v}`).join('\n') +
+        '\n' +
+        `[implement-dispatch] This may indicate tampering. Aborting flow resolution.\n`
+    );
+    process.exit(1);
+  }
+
   let config;
   try {
     config = loadConfig();
@@ -924,8 +973,18 @@ async function main() {
     process.stderr.write(`Invalid config:\n- ${configProblems.join('\n- ')}\n`);
     process.exit(1);
   }
-  if (opts.pins && opts.pins.length > 0) {
-    const normalizedPins = opts.pins.map(normalizePin);
+  // parsePins throws on an invalid count (below 1, unsafe) or a count mixed with anything
+  // else; surfacing that here keeps it ahead of liveness probing along with every other
+  // pre-validation check.
+  let pinKeys;
+  try {
+    ({ keys: pinKeys } = parsePins(opts.pins));
+  } catch (err) {
+    process.stderr.write(`Error: ${err.message}\n`);
+    process.exit(1);
+  }
+  if (pinKeys && pinKeys.length > 0) {
+    const normalizedPins = pinKeys.map(normalizePin);
     const allKeys = reviewSectionKeys(config);
     const unknown = normalizedPins.filter(p => p !== 'all' && !allKeys.has(p));
     if (unknown.length > 0) {

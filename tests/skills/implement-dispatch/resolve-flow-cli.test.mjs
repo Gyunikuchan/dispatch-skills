@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
+import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const SCRIPT = path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/resolve-flow.mjs');
 
@@ -236,6 +238,28 @@ describe('resolve-flow CLI', () => {
     assert.match(stderr, /cannot be combined with: --exclude/);
   });
 
+  it('rejects --pins 0 before probing', () => {
+    const broken = { liveness: '{not json' };
+    const { status, stderr } = run('--platform', 'claude', '--pins', '0', broken);
+    assert.equal(status, 1);
+    assert.match(stderr, /Reviewer count pin must be an integer from 1 to/);
+  });
+
+  it('rejects --pins 2,claude before probing', () => {
+    const broken = { liveness: '{not json' };
+    const { status, stderr } = run('--platform', 'claude', '--pins', '2,claude', broken);
+    assert.equal(status, 1);
+    assert.match(stderr, /A reviewer count pin must stand alone/);
+  });
+
+  it('resolves --pins=2 under the liveness env seam', () => {
+    const { status, stdout } = run('--platform=claude', '--level=medium', '--pins=2');
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.equal(flow.diagnostics.targetCountPin, 2);
+    assert.equal(flow['code-review'].targets.length, 2);
+  });
+
   it('rejects an unknown --platform, naming the valid keys', () => {
     const { status, stderr } = run('--platform', 'bogus', '--level', 'low');
     assert.equal(status, 1);
@@ -327,5 +351,97 @@ describe('resolve-flow CLI: invalid config', () => {
     const { status, stderr } = withConfig(INVALID, '--platform', 'claude');
     assert.equal(status, 1);
     assert.match(stderr, /Invalid config|unrecognized key/i);
+  });
+});
+
+describe('resolve-flow CLI: integrity manifest', () => {
+  /**
+   * Builds an implement-dispatch skill dir beside a copy of dispatch, the same layout
+   * the invalid-config fixture above uses, so resolve-flow.mjs's sibling imports resolve.
+   */
+  const setupFixture = () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-integrity-'));
+    const skillDir = path.join(dir, 'implement-dispatch');
+    fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+    fs.copyFileSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'),
+      path.join(skillDir, 'SKILL.md'),
+    );
+    fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
+    fs.copyFileSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs'),
+      path.join(skillDir, 'scripts', 'check-consensus.mjs'),
+    );
+    fs.cpSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
+      path.join(skillDir, 'config.default.jsonc'),
+    );
+    fs.cpSync(path.join(REPO_ROOT, 'skills/dispatch'), path.join(dir, 'dispatch'), { recursive: true });
+    return { dir, skillDir };
+  };
+
+  const runFixture = (skillDir, args = ['--validate-only']) => {
+    const result = spawnSync(
+      process.execPath,
+      [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args],
+      {
+        encoding: 'utf8',
+        timeout: 60_000,
+        killSignal: 'SIGKILL',
+        env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE, IMPLEMENT_DISPATCH_TEST_MODE: '1' },
+      },
+    );
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+
+  it('exits 1 with the modified file listed when a hashed file drifts', () => {
+    const { dir, skillDir } = setupFixture();
+    try {
+      const manifest = generateSkillHashes(skillDir);
+      fs.writeFileSync(path.join(skillDir, 'skill-hashes.json'), JSON.stringify(manifest, null, 2) + '\n');
+      // Tamper with SKILL.md after the manifest is written, so its hash no longer matches.
+      fs.appendFileSync(path.join(skillDir, 'SKILL.md'), '\n<!-- tampered -->\n');
+
+      const { status, stderr } = runFixture(skillDir);
+      assert.equal(status, 1);
+      assert.match(stderr, /Skill file integrity check failed/);
+      assert.match(stderr, /SKILL\.md/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('aborts a normal --platform run on drift, and --help bypasses the gate', () => {
+    const { dir, skillDir } = setupFixture();
+    try {
+      fs.writeFileSync(
+        path.join(skillDir, 'skill-hashes.json'),
+        JSON.stringify(generateSkillHashes(skillDir), null, 2) + '\n',
+      );
+      fs.appendFileSync(path.join(skillDir, 'SKILL.md'), '\n<!-- tampered -->\n');
+
+      const platformRun = runFixture(skillDir, ['--platform', 'claude']);
+      assert.equal(platformRun.status, 1);
+      assert.match(platformRun.stderr, /Skill file integrity check failed/);
+      assert.equal(platformRun.stdout, '');
+
+      const help = runFixture(skillDir, ['--help']);
+      assert.equal(help.status, 0);
+      assert.match(help.stdout, /Usage:/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('warns and proceeds (exit 0) when the manifest is absent', () => {
+    const { dir, skillDir } = setupFixture();
+    try {
+      const { status, stdout, stderr } = runFixture(skillDir);
+      assert.equal(status, 0);
+      assert.match(stdout, /Config is valid\./);
+      assert.match(stderr, /integrity manifest.*not found/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

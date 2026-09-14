@@ -38,21 +38,25 @@ describe('generate-hashes script', () => {
     }
   });
 
-  it('the committed manifests cover dispatch and both review skills, including their templates', () => {
-    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review']) {
+  it('the committed manifests cover dispatch, both review skills, and implement-dispatch, including their templates', () => {
+    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'implement-dispatch']) {
       const manifestPath = path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json');
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       assert.ok('SKILL.md' in manifest, `${skill} manifest omits SKILL.md`);
-      if (skill !== 'dispatch') {
+      if (skill !== 'dispatch' && skill !== 'implement-dispatch') {
         assert.ok(
           'references/prompt-template.md' in manifest,
           `${skill} manifest omits its prompt template`,
         );
       }
-      // Every references/*.md is hashed, not just the prompt template.
-      for (const file of fs.readdirSync(path.join(PROJECT_ROOT, 'skills', skill, 'references'))) {
-        if (file.endsWith('.md')) {
-          assert.ok(`references/${file}` in manifest, `${skill} manifest omits references/${file}`);
+      // Every references/*.md is hashed, not just the prompt template. implement-dispatch ships
+      // no references/ dir at all.
+      const referencesDir = path.join(PROJECT_ROOT, 'skills', skill, 'references');
+      if (fs.existsSync(referencesDir)) {
+        for (const file of fs.readdirSync(referencesDir)) {
+          if (file.endsWith('.md')) {
+            assert.ok(`references/${file}` in manifest, `${skill} manifest omits references/${file}`);
+          }
         }
       }
     }
@@ -101,7 +105,7 @@ describe('generate-hashes script', () => {
   });
 
   it('rejects an unknown --skill', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'implement-dispatch'], {
+    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'bogus-skill'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf8',
       timeout: 10_000,

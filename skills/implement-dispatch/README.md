@@ -141,6 +141,12 @@ Force the review fan-out wave to target specific external providers (`claude`, `
 /implement-dispatch max (claude): Audit and rewrite token refresh rotation
 ```
 
+Or pin a single reviewer count instead of naming providers — it replaces the level's `targetCount` for both review phases while keeping the level's other knobs (`maxRounds`, `consensus`, model/effort selection):
+
+```markdown
+/implement-dispatch high (3): Refactor payment webhook idempotency handler
+```
+
 ---
 
 ## Review Levels
@@ -158,8 +164,9 @@ Choose a level based on the risk and complexity of your change:
 ### Key Execution Mechanics
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
 - **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a target. Pins do not resurrect a phase configured off (`maxRounds: 0`).
-- **Breadth Clamping**: When a level asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
-- **Reserve Reviewers**: The live candidates beyond `targetCount` come back as each review section's ordered `reserves`. The liveness probe only proves a CLI runs, not that it is signed in or has quota, so when a reviewer fails mid-wave (e.g. `[auth]`), the review skill substitutes the next unused reserve in order before falling back to a subagent. Every model/effort candidate of a platform counts as its own entry. Pinned runs have no reserves.
+- **Count Pins**: `(<n>)` — a single positive integer, alone — pins a reviewer count instead of specific providers: `(3)` runs the unpinned selection path with `targetCount` forced to 3 for both review phases. It cannot be mixed with provider keys or `all` (`(claude,2)` and `(2,3)` are both errors), and it still forces a phase whose level `targetCount` is 0 to run as long as `maxRounds > 0` — a phase with `maxRounds: 0` stays off, since no pin resurrects it. Unlike a provider-key pin, a count pin keeps ordered `reserves`, because it names how many reviewers to run, not which ones.
+- **Breadth Clamping**: When a level (or a count pin) asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
+- **Reserve Reviewers**: The live candidates beyond `targetCount` come back as each review section's ordered `reserves`. The liveness probe only proves a CLI runs, not that it is signed in or has quota, so when a reviewer fails mid-wave (e.g. `[auth]`), the review skill substitutes the next unused reserve in order before falling back to a subagent. Every model/effort candidate of a platform counts as its own entry. Provider-pinned runs have no reserves.
 - **Diversity-Sorted Candidates**: Candidates are flattened in `platforms` key order, then every platform's first candidate is placed before any platform's second, so one platform with three models cannot fill a three-reviewer wave on its own. The orchestrator's candidates follow, sorted the same way. With `agy`, `copilot`, `opencode: [glm, deepseek, qwen]` and Claude Code orchestrating, the order is agy, copilot, glm, deepseek, qwen, claude.
 - **Sticky Exclusion**: A reviewer that fails `[auth]` or `[quota]` gets its whole platform added to the run's exclusion set. The orchestrator re-resolves with `resolve-flow.mjs --exclude <keys>` so later waves stop dispatching it. Excluded platforms appear in `diagnostics.excluded`. Excluding the orchestrator's own platform is an error.
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
@@ -244,6 +251,8 @@ node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --validate-only
 ```
 
 It checks the config schema and nothing else, so combining it with any run flag (`--platform`, `--level`, `--pins`) is an error rather than a silent no-op.
+
+Before loading config, the resolver also verifies its own files against `skill-hashes.json` (the same integrity manifest `dispatch` ships). A missing manifest just warns and proceeds; a manifest present alongside a locally edited `SKILL.md` or script aborts with the modified files listed — regenerate it with `npm run hashes` in this repo, or reinstall the skill.
 
 ### Level Matching & Fallback Rules
 
