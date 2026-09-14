@@ -255,17 +255,41 @@ describe('orchestrated handover contract', () => {
     assert.match(modes, /Detection:[^\n]*`consensus: true\|false`/, `${ALIGNMENT_PATH} detection does not hand over consensus`);
     assert.ok(!modes.includes('not already in the wave'), `${ALIGNMENT_PATH} still prefers platform diversity at substitution`);
 
+    const adjudication = alignment.slice(alignment.indexOf('## Adjudication'), alignment.indexOf('## Resolutions Log'));
+    assert.ok(
+      adjudication.includes('applies only to findings the citing delegate reported as MUST-FIX or SHOULD-FIX'),
+      `${ALIGNMENT_PATH} § Finality does not scope pending form to delegate-reported MUST-FIX or SHOULD-FIX`
+    );
+    assert.ok(
+      adjudication.includes('Findings the citing delegate reported as CONSIDER are advisory and final'),
+      `${ALIGNMENT_PATH} § Finality does not state CONSIDER finality`
+    );
+
     const log = alignment.slice(alignment.indexOf('## Resolutions Log'));
     assert.ok(log.includes('**[Rejected — pending confirmation]**'), `${ALIGNMENT_PATH} Resolutions Log lacks the pending form`);
+    assert.ok(log.includes('(CONSIDER)'), `${ALIGNMENT_PATH} Resolutions Log lacks (CONSIDER) grammar tag`);
 
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
-      assert.ok(readSkill(skillPath).includes('[Rejected — pending confirmation]'), `${skillPath} does not name the pending form`);
+      const content = readSkill(skillPath);
+      assert.ok(content.includes('[Rejected — pending confirmation]'), `${skillPath} does not name the pending form`);
+      assert.ok(
+        content.includes('delegate-reported MUST-FIX / SHOULD-FIX'),
+        `${skillPath} does not scope pending form to delegate-reported MUST-FIX / SHOULD-FIX`
+      );
     }
 
     const implement = readSkill(IMPLEMENT_PATH);
     assert.ok(implement.includes('consensus: true|false'), `${IMPLEMENT_PATH} does not hand over consensus`);
     assert.ok(implement.includes('check-consensus.mjs'), `${IMPLEMENT_PATH} does not gate on check-consensus.mjs`);
     assert.ok(implement.includes('--exclude'), `${IMPLEMENT_PATH} does not re-resolve with --exclude`);
+    assert.ok(
+      implement.includes('delegate-reported MUST-FIX or SHOULD-FIX'),
+      `${IMPLEMENT_PATH} does not scope rejections to delegate-reported MUST-FIX or SHOULD-FIX`
+    );
+    assert.ok(
+      implement.includes("Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality"),
+      `${IMPLEMENT_PATH} does not reference alignment.md § Finality for CONSIDER findings`
+    );
   });
 });
 

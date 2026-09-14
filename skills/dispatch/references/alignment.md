@@ -66,7 +66,7 @@ Detection: a review skill runs **orchestrated** when an orchestrating skill hand
 | Populate prompt template | Yes (§ Prompt Template Filling) | Yes (§ Prompt Template Filling; uses the handed-over Review Scope / Tool Turn Budget) |
 | Adjudicate (shared table) | Yes | Yes |
 | Escalate disputes | Immediately | Per orchestrator's consensus rule |
-| Log a Reject / Downgrade | `[Rejected / Downgraded]` | `[Rejected — pending confirmation]` when handed `consensus: true`; else `[Rejected / Downgraded]` |
+| Log a Reject / Downgrade | `[Rejected / Downgraded]` | `[Rejected — pending confirmation]` for delegate-reported MUST-FIX / SHOULD-FIX when handed `consensus: true`; else `[Rejected / Downgraded]` |
 | Fold findings + log resolutions | Yes | Yes — the review skill appends the round log in both modes; an orchestrator only rewrites its ruled `[Disputed]` and settled `[Rejected — pending confirmation]` lines |
 | Apply code fixes (code review) | Yes | No — orchestrator applies (its fix step) |
 | Report to user | Full report | None — orchestrator's handoff covers it |
@@ -111,13 +111,13 @@ Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendat
 | **Downgrade** | Real but trivial — style, taste, or speculative | Fold into next steps / Out of Scope or drop; log |
 | **Disputed** | Unsettleable from the artifact or code alone (intent, unverified external figures, deliberate trade-offs) | Escalate per Invocation Modes |
 
-**Finality**: in orchestrated mode, whether a Reject or Downgrade is final is the orchestrator's consensus rule (see § Resolutions Log); in standalone mode it is final.
+**Finality**: in standalone mode a Reject or Downgrade is final. In orchestrated mode, the pending form (`[Rejected — pending confirmation]`) applies only to findings the citing delegate reported as MUST-FIX or SHOULD-FIX when handed `consensus: true`. Findings the citing delegate reported as CONSIDER are advisory and final at the orchestrator's ruling (Accept, Downgrade into Out of Scope / Follow-ups, or Reject) and logged `[Rejected / Downgraded] <locus> — <tag> (CONSIDER): <defect> → <rejection rationale>` per § Resolutions Log, regardless of consensus settings. An orchestrator lowering a delegate-reported MUST-FIX or SHOULD-FIX is itself a Downgrade that remains pending under `consensus: true`.
 
 **Evidence over votes**: when aggregating multi-delegate reports, dedupe duplicate claims pointing to the same defect at the same locus into a single finding, then verify against the requirement, repository rules, and cited code. Accept valid findings regardless of delegate count; reject refuted findings even if unanimous. Provider agreement is context, never evidence.
 
 **Terminal outcomes**: a dispatch may end without producing a report — `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, a platform that is not configured, a runner that exits non-zero or on a usage error, or a workspace-modified warning. Handle each per `dispatch` Step 3, after exhausting § Invocation Modes **Reserve substitution** in orchestrated mode. When **no** invocation in a wave produced a report, there is nothing to adjudicate: skip adjudication and the resolutions log entirely and append nothing to the artifact — an empty round log reads as a review that found nothing, which is worse than a review that visibly did not run. Reporting follows the § Invocation Modes split: **standalone** names which providers were tried and how each ended; **orchestrated** returns that outcome to the caller and reports nothing directly.
 
-**Dispute escalation**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before applying a **Disputed** finding. Batch up to 4 questions per invocation (successive batches for more); quote the locus, state the delegate's claim, and provide a counter-reading with accept / reject / defer options. Apply the user's choice verbatim as final. Mandatory escalation triggers: repository-named domain authorities, persisted schema, shared URL state, or an explicit user request. In orchestrated mode, escalation instead defers to the orchestrator's consensus rule — return Disputed findings unescalated to the caller (see § Resolutions Log).
+**Dispute escalation**: query the user via interactive question tool (`ask_question` / `AskUserQuestion`) before applying a **Disputed** finding. Batch up to 4 questions per invocation (successive batches for more); quote the locus, state the delegate's claim, and provide a counter-reading with accept / reject / defer options. Apply the user's choice verbatim as final. Mandatory escalation triggers: repository-named domain authorities, persisted schema, shared URL state, or an explicit user request. In orchestrated mode, escalation instead defers to the orchestrator's consensus rule — return Disputed findings unescalated to the caller (see § Resolutions Log); a delegate-reported CONSIDER finding is never logged `[Disputed]`, as disputes over CONSIDER items are resolved directly at orchestrator discretion and logged as `[Accepted]` or `[Rejected / Downgraded] … (CONSIDER)`.
 
 ## Resolutions Log
 
@@ -133,9 +133,9 @@ Open each round with a marker heading, then one line per finding:
 
 - `- **[Accepted]** <locus> — <tag>: <defect> → <resolution & where applied>`
 - `- **[Resolved Dispute]** <locus> — <tag>: <defect> → <user ruling & action>`
-- `- **[Rejected / Downgraded]** <locus> — <tag>: <defect> → <rejection rationale>`
-- `- **[Disputed]** <locus> — <tag>: <defect> → <counter-reading>` — orchestrated mode only, for a dispute returned unescalated to the orchestrator's own consensus loop. Rewritten as `[Resolved Dispute]` once the orchestrator rules on it.
-- `- **[Rejected — pending confirmation]** <locus> — <tag>: <defect> → <counter-evidence>` — orchestrated mode only, when handed `consensus: true`: the orchestrator's consensus rule requires the citing delegate to confirm the rejection. Rewritten as `[Rejected / Downgraded]` once that delegate explicitly affirms the counter-evidence, or `[Resolved Dispute]` after a user ruling.
+- `- **[Rejected / Downgraded]** <locus> — <tag>: <defect> → <rejection rationale>` (for delegate-reported CONSIDER items, tag as `<tag> (CONSIDER)`)
+- `- **[Disputed]** <locus> — <tag>: <defect> → <counter-reading>` — orchestrated mode only, for a MUST-FIX or SHOULD-FIX dispute returned unescalated to the orchestrator's own consensus loop (CONSIDER findings resolve directly at orchestrator discretion). Rewritten as `[Resolved Dispute]` once the orchestrator rules on it.
+- `- **[Rejected — pending confirmation]** <locus> — <tag>: <defect> → <counter-evidence>` — orchestrated mode only, when handed `consensus: true` for delegate-reported MUST-FIX or SHOULD-FIX findings: the orchestrator's consensus rule requires the citing delegate to confirm the rejection. Rewritten as `[Rejected / Downgraded]` once that delegate explicitly affirms the counter-evidence, or `[Resolved Dispute]` after a user ruling.
 
 ## User Report
 

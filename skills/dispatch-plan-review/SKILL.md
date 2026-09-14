@@ -73,4 +73,4 @@ Locus note: ground truth is the **requirement plus the host repository's rules**
 
 **Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip the user report — the orchestrator's own handoff covers it.
 
-**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`, and rejections under a handed-over `consensus: true` as `[Rejected — pending confirmation]`), and (standalone only) the user report is delivered with provider prefix.
+**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`, and rejections of delegate-reported MUST-FIX / SHOULD-FIX under a handed-over `consensus: true` as `[Rejected — pending confirmation]` per `dispatch`'s `references/alignment.md` § Finality), and (standalone only) the user report is delivered with provider prefix.
