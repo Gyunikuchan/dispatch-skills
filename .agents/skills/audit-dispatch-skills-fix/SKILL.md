@@ -2,6 +2,8 @@
 name: audit-dispatch-skills-fix
 description: Verify and fix the open findings of the latest audit-dispatch-skills report, batch by batch, through implement-dispatch.
 disable-model-invocation: true
+metadata:
+  internal: true
 ---
 
 # Audit Dispatch Skills Fix

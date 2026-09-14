@@ -2,6 +2,8 @@
 name: audit-dispatch-skills
 description: Report-only audit of the dispatch-skills repository across skills, docs, scripts, tests, and live dispatch platforms.
 disable-model-invocation: true
+metadata:
+  internal: true
 ---
 
 # Audit Dispatch Skills
