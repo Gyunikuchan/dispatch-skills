@@ -24,24 +24,24 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ### Defaults & Overrides
 - **Model/Effort**: from `config.default.jsonc`'s `platforms.claude` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m` means no `-m` flag reaches `claude` at all.
 - **Default Mode**: Read-only (`--permission-mode plan`, `--allowedTools`, `--disallowedTools`)
-- **Mode Override**: `--claude-mode <desktop|vscode|cli>` (explicit execution mode)
+- **Mode Override**: `--claude-mode <cli|desktop|vscode>` (explicit execution mode)
 - **Reachability Probe**: `--test-modes` (tests reachability via `--version` across all modes without token consumption)
 
 ### Order of Preference
-1. **Claude Desktop (`desktop`)**:
+1. **Claude CLI (`cli`)**:
+   - macOS / Linux: `~/.local/bin/claude`, `/usr/local/bin/claude`, `/opt/homebrew/bin/claude`, NVM / global npm, system `$PATH`
+   - Windows: `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, system `PATH` (`where.exe`)
+2. **Claude Desktop (`desktop`)**:
    - macOS: `~/Library/Application Support/Claude/claude-code/<version>/claude.app/Contents/MacOS/claude`
    - Windows: `%APPDATA%\Claude\claude-code\<version>\claude.exe`, `%LOCALAPPDATA%\Claude\claude-code\...`
    - Linux: `~/.config/Claude/claude-code/<version>/claude`, `~/.local/share/Claude/...`
-2. **Claude VS Code Extension (`vscode`)**:
+3. **Claude VS Code Extension (`vscode`)**:
    - Cross-platform: `CLAUDE_CODE_EXECPATH` environment variable
    - Extension scan: `~/.vscode/extensions/anthropic.claude-code-*/resources/native-binary/claude` (`claude.exe` on Windows)
    - Agent-host SDK cache:
      - macOS: `~/Library/Application Support/Code/agent-host/sdk-cache/claude/**/claude`
      - Windows: `%APPDATA%\Code\agent-host\sdk-cache\claude\**\claude.exe`
      - Linux: `~/.config/Code/agent-host/sdk-cache/claude/**/claude`
-3. **Claude CLI (`cli`)**:
-   - macOS / Linux: `~/.local/bin/claude`, `/usr/local/bin/claude`, `/opt/homebrew/bin/claude`, NVM / global npm, system `$PATH`
-   - Windows: `%APPDATA%\npm\claude.cmd`, `%USERPROFILE%\.local\bin\claude.exe`, system `PATH` (`where.exe`)
 
 ### Sandboxing & Isolation
 - **Tool Restriction**: `--permission-mode plan` plus `--allowedTools` restricts tool types (`Read`, `Glob`, `Grep`, `Bash(git diff*)`, `Bash(grep *)`, …), not individual filesystem paths; commands that write or execute through their own arguments (`find`, `awk`, `sort`) and web tools (`WebFetch`, `WebSearch`) are excluded, and `--disallowedTools Write Edit NotebookEdit` denies write tools outright.
@@ -61,20 +61,20 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ### Defaults & Overrides
 - **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
-- **Mode Override**: `--agy-mode <antigravity-2.0|antigravity-vscode|antigravity-cli|auto>`
+- **Mode Override**: `--agy-mode <antigravity-cli|antigravity-2.0|antigravity-vscode|auto>`
 - **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
 
 ### Order of Preference
-1. **Antigravity Desktop (`antigravity-2.0`)**:
+1. **Antigravity CLI (`antigravity-cli`)**:
+   - Cross-platform: `~/.gemini/bin/agy`, `~/.local/bin/agy`, system `$PATH`
+2. **Antigravity Desktop (`antigravity-2.0`)**:
    - macOS: `~/.gemini/antigravity/bin/agy`, `/Applications/Antigravity.app/Contents/Resources/bin/agy`
    - Windows: `%LOCALAPPDATA%\Google\Antigravity\bin\agy.exe`, `%APPDATA%\Google\Antigravity\bin\agy.exe`, `%ProgramFiles%\Antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity/bin/agy`, `/opt/Antigravity/agy`
-2. **Antigravity VS Code Extension (`antigravity-vscode`)**:
+3. **Antigravity VS Code Extension (`antigravity-vscode`)**:
    - macOS: `~/.gemini/antigravity-ide/bin/agy`, `~/Library/Application Support/Code/User/globalStorage/google.google-antigravity/bin/agy`
    - Windows: `%APPDATA%\Code\User\globalStorage\google.google-antigravity\bin\agy.exe`
    - Linux: `~/.gemini/antigravity-ide/bin/agy`, `~/.config/Code/User/globalStorage/google.google-antigravity/bin/agy`
-3. **Antigravity CLI (`antigravity-cli`)**:
-   - Cross-platform: `~/.gemini/bin/agy`, `~/.local/bin/agy`, system `$PATH`
 
 ### Sandboxing & Isolation
 - **Structural Read-Only**: Enforced via `--mode plan`. Edits are blocked at the runtime level.
@@ -82,8 +82,8 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 - **Headless Permissions**: Runs pass `--dangerously-skip-permissions` to auto-approve tool execution requests (e.g. file reading, search) without interactive prompts in headless mode, while write operations are structurally prevented by `--mode plan`.
 
 ### Session Monitoring
-- **Deep-Link**: Emits `conversation://<conversation-id>` on init and completion for direct canvas navigation in the Antigravity desktop app.
-- **Transcript Logs**: Trajectory JSONL logs stored in `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/logs/transcript.jsonl`.
+- **Deep-Link**: Emits `conversation://<conversation-id>` on init and completion for direct canvas navigation in the Antigravity desktop app (available in desktop mode).
+- **Transcript Logs**: Trajectory JSONL logs stored in `~/.gemini/antigravity/brain/<conversation-id>/.system_generated/logs/transcript.jsonl` (or mode-specific `JETSKI_APP_DATA_DIR` directory).
 
 ---
 
@@ -92,22 +92,22 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ### Defaults & Overrides
 - **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
-- **Mode Override**: `--copilot-mode <desktop|vscode|cli|auto>` (explicit execution mode)
+- **Mode Override**: `--copilot-mode <cli|desktop|vscode|auto>` (explicit execution mode)
 - **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
 
 ### Order of Preference
-1. **GitHub Copilot Desktop (`desktop`)**:
-   - macOS: `~/Library/Caches/github-copilot-sdk/cli/<version>/copilot`, `~/Library/Caches/copilot/pkg/darwin-*/<version>/copilot`, `~/Library/Application Support/GitHub Copilot`, `/Applications/GitHub Copilot.app`
-   - Windows: `%LOCALAPPDATA%\github-copilot-sdk\cli\<version>\copilot.exe`, `%LOCALAPPDATA%\github-copilot\cli`, `%LOCALAPPDATA%\Programs\GitHub Copilot\resources\bin\copilot.exe`, `%ProgramFiles%\GitHub Copilot`
-   - Linux: `~/.cache/github-copilot-sdk/cli/<version>/copilot`, `~/.cache/copilot/pkg/linux-*/<version>/copilot`, `~/.local/share/github-copilot-sdk`, `/opt/GitHub Copilot`
-2. **Copilot VS Code Extension (`vscode`)**:
-   - macOS: `~/Library/Application Support/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, `Cursor`
-   - Windows: `%APPDATA%\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.{bat,cmd,exe,ps1}` (`Code - Insiders`, `VSCodium`, `%LOCALAPPDATA%`)
-   - Linux: `~/.config/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, Flatpak, Snap
-3. **Copilot CLI (`cli`)**:
+1. **Copilot CLI (`cli`)**:
    - macOS: `/opt/homebrew/bin/copilot`, `/usr/local/bin/copilot`, `~/.local/bin/copilot`, `~/.npm-global/bin/copilot`, system `$PATH`
    - Windows: `%APPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\npm\copilot.cmd`, `%LOCALAPPDATA%\Programs\copilot\copilot.exe`, `%ProgramFiles%\GitHub Copilot\copilot.exe`, system `PATH`
    - Linux: `/usr/local/bin/copilot`, `/usr/bin/copilot`, `/home/linuxbrew/.linuxbrew/bin/copilot`, `~/.local/bin/copilot`, system `$PATH`
+2. **GitHub Copilot Desktop (`desktop`)**:
+   - macOS: `~/Library/Caches/github-copilot-sdk/cli/<version>/copilot`, `~/Library/Caches/copilot/pkg/darwin-*/<version>/copilot`, `~/Library/Application Support/GitHub Copilot`, `/Applications/GitHub Copilot.app`
+   - Windows: `%LOCALAPPDATA%\github-copilot-sdk\cli\<version>\copilot.exe`, `%LOCALAPPDATA%\github-copilot\cli`, `%LOCALAPPDATA%\Programs\GitHub Copilot\resources\bin\copilot.exe`, `%ProgramFiles%\GitHub Copilot`
+   - Linux: `~/.cache/github-copilot-sdk/cli/<version>/copilot`, `~/.cache/copilot/pkg/linux-*/<version>/copilot`, `~/.local/share/github-copilot-sdk`, `/opt/GitHub Copilot`
+3. **Copilot VS Code Extension (`vscode`)**:
+   - macOS: `~/Library/Application Support/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, `Cursor`
+   - Windows: `%APPDATA%\Code\User\globalStorage\github.copilot-chat\copilotCli\copilot.{bat,cmd,exe,ps1}` (`Code - Insiders`, `VSCodium`, `%LOCALAPPDATA%`)
+   - Linux: `~/.config/Code{, - Insiders}/User/globalStorage/github.copilot-chat/copilotCli/copilot`, `VSCodium`, Flatpak, Snap
 
 ### Sandboxing & Isolation
 - **Structural Read-Only**: Enforced via `--mode plan`.

@@ -83,21 +83,21 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       }
     });
 
-    it('follows preference order: copilot desktop > copilot vscode > copilot cli', () => {
+    it('follows preference order: copilot cli > copilot desktop > copilot vscode', () => {
+      const cliBin = getCopilotCliBinary();
       const desktopBin = getCopilotDesktopBinary();
       const vscodeBin = getCopilotVscodeBinary();
-      const cliBin = getCopilotCliBinary();
       const resolved = resolveCopilotTarget();
 
-      if (desktopBin && testCopilotReachability(desktopBin).reachable) {
+      if (cliBin && testCopilotReachability(cliBin).reachable) {
+        assert.equal(resolved?.mode, 'cli');
+        assert.equal(getCopilotBinary(), cliBin);
+      } else if (desktopBin && testCopilotReachability(desktopBin).reachable) {
         assert.equal(resolved?.mode, 'desktop');
         assert.equal(getCopilotBinary(), desktopBin);
       } else if (vscodeBin && testCopilotReachability(vscodeBin).reachable) {
         assert.equal(resolved?.mode, 'vscode');
         assert.equal(getCopilotBinary(), vscodeBin);
-      } else if (cliBin && testCopilotReachability(cliBin).reachable) {
-        assert.equal(resolved?.mode, 'cli');
-        assert.equal(getCopilotBinary(), cliBin);
       }
     });
 

@@ -167,7 +167,7 @@ async function discover({ claude, agy, copilot, opencode }, providers = PROVIDER
 
   if (wanted.has('copilot')) {
     const copilotModes = copilot.probeCopilotModes();
-    for (const mode of ['desktop', 'vscode', 'cli']) {
+    for (const mode of ['cli', 'desktop', 'vscode']) {
       const r = copilotModes[mode] ?? {};
       rows.push({ provider: 'copilot', mode, bin: r.binary ?? null, reachable: !!r.reachable, detail: r.version || r.error || '' });
     }

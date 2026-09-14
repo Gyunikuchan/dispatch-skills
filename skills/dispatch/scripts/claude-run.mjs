@@ -6,9 +6,9 @@
  *
  * Supports cross-platform execution across macOS, Windows, and Linux (bash/zsh/PowerShell).
  * Resolves Claude executables according to preference order:
- *   1. Claude Desktop (desktop)
- *   2. Claude VS Code Extension (vscode)
- *   3. Claude CLI (cli)
+ *   1. Claude CLI (cli)
+ *   2. Claude Desktop (desktop)
+ *   3. Claude VS Code Extension (vscode)
  *
  * Each mode is discoverable and testable up to reachability (--version) without
  * requiring active subscriptions or token consumption.
@@ -155,15 +155,15 @@ export const READ_ONLY_ALLOWED_TOOLS = [
 export const DISALLOWED_WRITE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
 
 /**
- * Execution modes in cascade preference order: Claude Desktop > VS Code Extension > CLI.
+ * Execution modes in cascade preference order: Claude CLI > Claude Desktop > VS Code Extension.
  * The single source of truth for mode metadata — every mode-aware function below
  * (resolution, probing, execution) iterates this instead of redeclaring the list.
  * @type {ModeDefinition[]}
  */
 export const MODE_DEFINITIONS = [
+  { mode: 'cli', name: 'Claude CLI', fn: () => getClaudeCliBinary() },
   { mode: 'desktop', name: 'Claude Desktop', fn: () => getClaudeDesktopBinary() },
   { mode: 'vscode', name: 'Claude VS Code Extension', fn: () => getClaudeVSCodeBinary() },
-  { mode: 'cli', name: 'Claude CLI', fn: () => getClaudeCliBinary() },
 ];
 
 // ============================================================================
@@ -171,7 +171,7 @@ export const MODE_DEFINITIONS = [
 // ============================================================================
 
 /**
- * Runs a prompt through Claude Code using the preferred mode (desktop > vscode > cli).
+ * Runs a prompt through Claude Code using the preferred mode (cli > desktop > vscode).
  * If a mode encounters auth or quota failure (unsubscribed or out of tokens), it cascades
  * to the next available mode in preference order unless pinned via `claudeMode`.
  *
@@ -356,7 +356,8 @@ function findViableTargets(claudeMode) {
       viable.push({ mode: candidate.mode, name: candidate.name, bin });
     }
   }
-  // Desktop and VS Code routinely resolve to the same executable; retrying it is pure latency.
+  // Modes routinely resolve to the same executable; with CLI prioritized first,
+  // finding a CLI binary on PATH takes precedence in deduplication.
   return dedupeTargetsByBinary(viable, (t) => t.bin);
 }
 
@@ -618,16 +619,16 @@ Options:
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --prompt-file <path>          Read the prompt from a file instead of an argument
   --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
-  --claude-mode, --mode <mode>  Select execution mode: desktop | vscode | cli
+  --claude-mode, --mode <mode>  Select execution mode: cli | desktop | vscode
   --test-modes, --probe-modes, --reachability
                                 Test reachability of all modes (--version) without token consumption
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 
 Preference Order:
-  1. Claude Desktop (desktop)
-  2. Claude VS Code Extension (vscode)
-  3. Claude CLI (cli)
+  1. Claude CLI (cli)
+  2. Claude Desktop (desktop)
+  3. Claude VS Code Extension (vscode)
 `);
 }
 
@@ -729,7 +730,7 @@ export async function isClaudeAvailable(preferredMode = null) {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 1: Claude Desktop (`desktop`)
+// SECTION: Binary Discovery — Mode 2: Claude Desktop (`desktop`)
 // ============================================================================
 
 /**
@@ -820,7 +821,7 @@ export function getClaudeDesktopBinary() {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 2: Claude VS Code Extension (`vscode`)
+// SECTION: Binary Discovery — Mode 3: Claude VS Code Extension (`vscode`)
 // ============================================================================
 
 /**
@@ -935,7 +936,7 @@ export function getClaudeVSCodeBinary() {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 3: Claude CLI (`cli`)
+// SECTION: Binary Discovery — Mode 1: Claude CLI (`cli`)
 // ============================================================================
 
 /**

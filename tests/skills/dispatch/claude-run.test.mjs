@@ -40,10 +40,10 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.ok(READ_ONLY_ALLOWED_TOOLS.includes('Grep'));
     });
 
-    it('defines modes in preference order desktop > vscode > cli', () => {
+    it('defines modes in preference order cli > desktop > vscode', () => {
       assert.deepEqual(
         MODE_DEFINITIONS.map((m) => m.mode),
-        ['desktop', 'vscode', 'cli'],
+        ['cli', 'desktop', 'vscode'],
       );
     });
   });
@@ -92,7 +92,7 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       const modes = probeAllClaudeModes();
       assert.deepEqual(
         modes.map((m) => m.mode),
-        ['desktop', 'vscode', 'cli'],
+        ['cli', 'desktop', 'vscode'],
       );
       for (const m of modes) {
         assert.equal(typeof m.name, 'string');
@@ -132,21 +132,21 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       }
     });
 
-    it('follows preference order desktop > vscode > cli', () => {
+    it('follows preference order cli > desktop > vscode', () => {
+      const cliBin = getClaudeCliBinary();
       const desktopBin = getClaudeDesktopBinary();
       const vscodeBin = getClaudeVSCodeBinary();
-      const cliBin = getClaudeCliBinary();
       const resolved = resolveClaudeTarget();
 
-      if (desktopBin) {
+      if (cliBin) {
+        assert.equal(resolved?.mode, 'cli');
+        assert.equal(getClaudeBinary(), cliBin);
+      } else if (desktopBin) {
         assert.equal(resolved?.mode, 'desktop');
         assert.equal(getClaudeBinary(), desktopBin);
       } else if (vscodeBin) {
         assert.equal(resolved?.mode, 'vscode');
         assert.equal(getClaudeBinary(), vscodeBin);
-      } else if (cliBin) {
-        assert.equal(resolved?.mode, 'cli');
-        assert.equal(getClaudeBinary(), cliBin);
       }
     });
 

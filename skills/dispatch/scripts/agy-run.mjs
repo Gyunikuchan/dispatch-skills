@@ -6,9 +6,9 @@
  *
  * Supports cross-platform execution across macOS, Windows, and Linux (bash/zsh/PowerShell).
  * Resolves Antigravity executables according to preference order:
- *   1. Antigravity 2.0 (Desktop application)
- *   2. Antigravity VS Code Extension (IDE extension / Antigravity IDE)
- *   3. Antigravity CLI (Standalone agy/antigravity CLI)
+ *   1. Antigravity CLI (Standalone agy/antigravity CLI)
+ *   2. Antigravity 2.0 (Desktop application)
+ *   3. Antigravity VS Code Extension (IDE extension / Antigravity IDE)
  *
  * Each mode is discoverable and testable up to reachability (--help) without
  * requiring active subscriptions or token consumption.
@@ -51,7 +51,7 @@ import {
 // SECTION: Types
 // ============================================================================
 
-/** @typedef {'antigravity-2.0'|'antigravity-vscode'|'antigravity-cli'} AgyMode */
+/** @typedef {'antigravity-cli'|'antigravity-2.0'|'antigravity-vscode'} AgyMode */
 
 /**
  * @typedef {object} ModeDefinition
@@ -105,21 +105,21 @@ import {
 // ============================================================================
 
 export const AGY_MODES = {
+  ANTIGRAVITY_CLI: 'antigravity-cli',
   ANTIGRAVITY_2_0: 'antigravity-2.0',
   ANTIGRAVITY_VSCODE: 'antigravity-vscode',
-  ANTIGRAVITY_CLI: 'antigravity-cli',
 };
 
 /**
- * Execution modes in cascade preference order: Antigravity 2.0 > VS Code Extension > CLI.
+ * Execution modes in cascade preference order: CLI > Antigravity 2.0 (Desktop) > VS Code Extension.
  * The single source of truth for mode metadata — every mode-aware function below
  * (resolution, probing, execution) iterates this instead of redeclaring the list.
  * @type {ModeDefinition[]}
  */
 export const MODE_DEFINITIONS = [
+  { mode: AGY_MODES.ANTIGRAVITY_CLI, name: 'Antigravity CLI (agy)', dataDir: 'antigravity-cli', fn: () => getAgyCliBinary() },
   { mode: AGY_MODES.ANTIGRAVITY_2_0, name: 'Antigravity 2.0 (agy)', dataDir: 'antigravity', fn: () => getAgy20Binary() },
   { mode: AGY_MODES.ANTIGRAVITY_VSCODE, name: 'Antigravity VS Code Extension (agy)', dataDir: 'antigravity-ide', fn: () => getAgyVSCodeBinary() },
-  { mode: AGY_MODES.ANTIGRAVITY_CLI, name: 'Antigravity CLI (agy)', dataDir: 'antigravity-cli', fn: () => getAgyCliBinary() },
 ];
 
 // Derived from MODE_DEFINITIONS for callers that only need one facet of it.
@@ -132,7 +132,7 @@ export const AGY_MODE_LABELS = Object.fromEntries(MODE_DEFINITIONS.map((m) => [m
 // ============================================================================
 
 /**
- * Runs a prompt through Antigravity using the preferred mode (2.0 > vscode > cli).
+ * Runs a prompt through Antigravity using the preferred mode (cli > 2.0 > vscode).
  * If a mode encounters auth or quota failure (unsubscribed or out of tokens), it cascades
  * to the next available mode in preference order unless pinned via `modeVariant`/`agyMode`.
  *
@@ -176,7 +176,7 @@ export async function runAgy(options = {}) {
   // must test: 'auto' is a *request* that deliberately pins nothing. Pinning does not depend on
   // availability, so resolve it first and skip the probe entirely when a mode is pinned.
   const { pinnedMode } = resolveModePlan({ requestedMode });
-  // Preferred cascade: Antigravity 2.0 > VS Code Extension > CLI
+  // Preferred cascade: Antigravity CLI > Antigravity 2.0 > VS Code Extension
   const { modesToTry } = pinnedMode
     ? { modesToTry: [pinnedMode] }
     : resolveModePlan({ requestedMode, availableModes: await getAvailableModes() });
@@ -630,16 +630,16 @@ Options:
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --prompt-file <path>          Read the prompt from a file instead of an argument
   --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
-  --agy-mode, --mode-variant    Force mode: antigravity-2.0 | antigravity-vscode | antigravity-cli | auto
+  --agy-mode, --mode-variant    Force mode: antigravity-cli | antigravity-2.0 | antigravity-vscode | auto
   --test-reachability, --test-modes
                                 Test and report reachability for all modes without consuming tokens
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                    Show this help
 
 Preference Order:
-  1. Antigravity 2.0 (Desktop)
-  2. Antigravity VS Code Extension
-  3. Antigravity CLI
+  1. Antigravity CLI
+  2. Antigravity 2.0 (Desktop)
+  3. Antigravity VS Code Extension
 `);
 }
 
@@ -749,9 +749,9 @@ export async function isAgyModeAvailable(mode) {
 
 /**
  * Returns an ordered array of reachable Antigravity modes in order of preference:
- * 1. Antigravity 2.0
- * 2. Antigravity VS Code Extension
- * 3. Antigravity CLI
+ * 1. Antigravity CLI
+ * 2. Antigravity 2.0
+ * 3. Antigravity VS Code Extension
  * @returns {Promise<AgyMode[]>}
  */
 export async function getAvailableAgyModes() {
@@ -784,7 +784,7 @@ export async function isAgyAvailable() {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 1: Antigravity 2.0 (`antigravity-2.0`)
+// SECTION: Binary Discovery — Mode 2: Antigravity 2.0 (`antigravity-2.0`)
 // ============================================================================
 
 /**
@@ -921,7 +921,7 @@ function detectAntigravity20Presence() {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 2: Antigravity VS Code Extension (`antigravity-vscode`)
+// SECTION: Binary Discovery — Mode 3: Antigravity VS Code Extension (`antigravity-vscode`)
 // ============================================================================
 
 /**
@@ -1070,7 +1070,7 @@ function detectAntigravityVscodePresence() {
 }
 
 // ============================================================================
-// SECTION: Binary Discovery — Mode 3: Antigravity CLI (`antigravity-cli`)
+// SECTION: Binary Discovery — Mode 1: Antigravity CLI (`antigravity-cli`)
 // ============================================================================
 
 /**

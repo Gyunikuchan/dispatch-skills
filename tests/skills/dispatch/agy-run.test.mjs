@@ -58,16 +58,16 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(args[args.indexOf('--output-format') + 1], 'json');
     });
 
-    it('enforces preference order: Antigravity 2.0 > VS Code Extension > CLI', () => {
+    it('enforces preference order: Antigravity CLI > Antigravity 2.0 > VS Code Extension', () => {
       assert.deepEqual(AGY_MODE_PREFERENCE, [
+        'antigravity-cli',
         'antigravity-2.0',
         'antigravity-vscode',
-        'antigravity-cli',
       ]);
+      assert.equal(AGY_MODE_DATA_DIRS[AGY_MODES.ANTIGRAVITY_CLI], 'antigravity-cli');
       assert.equal(AGY_MODE_DATA_DIRS[AGY_MODES.ANTIGRAVITY_2_0], 'antigravity');
       assert.equal(AGY_MODE_DATA_DIRS[AGY_MODES.ANTIGRAVITY_VSCODE], 'antigravity-ide');
-      assert.equal(AGY_MODE_DATA_DIRS[AGY_MODES.ANTIGRAVITY_CLI], 'antigravity-cli');
-      assert.equal(AGY_MODE_LABELS[AGY_MODES.ANTIGRAVITY_2_0], 'Antigravity 2.0 (agy)');
+      assert.equal(AGY_MODE_LABELS[AGY_MODES.ANTIGRAVITY_CLI], 'Antigravity CLI (agy)');
     });
   });
 
@@ -112,7 +112,7 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(probes.length, 3);
 
       const modes = probes.map((p) => p.mode);
-      assert.deepEqual(modes, ['antigravity-2.0', 'antigravity-vscode', 'antigravity-cli']);
+      assert.deepEqual(modes, ['antigravity-cli', 'antigravity-2.0', 'antigravity-vscode']);
 
       for (const probe of probes) {
         assert.ok('mode' in probe);
@@ -419,7 +419,7 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
 // log and runs a git integrity check. runAgy now takes those as seams, so these tests assert what
 // the loop itself decides — nothing about subprocess plumbing.
 describe('runAgy cascade loop', () => {
-  const MODES = [AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE, AGY_MODES.ANTIGRAVITY_CLI];
+  const MODES = [AGY_MODES.ANTIGRAVITY_CLI, AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE];
 
   /** A result the loop reads as "reached the mode, but out of tokens" — the cascade trigger. */
   const quotaResult = (mode) => ({ exitCode: 1, failureKind: 'quota', stdout: '', stderr: 'usage limit reached', mode });
