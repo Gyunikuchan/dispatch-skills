@@ -76,6 +76,7 @@ import {
   formatSafetyPrompt,
   buildFormattedPrompt,
   getGitStatus,
+  isExecutableFile,
   isMainModule,
   parseCommonArgs,
   parseJsonc,
@@ -85,6 +86,7 @@ import {
   resolveCliInvocation,
   resolveRunnerExitCode,
   SAFE_ENV_WHITELIST,
+  scanVersionDirs,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_PATTERNS,
   terminateProcessTree,
@@ -93,6 +95,24 @@ import {
 // ============================================================================
 // SECTION: Types
 // ============================================================================
+
+/**
+ * @typedef {'cli'|'desktop'|'vscode'} OpencodeMode
+ */
+
+/**
+ * @typedef {object} OpencodeModeDefinition
+ * @property {OpencodeMode} mode
+ * @property {string} name
+ * @property {() => string|null} fn Resolves the binary path for this mode, or null if absent.
+ */
+
+/**
+ * @typedef {object} OpencodeTarget
+ * @property {OpencodeMode} mode
+ * @property {string} name
+ * @property {string} bin
+ */
 
 /**
  * @typedef {object} OpencodeSettings
@@ -140,6 +160,10 @@ import {
  * @property {'opencode'} provider
  * @property {string} model
  * @property {string} agent
+ * @property {OpencodeMode|null} mode Binary provenance — which install shape supplied the
+ *   executable (cli/desktop/vscode); null when no mode resolved and the bare `'opencode'`
+ *   fallback string is used. Independent of `engineType`, which reports the execution engine
+ *   (e.g. `'linux-bwrap'`); under bwrap both are present.
  * @property {string} engineType
  * @property {string} stdout Cleaned assistant response.
  * @property {string} rawStdout Raw stdout, unparsed.
@@ -168,15 +192,35 @@ export const DEFAULT_OUTPUT_LIMIT = 8192;
 export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
 
 /**
+ * Execution modes in discovery priority order: OpenCode CLI > OpenCode Desktop app >
+ * OpenCode VS Code extension. The single source of truth for mode metadata — every mode-aware
+ * function below (resolution, availability) iterates this instead of redeclaring the list.
+ * Mirrors claude-run.mjs/copilot-run.mjs MODE_DEFINITIONS; unlike those runners, opencode does
+ * not cascade execution across modes — this orders *binary discovery* only.
+ * @type {OpencodeModeDefinition[]}
+ */
+export const OPENCODE_MODE_DEFINITIONS = [
+  { mode: 'cli', name: 'OpenCode CLI', fn: () => getOpencodeCliBinary() },
+  { mode: 'desktop', name: 'OpenCode Desktop', fn: () => getOpencodeDesktopBinary() },
+  { mode: 'vscode', name: 'OpenCode VS Code Extension', fn: () => getOpencodeVscodeBinary() },
+];
+
+/**
  * Human-readable name used in init and completion banners. Says "LM Studio" only when the
  * resolved settings actually target it — a remote provider gets its own name instead, so logs
- * stop claiming "LM Studio" for a dispatch that never touched it.
+ * stop claiming "LM Studio" for a dispatch that never touched it. `mode` adds the binary
+ * provenance segment (`OpenCode [cli] (LM Studio)`); omitted when no mode resolved.
  * @param {OpencodeSettings} settings
+ * @param {OpencodeMode|null} [mode]
  * @returns {string}
  */
-function describeProvider(settings) {
-  if (settings.isLocal) return 'OpenCode (LM Studio)';
-  return settings.providerName ? `OpenCode (${settings.providerName})` : 'OpenCode (default)';
+function describeProvider(settings, mode = null) {
+  const suffix = settings.isLocal
+    ? '(LM Studio)'
+    : settings.providerName
+      ? `(${settings.providerName})`
+      : '(default)';
+  return mode ? `OpenCode [${mode}] ${suffix}` : `OpenCode ${suffix}`;
 }
 
 /**
@@ -277,6 +321,9 @@ async function runOpencodeSingle(options = {}) {
   if (effort) settings.reasoningEffort = effort;
   const { isLocal } = settings;
   const endpoint = isLocal ? getLMStudioEndpoint(settings) : null;
+  // Binary discovery (cli > desktop > vscode) happens before the init banner so both banners
+  // carry the resolved mode; the target is threaded down into buildCommand.
+  const target = resolveOpencodeTarget();
   // A resolved host (local, or an explicit remote baseURL) still gets a real URL, built with its
   // actual scheme/port so an HTTPS remote endpoint doesn't get relabeled as plain http://; a
   // remote provider relying on opencode's own built-in endpoint registry has no host this script
@@ -294,7 +341,7 @@ async function runOpencodeSingle(options = {}) {
   // so offline runs still produce a session log.
   const sessionLogger = createSessionLogger('opencode');
   emitInitBanner({
-    provider: describeProvider(settings),
+    provider: describeProvider(settings, target?.mode ?? null),
     model: settings.rawModel || null,
     effort: settings.reasoningEffort || null,
     sessionLink,
@@ -359,7 +406,8 @@ async function runOpencodeSingle(options = {}) {
       throw err;
     }
 
-    // Step 7: build the command, resolving model/agent from the pre-read config.
+    // Step 7: build the command, resolving model/agent from the pre-read config and using the
+    // binary discovered above (target.bin) instead of re-resolving inside.
     const effectiveModel = model || resolveDefaultModel(rawConfig);
     const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
     const { command, args, engineType, briefFile } = buildCommand({
@@ -369,6 +417,7 @@ async function runOpencodeSingle(options = {}) {
       effort,
       json,
       config: rawConfig,
+      binary: target?.bin ?? null,
     });
 
     if (verbose) {
@@ -402,6 +451,7 @@ async function runOpencodeSingle(options = {}) {
       effectiveAgent,
       engineType,
       briefFile,
+      mode: target?.mode ?? null,
       releaseOnce,
     });
   } catch (err) {
@@ -457,6 +507,7 @@ function spawnOpencode({
   effectiveAgent,
   engineType,
   briefFile,
+  mode,
   releaseOnce,
 }) {
   return new Promise((resolve, reject) => {
@@ -554,7 +605,7 @@ function spawnOpencode({
       }
 
       emitCompletionBanner({
-        provider: describeProvider(settings),
+        provider: describeProvider(settings, mode),
         sessionLink,
         exitCode,
         truncated,
@@ -566,6 +617,7 @@ function spawnOpencode({
         provider: 'opencode',
         model: effectiveModel,
         agent: effectiveAgent,
+        mode: mode ?? null,
         engineType,
         stdout: cleanStdout,
         rawStdout: stdoutBuffer,
@@ -1275,18 +1327,277 @@ function probeOpencodeOnPath() {
  * @returns {string}
  */
 export function resolveOpencodeBinary() {
-  return probeOpencodeOnPath() || 'opencode';
+  return resolveOpencodeTarget()?.bin ?? 'opencode';
 }
 
 /**
- * Cross-platform binary-presence probe: true when `opencode` is discoverable on PATH. Used to
- * degrade {@link isOpencodeAvailable} for a remote provider, mirroring how
+ * Cross-platform binary-presence probe: true when any mode (cli > desktop > vscode) resolves an
+ * executable. Used to degrade {@link isOpencodeAvailable} for a remote provider, mirroring how
  * isClaudeAvailable/isCopilotAvailable/isAgyAvailable already probe reachability via binary
  * discovery rather than a live network call.
  * @returns {boolean}
  */
 export function isOpencodeBinaryAvailable() {
-  return probeOpencodeOnPath() !== null;
+  return resolveOpencodeTarget() !== null;
+}
+
+// ============================================================================
+// SECTION: Binary Mode Discovery (cli > desktop > vscode)
+// ============================================================================
+
+/**
+ * Mode 1: standalone OpenCode CLI on PATH. The historical discovery path, unchanged —
+ * `where.exe` on Windows (preferring a real .exe, then a .cmd/.bat launcher), `which` elsewhere.
+ * @returns {string|null}
+ */
+export function getOpencodeCliBinary() {
+  return probeOpencodeOnPath();
+}
+
+/**
+ * Collects the executable files directly inside `dir` whose names match `pattern`, as full paths.
+ * `findFirstExistingFile` does literal existence checks only (no glob expansion), so candidate
+ * builders must enumerate directories and hand over concrete paths.
+ * @param {string} dir
+ * @param {RegExp} pattern
+ * @returns {string[]}
+ */
+function listMatchingExecutables(dir, pattern) {
+  try {
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && pattern.test(entry.name))
+      .map((entry) => path.join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/** Sidecar naming used by the desktop app's bundled CLI (Tauri external-bin convention). */
+const OPENCODE_SIDECAR_PATTERN = /^opencode-cli-.*\.(exe|cmd|bat)$/i;
+const OPENCODE_SIDECAR_PATTERN_POSIX = /^opencode-cli-/;
+
+/**
+ * Gathers candidate executable paths for the OpenCode Desktop application's bundled CLI.
+ * The desktop app embeds the `opencode` CLI binary as a sidecar and runs it as a child process;
+ * the desktop's own main binary (a GUI shell, sometimes itself named `opencode.exe` on Windows)
+ * is NOT headless-capable and is never a candidate — only `resources\`/`bin\` subpaths are
+ * probed, never the install root.
+ *
+ * Branching by Operating System:
+ * - Windows (win32): `%LOCALAPPDATA%\OpenCode` and `%LOCALAPPDATA%\Programs\OpenCode`
+ *   (Electron-builder NSIS layout) — `resources\bin`, `resources`, and `bin` subdirectories,
+ *   plus version dirs scanned with `scanVersionDirs`.
+ * - macOS (darwin): `/Applications/OpenCode.app` and `~/Applications/OpenCode.app` —
+ *   `Contents/Resources/bin`, `Contents/Resources` sidecars, and the `app.asar.unpacked` bin shape.
+ * - Linux (linux): `/opt/opencode-desktop/resources` (nix layout), `~/.local/share/opencode-desktop`,
+ *   and `~/.local/share/OpenCode`.
+ *
+ * @returns {string[]} Ordered array of candidate paths (concrete paths only, no globs)
+ */
+export function getOpencodeDesktopCandidates() {
+  const homeDir = os.homedir();
+  const candidates = [];
+  const isWin = process.platform === 'win32';
+  const sidecarPattern = isWin ? OPENCODE_SIDECAR_PATTERN : OPENCODE_SIDECAR_PATTERN_POSIX;
+  const cliNames = isWin ? ['opencode.exe', 'opencode.cmd', 'opencode.bat'] : ['opencode'];
+
+  const pushDir = (dir) => {
+    for (const name of cliNames) candidates.push(path.join(dir, name));
+    candidates.push(...listMatchingExecutables(dir, sidecarPattern));
+  };
+
+  // [OS: Windows] Only `resources\`/`bin\` subpaths are probed — never a directory root itself,
+  // where the GUI shell (sometimes itself named `opencode.exe`, matched case-insensitively on
+  // NTFS) would be mis-resolved as the CLI. This includes version dirs: scanVersionDirs returns
+  // EVERY subdirectory (no version-shape filter), and a version dir can be an install root
+  // (Squirrel `app-<ver>` layout), so each one is only probed through its subpaths.
+  const pushDirTree = (rootDir) => {
+    for (const sub of ['resources\\bin', 'resources', 'bin']) {
+      pushDir(path.join(rootDir, sub));
+    }
+  };
+
+  if (isWin) {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (localAppData) {
+      for (const root of [
+        path.join(localAppData, 'OpenCode'),
+        path.join(localAppData, 'Programs', 'OpenCode'),
+      ]) {
+        pushDirTree(root);
+        for (const ver of scanVersionDirs(root)) {
+          pushDirTree(path.join(root, ver));
+        }
+      }
+    }
+  }
+
+  if (process.platform === 'darwin') {
+    for (const app of ['/Applications/OpenCode.app', path.join(homeDir, 'Applications/OpenCode.app')]) {
+      const resources = path.join(app, 'Contents', 'Resources');
+      pushDir(path.join(resources, 'bin'));
+      pushDir(resources);
+      pushDir(path.join(resources, 'app.asar.unpacked', 'bin'));
+    }
+  }
+
+  if (process.platform === 'linux') {
+    for (const root of [
+      '/opt/opencode-desktop/resources',
+      path.join(homeDir, '.local/share/opencode-desktop'),
+      path.join(homeDir, '.local/share/OpenCode'),
+    ]) {
+      pushDir(path.join(root, 'bin'));
+      pushDir(root);
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Returns the first candidate that exists AND is executable, advancing past non-executable
+ * namesakes instead of aborting on the first existing hit (`findFirstExistingFile` checks
+ * existence only, so one unexecutable data file sharing the CLI's name would otherwise mask a
+ * valid sidecar later in the list). `isExecutableFile` stats through symlinks, matching the
+ * symlink acceptance in `listMatchingExecutables`.
+ * @param {string[]} candidates
+ * @returns {string|null}
+ */
+function firstExecutableCandidate(candidates) {
+  for (const candidate of candidates) {
+    if (candidate && isExecutableFile(candidate)) return path.resolve(candidate);
+  }
+  return null;
+}
+
+/**
+ * Resolves the OpenCode Desktop application's bundled CLI binary.
+ * @returns {string|null} Path to the sidecar CLI executable, or null if not found.
+ */
+export function getOpencodeDesktopBinary() {
+  return firstExecutableCandidate(getOpencodeDesktopCandidates());
+}
+
+/**
+ * Gathers candidate executable paths for the OpenCode VS Code extensions
+ * (`sst-dev.opencode`, `sst-dev.opencode-v2`). The publisher-id prefix is anchored so an
+ * unrelated extension directory can never match, and candidate binary names are exact
+ * (`opencode`, `opencode.exe`, `opencode.cmd`) rather than prefix globs. Current released
+ * extensions spawn the CLI from PATH and bundle no binary, so this list is usually empty —
+ * the mode exists so a future bundled-binary version is discovered without another change.
+ *
+ * Scans `~/.vscode/extensions`, `~/.vscode-insiders/extensions`, `~/.vscode-server/extensions`,
+ * and `~/.cursor/extensions` (newest extension version first), probing `bin/`, `resources/bin/`,
+ * and `dist/` inside each matching extension directory.
+ *
+ * @returns {string[]} Ordered array of candidate paths (concrete paths only, no globs)
+ */
+export function getOpencodeVscodeCandidates() {
+  const homeDir = os.homedir();
+  const candidates = [];
+  const isWin = process.platform === 'win32';
+  const cliNames = isWin ? ['opencode.exe', 'opencode.cmd'] : ['opencode'];
+  const extBaseDirs = [
+    path.join(homeDir, '.vscode', 'extensions'),
+    path.join(homeDir, '.vscode-insiders', 'extensions'),
+    path.join(homeDir, '.vscode-server', 'extensions'),
+    path.join(homeDir, '.cursor', 'extensions'),
+  ];
+
+  for (const extBase of extBaseDirs) {
+    if (!fs.existsSync(extBase)) continue;
+    let entries;
+    try {
+      entries = fs.readdirSync(extBase, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    const extNames = entries
+      .filter(
+        (entry) => entry.isDirectory() && /^sst-dev\.opencode(?:-v2)?-/i.test(entry.name),
+      )
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' }));
+
+    for (const extName of extNames) {
+      for (const sub of ['bin', path.join('resources', 'bin'), 'dist']) {
+        for (const name of cliNames) {
+          candidates.push(path.join(extBase, extName, sub, name));
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+/**
+ * Resolves the OpenCode VS Code extension's bundled CLI binary.
+ * @returns {string|null} Path to the bundled executable, or null (the norm today).
+ */
+export function getOpencodeVscodeBinary() {
+  return firstExecutableCandidate(getOpencodeVscodeCandidates());
+}
+
+/**
+ * Pure cascade core: iterates mode definitions in priority order and returns the first target
+ * with a resolvable binary, or null. Unit-testable with fabricated resolvers — no filesystem
+ * access of its own.
+ * @param {OpencodeModeDefinition[]} definitions
+ * @returns {OpencodeTarget|null}
+ */
+export function resolveTargetFrom(definitions) {
+  for (const candidate of definitions) {
+    const bin = candidate.fn();
+    if (bin) {
+      return { mode: candidate.mode, name: candidate.name, bin };
+    }
+  }
+  return null;
+}
+
+// Per-process resolution memo: `undefined` = not yet resolved, a target = first successful
+// unpinned resolution, `null` = every mode missed. Caching the negative result too keeps the
+// (common) no-opencode machine off repeated `which`/`where.exe` probes and extension-dir scans
+// across `cascadeModels`' per-model re-entry; dispatch processes are short-lived, so a
+// mid-process install going unnoticed until the next process is an accepted trade-off.
+// `_resetOpencodeTargetCache()` is the test seam.
+let cachedOpencodeTarget;
+
+/**
+ * Resolves the active OpenCode execution target in discovery priority order
+ * (cli > desktop > vscode), or for one pinned mode. Unpinned results are memoized per process
+ * (see {@link _resetOpencodeTargetCache}); a pinned lookup never touches the cache.
+ * @param {OpencodeMode|string|null} [preferredMode] Pin resolution to one mode (case-insensitive).
+ * @returns {OpencodeTarget|null}
+ */
+export function resolveOpencodeTarget(preferredMode = null) {
+  const normalized = preferredMode ? String(preferredMode).toLowerCase() : null;
+  if (!normalized && cachedOpencodeTarget !== undefined) {
+    if (!cachedOpencodeTarget) return null;
+    // Staleness re-check: a long-lived process surviving an uninstall must not keep returning a
+    // dead path; a vanished binary re-resolves (cheap existsSync, no re-probe while it lives).
+    try {
+      if (fs.existsSync(cachedOpencodeTarget.bin)) return cachedOpencodeTarget;
+    } catch {}
+    cachedOpencodeTarget = undefined;
+  }
+  const candidates = normalized
+    ? OPENCODE_MODE_DEFINITIONS.filter((m) => m.mode === normalized)
+    : OPENCODE_MODE_DEFINITIONS;
+  const target = resolveTargetFrom(candidates);
+  // Cache both outcomes: a target (with the staleness re-check above) or null, so the
+  // no-opencode machine stops re-probing and re-scanning on every call and model attempt. The
+  // negative branch accepts the same mid-process-install trade-off stated in the cache comment.
+  if (!normalized) cachedOpencodeTarget = target;
+  return target;
+}
+
+/** Test seam: clears the per-process target memoization. */
+export function _resetOpencodeTargetCache() {
+  cachedOpencodeTarget = undefined;
 }
 
 /**
@@ -1312,6 +1623,11 @@ export function resolveOpencodeStateDirs({ home, env = {} }) {
  *
  * @param {object} params
  * @param {string[]} params.opencodeArgs
+ * @param {string} [params.binary] Binary argv entry following `--chdir`; defaults to the bare
+ *   `'opencode'` (PATH-resolved inside the sandbox). Callers threading a discovered absolute
+ *   path (desktop/vscode sidecar) pass it here — it stays reachable via the `--ro-bind / /`
+ *   root mount, provided it does not live under a tmpfs overlay (`/tmp`, `/run`); the candidate
+ *   lists never place a sidecar there.
  * @param {string[]} [params.files]
  * @param {string|null} [params.briefFile]
  * @param {string} params.projectRoot
@@ -1319,7 +1635,15 @@ export function resolveOpencodeStateDirs({ home, env = {} }) {
  * @param {NodeJS.ProcessEnv} [params.env]
  * @returns {string[]}
  */
-export function buildBwrapArgs({ opencodeArgs, files = [], briefFile = null, projectRoot, home, env = {} }) {
+export function buildBwrapArgs({
+  opencodeArgs,
+  files = [],
+  briefFile = null,
+  projectRoot,
+  home,
+  env = {},
+  binary = 'opencode',
+}) {
   const bwrapArgs = [
     '--ro-bind', '/', '/',
     '--dev', '/dev',
@@ -1356,7 +1680,7 @@ export function buildBwrapArgs({ opencodeArgs, files = [], briefFile = null, pro
   }
 
   bwrapArgs.push('--chdir', projectRoot);
-  bwrapArgs.push('opencode', ...opencodeArgs);
+  bwrapArgs.push(binary, ...opencodeArgs);
   return bwrapArgs;
 }
 
@@ -1371,6 +1695,9 @@ export function buildBwrapArgs({ opencodeArgs, files = [], briefFile = null, pro
  * @param {boolean} [params.json]
  * @param {object|null} [params.config] Config `runOpencode` already parsed; passing it keeps the
  *   single parse threaded through, instead of re-reading and re-merging the tiers from disk here.
+ * @param {string|null} [params.binary] Pre-resolved delegate binary (the discovered target's
+ *   absolute path, threaded from `runOpencodeSingle`); falls back to {@link resolveOpencodeBinary}
+ *   when omitted.
  */
 export function buildCommand({
   prompt = '',
@@ -1380,20 +1707,30 @@ export function buildCommand({
   effort = null,
   json = false,
   config = null,
+  binary = null,
 } = {}) {
   const isLinux = process.platform === 'linux';
   const checkBwrap = isLinux ? cp.spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
   const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
 
   // Resolved before the prompt is prepared: a Windows .cmd shim forces a brief-file spill.
-  const binary = hasLinuxBwrap ? 'opencode' : resolveOpencodeBinary();
+  let effectiveBinary = binary ?? (hasLinuxBwrap ? 'opencode' : resolveOpencodeBinary());
+  // [OS: Linux] A discovered absolute path under a tmpfs overlay (/tmp, /run are --tmpfs mounts)
+  // is unreachable inside the bwrap sandbox; fall back to the bare name, which PATH-resolves
+  // inside the sandbox as before the absolute-path threading was introduced. Known limitation:
+  // the literal-prefix check misses paths only reachable via symlinks (e.g. /var/run) or a
+  // TMPDIR-relocated install; realpath comparison was rejected because the candidate may not
+  // exist yet at this point.
+  if (hasLinuxBwrap && effectiveBinary && /^(?:\/tmp|\/run)\//.test(effectiveBinary)) {
+    effectiveBinary = 'opencode';
+  }
 
   const finalFormattedPrompt =
     prompt.includes('[SECURITY GUARDRAIL - READ-ONLY CONSTRAINTS]')
       ? prompt
       : buildFormattedPrompt(prompt, files);
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(finalFormattedPrompt, 'opencode', {
-    binary,
+    binary: effectiveBinary,
   });
   // NOTE: accepted risk — headless runs cannot answer permission prompts, so `--auto` stays;
   // read-only on macOS/Windows rests on the prompt guardrail + git integrity check (see
@@ -1436,13 +1773,14 @@ export function buildCommand({
       projectRoot: PROJECT_ROOT,
       home,
       env,
+      binary: effectiveBinary,
     });
 
     return { command: 'bwrap', args: bwrapArgs, engineType: 'linux-bwrap', briefFile };
   }
 
   return {
-    command: binary,
+    command: effectiveBinary,
     args: opencodeArgs,
     engineType: 'process-hardened',
     briefFile,

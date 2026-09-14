@@ -22,10 +22,17 @@ import {
   DEFAULT_OUTPUT_LIMIT,
   GPU_LOCK_FILE_NAME,
   LM_STUDIO_NO_LOADED_MODEL_WARNING,
+  OPENCODE_MODE_DEFINITIONS,
+  _resetOpencodeTargetCache,
   buildBwrapArgs,
   buildCommand,
   describeLMStudioModelState,
   findLastErrorLine,
+  getOpencodeCliBinary,
+  getOpencodeDesktopBinary,
+  getOpencodeDesktopCandidates,
+  getOpencodeVscodeBinary,
+  getOpencodeVscodeCandidates,
   resolveOpencodeBinary,
   getLMStudioEndpoint,
   getOpencodeEnv,
@@ -40,10 +47,19 @@ import {
   resolveDefaultModel,
   resolveManagedConfigDir,
   resolveOpencodeSettings,
+  resolveOpencodeTarget,
+  resolveTargetFrom,
   runOpencode,
 } from '../../../skills/dispatch/scripts/opencode-run.mjs';
+import { findFirstExistingFile } from '../../../skills/dispatch/scripts/common.mjs';
 
 describe('opencode-run', () => {
+  // Binary discovery is memoized per process; reset after every test so a target cached under
+  // one test's mocked (or real) environment never leaks into the next.
+  afterEach(() => {
+    _resetOpencodeTargetCache();
+  });
+
   describe('Sensitive file denylist', () => {
     it('covers the documented sensitive filename shapes', () => {
       const sensitiveFiles = [
@@ -401,11 +417,14 @@ describe('opencode-run', () => {
       assert.equal(httpGet.mock.callCount(), 0);
     });
 
-    it('returns false when the opencode binary is not discoverable on PATH for a non-local endpoint', async () => {
+    it('degrades to the widened binary-presence probe when the CLI is not on PATH for a non-local endpoint', async () => {
       mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
+      _resetOpencodeTargetCache();
 
       const available = await isOpencodeAvailable({ isLocal: false });
-      assert.equal(available, false);
+      // Desktop/vscode resolvers are not PATH-based, so a CLI-absent PATH alone no longer decides
+      // availability — assert consistency with the resolver instead of a hardcoded false.
+      assert.equal(available, resolveOpencodeTarget() !== null);
     });
 
     it('"Fact to verify": no model configured anywhere degrades preflight to the binary-presence probe, not an LM Studio HTTP preflight', async () => {
@@ -427,13 +446,18 @@ describe('opencode-run', () => {
 
     it('isOpencodeBinaryAvailable() reflects the same discovery result directly', () => {
       mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
+      _resetOpencodeTargetCache();
       assert.equal(isOpencodeBinaryAvailable(), true);
 
       // NOTE: restore before re-mocking — a stacked mock.method makes restoreAll reinstate the
       // first mock rather than the real cp.spawnSync, leaking it into later tests.
       mock.restoreAll();
       mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
-      assert.equal(isOpencodeBinaryAvailable(), false);
+      // The first phase memoized its target; discovery semantics widened (desktop/vscode modes),
+      // so a fresh resolution is required, and absence of the CLI on a stubbed PATH no longer
+      // implies unavailability — assert consistency with the resolver instead of a hardcoded false.
+      _resetOpencodeTargetCache();
+      assert.equal(isOpencodeBinaryAvailable(), resolveOpencodeTarget() !== null);
     });
   });
 
@@ -1013,6 +1037,21 @@ describe('opencode-run', () => {
       const withoutEffort = buildCommand({ prompt: 'x', agent: 'delegate' });
       assert.ok(!withoutEffort.args.includes('--variant'));
     });
+
+    it('returns the threaded binary as command (non-bwrap platforms)', { skip: process.platform === 'linux' }, () => {
+      // On Linux with bwrap installed the command becomes 'bwrap' (its tmpfs test covers that
+      // branch); this asserts the direct-spawn path everywhere else.
+      const res = buildCommand({ prompt: 'x', binary: '/custom/opencode', config: {} });
+      assert.equal(res.command, '/custom/opencode');
+    });
+
+    it('falls back to the bare name when the threaded binary sits under a bwrap tmpfs overlay', { skip: process.platform !== 'linux' }, () => {
+      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/bin/bwrap\n' }));
+      const res = buildCommand({ prompt: 'x', binary: '/tmp/x/opencode', config: {} });
+      assert.equal(res.command, 'bwrap');
+      const chdirIndex = res.args.indexOf('--chdir');
+      assert.equal(res.args[chdirIndex + 2], 'opencode', 'tmpfs-overlayed path falls back to the bare name');
+    });
   });
 
   describe('buildBwrapArgs (Linux sandbox argv, pure)', () => {
@@ -1059,6 +1098,208 @@ describe('opencode-run', () => {
       const roBinds = bindTargets(args, '--ro-bind');
       assert.ok(roBinds.includes('/home/u/repo-other/notes.md'));
       assert.ok(!roBinds.includes('/home/u/repo/src/a.mjs'));
+    });
+
+    it('buildBwrapArgs spawns the threaded absolute binary after --chdir (desktop/vscode sidecar)', () => {
+      const absBinary = '/opt/opencode-desktop/resources/bin/opencode';
+      const args = buildBwrapArgs({ ...base, binary: absBinary });
+      const chdirIndex = args.indexOf('--chdir');
+      assert.ok(chdirIndex !== -1);
+      assert.equal(args[chdirIndex + 2], absBinary, 'the resolved binary follows --chdir <root>');
+      // Default remains the bare 'opencode' for callers that omit the field.
+      const defaultArgs = buildBwrapArgs(base);
+      assert.equal(defaultArgs[defaultArgs.indexOf('--chdir') + 2], 'opencode');
+    });
+  });
+
+  describe('binary mode discovery (cli > desktop > vscode)', () => {
+    afterEach(() => {
+      mock.restoreAll();
+      _resetOpencodeTargetCache();
+    });
+
+    it('OPENCODE_MODE_DEFINITIONS is ordered cli > desktop > vscode', () => {
+      assert.deepEqual(
+        OPENCODE_MODE_DEFINITIONS.map((m) => m.mode),
+        ['cli', 'desktop', 'vscode'],
+      );
+      for (const m of OPENCODE_MODE_DEFINITIONS) {
+        assert.equal(typeof m.name, 'string');
+        assert.equal(typeof m.fn, 'function');
+      }
+    });
+
+    it('resolveTargetFrom returns the first hit in priority order, null when all miss', () => {
+      const defs = [
+        { mode: 'cli', name: 'CLI', fn: () => null },
+        { mode: 'desktop', name: 'Desktop', fn: () => '/desktop/opencode' },
+        { mode: 'vscode', name: 'VSCode', fn: () => '/vscode/opencode' },
+      ];
+      assert.deepEqual(resolveTargetFrom(defs), {
+        mode: 'desktop',
+        name: 'Desktop',
+        bin: '/desktop/opencode',
+      });
+      assert.equal(resolveTargetFrom([{ mode: 'cli', name: 'CLI', fn: () => null }]), null);
+    });
+
+    it('resolveOpencodeTarget pins a mode case-insensitively and never returns another', () => {
+      for (const pinned of ['desktop', 'DESKTOP']) {
+        const target = resolveOpencodeTarget(pinned);
+        if (target) {
+          assert.equal(target.mode, 'desktop');
+        }
+      }
+      const vscode = resolveOpencodeTarget('vscode');
+      if (vscode) {
+        assert.equal(vscode.mode, 'vscode');
+      }
+    });
+
+    it('memoizes the first successful unpinned resolution and re-resolves a vanished binary', () => {
+      _resetOpencodeTargetCache();
+      // The staleness re-check stats the cached path, so the mocked probe must point at a real
+      // file for memoization to hold.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-memo-'));
+      const fakeCli = path.join(dir, 'opencode');
+      fs.writeFileSync(fakeCli, 'x');
+      try {
+        const probe = mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: `${fakeCli}\n` }));
+        const first = resolveOpencodeTarget();
+        const second = resolveOpencodeTarget();
+        assert.equal(second, first, 'the memoized target object is returned on the next call');
+        assert.equal(probe.mock.callCount(), 1, 'the cli probe ran exactly once');
+
+        fs.rmSync(fakeCli, { force: true });
+        const third = resolveOpencodeTarget();
+        assert.notEqual(third, first, 'a vanished cached binary re-resolves');
+        assert.equal(probe.mock.callCount(), 2, 'the cli probe re-ran after the staleness re-check');
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('_resetOpencodeTargetCache restores fresh resolution', () => {
+      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/local/bin/opencode\n' }));
+      _resetOpencodeTargetCache();
+      const first = resolveOpencodeTarget();
+      _resetOpencodeTargetCache();
+      const second = resolveOpencodeTarget();
+      assert.notEqual(second, first, 'a fresh target object is resolved after the reset');
+      assert.deepEqual(second, first);
+    });
+
+    it('isOpencodeBinaryAvailable() agrees with resolveOpencodeTarget()', () => {
+      assert.equal(isOpencodeBinaryAvailable(), resolveOpencodeTarget() !== null);
+    });
+
+    it('isOpencodeBinaryAvailable() is false when every discovery mode misses (deterministic)', () => {
+      const original = OPENCODE_MODE_DEFINITIONS.splice(
+        0,
+        OPENCODE_MODE_DEFINITIONS.length,
+        { mode: 'cli', name: 'OpenCode CLI', fn: () => null },
+        { mode: 'desktop', name: 'OpenCode Desktop', fn: () => null },
+        { mode: 'vscode', name: 'OpenCode VS Code Extension', fn: () => null },
+      );
+      try {
+        _resetOpencodeTargetCache();
+        assert.deepEqual(resolveOpencodeTarget(), null);
+        assert.equal(isOpencodeBinaryAvailable(), false);
+      } finally {
+        OPENCODE_MODE_DEFINITIONS.splice(0, OPENCODE_MODE_DEFINITIONS.length, ...original);
+        _resetOpencodeTargetCache();
+      }
+    });
+
+    it('memoizes the negative resolution (one probe across calls, deterministic)', () => {
+      // Only desktop/vscode are swapped to null resolvers — the real cli resolver stays so the
+      // probe-count assertion exercises the actual PATH probe.
+      const original = OPENCODE_MODE_DEFINITIONS.splice(
+        1,
+        2,
+        { mode: 'desktop', name: 'OpenCode Desktop', fn: () => null },
+        { mode: 'vscode', name: 'OpenCode VS Code Extension', fn: () => null },
+      );
+      try {
+        _resetOpencodeTargetCache();
+        const probe = mock.method(cp, 'spawnSync', () => ({ status: 1, stdout: '' }));
+        assert.deepEqual(resolveOpencodeTarget(), null);
+        assert.equal(isOpencodeBinaryAvailable(), false);
+        assert.equal(isOpencodeBinaryAvailable(), false);
+        assert.equal(probe.mock.callCount(), 1, 'the negative memo suppressed the second probe');
+      } finally {
+        OPENCODE_MODE_DEFINITIONS.splice(1, 2, ...original);
+        _resetOpencodeTargetCache();
+      }
+    });
+
+    it('desktop candidates never probe a version-dir install root (GUI-shell exclusion)', { skip: process.platform !== 'win32' }, () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-desktop-'));
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      try {
+        process.env.LOCALAPPDATA = dir;
+        // Squirrel-style layout: the version dir IS an install root holding the GUI shell.
+        const verDir = path.join(dir, 'OpenCode', 'app-1.2.3');
+        fs.mkdirSync(path.join(verDir, 'resources', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(verDir, 'OpenCode.exe'), 'gui-shell');
+        fs.writeFileSync(path.join(verDir, 'resources', 'bin', 'opencode.exe'), 'cli-sidecar');
+
+        const normalized = getOpencodeDesktopCandidates().map((c) => c.toLowerCase());
+        assert.ok(
+          normalized.includes(path.join(verDir, 'resources', 'bin', 'opencode.exe').toLowerCase()),
+          'the sidecar under resources\\bin is a candidate',
+        );
+        assert.ok(
+          !normalized.includes(path.join(verDir, 'opencode.exe').toLowerCase()),
+          'the version-dir install root (GUI shell) must never be a candidate',
+        );
+      } finally {
+        process.env.LOCALAPPDATA = originalLocalAppData;
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('getOpencodeCliBinary() is the cli mode resolver', () => {
+      const bin = getOpencodeCliBinary();
+      if (bin) {
+        // cli is first in priority, so a resolvable CLI binary must win the resolution.
+        const target = resolveOpencodeTarget();
+        assert.equal(target.mode, 'cli');
+        assert.equal(target.bin, bin);
+      }
+    });
+
+    it('candidate builders are pure, non-throwing, and emit concrete paths only', () => {
+      const desktop = getOpencodeDesktopCandidates();
+      const vscode = getOpencodeVscodeCandidates();
+      assert.ok(Array.isArray(desktop));
+      assert.ok(Array.isArray(vscode));
+      for (const candidate of [...desktop, ...vscode]) {
+        assert.equal(typeof candidate, 'string');
+        assert.ok(!candidate.includes('*'), `candidate must be a concrete path, got ${candidate}`);
+      }
+    });
+
+    it('vscode builder yields a null contract when no extension bundles a binary', () => {
+      const vscodeBin = getOpencodeVscodeBinary();
+      if (vscodeBin) {
+        // If a bundled binary ever appears, it must be a real file inside an sst-dev extension dir.
+        assert.ok(fs.existsSync(vscodeBin));
+        assert.match(vscodeBin.replace(/\\/g, '/'), /sst-dev\.opencode(-v2)?-[^/]+\//);
+      }
+    });
+
+    it('findFirstExistingFile picks the first existing entry from a fabricated list', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-disc-'));
+      try {
+        const ghost = path.join(dir, 'ghost.exe');
+        const real = path.join(dir, 'real.exe');
+        fs.writeFileSync(real, 'x');
+        assert.equal(findFirstExistingFile([ghost, real, path.join(dir, 'later.exe')]), path.resolve(real));
+        assert.equal(findFirstExistingFile([ghost]), null);
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
     });
   });
 

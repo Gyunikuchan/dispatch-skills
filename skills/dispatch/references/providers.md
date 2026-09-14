@@ -130,18 +130,30 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
   other loopback-bound backend): preflight HTTP probe against the resolved `baseURL` (e.g.
   `http://127.0.0.1:1234/v1`) — fast, free, and safe against a machine the user just started.
   Remote, or nothing configured at all (`resolveOpencodeSettings`'s `isLocal: false`): no live
-  network probe — `isOpencodeAvailable()` degrades to a binary-presence probe (`opencode` on
-  `$PATH`), mirroring `isClaudeAvailable`/`isCopilotAvailable`/`isAgyAvailable`; actual
+  network probe — `isOpencodeAvailable()` degrades to a binary-presence probe (any mode of the
+  cli > desktop > vscode discovery below), mirroring
+  `isClaudeAvailable`/`isCopilotAvailable`/`isAgyAvailable`; actual
   reachability is left to `opencode`'s own execution, whose `auth`/`quota`/`not-found` failures
   are classified normally.
 - **Config**: merged across every locally-readable tier of opencode's own precedence order (https://opencode.ai/docs/config/#precedence-order): global (`~/.config/opencode/`, `XDG_CONFIG_HOME`-aware) → `OPENCODE_CONFIG` → project root → `.opencode/` directories → `OPENCODE_CONFIG_CONTENT` → OS-managed config dirs, for model, agent, and limit overrides. `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, and `XDG_CONFIG_HOME` also pass through to the spawned delegate's environment so it resolves the same config. Remote config and macOS MDM `.mobileconfig` are excluded — see `readOpencodeConfig` in `opencode-run.mjs`.
 
 ### Order of Preference
 1. **OpenCode (`opencode`)**:
-   - Cross-platform: `opencode` binary on system `$PATH`, connecting to whatever provider endpoint
+   - Binary discovery priority (mirroring the Claude/Copilot runners' mode order):
+     1. **OpenCode CLI** — `opencode` binary on system `$PATH` (`where.exe`/`which`, with the
+        Windows `.exe` > `.cmd/.bat` preference).
+     2. **OpenCode Desktop** — the CLI sidecar binary bundled inside the desktop app
+        (`%LOCALAPPDATA%\OpenCode`, `/Applications/OpenCode.app`, `/opt/opencode-desktop`, …);
+        the desktop GUI shell itself is never a candidate.
+     3. **OpenCode VS Code extension** — a CLI binary bundled inside `sst-dev.opencode(-v2)`
+        extension directories; best-effort, since current released extensions spawn the CLI from
+        PATH and bundle no binary.
+     Connecting to whatever provider endpoint
      resolves from the configured `model` (`lmstudio/...` resolves to local `http://127.0.0.1:1234/v1`
      by convention; any other `provider/model` string resolves elsewhere). With no `model`
-     configured anywhere, `opencode`'s own CLI default applies.
+     configured anywhere, `opencode`'s own CLI default applies. Unlike the Claude/Copilot runners,
+     opencode does not cascade *execution* across modes — the priority orders binary discovery
+     only, and the resolved mode is reported as `mode` on the run result and banners.
 
 ### Sandboxing & Isolation
 - **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.

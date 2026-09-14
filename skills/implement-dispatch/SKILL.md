@@ -171,7 +171,7 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
 | `claude` | `general-purpose` |
 | `agy` | `self` |
 | `copilot` | `self` |
-| `opencode` | `build` |
+| `opencode` | `general` |
 
 ### Dispatch Invocation Rules
 - **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
