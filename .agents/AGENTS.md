@@ -1,31 +1,32 @@
 # Dispatch Skills Agent Guide
 
-Agent skills for delegating work to external coding-agent CLIs and reviewing results. Single source of truth for agent rules (`.claude/CLAUDE.md` symlinks here; edit this file).
+Agent skills for cross-agent CLI delegation and review. Single source of truth for repository rules (`.claude/CLAUDE.md` symlinks here; edit this file).
 
 ## Product North Star & Core Pillars
 
 Deliver high-confidence cross-agent delegation and review with minimal token overhead and zero human babysitting.
 
-- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens to verify code rather than guess or skip; optimize context hygiene and token density before raw speed.
-- **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of vote count; reject unverified findings even if unanimous. Axis coverage is explicit and visible.
-- **Structural Least Privilege**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools), except OpenCode off Linux (accepted risk; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
-- **Context Hygiene & Token Density**: Protect the orchestrator's context window and write token budget. Stream execution traces and subprocess logs out-of-context to temp logs in OS temp (not `.scratch/`). Never output raw delegate responses or full review reports verbatim in chat; pass only concise syntheses, banners, and log paths to the orchestrator, recording full findings into artifacts. Progressive disclosure drives high token density.
-- **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without user intervention.
-- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and work standalone or together. Shared conventions (`skills/dispatch/references/alignment.md`) govern only review-flow skills; host conventions always win, and skills never write conventions into the host repo.
+- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens verifying claims rather than guessing; optimize context hygiene and token density before raw speed.
+- **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
+- **Structural Least Privilege**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools; accepted risk: OpenCode off Linux per `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for orchestrators or native subagents. Runner harnesses verify workspace integrity across delegate runs and sanitize outputs.
+- **Context Hygiene & Token Density**: Stream execution traces and subprocess logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record full findings into artifacts. Progressive disclosure protects context windows.
+- **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
+- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules and fall back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/alignment.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Never relay verbose subprocess traces or verbatim delegate reports in chat; summarize findings compactly and link to artifacts.
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Summarize findings compactly and link to artifacts/temp logs instead of relaying verbose traces or verbatim reports in chat.
 
 ## Ask Before You Assume
 
-Clarify requirements, constraints, or trade-offs with multiple viable interpretations before building. State assumptions explicitly; suggest simpler alternatives when available. Triggers:
+Clarify requirements, constraints, or trade-offs with multiple viable interpretations before building. State assumptions explicitly; suggest simpler alternatives when available.
 
+**Escalation triggers**:
 - Breaking changes to skill interfaces, shared review schemas, or dependency contracts.
 - Introducing new external dependencies or runtime prerequisites.
 - Suspected user mistake, ambiguous prompt, or contradictory instruction.
 
-Report adjacent findings in output; keep task execution strictly bounded to requested scope.
+Report adjacent findings in output; keep execution strictly bounded to requested scope.
 
 ## Architecture & Dependency Invariants
 
@@ -51,37 +52,37 @@ dispatch-plan-review, dispatch-code-review → dispatch
 dispatch → (nothing)
 ```
 
-- **Name the skill, not its install path.** Refer to another skill by name; a sibling file inside the same `<skills-dir>` may be linked relatively (as `implement-dispatch` links the review skills' templates, keeping them single-source). Host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) and absolute paths never appear in skill markdown — they break the moment the skill is installed to a different host.
+- **Name the skill, not its install path**: Reference skills by name or sibling-relative paths (`<skills-dir>`). Never use host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) or absolute paths in skill markdown.
 - **Assume dependencies are installed**: Downstream skills assume upstream dependencies exist and invoke them directly.
-- **Upstream skills never name downstream skills** in prose or frontmatter, except `skills/dispatch/references/alignment.md` and the gated "Skill Alignment" pointer section in `skills/dispatch/SKILL.md` (which serve `implement-dispatch`, `dispatch-plan-review`, `dispatch-code-review`).
+- **Upstream skills never name downstream skills** in prose or frontmatter (gated exceptions: `skills/dispatch/references/alignment.md` and `skills/dispatch/SKILL.md` § Skill Alignment).
 - **Graceful degradation**: State absence of optional dependencies and run the reduced flow.
 
 ## Documentation Standards
 
-Differentiate human documentation, agent execution contracts, and non-operational background notes:
+Differentiate human documentation, agent execution contracts, and maintainer notes:
 
-- **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human developers. Filter: *Is this something the human user of the skill needs to know?*
-  - **Root `README.md`**: Core value proposition (2–3 sentences), quick install (`npx skills add ...`), skills catalog table, quick start prompts, architecture highlights.
-  - **Skill Manuals (`skills/*/README.md`)**: Purpose and core concepts, prerequisites/installation, realistic invocation examples (slash commands / prompt templates), configuration, CLI quirks/troubleshooting.
-- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus exclusively on operational context, decision paths, and checkable execution bounds. Non-operational maintainer context belongs in `references/notes.md`.
+- **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human users (*Is this something the user needs to know?*).
+  - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
+  - **Skill Manuals (`skills/*/README.md`)**: Purpose, concepts, prerequisites, realistic invocation examples, configuration, and troubleshooting.
+- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus strictly on operational context, decision paths, and checkable execution bounds. Maintainer notes belong in `references/notes.md`.
 
 ## Authoring & Cross-Platform Standards
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs).
 
-Portable by default across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
+Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
 
-- **Cross-Skill Alignment & Shared Conventions**: Single-source multi-skill conventions and shared review schemas in `skills/dispatch/references/alignment.md` to ensure downward independence and cross-invocation compatibility.
-- **Naming**: kebab-case for skill identifiers and filenames.
+- **Cross-Skill Alignment**: Single-source multi-skill conventions and shared schemas in `skills/dispatch/references/alignment.md`.
+- **Naming**: kebab-case for skill identifiers, filenames, and slugs.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
-- **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
-- **Scratch directory**: Strict allowlist: only active/working plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`, relocated to OS temp on finalize) belong in `.scratch/`. All other working data — subprocess logs and execution traces, filled review prompt files (`*-review-prompt*.md`), probe captures, intermediate findings, and ephemeral run files — belong in the OS temp directory (`os.tmpdir()`). Orchestrators owning the full lifecycle (`implement-dispatch`, `audit-dispatch-skills`) relocate their working scratch artifacts to OS temp on completion/consensus; standalone reviews retain their plan/walkthrough for handoff and subsequent review rounds (see `skills/dispatch/references/alignment.md` § Artifact Lifecycle). Note: `.scratch/` is intentionally not git-ignored; review `git status` before committing.
+- **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
+- **Scratch directory allowlist**: Only active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. All other data (subprocess logs, traces, filled prompts `*-review-prompt*.md`, probe captures, ephemeral run files) belongs in OS temp (`os.tmpdir()`). Orchestrators relocate working scratch artifacts to OS temp on completion; standalone reviews retain plans/walkthroughs in place (see `skills/dispatch/references/alignment.md` § Artifact Lifecycle). Note: `.scratch/` is not git-ignored; do not stage scratch files into git commits.
 
 ### Comments
 
 Explain non-obvious rationale ("why", CLI/subprocess quirks, cross-platform nuances, architectural decisions) in a single clause. Omit obvious mechanics and type signatures.
 
-- **Structure**: Group long sections with short headers; use `// SECTION:` dividers for major segments and platform/mode branches.
+- **Structure**: Group long sections with short headers; use `// SECTION:` dividers for major segments or platform/mode branches.
 - **Markers**: Use `// NOTE:` for workarounds; preserve active `TODO:` / `FIXME:`.
 
 ## Execution & Handoff Contract
