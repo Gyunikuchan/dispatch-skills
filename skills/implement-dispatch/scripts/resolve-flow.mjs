@@ -40,8 +40,6 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
-/** Knobs that may be omitted entirely; every other knob must define at least one level. */
-const OPTIONAL_KNOBS = [];
 
 const USAGE = `Usage:
   node resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>]
@@ -449,9 +447,7 @@ export function validateConfig(config) {
     for (const knob of REVIEW_KNOBS) {
       const value = config[section][knob];
       if (value === undefined) {
-        if (!OPTIONAL_KNOBS.includes(knob)) {
-          problems.push(`Section "${section}" is missing required knob "${knob}" (${DIFF_HINT}).`);
-        }
+        problems.push(`Section "${section}" is missing required knob "${knob}" (${DIFF_HINT}).`);
         continue;
       }
       validateKnob(section, knob, value, problems);
