@@ -72,7 +72,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. `<level>` 
 1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over plan path, `targets` and `reserves` from `flow['plan-review']`, `consensus: true|false` from `flow['plan-review'].consensus`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget formula**. Apply **Platform exclusion** to any `[auth]` / `[quota]` substitution.
 2. **Re-review wave**: While loop exit condition holds (**Mechanical loop exit**), re-invoke `dispatch-plan-review` in orchestrated mode, handing over plan path, `targets` narrowed by target affinity to live citing delegates, `reserves` from current `flow['plan-review']`, `consensus: true|false`, `Review Scope: Re-review round <n>` naming changed sections and pending rebuttals, and `Tool Turn Budget` per **Budget formula**.
 3. **Consensus**:
-   - `consensus: true`: Disputed MUST-FIX or SHOULD-FIX claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to user upon reaching round cap (**Ruling resets rounds**); rejections follow **Pending confirmation loop**. Delegate `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
+   - `consensus: true`: Disputed MUST-FIX or SHOULD-FIX claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to user upon reaching round cap (**Ruling resets rounds**); rejections follow **Pending confirmation loop**. Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
    - `consensus: false`: Orchestrator may reject unverified claims directly; `[Disputed]` lines still go to user.
    - Rewrite each ruled `[Disputed]` line in plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`, and each settled pending line per **Pending confirmation loop**.
 
@@ -110,7 +110,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. `<level>` 
 1. Apply accepted findings directly as orchestrator.
 2. Update walkthrough `## Changes Made` and `## Verification & Validation`; rewrite each ruled `[Disputed]` line to `[Resolved Dispute]`, and each settled pending line per **Pending confirmation loop**.
 3. Re-run host verify command until green.
-4. Enforce consensus against returned `[Disputed]` items: accept, rebut with counter-evidence, or escalate to user with interactive questions citing lines and counter-readings. Under `consensus: true`, rejections of delegate-reported MUST-FIX or SHOULD-FIX stay `[Rejected — pending confirmation]` until citing delegate confirms (**Pending confirmation loop**); delegate `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
+4. Enforce consensus against returned `[Disputed]` items: accept, rebut with counter-evidence, or escalate to user with interactive questions citing lines and counter-readings. Under `consensus: true`, rejections of delegate-reported MUST-FIX or SHOULD-FIX stay `[Rejected — pending confirmation]` until citing delegate confirms (**Pending confirmation loop**); Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
 
 **Done when:** Accepted fixes are applied, verify command is green, and round adjudications are logged in walkthrough.
 

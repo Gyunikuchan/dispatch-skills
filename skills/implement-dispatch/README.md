@@ -1,41 +1,43 @@
 # implement-dispatch
 
-Implement features or fixes with multi-agent review loops across external coding-agent CLIs—plan review before code is written, code review after, and re-review to consensus.
+Implement features and fixes with autonomous multi-agent review loops across external coding-agent CLIs—plan review before code is written, test-first implementation, and code review to consensus.
 
 ---
 
 ## What It Does
 
-When working with an AI coding assistant (the **orchestrator**—like Claude Code, Antigravity, or GitHub Copilot), complex features and fixes benefit immensely from second opinions. However, manually coordinating multiple agent CLIs, managing review templates, resolving contradictory feedback, and tracking re-reviews across iterations is tedious and error-prone.
+When working with an AI coding assistant (the **orchestrator**—such as Claude Code, Antigravity, or GitHub Copilot), complex features and fixes benefit immensely from second opinions. However, manually coordinating multiple agent CLIs, managing review templates, resolving contradictory feedback, and tracking re-reviews across iterations is tedious and error-prone.
 
 `implement-dispatch` acts as the **orchestrator and control loop** for end-to-end multi-agent development:
-1. **Plans & Reviews First**: Drafts a structured implementation plan, then fans out to external agent CLIs (Claude Code, Antigravity 2.0, Copilot, or OpenCode) for pre-implementation critique.
-2. **Adjudicates & Implements**: Evaluates reviewer claims against repository ground truth, folds accepted changes into the plan, and implements code test-first via native subagents.
-3. **Reviews Code & Re-Reviews**: Generates a detailed walkthrough, collects multi-agent code reviews, applies accepted fixes, and loops with reviewers until reaching consensus.
-4. **Maintains Strict Boundaries**: External delegates act strictly as read-only reviewers; the orchestrating agent alone owns decision-making, code edits, verification, and git operations.
+
+1. **Plans & Reviews First**: Drafts a structured implementation plan, then fans out to external agent CLIs (Claude Code, Antigravity 2.0, GitHub Copilot, or OpenCode) for adversarial pre-implementation critique across seven architectural axes.
+2. **Adjudicates Claims & Solicits Approval**: Evaluates reviewer claims against repository ground truth, folds accepted changes into the plan, and presents the plan to the user for a **single approval gate** before writing code.
+3. **Implements Test-First**: Hands implementation to platform-native write subagents to implement changes test-first while keeping project verification commands green.
+4. **Reviews Code & Converges on Consensus**: Generates a detailed walkthrough, collects multi-agent code reviews across six software engineering axes, applies accepted fixes, and loops with reviewers until reaching verified consensus.
+5. **Maintains Strict Least Privilege**: External delegates act strictly as read-only reviewers; the orchestrating agent alone owns decision-making, code edits, verification, and artifact lifecycle.
 
 ```mermaid
 flowchart TD
-    User(["👤 User Request"]) --> Scope["1️⃣ Scope & Flow Gate<br/>(Classify scope, resolve level & targets)"]
-    Scope --> Plan["2️⃣ Plan Authoring<br/>(Resolved artifact path)"]
+    User(["👤 1. User Request / Task"]) --> Scope["⚙️ 2. Scope & Flow Gate<br/>(Classify scope, resolve level & targets)"]
+    Scope --> Plan["📝 3. Plan Authoring<br/>(Structured plan on disk)"]
     
-    Plan --> PlanRev["3️⃣ Plan Review Wave<br/>(Fan out via dispatch)"]
-    PlanRev -->|External CLIs critique| PlanAdj{"Adjudicate Plan Claims"}
-    PlanAdj -->|Update plan on disk| Gate{"Single Plan Approval Gate"}
-    Gate -->|User approves| Impl["4️⃣ Test-First Implementation<br/>(Native subagent / Orchestrator)"]
+    Plan --> PlanRev["⚡ 4. Plan Review Wave<br/>(Fan out via dispatch)"]
+    PlanRev -->|External CLIs critique| PlanAdj{"⚖️ Adjudicate Plan Claims"}
+    PlanAdj -->|Update plan on disk| Gate{"🛑 5. Single Plan Approval Gate<br/>(User approves before code)"}
+    Gate -->|Approved| Impl["💻 6. Test-First Implementation<br/>(Platform native write subagent)"]
     
-    Impl --> CodeRev["5️⃣ Code Review Wave<br/>(Fan out walkthrough via dispatch)"]
-    CodeRev -->|External CLIs review code| CodeAdj{"Adjudicate Code Claims"}
+    Impl --> CodeRev["⚡ 7. Code Review Wave<br/>(Fan out walkthrough & diffs)"]
+    CodeRev -->|External CLIs review code| CodeAdj{"⚖️ Adjudicate Code Claims"}
     
-    CodeAdj -->|Apply accepted fixes| Fixes["6️⃣ Apply Fixes & Verify<br/>(Run project verify command)"]
-    Fixes --> ReRev{"7️⃣ Consensus Re-Review<br/>(Loop with citing delegates)"}
+    CodeAdj -->|Apply accepted fixes| Fixes["🔧 8. Apply Fixes & Verify<br/>(Run project verify command)"]
+    Fixes --> ReRev{"🔄 9. Consensus Re-Review<br/>(Loop with citing delegates)"}
     
     ReRev -->|Findings remaining| CodeRev
-    ReRev -->|Consensus reached| Handoff["8️⃣ Handoff & Cleanup<br/>(Summary report & relocate scratch)"]
+    ReRev -->|Consensus reached| Handoff["📦 10. Handoff & Cleanup<br/>(Diagnostics report & temp relocate)"]
     ReRev -->|Cap reached / Deadlock| Escalate(["❓ Escalate to User"])
-    Escalate -->|Ruling resets rounds| ReRev
+    Escalate -->|User ruling resets rounds| ReRev
     
-    Handoff --> User
+    Handoff --> Final(["👤 11. Handoff to User"])
 ```
 
 ---
@@ -43,26 +45,34 @@ flowchart TD
 ## Prerequisites & Installation
 
 ### Prerequisites
+
 - **Node.js**: `v18.0.0` or higher.
-- **At least one agent CLI** installed or reachable (`claude`, `agy`, `copilot`, `opencode`).
-- **`dispatch` skill**: Required runner and provider cascade.
+- **`dispatch` skill installed**: Required runner execution, CLI flags, sandboxing, and provider cascade.
+- **At least one agent CLI** installed or reachable on your system:
+  - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
+  - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
+  - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (supports local LLMs like LM Studio or remote providers like Anthropic/OpenRouter).
 
 ### Companion Skills
-`implement-dispatch` coordinates review criteria defined by its companion skills:
+
+`implement-dispatch` orchestrates the complete development lifecycle by integrating with companion review skills:
 
 | Skill | Role | Status |
 |---|---|---|
 | [`dispatch`](../dispatch) | Runner execution, CLI flags, sandboxing, and provider cascade | **Required** |
-| [`dispatch-plan-review`](../dispatch-plan-review) | Plan template, review axes, adjudication grammar | **Optional** *(skips plan review if absent)* |
-| [`dispatch-code-review`](../dispatch-code-review) | Walkthrough template, review axes, adjudication grammar | **Optional** *(skips code review if absent)* |
+| [`dispatch-plan-review`](../dispatch-plan-review) | Plan template, review axes, plan adjudication | **Optional** *(skips plan review if absent)* |
+| [`dispatch-code-review`](../dispatch-code-review) | Walkthrough template, review axes, code adjudication | **Optional** *(skips code review if absent)* |
+
+> [!NOTE]
+> If an optional companion skill is absent, `implement-dispatch` gracefully degrades by skipping that review phase, noting its absence in the final handoff report, and proceeding with the remaining workflow.
 
 ### Installation
 
-Install `implement-dispatch` and its required `dispatch` runner into your current project workspace (add the two review skills too, or use `--all` below):
+Install `implement-dispatch` alongside `dispatch`:
 
 ```bash
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch
-npx skills add Gyunikuchan/dispatch-skills --skill implement-dispatch
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill implement-dispatch
 ```
 
 To install the complete multi-agent suite (`dispatch`, `dispatch-plan-review`, `dispatch-code-review`, `implement-dispatch`):
@@ -71,27 +81,36 @@ To install the complete multi-agent suite (`dispatch`, `dispatch-plan-review`, `
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
-To install globally for all projects:
+To install globally for all your projects:
 
 ```bash
 npx skills add -g Gyunikuchan/dispatch-skills --all
 ```
 
+> [!NOTE]
+> When using multiple skills from this repository, ensure they are installed in the **same scope** (all project-local or all global) so sibling runner scripts, configuration resolvers, and prompt templates can locate each other.
+
 ---
 
 ## How to Use
 
-Trigger `implement-dispatch` directly via the slash command `/implement-dispatch` (or natural language) in your agent chat session:
+Trigger `implement-dispatch` directly via the `/implement-dispatch` slash command or natural language inside your agent chat session.
+
+### Invocation Grammar
 
 ```
 /implement-dispatch [<level>] [(<pins>)]: <feature | fix | task description>
 ```
 
-Both `<level>` and `(<pins>)` are optional (when `<level>` is omitted, the Scope gate automatically evaluates between `low`, `medium`, and `high` based on scope, complexity, and risk; the colon is optional).
+Both `<level>` and `(<pins>)` are optional:
+- **`<level>`**: Controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus gates (`consensus`), and model/effort budgets (`low`, `medium`, `high`, `xhigh`, `max`). When omitted, the skill automatically evaluates scope and selects `low`, `medium`, or `high`.
+- **`(<pins>)`**: Pins review targets to specific providers (`claude`, `agy`, `copilot`, `opencode`, or `all`), or pins a specific reviewer count `n` (e.g. `(3)`) across available platforms.
+
+---
 
 ### 1. Basic Invocations
 
-Run a balanced implementation with default settings (`medium` depth):
+Run a standard implementation with automatic scope evaluation and default settings:
 
 ```markdown
 /implement-dispatch Add a CSV export button to the transactions table
@@ -103,7 +122,7 @@ Run a balanced implementation with default settings (`medium` depth):
 
 ### 2. Controlling Depth with Levels (`low`, `medium`, `high`, `xhigh`, `max`)
 
-Tune review rigor, round budgets, and consensus requirements to match the scope and risk of your change:
+Explicitly set review rigor and round limits based on the risk and complexity of your change:
 
 ```markdown
 /implement-dispatch low: Rename Household.owner field to primaryHolder
@@ -121,187 +140,214 @@ Tune review rigor, round budgets, and consensus requirements to match the scope 
 /implement-dispatch max: Migrate database schema and state machine to v4
 ```
 
-### 3. Pinning Specific Reviewers (`(<pins>)`)
+### 3. Pinning Specific Reviewer Providers
 
-Force the review fan-out wave to target specific external providers (`claude`, `agy`, `copilot`, `opencode`; the `dispatch` skill's `--provider` aliases, e.g. `antigravity` for `agy` or `claudecode` for `claude`, are also accepted and normalized to the canonical key), or `all` to pin all available platforms:
+Direct review fan-out waves to specific external CLIs using `(<pins>)` (comma-separated provider keys `claude`, `agy`, `copilot`, `opencode` or `--provider` aliases like `antigravity` / `claudecode`):
 
 ```markdown
-/implement-dispatch (all): Audit cryptographic key derivation and session storage
+/implement-dispatch (claude): Implement OAuth2 PKCE authorization flow
 ```
 
 ```markdown
-/implement-dispatch (claude,agy): Implement OAuth2 PKCE authorization flow
+/implement-dispatch (claude,agy): Add rate-limiting middleware to API gateway
 ```
 
 ```markdown
-/implement-dispatch high (copilot,opencode): Optimize bulk ingestion SQL queries
+/implement-dispatch (all): Audit authentication token revocation logic
 ```
 
-```markdown
-/implement-dispatch max (claude): Audit and rewrite token refresh rotation
-```
+### 4. Pinning Reviewer Count
 
-Or pin a single reviewer count instead of naming providers — it replaces the level's `targetCount` for both review phases while keeping the level's other knobs (`maxRounds`, `consensus`, model/effort selection):
+Specify an exact number of reviewers rather than naming providers. The count replaces `targetCount` for review phases while preserving the level's other settings:
 
 ```markdown
 /implement-dispatch high (3): Refactor payment webhook idempotency handler
 ```
 
+### 5. Combining Levels, Pins, and Tasks
+
+Compose levels, reviewer pins, and detailed task requirements together:
+
+```markdown
+/implement-dispatch high (claude,agy): Refactor session store to use Redis cluster with connection pooling and automated failover
+```
+
 ---
 
-## Review Levels
+## Review Levels & Scope Gating
 
-Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`), which controls wave caps (`maxRounds`), reviewer breadth (`targetCount`), consensus requirements (`consensus`), and model/effort selection for each phase.
+Levels represent ascending tiers of review depth, reviewer breadth, and verification rigor. Rather than hardcoding behavior, levels are policy profiles resolved from configuration (`config.default.jsonc`, or your local `config.jsonc` / `config.local.jsonc`).
 
-Choose a level based on the risk and complexity of your change:
+### Shipped Default Profiles (`config.default.jsonc`)
 
-- **`low`** — **Fast-path / minimal overhead**. Best for minor bug fixes, mechanical changes, or low-risk tasks where extensive review isn't needed. Typically minimizes review rounds and reviewer breadth to move fast.
-- **`medium`** *(default)* — **Balanced everyday development**. Best for standard features and regular tasks. Provides a balanced review flow across planning and code review without excessive round overhead.
-- **`high`** — **Thorough review**. Best for significant features, architectural changes, or complex refactoring that benefits from multi-reviewer critique and deeper verification loops.
-- **`xhigh`** — **Deep multi-agent scrutiny**. Best for security-sensitive areas, core interfaces, or mission-critical logic requiring broader cross-agent review and higher verification budgets.
-- **`max`** — **Maximum depth & exhaustive verification**. Best for high-stakes migrations, cryptographic code, or complex subsystem overhauls where you want the widest possible reviewer fan-out and maximum round limits.
+| Level | Ideal For | Plan Review | Code Review | Consensus Gate |
+|---|---|---|---|---|
+| **`low`** | Minor bug fixes, mechanical changes, typos, renames, isolated tweaks | Off (`maxRounds: 0`, `targetCount: 0`) | Fast single-pass (`maxRounds: 1`, `targetCount: 1`) | Relaxed (`consensus: false`) |
+| **`medium`** *(default)* | Standard features, bounded multi-file changes, routine bug fixes | Up to 2 rounds (`targetCount: 1`, `maxRounds: 2`) | Up to 3 rounds (`targetCount: 2`, `maxRounds: 3`) | Strict (`consensus: true`) |
+| **`high`** | Complex refactoring, architectural changes, public contract/API shifts | Up to 3 rounds (`targetCount: 2`, `maxRounds: 3`) | Up to 3 rounds (`targetCount: 3`, `maxRounds: 3`) | Strict (`consensus: true`) |
+| **`xhigh`** | Security-sensitive subsystems, auth/token boundaries, core domain invariants | Deep review (`targetCount: 3`, `maxRounds: 3`) | Multi-round fan-out (`targetCount: 4`, `maxRounds: 3`) | Strict (`consensus: true`) |
+| **`max`** | High-stakes migrations, cryptographic code, critical subsystem overhauls | Exhaustive fan-out (`targetCount: "all"`, `maxRounds: 5`) | Exhaustive fan-out (`targetCount: "all"`, `maxRounds: 5`) | Strict (`consensus: true`) |
 
-### Key Execution Mechanics
-- **Waves, Not Individual Dispatches**: `maxRounds` bounds unattended review rounds. Plan and code reviews maintain independent round counters.
-- **Pins & Overrides**: Naming providers (`(claude,agy)`) pins review targets directly. Naming a count (`(3)`) replaces `targetCount` while retaining reserve substitution. Pins do not resurrect an intentionally disabled phase (`maxRounds: 0`).
-- **Reserves & Substitution**: Unreachable or failed reviewers (e.g. `[auth]`, rate limits) are substituted automatically from ordered reserves before falling back to subagents.
-- **Sticky Exclusion**: A reviewer failing `[auth]` or `[quota]` causes its entire platform to be excluded from subsequent waves in that run.
-- **Target Affinity**: Re-review rounds are routed back specifically to the reviewers who raised the original findings.
-- **Consensus & Dispute Gate**: Under `consensus: true`, rejections of delegate-reported MUST-FIX / SHOULD-FIX items require confirmation from the citing reviewer. Unsettled disputes are escalated to you before implementation or completion.
-- **Automatic Scope Gating**: An unlevelled invocation automatically selects `low` (fast-path), `medium` (standard), or `high` (cross-cutting) based on risk. Higher levels (`xhigh`, `max`) are reserved for explicit manual requests.
+> [!NOTE]
+> Under `consensus: false` (`low` level), orchestrator rejections are immediately final at its own discretion. Under `consensus: true` (`medium` and above), any orchestrator rejection or downgrade of a MUST-FIX or SHOULD-FIX claim must be confirmed by the citing reviewer or ruled interactively by the user.
+
+### Automatic Scope Classification Gate
+
+When no explicit `<level>` is provided in the prompt, the orchestrator evaluates the scope and risk of the task before authoring the plan:
+- **`trivial`** / low risk → Evaluates at **`low`** (fast-path, skips plan review).
+- **`focused`** / moderate risk → Evaluates at **`medium`** (standard review flow).
+- **`cross-cutting`** / high risk → Evaluates at **`high`** (multi-reviewer, strict consensus).
+
+> [!NOTE]
+> `xhigh` and `max` levels represent deep reasoning investments and are **manual-only**; the automatic scope gate will never select them without explicit user instruction. Provider or count pins (`(<pins>)`) alone do not alter level selection.
 
 ---
 
 ## Configuration & Flow Policy
 
-`config.default.jsonc` holds the whole flow policy: the review knobs per phase plus the models and reasoning effort per platform. Customize it by creating a local `config.local.jsonc` or `config.jsonc` alongside it, which **replaces** the default file wholly rather than merging into it — so copy the default as your starting point, and expect a clear validation error listing every problem if a section or knob is missing.
+`config.default.jsonc` defines the complete flow policy: review knobs per phase, per-platform models, and reasoning effort levels. You can customize behavior by creating `config.local.jsonc` or `config.jsonc` in the skill root directory.
 
-Config files are loaded fully (without merging) based on this order of precedence (`config.local.jsonc` takes precedence over `config.jsonc`):
-1. `<skill-root>/config.local.jsonc`
+### Configuration Loading & Precedence
+
+Config files are loaded as a whole (without deep merging) following this precedence order:
+
+1. `<skill-root>/config.local.jsonc` *(highest precedence, ignored by git)*
 2. `<skill-root>/config.jsonc`
-3. `<skill-root>/config.default.jsonc`
+3. `<skill-root>/config.default.jsonc` *(shipped defaults)*
 
-A local config omitting a platform under a section's `platforms` map (e.g. dropping `opencode` after it's added to `config.default.jsonc`) is intentional and supported — not every user wants every platform configured, and an omitted platform is simply never picked as a candidate. This differs from omitting a required top-level knob (`maxRounds`, `targetCount`, etc.), which does fail validation.
+> [!TIP]
+> To customize your setup, copy `config.default.jsonc` to `config.local.jsonc` and edit your desired values. Omission of individual platforms under `platforms` is supported (omitted platforms are simply excluded from selection), but omitting required top-level knobs (`maxRounds`, `targetCount`, `consensus`) triggers a clear schema validation error.
 
-The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order seeds the diversity-sorted order candidates are picked in (see **Diversity-Sorted Candidates**). Each platform entry can be a single model/effort object or an array of objects to run multiple candidates on that platform (e.g. OpenCode running both a remote model and a local LLM). The two review sections additionally carry three level-keyed knobs:
+### Flow Sections & Knobs
 
-| Knob | Meaning |
+The configuration defines three sections: `plan-review`, `implementation`, and `code-review`. Review sections configure three level-keyed knobs:
+
+| Knob | Description |
 |---|---|
-| `maxRounds` | Cap on total fan-out waves for the phase, counting the first review |
-| `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"`; the first `targetCount` of the diversity-sorted list, the rest become reserves |
-| `consensus` | When `true`, rejections of delegate MUST-FIX/SHOULD-FIX require reviewer confirmation or dispute escalation; when `false`, the author adjudicates independently (see `dispatch`'s `references/alignment.md` § Finality) |
+| `maxRounds` | Cap on total review fan-out waves for that phase. Setting `0` turns the phase off entirely (pins cannot resurrect it). |
+| `targetCount` | Number of review candidates dispatched in an unpinned wave (integer or `"all"`). Candidates beyond `targetCount` become ordered reserves. Setting `0` disables unpinned waves while allowing explicit pins to run. |
+| `consensus` | When `true`, rejections of delegate MUST-FIX or SHOULD-FIX findings require reviewer confirmation or interactive user ruling. When `false`, the orchestrator adjudicates independently. |
 
-When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last (with candidates matching the orchestrator's active platform and model placed dead last), fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.
+### Sparse Level Resolution
 
-The two sentinels differ in whether pins can override them. `maxRounds: 0` turns a phase off outright — pins cannot resurrect it. `targetCount: 0` turns it off for *unpinned* runs only; naming providers explicitly still runs the phase, because pins override breadth. On an unpinned run the resolver normalizes `targetCount: 0` to `maxRounds: 0`, so after resolution `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
+Knobs and platform models use sparse configuration inheritance:
+- **Exact Match**: Uses the requested level if defined.
+- **Round-Down Floor**: If exact level is missing, falls back to the nearest defined level below it.
+- **Round-Up Ceiling**: If no lower level is defined, falls back to the lowest level above it.
 
-Illustrative (not the shipped defaults):
+### Diversity-Sorted Candidates
 
-```jsonc
-{
-  "plan-review": {
-    "maxRounds": { "low": 0, "medium": 1, "max": 3 },
-    "targetCount": { "low": 0, "medium": 1, "max": "all" },
-    "consensus": { "low": false, "high": true },
-    "platforms": {
-      "claude": {
-        "low": { "model": "claude-opus-5", "effort": "low" },
-        "medium": { "model": "claude-opus-5", "effort": "medium" },
-        "high": { "model": "claude-opus-5", "effort": "high" },
-        "max": { "model": "claude-opus-5", "effort": "xhigh" }
-      },
-      "agy": { "model": "gemini-3.8-flash", "effort": "high" }
-    }
-  },
-  "implementation": {
-    "platforms": {
-      "claude": {
-        "low": { "model": "claude-sonnet-5", "effort": "medium" },
-        "high": { "model": "claude-opus-5", "effort": "low" }
-      }
-    }
-  },
-  "code-review": {
-    "maxRounds": { "low": 0, "medium": 1, "max": 3 },
-    "targetCount": { "low": 0, "medium": 1, "max": "all" },
-    "consensus": { "low": false, "high": true },
-    "platforms": {
-      "claude": {
-        "low": { "model": "claude-opus-5", "effort": "low" },
-        "medium": { "model": "claude-opus-5", "effort": "medium" },
-        "high": { "model": "claude-opus-5", "effort": "high" },
-        "max": { "model": "claude-opus-5", "effort": "xhigh" }
-      },
-      "agy": { "model": "gemini-3.8-flash", "effort": "high" }
-    }
-  }
-}
-```
+Unpinned review waves automatically prioritize external platforms and demote the host orchestrator's platform to the end of the candidate list (with matching platform+model candidates placed dead last). This prevents self-review echo chambers and maximizes review diversity.
 
-Validate a config without spawning any provider probes:
+### Validating Configuration
+
+Validate your configuration schema without triggering network probes or running dispatches:
 
 ```bash
 node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --validate-only
 ```
 
-It checks the config schema and nothing else, so combining it with any run flag (`--platform`, `--level`, `--pins`) is an error rather than a silent no-op.
-
-Before loading config, the resolver also verifies its own files against `skill-hashes.json` (the same integrity manifest `dispatch` ships). A missing manifest just warns and proceeds; a manifest present alongside a locally edited `SKILL.md` or script aborts with the modified files listed — regenerate it with `npm run hashes` in this repo, or reinstall the skill.
-
-### Level Matching & Fallback Rules
-
-Knobs and platform entries are **sparse by design**: define only the levels where the spend changes. Every value resolves by the same rule.
-
-- **Exact Match First**: Matches the requested level directly.
-- **Round Down Floor**: If an exact level is missing, it rounds down to the nearest configured level below it.
-- **Round Up Ceiling**: If nothing is configured below, it matches the lowest level above it.
-- **Sparse Keys Set Floors**: Because levels only ever round down, the lowest key you define is the floor for everything beneath it — define `low` to set the base and a higher key to mark where spend increases.
-- **Top-Heavy Reasoning**: Default configurations intentionally invest reasoning budget (`high` / `max` effort) into review phases to catch subtle flaws, keeping implementation lean.
-
 ---
 
 ## High-Level Behavior & Invariants
 
-- **Delegates Propose Claims; Orchestrator Decides**: Reviewers return structured findings (`<locus> — <tag>: <defect> → <required change>`). The orchestrating agent independently verifies each claim against repository code and tests before accepting or rejecting.
-- **Strict Read-Only Delegate Isolation**: All external reviews run under read-only sandboxes (`--mode plan` or restricted tool whitelists). Implementation is executed exclusively by native write-capable subagents or the orchestrator.
-- **Evidence Over Votes**: If two reviewers disagree, ground truth is determined by actual execution, project requirements, and test suites—not sheer headcount.
+- **Claim vs. Verdict Separation**: External reviewer feedback consists strictly of *claims*, not authoritative verdicts. The orchestrator independently verifies every defect citation against actual lines of code, test suites, and repository rules before accepting or rejecting it.
+- **Structural Least Privilege**: Delegate reviews run strictly in read-only sandbox mode (`--mode plan` or restricted tool whitelists). Implementation and code modifications are performed exclusively by native write-capable subagents or the orchestrator.
+- **Single Plan Approval Gate**: You are asked to approve the implementation plan exactly once—immediately before code implementation begins. Plan authoring, pre-implementation plan reviews, and claim adjudications proceed autonomously without intermediate interruptions.
+- **Test-First Implementation via Native Write Subagents**: Code implementation is delegated test-first to platform-native write subagents (`general-purpose` on Claude Code, `self` on Antigravity / Copilot, `general` on OpenCode), keeping the host verify command green.
+- **Mechanical Consensus Engine**: Multi-round review loops continue deterministically until `check-consensus.mjs` exits 0 (all claims accepted & applied, rebutted & confirmed, or ruled by user).
+- **Evidence Over Votes**: Multi-agent agreement is context, not evidence. A single verified finding is accepted regardless of other reviewer opinions, while ungrounded or incorrect findings are rejected even if raised by multiple delegates.
 - **Host Repository Conventions**: The orchestrator reads your project's `AGENTS.md` or `CLAUDE.md` to discover:
-  - **Verify command**: The test/lint command that must remain green across all iterations.
-  - **Escalation triggers**: Domain-specific decisions that require immediate user input.
-- **Scratch Space Lifecycle**: `dispatch`'s `resolve-artifact-paths.mjs` (not the flow resolver — it resolves the review/implementation flow only) generates the plan and walkthrough paths under `.scratch/plan/` from the run's date and slug, so nothing assembles a path by hand mid-run. Where your platform already produces a native plan or walkthrough artifact, that one is preferred and left in place. On successful consensus, the scratch files the run created are moved to the OS temp directory (never deleted); if a run terminates in deadlock or requires user intervention, they are preserved in place for easy resumption.
-- **Single Plan Approval Gate**: You are asked to approve the plan exactly once, immediately before any code is written — never twice. When preceded by interactive questioning or a requirements interview, questioning finishes first, then plan authoring and plan review run without interrupting you; the gate comes after them. Because it sits at the implementation step rather than inside plan review, it still fires on runs that skip plan review entirely (level `low`, or `dispatch-plan-review` not installed), where you approve the plan as authored instead of a reviewed one.
-- **Git Boundaries**: The skill strictly leaves git operations (`git commit`, `git push`, branch creation, and PRs) to the user.
+  - **Verify command**: The test, lint, or build command that must remain green across all iterations.
+  - **Escalation triggers**: Domain-specific decisions or high-risk paths that require user input.
+- **Scratch Space Lifecycle & Relocation**: Plan and walkthrough files are generated under `.scratch/plan/` (or resolved to platform-native session artifacts). Upon successful consensus completion, scratch files created during the run are cleanly relocated to OS temp (`os.tmpdir()`), keeping your project workspace clean. If a run halts or escalates, artifacts are preserved on disk for seamless resumption.
+- **Git Boundaries**: The skill strictly modifies working-tree files and never executes git commits, pushes, branch creation, or PR creation, leaving version control operations entirely to you.
+
+---
+
+## Platform Write Subagents
+
+When implementing non-trivial changes, `implement-dispatch` invokes the host platform's native write-capable subagent:
+
+| Platform | Native Write Subagent | Execution Role |
+|---|---|---|
+| **Claude Code** (`claude`) | `general-purpose` | Test-first code implementation and verify command execution |
+| **Antigravity 2.0** (`agy`) | `self` | Test-first code implementation and verify command execution |
+| **GitHub Copilot** (`copilot`) | `self` | Test-first code implementation and verify command execution |
+| **OpenCode** (`opencode`) | `general` | Test-first code implementation and verify command execution |
+
+---
+
+## Finding Grammar & Adjudication Table
+
+### Standard Finding Grammar
+
+Reviewers return structured single-line findings citing exact plan sections (`§ <Section>`) or code lines (`<file>:L<line>`):
+
+```
+<locus> — <tag>: <defect> → <required change>
+```
+
+### Adjudication Decision Table
+
+Every claim is verified against repository truth and recorded in the artifact's `## Review Findings & Resolutions`:
+
+| Verdict / State | Criterion | Action | Log Entry Syntax |
+|---|---|---|---|
+| **Accept** | Requirement, repo rules, or cited code confirms defect. | Apply fix directly; update walkthrough/plan. | `- **[Accepted]** <locus> — <tag>: <defect> → <resolution & where applied>` |
+| **Pending Rejection** | Orchestrator disputes finding under `consensus: true`. | Hand back counter-evidence to citing delegate in re-review. | `- **[Rejected — pending confirmation]** <locus> — <tag>: <defect> → <rationale>` |
+| **Settled Rejection** | Citing delegate confirmed counter-evidence or `consensus: false`. | Reject claim permanently; log rationale. | `- **[Rejected / Downgraded]** <locus> — <tag>: <defect> → <rejection rationale>` |
+| **Downgrade** | Real but subjective or minor preference. | Move to `## Follow-ups` / `## Out of Scope` or drop. | `- **[Rejected / Downgraded]** <locus> — <tag> (CONSIDER): <defect> → <rationale>` |
+| **Disputed / Ruled** | Ambiguous intent or trade-off ruled by user. | Solicit user decision; record resolution. | `- **[Resolved Dispute]** <locus> — <tag>: <defect> → <user ruling & action>` |
 
 ---
 
 ## Nuances, Quirks & Troubleshooting
 
 ### Graceful Degradation Without Companion Skills
-If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implement-dispatch` continues running seamlessly:
-- Missing `dispatch-plan-review`: Skips Step 3 (Plan Review) and proceeds to implementation. You are still asked to approve the plan first — the approval gate sits at the implementation step, so it survives a skipped review.
-- Missing `dispatch-code-review`: Skips Steps 5–7 (Code Review & Re-review) and completes after implementation verification.
-- The handoff report explicitly lists any omitted review phases.
+
+If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implement-dispatch` continues running smoothly:
+- **Missing `dispatch-plan-review`**: Skips the pre-implementation Plan Review phase (`SKILL.md` Step 3) and proceeds directly to the user approval gate. The single plan approval gate still fires before code is written.
+- **Missing `dispatch-code-review`**: Skips the post-implementation Code Review and Re-review phases (`SKILL.md` Steps 5–7) and completes after implementation verification.
+- The final handoff report explicitly lists any omitted review phases.
 
 ### Round Cap Escalation & Resumption
-When a review phase exhausts its allotted round budget before reaching full consensus:
-1. The orchestrator halts and presents the remaining disputed findings to you.
-2. Answering the escalation resets the round counter for that phase, allowing additional review iterations if needed. `maxRounds` bounds unattended rounds only — adding scope mid-run, or ruling on a dispute, restarts the budget.
 
-### Reviewer Tool Budgets
-Tool-turn budgets are not configured. Each dispatch hands the reviewer `8 + 2 × <units under review>` turns — a changed file for code review, a `## Proposed Changes` entry for plan review — so a large diff gets a large budget and there is no ceiling. Reviewers are told the budget covers every tool call and that test results are already in the walkthrough, so they read the recorded results instead of re-running the suite.
-
-### Fast Direct Execution for Trivial Tasks
-For mechanical one-line changes or renames classified as `trivial`, the orchestrator skips spawning background subagents and applies the edit directly, saving round-trip latency.
+When a review phase exhausts its allotted `maxRounds` budget before reaching consensus:
+1. The orchestrator pauses and presents remaining disputed findings to you via interactive questions.
+2. Your ruling settles the dispute (logged as `[Resolved Dispute]`) and grants **exactly one additional re-review round** with a refreshed tool budget to verify the resolution. Rounds already spent are not forgiven; reaching the cap a second time halts the loop and escalates.
 
 ### Write Subagent Git Guard
-Step 4's native write subagent is instructed to never run `git stash`, `git reset`, `git checkout -- <path>`, `git clean`, or any other command that rewrites or discards the working tree/index — the untracked `.scratch/` plan and walkthrough are not git-ignored and a `git stash -u` (or a failed pop) would sweep them up. Before/after comparisons (e.g. test counts) go through the verify command's own output or read-only `git diff` / `git status --porcelain`.
+
+During implementation, write subagents are strictly prohibited from executing destructive git commands (`git stash`, `git reset`, `git checkout -- <path>`, `git clean`). Untracked `.scratch/` plan and walkthrough files are not git-ignored, and working-tree resets would destroy them. Subagents use read-only inspections (`git status`, `git diff`, `git log`) or verify command outputs instead.
+
+### Fast Direct Execution for Trivial Tasks
+
+For mechanical single-file edits, renames, or simple typo fixes classified as `trivial`, the orchestrator skips spawning background subagents and applies the edit directly, saving round-trip execution latency.
 
 ### Inspecting Delegate Review Progress
-External reviews run asynchronously in the background. If you want to check what a reviewer is currently doing, you can monitor the temp logs emitted during launch:
+
+External review dispatches run asynchronously in the background. You can monitor live reviewer execution and tool traces in real time via OS temp logs:
+
+**macOS / Linux:**
 ```bash
 tail -f "<logFilePath>"
 ```
-PowerShell:
+
+**Windows PowerShell:**
 ```powershell
 Get-Content -Wait -Tail 30 "<logFilePath>"
 ```
+
+### Sticky Platform Exclusion
+
+If a reviewer fails due to authentication issues (`[auth]`) or exhausted quota (`[quota]`), the orchestrator marks that platform as excluded for the remainder of the run. Subsequent review waves automatically re-resolve candidates to skip the failing platform and pick from available reserves.
+
+### No Reviewer Available Fallback
+
+If all external CLIs are unavailable or unauthenticated, the runner reports `NO_DISPATCH_AVAILABLE`. The orchestrator automatically falls back to an in-process read-only subagent (prefixed with `[Subagent Fallback]`) to ensure the review criteria are still evaluated before proceeding.
+
+### Tool Turn Budgeting
+
+Reviewer delegates receive a dynamic tool turn budget calculated as `8 + 2 × <units under review>` (where a unit is a modified file for code review or a `## Proposed Changes` entry for plan review). On re-review rounds, only units modified since the previous round are counted, giving delegates ample headroom without arbitrary cutoffs.
+
