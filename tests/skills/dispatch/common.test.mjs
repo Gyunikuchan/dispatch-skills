@@ -58,10 +58,14 @@ import {
   resolveModelsToTry,
   cascadeModels,
   diversitySort,
+  detectOrchestrator,
+  detectOrchestratorModel,
+  normalizeModelId,
+  isSameModel,
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 // ---------------------------------------------------------------------------
-// SECTION: Diversity sort
+// SECTION: Diversity sort & Model comparison
 // ---------------------------------------------------------------------------
 
 describe('common: diversitySort', () => {
@@ -87,6 +91,80 @@ describe('common: diversitySort', () => {
     const input = [c('a', 1), c('a', 2), c('b', 3)];
     diversitySort(input);
     assert.deepEqual(input.map((x) => x.model), [1, 2, 3]);
+  });
+});
+
+describe('common: normalizeModelId & isSameModel', () => {
+  it('strips provider prefixes up to the last slash', () => {
+    assert.equal(normalizeModelId('opencode-go/glm-5.3-flash'), 'glm-5.3-flash');
+    assert.equal(normalizeModelId('anthropic/claude-3-7-sonnet'), 'claude-3-7-sonnet');
+    assert.equal(normalizeModelId('openrouter/deepseek/deepseek-chat'), 'deepseek-chat');
+  });
+
+  it('strips trailing 8-digit date suffixes', () => {
+    assert.equal(normalizeModelId('claude-3-7-sonnet-20250219'), 'claude-3-7-sonnet');
+    assert.equal(normalizeModelId('claude-haiku-4-5-20251001'), 'claude-haiku-4-5');
+    assert.equal(normalizeModelId('qwen2.5-72b-20240101'), 'qwen2.5-72b');
+    // Does not mangle non-date suffixes
+    assert.equal(normalizeModelId('model-v2'), 'model-v2');
+  });
+
+  it('trims and lowercases', () => {
+    assert.equal(normalizeModelId('  Claude-Opus-5  '), 'claude-opus-5');
+  });
+
+  it('returns empty string for null/undefined/non-string', () => {
+    assert.equal(normalizeModelId(null), '');
+    assert.equal(normalizeModelId(undefined), '');
+    assert.equal(normalizeModelId(''), '');
+  });
+
+  it('isSameModel compares single strings with normalization', () => {
+    assert.ok(isSameModel('claude-opus-5', 'claude-opus-5'));
+    assert.ok(isSameModel('anthropic/claude-3-7-sonnet-20250219', 'claude-3-7-sonnet'));
+    assert.ok(!isSameModel('claude-opus-5', 'claude-sonnet-5'));
+  });
+
+  it('isSameModel handles candidate model arrays with any-match', () => {
+    assert.ok(isSameModel(['claude-opus-5', 'claude-sonnet-5'], 'claude-sonnet-5'));
+    assert.ok(isSameModel(['opencode-go/glm-5.3-flash', 'deepseek-v4.1-flash'], 'glm-5.3-flash'));
+    assert.ok(!isSameModel(['claude-opus-5', 'claude-sonnet-5'], 'gemini-3.8-flash'));
+  });
+
+  it('isSameModel returns false when either argument is null/undefined/empty', () => {
+    assert.ok(!isSameModel(null, 'claude-opus-5'));
+    assert.ok(!isSameModel('claude-opus-5', null));
+    assert.ok(!isSameModel(undefined, 'claude-opus-5'));
+    assert.ok(!isSameModel('claude-opus-5', undefined));
+    assert.ok(!isSameModel(null, null));
+    assert.ok(!isSameModel('', ''));
+  });
+});
+
+describe('common: detectOrchestratorModel', () => {
+  it('detects model for agy from ANTIGRAVITY_MODEL / GEMINI_MODEL', () => {
+    assert.equal(detectOrchestratorModel({ env: { ANTIGRAVITY_MODEL: 'gemini-3.8-flash' }, orchestrator: 'agy' }), 'gemini-3.8-flash');
+    assert.equal(detectOrchestratorModel({ env: { GEMINI_MODEL: 'gemini-3.7-flash' }, orchestrator: 'agy' }), 'gemini-3.7-flash');
+  });
+
+  it('detects model for claude from CLAUDE_MODEL / ANTHROPIC_MODEL', () => {
+    assert.equal(detectOrchestratorModel({ env: { CLAUDE_MODEL: 'claude-opus-5' }, orchestrator: 'claude' }), 'claude-opus-5');
+    assert.equal(detectOrchestratorModel({ env: { ANTHROPIC_MODEL: 'claude-3-7-sonnet' }, orchestrator: 'claude' }), 'claude-3-7-sonnet');
+  });
+
+  it('detects model for copilot from COPILOT_MODEL / GITHUB_COPILOT_MODEL', () => {
+    assert.equal(detectOrchestratorModel({ env: { COPILOT_MODEL: 'gpt-5.6-luna' }, orchestrator: 'copilot' }), 'gpt-5.6-luna');
+    assert.equal(detectOrchestratorModel({ env: { GITHUB_COPILOT_MODEL: 'gpt-4o' }, orchestrator: 'copilot' }), 'gpt-4o');
+  });
+
+  it('detects model for opencode from OPENCODE_MODEL', () => {
+    assert.equal(detectOrchestratorModel({ env: { OPENCODE_MODEL: 'glm-5.3-flash' }, orchestrator: 'opencode' }), 'glm-5.3-flash');
+  });
+
+  it('returns null when orchestrator is null or unrecognized or env has no model', () => {
+    assert.equal(detectOrchestratorModel({ env: {}, orchestrator: 'claude' }), null);
+    assert.equal(detectOrchestratorModel({ env: { CLAUDE_MODEL: 'opus' }, orchestrator: null }), null);
+    assert.equal(detectOrchestratorModel({ env: { CLAUDE_MODEL: 'opus' }, orchestrator: 'unknown' }), null);
   });
 });
 

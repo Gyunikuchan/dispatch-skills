@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
  * @property {boolean} json
  * @property {boolean} verbose
  * @property {string|null} orchestrator
+ * @property {string|null} orchestratorModel
  * @property {string|null} provider
  * @property {boolean} help
  * @property {string|null} promptFile
@@ -354,7 +355,7 @@ export function buildFormattedPrompt(prompt, files = []) {
 export const COMMON_VALUE_FLAGS = new Set([
   '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
   '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
-  '--max-buffer', '--orchestrator', '--provider',
+  '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider',
 ]);
 
 // Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
@@ -375,7 +376,7 @@ export const DOCUMENTED_COMMON_FLAGS = [
 ];
 
 /** Common flags deliberately absent from every runner's help — see DOCUMENTED_COMMON_FLAGS. */
-export const RUNNER_IRRELEVANT_COMMON_FLAGS = ['-a', '--agent', '--orchestrator', '--provider'];
+export const RUNNER_IRRELEVANT_COMMON_FLAGS = ['-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider'];
 
 /**
  * Parses common CLI arguments strictly: an undeclared `-`-prefixed token throws
@@ -398,6 +399,7 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     json: false,
     verbose: false,
     orchestrator: null,
+    orchestratorModel: null,
     provider: null,
     help: false,
     promptFile: null,
@@ -451,6 +453,8 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
         }
       } else if (arg === '--orchestrator') {
         options.orchestrator = value;
+      } else if (arg === '--orchestrator-model') {
+        options.orchestratorModel = value;
       } else if (arg === '--provider') {
         options.provider = value;
       }
@@ -493,6 +497,8 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
       }
     } else if (arg.startsWith('--orchestrator=')) {
       options.orchestrator = arg.slice('--orchestrator='.length);
+    } else if (arg.startsWith('--orchestrator-model=')) {
+      options.orchestratorModel = arg.slice('--orchestrator-model='.length);
     } else if (arg.startsWith('--provider=')) {
       options.provider = arg.slice('--provider='.length);
     } else if (arg.startsWith('--prompt-file=')) {
@@ -1606,6 +1612,45 @@ export function diversitySort(candidates, key = (c) => c.platform) {
 }
 
 /**
+ * Normalizes a model identifier by stripping provider prefixes (everything before the
+ * last `/`), trailing 8-digit date suffixes matching `-YYYYMMDD`, and trimming/lowercasing.
+ *
+ * @param {string|null|undefined} model
+ * @returns {string}
+ */
+export function normalizeModelId(model) {
+  if (!model || typeof model !== 'string') return '';
+  let id = model.trim();
+  if (id.includes('/')) {
+    id = id.slice(id.lastIndexOf('/') + 1);
+  }
+  id = id.replace(/-(?:20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))$/, '');
+  return id.toLowerCase();
+}
+
+/**
+ * Compares a candidate model (string or array of fallback strings) against an orchestrator model.
+ * Returns false if orchestratorModel or candidateModel is nullish / empty.
+ *
+ * @param {string | string[] | null | undefined} candidateModel
+ * @param {string | null | undefined} orchestratorModel
+ * @returns {boolean}
+ */
+export function isSameModel(candidateModel, orchestratorModel) {
+  if (!orchestratorModel || !candidateModel) return false;
+  const target = normalizeModelId(orchestratorModel);
+  if (!target) return false;
+
+  if (Array.isArray(candidateModel)) {
+    return candidateModel.some((m) => isSameModel(m, orchestratorModel));
+  }
+  if (typeof candidateModel !== 'string') return false;
+
+  const candidate = normalizeModelId(candidateModel);
+  return Boolean(candidate && candidate === target);
+}
+
+/**
  * Strips single-line and multi-line comments and trailing commas from JSON/JSONC
  * strings while preserving URLs and string literals (leniently supports both " and ').
  *
@@ -1999,29 +2044,57 @@ export function resolveRunnerExitCode({ code, signal, truncated, cleanStdout, is
  * `--orchestrator` overrides whatever this returns.
  * @returns {string|null} Provider key, or null when no host marker is present.
  */
-export function detectOrchestrator() {
+export function detectOrchestrator(options = {}) {
+  const env = options.env || process.env;
   if (
-    process.env.ANTIGRAVITY_AGENT ||
-    process.env.ANTIGRAVITY_CONVERSATION_ID ||
-    process.env.ANTIGRAVITY_SESSION_ID ||
-    process.env.GEMINI_CLI
+    env.ANTIGRAVITY_AGENT ||
+    env.ANTIGRAVITY_CONVERSATION_ID ||
+    env.ANTIGRAVITY_SESSION_ID ||
+    env.GEMINI_CLI
   ) {
     return 'agy';
   }
   if (
-    process.env.CLAUDECODE ||
-    process.env.CLAUDE_CODE ||
-    process.env.CLAUDE_CODE_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    process.env.CLAUDE_CODE_ENTRYPOINT
+    env.CLAUDECODE ||
+    env.CLAUDE_CODE ||
+    env.CLAUDE_CODE_SESSION_ID ||
+    env.CLAUDE_SESSION_ID ||
+    env.CLAUDE_CODE_ENTRYPOINT
   ) {
     return 'claude';
   }
-  if (process.env.COPILOT_AGENT || process.env.COPILOT_CLI_SESSION_ID) {
+  if (env.COPILOT_AGENT || env.COPILOT_CLI_SESSION_ID) {
     return 'copilot';
   }
-  if (process.env.OPENCODE_PORT || process.env.OPENCODE_AGENT) {
+  if (env.OPENCODE_PORT || env.OPENCODE_AGENT) {
     return 'opencode';
+  }
+  return null;
+}
+
+/**
+ * Detects the orchestrator model from environment variables, scoped to the detected orchestrator.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env=process.env]
+ * @param {string|null} [options.orchestrator]
+ * @returns {string|null} Detected model identifier, or null.
+ */
+export function detectOrchestratorModel(options = {}) {
+  const env = options.env || process.env;
+  const orchestrator = options.orchestrator !== undefined ? options.orchestrator : detectOrchestrator({ env });
+
+  if (orchestrator === 'agy') {
+    return env.ANTIGRAVITY_MODEL || env.GEMINI_MODEL || null;
+  }
+  if (orchestrator === 'claude') {
+    return env.CLAUDE_MODEL || env.ANTHROPIC_MODEL || null;
+  }
+  if (orchestrator === 'copilot') {
+    return env.COPILOT_MODEL || env.GITHUB_COPILOT_MODEL || null;
+  }
+  if (orchestrator === 'opencode') {
+    return env.OPENCODE_MODEL || null;
   }
   return null;
 }

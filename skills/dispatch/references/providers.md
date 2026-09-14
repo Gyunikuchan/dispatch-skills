@@ -8,7 +8,7 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 Model and reasoning-effort defaults come from [`config.default.jsonc`](../config.default.jsonc) (or a project/machine override; see [Configuration](../SKILL.md#configuration) in `SKILL.md`). A runner given no model/effort (no CLI flag, no config entry) omits `-m`/`-e` entirely and lets the underlying CLI apply its own default.
 
-Unpinned cascade order is diversity-sorted from the config's `platforms` key order: each platform's first array entry comes before any platform's second, and the orchestrator's platform comes last (sorted the same way). An in-slot `model` array stays within its one slot; `-m`/`-e` collapse a platform to one candidate; a pinned `--provider` walks that platform's entries in order.
+Unpinned cascade order is diversity-sorted from the config's `platforms` key order: each platform's first array entry comes before any platform's second, and the orchestrator's platform comes last (with candidates matching the orchestrator's active model placed after alternative models on that platform). An in-slot `model` array stays within its one slot; `-m`/`-e` collapse a platform to one candidate; a pinned `--provider` walks that platform's entries in order.
 
 | Provider | Key | CLI Binary | Direct Runner | Default Mode | Session Handle |
 |----------|-----|------------|---------------|--------------|----------------|
@@ -162,14 +162,16 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 
 `detectOrchestrator()` in [`scripts/common.mjs`](../scripts/common.mjs) (re-exported by `dispatch.mjs`) inspects host CLI environment markers to skip dispatching back to the orchestrator's own platform:
 
-| Orchestrator | Markers |
-|--------------|---------|
-| Antigravity | `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `ANTIGRAVITY_SESSION_ID`, `GEMINI_CLI` |
-| Claude Code | `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` |
-| Copilot CLI | `COPILOT_AGENT`, `COPILOT_CLI_SESSION_ID` |
-| OpenCode | `OPENCODE_PORT`, `OPENCODE_AGENT` |
+| Orchestrator | Platform Markers | Model Markers |
+|--------------|------------------|---------------|
+| Antigravity | `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `ANTIGRAVITY_SESSION_ID`, `GEMINI_CLI` | `ANTIGRAVITY_MODEL`, `GEMINI_MODEL` |
+| Claude Code | `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` | `CLAUDE_MODEL`, `ANTHROPIC_MODEL` |
+| Copilot CLI | `COPILOT_AGENT`, `COPILOT_CLI_SESSION_ID` | `COPILOT_MODEL`, `GITHUB_COPILOT_MODEL` |
+| OpenCode | `OPENCODE_PORT`, `OPENCODE_AGENT` | `OPENCODE_MODEL` |
 
-`VSCODE_PID` is excluded from detection as it is set across all VS Code terminals regardless of driving agent. Pass `--orchestrator <name>` to override detection.
+`VSCODE_PID` is excluded from detection as it is set across all VS Code terminals regardless of driving agent. Pass `--orchestrator <name>` and `--orchestrator-model <model>` to override detection.
+
+`detectOrchestratorModel()` pairs model detection with the detected orchestrator host to demote candidates matching the active orchestrator platform + model to the end of the candidate list.
 
 ---
 

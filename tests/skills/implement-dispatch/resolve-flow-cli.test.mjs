@@ -62,6 +62,12 @@ describe('resolve-flow CLI', () => {
     assert.match(stderr, /cannot be combined with: --platform, --level/);
   });
 
+  it('refuses --validate-only combined with --orchestrator-model', () => {
+    const { status, stderr } = run('--validate-only', '--orchestrator-model', 'claude-opus-5');
+    assert.equal(status, 1);
+    assert.match(stderr, /cannot be combined with: --orchestrator-model/);
+  });
+
   it('requires --platform', () => {
     const { status, stderr } = run('--level', 'low');
     assert.equal(status, 1);
@@ -96,6 +102,20 @@ describe('resolve-flow CLI', () => {
     const { status, stderr } = run('--platform');
     assert.equal(status, 1);
     assert.match(stderr, /Missing value for --platform/);
+  });
+
+  it('rejects --orchestrator-model with a missing value', () => {
+    const { status, stderr } = run('--platform', 'claude', '--orchestrator-model');
+    assert.equal(status, 1);
+    assert.match(stderr, /Missing value for --orchestrator-model/);
+  });
+
+  it('accepts --orchestrator-model and --orchestrator-model= forms equivalently', () => {
+    const spaced = run('--platform', 'claude', '--level', 'low', '--orchestrator-model', 'claude-opus-5');
+    const equals = run('--platform=claude', '--level=low', '--orchestrator-model=claude-opus-5');
+    assert.equal(spaced.status, 0);
+    assert.equal(equals.status, 0);
+    assert.deepEqual(JSON.parse(spaced.stdout), JSON.parse(equals.stdout));
   });
 
   it('rejects an unknown level', () => {

@@ -744,6 +744,195 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.deepEqual(calls, ['agy', 'claude']);
     });
 
+    it('demotes same platform + model candidate to dead last behind alternative models on the orchestrator platform', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const multiConfig = {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+          copilot: { model: 'gpt-5.6-luna' },
+        },
+      };
+
+      const calls = [];
+      const fail = (provider) => async (opts) => {
+        calls.push({ provider, model: opts.model, effort: opts.effort });
+        return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+      };
+      for (const provider of ['claude', 'agy', 'copilot']) {
+        mock.method(providerRunners, provider, fail(provider));
+      }
+
+      await dispatchTask({
+        prompt: 'Test',
+        orchestrator: 'claude',
+        orchestratorModel: 'claude-opus-5',
+        config: multiConfig,
+        configPath: 'custom.jsonc',
+      }).catch(() => {});
+
+      // Externals first (agy, copilot), then claude with different model (sonnet-5), then exact match (opus-5) last
+      assert.deepEqual(calls.map((c) => `${c.provider}:${c.model}`), [
+        'agy:gemini-3.8-flash',
+        'copilot:gpt-5.6-luna',
+        'claude:claude-sonnet-5',
+        'claude:claude-opus-5',
+      ]);
+    });
+
+    it('demotes same platform + model match regardless of reasoning effort (effort neutrality)', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const config = {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5', effort: 'low' },
+            { model: 'claude-sonnet-5', effort: 'high' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      };
+
+      const calls = [];
+      for (const provider of ['claude', 'agy']) {
+        mock.method(providerRunners, provider, async (opts) => {
+          calls.push({ provider, model: opts.model, effort: opts.effort });
+          return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+        });
+      }
+
+      // Orchestrator has effort "max", candidate has effort "low" — should still match and demote
+      await dispatchTask({
+        prompt: 'Test',
+        orchestrator: 'claude',
+        orchestratorModel: 'claude-opus-5',
+        config,
+        configPath: 'custom.jsonc',
+      }).catch(() => {});
+
+      assert.deepEqual(calls.map((c) => `${c.provider}:${c.model}`), [
+        'agy:gemini-3.8-flash',
+        'claude:claude-sonnet-5',
+        'claude:claude-opus-5',
+      ]);
+    });
+
+    it('preserves baseline group order when orchestratorModel is null (undetected)', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const config = {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      };
+
+      const calls = [];
+      for (const provider of ['claude', 'agy']) {
+        mock.method(providerRunners, provider, async (opts) => {
+          calls.push(`${provider}:${opts.model}`);
+          return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+        });
+      }
+
+      await dispatchTask({
+        prompt: 'Test',
+        orchestrator: 'claude',
+        orchestratorModel: null,
+        config,
+        configPath: 'custom.jsonc',
+      }).catch(() => {});
+
+      assert.deepEqual(calls, [
+        'agy:gemini-3.8-flash',
+        'claude:claude-opus-5',
+        'claude:claude-sonnet-5',
+      ]);
+    });
+
+    it('pinned cascade bypasses orchestrator demotion', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      const config = {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+        },
+      };
+
+      const calls = [];
+      mock.method(providerRunners, 'claude', async (opts) => {
+        calls.push(opts.model);
+        return { provider: 'claude', stdout: '', exitCode: 1, failureKind: 'quota' };
+      });
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        orchestratorModel: 'claude-opus-5',
+        config,
+        configPath: 'custom.jsonc',
+      }).catch(() => {});
+
+      // Pinned walks candidate array in original order
+      assert.deepEqual(calls, ['claude-opus-5', 'claude-sonnet-5']);
+    });
+
+    it('falls through to environment model detection when orchestratorModel is omitted (undefined)', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDE_MODEL = 'claude-opus-5';
+      process.env.CLAUDECODE = '1';
+
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const config = {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      };
+
+      const calls = [];
+      for (const provider of ['claude', 'agy']) {
+        mock.method(providerRunners, provider, async (opts) => {
+          calls.push(`${provider}:${opts.model}`);
+          return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+        });
+      }
+
+      // orchestratorModel omitted entirely -> defaults to undefined -> detects CLAUDE_MODEL -> demotes opus-5 to end
+      await dispatchTask({
+        prompt: 'Test',
+        config,
+        configPath: 'custom.jsonc',
+      }).catch(() => {});
+
+      assert.deepEqual(calls, [
+        'agy:gemini-3.8-flash',
+        'claude:claude-sonnet-5',
+        'claude:claude-opus-5',
+      ]);
+    });
+
     it('CLI -m override still yields one candidate per platform in the unpinned cascade', async () => {
       clearOrchestratorEnv();
       for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {

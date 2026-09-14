@@ -6,7 +6,8 @@
  * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string } | Array<{ "model"?: string | string[], "effort"?: string }> } }
  *   - Cascade order is diversity-sorted from "platforms" key order: each platform's first
  *     entry in key order, then remaining array entries in their original order; the
- *     orchestrator's own platform is sorted the same way and tried last. An in-slot "model"
+ *     orchestrator's own platform is sorted the same way and tried last (with candidates matching
+ *     the orchestrator's active model placed after alternative models on that platform). An in-slot "model"
  *     array stays one candidate and is unaffected.
  *   - A platform key absent from the loaded config is never dispatched to.
  *   - Each platform entry can be a single model/effort object or an array of candidate

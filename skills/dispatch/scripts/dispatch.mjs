@@ -26,6 +26,8 @@ import {
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
   detectOrchestrator,
+  detectOrchestratorModel,
+  isSameModel,
   diversitySort,
   DEFAULT_TIMEOUT_SECONDS,
   isEmptyResult,
@@ -38,9 +40,9 @@ import {
   verifySkillIntegrity,
 } from './common.mjs';
 
-// Re-exported: it lives in common.mjs so resolve-artifact-paths.mjs can detect the host
+// Re-exported: they live in common.mjs so other modules can detect host/model
 // without importing this module (and, through it, every provider runner).
-export { detectOrchestrator };
+export { detectOrchestrator, detectOrchestratorModel, isSameModel };
 import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
@@ -67,6 +69,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {boolean} [json] Structured JSON output (opencode provider only).
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
+ * @property {string|null} [orchestratorModel] Explicit orchestrator model override; skips detection.
  * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
@@ -138,6 +141,7 @@ export async function dispatchTask(options = {}) {
     json = false,
     verbose = false,
     orchestrator = null,
+    orchestratorModel = undefined,
     provider = null,
     noConfig = false,
     config: injectedConfig = undefined,
@@ -172,6 +176,12 @@ export async function dispatchTask(options = {}) {
   // Resolved once so cascade membership and the orchestrator-last grouping below agree; a pin never
   // groups by orchestrator, so detection is skipped there.
   const effectiveOrchestrator = provider ? null : normalizeOrchestrator(orchestrator || detectOrchestrator());
+  const effectiveOrchestratorModel =
+    !effectiveOrchestrator || provider
+      ? null
+      : orchestratorModel !== undefined
+        ? (orchestratorModel || null)
+        : detectOrchestratorModel({ orchestrator: effectiveOrchestrator });
 
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
@@ -248,11 +258,25 @@ export async function dispatchTask(options = {}) {
   };
 
   // Try every platform's first entry before any platform's second, externals before the orchestrator.
+  // Within the orchestrator's platform, demote exact platform + model matches behind alternative models.
   // A pin cascades over one provider's entries only, so the sort is a no-op there.
-  const orderedCandidates = [
-    ...diversitySort(targetCandidates.filter((c) => c.provider !== effectiveOrchestrator), (c) => c.provider),
-    ...diversitySort(targetCandidates.filter((c) => c.provider === effectiveOrchestrator), (c) => c.provider),
-  ];
+  let orderedCandidates;
+  if (!provider && effectiveOrchestrator) {
+    const externals = targetCandidates.filter((c) => c.provider !== effectiveOrchestrator);
+    const orchestratorDiffModel = targetCandidates.filter(
+      (c) => c.provider === effectiveOrchestrator && !isSameModel(c.model, effectiveOrchestratorModel),
+    );
+    const orchestratorSameModel = targetCandidates.filter(
+      (c) => c.provider === effectiveOrchestrator && isSameModel(c.model, effectiveOrchestratorModel),
+    );
+    orderedCandidates = [
+      ...diversitySort(externals, (c) => c.provider),
+      ...diversitySort(orchestratorDiffModel, (c) => c.provider),
+      ...diversitySort(orchestratorSameModel, (c) => c.provider),
+    ];
+  } else {
+    orderedCandidates = diversitySort(targetCandidates, (c) => c.provider);
+  }
 
   return await runCascade(orderedCandidates, runnerOptionsFor, { pinned: Boolean(provider) });
 }
@@ -432,6 +456,7 @@ export async function main() {
     if (options.json) ignored.push('--json');
     if (options.verbose) ignored.push('--verbose');
     if (options.orchestrator !== null) ignored.push('--orchestrator');
+    if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
     if (options.provider !== null) ignored.push('--provider');
     if (noConfig) ignored.push('--no-config');
     if (ignored.length > 0) {
@@ -469,7 +494,12 @@ export async function main() {
   }
 
   try {
-    const result = await dispatchTask({ ...options, prompt: finalPrompt, noConfig });
+    const result = await dispatchTask({
+      ...options,
+      prompt: finalPrompt,
+      noConfig,
+      orchestratorModel: options.orchestratorModel ?? undefined,
+    });
 
     if (result.stdout) {
       process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
@@ -521,6 +551,7 @@ Options:
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
+  --orchestrator-model <name> Override detected orchestrator model
   --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
   --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
   --json                      Request structured JSON output (opencode provider only)

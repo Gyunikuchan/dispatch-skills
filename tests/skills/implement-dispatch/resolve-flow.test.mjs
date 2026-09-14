@@ -1170,6 +1170,84 @@ describe('resolveFlow — diversity-sorted candidates', () => {
     assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'deepseek-v4.1-flash']);
   });
 
+  it('demotes same platform + model match to dead last behind alternative models on orchestrator platform', () => {
+    const config = withSections({
+      'code-review': {
+        targetCount: { low: 'all' },
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      },
+    });
+    const out = resolveFlow({ platform: 'claude', orchestratorModel: 'claude-opus-5', level: 'low' }, ALL_UP, config);
+    assert.deepEqual(
+      out['code-review'].targets.map((t) => `${t.platform}:${t.model}`),
+      ['agy:gemini-3.8-flash', 'claude:claude-sonnet-5', 'claude:claude-opus-5']
+    );
+  });
+
+  it('demotes same platform + model match regardless of reasoning effort in resolveFlow', () => {
+    const config = withSections({
+      'code-review': {
+        targetCount: { low: 'all' },
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5', effort: 'low' },
+            { model: 'claude-sonnet-5', effort: 'max' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      },
+    });
+    const out = resolveFlow({ platform: 'claude', orchestratorModel: 'claude-opus-5', level: 'low' }, ALL_UP, config);
+    assert.deepEqual(
+      out['code-review'].targets.map((t) => `${t.platform}:${t.model}`),
+      ['agy:gemini-3.8-flash', 'claude:claude-sonnet-5', 'claude:claude-opus-5']
+    );
+  });
+
+  it('preserves baseline order when orchestratorModel is null in resolveFlow', () => {
+    const config = withSections({
+      'code-review': {
+        targetCount: { low: 'all' },
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      },
+    });
+    const out = resolveFlow({ platform: 'claude', orchestratorModel: null, level: 'low' }, ALL_UP, config);
+    assert.deepEqual(
+      out['code-review'].targets.map((t) => `${t.platform}:${t.model}`),
+      ['agy:gemini-3.8-flash', 'claude:claude-opus-5', 'claude:claude-sonnet-5']
+    );
+  });
+
+  it('pinned runs in resolveFlow bypass orchestrator model demotion', () => {
+    const config = withSections({
+      'code-review': {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5' },
+            { model: 'claude-sonnet-5' },
+          ],
+        },
+      },
+    });
+    const out = resolveFlow({ platform: 'claude', orchestratorModel: 'claude-opus-5', pins: ['claude'], level: 'low' }, ALL_UP, config);
+    assert.deepEqual(
+      out['code-review'].targets.map((t) => `${t.platform}:${t.model}`),
+      ['claude:claude-opus-5', 'claude:claude-sonnet-5']
+    );
+  });
+
   describe('exclude', () => {
     it('removes excluded platforms from candidates and reports them only in diagnostics.excluded', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high', exclude: ['copilot'] }, ALL_UP, multi());

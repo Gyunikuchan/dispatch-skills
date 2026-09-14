@@ -190,7 +190,7 @@ The three sections (`plan-review`, `implementation`, `code-review`) each nest th
 | `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"`; the first `targetCount` of the diversity-sorted list, the rest become reserves |
 | `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
 
-When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last, fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.
+When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last (with candidates matching the orchestrator's active platform and model placed dead last), fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.
 
 The two sentinels differ in whether pins can override them. `maxRounds: 0` turns a phase off outright — pins cannot resurrect it. `targetCount: 0` turns it off for *unpinned* runs only; naming providers explicitly still runs the phase, because pins override breadth. On an unpinned run the resolver normalizes `targetCount: 0` to `maxRounds: 0`, so after resolution `maxRounds === 0` is the single sentinel: a phase is off when it is `0`, and providers are merely unavailable when it is `> 0` with an empty `targets` list.
 

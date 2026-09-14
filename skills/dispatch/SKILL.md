@@ -14,7 +14,7 @@ The cascade order and per-provider model/effort come from [config.default.jsonc]
 3. **GitHub Copilot** (`copilot`).
 4. **OpenCode** (`opencode`) — cascading across models configured in `config.default.jsonc` (defaulting to GLM → DeepSeek → local LM Studio) or falling back to `opencode.jsonc`'s configured model / CLI default.
 
-A platform omitted from the loaded config is never dispatched, regardless of order. Alternative providers are attempted first; the orchestrator's own platform is tried last. Within each group the cascade is diversity-sorted: every platform's first array entry, in key order, before any platform's second entry (an in-slot `model` array is not split). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
+A platform omitted from the loaded config is never dispatched, regardless of order. Alternative providers are attempted first; the orchestrator's own platform is tried last (with candidates matching the orchestrator's active model placed after alternative models on that platform). Within each group the cascade is diversity-sorted: every platform's first array entry, in key order, before any platform's second entry (an in-slot `model` array is not split). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
@@ -107,6 +107,7 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 | `-e <effort>` | Override reasoning effort; passed through verbatim to the target CLI (OpenCode receives it as `--variant`; values are platform-specific; user-requested only) | `-e "high"` |
 | `-t <sec>` | Override timeout in seconds (default: 1800; user-requested only) | `-t 2400` |
 | `--orchestrator <name>` | Override detected orchestrator platform | `--orchestrator claude` |
+| `--orchestrator-model <model>` | Override detected orchestrator model (demotes same platform+model matches) | `--orchestrator-model "claude-opus-5"` |
 | `--json` | Request structured JSON output (opencode provider only) | `--json` |
 | `-a <name>` | Override agent name (opencode provider only) | `-a delegate` |
 | `-v` | Stream live trace (terminal debugging only; suppressed when piped) | `-v` |

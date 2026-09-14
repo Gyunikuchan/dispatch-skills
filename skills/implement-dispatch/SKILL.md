@@ -54,10 +54,10 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 3. **Resolve flow** (`<skills-dir>` resolves per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution):
 
    ```bash
-   node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <pins>] [--exclude <keys>]
+   node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>] [--pins <pins>] [--exclude <keys>]
    ```
 
-   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`). `--exclude` carries the run's exclusion set (**Exclude failed platforms**); omit it on the first run. Candidates come back diversity-sorted: every platform's first model before any platform's second, the orchestrator's platform last. Halt immediately if non-zero; store output as `flow`.
+   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`); `--orchestrator-model` optionally overrides the auto-detected orchestrator model. `--exclude` carries the run's exclusion set (**Exclude failed platforms**); omit it on the first run. Candidates come back diversity-sorted: every platform's first model before any platform's second, the orchestrator's platform last (with same platform + model matches placed dead last). Halt immediately if non-zero; store output as `flow`.
 4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
 
    ```bash

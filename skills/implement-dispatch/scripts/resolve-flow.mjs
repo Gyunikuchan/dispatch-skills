@@ -24,6 +24,8 @@ import {
   isMainModule,
   getConfigCandidates,
   loadSkillConfig,
+  detectOrchestratorModel,
+  isSameModel,
 } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
@@ -41,14 +43,16 @@ const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
 const OPTIONAL_KNOBS = [];
 
 const USAGE = `Usage:
-  node resolve-flow.mjs --platform <key> [--level <level>] [--pins <list>] [--exclude <list>] [--validate-only]
+  node resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>]
+                        [--pins <list>] [--exclude <list>] [--validate-only]
 
-  --platform <key>   orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
-  --level <level>    ${LEVELS.join(' | ')} (default: medium)
-  --pins <list>      comma-separated provider keys, or "all"
-  --exclude <list>   comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
-  --validate-only    validate the config schema and exit
-  -h, --help         show this help
+  --platform <key>            orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
+  --orchestrator-model <name> orchestrator's active model (sorts same platform+model last)
+  --level <level>             ${LEVELS.join(' | ')} (default: medium)
+  --pins <list>               comma-separated provider keys, or "all"
+  --exclude <list>            comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
+  --validate-only             validate the config schema and exit
+  -h, --help                  show this help
 `;
 
 /**
@@ -580,6 +584,7 @@ export function assertKnownExcludeKeys(excluded, reviewKeys) {
  * Pure over its inputs: no clock, filesystem, or process access.
  *
  * @param {{ platform: string, level?: string, pins?: string[], exclude?: string[],
+ *           orchestratorModel?: string | null,
  *           livenessSource?: 'env-override' | 'probe' }} options
  *   `livenessSource` is passed in rather than read from the environment, keeping this pure.
  * @param {Record<string, boolean>} liveness - map of platform key → available
@@ -587,7 +592,7 @@ export function assertKnownExcludeKeys(excluded, reviewKeys) {
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
-  const { level = 'medium', pins: rawPins } = options;
+  const { level = 'medium', pins: rawPins, orchestratorModel = null } = options;
   // Same alias normalization as pins, so `claudecode` still self-excludes `claude`.
   const platform = options.platform ? normalizePin(options.platform) : options.platform;
   // An unvalidated platform self-excludes nothing, so the orchestrator's own agent would be
@@ -688,7 +693,8 @@ export function resolveFlow(options, liveness, config) {
 
     // Unpinned: gather live candidates for each configured platform
     const externalCandidates = [];
-    const orchestratorCandidates = [];
+    const orchestratorDiffModel = [];
+    const orchestratorSameModel = [];
 
     for (const k of allKeys) {
       if (liveness[k] !== true) continue;
@@ -698,14 +704,22 @@ export function resolveFlow(options, liveness, config) {
         if (c.model !== undefined) target.model = c.model;
         if (c.effort !== undefined) target.effort = c.effort;
         if (k === platform) {
-          orchestratorCandidates.push(target);
+          if (isSameModel(c.model, orchestratorModel)) {
+            orchestratorSameModel.push(target);
+          } else {
+            orchestratorDiffModel.push(target);
+          }
         } else {
           externalCandidates.push(target);
         }
       }
     }
 
-    const orderedCandidates = [...diversitySort(externalCandidates), ...diversitySort(orchestratorCandidates)];
+    const orderedCandidates = [
+      ...diversitySort(externalCandidates),
+      ...diversitySort(orchestratorDiffModel),
+      ...diversitySort(orchestratorSameModel),
+    ];
     const requested = targetCount === 'all' ? orderedCandidates.length : targetCount;
     const resolved = Math.min(requested, orderedCandidates.length);
     if (resolved < requested) clamped[sectionName] = { requested, resolved };
@@ -809,6 +823,7 @@ function parseArgs(args) {
       const val = arg.slice(eq + 1);
       switch (flag) {
         case '--platform': opts.platform = val; continue;
+        case '--orchestrator-model': opts.orchestratorModel = val; continue;
         case '--level':    opts.level = val; continue;
         case '--pins':     setPins(val); continue;
         case '--exclude':  setExclude(val); continue;
@@ -818,6 +833,7 @@ function parseArgs(args) {
     }
     switch (arg) {
       case '--platform': opts.platform = value(i); i++; break;
+      case '--orchestrator-model': opts.orchestratorModel = value(i); i++; break;
       case '--level':    opts.level = value(i); i++; break;
       case '--pins':
         setPins(value(i));
@@ -863,11 +879,11 @@ async function main() {
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
-    const ignored = ['platform', 'level', 'pins', 'exclude'].filter(k => opts[k] !== undefined);
+    const ignored = ['platform', 'orchestratorModel', 'level', 'pins', 'exclude'].filter(k => opts[k] !== undefined);
     if (ignored.length > 0) {
       process.stderr.write(
         `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
-          .map(k => `--${k}`)
+          .map(k => (k === 'orchestratorModel' ? '--orchestrator-model' : `--${k}`))
           .join(', ')}\n`
       );
       process.exit(1);
@@ -941,9 +957,14 @@ async function main() {
     process.exit(1);
   }
 
+  const orchestratorModel =
+    opts.orchestratorModel !== undefined
+      ? (opts.orchestratorModel || null)
+      : detectOrchestratorModel({ orchestrator: normalizePin(opts.platform) });
+
   let result;
   try {
-    result = resolveFlow({ ...opts, livenessSource }, liveness, config);
+    result = resolveFlow({ ...opts, orchestratorModel, livenessSource }, liveness, config);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
