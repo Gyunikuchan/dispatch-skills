@@ -6,20 +6,29 @@ Get a rigorous cross-agent second opinion on code changes in your working tree, 
 
 ## What It Does
 
-Reviewing your own code or relying solely on a single agent often leaves blind spots in domain edge cases, security seams, and architectural drift. `dispatch-code-review` automates cross-agent code review by delegating inspection of recent session changes or working-tree diffs to an external coding-agent CLI (e.g. Claude Code, Antigravity, GitHub Copilot, or OpenCode).
+Reviewing your own code or relying solely on a single agent often leaves blind spots in domain edge cases, security seams, and architectural drift. `dispatch-code-review` automates cross-agent code review by delegating inspection of recent session changes or working-tree diffs to an external coding-agent CLI (such as Claude Code, Antigravity, GitHub Copilot, or OpenCode).
 
 The core philosophy is **claim vs. verdict**:
 1. **Delegate produces claims**: An external delegate CLI inspects uncommitted or recent git diffs, adjacent call sites, and attached walkthroughs/plans across six software engineering axes.
-2. **Orchestrator adjudicates**: Your primary orchestrator agent (who holds the full conversation context and tool access) verifies every claim against the cited `<file>:L<line>`, active codebase, and repository rules (`AGENTS.md` / `CLAUDE.md`).
-3. **Walkthrough & code updated**: Accepted findings are fixed or logged in the walkthrough file on disk under `## Review Findings & Resolutions`, while true ambiguities are escalated interactively to the user.
+2. **Orchestrator adjudicates**: Your primary orchestrator agent (holding conversation history, workspace context, and tool access) verifies every claim against the cited `<file>:L<line>`, active codebase, and repository rules (`AGENTS.md` / `CLAUDE.md`).
+3. **Walkthrough & code updated**: In standalone mode, accepted findings are automatically applied to the working tree, project verification commands are re-run until green, and resolutions are recorded in the walkthrough file on disk under `## Review Findings & Resolutions`, while true ambiguities are escalated interactively to the user.
 
 ```mermaid
 flowchart TD
-    User(["👤 User"]) -->|"1. Request code review"| Orchestrator["🤖 Orchestrator Agent"]
-    Orchestrator -->|"2. Dispatches read-only review"| Delegate["🔍 Delegate CLI (6 Axes)"]
-    Delegate -->|"3. Structured claims"| Orchestrator
-    Orchestrator -->|"4. Adjudicates against code lines"| Codebase[("💻 Active Code & Walkthrough")]
-    Orchestrator -->|"5. Final report & resolutions"| User
+    Prompt(["👤 1. User Prompt / Review Request"]) --> Orchestrator["🤖 2. Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
+    
+    Orchestrator -->|"Resolves or authors"| Walkthrough[("📄 3. Walkthrough & Diffs<br/>(Working tree / branch diff)")]
+    Walkthrough -->|"Dispatches with -f"| Dispatch["⚡ 4. dispatch runner"]
+    
+    Dispatch -->|"Cascade / pinned CLI"| Delegate["🔍 5. Delegate CLI<br/>(6 Evaluation Axes)"]
+    Delegate -.->|"Streams raw traces"| Logs[("📝 OS Temp Logs<br/>(Protects context)")]
+    
+    Delegate -->|"Structured claims (<file>:L<line>)"| Adjudicate["⚖️ 6. Claim Adjudication<br/>(Verified against code & rules)"]
+    Codebase[("💻 Workspace Rules & Code")] -->|"Ground truth"| Adjudicate
+    
+    Adjudicate -->|"Applies fixes & re-verifies"| WorkTree[("💻 7. Working Tree & Code")]
+    Adjudicate -->|"Logs resolutions & follow-ups"| UpdatedWalkthrough[("📄 8. Updated Walkthrough on Disk")]
+    Adjudicate -->|"Presents report"| Report(["👤 9. Final Report to User"])
 ```
 
 ---
@@ -33,7 +42,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (any provider/model; see `dispatch`).
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (supports local LLMs like LM Studio or remote providers like Anthropic/OpenRouter).
 
 ### Installation
 
@@ -43,17 +52,26 @@ Install `dispatch-code-review` alongside `dispatch`:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
 ```
 
-To install the complete suite across all skills (`--all`, add `-g` for global):
+To install globally for all your projects:
+
+```bash
+npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
+```
+
+To install the complete suite of dispatch skills:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
+> [!NOTE]
+> When using multiple skills from this repository, ensure they are installed in the **same scope** (all project-local or all global) so sibling runner scripts and prompt templates can locate each other.
+
 ---
 
 ## How to Use
 
-Trigger `dispatch-code-review` directly via the slash command `/dispatch-code-review` (or natural language) in your agent chat session. You do not need to call any scripts manually—the agent will assemble context, dispatch the review, adjudicate the findings against your code, update the walkthrough, and, when run standalone, apply accepted must-fix changes to your working tree.
+Trigger `dispatch-code-review` directly via the `/dispatch-code-review` slash command or natural language inside your agent chat session. The orchestrator agent automatically handles diff inspection, walkthrough resolution/authoring, background execution, claim adjudication, working-tree fix application, and verification.
 
 ### 1. Basic Code Review
 
@@ -68,16 +86,16 @@ Review current uncommitted working-tree changes (staged, unstaged, and untracked
 Pass focus areas directly after the command to steer delegate attention:
 
 ```markdown
-/dispatch-code-review focus on the CPF allocation math and a11y
+/dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
 ```
 
 ```markdown
-/dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
+/dispatch-code-review focus on the CPF allocation math and a11y
 ```
 
 ### 3. Pinning Reviewer Providers
 
-Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separated provider keys, no level (standalone reviews run a single round):
+Fan out review to specific external CLIs in parallel using `(<pins>)` (comma-separated provider keys `claude`, `agy`, `copilot`, `opencode`):
 
 ```markdown
 /dispatch-code-review (claude)
@@ -87,26 +105,45 @@ Fan out to specific external CLIs in parallel with `(<pins>)` — comma-separate
 /dispatch-code-review (claude,agy) focus on resource lifecycle and memory leaks
 ```
 
-### 4. Explicit Context or Walkthrough Targeting
+> [!TIP]
+> Unpinned invocations automatically use `dispatch`'s diversity-sorted cascade, trying external platforms first and demoting the host orchestrator's platform to avoid echo chambers.
 
-Pass explicit plan or walkthrough paths if you want the review anchored to specific design docs:
+### 4. Context, Walkthrough & Task Targeting
+
+Pass explicit walkthrough or plan paths if you want the review anchored to specific design documents:
 
 ```markdown
 /dispatch-code-review .scratch/plan/2026-09-08-auth-v2-walkthrough.md
 ```
 
+You can also provide a task summary describing the completed work:
+
+```markdown
+/dispatch-code-review Refactored session store to use Redis cluster with connection pooling
+```
+
+### 5. Multi-Round Re-Reviews
+
+When iterating on code, running `/dispatch-code-review` again automatically detects previous review rounds (by counting `### Round` headings under `## Review Findings & Resolutions`). It scopes subsequent delegate grounding to verify prior resolutions and review only paths and call sites modified since the last round.
+
 ---
 
 ## High-Level Behavior & Invariants
 
-- **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
-- **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
-- **Working-Tree Diff Prioritization**: Uncommitted changes are reviewed first. When everything is already committed, the review covers the whole branch since it diverged from its base — not just the last commit. The exact resolution lives in [references/prompt-template.md](references/prompt-template.md).
-- **Walkthrough Resolution**: Follows `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (host convention and explicit user paths override; then resolves across tiers: *platform-native* → *existing scratch* matching branch slug → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`).
-- **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
-- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (your agent's interactive question tool) before modifying code.
-- **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only modified files, adjacent call sites, and contracts via code graphs) rather than unbounded codebase scans.
-- **Artifact Lifecycle**: standalone runs always retain the walkthrough file in place; only an orchestrator owning the full implement-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
+- **Claim vs. Verdict Separation**: The external delegate's report is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag patterns your codebase already handles. The orchestrator independently verifies every defect citation against actual lines of code before accepting it.
+- **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate uncovers a subtle boundary bug, the orchestrator accepts it.
+- **Working-Tree Diff Prioritization**: Uncommitted changes are reviewed first (staged, unstaged, and untracked files). When the working tree is clean, the review automatically covers the entire branch since it diverged from its base branch (e.g. `origin/HEAD`, `main`, or `master`)—not just the last commit.
+- **Standalone Auto-Fix & Re-Verification**: When run standalone, the skill applies accepted `MUST-FIX` and small safe `SHOULD-FIX` findings directly to your codebase, re-runs the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green or stable, and records unapplied accepted items under `## Follow-ups` in the walkthrough.
+- **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, architectural trade-offs, or unverified external assumptions, the orchestrator pauses and presents interactive questions (using the agent's interactive question tool) before modifying code.
+- **Structured Walkthrough Resolution**: Resolves target walkthroughs through a predictable precedence ladder:
+  1. *Explicit user-provided path* (passed via CLI; skips resolution).
+  2. *Host repository convention* (`AGENTS.md` / `CLAUDE.md` path overrides).
+  3. *Platform-native session artifact* (e.g. Antigravity session brain `walkthrough.md`).
+  4. *Existing scratch walkthrough* matching branch slug (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`).
+  5. *Auto-authored scratch walkthrough* capturing current changes and verification status.
+- **Targeted Grounding & Tool Budgeting**: Delegates perform bounded inspections—reading diff hunks, adjacent call sites, interfaces, and tests via AST / code-graph tools (`codegraph`, `graphify`) within a strict tool turn budget (defaulting to `8 + 2 × <changed files>` turns in standalone runs) rather than performing unbounded codebase scans.
+- **Delegate Text Sanitization**: Delegate claims are rewritten in the orchestrator's own words before being logged or applied. Imperatives addressed to readers, fenced instruction blocks, and raw tool calls are stripped to prevent prompt injection into subsequent planning contexts.
+- **Artifact Lifecycle**: Standalone review runs always retain scratch walkthrough files in place. Only an orchestrator managing an end-to-end workflow relocates completed artifacts to OS temp upon final consensus.
 
 ---
 
@@ -129,46 +166,100 @@ Every code change is evaluated across six rigorous dimensions:
 
 ### Standard Finding Grammar
 
-Every finding returned by the reviewer follows a strict single-line grammar citing an exact path and line number:
+Every finding returned by the reviewer follows a strict single-line grammar citing an exact file path and line number:
 
 ```
 <file>:L<line> — <tag>: <defect> → <required change>
 ```
 
-The full delegate prompt lives in [references/prompt-template.md](references/prompt-template.md), and the structure used when a walkthrough is auto-authored in [references/walkthrough-template.md](references/walkthrough-template.md); edit those files to customize either.
+#### Example Reviewer Output
 
-A finding looks like this in practice:
-```
-src/domain/cpf.ts:L118 — unit: annual ceiling compared against a monthly wage → divide the ceiling by 12, or lift the wage to annual.
-```
+```markdown
+## Verdict
+Ready to ship once the one MUST-FIX security item is resolved.
 
-The full report skeleton — every heading, in order — lives in [references/prompt-template.md](references/prompt-template.md).
+## Axis Coverage
+Architecture & Module Design: clean
+Domain & Business Logic: 1 finding
+Security & Resource Safety: 1 finding
+Simplicity & Anti-Bloat: clean
+Blast Radius & Compatibility: clean
+Test Quality & UI/UX: 1 finding
+
+## MUST-FIX
+- src/auth/session.ts:L42 — auth: session token validation skips expiry check on cached entries → verify `cached.expiresAt > Date.now()` before returning valid session.
+
+## SHOULD-FIX
+- src/domain/cpf.ts:L118 — unit: annual ceiling compared against a monthly wage → divide the ceiling by 12, or lift the wage to annual.
+
+## CONSIDER
+- src/components/button.tsx:L85 — a11y: icon button lacks aria-label → add explicit aria-label describing button action.
+
+## Actionable Next Steps
+1. Patch token expiry check in `src/auth/session.ts:L42`.
+2. Normalize monthly wage calculation in `src/domain/cpf.ts:L118`.
+```
 
 ### Adjudication Decision Table
 
-Every claim is checked against the code it cites and then accepted, rejected, downgraded, or marked disputed — and whichever way it goes, the outcome is logged under `## Review Findings & Resolutions` in the walkthrough. A disputed claim is one the code alone cannot settle (intent, a trade-off, an unverified figure); standalone runs put it to you, while an orchestrated run returns it for the orchestrator's consensus rule to handle. The exact criteria, the resolution order, and the escalation mechanics live in one place — `dispatch`'s `references/alignment.md` § Adjudication — rather than being restated here, where they drift.
+Every claim is verified against the cited code lines and repository rules, then categorized:
+
+| Verdict | Criterion | Action | Log Entry Syntax |
+|---|---|---|---|
+| **Accept** | Requirement, repo rules, or cited code confirms the defect. | Apply fix (standalone) or log for fixes; update walkthrough. | `- **[Accepted]** <file>:L<line> — <tag>: <defect> → <resolution & where applied>` |
+| **Reject** | Contradicted by code, locus missing, already handled, or ungrounded. | Drop from changes; log rejection rationale. | `- **[Rejected / Downgraded]** <file>:L<line> — <tag>: <defect> → <rejection rationale>` |
+| **Downgrade** | Real but trivial or subjective (style, minor preference). | Move to `## Follow-ups` or drop; log rationale. | `- **[Rejected / Downgraded]** <file>:L<line> — <tag> (CONSIDER): <defect> → <rationale>` |
+| **Disputed** | Unsettleable from code alone (ambiguous intent, trade-offs). | Query user interactively before modifying code. | `- **[Resolved Dispute]** <file>:L<line> — <tag>: <defect> → <user ruling & action>` |
+
+All adjudications are appended to the walkthrough file under `## Review Findings & Resolutions`:
+
+```markdown
+### Round 1 — claude, 2026-09-08
+- **[Accepted]** src/auth/session.ts:L42 — auth: session token validation skipped expiry check → added `cached.expiresAt > Date.now()` check in validateSession().
+- **[Accepted]** src/domain/cpf.ts:L118 — unit: annual ceiling compared against monthly wage → normalized wage to annual basis before applying ceiling.
+- **[Rejected / Downgraded]** src/components/button.tsx:L85 — a11y (CONSIDER): icon button aria-label → rejected; icon button is wrapped in Tooltip providing accessible name via aria-describedby.
+```
 
 ---
 
 ## Nuances, Quirks & Troubleshooting
 
 ### Orchestrator Platform Ordering
-Unpinned, the underlying `dispatch` runner tries the other configured platforms first and the orchestrator's own platform last (e.g. Claude Code tries every other reachable CLI before dispatching to Claude Code) — so a same-platform review is possible when nothing else answers. Pin a delegate to force it (`/dispatch-code-review (claude)`), even from the same platform. The review falls back to a read-only subagent only when no dispatch succeeds (`NO_DISPATCH_AVAILABLE`).
-
-### Inspecting Uncommitted Diffs
-Delegates run in a structurally read-only mode and inspect the current working tree (`git diff`, `git diff --staged`, and untracked files). Ensure your changes are saved to disk before triggering review.
-
-### Working on `main` or a Detached HEAD
-The walkthrough path's slug normally comes from your branch name, which is what lets a plan review today and a code review tomorrow land on the same pair of files with no coordination. On a protected branch (`main`, `master`, `develop`, `trunk`) or a detached HEAD, a branch slug would collide across unrelated work, so the slug falls back to your conversation id — meaning only *this* session finds that walkthrough automatically; a later session needs the path or an explicit `--slug`. Under OpenCode, which exposes no conversation id, both derivations fail on a protected branch and the resolver exits non-zero: pass `--slug <kebab-case-slug>`, or give the walkthrough path directly.
-
-### No Reviewer Available
-If every configured platform is missing, unauthenticated, or out of quota, the dispatch fails with `NO_DISPATCH_AVAILABLE` and the review falls back to an in-process read-only subagent on your own platform. Its findings are prefixed `[Subagent Fallback]` — that prefix means the second opinion came from the same model that wrote the code, so it is a self-check rather than a genuinely independent review. Treat those findings with more scepticism, and re-run with a real delegate once one is reachable.
+When unpinned, `dispatch` tries alternative platforms before resorting to the host agent's own platform (e.g. Claude Code tries Antigravity, Copilot, and OpenCode before Claude Code). This ensures genuine cross-agent diversity. To force delegation to a specific platform, use explicit pins like `/dispatch-code-review (claude)`.
 
 ### Host Convention Reading
 Delegates do not require manual rule configuration. They automatically inspect the workspace's `AGENTS.md` or `CLAUDE.md` to evaluate repository-specific idioms, architectural constraints, and coding standards.
 
-### A Standalone Review Edits Your Working Tree
-Run on its own, this skill does not stop at reporting: it applies the fixes it accepts, re-runs your project's verify command until green, and updates the walkthrough on disk. Delegates stay read-only throughout — the edits come from the orchestrator, after it has verified each claim against the cited lines. Accepted findings it does not apply are listed under `## Follow-ups` in the walkthrough rather than dropped. Commit or stash anything you want protected first, and review the resulting diff as you would any other change. Driven by an orchestrating skill instead, the review applies nothing itself — the orchestrator owns its own fix step.
+### Standalone Review Edits Your Working Tree
+When run standalone, this skill does not stop at reporting: it applies the fixes it accepts, re-runs your project's verification command until green, and updates the walkthrough on disk. Delegates stay read-only throughout—the edits are performed by the orchestrator after independently verifying each claim. Commit or stash anything you want protected first, and review the resulting diff.
 
 ### Reviewing Transient Antigravity Walkthroughs
-When running inside Antigravity, the orchestrator picks up the active `walkthrough.md` and `implementation_plan.md` from the session brain directory — no manual copy or export. One caveat: it identifies the session exactly only when `ANTIGRAVITY_CONVERSATION_ID` is set. Without it, the lookup falls back to whichever conversation directory was touched most recently, which can belong to a different session if several are open. Check the resolved paths in the run banner, or pass them explicitly, when more than one Antigravity conversation is live.
+When running inside Antigravity, the orchestrator automatically picks up the active `walkthrough.md` and `implementation_plan.md` from the session brain directory without requiring manual copying. If `ANTIGRAVITY_CONVERSATION_ID` is set in your environment, it targets that exact session; otherwise, it resolves the most recently updated conversation directory.
+
+### Working on `main` or a Detached HEAD
+Walkthrough slugs are normally derived from your active git branch name (e.g. `feature/auth-v2` → `auth-v2`). On protected branches (`main`, `master`, `develop`, `trunk`) or a detached HEAD, the slug falls back to your conversation ID (`conversation-<first 8 chars>`). Under OpenCode (which exposes no conversation ID), pass an explicit path or `--slug <kebab-slug>` to avoid derivation errors.
+
+### Stale-Walkthrough Guard
+When an existing walkthrough file matches the branch slug, the orchestrator compares `## Changes Made` against the active diff under review. If there is a mismatch (e.g. the walkthrough describes earlier work), it pauses to ask whether you want to overwrite it, review it as-is, or author under a fresh slug.
+
+### Inspecting a Running Review
+Each dispatch run prints a launch banner naming the provider, model, and OS temp log path. You can monitor live reviewer execution in real time:
+
+**macOS / Linux:**
+```bash
+tail -f "<logFilePath>"
+```
+
+**Windows PowerShell:**
+```powershell
+Get-Content -Wait -Tail 30 "<logFilePath>"
+```
+
+The rendered prompt sent to the delegate is stored in OS temp (`os.tmpdir()`), keeping your project workspace clean.
+
+### No Reviewer Available
+If all external CLIs are unavailable, unauthenticated, or out of quota, the runner exits `NO_DISPATCH_AVAILABLE`. The orchestrator falls back to an in-process read-only subagent (prefixed with `[Subagent Fallback]`). Note that because fallback subagents run on the host model, they provide a self-check rather than an independent cross-agent review.
+
+### Handling Committed vs. Uncommitted Branch Diffs
+If your working tree is dirty or has untracked files, the review evaluates those uncommitted changes. If your working tree is clean, the review automatically resolves your base branch (e.g. `origin/HEAD`, `main`, or `master`) and reviews all commits on your current branch since the merge base.
+
