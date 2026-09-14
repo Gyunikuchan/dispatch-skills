@@ -26,6 +26,7 @@ import {
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
   detectOrchestrator,
+  diversitySort,
   DEFAULT_TIMEOUT_SECONDS,
   isEmptyResult,
   isMainModule,
@@ -168,9 +169,13 @@ export async function dispatchTask(options = {}) {
     }
   }
 
+  // Resolved once so cascade membership and the orchestrator-last grouping below agree; a pin never
+  // groups by orchestrator, so detection is skipped there.
+  const effectiveOrchestrator = provider ? null : normalizeOrchestrator(orchestrator || detectOrchestrator());
+
   const candidates = await getCandidateProviders({
     explicitProvider: provider,
-    orchestrator,
+    orchestrator: effectiveOrchestrator,
     noConfig,
     config,
     configPath,
@@ -242,7 +247,14 @@ export async function dispatchTask(options = {}) {
     };
   };
 
-  return await runCascade(targetCandidates, runnerOptionsFor, { pinned: Boolean(provider) });
+  // Try every platform's first entry before any platform's second, externals before the orchestrator.
+  // A pin cascades over one provider's entries only, so the sort is a no-op there.
+  const orderedCandidates = [
+    ...diversitySort(targetCandidates.filter((c) => c.provider !== effectiveOrchestrator), (c) => c.provider),
+    ...diversitySort(targetCandidates.filter((c) => c.provider === effectiveOrchestrator), (c) => c.provider),
+  ];
+
+  return await runCascade(orderedCandidates, runnerOptionsFor, { pinned: Boolean(provider) });
 }
 
 /** Loads the dispatch cascade config via the shared skill-config loader. */
@@ -582,7 +594,7 @@ export async function getCandidateProviders(params = {}) {
   }
 
   const order = config ? Object.keys(config.platforms) : KNOWN_PROVIDERS;
-  const effectiveOrchestrator = orchestrator || detectOrchestrator();
+  const effectiveOrchestrator = normalizeOrchestrator(orchestrator || detectOrchestrator());
 
   // Probe concurrently: each probe spawns a CLI and waits on it, so serially they add up to seconds
   // of pure latency before the first delegate starts. Cascade order is preserved by filtering the
@@ -597,6 +609,12 @@ export async function getCandidateProviders(params = {}) {
   }
 
   return candidates;
+}
+
+/** Canonicalizes an orchestrator name via {@link PROVIDER_ALIASES}, passing unknown names through. */
+function normalizeOrchestrator(name) {
+  if (!name) return name ?? null;
+  return PROVIDER_ALIASES[String(name).toLowerCase()] ?? name;
 }
 
 /** Normalizes a user-supplied `--provider` value to a canonical {@link Provider} name. */

@@ -1125,6 +1125,127 @@ describe('resolveFlow', () => {
   });
 });
 
+describe('resolveFlow — diversity-sorted candidates', () => {
+  const ALL_UP = { claude: true, agy: true, copilot: true, opencode: true };
+  const OPENCODE_MULTI = [
+    { model: 'glm-5.3-flash' },
+    { model: 'deepseek-v4.1-flash' },
+    { model: 'qwen3.8-27b' },
+  ];
+  const label = (t) => (t.platform === 'opencode' ? t.model : t.platform);
+  const multi = (agy = { model: 'gemini-3.8-flash' }) =>
+    withSections({
+      'code-review': {
+        targetCount: { low: 3 },
+        platforms: {
+          claude: { model: 'claude-opus-5' },
+          agy,
+          copilot: { model: 'gpt-5.6-luna' },
+          opencode: OPENCODE_MULTI,
+        },
+      },
+    });
+
+  it('yields agy, copilot, glm as targets and deepseek, qwen, claude as reserves', () => {
+    const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, multi());
+    assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'copilot', 'glm-5.3-flash']);
+    assert.deepEqual(out['code-review'].reserves.map(label), ['deepseek-v4.1-flash', 'qwen3.8-27b', 'claude']);
+  });
+
+  it('moves a second agy model behind the first occurrence of every platform', () => {
+    const config = multi([{ model: 'a1' }, { model: 'a2' }]);
+    const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, config);
+    const all = [...out['code-review'].targets, ...out['code-review'].reserves];
+    assert.deepEqual(all.map((t) => t.model), ['a1', 'gpt-5.6-luna', 'glm-5.3-flash', 'a2', 'deepseek-v4.1-flash', 'qwen3.8-27b', 'claude-opus-5']);
+  });
+
+  it('diversity-sorts the orchestrator group among itself, after every external', () => {
+    const config = withSections({
+      'code-review': {
+        targetCount: { low: 'all' },
+        platforms: { opencode: OPENCODE_MULTI.slice(0, 2), agy: { model: 'g' } },
+      },
+    });
+    const out = resolveFlow({ platform: 'opencode', level: 'low' }, ALL_UP, config);
+    assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'deepseek-v4.1-flash']);
+  });
+
+  describe('exclude', () => {
+    it('removes excluded platforms from candidates and reports them only in diagnostics.excluded', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'high', exclude: ['copilot'] }, ALL_UP, multi());
+      assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'deepseek-v4.1-flash']);
+      assert.ok(out['code-review'].reserves.every((t) => t.platform !== 'copilot'));
+      assert.deepEqual(out.diagnostics.excluded, ['copilot']);
+      assert.ok(!out.diagnostics.unavailable.includes('copilot'));
+    });
+
+    it('still reports a genuinely dead platform as unavailable alongside an exclusion', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'high', exclude: ['copilot'] },
+        { ...ALL_UP, opencode: false },
+        multi()
+      );
+      assert.deepEqual(out.diagnostics.unavailable, ['opencode']);
+      assert.deepEqual(out.diagnostics.excluded, ['copilot']);
+    });
+
+    it('normalizes aliases, dedupes, and sorts diagnostics.excluded', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'high', exclude: ['copilot', 'antigravity', 'agy'] },
+        ALL_UP,
+        multi()
+      );
+      assert.deepEqual(out.diagnostics.excluded, ['agy', 'copilot']);
+    });
+
+    it('defaults diagnostics.excluded to []', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, multi());
+      assert.deepEqual(out.diagnostics.excluded, []);
+    });
+
+    it('throws when excluding the orchestrator platform, before unknown-key validation', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'high', exclude: ['bogus', 'claudecode'] }, ALL_UP, multi()),
+        /orchestrator/i
+      );
+    });
+
+    it('throws on an unknown exclude key, listing valid keys', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'high', exclude: ['bogus'] }, ALL_UP, multi()),
+        /bogus.*Valid keys: agy, claude, copilot, opencode/
+      );
+    });
+
+    it('drops an excluded pin silently, without reporting it in droppedPins', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'high', pins: ['agy', 'copilot'], exclude: ['copilot'] },
+        ALL_UP,
+        multi()
+      );
+      assert.deepEqual(out['code-review'].targets.map(label), ['agy']);
+      assert.equal(out.diagnostics.droppedPins['code-review'], undefined);
+    });
+
+    it('skips excluded keys when expanding pins "all"', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'high', pins: ['all'], exclude: ['copilot'] },
+        ALL_UP,
+        multi()
+      );
+      assert.ok(out['code-review'].targets.every((t) => t.platform !== 'copilot'));
+      assert.equal(out.diagnostics.droppedPins['code-review'], undefined);
+    });
+
+    it('throws when every pin is excluded', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'claude', level: 'high', pins: ['copilot'], exclude: ['copilot'] }, ALL_UP, multi()),
+        /All pinned platforms excluded or unavailable/
+      );
+    });
+  });
+});
+
 describe('resolvePlatformCandidates', () => {
   it('returns single candidate from flat object', () => {
     const entry = { model: 'claude-opus-5', effort: 'medium' };
@@ -1241,6 +1362,15 @@ describe('probeCandidates', () => {
   it('treats the "all" pin as unpinned breadth', () => {
     const keys = probeCandidates({ platform: 'claude', pins: ['all'] }, config).sort();
     assert.deepEqual(keys, ['agy', 'claude', 'copilot']);
+  });
+
+  it('does not throw with pins and no platform', () => {
+    assert.deepEqual(probeCandidates({ pins: ['agy'] }, config), ['agy']);
+  });
+
+  it('skips excluded platforms', () => {
+    const keys = probeCandidates({ platform: 'claude', exclude: ['copilot'] }, config).sort();
+    assert.deepEqual(keys, ['agy', 'claude']);
   });
 });
 

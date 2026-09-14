@@ -188,6 +188,34 @@ describe('resolve-flow CLI', () => {
     );
   });
 
+  it('accepts --exclude and --exclude= forms equivalently', () => {
+    const spaced = run('--platform', 'claude', '--level', 'high', '--exclude', 'copilot');
+    const equals = run('--platform=claude', '--level=high', '--exclude=copilot');
+    assert.equal(spaced.status, 0, spaced.stderr);
+    assert.equal(equals.status, 0, equals.stderr);
+    const flow = JSON.parse(spaced.stdout);
+    assert.deepEqual(flow.diagnostics.excluded, ['copilot']);
+    assert.ok(flow['code-review'].targets.every((t) => t.platform !== 'copilot'));
+    assert.deepEqual(flow, JSON.parse(equals.stdout));
+  });
+
+  it('rejects exclude errors before probing, even when the liveness seam is broken', () => {
+    // Unparsable liveness proves the error came from pre-validation, not from resolveFlow after probing.
+    const broken = { liveness: '{not json' };
+    const unknown = run('--platform', 'claude', '--exclude', 'bogus', broken);
+    assert.equal(unknown.status, 1);
+    assert.match(unknown.stderr, /Unrecognized exclude key\(s\): bogus\. Valid keys: /);
+    const self = run('--platform', 'claude', '--exclude', 'claudecode', broken);
+    assert.equal(self.status, 1);
+    assert.match(self.stderr, /Cannot exclude the orchestrator platform "claude"/);
+  });
+
+  it('refuses --exclude combined with --validate-only', () => {
+    const { status, stderr } = run('--validate-only', '--exclude', 'copilot');
+    assert.equal(status, 1);
+    assert.match(stderr, /cannot be combined with: --exclude/);
+  });
+
   it('rejects an unknown --platform, naming the valid keys', () => {
     const { status, stderr } = run('--platform', 'bogus', '--level', 'low');
     assert.equal(status, 1);

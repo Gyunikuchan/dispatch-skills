@@ -29,7 +29,7 @@ When a plan already exists, `<Requirement>` comes from the plan's own goal state
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a plan path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over path, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a plan path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over path, skipping resolution.
 
 Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
 
@@ -73,4 +73,4 @@ Locus note: ground truth is the **requirement plus the host repository's rules**
 
 **Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip the user report — the orchestrator's own handoff covers it.
 
-**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`), and (standalone only) the user report is delivered with provider prefix.
+**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`, and rejections under a handed-over `consensus: true` as `[Rejected — pending confirmation]`), and (standalone only) the user report is delivered with provider prefix.

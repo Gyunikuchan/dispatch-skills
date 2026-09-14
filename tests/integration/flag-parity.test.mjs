@@ -141,6 +141,7 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'dispatch', 'scripts', 'resolve-artifact-paths.mjs'],
     ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],
+    ['skills', 'implement-dispatch', 'scripts', 'check-consensus.mjs'],
   ]) {
     const name = script[script.length - 1];
     it(`${name} --help exits 0 and prints usage`, () => {

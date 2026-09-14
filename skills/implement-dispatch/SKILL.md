@@ -19,6 +19,18 @@ If an optional skill is absent, name its absence in the handoff and proceed with
 
 **Ruling resets rounds.** A user ruling on a round-cap escalation resets that phase's round counter to 0. `maxRounds` bounds *unattended* rounds only — added scope or a user decision restarts the budget.
 
+**Rejections need the citing reviewer.** With the phase's `consensus: true`, an orchestrator Reject or Downgrade of a reviewer claim is not final: it is logged `[Rejected — pending confirmation]` and handed back to every citing delegate in the next re-review round. Rewrite it to `[Rejected / Downgraded]` only when a citing delegate's report explicitly affirms the counter-evidence (silence keeps it pending), or to `[Resolved Dispute]` after a user ruling. If every citing delegate is excluded or unavailable, escalate it to the user at once rather than waiting for the cap. With `consensus: false`, rejections are final, but every `[Disputed]` line is still ruled by the user and rewritten before the gate.
+
+**Loop exit is mechanical.** A review loop continues while (the last round modified the artifact **or** a `[Disputed]` / `[Rejected — pending confirmation]` line exists) and rounds < `maxRounds`. Never exit early because remaining edits look minor. At the cap, escalate every remaining item to the user and rewrite each ruling to `[Resolved Dispute]` in the artifact. Gate with:
+
+```bash
+node <skills-dir>/implement-dispatch/scripts/check-consensus.mjs <artifact path>
+```
+
+Exit 0 means settled (or no `## Review Findings & Resolutions` section); exit 1 lists the unsettled lines. There is no "the user ruled" exception — a ruling is written into the artifact first.
+
+**Exclude failed platforms.** When a review wave records a target (or substitute) that failed `[auth]` or `[quota]`, add its platform to the run's exclusion set and re-run Step 1.3's `resolve-flow.mjs` with `--exclude <set>` before the next wave or phase, using the new `targets` / `reserves`. Exclusion is platform-granular: a `[quota]` on one model excludes that platform's other models too. Target affinity still narrows re-review targets to citing delegates that remain live.
+
 **Budget sizes to the work.** The `Tool Turn Budget` handed to each reviewer is computed per dispatch, not configured: `6 + <units under review>`, where a unit is a changed file (code review) or a `## Proposed Changes` entry (plan review). On a re-review round, count only the units changed since the previous round. Reviewers get what the job takes; there is no ceiling.
 
 ## Invocation
@@ -42,10 +54,10 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 3. **Resolve flow** (`<skills-dir>` resolves per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution):
 
    ```bash
-   node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <pins>]
+   node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--level <level>] [--pins <pins>] [--exclude <keys>]
    ```
 
-   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`). Halt immediately if non-zero; store output as `flow`.
+   `--platform` is the orchestrator's own provider key (`claude`, `agy`, `copilot`, `opencode`). `--exclude` carries the run's exclusion set (**Exclude failed platforms**); omit it on the first run. Candidates come back diversity-sorted: every platform's first model before any platform's second, the orchestrator's platform last. Halt immediately if non-zero; store output as `flow`.
 4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
 
    ```bash
@@ -69,20 +81,20 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 *Skip if `flow['plan-review'].maxRounds === 0`.* When `maxRounds > 0` but `flow['plan-review'].targets` is empty (every review platform is unavailable), do not invoke the review skill with no targets — it would complete with zero review. Run one in-process review round instead via `dispatch`'s read-only subagent fallback, and record the substitution in the plan's round log and Step 8 diagnostics.
 
-1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log.
-2. **Re-review wave**: If accepted findings modify plan sections and round count < `maxRounds`, re-invoke `dispatch-plan-review` in orchestrated mode, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `Review Scope: Re-review round <n>` naming changed sections, and `Tool Turn Budget` per **Budget sizes to the work**.
+1. **Invoke review**: Call `dispatch-plan-review` in **orchestrated mode**, handing over the plan path, `targets` and `reserves` from `flow['plan-review']`, `consensus: true|false` from `flow['plan-review'].consensus`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, and appends the round log. Apply **Exclude failed platforms** to any recorded `[auth]` / `[quota]` substitution.
+2. **Re-review wave**: While the loop condition in **Loop exit is mechanical** holds, re-invoke `dispatch-plan-review` in orchestrated mode, handing over the plan path, `targets` and `reserves` from the current `flow['plan-review']`, `consensus: true|false`, `Review Scope: Re-review round <n>` naming changed sections and each pending rebuttal (for its citing delegates), and `Tool Turn Budget` per **Budget sizes to the work**.
 3. **Consensus**:
-   - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap (**Ruling resets rounds**).
-   - `consensus: false`: Orchestrator may reject unverified claims directly.
-   - Rewrite each ruled `[Disputed]` line in the plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`.
+   - `consensus: true`: Disputed claims must be accepted, rebutted with counter-evidence in re-dispatch, or escalated to the user upon reaching the round cap (**Ruling resets rounds**). Rejections follow **Rejections need the citing reviewer**.
+   - `consensus: false`: Orchestrator may reject unverified claims directly; `[Disputed]` lines still go to the user.
+   - Rewrite each ruled `[Disputed]` line in the plan's `## Review Findings & Resolutions` to `[Resolved Dispute]`, and each settled pending line per **Rejections need the citing reviewer**.
 
-**Done when:** Plan reflects all accepted findings and disputes are resolved.
+**Done when:** `check-consensus.mjs` exits 0 on the plan.
 
 ---
 
 ### 4. Implement
 
-**User approval gate**: before writing code or dispatching implementation, solicit user approval on the plan as it stands — the refined post-review plan when Step 3 ran, the plan as authored when Step 3 was skipped (`maxRounds: 0`, or `dispatch-plan-review` absent). This is the run's only approval gate, and it sits here because Step 4 is the first step that writes anything: every path into implementation passes through it.
+**User approval gate**: before writing code or dispatching implementation, solicit user approval on the plan as it stands — the refined post-review plan when Step 3 ran, the plan as authored when Step 3 was skipped (`maxRounds: 0`, or `dispatch-plan-review` absent). This is the run's only approval gate, and it sits here because Step 4 is the first step that writes anything: every path into implementation passes through it. When the plan has a `## Review Findings & Resolutions` section — however Step 3 ran, external targets or in-process fallback — run `check-consensus.mjs` on it first; never ask for approval while it exits 1.
 
 1. **Snapshot the boundary**: record `git status --porcelain` and `git stash list` before dispatching, and confirm the plan file authored in Step 2 is on disk. These are the before-values Step 4.4 compares against.
 2. **Dispatch implementation**: Dispatch test-first to the platform's native write subagent (Reference below), configured with `flow.implementation` hints, the plan path, and the resolved walkthrough path from Step 1. Instruct it to implement the plan's Proposed Changes, run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, and author the baseline walkthrough at the resolved path following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) — that template is the single source of truth for the headings. When `dispatch-code-review` is absent, skip the walkthrough entirely and let Step 8's diagnostics go to the plan instead.
@@ -101,7 +113,7 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 *Skip Steps 5–7 if `flow['code-review'].maxRounds === 0`* — the same span `dispatch-code-review`'s absence skips. Skipping Step 5 alone would strand Step 6 with no claims to adjudicate and a completion bound it could never satisfy. When `maxRounds > 0` but `flow['code-review'].targets` is empty, run one in-process review round via `dispatch`'s read-only subagent fallback instead of invoking the review skill with no targets, and record the substitution in the walkthrough's round log and Step 8 diagnostics.
 
 1. Verify the walkthrough exists at the path resolved in Step 1 (authored in Step 4, or author now following `dispatch-code-review`'s [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) if skipped). This step is unreachable when `dispatch-code-review` is absent — that skips Steps 5–7 outright.
-2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` and `reserves` from `flow['code-review']`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes.
+2. Invoke `dispatch-code-review` in **orchestrated mode**, handing over the walkthrough and plan paths, `targets` and `reserves` from `flow['code-review']` (re-resolved with `--exclude` if plan review excluded platforms), `consensus: true|false` from `flow['code-review'].consensus`, `Review Scope: Full review`, and `Tool Turn Budget` per **Budget sizes to the work**. The review skill fills its own prompt template, builds the invocations, appends the round log, and returns claims without applying code fixes. Apply **Exclude failed platforms** to any recorded `[auth]` / `[quota]` substitution.
 
 **Done when:** Walkthrough exists on disk, every target's dispatch has returned, and round 1 claims are in hand for Step 6.
 
@@ -110,9 +122,9 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 6. Apply Fixes & Settle Disputes
 
 1. Apply accepted findings directly as the orchestrator.
-2. Update the walkthrough's `## Changes Made` and `## Verification & Validation`; rewrite each ruled `[Disputed]` line to `[Resolved Dispute]` (the review skill appends each round's log).
+2. Update the walkthrough's `## Changes Made` and `## Verification & Validation`; rewrite each ruled `[Disputed]` line to `[Resolved Dispute]`, and each settled pending line per **Rejections need the citing reviewer** (the review skill appends each round's log).
 3. Re-run the host verify command until green.
-4. Enforce consensus against returned `[Disputed]` items: rebut with counter-evidence, accept, or escalate to the user with interactive questions citing lines and counter-readings.
+4. Enforce consensus against returned `[Disputed]` items: rebut with counter-evidence, accept, or escalate to the user with interactive questions citing lines and counter-readings. With `consensus: true`, rejections stay `[Rejected — pending confirmation]` until the citing delegate confirms (**Rejections need the citing reviewer**).
 
 **Done when:** Accepted fixes are applied, verify command is green, and round adjudications are logged in the walkthrough.
 
@@ -120,22 +132,24 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 
 ### 7. Re-Review Loop
 
-While previous round modified code and code review round count < `flow['code-review'].maxRounds`:
-1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the delegates that cited the re-reviewed findings (target affinity), `reserves` from `flow['code-review']`, `Review Scope: Re-review round <n>` naming modified lines, and `Tool Turn Budget` per **Budget sizes to the work**.
-2. Apply accepted fixes and settle disputes per Step 6.
+While the loop condition in **Loop exit is mechanical** holds (previous round modified code, or a `[Disputed]` / pending-confirmation line remains, and round count < `flow['code-review'].maxRounds`):
+1. Re-invoke `dispatch-code-review` in orchestrated mode, handing over the walkthrough and plan paths, `targets` narrowed to the live delegates that cited the re-reviewed findings or pending rebuttals (target affinity), `reserves` from the current `flow['code-review']`, `consensus: true|false`, `Review Scope: Re-review round <n>` naming modified lines and each pending rebuttal, and `Tool Turn Budget` per **Budget sizes to the work**.
+2. Apply accepted fixes and settle disputes per Step 6; apply **Exclude failed platforms** to any recorded `[auth]` / `[quota]` substitution.
 
-**Done when:** Consensus is reached, no modifications remain, or the user rules on round-cap escalation (**Ruling resets rounds**) — then proceed to Handoff.
+At the cap, escalate remaining items to the user (**Ruling resets rounds**) and write each ruling into the walkthrough.
+
+**Done when:** `check-consensus.mjs` exits 0 on the walkthrough — then proceed to Handoff.
 
 ---
 
 ### 8. Handoff & Cleanup
 
-1. **Record diagnostics**: Append `## Run Diagnostics` to the walkthrough (or plan if code review was skipped):
+1. **Record diagnostics**: When the walkthrough has a `## Review Findings & Resolutions` section, run `check-consensus.mjs` on it first and return to Step 7's escalation while it exits 1. Then append `## Run Diagnostics` to the walkthrough (or plan if code review was skipped):
    - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
    - Rounds spent per phase vs `maxRounds`.
-   - Active, failed, substituted, dropped, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `droppedPins`, `clamped`, `livenessSource`; substitutions as recorded by the review skill).
-   - Summary of accepted/rejected findings and verification command status.
+   - Active, failed, substituted, dropped, excluded, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `excluded`, `droppedPins`, `clamped`, `livenessSource`; substitutions as recorded by the review skill; the run's exclusion set with each platform's `[auth]` / `[quota]` reason).
+   - Summary of accepted/rejected findings, rebuttals confirmed by citing delegates, and verification command status.
 2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
 
    ```bash
@@ -163,4 +177,4 @@ While previous round modified code and code review round count < `flow['code-rev
 - **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
 - **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). Orchestrator / native subagents alone write code.
-- **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned runs only — pinned runs carry none); once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.
+- **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned runs only — pinned runs carry none), taking the next unused reserve in order; once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.

@@ -15,7 +15,7 @@ The delegate's report is a **claim, not a verdict**. The orchestrator adjudicate
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a walkthrough path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves context files below; orchestrated uses the handed-over paths, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a walkthrough path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves context files below; orchestrated uses the handed-over paths, skipping resolution.
 
 Attach the change walkthrough and implementation plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
 
@@ -73,4 +73,4 @@ Locus note: ground truth for a code claim is the cited `<file>:L<line>` plus eno
 
 **Standalone mode**: report to the user per alignment § User Report. **Orchestrated mode**: skip fix application, re-verification and the user report — the orchestrator applies its own fixes, runs its own verification, and its handoff covers reporting.
 
-**Done when:** (standalone only) accepted fixes are applied, undeferred items are recorded under `## Follow-ups`, and the host verify command is green — or has twice failed on the same failures, with those recorded as follow-ups; `## Review Findings & Resolutions` is updated with this round's adjudications; and (standalone only) the user report is delivered with provider prefix.
+**Done when:** (standalone only) accepted fixes are applied, undeferred items are recorded under `## Follow-ups`, and the host verify command is green — or has twice failed on the same failures, with those recorded as follow-ups; `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`, and rejections under a handed-over `consensus: true` as `[Rejected — pending confirmation]`); and (standalone only) the user report is delivered with provider prefix.

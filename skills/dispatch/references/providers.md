@@ -8,6 +8,8 @@ Technical specifications, binary discovery paths, session monitoring mechanics, 
 
 Model and reasoning-effort defaults come from [`config.default.jsonc`](../config.default.jsonc) (or a project/machine override; see [Configuration](../SKILL.md#configuration) in `SKILL.md`). A runner given no model/effort (no CLI flag, no config entry) omits `-m`/`-e` entirely and lets the underlying CLI apply its own default.
 
+Unpinned cascade order is diversity-sorted from the config's `platforms` key order: each platform's first array entry comes before any platform's second, and the orchestrator's platform comes last (sorted the same way). An in-slot `model` array stays within its one slot; `-m`/`-e` collapse a platform to one candidate; a pinned `--provider` walks that platform's entries in order.
+
 | Provider | Key | CLI Binary | Direct Runner | Default Mode | Session Handle |
 |----------|-----|------------|---------------|--------------|----------------|
 | **Claude Code** | `claude` | `claude` | `scripts/claude-run.mjs` | Read-only | `claude --resume <session_id>` |

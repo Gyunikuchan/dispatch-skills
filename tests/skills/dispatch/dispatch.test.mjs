@@ -688,6 +688,84 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(copilotRunner.mock.calls.length, 0, 'did not cascade to copilot');
     });
 
+    it('diversity-sorts the unpinned cascade: first entry per platform, then repeats, orchestrator last', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const multiConfig = {
+        platforms: {
+          claude: { model: 'claude-opus-5' },
+          opencode: [{ model: 'glm-5.3-flash' }, { model: 'deepseek-v4.1-flash' }, { model: 'qwen3.8-27b' }],
+          agy: { model: 'gemini-3.8-flash' },
+          copilot: { model: 'gpt-5.6-luna' },
+        },
+      };
+
+      const calls = [];
+      const fail = (provider) => async (opts) => {
+        calls.push(opts.model);
+        return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+      };
+      for (const provider of ['claude', 'agy', 'copilot', 'opencode']) {
+        mock.method(providerRunners, provider, fail(provider));
+      }
+
+      await dispatchTask({ prompt: 'Test', orchestrator: 'claude', config: multiConfig, configPath: 'custom.jsonc' }).catch(() => {});
+      // opencode is keyed first, yet its second and third models yield to agy and copilot.
+      assert.deepEqual(calls, [
+        'glm-5.3-flash',
+        'gemini-3.8-flash',
+        'gpt-5.6-luna',
+        'deepseek-v4.1-flash',
+        'qwen3.8-27b',
+        'claude-opus-5',
+      ]);
+    });
+
+    it('normalizes an alias orchestrator so its platform still sorts last', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const calls = [];
+      for (const provider of ['claude', 'agy']) {
+        mock.method(providerRunners, provider, async () => {
+          calls.push(provider);
+          return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+        });
+      }
+      await dispatchTask({
+        prompt: 'Test',
+        orchestrator: 'claudecode',
+        config: { platforms: { claude: {}, agy: {} } },
+        configPath: 'c.jsonc',
+      }).catch(() => {});
+      assert.deepEqual(calls, ['agy', 'claude']);
+    });
+
+    it('CLI -m override still yields one candidate per platform in the unpinned cascade', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
+        mock.method(providerProbes, probe, async () => true);
+      }
+      const multiConfig = {
+        platforms: {
+          opencode: [{ model: 'glm-5.3-flash' }, { model: 'deepseek-v4.1-flash' }],
+          agy: { model: 'gemini-3.8-flash' },
+        },
+      };
+      const calls = [];
+      for (const provider of ['agy', 'opencode']) {
+        mock.method(providerRunners, provider, async (opts) => {
+          calls.push(`${provider}:${opts.model}`);
+          return { provider, stdout: '', exitCode: 1, failureKind: 'quota' };
+        });
+      }
+      await dispatchTask({ prompt: 'Test', model: 'm', orchestrator: 'claude', config: multiConfig, configPath: 'c.jsonc' }).catch(() => {});
+      assert.deepEqual(calls, ['opencode:m', 'agy:m']);
+    });
+
     it('CLI -m flag collapses candidate array to a single target invocation', async () => {
       clearOrchestratorEnv();
       const multiConfig = {

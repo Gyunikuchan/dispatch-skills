@@ -1,12 +1,12 @@
 {
-  "SKILL.md": "2e56a0736da1004601fbf45c9db2c438437ab56912cf7ddb49787f66f1187831",
-  "references/alignment.md": "ba5dfae9fec3ba08baac423682a7ff72b0aa869612816adfd193e7071348462d",
-  "references/providers.md": "383df4e3d879c35d16ee73d329a039baaaf72ef50ee0dc0caf2903d5f2838830",
+  "SKILL.md": "89d257d6ccd68911791c71c1be4f51447c45709e28eb0ef9905faffb9ab43076",
+  "references/alignment.md": "5ae5fa1b008dadd7720b055aa74e3b376d88376d824b2cbc6b058ad465eb4921",
+  "references/providers.md": "545e7315fb1273afb1a538b4ccb47dcc41fab3c19d94fb01116a49c3478019a7",
   "scripts/agy-run.mjs": "34dd1053a0061cdf64be3de6c475cee588ba63b8c98ae2d89058020b6bcb76e7",
   "scripts/claude-run.mjs": "49bb5d6ffaa6a7ad94fd4194f1af7d85617600413f90c863601446d2a13f3400",
-  "scripts/common.mjs": "0e2e0e619f2f9846ba8757290f8d5fe0eb6be5175bc097c116ccfce1e50a6141",
+  "scripts/common.mjs": "a3f1562b1e989c1c76182ecb3ee3a906a51331703794965af71eb4150e284fda",
   "scripts/copilot-run.mjs": "7424923c2e226dd8e6aa1ea03f8401396222a5481a0e3c76bb6903a4ac580da4",
-  "scripts/dispatch.mjs": "7850aa026fe12fc9f16e954ba6a8eeb0a95f960ad8202be4f36d805cca855f3b",
+  "scripts/dispatch.mjs": "13bfd10eb2a654f45e816f5810611bcead03180d1fd82848e2e12ec7ec35001a",
   "scripts/fill-template.mjs": "64e050d86f418b0bd58984eeda669e3748e636827b1fcf041dc6e7c79f739464",
   "scripts/opencode-run.mjs": "b8962f267d42854f4a23b2eabf61d03380e19b1efcb7a9bbc073083b6983f438",
   "scripts/resolve-artifact-paths.mjs": "19211c0dfcd66fbea20434292bd01a2087c3c2200fb715440933be32cab74c4f"

@@ -159,11 +159,14 @@ Choose a level based on the risk and complexity of your change:
 - **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
 - **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a target. Pins do not resurrect a phase configured off (`maxRounds: 0`).
 - **Breadth Clamping**: When a level asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
-- **Reserve Reviewers**: The live candidates beyond `targetCount` come back as each review section's ordered `reserves`. The liveness probe only proves a CLI runs, not that it is signed in or has quota, so when a reviewer fails mid-wave (e.g. `[auth]`), the review skill substitutes the next reserve — preferring a platform not already in the wave — before falling back to a subagent. Every model/effort candidate of a platform counts as its own entry. Pinned runs have no reserves.
+- **Reserve Reviewers**: The live candidates beyond `targetCount` come back as each review section's ordered `reserves`. The liveness probe only proves a CLI runs, not that it is signed in or has quota, so when a reviewer fails mid-wave (e.g. `[auth]`), the review skill substitutes the next unused reserve in order before falling back to a subagent. Every model/effort candidate of a platform counts as its own entry. Pinned runs have no reserves.
+- **Diversity-Sorted Candidates**: Candidates are flattened in `platforms` key order, then every platform's first candidate is placed before any platform's second, so one platform with three models cannot fill a three-reviewer wave on its own. The orchestrator's candidates follow, sorted the same way. With `agy`, `copilot`, `opencode: [glm, deepseek, qwen]` and Claude Code orchestrating, the order is agy, copilot, glm, deepseek, qwen, claude.
+- **Sticky Exclusion**: A reviewer that fails `[auth]` or `[quota]` gets its whole platform added to the run's exclusion set. The orchestrator re-resolves with `resolve-flow.mjs --exclude <keys>` so later waves stop dispatching it. Excluded platforms appear in `diagnostics.excluded`. Excluding the orchestrator's own platform is an error.
 - **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
 - **Consensus Enforcement**:
-  - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists.
-  - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a finding. Every dispute must be accepted, escalated to the user, or rebutted with verified counter-evidence during re-dispatch.
+  - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists. Disputed findings still go to the user.
+  - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a finding. A rejection is logged `[Rejected — pending confirmation]` and sent back to the reviewer who raised it. It becomes final only when that reviewer explicitly accepts the counter-evidence, or when you rule on it at the round cap.
+  - Loops keep going while the last round changed the artifact or anything is still disputed or pending, up to `maxRounds`. `scripts/check-consensus.mjs <artifact>` is the gate before plan approval and before handoff: it exits 1 while any `[Disputed]` or pending line remains.
 - **Automatic Scope Downshifting**: Trivial changes (single-file mechanical edits, typo/comment fixes, simple constant changes) are automatically downshifted to `low` to avoid unnecessary review overhead. An explicitly requested level is always honoured.
 
 ---
@@ -179,12 +182,12 @@ Config files are loaded fully (without merging) based on this order of precedenc
 
 A local config omitting a platform under a section's `platforms` map (e.g. dropping `opencode` after it's added to `config.default.jsonc`) is intentional and supported — not every user wants every platform configured, and an omitted platform is simply never picked as a candidate. This differs from omitting a required top-level knob (`maxRounds`, `targetCount`, etc.), which does fail validation.
 
-The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order is the priority order candidates are picked in. Each platform entry can be a single model/effort object or an array of objects to run multiple candidates on that platform (e.g. OpenCode running both a remote model and a local LLM). The two review sections additionally carry three level-keyed knobs:
+The three sections (`plan-review`, `implementation`, `code-review`) each nest their per-platform model settings under `platforms`, whose key order seeds the diversity-sorted order candidates are picked in (see **Diversity-Sorted Candidates**). Each platform entry can be a single model/effort object or an array of objects to run multiple candidates on that platform (e.g. OpenCode running both a remote model and a local LLM). The two review sections additionally carry three level-keyed knobs:
 
 | Knob | Meaning |
 |---|---|
 | `maxRounds` | Cap on total fan-out waves for the phase, counting the first review |
-| `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"` |
+| `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"`; the first `targetCount` of the diversity-sorted list, the rest become reserves |
 | `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
 
 When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last, fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.

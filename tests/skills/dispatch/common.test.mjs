@@ -57,7 +57,38 @@ import {
   resolveRunnerExitCode,
   resolveModelsToTry,
   cascadeModels,
+  diversitySort,
 } from '../../../skills/dispatch/scripts/common.mjs';
+
+// ---------------------------------------------------------------------------
+// SECTION: Diversity sort
+// ---------------------------------------------------------------------------
+
+describe('common: diversitySort', () => {
+  const c = (platform, model) => ({ platform, model });
+
+  it('moves repeat platforms behind every first occurrence, keeping their order', () => {
+    const input = [c('agy'), c('copilot'), c('opencode', 'glm'), c('opencode', 'deepseek'), c('opencode', 'qwen')];
+    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['agy', 'copilot', 'glm', 'deepseek', 'qwen']);
+  });
+
+  it('interleaves a second agy model after the first occurrences of every platform', () => {
+    const input = [c('agy', 'a1'), c('agy', 'a2'), c('copilot'), c('opencode', 'glm'), c('opencode', 'deepseek'), c('opencode', 'qwen')];
+    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['a1', 'copilot', 'glm', 'a2', 'deepseek', 'qwen']);
+  });
+
+  it('accepts a custom key and is stable for a single platform', () => {
+    const input = [{ provider: 'x', n: 1 }, { provider: 'x', n: 2 }, { provider: 'x', n: 3 }];
+    assert.deepEqual(diversitySort(input, (e) => e.provider).map((e) => e.n), [1, 2, 3]);
+  });
+
+  it('returns a new empty array for empty input without mutating the original', () => {
+    assert.deepEqual(diversitySort([]), []);
+    const input = [c('a', 1), c('a', 2), c('b', 3)];
+    diversitySort(input);
+    assert.deepEqual(input.map((x) => x.model), [1, 2, 3]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // SECTION: Model cascade

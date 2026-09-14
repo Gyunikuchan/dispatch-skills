@@ -1581,6 +1581,31 @@ export function existsAny(...paths) {
 // ============================================================================
 
 /**
+ * Stable partition putting each key's first occurrence ahead of every repeat, so a platform
+ * configured with several models cannot crowd other platforms out of the front of the order.
+ *
+ * @template T
+ * @param {T[]} candidates
+ * @param {(candidate: T) => unknown} [key]
+ * @returns {T[]} a new array; the input is not mutated
+ */
+export function diversitySort(candidates, key = (c) => c.platform) {
+  const seen = new Set();
+  const firsts = [];
+  const repeats = [];
+  for (const candidate of candidates) {
+    const k = key(candidate);
+    if (seen.has(k)) {
+      repeats.push(candidate);
+    } else {
+      seen.add(k);
+      firsts.push(candidate);
+    }
+  }
+  return [...firsts, ...repeats];
+}
+
+/**
  * Strips single-line and multi-line comments and trailing commas from JSON/JSONC
  * strings while preserving URLs and string literals (leniently supports both " and ').
  *

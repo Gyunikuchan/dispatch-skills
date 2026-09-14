@@ -248,6 +248,25 @@ describe('orchestrated handover contract', () => {
     assert.ok(!implement.includes('fill-template'), `${IMPLEMENT_PATH} still instructs fill-template`);
     assert.ok(!implement.includes('--prompt-file'), `${IMPLEMENT_PATH} still instructs --prompt-file`);
   });
+
+  it('the handover carries consensus, and pending rebuttals are a logged form in every consumer', () => {
+    const alignment = readSkill(ALIGNMENT_PATH);
+    const modes = alignment.slice(alignment.indexOf('## Invocation Modes'), alignment.indexOf('## Prompt Template Filling'));
+    assert.match(modes, /Detection:[^\n]*`consensus: true\|false`/, `${ALIGNMENT_PATH} detection does not hand over consensus`);
+    assert.ok(!modes.includes('not already in the wave'), `${ALIGNMENT_PATH} still prefers platform diversity at substitution`);
+
+    const log = alignment.slice(alignment.indexOf('## Resolutions Log'));
+    assert.ok(log.includes('**[Rejected — pending confirmation]**'), `${ALIGNMENT_PATH} Resolutions Log lacks the pending form`);
+
+    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      assert.ok(readSkill(skillPath).includes('[Rejected — pending confirmation]'), `${skillPath} does not name the pending form`);
+    }
+
+    const implement = readSkill(IMPLEMENT_PATH);
+    assert.ok(implement.includes('consensus: true|false'), `${IMPLEMENT_PATH} does not hand over consensus`);
+    assert.ok(implement.includes('check-consensus.mjs'), `${IMPLEMENT_PATH} does not gate on check-consensus.mjs`);
+    assert.ok(implement.includes('--exclude'), `${IMPLEMENT_PATH} does not re-resolve with --exclude`);
+  });
 });
 
 describe('review skill axis/tag parity: prompt template vs README.md', () => {

@@ -20,8 +20,10 @@
  * Review-section knobs:
  *   maxRounds   — cap on total fan-out waves for the phase, counting the first review.
  *   targetCount — how many review candidates a wave dispatches to when unpinned; a whole
- *                 number or "all". The orchestrator's own platform is always eligible to
- *                 fulfil targetCount, but is sorted last so external reviewers are preferred.
+ *                 number or "all". Candidates are diversity-sorted (see `platforms` below)
+ *                 and the first targetCount become targets; the rest are ordered reserves.
+ *                 The orchestrator's own platform is always eligible to fulfil targetCount,
+ *                 but is sorted last so external reviewers are preferred.
  *                 Pinned runs dispatch to every live pin instead, ignoring this knob.
  *   consensus   — when true, no finding may be dismissed without counter-evidence.
  *
@@ -30,8 +32,9 @@
  * is the single sentinel: a phase is off when 0, providers merely unavailable when
  * `> 0` with an empty targets list.
  *
- * `platforms` holds the per-platform model/effort settings; its key order is the
- * priority order candidates are selected in. Each platform entry can be a single
+ * `platforms` holds the per-platform model/effort settings. Candidates are flattened in key
+ * order, then diversity-sorted: each platform's first candidate before any platform's second,
+ * repeats keeping their relative order, the orchestrator's platform last. Each platform entry can be a single
  * model/effort object or an array of objects to run multiple candidates on that platform
  * (e.g. OpenCode running both a remote model and a local LLM). Flat model/effort keys
  * alongside level keys act as defaults the matched level overrides.

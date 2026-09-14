@@ -5,6 +5,7 @@
  * Usage:
  *   node resolve-flow.mjs --platform <key>
  *                         [--level <low|medium|high|xhigh|max>] [--pins <key,key,...|all>]
+ *                         [--exclude <key,key,...>]
  *   node resolve-flow.mjs --validate-only
  *   node resolve-flow.mjs --help
  *
@@ -17,7 +18,13 @@
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { KNOWN_PROVIDERS, isMainModule, getConfigCandidates, loadSkillConfig } from '../../dispatch/scripts/common.mjs';
+import {
+  KNOWN_PROVIDERS,
+  diversitySort,
+  isMainModule,
+  getConfigCandidates,
+  loadSkillConfig,
+} from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -34,11 +41,12 @@ const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
 const OPTIONAL_KNOBS = [];
 
 const USAGE = `Usage:
-  node resolve-flow.mjs --platform <key> [--level <level>] [--pins <list>] [--validate-only]
+  node resolve-flow.mjs --platform <key> [--level <level>] [--pins <list>] [--exclude <list>] [--validate-only]
 
   --platform <key>   orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
   --level <level>    ${LEVELS.join(' | ')} (default: medium)
   --pins <list>      comma-separated provider keys, or "all"
+  --exclude <list>   comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
   --validate-only    validate the config schema and exit
   -h, --help         show this help
 `;
@@ -506,13 +514,60 @@ export function probeCandidates(opts, config) {
   const configured = new Set(
     SECTIONS.flatMap((section) => Object.keys(config?.[section]?.platforms ?? {}).map(normalizePin))
   );
-  if (opts.platform) configured.add(normalizePin(opts.platform));
+  const platform = opts.platform ? normalizePin(opts.platform) : undefined;
+  if (platform) configured.add(platform);
 
+  const excluded = new Set(normalizeExcludeKeys(opts.exclude));
   const pins = (opts.pins ?? []).map(normalizePin);
-  if (pins.length > 0 && !pins.includes('all')) {
-    return [...configured].filter((key) => pins.includes(key) || key === normalizePin(opts.platform));
+  const keys = pins.length > 0 && !pins.includes('all')
+    ? [...configured].filter((key) => pins.includes(key) || key === platform)
+    : [...configured];
+  return keys.filter((key) => !excluded.has(key));
+}
+
+/**
+ * Canonical platform keys of both review sections (aliases normalized), the set pins and
+ * exclusions are validated against.
+ * @param {object} config
+ * @returns {Set<string>}
+ */
+export function reviewSectionKeys(config) {
+  return new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {}).map(normalizePin)));
+}
+
+/**
+ * Normalized, deduped, sorted exclude keys.
+ * @param {string[]|undefined} exclude
+ * @returns {string[]}
+ */
+export function normalizeExcludeKeys(exclude) {
+  return [...new Set((exclude ?? []).map(normalizePin))].sort();
+}
+
+/**
+ * Throws when the orchestrator's own platform is excluded. Checked before unknown keys: the
+ * orchestrator is also the implementer, so excluding it is a contradiction whatever else the list holds.
+ * @param {string[]} excluded normalized keys
+ * @param {string|undefined} platform normalized orchestrator key
+ */
+export function assertOrchestratorNotExcluded(excluded, platform) {
+  if (platform && excluded.includes(platform)) {
+    throw new Error(`Cannot exclude the orchestrator platform "${platform}": it is also the implementer`);
   }
-  return [...configured];
+}
+
+/**
+ * Throws when an excluded key names no review-section platform.
+ * @param {string[]} excluded normalized, sorted keys
+ * @param {Set<string>} reviewKeys
+ */
+export function assertKnownExcludeKeys(excluded, reviewKeys) {
+  const unknown = excluded.filter(k => !reviewKeys.has(k));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unrecognized exclude key(s): ${unknown.join(', ')}. Valid keys: ${[...reviewKeys].sort().join(', ')}`
+    );
+  }
 }
 
 // ============================================================================
@@ -524,7 +579,7 @@ export function probeCandidates(opts, config) {
  *
  * Pure over its inputs: no clock, filesystem, or process access.
  *
- * @param {{ platform: string, level?: string, pins?: string[],
+ * @param {{ platform: string, level?: string, pins?: string[], exclude?: string[],
  *           livenessSource?: 'env-override' | 'probe' }} options
  *   `livenessSource` is passed in rather than read from the environment, keeping this pure.
  * @param {Record<string, boolean>} liveness - map of platform key → available
@@ -549,6 +604,8 @@ export function resolveFlow(options, liveness, config) {
   // Dedupe once at entry so a repeated `--pins x,x` cannot produce duplicate
   // dispatch targets in the same wave.
   const pins = normalizedPins ? [...new Set(normalizedPins)] : normalizedPins;
+  const excluded = normalizeExcludeKeys(options.exclude);
+  assertOrchestratorNotExcluded(excluded, platform);
 
   if (!LEVELS.includes(level)) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
@@ -568,16 +625,23 @@ export function resolveFlow(options, liveness, config) {
   );
   const platformsOf = section => canonicalPlatforms[section];
 
-  // Validate pins against the union of both review sections' platform keys
+  // Validate pins and exclusions against the union of both review sections' platform keys
+  const reviewKeys = reviewSectionKeys(config);
   if (pins && pins.length > 0) {
-    const allKeys = new Set(REVIEW_SECTIONS.flatMap(s => Object.keys(platformsOf(s))));
-    const unknown = pins.filter(p => p !== 'all' && !allKeys.has(p));
+    const unknown = pins.filter(p => p !== 'all' && !reviewKeys.has(p));
     if (unknown.length > 0) {
       throw new Error(
-        `Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...allKeys].sort().join(', ')}`
+        `Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...reviewKeys].sort().join(', ')}`
       );
     }
   }
+  assertKnownExcludeKeys(excluded, reviewKeys);
+
+  // An excluded platform fails liveness, so candidate selection, `--pins all` expansion and the
+  // live-pin filter all skip it without special cases; `unavailable` is computed from the raw map.
+  const rawLiveness = liveness;
+  liveness = { ...rawLiveness };
+  for (const k of excluded) liveness[k] = false;
 
   const clamped = {};
   const droppedPins = {};
@@ -592,8 +656,9 @@ export function resolveFlow(options, liveness, config) {
 
   /**
    * Builds the live candidate list for one review section.
-   * Pins override `targetCount`; unpinned runs sort the orchestrator last
-   * to prioritize external reviewers while using the orchestrator to satisfy targetCount.
+   * Pins override `targetCount`. Unpinned runs diversity-sort externals (every platform's first
+   * candidate before any platform's second), then the orchestrator's candidates sorted the same
+   * way, so external reviewers are preferred while the orchestrator can still satisfy targetCount.
    */
   function getCandidates(sectionName, targetCount) {
     const platforms = platformsOf(sectionName);
@@ -604,7 +669,8 @@ export function resolveFlow(options, liveness, config) {
       const validPins = sectionPins.filter(p => allKeys.includes(p));
       const livePins = validPins.filter(p => liveness[p] === true);
       if (validPins.length > 0 && livePins.length === 0) {
-        throw new Error(`All pinned platforms unavailable: ${validPins.join(', ')}`);
+        const cause = validPins.some(p => excluded.includes(p)) ? 'excluded or unavailable' : 'unavailable';
+        throw new Error(`All pinned platforms ${cause}: ${validPins.join(', ')}`);
       }
       const targets = [];
       for (const p of livePins) {
@@ -639,7 +705,7 @@ export function resolveFlow(options, liveness, config) {
       }
     }
 
-    const orderedCandidates = [...externalCandidates, ...orchestratorCandidates];
+    const orderedCandidates = [...diversitySort(externalCandidates), ...diversitySort(orchestratorCandidates)];
     const requested = targetCount === 'all' ? orderedCandidates.length : targetCount;
     const resolved = Math.min(requested, orderedCandidates.length);
     if (resolved < requested) clamped[sectionName] = { requested, resolved };
@@ -674,7 +740,8 @@ export function resolveFlow(options, liveness, config) {
     if (maxRounds > 0 && pins && pins.length > 0) {
       const sectionPins = expandPins(sectionName);
       const liveKeys = new Set(targets.map(t => t.platform));
-      const dropped = sectionPins.filter(p => !liveKeys.has(p));
+      // An excluded pin is reported once, in `diagnostics.excluded`, not as a dropped pin.
+      const dropped = sectionPins.filter(p => !liveKeys.has(p) && !excluded.includes(p));
       if (dropped.length > 0) droppedPins[sectionName] = dropped;
     }
 
@@ -692,7 +759,7 @@ export function resolveFlow(options, liveness, config) {
   const codeReview = buildReviewSection('code-review');
 
   const configured = new Set(SECTIONS.flatMap(s => Object.keys(platformsOf(s))));
-  const unavailable = [...configured].filter(k => liveness[k] !== true).sort();
+  const unavailable = [...configured].filter(k => rawLiveness[k] !== true && !excluded.includes(k)).sort();
 
   const flow = {
     'plan-review': planReview,
@@ -701,6 +768,7 @@ export function resolveFlow(options, liveness, config) {
     diagnostics: {
       effectiveLevel: level,
       unavailable,
+      excluded,
       droppedPins,
       clamped,
       livenessSource: options.livenessSource ?? 'probe',
@@ -727,6 +795,9 @@ function parseArgs(args) {
   const setPins = raw => {
     opts.pins = raw.split(',').map(s => s.trim()).filter(Boolean);
   };
+  const setExclude = raw => {
+    opts.exclude = raw.split(',').map(s => s.trim()).filter(Boolean);
+  };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -740,6 +811,7 @@ function parseArgs(args) {
         case '--platform': opts.platform = val; continue;
         case '--level':    opts.level = val; continue;
         case '--pins':     setPins(val); continue;
+        case '--exclude':  setExclude(val); continue;
         default:
           throw new Error(`Unrecognized argument "${flag}"`);
       }
@@ -749,6 +821,10 @@ function parseArgs(args) {
       case '--level':    opts.level = value(i); i++; break;
       case '--pins':
         setPins(value(i));
+        i++;
+        break;
+      case '--exclude':
+        setExclude(value(i));
         i++;
         break;
       case '--validate-only': opts.validateOnly = true; break;
@@ -787,7 +863,7 @@ async function main() {
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
-    const ignored = ['platform', 'level', 'pins'].filter(k => opts[k] !== undefined);
+    const ignored = ['platform', 'level', 'pins', 'exclude'].filter(k => opts[k] !== undefined);
     if (ignored.length > 0) {
       process.stderr.write(
         `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
@@ -834,14 +910,24 @@ async function main() {
   }
   if (opts.pins && opts.pins.length > 0) {
     const normalizedPins = opts.pins.map(normalizePin);
-    const allKeys = new Set(
-      REVIEW_SECTIONS.flatMap(s => Object.keys(config[s]?.platforms ?? {}).map(normalizePin))
-    );
+    const allKeys = reviewSectionKeys(config);
     const unknown = normalizedPins.filter(p => p !== 'all' && !allKeys.has(p));
     if (unknown.length > 0) {
       process.stderr.write(
         `Error: Unrecognized pin key(s): ${unknown.join(', ')}. Valid keys: ${[...allKeys].sort().join(', ')}\n`
       );
+      process.exit(1);
+    }
+  }
+
+  // Same checks resolveFlow runs, repeated here only so a typo fails before the slow probes.
+  if (opts.exclude && opts.exclude.length > 0) {
+    const excluded = normalizeExcludeKeys(opts.exclude);
+    try {
+      assertOrchestratorNotExcluded(excluded, normalizePin(opts.platform));
+      assertKnownExcludeKeys(excluded, reviewSectionKeys(config));
+    } catch (err) {
+      process.stderr.write(`Error: ${err.message}\n`);
       process.exit(1);
     }
   }

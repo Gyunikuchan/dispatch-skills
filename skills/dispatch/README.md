@@ -139,7 +139,7 @@ Schema:
 ```jsonc
 {
   "platforms": {
-    // Key order is cascade order. A platform key absent here is never dispatched.
+    // Key order seeds the cascade (see below). A platform key absent here is never dispatched.
     "claude": { "model": ["claude-opus-5", "claude-sonnet-5"], "effort": "high" },
     "agy": {},
     "copilot": { "model": "gpt-5.6-luna" },
@@ -152,7 +152,7 @@ Schema:
 }
 ```
 
-Each platform entry can be a single object or an array of candidate objects (which are attempted in order before cascading to the next platform). `model` accepts a string or an array of strings inside candidate objects; every runner (claude, agy, copilot, opencode) tries an array's models in order as fallbacks within that candidate slot. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
+Each platform entry can be a single object or an array of candidate objects. The cascade is diversity-sorted: every platform's first entry is tried, in key order, before any platform's second entry; remaining array entries follow in their original order, and the orchestrator's own platform is tried last. With the config above and Claude Code orchestrating, the cascade is agy → copilot → GLM → DeepSeek → LM Studio → claude. A pinned `--provider` walks only that platform's entries, in order. `model` accepts a string or an array of strings inside candidate objects; every runner (claude, agy, copilot, opencode) tries an array's models in order as fallbacks within that candidate slot. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
 
 Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, and edit it to change the cascade.
 
