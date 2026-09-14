@@ -30,28 +30,20 @@ flowchart TD
 - **Node.js**: `v18.0.0` or higher.
 - **`dispatch` skill installed**: Required for the cross-agent CLI runner.
 - **At least one agent CLI** installed or reachable on your system:
-  - **Claude Code**: Claude Desktop, VS Code extension, or standalone CLI (`claude`).
+  - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
-  - **GitHub Copilot**: Copilot CLI or VS Code extension CLI (`copilot`).
+  - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
   - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (any provider/model; see `dispatch`).
 
 ### Installation
 
-Install `dispatch-plan-review` and its core runner into your project workspace:
+Install `dispatch-plan-review` alongside `dispatch`:
 
 ```bash
-# Install both skills
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch-plan-review
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
 ```
 
-To install globally for all projects:
-
-```bash
-npx skills add -g Gyunikuchan/dispatch-skills --all
-```
-
-To install every skill in this repository:
+To install the complete suite across all skills (`--all`, add `-g` for global):
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
@@ -115,7 +107,7 @@ If no plan file exists yet, simply describe the feature and request a plan revie
 - **Evidence Over Votes**: Provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
 - **Plan File Updated on Disk**: Accepted changes are not just printed in the chat; they are actively written back to the target plan file (`Proposed Changes`, `Verification Plan`, `Rollback & Blast Radius`), keeping the on-disk plan as the single source of truth for the implementation phase.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (your agent's interactive question tool) before modifying the plan.
-- **Structured Plan Resolution Order** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *host convention* — a repo `AGENTS.md` / `CLAUDE.md` naming a plan path or directory wins outright and the tiers below never run — → *explicit user-provided path* → *platform-native plan* (e.g. Antigravity's `implementation_plan.md`) → *existing scratch plan* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`.
+- **Structured Plan Resolution**: Follows `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (host convention and explicit user paths override; then resolves across tiers: *platform-native* → *existing scratch* matching branch slug → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>.md`).
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only files named in proposed changes and immediate call sites) rather than unbounded codebase scans, keeping turnaround quick and tokens focused.
 - **Artifact Lifecycle**: standalone runs always retain the plan file in place; only an orchestrator owning the full plan-through-review lifecycle relocates scratch artifacts, and only on consensus/completion.
 

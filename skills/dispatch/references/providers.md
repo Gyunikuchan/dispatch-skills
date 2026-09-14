@@ -17,12 +17,20 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 | **GitHub Copilot** | `copilot` | `copilot` | `scripts/copilot-run.mjs` | `--mode plan` | `copilot --resume <session_id>` |
 | **OpenCode** | `opencode` | `opencode` | `scripts/opencode-run.mjs` | Read-only | Local server logs |
 
+### Safe Environment Variable Pass-Through
+
+Delegates execute in a filtered environment where authentication tokens and sensitive secrets are stripped. Non-secret identity, proxy, certificate, and system environment variables pass through:
+- **Proxy & Networking**: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`
+- **TLS & Certificates**: `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`
+- **System & Locale**: `PATH`, `PATHEXT`, `TERM`, `HOME`, `USERPROFILE`, `SYSTEMROOT`, `COMSPEC`, `SHELL`, `TMPDIR`, `TEMP`, `TMP`, `USER`, `USERNAME`, `LOGNAME`, `TZ`, `LANG`, `LC_ALL`, `LC_CTYPE`
+- **XDG & Config**: `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`
+
 ---
 
 ## 2. Claude Code (`claude`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.claude` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m` means no `-m` flag reaches `claude` at all.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.claude` entry (override via `-m <model>`/`-e <level>`; `-e` passes through to `claude`'s `--effort`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m` means no `-m` flag reaches `claude` at all.
 - **Default Mode**: Read-only (`--permission-mode plan`, `--allowedTools`, `--disallowedTools`)
 - **Mode Override**: `--claude-mode <cli|desktop|vscode>` (explicit execution mode)
 - **Reachability Probe**: `--test-modes` (tests reachability via `--version` across all modes without token consumption)
@@ -59,7 +67,7 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ## 3. Antigravity 2.0 (`agy`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.agy` entry (override via `-m <model>`/`-e <level>`; `-e` passes through to `agy`'s `-e`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `agy` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--agy-mode <antigravity-cli|antigravity-2.0|antigravity-vscode|auto>`
 - **Reachability Probe**: `--test-reachability` (tests reachability across all modes without token consumption)
@@ -90,7 +98,7 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ## 4. GitHub Copilot (`copilot`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.copilot` entry (override via `-m <model>`/`-e <level>`; `-e` passes through to `copilot`'s `-e`); `model` may be an array there, tried in order as fallback models within this one cascade slot. No config entry and no `-m`/`-e` means neither flag reaches `copilot` at all.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--copilot-mode <cli|desktop|vscode|auto>` (explicit execution mode)
 - **Reachability Probe**: `--test` / `--probe` (tests reachability via `--version` across all modes without token consumption)
@@ -123,7 +131,7 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 ## 5. OpenCode (`opencode`)
 
 ### Defaults & Overrides
-- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`); `model` may be an array inside a candidate entry, tried in order as fallback models within that one cascade slot (each model re-resolves locality, preflight and GPU lock). Supports an array of candidate entries to cascade across multiple models (e.g. the shipped default of OpenCode Go GLM (`opencode-go/glm-5.3-flash`) -> DeepSeek (`opencode-go/deepseek-v4.1-flash`) -> LM Studio (`lmstudio/qwen3.8-27b-ridge`)). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; dispatch makes no assumption of Local LM Studio.
+- **Model/Effort**: from `config.default.jsonc`'s `platforms.opencode` entry (override via `-m <provider>/<model>`/`-e <level>`; `-e` reaches `opencode` as `--variant <effort>`); `model` may be an array inside a candidate entry, tried in order as fallback models within that one cascade slot (each model re-resolves locality, preflight and GPU lock). Supports an array of candidate entries to cascade across multiple models (e.g. the shipped default of OpenCode Go GLM (`opencode-go/glm-5.3-flash`) -> DeepSeek (`opencode-go/deepseek-v4.1-flash`) -> LM Studio (`lmstudio/qwen3.8-27b-ridge`)). With no `model` configured anywhere — neither dispatch's config nor `opencode.jsonc` — no `-m` flag reaches `opencode`, and `opencode`'s own CLI default applies; OpenCode has no hard dependency on Local LM Studio.
 - **Default Mode**: Read-only prompt + network isolation
 - **Reachability Probe**: branches on whether the resolved endpoint host is a loopback address
   (`isLocalEndpointHost`). Local (an `lmstudio/...` model resolved to its loopback endpoint, or any
@@ -159,8 +167,8 @@ Unpinned cascade order is diversity-sorted from the config's `platforms` key ord
 - **WAN Confinement**: applies only when the resolved endpoint is local. Outbound network traffic is trapped to dead proxy `127.0.0.1:0` via `HTTP_PROXY`/`HTTPS_PROXY`; `NO_PROXY=127.0.0.1,localhost` permits local backend communication. A remote provider's entire purpose is reaching WAN, so no proxy variables are set at all for that case — reachability and auth are opencode's own concern.
 - **Credential Stripping**: Environment variables are filtered through `SAFE_ENV_WHITELIST`, removing API tokens, SSH keys, and cloud credentials, regardless of provider. A remote provider's own credentials belong in `opencode.jsonc`'s `provider.<name>.options.apiKey`, resolved by `opencode`'s own subprocess — not in this process's environment.
 - **Attachment Boundary**: File attachments (`-f`) outside the workspace root, Antigravity brain, agent config directories, and OS temp dir are read with a warning; the sensitive-file denylist (checked against the resolved real path) is the gate, and a denylisted file is skipped with the same warning.
-- **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS and Windows rely on prompt guardrails and pre/post git integrity checks — no structural read-only boundary.
-- **Accepted risk**: every run passes `opencode run --auto`, which auto-approves any permission not explicitly denied. It is kept because headless runs cannot answer permission prompts. Residual boundary: Linux with `bwrap` — read-only mounts; macOS/Windows (and Linux without `bwrap`) — the prompt guardrail plus the git integrity check only.
+- **Platform Constraints**: Linux uses Bubblewrap (`bwrap`) filesystem read-only mounts when available. macOS, Windows, and Linux without Bubblewrap (`bwrap`) rely on prompt guardrails and pre/post git integrity checks — no structural read-only boundary.
+- **Accepted risk**: every run passes `opencode run --auto`, which auto-approves any permission not explicitly denied. It is kept because headless runs cannot answer permission prompts. Residual boundary: Linux with `bwrap` — read-only mounts; macOS, Windows, and Linux without Bubblewrap (`bwrap`) — the prompt guardrail plus the git integrity check only.
 - **GPU Concurrency Lock**: only acquired when the resolved endpoint is local (prevents concurrent hooks from thrashing local VRAM); a remote API call has no such contention and is not serialized behind it.
 
 ### Session Monitoring

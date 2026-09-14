@@ -30,28 +30,20 @@ flowchart TD
 - **Node.js**: `v18.0.0` or higher.
 - **`dispatch` skill installed**: Required for the cross-agent CLI runner.
 - **At least one agent CLI** installed or reachable on your system:
-  - **Claude Code**: Claude Desktop, VS Code extension, or standalone CLI (`claude`).
+  - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
-  - **GitHub Copilot**: Copilot CLI or VS Code extension CLI (`copilot`).
+  - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
   - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (any provider/model; see `dispatch`).
 
 ### Installation
 
-Install `dispatch-code-review` and its core runner into your project workspace:
+Install `dispatch-code-review` alongside `dispatch`:
 
 ```bash
-# Install both skills
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch
-npx skills add Gyunikuchan/dispatch-skills --skill dispatch-code-review
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
 ```
 
-To install globally for all projects:
-
-```bash
-npx skills add -g Gyunikuchan/dispatch-skills --all
-```
-
-To install every skill in this repository:
+To install the complete suite across all skills (`--all`, add `-g` for global):
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
@@ -110,7 +102,7 @@ Pass explicit plan or walkthrough paths if you want the review anchored to speci
 - **Claim vs. Verdict Separation**: The external delegate's output is strictly a set of *claims*, not an authoritative verdict. Reviewers reading a diff cold often flag things your codebase already handles. The orchestrator independently verifies every defect citation against lines of code before accepting it.
 - **Evidence Over Votes**: Multi-provider agreement is context, not evidence. If two delegates flag a non-existent issue, the orchestrator rejects it. If one delegate discovers a valid subtle boundary bug, the orchestrator accepts it.
 - **Working-Tree Diff Prioritization**: Uncommitted changes are reviewed first. When everything is already committed, the review covers the whole branch since it diverged from its base — not just the last commit. The exact resolution lives in [references/prompt-template.md](references/prompt-template.md).
-- **Walkthrough Resolution & Authoring** (see `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution): *explicit user-provided walkthrough* → *platform-native walkthrough* (e.g. Antigravity's `walkthrough.md`) → *existing scratch walkthrough* matching the branch-derived slug (reused, not re-authored) → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
+- **Walkthrough Resolution**: Follows `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (host convention and explicit user paths override; then resolves across tiers: *platform-native* → *existing scratch* matching branch slug → *auto-authored* under `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`).
 - **Walkthrough Updated on Disk**: Accepted fixes and adjudication outcomes are recorded directly under `## Review Findings & Resolutions` in the target walkthrough file.
 - **Interactive Dispute Escalation**: When a claim touches ambiguous domain intent, trade-offs, or unverified external figures, the orchestrator will pause and ask you via interactive questions (your agent's interactive question tool) before modifying code.
 - **Targeted Grounding**: Delegate CLIs perform fast, targeted inspection (checking only modified files, adjacent call sites, and contracts via code graphs) rather than unbounded codebase scans.

@@ -74,7 +74,11 @@ Detection: a review skill runs **orchestrated** when an orchestrating skill hand
 
 **Target → flag mapping** (orchestrated): `--provider <target.platform> --no-config`; add `-m <target.model>` and `-e <target.effort>` only when the target carries `model` or `effort`. Attach context with `-f "<path>"` and pass the filled prompt with `--prompt-file "<path>"` instead of `-p`/positional. Redirect each invocation's stdout/stderr to OS temp, not into the repo — a log file inside the workspace trips the delegate's own read-only integrity check.
 
-**Reserve substitution** (orchestrated): each target is pinned (`--no-config`), so `dispatch` never cascades a failed target to another platform — the reserves list does. When a target's dispatch ends without a report for a reason that is not `INTEGRITY_VIOLATION` or a workspace-modified warning (e.g. `[auth]`, `[quota]`, non-zero exit, no output), dispatch the first unused reserve in list order — the list is already sorted for platform diversity. A reserve is unusable when it matches — same platform, model and effort — any target already dispatched in the wave, including the failed one; re-review rounds can carry an earlier substitute in `targets` while it is still listed in `reserves`. Repeat until that slot yields a report or reserves run out, then apply the `dispatch` subagent fallback for the slot. Each reserve is used at most once per wave. Record every substitution (`<failed target> → <reserve>: <reason>`) for the orchestrator's diagnostics.
+**Reserve substitution** (orchestrated): each target is pinned (`--no-config`), so `dispatch` never cascades a failed target to another platform — the reserves list does:
+- **Trigger**: When a target's dispatch ends without a report for a reason that is not `INTEGRITY_VIOLATION` or a workspace-modified warning (e.g. `[auth]`, `[quota]`, non-zero exit, no output), dispatch the first unused reserve in list order (already diversity-sorted).
+- **Usability**: A reserve is unusable when it matches (same platform, model, and effort) any target already dispatched in the wave, including the failed one.
+- **Fallback**: Repeat substitution until the slot yields a report or reserves run out, then apply the `dispatch` subagent fallback for the slot.
+- **Diagnostics**: Each reserve is used at most once per wave. Record every substitution (`<failed target> → <reserve>: <reason>`) for run diagnostics.
 
 ## Prompt Template Filling
 
@@ -102,7 +106,7 @@ Pass the written file straight to `dispatch` with `--prompt-file <path>` (see Ru
 
 ## Adjudication
 
-Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendation). Discard passing axes, clean verdicts, and praise immediately.
+Scope: adjudicate every actionable claim (a proposed defect, cut, or recommendation). Discard passing axes, clean verdicts, and praise immediately. A reviewer reporting 0 must-fix findings is considered settled for that review phase.
 
 | Verdict | Criterion | Action |
 |---------|-----------|--------|
@@ -150,5 +154,11 @@ Standalone mode only (orchestrated mode reports nothing — the orchestrator's o
 ## Artifact Lifecycle
 
 Standalone reviews always retain their artifact in place. Only an orchestrator owning the full review-and-implement lifecycle relocates scratch artifacts to the OS temp directory, and only on consensus/completion — a standalone review has no later phase to hand the artifact to, so moving it would strand the next invocation's lookup.
+
+Relocate scratch artifacts using the cross-platform helper:
+
+```bash
+node <skills-dir>/dispatch/scripts/relocate-scratch.mjs "<plan path>" "<walkthrough path>"
+```
 
 <!-- Add further shared conventions for these three skills as new `## <Topic>` sections above this comment. -->

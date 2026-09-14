@@ -17,9 +17,12 @@ If an optional skill is absent, name its absence in the handoff and proceed with
 
 **Install them side by side.** `resolve-flow.mjs` imports `dispatch`'s scripts by sibling path, so every skill above must live in one `<skills-dir>`. A split install (say `dispatch` global, `implement-dispatch` project-local) fails at import. Install all of them to the same scope — `npx skills add Gyunikuchan/dispatch-skills --all`, with `-g` on every skill or on none.
 
-**Ruling resets rounds.** A user ruling on a round-cap escalation resets that phase's round counter to 0. `maxRounds` bounds *unattended* rounds only — added scope or a user decision restarts the budget.
-
-**Rejections need the citing reviewer.** With the phase's `consensus: true`, an orchestrator Reject or Downgrade of a delegate-reported MUST-FIX or SHOULD-FIX claim is not final: it is logged `[Rejected — pending confirmation]` and handed back to every citing delegate in the next re-review round. Rewrite it to `[Rejected / Downgraded]` only when a citing delegate's report explicitly affirms the counter-evidence (silence keeps it pending), or to `[Resolved Dispute]` after a user ruling. If every citing delegate is excluded or unavailable, escalate it to the user at once rather than waiting for the cap. Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality and are final at the orchestrator's ruling without entering the pending confirmation loop. With `consensus: false`, rejections are final, but every `[Disputed]` line is still ruled by the user and rewritten before the gate.
+**Rejections need the citing reviewer.** With the phase's `consensus: true`, an orchestrator Reject or Downgrade of a delegate-reported MUST-FIX or SHOULD-FIX claim is not final:
+- It is logged `[Rejected — pending confirmation]` and handed back to every citing delegate in the next re-review round.
+- Rewrite it to `[Rejected / Downgraded]` only when a citing delegate's report explicitly affirms the counter-evidence (silence keeps it pending), or to `[Resolved Dispute]` after a user ruling.
+- If every citing delegate is excluded or unavailable, escalate it to the user at once rather than waiting for the cap.
+- Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality and are final at the orchestrator's ruling without entering the pending confirmation loop.
+- With `consensus: false`, rejections are final, but every `[Disputed]` line is still ruled by the user and rewritten before the gate.
 
 **Loop exit is mechanical.** A review loop continues while (the last round modified the artifact **or** a `[Disputed]` / `[Rejected — pending confirmation]` line exists) and rounds < `maxRounds`. Never exit early because remaining edits look minor. At the cap, escalate every remaining item to the user and rewrite each ruling to `[Resolved Dispute]` in the artifact. Gate with:
 
@@ -156,10 +159,10 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
    - Rounds spent per phase vs `maxRounds`.
    - Active, failed, substituted, dropped, excluded, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `excluded`, `droppedPins`, `clamped`, `targetCountPin`, `livenessSource`; substitutions as recorded by the review skill; the run's exclusion set with each platform's `[auth]` / `[quota]` reason).
    - Summary of accepted/rejected findings, rebuttals confirmed by citing delegates, and verification command status.
-2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion. Use Node rather than a shell `mv`/`Move-Item`, so one command works under cmd.exe, PowerShell and POSIX shells alike, and so the destination resolves from `os.tmpdir()` on every platform:
+2. **Relocate scratch**: Per `alignment.md` § Artifact Lifecycle, move scratch plan/walkthrough files to OS temp on completion using the shared helper:
 
    ```bash
-   node -e "const fs=require('fs'),os=require('os'),path=require('path');for(const f of process.argv.slice(1)){if(!fs.existsSync(f))continue;const d=path.join(os.tmpdir(),path.basename(f));try{fs.renameSync(f,d)}catch(e){if(!['EXDEV','EPERM','EBUSY'].includes(e.code))throw e;fs.copyFileSync(f,d);fs.rmSync(f)}console.log(d)}" "<plan path>" "<walkthrough path>"
+   node <skills-dir>/dispatch/scripts/relocate-scratch.mjs "<plan path>" "<walkthrough path>"
    ```
 
    If the run is unresolved or halted, retain the artifacts in place and state why.
@@ -182,5 +185,5 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
 ### Dispatch Invocation Rules
 - **Flags**: the review skill maps each handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
 - **Parallelism**: Launch all targets in a round concurrently in the background; yield turn and await notifications.
-- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode off Linux (accepted risk; see `dispatch`'s providers.md). Orchestrator / native subagents alone write code.
+- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode on macOS, Windows, and Linux without Bubblewrap (`bwrap`) (accepted risk; see `dispatch`'s `references/providers.md`). Orchestrator / native subagents alone write code.
 - **Fallback**: A failed target is replaced from `reserves` per `dispatch`'s `references/alignment.md` § Invocation Modes **Reserve substitution** (unpinned and count-pinned runs only — provider-pinned runs carry none), taking the next unused reserve in order; once reserves run out, it falls back to `dispatch`'s in-process read-only subagent.

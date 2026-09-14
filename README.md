@@ -24,7 +24,7 @@ Add `-g` for a user-level install.
 |-------|--------------|------------|
 | [`dispatch`](skills/dispatch) | Hands a bounded task to another agent CLI through a provider cascade; read-only (no write mode), execution logs kept out of your context. | nothing |
 | [`dispatch-plan-review`](skills/dispatch-plan-review) | 7-axis review of an implementation plan **before** code exists; folds accepted findings into the plan on disk. | `dispatch` |
-| [`dispatch-code-review`](skills/dispatch-code-review) | 6-axis review of your working-tree diff; verifies every claim against the cited lines. | `dispatch` |
+| [`dispatch-code-review`](skills/dispatch-code-review) | 6-axis review of code changes (working tree or branch diff); verifies every claim against the cited lines. | `dispatch` |
 | [`implement-dispatch`](skills/implement-dispatch) | The full loop: plan → plan review → implement → code review → apply → re-review to consensus. | all three |
 
 Dependencies point one way and never back. `dispatch` references nothing; the review skills reference only `dispatch`; `implement-dispatch` references all three **by skill name**; where it links a sibling's template file it does so relatively, within the one skills directory, and never by a host-specific install path. Install only what you want — but install whatever you do want to the **same scope**, all global or all project-local: the scripts locate each other as siblings in one skills directory, so a split install (global `dispatch`, project-local `implement-dispatch`) fails to start.

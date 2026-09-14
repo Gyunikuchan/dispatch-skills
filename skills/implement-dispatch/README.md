@@ -162,19 +162,13 @@ Choose a level based on the risk and complexity of your change:
 - **`max`** — **Maximum depth & exhaustive verification**. Best for high-stakes migrations, cryptographic code, or complex subsystem overhauls where you want the widest possible reviewer fan-out and maximum round limits.
 
 ### Key Execution Mechanics
-- **Waves, Not Individual Dispatches**: `maxRounds` caps the parallel waves a phase may spend, counting the first review. Plan review and code review maintain separate, independent counters.
-- **Pins Override Breadth**: Naming providers is the most explicit input available, so `(claude,agy,copilot)` dispatches to all three live pins regardless of the level's configured `targetCount`. Specifying `(all)` pins all configured platforms, including the orchestrator's own platform as a target. Pins do not resurrect a phase configured off (`maxRounds: 0`).
-- **Count Pins**: `(<n>)` — a single positive integer, alone — pins a reviewer count instead of specific providers: `(3)` runs the unpinned selection path with `targetCount` forced to 3 for both review phases. It cannot be mixed with provider keys or `all` (`(claude,2)` and `(2,3)` are both errors), and it still forces a phase whose level `targetCount` is 0 to run as long as `maxRounds > 0` — a phase with `maxRounds: 0` stays off, since no pin resurrects it. Unlike a provider-key pin, a count pin keeps ordered `reserves`, because it names how many reviewers to run, not which ones.
-- **Breadth Clamping**: When a level (or a count pin) asks for more reviewers than are live, the wave is clamped to what is reachable rather than failing, and `diagnostics.clamped` records `{ requested, resolved }` for each affected section so the handoff report can surface the reduced breadth.
-- **Reserve Reviewers**: The live candidates beyond `targetCount` come back as each review section's ordered `reserves`. The liveness probe only proves a CLI runs, not that it is signed in or has quota, so when a reviewer fails mid-wave (e.g. `[auth]`), the review skill substitutes the next unused reserve in order before falling back to a subagent. Every model/effort candidate of a platform counts as its own entry. Provider-pinned runs have no reserves.
-- **Diversity-Sorted Candidates**: Candidates are flattened in `platforms` key order, then every platform's first candidate is placed before any platform's second, so one platform with three models cannot fill a three-reviewer wave on its own. The orchestrator's candidates follow, sorted the same way. With `agy`, `copilot`, `opencode: [glm, deepseek, qwen]` and Claude Code orchestrating, the order is agy, copilot, glm, deepseek, qwen, claude.
-- **Sticky Exclusion**: A reviewer that fails `[auth]` or `[quota]` gets its whole platform added to the run's exclusion set. The orchestrator re-resolves with `resolve-flow.mjs --exclude <keys>` so later waves stop dispatching it. Excluded platforms appear in `diagnostics.excluded`. Excluding the orchestrator's own platform is an error.
-- **Target Affinity in Re-Reviews**: Re-reviews are sent back specifically to the delegate handle that raised the finding, providing the resolution log and exact code delta to verify fixes efficiently.
-- **Consensus Enforcement**:
-  - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists. Disputed findings still go to the user.
-  - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a delegate-reported `MUST-FIX` or `SHOULD-FIX` finding. A rejection is logged `[Rejected — pending confirmation]` and sent back to the reviewer who raised it. It becomes final only when that reviewer explicitly accepts the counter-evidence, or when you rule on it at the round cap. Delegate-reported `CONSIDER` findings are advisory and final at the orchestrator's ruling without entering the pending confirmation loop.
-  - Loops keep going while the last round changed the artifact or anything is still disputed or pending, up to `maxRounds`. `scripts/check-consensus.mjs <artifact>` is the gate before plan approval and before handoff: it exits 1 while any `[Disputed]` or pending line remains.
-- **Automatic Scope Gating**: When `<level>` is omitted, the scope gate automatically evaluates scope, complexity, and risk to select between `low` (fast-path for trivial edits or isolated tweaks), `medium` (standard features and routine fixes), and `high` (cross-cutting features, architectural changes, complex refactoring, state machines). Higher tiers (`xhigh` and `max`) are never automatically selected and remain strictly reserved for explicit manual pinning. An explicitly requested level is always honoured.
+- **Waves, Not Individual Dispatches**: `maxRounds` bounds unattended review rounds. Plan and code reviews maintain independent round counters.
+- **Pins & Overrides**: Naming providers (`(claude,agy)`) pins review targets directly. Naming a count (`(3)`) replaces `targetCount` while retaining reserve substitution. Pins do not resurrect an intentionally disabled phase (`maxRounds: 0`).
+- **Reserves & Substitution**: Unreachable or failed reviewers (e.g. `[auth]`, rate limits) are substituted automatically from ordered reserves before falling back to subagents.
+- **Sticky Exclusion**: A reviewer failing `[auth]` or `[quota]` causes its entire platform to be excluded from subsequent waves in that run.
+- **Target Affinity**: Re-review rounds are routed back specifically to the reviewers who raised the original findings.
+- **Consensus & Dispute Gate**: Under `consensus: true`, rejections of delegate-reported MUST-FIX / SHOULD-FIX items require confirmation from the citing reviewer. Unsettled disputes are escalated to you before implementation or completion.
+- **Automatic Scope Gating**: An unlevelled invocation automatically selects `low` (fast-path), `medium` (standard), or `high` (cross-cutting) based on risk. Higher levels (`xhigh`, `max`) are reserved for explicit manual requests.
 
 ---
 
@@ -195,7 +189,7 @@ The three sections (`plan-review`, `implementation`, `code-review`) each nest th
 |---|---|
 | `maxRounds` | Cap on total fan-out waves for the phase, counting the first review |
 | `targetCount` | How many review candidates an unpinned wave dispatches to — a whole number or `"all"`; the first `targetCount` of the diversity-sorted list, the rest become reserves |
-| `consensus` | When `true`, no finding may be dismissed without verified counter-evidence |
+| `consensus` | When `true`, rejections of delegate MUST-FIX/SHOULD-FIX require reviewer confirmation or dispute escalation; when `false`, the author adjudicates independently (see `dispatch`'s `references/alignment.md` § Finality) |
 
 When unpinned, review candidates prioritize external platforms first and sort the orchestrator platform's candidates last (with candidates matching the orchestrator's active platform and model placed dead last), fulfilling `targetCount` with the orchestrator only when external candidates are insufficient.
 
@@ -281,11 +275,6 @@ Knobs and platform entries are **sparse by design**: define only the levels wher
 ---
 
 ## Nuances, Quirks & Troubleshooting
-
-### Liveness Override (Test-Only)
-`IMPLEMENT_DISPATCH_LIVENESS_JSON` replaces the flow resolver's real provider probing with a literal `{ "claude": true, "agy": false, ... }` map, so a test run does not shell out to every provider CLI. It bypasses probing entirely — nothing is checked against your installed agents.
-
-Because an inherited value would silently reshape a real run, the variable is armed only when `IMPLEMENT_DISPATCH_TEST_MODE=1` is set alongside it. Setting the payload alone is an error naming both variables, not a silent fall back to probing. A run using the override reports `diagnostics.livenessSource: "env-override"`; every other run reports `"probe"`.
 
 ### Graceful Degradation Without Companion Skills
 If `dispatch-plan-review` or `dispatch-code-review` are not installed, `implement-dispatch` continues running seamlessly:

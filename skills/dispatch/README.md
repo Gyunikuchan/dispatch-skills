@@ -37,7 +37,7 @@ flowchart TD
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
   - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). With no `model` configured anywhere (`opencode.jsonc`, dispatch's own config), `opencode` falls back to its own CLI default — dispatch makes no assumption of Local LM Studio.
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). With no `model` configured anywhere (`opencode.jsonc`, dispatch's own config), `opencode` falls back to its own CLI default — OpenCode has no hard dependency on Local LM Studio.
 
 ### Installation
 
@@ -162,7 +162,7 @@ Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to 
 ## High-Level Behavior & Invariants
 
 - **Alternative Platforms Prioritized**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It tries alternative platforms first to engage a differentiated platform/model for a different opinion, cascading to the host platform only as a last resort before falling back to an in-process subagent.
-- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; `--permission-mode plan` with read-only tool allowlists and denied write tools on Claude Code; Bubblewrap read-only mounts, credential stripping, and, for a local endpoint, dead-end WAN proxies on OpenCode). Exception: OpenCode on macOS/Windows has no structural boundary and relies on prompt guardrails plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode — this only affects permission prompts, not the `--mode plan` write block.
+- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; `--permission-mode plan` with read-only tool allowlists and denied write tools on Claude Code; Bubblewrap read-only mounts on Linux with `bwrap`, credential stripping, and dead-end WAN proxies for local backends on OpenCode). Exception: OpenCode on macOS, Windows, and Linux without Bubblewrap (`bwrap`) has no structural boundary and relies on prompt guardrails plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode.
 - **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (OS temp). The orchestrating agent receives only the final synthesized summary and session link.
 - **Session Continuity & Deep-Links**: When supported, `dispatch` captures and returns session identifiers:
   - **Antigravity 2.0**: `conversation://<id>` deep-links that open directly in the Antigravity desktop canvas.
@@ -192,23 +192,13 @@ Get-Content -Tail 30 "<logFilePath>"
 ```
 
 ### Delegate Environment & Authentication
-Delegates get a whitelisted environment: non-secret reachability and identity vars pass through (`HTTP(S)_PROXY`/`NO_PROXY`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`/`SSL_CERT_DIR`, `XDG_*`, `CLAUDE_CONFIG_DIR`, `USER`, `TZ`), everything credential-shaped is stripped. So **sign each CLI in interactively once** (`claude`, `agy`, `copilot`) — API-key and token env vars are not inherited, and `opencode` reads its provider credentials from `opencode.jsonc`. For a local `opencode` endpoint the proxy vars are replaced by the WAN trap rather than inherited.
+Delegates run in a filtered environment with credential stripping. Non-secret identity and reachability variables pass through; API keys and tokens are stripped (see [references/providers.md § 1 Safe Environment Variable Pass-Through](references/providers.md#safe-environment-variable-pass-through)). Sign each CLI in interactively once (`claude`, `agy`, `copilot`), or provide remote credentials in `opencode.jsonc`.
 
 ### Git Integrity False Positives
 `dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
 
 ### OpenCode Provider Setup
-`opencode` is config-driven: it targets whatever `provider/model` `opencode.jsonc` resolves, local or remote. `dispatch` assumes nothing about which provider that is — with no `model` configured anywhere, `opencode`'s own CLI default applies, not Local LM Studio.
+`opencode` targets whatever `provider/model` `opencode.jsonc` resolves, local or remote. With no `model` configured anywhere, `opencode`'s own CLI default applies.
 
-**Local LM Studio** — used when `opencode.jsonc`'s `model` is set to an `lmstudio/...` model:
-1. Start LM Studio and launch the local server at `http://127.0.0.1:1234/v1`.
-2. Ensure the `opencode` CLI binary is present on your `PATH`.
-3. Dispatch with `--provider opencode` or allow the cascade to reach it.
-
-**Any other provider** — point `opencode.jsonc`'s `model` at a `<provider>/<model>` pair (e.g.
-`anthropic/claude-opus-5`, `openrouter/...`); put that provider's credentials in its
-`provider.<name>.options.apiKey` entry in `opencode.jsonc` (resolved by `opencode`'s own
-subprocess), not in your shell environment — dispatch strips ambient cloud API keys before the
-delegate spawns. Preflight, the GPU concurrency lock, and WAN proxy-trapping only apply when the
-resolved endpoint is local; a remote provider's own `auth`/`quota`/`not-found` failures surface
-and cascade normally.
+- **Local LM Studio**: When `opencode.jsonc`'s `model` is set to an `lmstudio/...` model, start LM Studio's local server at `http://127.0.0.1:1234/v1` and ensure `opencode` is on `PATH`.
+- **Any other provider**: Point `opencode.jsonc`'s `model` at a `<provider>/<model>` pair (e.g. `anthropic/claude-opus-5`, `openrouter/...`) and configure credentials in `opencode.jsonc`'s `provider.<name>.options.apiKey`. Preflight, GPU concurrency lock, and WAN trapping apply only to local endpoints; remote providers authenticate and cascade normally.

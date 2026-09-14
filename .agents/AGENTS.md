@@ -8,7 +8,7 @@ Deliver high-confidence cross-agent delegation and review with minimal token ove
 
 - **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens verifying claims rather than guessing; optimize context hygiene and token density before raw speed.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
-- **Structural Least Privilege**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools; accepted risk: OpenCode off Linux per `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for orchestrators or native subagents. Runner harnesses verify workspace integrity across delegate runs and sanitize outputs.
+- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for orchestrators or native subagents. Runner harnesses verify workspace integrity across delegate runs and sanitize outputs.
 - **Context Hygiene & Token Density**: Stream execution traces and subprocess logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record full findings into artifacts. Progressive disclosure protects context windows.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
 - **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules and fall back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/alignment.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
@@ -52,7 +52,7 @@ dispatch-plan-review, dispatch-code-review → dispatch
 dispatch → (nothing)
 ```
 
-- **Name the skill, not its install path**: Reference skills by name or sibling-relative paths (`<skills-dir>`). Never use host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) or absolute paths in skill markdown.
+- **Name the skill, not its install path**: Reference skills by name or sibling-relative paths (`<skills-dir>`). Never use host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) or absolute paths in operational skill markdown or script invocations (discovery tables documenting standard installation locations are permitted).
 - **Assume dependencies are installed**: Downstream skills assume upstream dependencies exist and invoke them directly.
 - **Upstream skills never name downstream skills** in prose or frontmatter (gated exceptions: `skills/dispatch/references/alignment.md` and `skills/dispatch/SKILL.md` § Skill Alignment).
 - **Graceful degradation**: State absence of optional dependencies and run the reduced flow.

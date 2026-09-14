@@ -7,20 +7,15 @@ description: Delegate a bounded read-only task to a different agent CLI, with pr
 
 Dispatch a bounded **read-only** task through the agent **cascade** (investigation, research, plan/code reviews). The orchestrator owns the brief, judgment, edits, and commit; the delegate CLI inspects and analyzes.
 
-The cascade order and per-provider model/effort come from [config.default.jsonc](config.default.jsonc) — see [Configuration](#configuration) below. Its shipped default order is:
+The cascade order and per-provider model/effort come from [config.default.jsonc](config.default.jsonc) (see [Configuration](#configuration) below).
 
-1. **Claude Code** (`claude`).
-2. **Antigravity 2.0** (`agy`).
-3. **GitHub Copilot** (`copilot`).
-4. **OpenCode** (`opencode`) — cascading across models configured in `config.default.jsonc` (defaulting to GLM → DeepSeek → local LM Studio) or falling back to `opencode.jsonc`'s configured model / CLI default.
-
-A platform omitted from the loaded config is never dispatched, regardless of order. Alternative providers are attempted first; the orchestrator's own platform is tried last (with candidates matching the orchestrator's active model placed after alternative models on that platform). Within each group the cascade is diversity-sorted: every platform's first array entry, in key order, before any platform's second entry (an in-slot `model` array is not split). If every candidate pass is exhausted, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
+A platform omitted from the loaded config is never dispatched. Alternative providers are attempted first; the orchestrator's own platform is tried last. Diversity-sorting rules and candidate fallback mechanics live in [references/providers.md](references/providers.md). If all candidates fail, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
 ## Operating Invariants
 
-- **Structurally read-only**: delegates run with structural enforcement — `--mode plan` (Antigravity, Copilot), `--permission-mode plan` with read-only `--allowedTools` and `--disallowedTools Write Edit NotebookEdit` (Claude Code), Bubblewrap read-only mounts (OpenCode on Linux) — plus a prompt-level safety guardrail. Exception: OpenCode off Linux has no structural boundary and relies on the guardrail plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Dispatch has no write mode; writes belong to the orchestrator or its native subagent. Antigravity additionally passes `--dangerously-skip-permissions` to auto-approve read-only tool requests (file reads, search) in headless mode; write operations stay structurally blocked by `--mode plan` regardless.
+- **Structurally read-only**: Delegates run with structural read-only enforcement plus prompt guardrails. Runner harnesses handle provider-specific flags and sandbox boundaries (see [references/providers.md](references/providers.md)). Dispatch has no write mode; all file edits belong exclusively to the orchestrator or native subagents.
 - **Context hygiene**: execution logs stream to an OS temp log file; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to stderr when it is a terminal).
 - **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total) and wrapped in data delimiters to resist prompt injection; oversized prompts spill to a temp brief file to prevent context or argument-length overflow.
 - **Git integrity check**: workspace `git status --porcelain` is compared before and after every delegate run; a mismatch is flagged as a warning. False positives are possible from concurrent IDE/build activity.
@@ -69,7 +64,7 @@ Map the runner outcome to exactly one row. A terminal error prints its sentinel 
 |---------|--------|
 | Exit 0 | Success: capture stdout and session handle, then proceed to Step 4. |
 | Truncated or partial output (`WARNING: Output truncated`, `returning partial output`) | Use it if it fulfils the brief; otherwise re-dispatch a narrowed task. |
-| `NO_DISPATCH_AVAILABLE`, or a pinned (`--provider`) run exiting non-zero | Fall back in-process to the platform's read-only subagent (table below), with identical prompt and attachments. |
+| `NO_DISPATCH_AVAILABLE`, or a pinned (`--provider`) run exiting non-zero | Fall back in-process to the platform's read-only subagent (table below), with identical prompt and attachments (callers maintaining a reserve list substitute from reserves first; in-process fallback applies to standalone pinned runs and on reserve exhaustion). |
 | `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, `NO_CONFIG_REQUIRES_PROVIDER`, or `PLATFORM_NOT_CONFIGURED` | Stop and report the error to the user. |
 | Any other bracketed `[<CODE>]` (runner-originated codes such as `CLI_NOT_FOUND`, `SERVER_OFFLINE`, `CONTEXT_BUDGET_EXCEEDED` surface here, rethrown through the cascade) | Dispatch failure: same action as a pinned run exiting non-zero. |
 | `Workspace was modified during READ-ONLY execution!` | Run `git status`, report the modified files, and relay the result flagged as workspace-modified. |
@@ -130,14 +125,7 @@ Two runtime facts that file cannot state:
 
 ## Providers & Session Handles
 
-| Provider | Key | CLI Binary | Session Handle Format |
-|----------|-----|------------|-----------------------|
-| **Claude Code** | `claude` | `claude` | `claude --resume <session_id>` |
-| **Antigravity 2.0** | `agy` | `agy` | `conversation://<id>` |
-| **GitHub Copilot** | `copilot` | `copilot` | `copilot --resume <session_id>` |
-| **OpenCode** | `opencode` | `opencode` | Local server logs |
-
-Technical specifications, discovery paths, default models, sandboxing boundaries, and failure classification live in [references/providers.md](references/providers.md).
+Technical specifications, discovery paths, default models, session handles, sandboxing boundaries, and failure classification live in [references/providers.md](references/providers.md).
 
 ---
 
@@ -151,12 +139,5 @@ Topics: Plan/Walkthrough Artifact Resolution, Invocation, Invocation Modes, Prom
 
 ## Troubleshooting
 
-- **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner:
-  ```bash
-  tail -n 30 "<logFile>"
-  ```
-  PowerShell:
-  ```powershell
-  Get-Content -Tail 30 "<logFile>"
-  ```
+- **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner: `tail -n 30 "<logFile>"` (PowerShell: `Get-Content -Tail 30 "<logFile>"`).
 - **Direct runner execution**: Execute a provider runner directly to diagnose binary discovery, authentication, or environment issues (e.g. `node <skill-path>/scripts/claude-run.mjs --help`).
