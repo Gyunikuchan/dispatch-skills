@@ -1,10 +1,40 @@
 {
   "name": "dispatch-skills",
+  "version": "0.1.0",
+  "description": "Cross-agent CLI delegation, review, and autonomous consensus engine for Claude Code, Antigravity, GitHub Copilot, and OpenCode.",
   "license": "MIT",
   "type": "module",
+  "author": "Gyunikuchan (https://github.com/Gyunikuchan)",
+  "homepage": "https://github.com/Gyunikuchan/dispatch-skills#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gyunikuchan/dispatch-skills.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Gyunikuchan/dispatch-skills/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent-skills",
+    "claude-code",
+    "antigravity",
+    "copilot",
+    "opencode",
+    "code-review",
+    "plan-review",
+    "multi-agent",
+    "consensus",
+    "delegation"
+  ],
   "engines": {
     "node": ">=22"
   },
+  "files": [
+    "skills",
+    "scripts",
+    "LICENSE",
+    "README.md"
+  ],
   "scripts": {
     "prepare": "husky",
     "hashes": "node scripts/generate-hashes.mjs",
