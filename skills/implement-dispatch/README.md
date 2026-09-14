@@ -87,7 +87,7 @@ Trigger `implement-dispatch` directly via the slash command `/implement-dispatch
 /implement-dispatch [<level>] [(<pins>)]: <feature | fix | task description>
 ```
 
-Both `<level>` and `(<pins>)` are optional (defaults to `medium` depth with automatic cascade selection; the colon is optional).
+Both `<level>` and `(<pins>)` are optional (when `<level>` is omitted, the Scope gate automatically evaluates between `low`, `medium`, and `high` based on scope, complexity, and risk; the colon is optional).
 
 ### 1. Basic Invocations
 
@@ -174,7 +174,7 @@ Choose a level based on the risk and complexity of your change:
   - When `consensus` is disabled (`false`), the orchestrator can reject claims directly if verified counter-evidence exists. Disputed findings still go to the user.
   - When `consensus` is enabled (`true`), the orchestrator cannot unilaterally dismiss a delegate-reported `MUST-FIX` or `SHOULD-FIX` finding. A rejection is logged `[Rejected — pending confirmation]` and sent back to the reviewer who raised it. It becomes final only when that reviewer explicitly accepts the counter-evidence, or when you rule on it at the round cap. Delegate-reported `CONSIDER` findings are advisory and final at the orchestrator's ruling without entering the pending confirmation loop.
   - Loops keep going while the last round changed the artifact or anything is still disputed or pending, up to `maxRounds`. `scripts/check-consensus.mjs <artifact>` is the gate before plan approval and before handoff: it exits 1 while any `[Disputed]` or pending line remains.
-- **Automatic Scope Downshifting**: Trivial changes (single-file mechanical edits, typo/comment fixes, simple constant changes) are automatically downshifted to `low` to avoid unnecessary review overhead. An explicitly requested level is always honoured.
+- **Automatic Scope Gating**: When `<level>` is omitted, the scope gate automatically evaluates scope, complexity, and risk to select between `low` (fast-path for trivial edits or isolated tweaks), `medium` (standard features and routine fixes), and `high` (cross-cutting features, architectural changes, complex refactoring, state machines). Higher tiers (`xhigh` and `max`) are never automatically selected and remain strictly reserved for explicit manual pinning. An explicitly requested level is always honoured.
 
 ---
 

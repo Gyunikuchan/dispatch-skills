@@ -50,7 +50,11 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. Both `<lev
 ### 1. Scope & Setup
 
 1. **Understand ask**: Restate requirements as checkable success criteria. If preceded by user questioning/interviews (e.g. `grilling`), fold settled decisions directly into criteria and assumptions without intermediate approval gates.
-2. **Scope gate**: Classify the change as `trivial` (single-file mechanical edit, rename, comment/typo, simple constant), `focused`, or `cross-cutting`. When the user gave no `<level>` and scope is `trivial`, run at `low`; otherwise use the requested (or default `medium`) level. Pins do not affect this.
+2. **Scope gate**: Classify the change based on scope, complexity, and risk:
+   - `trivial` / low risk (single-file mechanical edit, rename, comment/typo, simple constant, isolated tweak) → evaluate at `low`.
+   - `focused` / moderate risk (standard feature, multi-file changes in a bounded subsystem, routine bug fix/refactoring) → evaluate at `medium`.
+   - `cross-cutting` / high risk (architectural changes, complex refactoring, multi-subsystem integrations, public API/contract changes, state machines) → evaluate at `high`.
+   When the user gave no `<level>`, run at the evaluated level (`low`, `medium`, or `high`); otherwise use the requested level. `xhigh` and `max` are never selected automatically and remain reserved for manual pinning. Provider or count pins `(<pins>)` alone do not affect level selection.
 3. **Resolve flow** (`<skills-dir>` resolves per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution):
 
    ```bash
@@ -147,7 +151,7 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
 **Await all reviews**: Never initiate handoff while any background review task or dispatch is still running. All launched target and reserve dispatches across all review phases must be fully completed and settled before beginning Step 8.
 
 1. **Record diagnostics**: When the walkthrough has a `## Review Findings & Resolutions` section, run `check-consensus.mjs` on it first and return to Step 7's escalation while it exits 1. Then append `## Run Diagnostics` to the walkthrough (or plan if code review was skipped):
-   - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
+   - Scope classification, evaluated level (`low` / `medium` / `high`), `flow.diagnostics.effectiveLevel`, and any scope shift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
    - Rounds spent per phase vs `maxRounds`.
    - Active, failed, substituted, dropped, excluded, unavailable, or clamped delegates (`flow.diagnostics` — `unavailable`, `excluded`, `droppedPins`, `clamped`, `targetCountPin`, `livenessSource`; substitutions as recorded by the review skill; the run's exclusion set with each platform's `[auth]` / `[quota]` reason).
