@@ -144,6 +144,8 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
 
 ### 8. Handoff & Cleanup
 
+**Await all reviews**: Never initiate handoff while any background review task or dispatch is still running. All launched target and reserve dispatches across all review phases must be fully completed and settled before beginning Step 8.
+
 1. **Record diagnostics**: When the walkthrough has a `## Review Findings & Resolutions` section, run `check-consensus.mjs` on it first and return to Step 7's escalation while it exits 1. Then append `## Run Diagnostics` to the walkthrough (or plan if code review was skipped):
    - Scope classification, `flow.diagnostics.effectiveLevel`, and any scope downshift.
    - Artifact slug and `slugSource` (`explicit`, `branch`, `conversation`).
@@ -157,9 +159,9 @@ At the cap, escalate remaining items to the user (**Ruling resets rounds**) and 
    ```
 
    If the run is unresolved or halted, retain the artifacts in place and state why.
-3. **Report to user**: Present run diagnostics and a link to the artifact (omit full inline artifact content). Git operations (commit, push, PR) remain for the user.
+3. **Report to user**: Present run diagnostics and a link to the artifact (never output full inline artifact content or verbatim delegate reports in chat, to conserve write tokens). Git operations (commit, push, PR) remain for the user.
 
-**Done when:** Diagnostics are appended, scratch artifacts relocated (or retained with stated reason), and handoff report delivered.
+**Done when:** All review dispatches and background tasks across all phases are fully completed, diagnostics are appended, scratch artifacts relocated (or retained with stated reason), and handoff report delivered.
 
 ---
 

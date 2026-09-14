@@ -9,13 +9,13 @@ Deliver high-confidence cross-agent delegation and review with minimal token ove
 - **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens to verify code rather than guess or skip; optimize context hygiene and token density before raw speed.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of vote count; reject unverified findings even if unanimous. Axis coverage is explicit and visible.
 - **Structural Least Privilege**: Delegate invocations are structurally read-only (`--mode plan`, read-only tools), except OpenCode off Linux (accepted risk; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for the orchestrator or native subagents. Guard every boundary with git status validation (`git status --porcelain`) and sanitize delegate outputs.
-- **Context Hygiene & Token Density**: Protect the orchestrator's context window. Stream execution traces and subprocess logs out-of-context to temp logs (`.scratch/` or OS temp); pass only concise syntheses, banners, and log paths to the orchestrator. Progressive disclosure drives high token density.
+- **Context Hygiene & Token Density**: Protect the orchestrator's context window and write token budget. Stream execution traces and subprocess logs out-of-context to temp logs in OS temp (not `.scratch/`). Never output raw delegate responses or full review reports verbatim in chat; pass only concise syntheses, banners, and log paths to the orchestrator, recording full findings into artifacts. Progressive disclosure drives high token density.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without user intervention.
 - **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace `AGENTS.md` / `CLAUDE.md` and fall back to industry best practices. Skills maintain strict downward independence and work standalone or together. Shared conventions (`skills/dispatch/references/alignment.md`) govern only review-flow skills; host conventions always win, and skills never write conventions into the host repo.
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs.
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Never relay verbose subprocess traces or verbatim delegate reports in chat; summarize findings compactly and link to artifacts.
 
 ## Ask Before You Assume
 
@@ -75,7 +75,7 @@ Portable by default across macOS, Windows, Linux (zsh, bash, PowerShell) and Ant
 - **Naming**: kebab-case for skill identifiers and filenames.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where agent or shell environments diverge.
-- **Scratch directory**: Ephemeral state and run logs belong in `.scratch/`. Orchestrators owning the full lifecycle relocate scratch artifacts to OS temp on completion; standalone reviews retain theirs (see `skills/dispatch/references/alignment.md` § Artifact Lifecycle). Note: `.scratch/` is intentionally not git-ignored; review `git status` before committing.
+- **Scratch directory**: Strict allowlist: only active/working plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`, relocated to OS temp on finalize) belong in `.scratch/`. All other working data — subprocess logs and execution traces, filled review prompt files (`*-review-prompt*.md`), probe captures, intermediate findings, and ephemeral run files — belong in the OS temp directory (`os.tmpdir()`). Orchestrators owning the full lifecycle (`implement-dispatch`, `audit-dispatch-skills`) relocate their working scratch artifacts to OS temp on completion/consensus; standalone reviews retain their plan/walkthrough for handoff and subsequent review rounds (see `skills/dispatch/references/alignment.md` § Artifact Lifecycle). Note: `.scratch/` is intentionally not git-ignored; review `git status` before committing.
 
 ### Comments
 

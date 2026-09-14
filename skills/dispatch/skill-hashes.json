@@ -1,6 +1,6 @@
 {
-  "SKILL.md": "1a945477b761d596706962eead2ea358ca7e1822adb92a0af94f73525eea66f4",
-  "references/alignment.md": "72aa7a11d9897d063587b6e8447fd262129ae9f5da019e72aaed2f72aead9b2d",
+  "SKILL.md": "c7968f7c37fa9759e849fd9d49d0c23c1b9c76c26440576a8e22baae5b7bb2cf",
+  "references/alignment.md": "1e4f417de39954ce3b5cb86751c965d671fa9c8d9c3a7f68a6378e30b48bc995",
   "references/providers.md": "05a563a73b3b27c38f8baa1450b17a090a5f32d4890d1204d23b862df13e0632",
   "scripts/agy-run.mjs": "746301586fcf36fcbf3002c1f8cbd3605df4ad88f3f7cfc3860d72a28ce4e7e6",
   "scripts/claude-run.mjs": "900a28e0662a9be75e4ce248792d41130c0c3c5b2a3db516b33762f518ef5e55",
