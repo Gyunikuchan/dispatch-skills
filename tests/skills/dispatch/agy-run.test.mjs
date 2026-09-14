@@ -5,12 +5,6 @@ import path from 'node:path';
 import { describe, it, after } from 'node:test';
 
 import {
-  getArgvByteLimit,
-  preparePromptForArgv,
-  resolveRunnerExitCode,
-} from '../../../skills/dispatch/scripts/common.mjs';
-
-import {
   AGY_MODES,
   AGY_MODE_PREFERENCE,
   AGY_MODE_DATA_DIRS,
@@ -58,6 +52,11 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(args[args.indexOf('--output-format') + 1], 'json');
     });
 
+    it('threads the runner timeout into the CLI as --print-timeout=<seconds>s', () => {
+      const args = buildAgyArgs('prompt', null, { model: null, effort: null, timeout: 120 });
+      assert.ok(args.includes('--print-timeout=120s'), `expected the print timeout on argv, got: ${args.join(' ')}`);
+    });
+
     it('enforces preference order: Antigravity CLI > Antigravity 2.0 > VS Code Extension', () => {
       assert.deepEqual(AGY_MODE_PREFERENCE, [
         'antigravity-cli',
@@ -78,7 +77,7 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.equal(typeof detectAgyModePresence(AGY_MODES.ANTIGRAVITY_CLI), 'boolean');
     });
 
-    it('resolves binary across modes and platforms', () => {
+    it('resolves binary across modes and platforms', { skip: !getAgyBinary() && !getAgy20Binary() && !getAgyVSCodeBinary() && !getAgyCliBinary() ? 'no Antigravity binary installed' : false }, () => {
       const general = getAgyBinary();
       const agy20 = getAgy20Binary();
       const agyVscode = getAgyVSCodeBinary();
@@ -123,7 +122,7 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       }
     });
 
-    it('resolves target in preference order or explicit override', () => {
+    it('resolves target in preference order or explicit override', { skip: !resolveAgyTarget() ? 'no Antigravity target resolved' : false }, () => {
       const target = resolveAgyTarget();
       if (target) {
         assert.ok(AGY_MODE_PREFERENCE.includes(target.mode));
@@ -143,10 +142,62 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.ok(id === null || typeof id === 'string');
     });
 
-    it('checks mode availability and returns active modes in preference order', async () => {
-      const isCliAvail = await isAgyModeAvailable(AGY_MODES.ANTIGRAVITY_CLI);
-      assert.equal(typeof isCliAvail, 'boolean');
+    it('scans the mode-scoped brain directory and returns the newest conversation', () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-scan-'));
+      const originalAppData = process.env.APPDATA;
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      try {
+        process.env.APPDATA = fixture;
+        process.env.LOCALAPPDATA = fixture;
+        const brainDir = path.join(fixture, 'antigravity', 'brain');
+        fs.mkdirSync(brainDir, { recursive: true });
+        fs.mkdirSync(path.join(brainDir, 'older-conversation'));
+        fs.mkdirSync(path.join(brainDir, 'newest-conversation'));
+        fs.mkdirSync(path.join(brainDir, 'scratch'));
+        // Explicit mtimes: two mkdirs inside the same clock tick would tie and make this flaky.
+        const older = new Date(Date.now() - 600000);
+        fs.utimesSync(path.join(brainDir, 'older-conversation'), older, older);
+        const newer = new Date();
+        fs.utimesSync(path.join(brainDir, 'newest-conversation'), newer, newer);
 
+        const id = getNewestBrainConversationId(0, AGY_MODES.ANTIGRAVITY_2_0);
+        assert.equal(id, 'newest-conversation', 'the newest mtime wins and the scratch dir is skipped');
+      } finally {
+        // Conditional restore: assigning `undefined` stringifies to the literal "undefined"
+        // where the var was unset (POSIX), polluting the env for the rest of the file.
+        if (originalAppData === undefined) delete process.env.APPDATA;
+        else process.env.APPDATA = originalAppData;
+        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = originalLocalAppData;
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+
+    it('modifiedAfterMs filters out conversations older than the threshold', () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-filter-'));
+      const originalAppData = process.env.APPDATA;
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      try {
+        process.env.APPDATA = fixture;
+        process.env.LOCALAPPDATA = fixture;
+        const brainDir = path.join(fixture, 'antigravity', 'brain');
+        fs.mkdirSync(brainDir, { recursive: true });
+        fs.mkdirSync(path.join(brainDir, 'stale-conversation'));
+        const stale = new Date(Date.now() - 600000);
+        fs.utimesSync(path.join(brainDir, 'stale-conversation'), stale, stale);
+
+        const id = getNewestBrainConversationId(Date.now() - 60000, AGY_MODES.ANTIGRAVITY_2_0);
+        assert.equal(id, null, 'a conversation older than the threshold is not returned');
+      } finally {
+        if (originalAppData === undefined) delete process.env.APPDATA;
+        else process.env.APPDATA = originalAppData;
+        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = originalLocalAppData;
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+
+    it('checks mode availability and returns active modes in preference order', async () => {
       const activeModes = await getAvailableAgyModes();
       assert.ok(Array.isArray(activeModes));
       for (const m of activeModes) {
@@ -154,7 +205,13 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       }
 
       const overall = await isAgyAvailable();
-      assert.equal(typeof overall, 'boolean');
+      // Consistency, not a hardcoded true/false: availability needs at least one reachable mode,
+      // or the plain-binary fallback to reach.
+      const bin = getAgyBinary();
+      if (overall === false) {
+        assert.equal(activeModes.length, 0);
+        assert.ok(!bin || !testAgyBinaryReachability(bin).reachable, 'no fallback reach either');
+      }
     });
 
   });
@@ -217,18 +274,6 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const modeIdx = args.indexOf('--mode');
       assert.ok(addDirIdx < modelIdx, '--add-dir should appear before --model');
       assert.ok(addDirIdx < modeIdx, '--add-dir should appear before --mode');
-    });
-  });
-
-  describe('exit code & output resolution', () => {
-    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
-      const stdout = 'Review: observed timeout issue in network handler';
-      const clean = stdout;
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: clean }), 0);
-    });
-
-    it('forces exit code 1 when agy exits 0 with empty stdout', () => {
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 
@@ -390,6 +435,10 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
     it('accepts snake_case and nested conversation shapes', () => {
       assert.equal(parseAgyEnvelope('{"conversation_id":"s1","result":"x"}').conversationId, 's1');
       assert.equal(parseAgyEnvelope('{"conversation":{"id":"n1"},"text":"x"}').conversationId, 'n1');
+    });
+
+    it('falls back to the output field when response/result/text are absent', () => {
+      assert.equal(parseAgyEnvelope('{"conversationId":"o1","output":"the body"}').text, 'the body');
     });
 
     it('skips a banner line preceding the envelope', () => {

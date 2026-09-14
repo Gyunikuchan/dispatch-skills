@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.mjs';
-
 import {
   buildCopilotArgs,
   extractCopilotSessionId,
@@ -15,12 +13,12 @@ import {
   getCopilotBinary,
   nextCopilotStep,
   resolveCopilotTarget,
+  runCopilot,
   testCopilotReachability,
   probeCopilotModes,
   isCopilotAvailable,
   classifyCopilotFailure,
   classifyCopilotResult,
-  runCopilot,
 } from '../../../skills/dispatch/scripts/copilot-run.mjs';
 
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
@@ -66,7 +64,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       assert.ok(result.error !== null);
     });
 
-    it('supports explicit mode override in resolution', () => {
+    it('supports explicit mode override in resolution', { skip: !getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false }, () => {
       const targetDesktop = resolveCopilotTarget('desktop');
       if (targetDesktop) {
         assert.equal(targetDesktop.mode, 'desktop');
@@ -83,7 +81,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       }
     });
 
-    it('follows preference order: copilot cli > copilot desktop > copilot vscode', () => {
+    it('follows preference order: copilot cli > copilot desktop > copilot vscode', { skip: !getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false }, () => {
       const cliBin = getCopilotCliBinary();
       const desktopBin = getCopilotDesktopBinary();
       const vscodeBin = getCopilotVscodeBinary();
@@ -111,9 +109,11 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       assert.equal(typeof probe.cli.reachable, 'boolean');
     });
 
-    it('checks Copilot availability without requiring subscription or tokens', async () => {
+    it('availability agrees with the resolved target reachability', async () => {
       const available = await isCopilotAvailable();
-      assert.equal(typeof available, 'boolean');
+      const target = resolveCopilotTarget();
+      const expected = target ? testCopilotReachability(target.binary).reachable : false;
+      assert.equal(available, expected);
     });
   });
 
@@ -134,6 +134,15 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
         'auth',
       );
     });
+
+    it('falls back to the shared classifier for non-auth failures', () => {
+      // quota/context-overflow/timeout are common-classifier territory; the copilot wrapper
+      // must pass them through rather than swallowing them into 'auth' or null.
+      assert.equal(classifyCopilotFailure('Error: usage limit reached, resets at 4pm'), 'quota');
+      assert.equal(classifyCopilotFailure('context_length_exceeded: too many tokens'), 'context-overflow');
+      assert.equal(classifyCopilotFailure('Execution timed out'), 'timeout');
+      assert.equal(classifyCopilotFailure('All good, no issues.'), null);
+    });
   });
 
   describe('classifyCopilotResult (stdout only on non-zero exit)', () => {
@@ -149,17 +158,6 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
 
     it('non-zero exit with auth text on stdout -> auth', () => {
       assert.equal(classifyCopilotResult({ exitCode: 1, stderr: '', stdout: authText }), 'auth');
-    });
-  });
-
-  describe('exit code & output resolution', () => {
-    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
-      const stdout = 'Review: timeout and rate limit concerns addressed';
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: stdout }), 0);
-    });
-
-    it('forces exit code 1 when copilot exits 0 with empty stdout', () => {
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
     });
   });
 
@@ -273,6 +271,17 @@ describe('runCopilot cascade loop', () => {
     const result = await runCopilot(h.options);
     assert.deepEqual(h.calls, ['desktop', 'vscode']);
     assert.equal(result.exitCode, 0);
+  });
+
+  it('throws the not-found marked CLI_NOT_FOUND error when no target is viable', async () => {
+    const h = harness({ targets: [] });
+    await assert.rejects(() => runCopilot(h.options), (err) => {
+      assert.equal(err.code, 'CLI_NOT_FOUND');
+      assert.equal(err.failureKind, 'not-found');
+      assert.ok(err.message.includes('GitHub Copilot was not found'));
+      return true;
+    });
+    assert.deepEqual(h.calls, []);
   });
 
   it('cascades on a spawn error', async () => {

@@ -129,6 +129,9 @@ export const DEFAULT_MAX_BUFFER_MB = 10;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 512 * 1024;
 
+/** Canonical provider keys a dispatch config's `platforms` map may key on. */
+export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
+
 // ============================================================================
 // SECTION: Security Invariants
 // ============================================================================
@@ -287,6 +290,11 @@ export function getSanitizedEnv() {
 
 /**
  * Builds the human-readable denylist block for the safety prompt.
+ *
+ * Hand-written prose mirroring `SENSITIVE_FILE_PATTERNS` / `SENSITIVE_DIR_PATTERNS` above,
+ * *deliberately* not generated from the regexes: the prompt needs readable examples, and
+ * deriving text from regexes would produce noise like `/\.env($|\..+)/i`. When you add a
+ * denylist pattern, mirror it here — the two lists must not drift.
  */
 function buildDenylistBlock() {
   const fileExamples = '.env*, *.pem, *.key, *.ovpn, id_rsa*, .npmrc, .pypirc, .netrc, .htpasswd, .pgpass, .my.cnf, .s3cfg, .boto, .terraformrc, terraform.rc, wp-config.php, .git-credentials, .docker/config.json, .vault-token, credentials.json, service-account*.json, *token*, *secret*';
@@ -379,6 +387,64 @@ export const DOCUMENTED_COMMON_FLAGS = [
 export const RUNNER_IRRELEVANT_COMMON_FLAGS = ['-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider'];
 
 /**
+ * One canonical option field per common-flag spelling. Every `COMMON_VALUE_FLAGS` member
+ * maps to the `options` field its value assigns, and {@link applyOptionValue} coerces the
+ * numeric fields — one table feeds both the space-separated and the `--name=value` forms,
+ * so the two spellings cannot drift apart. Exported for the lockstep test: a flag added to
+ * one table only would make `applyOptionValue` assign onto `options[undefined]` and silently
+ * drop the value, so the test pins the two tables to set equality.
+ */
+export const FLAG_ALIASES = new Map([
+  ['-p', 'prompt'],
+  ['--prompt', 'prompt'],
+  ['--prompt-file', 'promptFile'],
+  ['-f', 'files'],
+  ['--file', 'files'],
+  ['--artifact', 'files'],
+  ['-m', 'model'],
+  ['--model', 'model'],
+  ['-e', 'effort'],
+  ['--effort', 'effort'],
+  ['--reasoning-effort', 'effort'],
+  ['-a', 'agent'],
+  ['--agent', 'agent'],
+  ['-t', 'timeout'],
+  ['--timeout', 'timeout'],
+  ['--max-buffer', 'maxBufferMb'],
+  ['--orchestrator', 'orchestrator'],
+  ['--orchestrator-model', 'orchestratorModel'],
+  ['--provider', 'provider'],
+]);
+
+/** Option fields whose value is a positive integer, with silent-default on a bad value. */
+const POSITIVE_INT_OPTIONS = new Set(['timeout', 'maxBufferMb']);
+
+// Long `--name=value` support predates the alias table and covers every value flag except
+// `--prompt`: `-p/--prompt=x` was never a documented form, and accepting it now would newly
+// admit a spelling the old parser rejected (kept out of scope by the plan review).
+const LONG_FORM_ALIASES = new Map([...FLAG_ALIASES].filter(([flag]) => flag !== '--prompt'));
+
+/**
+ * Assigns one parsed option value onto `options` — the single landing point for every
+ * common flag, in both spellings. An unparsable or non-positive numeric value silently
+ * keeps the default (deliberate: a malformed `-t`/`--max-buffer` never aborts a dispatch).
+ */
+function applyOptionValue(options, field, value) {
+  if (POSITIVE_INT_OPTIONS.has(field)) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      options[field] = parsed;
+    }
+    return;
+  }
+  if (field === 'files') {
+    options.files.push(value);
+    return;
+  }
+  options[field] = value;
+}
+
+/**
  * Parses common CLI arguments strictly: an undeclared `-`-prefixed token throws
  * `Unknown flag`, and a value flag that is last or followed by a `--` token throws
  * `<flag> requires a value`. Runner-specific flags are declared by the caller (and
@@ -427,37 +493,8 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     }
 
     if (COMMON_VALUE_FLAGS.has(arg)) {
-      const value = takeValue(i);
+      applyOptionValue(options, FLAG_ALIASES.get(arg), takeValue(i));
       i++;
-      if (arg === '-p' || arg === '--prompt') {
-        options.prompt = value;
-      } else if (arg === '--prompt-file') {
-        options.promptFile = value;
-      } else if (arg === '-f' || arg === '--file' || arg === '--artifact') {
-        options.files.push(value);
-      } else if (arg === '-m' || arg === '--model') {
-        options.model = value;
-      } else if (arg === '-e' || arg === '--effort' || arg === '--reasoning-effort') {
-        options.effort = value;
-      } else if (arg === '-a' || arg === '--agent') {
-        options.agent = value;
-      } else if (arg === '-t' || arg === '--timeout') {
-        const parsedTimeout = parseInt(value, 10);
-        if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
-          options.timeout = parsedTimeout;
-        }
-      } else if (arg === '--max-buffer') {
-        const parsedMb = parseInt(value, 10);
-        if (!Number.isNaN(parsedMb) && parsedMb > 0) {
-          options.maxBufferMb = parsedMb;
-        }
-      } else if (arg === '--orchestrator') {
-        options.orchestrator = value;
-      } else if (arg === '--orchestrator-model') {
-        options.orchestratorModel = value;
-      } else if (arg === '--provider') {
-        options.provider = value;
-      }
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
     } else if (LEGACY_SILENT_FLAGS.has(arg)) {
@@ -473,36 +510,12 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
       i++;
     } else if (arg.startsWith('--') && arg.includes('=') && declaredValue.has(arg.slice(0, arg.indexOf('=')))) {
       // Runner-declared `--name=value` form; the runner reads it itself.
-    } else if (arg.startsWith('--file=')) {
-      options.files.push(arg.slice('--file='.length));
-    } else if (arg.startsWith('--artifact=')) {
-      options.files.push(arg.slice('--artifact='.length));
-    } else if (arg.startsWith('--model=')) {
-      options.model = arg.slice('--model='.length);
-    } else if (arg.startsWith('--effort=')) {
-      options.effort = arg.slice('--effort='.length);
-    } else if (arg.startsWith('--reasoning-effort=')) {
-      options.effort = arg.slice('--reasoning-effort='.length);
-    } else if (arg.startsWith('--agent=')) {
-      options.agent = arg.slice('--agent='.length);
-    } else if (arg.startsWith('--timeout=')) {
-      const parsedTimeout = parseInt(arg.slice('--timeout='.length), 10);
-      if (!Number.isNaN(parsedTimeout) && parsedTimeout > 0) {
-        options.timeout = parsedTimeout;
-      }
-    } else if (arg.startsWith('--max-buffer=')) {
-      const parsedMb = parseInt(arg.slice('--max-buffer='.length), 10);
-      if (!Number.isNaN(parsedMb) && parsedMb > 0) {
-        options.maxBufferMb = parsedMb;
-      }
-    } else if (arg.startsWith('--orchestrator=')) {
-      options.orchestrator = arg.slice('--orchestrator='.length);
-    } else if (arg.startsWith('--orchestrator-model=')) {
-      options.orchestratorModel = arg.slice('--orchestrator-model='.length);
-    } else if (arg.startsWith('--provider=')) {
-      options.provider = arg.slice('--provider='.length);
-    } else if (arg.startsWith('--prompt-file=')) {
-      options.promptFile = arg.slice('--prompt-file='.length);
+    } else if (arg.startsWith('--') && arg.includes('=') && LONG_FORM_ALIASES.has(arg.slice(0, arg.indexOf('=')))) {
+      applyOptionValue(
+        options,
+        LONG_FORM_ALIASES.get(arg.slice(0, arg.indexOf('='))),
+        arg.slice(arg.indexOf('=') + 1),
+      );
     } else if (!arg.startsWith('-')) {
       positional.push(arg);
     } else {
@@ -731,6 +744,260 @@ export function terminateProcessTree(child) {
       }, 1000).unref();
     } catch {}
   }
+}
+
+// ============================================================================
+// SECTION: Shared Runner Scaffolding
+// ============================================================================
+//
+// The machinery every per-provider runner shares: runner-specific flag scanning,
+// reachability probing, session-id extraction, the no-viable-target error, and the
+// delegate-capture executor. Runners keep only what is genuinely provider-specific
+// (envelope parsing, session identity, env, cascade policy) on top of these.
+
+/**
+ * Shared second pass over argv for runner-specific flags. `parseCommonArgs` *validates*
+ * these flags (so an unknown one still throws) but leaves their values to the runner;
+ * this scanner extracts them, replacing the per-runner re-parsing loops.
+ *
+ * Scans ALL arguments — including any after a `--` separator — matching the per-runner
+ * parsers this replaces. Boundary semantics: a declared value flag with no following value
+ * records `null` (never throws); booleans default to `false`.
+ *
+ * @param {string[]} args - argv without the node/script prefix
+ * @param {{ valueFlags?: string[], booleanFlags?: string[], aliases?: Record<string, string> }} spec
+ *   `aliases` maps several spellings onto one canonical result name (e.g. claude's
+ *   `--claude-mode`/`--mode` both resolving to a single mode value, last one wins).
+ * @returns {{ values: Record<string, string|null>, booleans: Record<string, boolean> }}
+ */
+export function parseRunnerModeArgs(args, { valueFlags = [], booleanFlags = [], aliases = null } = {}) {
+  // A partial alias table degrades gracefully: a value flag missing from `aliases` maps to itself,
+  // so `values` never gains a null key.
+  const canonicalOf = (flag) => (aliases ? aliases[flag] ?? flag : flag);
+  const valueNames = aliases
+    ? [...new Set([...Object.values(aliases), ...valueFlags])]
+    : [...valueFlags];
+  const values = Object.fromEntries(valueNames.map((name) => [name, null]));
+  const booleans = Object.fromEntries(booleanFlags.map((flag) => [flag, false]));
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (booleanFlags.includes(arg)) {
+      booleans[arg] = true;
+      continue;
+    }
+    if (valueFlags.includes(arg)) {
+      values[canonicalOf(arg)] = args[++i] || null;
+      continue;
+    }
+    const eq = arg.indexOf('=');
+    if (eq > 2 && arg.startsWith('--') && valueFlags.includes(arg.slice(0, eq))) {
+      values[canonicalOf(arg.slice(0, eq))] = arg.slice(eq + 1);
+    }
+  }
+
+  return { values, booleans };
+}
+
+/**
+ * Shared binary reachability probe: verifies the file exists, runs a cheap command
+ * (`--version`/`--help`) under a short timeout, and reports reachability without
+ * consuming tokens or subscriptions. Carries the claude/agy probe semantics —
+ * copilot keeps its own variant (no existence check, `stdout||stderr` version, 5s).
+ *
+ * @param {object} opts
+ * @param {string} bin Candidate binary path.
+ * @param {string[]} args Probe argv (e.g. `['--version']`).
+ * @param {number} [timeoutMs=3000] Kill probe after this long.
+ * @param {Record<string, string>} [env] Optional spawn env (agy's per-mode data dir).
+ * @returns {{ reachable: boolean, version: string|null, error: string|null }}
+ */
+export function probeCliReachability({ bin, args, timeoutMs = 3000, env = null }) {
+  if (!bin || typeof bin !== 'string') {
+    return { reachable: false, version: null, error: 'Binary path not provided' };
+  }
+  if (!fs.existsSync(bin)) {
+    return { reachable: false, version: null, error: 'Binary file does not exist' };
+  }
+  try {
+    const res = spawnCliSync(bin, args, { encoding: 'utf8', timeout: timeoutMs, ...(env ? { env } : {}) });
+    if (res.status === 0) {
+      return { reachable: true, version: (res.stdout || '').trim(), error: null };
+    }
+    return {
+      reachable: false,
+      version: null,
+      error: `Process exited with code ${res.status}: ${(res.stderr || '').trim()}`,
+    };
+  } catch (err) {
+    return { reachable: false, version: null, error: err.message };
+  }
+}
+
+/**
+ * Extracts a resume-able session id from raw delegate output. Tries, in order:
+ * a JSON `"session_id"` field, a `session id:`/`session id=` line, and the CLI's own
+ * `--resume` mention — the three spellings CLIs have actually been observed to emit.
+ *
+ * @param {string} text Raw stdout or stderr
+ * @param {string} resumePrefix The binary's resume spelling (e.g. `'claude'`, `'copilot'`)
+ * @returns {string|null}
+ */
+export function extractSessionIdFromOutput(text, resumePrefix) {
+  if (!text) return null;
+  const match =
+    text.match(/"session_id"\s*:\s*"([a-zA-Z0-9_-]+)"/) ||
+    text.match(/session\s+id[:=]\s*([a-zA-Z0-9_-]{8,})/i) ||
+    text.match(new RegExp(`${resumePrefix}\\s+--resume\\s+([a-zA-Z0-9_-]{8,})`, 'i'));
+  return match ? match[1] : null;
+}
+
+/**
+ * Builds the shared no-viable-target error a runner's discovery phase throws when no
+ * mode is both present and reachable. Callers supply their own installation guidance;
+ * the `CLI_NOT_FOUND` code is the cross-runner sentinel dispatch and the SKILL.md outcome
+ * tables key on.
+ *
+ * @param {string} headline Full human-readable message (what was searched, how to install).
+ * @param {string} [failureKind] Optional result.failureKind annotation (copilot marks 'not-found').
+ * @returns {Error}
+ */
+export function createNoTargetsError(headline, failureKind = null) {
+  const err = new Error(headline);
+  err.code = 'CLI_NOT_FOUND';
+  if (failureKind) err.failureKind = failureKind;
+  return err;
+}
+
+/**
+ * Runs a delegate child to completion under the shared subprocess machinery: byte-capped
+ * output buffering, a timeout kill, the `settled` guard that keeps Node's `error`+`close`
+ * double-fire from resolving twice, and the git-integrity check.
+ *
+ * Owns the subprocess lifecycle only. Callers own their session logger (created and closed
+ * per their cascade design — claude holds one logger for the whole cascade, agy/opencode
+ * close per attempt) and assemble the provider-specific result in `onClose`.
+ *
+ * @param {object} opts
+ * @param {() => import('node:child_process').ChildProcess} opts.spawnChild Builds and starts the child.
+ * @param {number} opts.timeoutSeconds Seconds before the child is killed (`truncated: 'timeout'`).
+ * @param {number} opts.maxBufferMb Stdout byte cap before the child is killed (`truncated: 'buffer'`).
+ *   Stderr is deliberately uncapped — inherited from all four runner executors this machinery
+ *   replaced, since stderr is where CLIs report their failure cause and capping it would truncate
+ *   the very diagnostics the callers classify on; a hostile stderr flood grows memory without
+ *   limit, an accepted exemption rather than a regression this consolidation introduced.
+ * @param {SessionLogger|null} [opts.sessionLogger] Every captured chunk is appended to it.
+ * @param {((chunk: string|Buffer) => void)|null} [opts.trace] Verbose trace sink.
+ * @param {((stream: 'stdout'|'stderr', chunk: Buffer) => void)|null} [opts.onChunk]
+ *   Arrival-ordered hook for stream-interleaved diagnostics (opencode's log tail).
+ * @param {string|null} [opts.initialGitStatus] Pre-run snapshot for the integrity check.
+ * @param {(outcome: DelegateCaptureOutcome) => object|Promise<object>} opts.onClose
+ *   Assembles the run result from the captured state.
+ * @param {(err: Error, captured: { stdoutBuffer: string, stderrBuffer: string }) => void} [opts.onFail]
+ *   Annotates a spawn failure before it is rethrown (helper sets `err.code = 1`, `err.stderr`).
+ * @returns {Promise<object>} Whatever `onClose` resolves to.
+ *
+ * @typedef {object} DelegateCaptureOutcome
+ * @property {number|null} code
+ * @property {string|null} signal
+ * @property {string} stdoutBuffer Raw stdout captured before any cap.
+ * @property {string} stderrBuffer Raw stderr, uncapped by design — see the maxBufferMb note.
+ * @property {'timeout'|'buffer'|null} truncated
+ * @property {boolean} isTimedOut
+ * @property {boolean} isBufferExceeded
+ * @property {{ violation: boolean, details: string|null }} gitIntegrity
+ */
+export function runDelegateCapture({
+  spawnChild,
+  timeoutSeconds,
+  maxBufferMb,
+  sessionLogger = null,
+  trace = null,
+  onChunk = null,
+  initialGitStatus = null,
+  onClose,
+  onFail = null,
+}) {
+  return new Promise((resolve, reject) => {
+    // Node emits both `error` and `close` on a spawn failure; the first event wins and the
+    // second must not also emit a success path.
+    let settled = false;
+    let stdoutBuffer = '';
+    let stderrBuffer = '';
+    let totalOutputBytes = 0;
+    let isTimedOut = false;
+    let isBufferExceeded = false;
+    const maxBufferBytes = maxBufferMb * 1024 * 1024;
+
+    const logChunk = (stream, chunk) => {
+      if (sessionLogger) sessionLogger.write(chunk);
+      if (trace) trace(chunk);
+      if (onChunk) onChunk(stream, chunk);
+    };
+
+    const child = spawnChild();
+
+    const timer = setTimeout(() => {
+      isTimedOut = true;
+      terminateProcessTree(child);
+    }, timeoutSeconds * 1000);
+
+    child.stdout?.on('data', (chunk) => {
+      totalOutputBytes += chunk.length;
+      if (totalOutputBytes > maxBufferBytes) {
+        if (!isBufferExceeded) {
+          isBufferExceeded = true;
+          terminateProcessTree(child);
+        }
+        return;
+      }
+      stdoutBuffer += chunk.toString('utf8');
+      logChunk('stdout', chunk);
+    });
+
+    child.stderr?.on('data', (chunk) => {
+      stderrBuffer += chunk.toString('utf8');
+      logChunk('stderr', chunk);
+    });
+
+    child.on('close', async (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+
+      const gitIntegrity = checkGitIntegrity(initialGitStatus);
+      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
+      const outcome = {
+        code,
+        signal,
+        stdoutBuffer,
+        stderrBuffer,
+        truncated,
+        isTimedOut,
+        isBufferExceeded,
+        gitIntegrity,
+      };
+
+      try {
+        resolve(await onClose(outcome));
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    child.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      terminateProcessTree(child);
+      err.code = 1;
+      err.stderr = stderrBuffer;
+      try {
+        onFail?.(err, { stdoutBuffer, stderrBuffer });
+      } catch {}
+      reject(err);
+    });
+  });
 }
 
 // ============================================================================
@@ -1374,6 +1641,15 @@ export function checkGitIntegrity(initialGitStatus) {
 // ============================================================================
 
 /**
+ * Expands a leading `~` (followed by end-of-string, `/`, or `\`) to the user's home
+ * directory; every other path passes through unchanged. Shared by the candidate-file
+ * and binary lookups below.
+ */
+function expandHomePath(candidate) {
+  return candidate.replace(/^~(?=$|\/|\\)/, os.homedir());
+}
+
+/**
  * Normalizes filesystem path for cross-platform comparison.
  */
 export function normalizePath(targetPath) {
@@ -1457,8 +1733,7 @@ export function findBinary(binName, extraCandidates = [], { pathFirst = true } =
   };
 
   const fromCandidates = () => {
-    const homeDir = os.homedir();
-    const expandedCandidates = extraCandidates.map((p) => p.replace(/^~(?=$|\/|\\)/, homeDir));
+    const expandedCandidates = extraCandidates.map(expandHomePath);
 
     for (const candidate of expandedCandidates) {
       if (fs.existsSync(candidate)) {
@@ -1559,10 +1834,9 @@ export function isExecutableFile(targetPath) {
  * @returns {string|null}
  */
 export function findFirstExistingFile(candidates) {
-  const homeDir = os.homedir();
   for (const candidate of candidates) {
     if (!candidate) continue;
-    const expanded = candidate.replace(/^~(?=$|\/|\\)/, homeDir);
+    const expanded = expandHomePath(candidate);
     try {
       if (fs.existsSync(expanded) && fs.statSync(expanded).isFile()) {
         return path.resolve(expanded);
@@ -1587,6 +1861,26 @@ export function existsAny(...paths) {
 // ============================================================================
 
 /**
+ * Stable first-occurrence partition shared by the ordering helpers below: items whose
+ * key is seen for the first time land in `firsts` (input order), every repeat in `repeats`.
+ */
+function partitionFirstSeen(items, keyOf) {
+  const seen = new Set();
+  const firsts = [];
+  const repeats = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    if (seen.has(key)) {
+      repeats.push(item);
+    } else {
+      seen.add(key);
+      firsts.push(item);
+    }
+  }
+  return { firsts, repeats };
+}
+
+/**
  * Stable partition putting each key's first occurrence ahead of every repeat, so a platform
  * configured with several models cannot crowd other platforms out of the front of the order.
  *
@@ -1596,18 +1890,7 @@ export function existsAny(...paths) {
  * @returns {T[]} a new array; the input is not mutated
  */
 export function diversitySort(candidates, key = (c) => c.platform) {
-  const seen = new Set();
-  const firsts = [];
-  const repeats = [];
-  for (const candidate of candidates) {
-    const k = key(candidate);
-    if (seen.has(k)) {
-      repeats.push(candidate);
-    } else {
-      seen.add(k);
-      firsts.push(candidate);
-    }
-  }
+  const { firsts, repeats } = partitionFirstSeen(candidates, key);
   return [...firsts, ...repeats];
 }
 
@@ -1761,9 +2044,6 @@ export function parseJsonc(text) {
 // SECTION: Skill Config Loading
 // ============================================================================
 
-/** Canonical provider keys a dispatch config's `platforms` map may key on. */
-export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
-
 /**
  * Builds the 3-path config precedence list:
  * skill-root override (local, then shared) beats the skill's own shipped default.
@@ -1910,6 +2190,10 @@ export function isMainModule(importMetaUrl) {
   }
 }
 
+// ============================================================================
+// SECTION: Failure Classification & Model Cascade
+// ============================================================================
+
 /**
  * Classifies a delegate failure so the cascade can tell a retry-elsewhere condition
  * (quota, rate limit, context overflow) from a terminal one (auth, missing CLI).
@@ -2031,6 +2315,10 @@ export function resolveRunnerExitCode({ code, signal, truncated, cleanStdout, is
   }
   return raw;
 }
+
+// ============================================================================
+// SECTION: Orchestrator Detection
+// ============================================================================
 
 /**
  * Detects the orchestrator runtime from environment variables.

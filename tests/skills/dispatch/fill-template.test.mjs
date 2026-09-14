@@ -169,14 +169,9 @@ describe('fill-template: CLI', () => {
     assert.equal(fs.readFileSync(outFile, 'utf8').trim(), 'Hello World');
   });
 
-  it('fills a real review template whose skill manifest is intact', () => {
-    const template = path.join(
-      PROJECT_ROOT, 'skills', 'dispatch-plan-review', 'references', 'prompt-template.md',
-    );
-    const result = run(['--skill', template, '--list']);
-    assert.equal(result.status, 0, result.stderr);
-    assert.ok(Array.isArray(JSON.parse(result.stdout.trim())));
-  });
+  // Real review-skill templates are exercised end-to-end by tests/integration/review-skill-parity
+  // (its CLI loop runs --list and the integrity gate against both shipped templates); duplicating
+  // one here would test the same thing under the wrong boundary.
 
   it('exits 1 when the owning skill has a manifest and a hashed file was tampered with', () => {
     const skillRoot = path.join(scratchDir, 'tampered-skill');

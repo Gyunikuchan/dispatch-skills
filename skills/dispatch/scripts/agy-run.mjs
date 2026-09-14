@@ -23,8 +23,8 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
-  checkGitIntegrity,
   classifyFailure,
+  createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
@@ -38,13 +38,14 @@ import {
   getSanitizedEnv,
   isMainModule,
   parseCommonArgs,
+  parseRunnerModeArgs,
   preparePromptForArgv,
+  probeCliReachability,
   PROJECT_ROOT,
   readStdin,
   resolveRunnerExitCode,
+  runDelegateCapture,
   spawnCli,
-  spawnCliSync,
-  terminateProcessTree,
 } from './common.mjs';
 
 // ============================================================================
@@ -162,12 +163,10 @@ export async function runAgy(options = {}) {
 
   const bin = getBinary();
   if (!bin) {
-    const err = new Error(
+    throw createCliNotFoundError(
       'Google Antigravity CLI (agy) was not found in PATH or ~/.gemini/bin/agy.\n' +
         'Please ensure agy is installed: https://antigravity.google/docs/cli/reference',
     );
-    err.code = 'CLI_NOT_FOUND';
-    throw err;
   }
 
   const requestedMode = modeVariant || agyMode || null;
@@ -238,10 +237,10 @@ export async function runAgy(options = {}) {
         }
         throw err;
       } finally {
-        // This loop owns the logger it created, matching runClaude/runCopilot. executeAgyInMode
-        // closes it on the child's 'close'/'error' events, but a throw before the child is spawned
-        // reaches neither - and the loop would then cascade and open another. close() is idempotent,
-        // so the usual path's double call is a no-op.
+        // This loop owns the logger it created, matching runClaude/runCopilot: the shared
+        // executor (runDelegateCapture) never closes a caller's logger, so this finally is the
+        // sole closer — on success, on a spawn error, and on a throw before the child is even
+        // spawned (which would otherwise cascade and open another). close() is idempotent.
         sessionLogger.close();
       }
     }
@@ -254,6 +253,10 @@ export async function runAgy(options = {}) {
     throw err;
   }
 }
+
+// ============================================================================
+// SECTION: Cascade & Execution Helpers
+// ============================================================================
 
 /**
  * Checks if output indicates a token exhaustion, missing subscription, or unauthenticated state.
@@ -380,6 +383,13 @@ export function parseAgyEnvelope(stdout) {
 /**
  * Spawns Antigravity for a single mode and resolves once the process exits, enforcing
  * the timeout and buffer caps and checking git integrity.
+ *
+ * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
+ * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
+ * is Antigravity-specific: the per-mode data-dir env, the JSON envelope parse, and the brain-
+ * directory conversation fallback. The session logger is closed by `runModeCascade`'s
+ * `finally` (agy-run's runAgy), which owns it on every path — success, spawn error, and a
+ * throw before the child is spawned.
  * @returns {Promise<RunAgyResult>}
  */
 function executeAgyInMode(mode, options) {
@@ -396,12 +406,10 @@ function executeAgyInMode(mode, options) {
 
   const bin = getAgyBinary(mode);
   if (!bin) {
-    const err = new Error(
+    throw createCliNotFoundError(
       `Google Antigravity binary was not found for mode '${mode}'.\n` +
         'Please ensure agy is installed: https://antigravity.google/docs/cli/reference',
     );
-    err.code = 'CLI_NOT_FOUND';
-    throw err;
   }
 
   const startTime = Date.now();
@@ -429,96 +437,60 @@ function executeAgyInMode(mode, options) {
 
   const trace = createTraceWriter(verbose);
 
-  return new Promise((resolve, reject) => {
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    let totalOutputBytes = 0;
-    let isTimedOut = false;
-    let isBufferExceeded = false;
-    const maxBufferBytes = maxBufferMb * 1024 * 1024;
-
-    const child = spawnCli(bin, agyArgs, {
-      cwd: PROJECT_ROOT,
-      env: modeEnv,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-
-    const timer = setTimeout(() => {
-      isTimedOut = true;
-      terminateProcessTree(child);
-    }, timeout * 1000);
-
-    child.stdout.on('data', (chunk) => {
-      totalOutputBytes += chunk.length;
-      if (totalOutputBytes > maxBufferBytes) {
-        if (!isBufferExceeded) {
-          isBufferExceeded = true;
-          terminateProcessTree(child);
-        }
-        return;
-      }
-      stdoutBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderrBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-      sessionLogger.close();
-
+  return runDelegateCapture({
+    spawnChild: () =>
+      spawnCli(bin, agyArgs, {
+        cwd: PROJECT_ROOT,
+        env: modeEnv,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      }),
+    timeoutSeconds: timeout,
+    maxBufferMb,
+    sessionLogger,
+    trace,
+    initialGitStatus,
+    onClose: (outcome) => {
       // The envelope names its own conversation; the mtime scan is the fallback for an older agy
       // that ignored --output-format, and it cannot tell two concurrent dispatches apart.
-      const envelope = parseAgyEnvelope(stdoutBuffer);
+      const envelope = parseAgyEnvelope(outcome.stdoutBuffer);
       const conversationId = envelope.conversationId ?? getNewestBrainConversationId(startTime, mode);
       const sessionLink = conversationId ? `conversation://${conversationId}` : null;
 
-      const gitIntegrity = checkGitIntegrity(initialGitStatus);
-
-      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const cleanStdout = envelope.text ?? extractCleanResponse(stdoutBuffer);
-      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
-      const failureKind = classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || truncated;
+      const cleanStdout = envelope.text ?? extractCleanResponse(outcome.stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({
+        code: outcome.code,
+        signal: outcome.signal,
+        truncated: outcome.truncated,
+        cleanStdout,
+      });
+      const failureKind =
+        classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || outcome.truncated;
 
       emitCompletionBanner({
         provider: providerLabel,
         sessionLink,
         exitCode,
-        truncated,
+        truncated: outcome.truncated,
       });
 
-      resolve({
+      return {
         provider: 'agy',
         mode,
         stdout: cleanStdout,
-        rawStdout: stdoutBuffer,
-        stderr: stderrBuffer,
+        rawStdout: outcome.stdoutBuffer,
+        stderr: outcome.stderrBuffer,
         exitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         conversationId,
         sessionLink,
-        truncated,
+        truncated: outcome.truncated,
         failureKind,
-        gitIntegrityViolation: gitIntegrity.violation,
-        gitIntegrityDetails: gitIntegrity.details,
-      });
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      terminateProcessTree(child);
-      sessionLogger.close();
-      err.code = 1;
-      err.stderr = stderrBuffer;
-      reject(err);
-    });
+        gitIntegrityViolation: outcome.gitIntegrity.violation,
+        gitIntegrityDetails: outcome.gitIntegrity.details,
+      };
+    },
   });
 }
 
@@ -570,46 +542,32 @@ export async function main() {
   }
 }
 
-/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
+/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list.
+ * `aliases` maps both mode spellings onto one canonical value — the last spelling on argv wins. */
 export const CLI_FLAGS = {
   valueFlags: ['--agy-mode', '--mode-variant'],
   booleanFlags: ['--test-reachability', '--test-modes'],
+  aliases: { '--agy-mode': 'modeVariant', '--mode-variant': 'modeVariant' },
 };
 
 /** Parses arguments with additional agy mode flags. */
 function parseAgyArgs(argv) {
   const common = parseCommonArgs(argv, CLI_FLAGS);
-  const extra = {
-    modeVariant: null,
-    testReachability: false,
+  const { values, booleans } = parseRunnerModeArgs(argv.slice(2), CLI_FLAGS);
+
+  return {
+    ...common,
+    modeVariant: values.modeVariant,
+    testReachability: booleans['--test-reachability'] || booleans['--test-modes'],
   };
-
-  const args = argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--agy-mode' || arg === '--mode-variant') {
-      extra.modeVariant = args[++i] || null;
-    } else if (arg.startsWith('--agy-mode=')) {
-      extra.modeVariant = arg.slice('--agy-mode='.length);
-    } else if (arg.startsWith('--mode-variant=')) {
-      extra.modeVariant = arg.slice('--mode-variant='.length);
-    } else if (arg === '--test-reachability' || arg === '--test-modes') {
-      extra.testReachability = true;
-    }
-  }
-
-  return { ...common, ...extra };
 }
 
 function printReachabilityReport() {
   console.log('[dispatch] Testing Antigravity Mode Reachability (non-token-consuming):');
-  for (const { mode, name } of MODE_DEFINITIONS) {
-    const present = detectAgyModePresence(mode);
-    const binary = getAgyBinary(mode);
-    const reachable = binary ? testAgyBinaryReachability(binary, mode).reachable : false;
+  for (const { mode, name, present, bin, reachable } of probeAllAgyModes()) {
     console.log(`\nMode: ${name} [${mode}]`);
     console.log(`  OS Presence: ${present ? 'DETECTED' : 'NOT DETECTED'}`);
-    console.log(`  Executable:  ${binary || 'NOT FOUND'}`);
+    console.log(`  Executable:  ${bin || 'NOT FOUND'}`);
     console.log(`  Reachability:${reachable ? ' REACHABLE (tested via non-token probe)' : ' UNREACHABLE'}`);
   }
 }
@@ -679,35 +637,22 @@ export function resolveAgyTarget(preferredMode = null) {
 
 /**
  * Tests whether an Antigravity binary is reachable without requiring tokens or subscriptions.
+ * Runs `--help` under a short timeout with the mode's data-dir profile.
  * @param {string} binPath - Path to binary
  * @param {AgyMode} [mode=AGY_MODES.ANTIGRAVITY_2_0] - Mode to test
  * @returns {{ reachable: boolean, error: string|null }}
  */
 export function testAgyBinaryReachability(binPath, mode = AGY_MODES.ANTIGRAVITY_2_0) {
-  if (!binPath || typeof binPath !== 'string') {
-    return { reachable: false, error: 'Binary path not provided' };
-  }
-  if (!fs.existsSync(binPath)) {
-    return { reachable: false, error: 'Binary file does not exist' };
-  }
-
-  const dataDir = AGY_MODE_DATA_DIRS[mode] || 'antigravity';
-  try {
-    const res = spawnCliSync(binPath, ['--help'], {
-      encoding: 'utf8',
-      timeout: 3000,
-      env: {
-        ...getSanitizedEnv(),
-        JETSKI_APP_DATA_DIR: dataDir,
-      },
-    });
-    if (res.status === 0) {
-      return { reachable: true, error: null };
-    }
-    return { reachable: false, error: `Process exited with code ${res.status}: ${res.stderr || ''}` };
-  } catch (err) {
-    return { reachable: false, error: err.message };
-  }
+  const { reachable, error } = probeCliReachability({
+    bin: binPath,
+    args: ['--help'],
+    timeoutMs: 3000,
+    env: {
+      ...getSanitizedEnv(),
+      JETSKI_APP_DATA_DIR: AGY_MODE_DATA_DIRS[mode] || 'antigravity',
+    },
+  });
+  return { reachable, error };
 }
 
 /**
@@ -774,13 +719,9 @@ export async function isAgyAvailable() {
   const modes = await getAvailableAgyModes();
   if (modes.length > 0) return true;
 
-  // Fallback check on standard binary
-  try {
-    const res = spawnCliSync(bin, ['--help'], { encoding: 'utf8', timeout: 3000 });
-    return res.status === 0;
-  } catch {
-    return false;
-  }
+  // Fallback for the default binary: no mode reported reachable, so test the plain binary
+  // (the shared probe carries the 2.0 data-dir profile — a probe-only difference).
+  return testAgyBinaryReachability(bin).reachable;
 }
 
 // ============================================================================

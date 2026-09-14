@@ -1,8 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveRunnerExitCode } from '../../../skills/dispatch/scripts/common.mjs';
-
 import {
   READ_ONLY_ALLOWED_TOOLS,
   MODE_DEFINITIONS,
@@ -115,7 +113,7 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.ok(result.error !== null);
     });
 
-    it('supports explicit mode override in resolution', () => {
+    it('supports explicit mode override in resolution', { skip: !getClaudeCliBinary() && !getClaudeDesktopBinary() && !getClaudeVSCodeBinary() ? 'no Claude binary installed' : false }, () => {
       const targetDesktop = resolveClaudeTarget('desktop');
       if (targetDesktop) {
         assert.equal(targetDesktop.mode, 'desktop');
@@ -132,7 +130,7 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       }
     });
 
-    it('follows preference order cli > desktop > vscode', () => {
+    it('follows preference order cli > desktop > vscode', { skip: !getClaudeCliBinary() && !getClaudeDesktopBinary() && !getClaudeVSCodeBinary() ? 'no Claude binary installed' : false }, () => {
       const cliBin = getClaudeCliBinary();
       const desktopBin = getClaudeDesktopBinary();
       const vscodeBin = getClaudeVSCodeBinary();
@@ -150,24 +148,10 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       }
     });
 
-    it('checks Claude availability without consuming tokens', async () => {
+    it('availability agrees with the resolved target reachability', async () => {
       const available = await isClaudeAvailable();
-      assert.equal(typeof available, 'boolean');
-    });
-  });
-
-  describe('exit code & output resolution', () => {
-    it('preserves exit code 0 when stdout contains keywords like timeout or rate limit', () => {
-      const stdout = 'Review: timeout and rate limit considerations';
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: stdout }), 0);
-    });
-
-    it('forces exit code 1 when claude exits 0 with isError envelope', () => {
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: 'error details', isError: true }), 1);
-    });
-
-    it('forces exit code 1 when claude exits 0 with empty stdout', () => {
-      assert.equal(resolveRunnerExitCode({ code: 0, cleanStdout: '' }), 1);
+      const bin = getClaudeBinary();
+      assert.equal(available, bin ? testClaudeBinaryReachability(bin).reachable : false);
     });
   });
 
@@ -410,7 +394,12 @@ describe('runClaude cascade loop', () => {
 
   it('throws when no target is viable, before any execution', async () => {
     const h = harness({ targets: [] });
-    await assert.rejects(() => runClaude(h.options));
+    await assert.rejects(() => runClaude(h.options), (err) => {
+      assert.equal(err.code, 'CLI_NOT_FOUND');
+      assert.ok(err.message.includes('Claude Code was not found or not reachable in any mode'));
+      assert.ok(err.message.includes('npm install -g @anthropic-ai/claude-code'), 'the message names the CLI install path');
+      return true;
+    });
     assert.deepEqual(h.calls, []);
   });
 });

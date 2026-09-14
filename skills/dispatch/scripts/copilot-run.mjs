@@ -15,7 +15,6 @@
  * without credentials can still verify reachability and fall back cleanly.
  */
 
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
@@ -24,8 +23,8 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
-  checkGitIntegrity,
   classifyFailure,
+  createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
@@ -34,20 +33,22 @@ import {
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
+  extractSessionIdFromOutput,
   findBinary,
   findFirstExistingFile,
   getGitStatus,
   getSanitizedEnv,
   isMainModule,
   parseCommonArgs,
+  parseRunnerModeArgs,
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
   resolveRunnerExitCode,
+  runDelegateCapture,
   scanVersionDirs,
   spawnCli,
   spawnCliSync,
-  terminateProcessTree,
 } from './common.mjs';
 
 // ============================================================================
@@ -226,6 +227,10 @@ export async function runCopilot(options = {}) {
 }
 
 
+// ============================================================================
+// SECTION: Cascade & Execution Helpers
+// ============================================================================
+
 /**
  * Returns viable Copilot targets in preference order, each probed up to executable
  * reachability. Falls back to on-disk presence (without reachability) if no probe
@@ -278,16 +283,14 @@ export function nextCopilotStep({ result, error, canCascade }) {
 }
 
 function createNoTargetsError() {
-  const err = new Error(
+  return createCliNotFoundError(
     'GitHub Copilot was not found in system PATH, Copilot Desktop cache, or VS Code extension storage.\n' +
       'Preference order: Standalone Copilot CLI > GitHub Copilot Desktop > Copilot VS Code Extension.\n' +
       '- Mode [copilot cli]:     npm install -g @github/copilot (or brew install copilot)\n' +
       '- Mode [copilot desktop]: Install GitHub Copilot Desktop app.\n' +
       '- Mode [copilot vscode]:  Install GitHub Copilot Chat extension in VS Code.',
+    'not-found',
   );
-  err.code = 'CLI_NOT_FOUND';
-  err.failureKind = 'not-found';
-  return err;
 }
 
 /**
@@ -308,6 +311,12 @@ export function buildCopilotArgs(argvPrompt, { model, effort } = {}) {
 /**
  * Spawns Copilot on a single resolved target and resolves once the process exits,
  * enforcing the timeout and buffer caps and checking git integrity.
+ *
+ * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
+ * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
+ * is Copilot-specific: the dual-stream session-id scan, the auth classifier, and the
+ * failure-kind composition. The logger stays open on success — `runCopilot` owns it per
+ * model attempt.
  * @returns {Promise<RunCopilotResult>}
  */
 function executeOnTarget({
@@ -340,90 +349,58 @@ function executeOnTarget({
 
   const trace = createTraceWriter(verbose);
 
-  return new Promise((resolve, reject) => {
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    let totalOutputBytes = 0;
-    let isTimedOut = false;
-    let isBufferExceeded = false;
-    const maxBufferBytes = maxBufferMb * 1024 * 1024;
-
-    const child = spawnCli(target.binary, copilotArgs, {
-      cwd: PROJECT_ROOT,
-      env: getSanitizedEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-
-    const timer = setTimeout(() => {
-      isTimedOut = true;
-      terminateProcessTree(child);
-    }, timeout * 1000);
-
-    child.stdout.on('data', (chunk) => {
-      totalOutputBytes += chunk.length;
-      if (totalOutputBytes > maxBufferBytes) {
-        if (!isBufferExceeded) {
-          isBufferExceeded = true;
-          terminateProcessTree(child);
-        }
-        return;
-      }
-      stdoutBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderrBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-
-      const sessionId = extractCopilotSessionId(stdoutBuffer) || extractCopilotSessionId(stderrBuffer);
+  return runDelegateCapture({
+    spawnChild: () =>
+      spawnCli(target.binary, copilotArgs, {
+        cwd: PROJECT_ROOT,
+        env: getSanitizedEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      }),
+    timeoutSeconds: timeout,
+    maxBufferMb,
+    sessionLogger,
+    trace,
+    initialGitStatus,
+    onFail: (err, { stderrBuffer }) => {
+      err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
+    },
+    onClose: (outcome) => {
+      const sessionId = extractCopilotSessionId(outcome.stdoutBuffer) || extractCopilotSessionId(outcome.stderrBuffer);
       const sessionLink = sessionId ? `copilot --resume ${sessionId}` : null;
 
-      const gitIntegrity = checkGitIntegrity(initialGitStatus);
-
       // A truncated run still carries its partial analysis; return captured output
-      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
-      const cleanStdout = extractCleanResponse(stdoutBuffer);
-      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
+      const cleanStdout = extractCleanResponse(outcome.stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({
+        code: outcome.code,
+        signal: outcome.signal,
+        truncated: outcome.truncated,
+        cleanStdout,
+      });
       const failureKind =
-        classifyCopilotResult({ exitCode, stderr: stderrBuffer, stdout: stdoutBuffer }) || truncated;
+        classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }) ||
+        outcome.truncated;
 
-      emitCompletionBanner({ provider: providerLabel, sessionLink, exitCode, truncated });
+      emitCompletionBanner({ provider: providerLabel, sessionLink, exitCode, truncated: outcome.truncated });
 
-      resolve({
+      return {
         provider: 'copilot',
         mode: target.mode,
         binary: target.binary,
         stdout: cleanStdout,
-        rawStdout: stdoutBuffer,
-        stderr: stderrBuffer,
+        rawStdout: outcome.stdoutBuffer,
+        stderr: outcome.stderrBuffer,
         exitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         sessionId,
         sessionLink,
-        truncated,
+        truncated: outcome.truncated,
         failureKind,
-        gitIntegrityViolation: gitIntegrity.violation,
-        gitIntegrityDetails: gitIntegrity.details,
-      });
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      terminateProcessTree(child);
-      err.code = 1;
-      err.stderr = stderrBuffer;
-      err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
-      reject(err);
-    });
+        gitIntegrityViolation: outcome.gitIntegrity.violation,
+        gitIntegrityDetails: outcome.gitIntegrity.details,
+      };
+    },
   });
 }
 
@@ -483,25 +460,17 @@ export async function main() {
 export const CLI_FLAGS = {
   valueFlags: ['--copilot-mode'],
   booleanFlags: ['--test', '--probe', '--check', '--test-modes'],
+  aliases: { '--copilot-mode': 'copilotMode' },
 };
 
 /** Parses the runner-specific `--copilot-mode` and `--test`/`--probe` flags. */
 function parseCopilotArgs(argv) {
   const options = parseCommonArgs(argv, CLI_FLAGS);
-  options.copilotMode = 'auto';
-  options.probeOnly = false;
+  const { values, booleans } = parseRunnerModeArgs(argv.slice(2), CLI_FLAGS);
 
-  for (let i = 2; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--test' || arg === '--probe' || arg === '--check' || arg === '--test-modes') {
-      options.probeOnly = true;
-    } else if (arg === '--copilot-mode' && argv[i + 1]) {
-      options.copilotMode = argv[++i];
-    } else if (arg.startsWith('--copilot-mode=')) {
-      options.copilotMode = arg.slice('--copilot-mode='.length);
-    }
-  }
-
+  options.copilotMode = values.copilotMode ?? 'auto';
+  options.probeOnly =
+    booleans['--test'] || booleans['--probe'] || booleans['--check'] || booleans['--test-modes'];
   return options;
 }
 
@@ -961,12 +930,7 @@ export function getCopilotCliBinary() {
  * @returns {string|null}
  */
 export function extractCopilotSessionId(text) {
-  if (!text) return null;
-  const match =
-    text.match(/"session_id"\s*:\s*"([a-zA-Z0-9_-]+)"/) ||
-    text.match(/session\s+id[:=]\s*([a-zA-Z0-9_-]{8,})/i) ||
-    text.match(/copilot\s+--resume\s+([a-zA-Z0-9_-]{8,})/i);
-  return match ? match[1] : null;
+  return extractSessionIdFromOutput(text, 'copilot');
 }
 
 /**

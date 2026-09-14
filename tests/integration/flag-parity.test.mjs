@@ -12,6 +12,7 @@ import {
 import { CLI_FLAGS as claudeFlags } from '../../skills/dispatch/scripts/claude-run.mjs';
 import { CLI_FLAGS as agyFlags } from '../../skills/dispatch/scripts/agy-run.mjs';
 import { CLI_FLAGS as copilotFlags } from '../../skills/dispatch/scripts/copilot-run.mjs';
+import { CLI_FLAGS as opencodeFlags } from '../../skills/dispatch/scripts/opencode-run.mjs';
 
 // `dispatch.mjs --help`, SKILL.md's flag table and README.md's flag table drifted apart once
 // (`--json` scoped to "local" in one and "opencode" in another, `-a` scoped in neither). Parity
@@ -95,6 +96,7 @@ const RUNNERS = [
   ['claude-run.mjs', claudeFlags],
   ['agy-run.mjs', agyFlags],
   ['copilot-run.mjs', copilotFlags],
+  ['opencode-run.mjs', opencodeFlags],
 ];
 
 /** Every flag spelling a runner's `--help` prints. */
@@ -138,6 +140,10 @@ describe('runner flag parity (--help vs the flags each runner accepts)', () => {
 describe('every authored CLI answers --help', () => {
   for (const script of [
     ['skills', 'dispatch', 'scripts', 'dispatch.mjs'],
+    ['skills', 'dispatch', 'scripts', 'claude-run.mjs'],
+    ['skills', 'dispatch', 'scripts', 'agy-run.mjs'],
+    ['skills', 'dispatch', 'scripts', 'copilot-run.mjs'],
+    ['skills', 'dispatch', 'scripts', 'opencode-run.mjs'],
     ['skills', 'dispatch', 'scripts', 'resolve-artifact-paths.mjs'],
     ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],

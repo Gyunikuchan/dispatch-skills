@@ -24,8 +24,8 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
-  checkGitIntegrity,
   classifyFailure,
+  createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
@@ -34,20 +34,22 @@ import {
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
+  extractSessionIdFromOutput,
   findBinary,
   findFirstExistingFile,
   getGitStatus,
   getSanitizedEnv,
   isMainModule,
   parseCommonArgs,
+  parseRunnerModeArgs,
   preparePromptForArgv,
+  probeCliReachability,
   PROJECT_ROOT,
   readStdin,
   resolveRunnerExitCode,
+  runDelegateCapture,
   scanVersionDirs,
   spawnCli,
-  spawnCliSync,
-  terminateProcessTree,
 } from './common.mjs';
 
 // ============================================================================
@@ -283,15 +285,10 @@ export async function runClaude(options = {}) {
   return lastResult;
 }
 
-/**
- * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
- * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
- * `--permission-mode plan` and `--disallowedTools` layer on the allowlist so a write tool
- * stays denied even if a future CLI widens what the allowlist implies.
- * @param {string} argvPrompt
- * @param {{ model?: string|null, effort?: string|null }} [opts]
- * @returns {string[]}
- */
+// ============================================================================
+// SECTION: Cascade & Execution Helpers
+// ============================================================================
+
 /**
  * Byte length of every argument `buildClaudeArgs` adds around the prompt, plus a separator per
  * argument. Used to reserve room against the batch-launcher command-line ceiling.
@@ -304,6 +301,15 @@ export function claudeFixedArgBytes({ model, effort } = {}) {
   return withPrompt.reduce((sum, arg) => sum + Buffer.byteLength(String(arg), 'utf8') + 1, 0);
 }
 
+/**
+ * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
+ * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
+ * `--permission-mode plan` and `--disallowedTools` layer on the allowlist so a write tool
+ * stays denied even if a future CLI widens what the allowlist implies.
+ * @param {string} argvPrompt
+ * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @returns {string[]}
+ */
 export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
   const args = ['-p', argvPrompt, '--output-format', 'json', '--permission-mode', 'plan'];
   if (model) args.push('--model', model);
@@ -362,20 +368,24 @@ function findViableTargets(claudeMode) {
 }
 
 function createNoTargetsError() {
-  const err = new Error(
+  return createCliNotFoundError(
     'Claude Code was not found or not reachable in any mode (Claude Desktop, VS Code extension, or CLI).\n' +
       'Install options:\n' +
       '  - Claude Desktop: Install Claude Desktop application\n' +
       '  - VS Code Extension: Install Anthropic Claude Code extension\n' +
       '  - Claude CLI: npm install -g @anthropic-ai/claude-code (or curl -fsSL https://claude.ai/install.sh | bash)',
   );
-  err.code = 'CLI_NOT_FOUND';
-  return err;
 }
 
 /**
  * Spawns Claude Code on a single resolved target/model pair and resolves once the
  * process exits, enforcing the timeout and buffer caps and checking git integrity.
+ *
+ * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
+ * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
+ * is Claude-specific: the batch-budget prompt spill, the JSON envelope parse, the session
+ * id fallback, and the failure-kind composition. The logger stays open on success —
+ * `runClaude` owns it for the whole cascade.
  * @returns {Promise<RunClaudeResult>}
  */
 function executeOnTarget({
@@ -399,8 +409,9 @@ function executeOnTarget({
   });
   const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort });
 
+  const providerLabel = `Claude Code [${target.mode}] (claude)`;
   emitInitBanner({
-    provider: `Claude Code [${target.mode}] (claude)`,
+    provider: providerLabel,
     model,
     effort,
     logFile: sessionLogger.logFile,
@@ -409,103 +420,62 @@ function executeOnTarget({
 
   const trace = createTraceWriter(verbose);
 
-  return new Promise((resolve, reject) => {
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    let totalOutputBytes = 0;
-    let isTimedOut = false;
-    let isBufferExceeded = false;
-    const maxBufferBytes = maxBufferMb * 1024 * 1024;
-
-    const child = spawnCli(target.bin, claudeArgs, {
-      cwd: PROJECT_ROOT,
-      env: getSanitizedEnv(),
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-    });
-
-    const timer = setTimeout(() => {
-      isTimedOut = true;
-      terminateProcessTree(child);
-    }, timeout * 1000);
-
-    child.stdout.on('data', (chunk) => {
-      totalOutputBytes += chunk.length;
-      if (totalOutputBytes > maxBufferBytes) {
-        if (!isBufferExceeded) {
-          isBufferExceeded = true;
-          terminateProcessTree(child);
-        }
-        return;
-      }
-      stdoutBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderrBuffer += chunk.toString('utf8');
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.on('close', (code, signal) => {
-      clearTimeout(timer);
-
-      const envelope = parseClaudeEnvelope(stdoutBuffer);
-      const sessionId = envelope.sessionId || extractClaudeSessionId(stderrBuffer);
+  return runDelegateCapture({
+    spawnChild: () =>
+      spawnCli(target.bin, claudeArgs, {
+        cwd: PROJECT_ROOT,
+        env: getSanitizedEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      }),
+    timeoutSeconds: timeout,
+    maxBufferMb,
+    sessionLogger,
+    trace,
+    initialGitStatus,
+    onClose: (outcome) => {
+      const envelope = parseClaudeEnvelope(outcome.stdoutBuffer);
+      const sessionId = envelope.sessionId || extractClaudeSessionId(outcome.stderrBuffer);
       const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
 
-      const gitIntegrity = checkGitIntegrity(initialGitStatus);
-
-      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
       const exitCode = resolveRunnerExitCode({
-        code,
-        signal,
-        truncated,
+        code: outcome.code,
+        signal: outcome.signal,
+        truncated: outcome.truncated,
         cleanStdout: envelope.text,
         isError: envelope.isError,
       });
 
       emitCompletionBanner({
-        provider: `Claude Code [${target.mode}] (claude)`,
+        provider: providerLabel,
         sessionLink,
         exitCode,
-        truncated,
+        truncated: outcome.truncated,
       });
 
-      resolve({
+      return {
         provider: 'claude',
         claudeMode: target.mode,
         bin: target.bin,
         model,
         stdout: envelope.text,
-        rawStdout: stdoutBuffer,
-        stderr: stderrBuffer,
+        rawStdout: outcome.stdoutBuffer,
+        stderr: outcome.stderrBuffer,
         exitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         sessionId,
         sessionLink,
-        truncated,
+        truncated: outcome.truncated,
         // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
         failureKind:
           (envelope.isError && envelope.subtype) ||
-          classifyFailure(`${stderrBuffer}\n${envelope.text}`) ||
-          (truncated ? truncated : null),
-        gitIntegrityViolation: gitIntegrity.violation,
-        gitIntegrityDetails: gitIntegrity.details,
-      });
-    });
-
-    child.on('error', (err) => {
-      clearTimeout(timer);
-      terminateProcessTree(child);
-      sessionLogger.close();
-      err.code = 1;
-      err.stderr = stderrBuffer;
-      reject(err);
-    });
+          classifyFailure(`${outcome.stderrBuffer}\n${envelope.text}`) ||
+          (outcome.truncated ? outcome.truncated : null),
+        gitIntegrityViolation: outcome.gitIntegrity.violation,
+        gitIntegrityDetails: outcome.gitIntegrity.details,
+      };
+    },
   });
 }
 
@@ -513,10 +483,12 @@ function executeOnTarget({
 // SECTION: CLI Entry Point
 // ============================================================================
 
-/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
+/** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list.
+ * `aliases` maps both mode spellings onto one canonical value — the last spelling on argv wins. */
 export const CLI_FLAGS = {
   valueFlags: ['--claude-mode', '--mode'],
   booleanFlags: ['--test-modes', '--probe-modes', '--reachability'],
+  aliases: { '--claude-mode': 'requestedMode', '--mode': 'requestedMode' },
 };
 
 export async function main() {
@@ -569,19 +541,12 @@ export async function main() {
 
 /** Parses the runner-specific `--claude-mode`/`--mode` and `--test-modes` flags. */
 function parseModeFlags(args) {
-  let requestedMode = null;
-  let testModes = false;
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--claude-mode' || arg === '--mode') {
-      requestedMode = args[++i] || null;
-    } else if (arg.startsWith('--claude-mode=')) {
-      requestedMode = arg.slice('--claude-mode='.length);
-    } else if (arg === '--test-modes' || arg === '--probe-modes' || arg === '--reachability') {
-      testModes = true;
-    }
-  }
-  return { requestedMode, testModes };
+  const { values, booleans } = parseRunnerModeArgs(args, CLI_FLAGS);
+  return {
+    requestedMode: values.requestedMode,
+    testModes:
+      booleans['--test-modes'] || booleans['--probe-modes'] || booleans['--reachability'],
+  };
 }
 
 function printReachabilityReport() {
@@ -672,25 +637,7 @@ export function resolveClaudeTarget(preferredMode = null) {
  * @returns {{ reachable: boolean, version: string|null, error: string|null }}
  */
 export function testClaudeBinaryReachability(binPath) {
-  if (!binPath || typeof binPath !== 'string') {
-    return { reachable: false, version: null, error: 'Binary path not provided' };
-  }
-  if (!fs.existsSync(binPath)) {
-    return { reachable: false, version: null, error: 'Binary file does not exist' };
-  }
-  try {
-    const res = spawnCliSync(binPath, ['--version'], { encoding: 'utf8', timeout: 3000 });
-    if (res.status === 0) {
-      return { reachable: true, version: (res.stdout || '').trim(), error: null };
-    }
-    return {
-      reachable: false,
-      version: null,
-      error: `Process exited with code ${res.status}: ${(res.stderr || '').trim()}`,
-    };
-  } catch (err) {
-    return { reachable: false, version: null, error: err.message };
-  }
+  return probeCliReachability({ bin: binPath, args: ['--version'], timeoutMs: 3000 });
 }
 
 /**
@@ -1026,12 +973,7 @@ export function getClaudeCliBinary() {
  * bogus resume commands.
  */
 export function extractClaudeSessionId(text) {
-  if (!text) return null;
-  const match =
-    text.match(/"session_id"\s*:\s*"([a-zA-Z0-9_-]+)"/) ||
-    text.match(/session\s+id[:=]\s*([a-zA-Z0-9_-]{8,})/i) ||
-    text.match(/claude\s+--resume\s+([a-zA-Z0-9_-]{8,})/i);
-  return match ? match[1] : null;
+  return extractSessionIdFromOutput(text, 'claude');
 }
 
 /**

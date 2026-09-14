@@ -8,6 +8,9 @@ import { describe, it, after } from 'node:test';
 
 import {
   parseCommonArgs,
+  parseRunnerModeArgs,
+  COMMON_VALUE_FLAGS,
+  FLAG_ALIASES,
   formatCliError,
   safeExitCode,
   formatSafetyPrompt,
@@ -15,9 +18,6 @@ import {
   isPathInside,
   normalizePath,
   getAllowedBoundaryRoots,
-  createSessionLogger,
-  emitInitBanner,
-  emitCompletionBanner,
   buildAttachmentBlock,
   findSensitiveMatch,
   isBatchLauncher,
@@ -30,20 +30,7 @@ import {
   DEFAULT_MAX_BUFFER_MB,
   PROJECT_ROOT,
   getArgvByteLimit,
-  spawnCli,
-  spawnCliSync,
-  terminateProcessTree,
-  SENSITIVE_FILE_PATTERNS,
-  SENSITIVE_FILE_BASENAME_PATTERNS,
-  SAFE_ENV_WHITELIST,
-  SENSITIVE_ENV_KEY_PATTERN,
-  getSanitizedEnv,
-  getGitStatus,
-  checkGitIntegrity,
-  describeGitStatusDiff,
   dedupeTargetsByBinary,
-  verifySkillIntegrity,
-  generateSkillHashes,
   buildFormattedPrompt,
   scanVersionDirs,
   isExecutableFile,
@@ -388,6 +375,17 @@ describe('common: argument parsing', () => {
     assert.throws(() => parseCommonArgs(['node', 'd.mjs', '--bogus', 'prompt']), /Unknown flag: --bogus/);
     // An undeclared `--name=value` form of a runner flag is still unknown to a caller that didn't declare it.
     assert.throws(() => parseCommonArgs(['node', 'd.mjs', '--claude-mode=cli', 'p']), /Unknown flag: --claude-mode=cli/);
+    // `--prompt=` was never a documented long form (only the `-p <value>` space form); accepting
+    // it would newly admit a spelling the original parser rejected.
+    assert.throws(() => parseCommonArgs(['node', 'd.mjs', '--prompt=inline', 'p']), /Unknown flag: --prompt=inline/);
+  });
+
+  it('parses a runner flag declared only in the long form', () => {
+    // Declared runner flags consume their `--name=value` spelling without leaking into positionals.
+    const opts = parseCommonArgs(['node', 'claude-run.mjs', '--mode=vscode', 'the prompt'], {
+      valueFlags: ['--mode'],
+    });
+    assert.equal(opts.prompt, 'the prompt');
   });
 
   it('rejects a value flag followed by another flag', () => {
@@ -411,6 +409,57 @@ describe('common: argument parsing', () => {
   it('treats everything after -- as positional prompt text', () => {
     const opts = parseCommonArgs(['node', 'd.mjs', '--', '-leading', 'dash']);
     assert.equal(opts.prompt, '-leading dash');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SECTION: Shared runner-flag scanner
+// ---------------------------------------------------------------------------
+
+describe('common: parseRunnerModeArgs (shared runner-flag scanner)', () => {
+  it('FLAG_ALIASES and COMMON_VALUE_FLAGS stay in lockstep', () => {
+    // A flag added to one table only would make parseCommonArgs consume (or accept) its value
+    // and then assign onto options[undefined] — silently dropped. Pin the two tables to set
+    // equality; the flag-parity test covers the help surface one level up.
+    assert.deepEqual([...FLAG_ALIASES.keys()].sort(), [...COMMON_VALUE_FLAGS].sort());
+  });
+
+  const claudeSpec = {
+    valueFlags: ['--claude-mode', '--mode'],
+    booleanFlags: ['--test-modes', '--probe-modes'],
+    aliases: { '--claude-mode': 'requestedMode', '--mode': 'requestedMode' },
+  };
+
+  it('collapses aliased spellings onto one canonical value, last one wins', () => {
+    const { values, booleans } = parseRunnerModeArgs(
+      ['--claude-mode', 'cli', '--mode=desktop', '--test-modes'],
+      claudeSpec,
+    );
+    assert.equal(values.requestedMode, 'desktop');
+    assert.equal(booleans['--test-modes'], true);
+    assert.equal(booleans['--probe-modes'], false);
+  });
+
+  it('scans past a -- separator, matching the per-runner parsers it replaced', () => {
+    const { values } = parseRunnerModeArgs(['--', '--mode', 'cli'], claudeSpec);
+    assert.equal(values.requestedMode, 'cli');
+  });
+
+  it('an unaliased value flag maps to itself instead of a null key', () => {
+    const { values } = parseRunnerModeArgs(['--custom-flag', 'v'], {
+      valueFlags: ['--custom-flag'],
+      aliases: { '--other': 'other' },
+    });
+    assert.equal(values['--custom-flag'], 'v');
+    assert.equal(values.other, null);
+  });
+
+  it('a declared value flag with no following value records null, never throws', () => {
+    const { values } = parseRunnerModeArgs(['--claude-mode'], {
+      valueFlags: ['--claude-mode'],
+      aliases: { '--claude-mode': 'requestedMode' },
+    });
+    assert.equal(values.requestedMode, null);
   });
 });
 
@@ -655,6 +704,35 @@ describe('common: path & boundary utilities', () => {
     assert.ok(resolved !== null);
     assert.equal(resolved, findBinary('node'));
   });
+
+  describe('dedupeTargetsByBinary', () => {
+    it('collapses modes resolving to the same binary, keeping the first', () => {
+      // Three copilot modes routinely answer with one PATH executable; retrying it is pure latency.
+      const targets = [
+        { mode: 'desktop', bin: '/usr/local/bin/copilot' },
+        { mode: 'vscode', bin: '/usr/local/bin/copilot' },
+        { mode: 'cli', bin: '/opt/copilot/bin/copilot' },
+      ];
+      const deduped = dedupeTargetsByBinary(targets, (t) => t.bin);
+      assert.deepEqual(
+        deduped.map((t) => t.mode),
+        ['desktop', 'cli'],
+      );
+    });
+
+    it('preserves targets with no resolved binary', () => {
+      const targets = [{ mode: 'a', bin: null }, { mode: 'b', bin: null }];
+      assert.equal(dedupeTargetsByBinary(targets, (t) => t.bin).length, 2);
+    });
+
+    it('treats path spellings that normalize alike as one binary', () => {
+      const targets = [
+        { mode: 'a', bin: path.join(os.tmpdir(), 'cli') },
+        { mode: 'b', bin: path.join(os.tmpdir(), '.', 'cli') },
+      ];
+      assert.equal(dedupeTargetsByBinary(targets, (t) => t.bin).length, 1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -817,452 +895,6 @@ describe('common: attachments, brief files & spill', () => {
 });
 
 // ---------------------------------------------------------------------------
-// SECTION: Session Logging & Process Utilities
-// ---------------------------------------------------------------------------
-
-describe('common: session logging & process spawning', () => {
-  it('creates dedicated session log file without errors', () => {
-    const logger = createSessionLogger('test-provider');
-    assert.ok(logger.logFile.includes('test-provider'));
-    assert.ok(logger.logFile.startsWith(os.tmpdir()));
-    assert.ok(!logger.logFile.includes('.scratch'));
-    logger.write('Sample log line\n');
-    logger.close();
-
-    assert.ok(fs.existsSync(logger.logFile));
-    fs.unlinkSync(logger.logFile);
-  });
-
-  it('spawns a binary directly with spawnCliSync', () => {
-    const result = spawnCliSync(process.execPath, ['-e', 'console.log("direct")'], {
-      encoding: 'utf8',
-    });
-    assert.equal(String(result.stdout).trim(), 'direct');
-  });
-
-  it('spawns a process with spawnCli and handles lifecycle', (t, done) => {
-    const child = spawnCli(process.execPath, ['-e', 'console.log("async")'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.on('close', (code) => {
-      assert.equal(code, 0);
-      assert.equal(out.trim(), 'async');
-      done();
-    });
-  });
-
-  it('createSessionLogger: write after close does not throw or emit', async () => {
-    const logger = createSessionLogger('test-after-close');
-    logger.write('before-close\n');
-    logger.close();
-    assert.doesNotThrow(() => logger.write('after-close\n'));
-    assert.doesNotThrow(() => logger.close());
-
-    // The stream flushes asynchronously; wait for the pre-close line before asserting.
-    let content = '';
-    for (let i = 0; i < 50 && !content.includes('before-close'); i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      content = fs.readFileSync(logger.logFile, 'utf8');
-    }
-    assert.ok(content.includes('before-close'));
-    assert.ok(!content.includes('after-close'));
-    fs.unlinkSync(logger.logFile);
-  });
-
-  it('spawnCli rejects a newline argument for a .cmd launcher', { skip: process.platform !== 'win32' }, () => {
-    assert.throws(
-      () => spawnCli('C:\\fake\\tool.cmd', ['line1\nline2', 'after']),
-      /batch launcher argument contains a newline/,
-    );
-    assert.throws(
-      () => spawnCliSync('C:\\fake\\tool.cmd', ['a\rb']),
-      /batch launcher argument contains a newline/,
-    );
-  });
-
-  it('round-trips a single-line metacharacter argument through a real .cmd launcher', { skip: process.platform !== 'win32' }, () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cmd-echo-'));
-    try {
-      fs.writeFileSync(path.join(dir, 'echo.js'), 'process.stdout.write(JSON.stringify(process.argv.slice(2)));');
-      const launcher = path.join(dir, 'echo.cmd');
-      fs.writeFileSync(launcher, `@"${process.execPath}" "%~dp0echo.js" %*\r\n`);
-      const arg = 'a & b " c ^ d <e> | f (g) !h!';
-      const res = spawnCliSync(launcher, [arg, 'second'], { encoding: 'utf8' });
-      assert.equal(res.status, 0, res.stderr);
-      assert.deepEqual(JSON.parse(res.stdout), [arg, 'second']);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('emitInitBanner formats standard banner with provider, model, effort, session, mode, and log', () => {
-    let captured = '';
-    const origWrite = process.stderr.write;
-    process.stderr.write = (chunk) => {
-      captured += chunk;
-      return true;
-    };
-    try {
-      emitInitBanner({
-        provider: 'Claude Code [desktop] (claude)',
-        model: 'claude-3-7-sonnet',
-        effort: 'high',
-        sessionLink: 'https://example.com/session',
-        mode: 'READ-ONLY',
-        logFile: '/tmp/test.log',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Provider: Claude Code [desktop] (claude) | Model: claude-3-7-sonnet | Effort: high | Session: https://example.com/session | Mode: READ-ONLY | Log: /tmp/test.log\n',
-      );
-    } finally {
-      process.stderr.write = origWrite;
-    }
-  });
-
-  it('emitInitBanner formats array model and omits null/undefined fields', () => {
-    let captured = '';
-    const origWrite = process.stderr.write;
-    process.stderr.write = (chunk) => {
-      captured += chunk;
-      return true;
-    };
-    try {
-      emitInitBanner({
-        provider: 'Antigravity 2.0 (agy)',
-        model: ['gemini-3.8-flash', 'gemini-3.7-flash'],
-        effort: null,
-        logFile: '/tmp/test.log',
-        mode: 'READ-ONLY',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Provider: Antigravity 2.0 (agy) | Model: gemini-3.8-flash, gemini-3.7-flash | Mode: READ-ONLY | Log: /tmp/test.log\n',
-      );
-    } finally {
-      process.stderr.write = origWrite;
-    }
-  });
-
-  it('emitCompletionBanner formats completion banner with provider, resume, exitCode, and truncated', () => {
-    let captured = '';
-    const origWrite = process.stderr.write;
-    process.stderr.write = (chunk) => {
-      captured += chunk;
-      return true;
-    };
-    try {
-      emitCompletionBanner({
-        provider: 'OpenCode (LM Studio)',
-        sessionLink: 'http://127.0.0.1:1234/v1',
-        exitCode: 0,
-        truncated: 'timeout',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Done: OpenCode (LM Studio) | Exit: 0 | Resume: http://127.0.0.1:1234/v1 | Truncated: timeout\n',
-      );
-    } finally {
-      process.stderr.write = origWrite;
-    }
-  });
-
-  it('terminateProcessTree safely handles null or dead child', () => {
-    assert.doesNotThrow(() => terminateProcessTree(null));
-    assert.doesNotThrow(() => terminateProcessTree({ pid: 99999999 }));
-  });
-
-  it(
-    'terminateProcessTree kills a grandchild, not just the direct child',
-    { skip: process.platform === 'win32' ? 'POSIX process groups only' : false },
-    async () => {
-      // The defect: killing only the direct child left the real delegate CLI running, still
-      // consuming tokens after the timeout fired.
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-tree-'));
-      try {
-        const grandchild = path.join(dir, 'grandchild.js');
-        fs.writeFileSync(grandchild, 'setInterval(() => {}, 1000);');
-        const parent = path.join(dir, 'parent.js');
-        fs.writeFileSync(
-          parent,
-          `const cp = require('node:child_process');
-const kid = cp.spawn(process.execPath, [${JSON.stringify(grandchild)}], { stdio: 'ignore' });
-process.stdout.write(String(kid.pid));
-setInterval(() => {}, 1000);`,
-        );
-
-        const child = spawnCli(process.execPath, [parent], { stdio: ['ignore', 'pipe', 'ignore'] });
-        const grandchildPid = await new Promise((resolve) => {
-          let buf = '';
-          child.stdout.on('data', (c) => {
-            buf += c.toString();
-            if (buf.trim()) resolve(Number(buf.trim()));
-          });
-        });
-
-        const alive = (pid) => {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch {
-            return false;
-          }
-        };
-        assert.ok(alive(grandchildPid), 'the grandchild started');
-
-        terminateProcessTree(child);
-        // SIGKILL follows SIGTERM after 1s; allow for it plus scheduling slack.
-        for (let i = 0; i < 40 && alive(grandchildPid); i++) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        assert.equal(alive(grandchildPid), false, 'the grandchild was terminated with the group');
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// SECTION: Security, Sanitization & Git Integrity
-// ---------------------------------------------------------------------------
-
-describe('common: security & git integrity', () => {
-  it('getSanitizedEnv strips sensitive keys and preserves safe ones', () => {
-    const origKey = process.env.ANTHROPIC_API_KEY;
-    // Windows spells the key `Path`; the whitelist carries both spellings, so match the platform's own.
-    const pathKey = Object.keys(process.env).find((k) => /^path$/i.test(k));
-    try {
-      process.env.ANTHROPIC_API_KEY = 'sk-ant-test-12345';
-      const clean = getSanitizedEnv();
-
-      assert.ok(!('ANTHROPIC_API_KEY' in clean));
-      if (pathKey !== undefined) {
-        assert.equal(clean[pathKey], process.env[pathKey]);
-      }
-    } finally {
-      if (origKey === undefined) {
-        delete process.env.ANTHROPIC_API_KEY;
-      } else {
-        process.env.ANTHROPIC_API_KEY = origKey;
-      }
-    }
-  });
-
-  it('getSanitizedEnv passes non-secret proxy, CA and config-dir vars through', () => {
-    const oldEnv = process.env;
-    try {
-      process.env = { ...oldEnv };
-      process.env.HTTPS_PROXY = 'http://corp-proxy:8080';
-      process.env.NO_PROXY = 'localhost';
-      process.env.NODE_EXTRA_CA_CERTS = '/etc/ssl/corp.pem';
-      process.env.XDG_CONFIG_HOME = '/home/u/.config';
-      process.env.CLAUDE_CONFIG_DIR = '/home/u/.claude';
-      process.env.TZ = 'Europe/Berlin';
-
-      const clean = getSanitizedEnv();
-
-      assert.equal(clean.HTTPS_PROXY, 'http://corp-proxy:8080');
-      assert.equal(clean.NO_PROXY, 'localhost');
-      assert.equal(clean.NODE_EXTRA_CA_CERTS, '/etc/ssl/corp.pem');
-      assert.equal(clean.XDG_CONFIG_HOME, '/home/u/.config');
-      assert.equal(clean.CLAUDE_CONFIG_DIR, '/home/u/.claude');
-      assert.equal(clean.TZ, 'Europe/Berlin');
-    } finally {
-      process.env = oldEnv;
-    }
-  });
-
-  it('every SAFE_ENV_WHITELIST entry survives SENSITIVE_ENV_KEY_PATTERN', () => {
-    for (const key of SAFE_ENV_WHITELIST) {
-      assert.ok(
-        !SENSITIVE_ENV_KEY_PATTERN.test(key),
-        `whitelisted ${key} is credential-shaped and would be stripped`,
-      );
-    }
-  });
-
-  it('SENSITIVE_FILE_PATTERNS and SENSITIVE_FILE_BASENAME_PATTERNS match known sensitive filenames', () => {
-    const sensitive = [
-      '.env', '.env.local', '.env.production',
-      'id_rsa', 'id_ed25519',
-      '.npmrc', '.pypirc', '.netrc',
-      'server.pem', 'cert.p12',
-    ];
-    for (const file of sensitive) {
-      assert.ok(
-        SENSITIVE_FILE_PATTERNS.some((p) => p.test(file)) ||
-        SENSITIVE_FILE_BASENAME_PATTERNS.some((p) => p.test(file)),
-        `expected ${file} to match denylist`,
-      );
-    }
-  });
-
-  it('SENSITIVE_ENV_KEY_PATTERN matches credentials and keys', () => {
-    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('AWS_SECRET_ACCESS_KEY'));
-    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('GITHUB_TOKEN'));
-    assert.ok(SENSITIVE_ENV_KEY_PATTERN.test('API_KEY'));
-    assert.ok(!SENSITIVE_ENV_KEY_PATTERN.test('PATH'));
-    assert.ok(!SENSITIVE_ENV_KEY_PATTERN.test('NODE_ENV'));
-  });
-
-  it('describeGitStatusDiff returns null when statuses match or are null', () => {
-    assert.equal(describeGitStatusDiff(null, null), null);
-    assert.equal(describeGitStatusDiff('M file.ts', 'M file.ts'), null);
-  });
-
-  it('describeGitStatusDiff returns added lines when status diverges', () => {
-    const before = ' M abc123 file.ts';
-    const after = ' M abc123 file.ts\n?? def456 new.ts';
-    const diff = describeGitStatusDiff(before, after);
-    assert.ok(diff !== null);
-    assert.ok(diff.includes('new.ts'));
-  });
-
-  it('describeGitStatusDiff reports a removed entry, not just added ones', () => {
-    // Deleting an untracked file is a workspace mutation; it used to report violation with no detail.
-    const before = ' M abc123 file.ts\n?? def456 scratch.ts';
-    const after = ' M abc123 file.ts';
-    const diff = describeGitStatusDiff(before, after);
-    assert.ok(diff !== null);
-    assert.ok(diff.includes('scratch.ts'));
-  });
-
-  it('describeGitStatusDiff reports a re-modified file once, not twice', () => {
-    // The same path occupies a record in both snapshots under different hashes — one change.
-    const diff = describeGitStatusDiff(' M aaa file.ts', ' M bbb file.ts');
-    assert.equal(diff, 'M file.ts');
-  });
-
-  it('describeGitStatusDiff strips the hash column from displayed entries', () => {
-    const diff = describeGitStatusDiff('', '?? deadbeef new.ts');
-    assert.equal(diff, '?? new.ts');
-  });
-
-  it('checkGitIntegrity treats a null baseline as no violation', () => {
-    assert.equal(checkGitIntegrity(null).violation, false);
-  });
-
-  describe('dedupeTargetsByBinary', () => {
-    it('collapses modes resolving to the same binary, keeping the first', () => {
-      // Three copilot modes routinely answer with one PATH executable; retrying it is pure latency.
-      const targets = [
-        { mode: 'desktop', bin: '/usr/local/bin/copilot' },
-        { mode: 'vscode', bin: '/usr/local/bin/copilot' },
-        { mode: 'cli', bin: '/opt/copilot/bin/copilot' },
-      ];
-      const deduped = dedupeTargetsByBinary(targets, (t) => t.bin);
-      assert.deepEqual(
-        deduped.map((t) => t.mode),
-        ['desktop', 'cli'],
-      );
-    });
-
-    it('preserves targets with no resolved binary', () => {
-      const targets = [{ mode: 'a', bin: null }, { mode: 'b', bin: null }];
-      assert.equal(dedupeTargetsByBinary(targets, (t) => t.bin).length, 2);
-    });
-
-    it('treats path spellings that normalize alike as one binary', () => {
-      const targets = [
-        { mode: 'a', bin: path.join(os.tmpdir(), 'cli') },
-        { mode: 'b', bin: path.join(os.tmpdir(), '.', 'cli') },
-      ];
-      assert.equal(dedupeTargetsByBinary(targets, (t) => t.bin).length, 1);
-    });
-  });
-
-  describe('getGitStatus content fingerprints', () => {
-    /** Builds a throwaway git repo so the fingerprint can be observed against real git output. */
-    const makeRepo = () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-git-'));
-      const git = (...args) => cp.spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-      git('init', '-q');
-      git('config', 'user.email', 'test@example.com');
-      git('config', 'user.name', 'Test');
-      git('config', 'commit.gpgsign', 'false');
-      fs.writeFileSync(path.join(dir, 'tracked.txt'), 'one\n');
-      git('add', '.');
-      git('commit', '-qm', 'init');
-      return { dir, git };
-    };
-
-    it('flags a content change to an already-modified file', () => {
-      // The defect this replaced: both snapshots read ` M tracked.txt`, so a second edit by a
-      // delegate was invisible to a status-line comparison.
-      const { dir } = makeRepo();
-      try {
-        const file = path.join(dir, 'tracked.txt');
-        fs.writeFileSync(file, 'two\n');
-        const before = getGitStatus(dir);
-        fs.writeFileSync(file, 'three\n');
-        const after = getGitStatus(dir);
-
-        assert.ok(before && after, 'both snapshots resolve inside a real repo');
-        assert.notEqual(before, after);
-        assert.equal(describeGitStatusDiff(before, after), 'M tracked.txt');
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it('records a deleted file with a tombstone instead of failing', () => {
-      const { dir } = makeRepo();
-      try {
-        fs.rmSync(path.join(dir, 'tracked.txt'));
-        const status = getGitStatus(dir);
-        assert.ok(status, 'a deletion still produces a snapshot');
-        assert.match(status, /tracked\.txt$/m);
-        assert.match(status, /^.D - tracked\.txt$/m);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it('lists new files individually under an untracked directory', () => {
-      // Without -uall these collapse into one `?? sub/` line, hiding per-file writes.
-      const { dir } = makeRepo();
-      try {
-        fs.mkdirSync(path.join(dir, 'sub'));
-        fs.writeFileSync(path.join(dir, 'sub/a.txt'), 'a');
-        fs.writeFileSync(path.join(dir, 'sub/b.txt'), 'b');
-        const status = getGitStatus(dir);
-        assert.match(status, /sub\/a\.txt$/m);
-        assert.match(status, /sub\/b\.txt$/m);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it('fingerprints the destination of a rename without consuming the next entry', () => {
-      // `-z` emits a rename as two NUL-terminated tokens; mis-parsing shifts every later entry.
-      const { dir, git } = makeRepo();
-      try {
-        git('mv', 'tracked.txt', 'renamed.txt');
-        fs.writeFileSync(path.join(dir, 'later.txt'), 'later');
-        const status = getGitStatus(dir);
-        assert.match(status, /renamed\.txt$/m);
-        assert.match(status, /later\.txt$/m);
-        assert.ok(!status.includes('tracked.txt'), 'the rename origin is not a separate entry');
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-
-    it('returns null outside a git repository', () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-nogit-'));
-      try {
-        assert.equal(getGitStatus(dir), null);
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
 // SECTION: Failure Classification
 // ---------------------------------------------------------------------------
 
@@ -1296,79 +928,6 @@ describe('common: failure classification', () => {
     assert.equal(isEmptyResult({}), true);
     assert.equal(isEmptyResult(null), true);
     assert.equal(isEmptyResult({ stdout: '## Summary' }), false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// SECTION: Skill Integrity & Hashes
-// ---------------------------------------------------------------------------
-
-describe('common: skill integrity & hashes', () => {
-  it('verifySkillIntegrity returns missing:true when no manifest exists', () => {
-    const result = verifySkillIntegrity(os.tmpdir(), 'nonexistent-manifest.json');
-    assert.equal(result.missing, true);
-    assert.equal(result.valid, true);
-    assert.deepEqual(result.violations, []);
-  });
-
-  it('generateSkillHashes lists SKILL.md and .mjs scripts', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-hash-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      const scriptsDir = path.join(tmpDir, 'scripts');
-      fs.mkdirSync(scriptsDir);
-      fs.writeFileSync(path.join(scriptsDir, 'runner.mjs'), '// runner', 'utf8');
-
-      const manifest = generateSkillHashes(tmpDir);
-      assert.ok('SKILL.md' in manifest);
-      assert.ok('scripts/runner.mjs' in manifest);
-      assert.ok(typeof manifest['SKILL.md'] === 'string');
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('generateSkillHashes hashes references/*.md and excludes config files', () => {
-    const manifest = generateSkillHashes(path.join(PROJECT_ROOT, 'skills', 'dispatch'));
-    assert.ok('references/alignment.md' in manifest);
-    assert.ok(!Object.keys(manifest).some((k) => k.startsWith('config')));
-    assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
-  });
-
-  it('verifySkillIntegrity detects a tampered file', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-tamper-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      const manifest = generateSkillHashes(tmpDir);
-      const manifestPath = path.join(tmpDir, 'skill-hashes.json');
-      fs.writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
-
-      // Tamper with the file
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Tampered', 'utf8');
-
-      const result = verifySkillIntegrity(tmpDir);
-      assert.equal(result.valid, false);
-      assert.ok(result.violations.includes('SKILL.md'));
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('verifySkillIntegrity passes when all hashes match', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-ok-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      const manifest = generateSkillHashes(tmpDir);
-      const manifestPath = path.join(tmpDir, 'skill-hashes.json');
-      fs.writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
-
-      const result = verifySkillIntegrity(tmpDir);
-      assert.equal(result.valid, true);
-      assert.deepEqual(result.violations, []);
-      assert.equal(result.missing, false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 });
 

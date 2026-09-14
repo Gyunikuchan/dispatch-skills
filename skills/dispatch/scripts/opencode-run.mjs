@@ -64,7 +64,6 @@ import {
   resolveModelsToTry,
   formatCliError,
   safeExitCode,
-  checkGitIntegrity,
   classifyFailure,
   createSessionLogger,
   createTraceWriter,
@@ -73,7 +72,6 @@ import {
   emitCompletionBanner,
   emitInitBanner,
   extractCleanResponse,
-  formatSafetyPrompt,
   buildFormattedPrompt,
   getGitStatus,
   isExecutableFile,
@@ -85,11 +83,11 @@ import {
   readStdin,
   resolveCliInvocation,
   resolveRunnerExitCode,
+  runDelegateCapture,
   SAFE_ENV_WHITELIST,
   scanVersionDirs,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_PATTERNS,
-  terminateProcessTree,
 } from './common.mjs';
 
 // ============================================================================
@@ -427,7 +425,6 @@ async function runOpencodeSingle(options = {}) {
     }
 
     const trace = createTraceWriter(verbose);
-    const maxBufferBytes = maxBufferMb * 1024 * 1024;
 
     // Step 8: `runOpencode` owns the baseline (dispatch-level, else one snapshot before the model
     // cascade) so a write by an earlier failed provider or model stays inside the compared window;
@@ -440,7 +437,6 @@ async function runOpencodeSingle(options = {}) {
       args,
       settings,
       timeout,
-      maxBufferBytes,
       maxBufferMb,
       json,
       trace,
@@ -462,6 +458,10 @@ async function runOpencodeSingle(options = {}) {
     throw err;
   }
 }
+
+// ============================================================================
+// SECTION: Log Lifecycle & Delegate Spawn
+// ============================================================================
 
 /**
  * Records a terminal error in the session log before closing it, so a failed run leaves a log
@@ -489,6 +489,12 @@ function closeLogger(sessionLogger) {
  * Spawns the delegate and settles once — Node emits both `error` and `close` on a spawn
  * failure, so a shared guard keeps the failure path from also emitting a success banner.
  *
+ * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
+ * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
+ * is OpenCode-specific: the invocation routing around `spawnCli` (for `cp.spawn` mockability),
+ * the immediate stdin close, the arrival-ordered log tail, the `--format json` raw-stdout
+ * branch, the last-`Error:`-line surfacing, and GPU-lock/log release on every exit path.
+ *
  * @returns {Promise<RunOpencodeResult>}
  */
 function spawnOpencode({
@@ -496,7 +502,6 @@ function spawnOpencode({
   args,
   settings,
   timeout,
-  maxBufferBytes,
   maxBufferMb,
   json,
   trace,
@@ -510,102 +515,83 @@ function spawnOpencode({
   mode,
   releaseOnce,
 }) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let stdoutBuffer = '';
-    let stderrBuffer = '';
-    // Arrival-ordered tail of both streams, mirroring the session log's end for diagnostics.
-    let logTail = '';
-    let totalOutputBytes = 0;
-    let isTimedOut = false;
-    let isBufferExceeded = false;
-    const appendTail = (chunk) => {
-      logTail = (logTail + chunk.toString('utf8')).slice(-LOG_TAIL_CHARS);
-    };
+  const providerLabel = describeProvider(settings, mode);
+  // Arrival-ordered tail of both streams, mirroring the session log's end for diagnostics.
+  let logTail = '';
 
-    // NOTE: common's invocation builder (not spawnCli) so an npm `.cmd` shim is routed through
-    // cmd.exe safely while `cp.spawn` stays mockable in tests.
-    const invocation = resolveCliInvocation(command, args, {
-      cwd: PROJECT_ROOT,
-      env: getOpencodeEnv(settings),
-      stdio: ['pipe', 'pipe', 'pipe'],
-      shell: false,
-      // Set here rather than inherited from spawnCli (which this deliberately bypasses): without an
-      // own process group, a timeout leaves opencode's grandchildren running on POSIX.
-      detached: process.platform !== 'win32',
-    });
-    const child = cp.spawn(invocation.command, invocation.args, invocation.options);
+  return runDelegateCapture({
+    spawnChild: () => {
+      // NOTE: common's invocation builder (not spawnCli) so an npm `.cmd` shim is routed through
+      // cmd.exe safely while `cp.spawn` stays mockable in tests.
+      const invocation = resolveCliInvocation(command, args, {
+        cwd: PROJECT_ROOT,
+        env: getOpencodeEnv(settings),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: false,
+        // Set here rather than inherited from spawnCli (which this deliberately bypasses): without an
+        // own process group, a timeout leaves opencode's grandchildren running on POSIX.
+        detached: process.platform !== 'win32',
+      });
+      const child = cp.spawn(invocation.command, invocation.args, invocation.options);
 
-    // Close stdin at once — opencode reads from its flags, not stdin.
-    if (child.stdin) {
-      child.stdin.end();
-    }
-
-    const timer = setTimeout(() => {
-      isTimedOut = true;
-      terminateProcessTree(child);
-    }, timeout * 1000);
-
-    child.stdout.on('data', (chunk) => {
-      totalOutputBytes += chunk.length;
-      if (totalOutputBytes > maxBufferBytes) {
-        if (!isBufferExceeded) {
-          isBufferExceeded = true;
-          terminateProcessTree(child);
-        }
-        return;
+      // Close stdin at once — opencode reads from its flags, not stdin.
+      if (child.stdin) {
+        child.stdin.end();
       }
-      stdoutBuffer += chunk.toString('utf8');
-      appendTail(chunk);
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderrBuffer += chunk.toString('utf8');
-      appendTail(chunk);
-      sessionLogger.write(chunk);
-      if (trace) trace(chunk);
-    });
-
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
+      return child;
+    },
+    timeoutSeconds: timeout,
+    maxBufferMb,
+    sessionLogger,
+    trace,
+    initialGitStatus,
+    onChunk: (_stream, chunk) => {
+      logTail = (logTail + chunk.toString('utf8')).slice(-LOG_TAIL_CHARS);
+    },
+    onFail: (err) => {
       releaseOnce();
-
-      const gitIntegrity = checkGitIntegrity(initialGitStatus);
+      failLogger(sessionLogger, err?.message ?? String(err));
+    },
+    onClose: (outcome) => {
+      releaseOnce();
 
       // A truncated run still carries most of its analysis; return captured output and let
       // the caller decide whether to use it or cascade.
-      const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
+      const truncated = outcome.truncated;
       if (truncated) {
         process.stderr.write(
-          isTimedOut
+          outcome.isTimedOut
             ? `[dispatch] Timed out after ${timeout}s; returning partial output.\n`
             : `[dispatch] Output exceeded ${maxBufferMb}MB cap; returning partial output.\n`,
         );
       }
 
-      const cleanStdout = json ? stdoutBuffer : extractCleanResponse(stdoutBuffer);
-      const exitCode = resolveRunnerExitCode({ code, signal, truncated, cleanStdout });
+      const cleanStdout = json ? outcome.stdoutBuffer : extractCleanResponse(outcome.stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({
+        code: outcome.code,
+        signal: outcome.signal,
+        truncated,
+        cleanStdout,
+      });
       let failureKind =
-        classifyFailure(`${stderrBuffer}\n${stdoutBuffer}`) || (truncated ? truncated : null);
+        classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || (truncated ? truncated : null);
 
       // opencode can fail with its cause only in the output stream, leaving stderr silent; surface
       // the last `Error:` line so the orchestrator sees why instead of a bare exit code.
-      let stderrOut = stderrBuffer;
-      if (exitCode !== 0 && !classifyFailure(stderrBuffer)) {
+      let stderrOut = outcome.stderrBuffer;
+      if (exitCode !== 0 && !classifyFailure(outcome.stderrBuffer)) {
         const lastError = findLastErrorLine(logTail);
-        if (lastError && !stderrBuffer.includes(lastError)) {
-          stderrOut = stderrBuffer ? `${stderrBuffer.replace(/\s+$/, '')}\n${lastError}\n` : `${lastError}\n`;
+        if (lastError && !outcome.stderrBuffer.includes(lastError)) {
+          stderrOut = outcome.stderrBuffer
+            ? `${outcome.stderrBuffer.replace(/\s+$/, '')}\n${lastError}\n`
+            : `${lastError}\n`;
           process.stderr.write(`[dispatch] OpenCode reported: ${lastError}\n`);
           failureKind = failureKind || classifyFailure(lastError);
         }
       }
 
       emitCompletionBanner({
-        provider: describeProvider(settings, mode),
+        provider: providerLabel,
         sessionLink,
         exitCode,
         truncated,
@@ -613,14 +599,14 @@ function spawnOpencode({
 
       closeLogger(sessionLogger);
 
-      resolve({
+      return {
         provider: 'opencode',
         model: effectiveModel,
         agent: effectiveAgent,
         mode: mode ?? null,
         engineType,
         stdout: cleanStdout,
-        rawStdout: stdoutBuffer,
+        rawStdout: outcome.stdoutBuffer,
         stderr: stderrOut,
         exitCode,
         logFile: sessionLogger.logFile,
@@ -628,22 +614,10 @@ function spawnOpencode({
         sessionLink,
         truncated,
         failureKind,
-        gitIntegrityViolation: gitIntegrity.violation,
-        gitIntegrityDetails: gitIntegrity.details,
-      });
-    });
-
-    child.on('error', (err) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      terminateProcessTree(child);
-      releaseOnce();
-      failLogger(sessionLogger, err?.message ?? String(err));
-      err.code = 1;
-      err.stderr = stderrBuffer;
-      reject(err);
-    });
+        gitIntegrityViolation: outcome.gitIntegrity.violation,
+        gitIntegrityDetails: outcome.gitIntegrity.details,
+      };
+    },
   });
 }
 
@@ -1051,6 +1025,10 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
     isLocal,
   };
 }
+
+// ============================================================================
+// SECTION: LM Studio Preflight & Diagnosis
+// ============================================================================
 
 /**
  * Returns the LM Studio endpoint, preferring LM_STUDIO_HOST/PORT/PATH env overrides.
@@ -1791,6 +1769,15 @@ export function buildCommand({
 // SECTION: CLI Entry Point
 // ============================================================================
 
+/** Runner-specific flags — none. Every flag this runner accepts is a common one
+ * (`-a/--agent` included, parsed by `parseCommonArgs`); listing any here as runner-declared
+ * would shadow common's parsing and discard the value. Exported as an empty spec so the
+ * flag-parity test still checks this runner's `--help` against DOCUMENTED_COMMON_FLAGS. */
+export const CLI_FLAGS = {
+  valueFlags: [],
+  booleanFlags: [],
+};
+
 export async function main() {
   const options = parseCommonArgs(process.argv);
 
@@ -1844,9 +1831,11 @@ Usage:
 Options:
   -p, --prompt <string>       The prompt message to send to the agent
   -f, --file, --artifact      Attach a context file or Antigravity artifact path (can repeat)
+  --prompt-file <path>        Read the prompt from a file instead of an argument
   -a, --agent <name>          Override agent (auto-resolved from opencode config, fallback 'plan')
   -m, --model <provider/name> Override model (defaults to opencode.jsonc model)
-  -e, --effort <variant>      Passed as opencode run --variant (provider-specific reasoning effort)
+  -e, --effort, --reasoning-effort <variant>
+                              Passed as opencode run --variant (provider-specific reasoning effort)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --json                      Emit raw JSON event stream

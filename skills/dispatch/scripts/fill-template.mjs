@@ -165,7 +165,7 @@ export function fillTemplate(template, variables, values) {
  * Resolves the skill root owning a template path: `<skill>/references/x.md` and
  * `<skill>/SKILL.md` both resolve to `<skill>`.
  */
-export function resolveSkillRoot(templatePath) {
+function resolveSkillRoot(templatePath) {
   const dir = path.dirname(path.resolve(templatePath));
   return path.basename(dir) === 'references' ? path.dirname(dir) : dir;
 }

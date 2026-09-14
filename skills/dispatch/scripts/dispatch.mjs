@@ -676,7 +676,12 @@ export async function resolveProvider(params = {}) {
   return candidates[0] || null;
 }
 
-/** Executes a specific provider runner via {@link providerRunners}. */
+/**
+ * Executes a specific provider runner via {@link providerRunners}.
+ *
+ * Exported as a seam even though only `runCascade` calls it in-repo: tests drive an
+ * unhandled provider through it, and a pinned `--provider` resolution funnels here.
+ */
 export async function executeProvider(provider, runnerOptions) {
   const runner = providerRunners[provider];
   if (!runner) {

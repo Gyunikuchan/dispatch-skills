@@ -259,7 +259,7 @@ const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
  * @param {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} [options]
  * @returns {string|null} absolute path
  */
-export function findNativeArtifact(kind, options = {}) {
+function findNativeArtifact(kind, options = {}) {
   const orchestrator = options.orchestrator !== undefined ? options.orchestrator : detectOrchestrator();
   // Checked before constructing `roots` (which stats env vars and joins paths for
   // every AGY_MODE_DATA_DIRS entry) so a non-agy orchestrator short-circuits cheaply.

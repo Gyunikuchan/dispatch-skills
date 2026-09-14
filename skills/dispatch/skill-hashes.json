@@ -2,13 +2,13 @@
   "SKILL.md": "8e9cae3a2436f681984af5b73c2f816ccef6702890a099d18cf3c4b80745dee4",
   "references/alignment.md": "17e050768a87735dcf8288d841164b9171ada7ce243f1c428382da58ac2b742d",
   "references/providers.md": "2d9908c2d8ae6e7ef455a2922438a6d2b397a513b7f589e9650e63e9d0d1bd0f",
-  "scripts/agy-run.mjs": "746301586fcf36fcbf3002c1f8cbd3605df4ad88f3f7cfc3860d72a28ce4e7e6",
-  "scripts/claude-run.mjs": "900a28e0662a9be75e4ce248792d41130c0c3c5b2a3db516b33762f518ef5e55",
-  "scripts/common.mjs": "bf830ab09fd78bd42487ad4fe3fc29988264ffa08149970a8a0d50234702455b",
-  "scripts/copilot-run.mjs": "590c8186ce96dde081053cc9169c172e2883f9865dc196f4a28fc7a89aa4926b",
-  "scripts/dispatch.mjs": "3fd8fe01dc3f39ae0f4735bf165c24a62dbaaa8af1ff7f79c6c563cba52a14b2",
-  "scripts/fill-template.mjs": "64e050d86f418b0bd58984eeda669e3748e636827b1fcf041dc6e7c79f739464",
-  "scripts/opencode-run.mjs": "d9d15b635b8276202dcb34a05e8f75a0334dbe9c68bcf3fd46f35313350b3391",
-  "scripts/relocate-scratch.mjs": "bae681baca91da9d8f0808d4a997b6a050b287c0ad3d4be56efd5266fe2865bd",
-  "scripts/resolve-artifact-paths.mjs": "19211c0dfcd66fbea20434292bd01a2087c3c2200fb715440933be32cab74c4f"
+  "scripts/agy-run.mjs": "bd81aa5a511e65c532b056436e4e1c334e00d64f7ab97e62229051ed28e308f1",
+  "scripts/claude-run.mjs": "6d3b715b6f729c6a7f61bbf4b2e7b90889ba810c2e34adc9cf678be4c3fe58c4",
+  "scripts/common.mjs": "e789a3452498f89a082d0b19f3bded950051b379d88f084591b646543fcfbfc7",
+  "scripts/copilot-run.mjs": "1e6ae16737cf788aa73bcc7801a4286f6109d0f19b4cbde93600e7f4b96444dc",
+  "scripts/dispatch.mjs": "40213073925dfcc75037d34963e22b03691bda35ff076985b964acbf7810dfe7",
+  "scripts/fill-template.mjs": "6a49d70637514b94e317f3829275b6994bb73c4f67870185fddf7fc1d1b56800",
+  "scripts/opencode-run.mjs": "8f14800980423b3c5ef088b2b589301360aa560f6a506a0a2c2162d82d739396",
+  "scripts/relocate-scratch.mjs": "83659674079eda078b95dd2481cf418ade07c05ce2956a89adef8c95073677e1",
+  "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581"
 }

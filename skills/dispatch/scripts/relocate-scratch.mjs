@@ -4,6 +4,11 @@
  * @file relocate-scratch.mjs
  * @description Cross-platform utility for relocating scratch artifacts (.scratch/) to OS temp (os.tmpdir()).
  * Handles atomic moves, cross-device EXDEV fallbacks, collision avoidance, and workspace boundary checks.
+ *
+ * Deliberately imports nothing from common.mjs: a library import here would pay common's
+ * import-time `git rev-parse` spawn (PROJECT_ROOT) for a four-function file that needs none
+ * of it — so the module guard below is this file's own inline equivalent of common's
+ * `isMainModule`, and stays one.
  */
 
 import fs from 'node:fs';

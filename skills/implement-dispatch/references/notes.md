@@ -20,7 +20,7 @@ implement-dispatch
 1. **Scope & Setup**: Success criteria formulation, scope gating (`trivial` → `low`, `focused` → `medium`, `cross-cutting` → `high`), flow resolution (`resolve-flow.mjs`), and artifact path derivation (`resolve-artifact-paths.mjs`).
 2. **Author Plan**: Baseline plan creation from `dispatch-plan-review` template.
 3. **Plan Review Loop**: Multi-agent review waves via `dispatch-plan-review` (orchestrated mode) until consensus or wave cap (`maxRounds`).
-4. **Implement**: Single user approval gate, git boundary snapshot, native write subagent dispatch (test-first with git guard), boundary verification.
+4. **Implement**: Single user approval gate, native write subagent dispatch (test-first), boundary verification.
 5. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
 6. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
 7. **Re-Review Loop**: Re-dispatch narrowed by target affinity to live citing delegates until `check-consensus.mjs` exits 0 or wave cap reached.

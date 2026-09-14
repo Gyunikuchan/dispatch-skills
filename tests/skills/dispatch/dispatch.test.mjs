@@ -10,6 +10,7 @@ import {
   resolveProvider,
   getCandidateProviders,
   dispatchTask,
+  executeProvider,
   providerProbes,
   providerRunners,
   PROVIDER_ALIASES,
@@ -1053,6 +1054,61 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
     }
   });
 
+  it('executeProvider throws on an unhandled provider key', async () => {
+    await assert.rejects(
+      () => executeProvider('nonexistent-provider', {}),
+      /Unhandled provider: nonexistent-provider/,
+    );
+  });
+
+  it('dispatchTask forwards files, agent, timeout, maxBufferMb, json and verbose into the runner options', async () => {
+    const seen = [];
+    try {
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerRunners, 'agy', async (opts) => {
+        seen.push(opts);
+        return { exitCode: 0, stdout: 'ok', stderr: '', provider: 'agy' };
+      });
+
+      await dispatchTask({
+        prompt: 'p',
+        provider: 'agy',
+        files: ['a.md'],
+        agent: 'my-agent',
+        timeout: 1234,
+        maxBufferMb: 25,
+        json: true,
+        verbose: true,
+      });
+
+      const opts = seen[0];
+      assert.deepEqual(
+        {
+          files: opts.files,
+          agent: opts.agent,
+          timeout: opts.timeout,
+          maxBufferMb: opts.maxBufferMb,
+          json: opts.json,
+          verbose: opts.verbose,
+        },
+        {
+          files: ['a.md'],
+          agent: 'my-agent',
+          timeout: 1234,
+          maxBufferMb: 25,
+          json: true,
+          verbose: true,
+        },
+      );
+      // The baseline is dispatchTask's own single snapshot — a string fingerprint, shared by every attempt.
+      assert.equal(typeof opts.initialGitStatus, 'string', 'the runner receives the cascade-level git baseline');
+    } finally {
+      // This describe has no afterEach of its own; restore here so the mocks cannot leak into
+      // later tests if this file grows (mocks persist across sibling tests otherwise).
+      mock.restoreAll();
+    }
+  });
+
   it('prints the sentinel on stderr end-to-end for `dispatch.mjs --no-config`', () => {
     const script = path.join(
       PROJECT_ROOT,
@@ -1075,5 +1131,30 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
     );
     assert.match(stderr, /\[dispatch\] ERROR: \[NO_CONFIG_REQUIRES_PROVIDER\]/);
     assert.equal(run.status, 1);
+  });
+});
+
+describe('dispatch --validate-only CLI', () => {
+  // main() calls process.exit on every path, so it is only drivable as a spawned child.
+  const run = (args) =>
+    cp.spawnSync(process.execPath, [path.join(PROJECT_ROOT, 'skills', 'dispatch', 'scripts', 'dispatch.mjs'), ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: PROJECT_ROOT, // hermetic: never inherit the caller's cwd
+    });
+
+  it('validates the shipped config and exits 0', () => {
+    const res = run(['--validate-only']);
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout || '', /Config is valid\./);
+  });
+
+  it('rejects combining --validate-only with flags it would otherwise ignore', () => {
+    const res = run(['--validate-only', '-m', 'claude-opus-5', 'positional prompt']);
+    assert.equal(res.status, 1);
+    assert.match(
+      res.stderr || '',
+      /--validate-only checks the dispatch config schema alone and cannot be combined with: prompt, --model/,
+    );
   });
 });
