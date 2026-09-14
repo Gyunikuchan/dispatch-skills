@@ -1,30 +1,30 @@
 # dispatch
 
-Hand bounded, read-only tasks to external coding-agent CLIs and receive clean, synthesized results without polluting your primary agent's context window.
+Hand bounded, read-only tasks to external coding-agent CLIs—Claude Code, Antigravity, GitHub Copilot, and OpenCode—and receive clean, synthesized results without polluting your primary agent's context window.
 
 ---
 
 ## What It Does
 
-When working with an AI coding assistant (the **orchestrator**—like Claude Code, Antigravity, or GitHub Copilot), complex investigations, code trace requests, or plan reviews can flood the context window with hundreds of lines of raw search outputs and intermediate tool calls.
+When working with an AI coding assistant (the **orchestrator**—such as Claude Code, Antigravity, or GitHub Copilot), large investigations, code trace requests, and architectural inquiries can flood the active context window with hundreds of lines of raw search outputs, AST dumps, and intermediate tool iterations.
 
-`dispatch` solves this by acting as a **cross-agent delegation bridge**:
-1. **Delegates bounded read-only work** to an external agent CLI (Claude Code, Antigravity 2.0, Copilot, or OpenCode).
-2. **Runs in isolation** in the background, redirecting verbose execution traces to OS temp logs.
-3. **Returns only the synthesized answer** along with a persistent session handle or canvas deep-link.
-4. **Preserves the orchestrator's role**: The orchestrator keeps the user brief, judgment, workspace file edits, and git commits.
+`dispatch` serves as a **cross-agent delegation bridge**:
+1. **Delegates bounded read-only work** to an external agent CLI (`claude`, `agy`, `copilot`, or `opencode`).
+2. **Preserves context hygiene**: Runs the delegate in the background, streaming verbose traces and tool logs out-of-context to OS temporary files.
+3. **Returns clean syntheses & session handles**: Delivers a concise answer to the orchestrator along with an interactive session resume command or Antigravity canvas deep-link.
+4. **Enforces structural read-only safety**: Delegates cannot mutate workspace code or stage git commits. File edits and final decisions remain strictly with your primary orchestrator agent.
 
 ```mermaid
 flowchart TD
     User(["👤 User Prompt"]) --> Orchestrator["🤖 Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
     Orchestrator -->|"Delegates read-only task"| Dispatch["⚡ dispatch"]
     
-    Dispatch -->|"Selects available CLI"| Delegate["🔍 External Delegate CLI<br/>(Claude Code / Antigravity / Copilot / OpenCode)"]
+    Dispatch -->|"Diversity-sorted cascade"| Delegate["🔍 External Delegate CLI<br/>(Claude Code / Antigravity / Copilot / OpenCode)"]
     
-    Delegate -.->|"Streams raw tool traces"| Logs[("📝 OS Temp Logs<br/>(Keeps context clean)")]
-    Delegate -->|"Returns clean answer & session link"| Orchestrator
+    Delegate -.->|"Streams raw tool traces"| Logs[("📝 OS Temp Logs<br/>(Protects context window)")]
+    Delegate -->|"Returns clean findings & session link"| Orchestrator
     
-    Orchestrator -->|"Presents synthesized result"| User
+    Orchestrator -->|"Verifies claims & presents synthesis"| User
 ```
 
 ---
@@ -35,9 +35,9 @@ flowchart TD
 - **Node.js**: `v18.0.0` or higher.
 - **At least one agent CLI** installed or reachable on your system:
   - **Claude Code**: Claude Desktop, Claude VS Code Extension, or standalone CLI (`claude`).
-  - **Antigravity 2.0**: Antigravity Desktop app, VS Code extension, or CLI (`agy`).
+  - **Antigravity 2.0**: Antigravity Desktop app, Antigravity VS Code extension, or CLI (`agy`).
   - **GitHub Copilot**: GitHub Copilot Desktop, Copilot CLI, or VS Code Extension CLI (`copilot`).
-  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc`'s `model` field to any `provider/model` it supports (e.g. `anthropic/claude-opus-5`, `openrouter/...`). With no `model` configured anywhere (`opencode.jsonc`, dispatch's own config), `opencode` falls back to its own CLI default — OpenCode has no hard dependency on Local LM Studio.
+  - **OpenCode**: `opencode` binary, configured via `opencode.jsonc` (supports local LLMs like LM Studio or remote providers like Anthropic/OpenRouter).
 
 ### Installation
 
@@ -47,43 +47,49 @@ Install `dispatch` into your current project workspace:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 ```
 
-To install globally for all projects:
+To install globally for all your projects:
 
 ```bash
 npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch
 ```
 
-To install every skill in this repository:
+To install the complete suite of dispatch skills:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
+> [!NOTE]
+> When using multiple skills from this repository, ensure they are installed in the **same scope** (all project-local or all global) so sibling runner scripts can locate each other.
+
 ---
 
 ## How to Use
 
-Trigger `dispatch` directly via the slash command `/dispatch` (or natural language) in your agent chat session. You do not need to invoke lower-level scripts manually.
+Trigger `dispatch` directly via the `/dispatch` slash command or natural language inside your agent chat session. The orchestrator agent automatically handles argument assembly, background execution, log capture, and claim verification.
 
 ### 1. Basic Invocations
 
-Delegate an investigation or trace task:
+Delegate an investigation, architectural question, or code trace:
 
 ```markdown
 /dispatch Investigate why token refreshes fail silently in src/auth/session.ts
 ```
 
 ```markdown
-/dispatch Trace how discount stacking is calculated in src/domain/pricing.ts
+/dispatch Trace how discount stacking is calculated in src/domain/pricing.ts and check for order dependence
 ```
 
 ### 2. Attaching Files & Context (`-f`)
 
-Include specific files as bounded attachments:
+Attach specific files or out-of-workspace artifacts as bounded context:
 
 ```markdown
 /dispatch -f src/services/payment.ts -f src/types/billing.ts Check for race conditions in charge capture
 ```
+
+> [!TIP]
+> Delegate CLIs already have direct tool access to inspect workspace files. Use `-f` primarily for non-workspace artifacts, specific scratch briefs, or files you want the delegate to inspect with priority.
 
 ### 3. Pinning a Specific Provider (`--provider`)
 
@@ -94,56 +100,75 @@ Force delegation to a specific provider and bypass the automatic fallback cascad
 ```
 
 ```markdown
-/dispatch --provider claude Review our GraphQL schema definition for N+1 vulnerabilities
+/dispatch --provider claude Review our GraphQL schema definition for N+1 query vulnerabilities
 ```
 
 ### 4. Overriding Model & Reasoning Effort (`-m`, `-e`)
 
-Specify custom models or higher reasoning effort when needed:
+Specify a custom model or elevated reasoning effort:
 
 ```markdown
 /dispatch --provider copilot -m gpt-5.6-luna -e max Audit src/crypto/tokens.ts for timing attacks
+```
+
+```markdown
+/dispatch -m claude-opus-5 -e high Verify concurrency safety in src/worker/queue.ts
+```
+
+### 5. Overriding Execution Timeout (`-t`)
+
+Extend or shorten the execution timeout (default: `1800` seconds / 30 minutes):
+
+```markdown
+/dispatch -t 300 Quick dependency sanity check across all workspace package.json files
 ```
 
 ---
 
 ## Options & Flags Reference
 
-When invoking `/dispatch` (or reviewing execution plans), the following flags are supported:
+The following flags are supported when calling `/dispatch` or configuring dispatch runs:
 
-| Option / Flag | Description | Example Slash Command / Usage |
+| Option / Flag | Description | Example Usage |
 |---|---|---|
-| `-f <path>` | Attach context files (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
-| `-p <string>` | Pass the prompt as a flag instead of positionally. | `/dispatch -p "Trace the retry path"` |
-| `--prompt-file <path>` | Read the prompt from a file (cannot combine with `-p` or a positional prompt); pairs with `fill-template.mjs` output. | `/dispatch --prompt-file <path to filled prompt>` |
-| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables cascading. | `/dispatch --provider agy Trace workflow state` |
-| `-m <model>` | Override the default delegate model. | `/dispatch -m claude-opus-5 Review core types` |
-| `-e <level>` | Override reasoning effort; values are CLI-specific (e.g. Antigravity accepts `low`/`medium`/`high`; OpenCode receives it as `--variant`). | `/dispatch -e max Verify crypto primitives` |
-| `-t <sec>` | Override execution timeout (default: `1800` seconds / 30 mins). | `/dispatch -t 300 Quick dependency check` |
+| `-f <path>` | Attach context file or artifact (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
+| `-p <string>` | Pass the prompt explicitly as a flag instead of positional text. | `/dispatch -p "Trace the retry path"` |
+| `--prompt-file <path>` | Read the prompt from a file on disk (mutually exclusive with `-p` and positional prompt). | `/dispatch --prompt-file .scratch/brief.md` |
+| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables fallback cascading. | `/dispatch --provider agy Trace workflow state` |
+| `-m <model>` | Override the delegate model identifier. | `/dispatch -m claude-opus-5 Review core types` |
+| `-e <level>` | Override reasoning effort (CLI-specific, e.g. `low`, `medium`, `high`, `max`; OpenCode receives `--variant`). | `/dispatch -e max Verify crypto primitives` |
+| `-t <sec>` | Override execution timeout in seconds (default: `1800`). | `/dispatch -t 600 Inspect index coverage` |
 | `--orchestrator <name>` | Override auto-detected host platform (`claude`, `agy`, `copilot`, `opencode`). | `/dispatch --orchestrator claude ...` |
-| `--orchestrator-model <model>` | Override auto-detected host model (demotes same platform+model matches to end). | `/dispatch --orchestrator-model claude-opus-5 ...` |
+| `--orchestrator-model <model>` | Override auto-detected host model (demotes matching platform+model to end of cascade). | `/dispatch --orchestrator-model claude-opus-5 ...` |
 | `--json` | Request structured JSON output (OpenCode provider only). | `/dispatch --provider opencode --json Parse AST` |
-| `-a <name>` | Override the delegate agent name (opencode provider only). | `/dispatch --provider opencode -a delegate ...` |
-| `-v` | Stream live verbose execution traces to the active terminal. | `/dispatch -v Run complex benchmark trace` |
-| `--no-config` | Skip loading the cascade config; requires `--provider`. | `/dispatch --no-config --provider claude ...` |
-| `--validate-only` | Validate the loaded config and exit. | `node scripts/dispatch.mjs --validate-only` |
-| `--max-buffer <MB>` | Raise the subprocess output cap (default: `10`) when a delegate's trace is truncated. | `/dispatch --max-buffer 25 ...` |
+| `-a <name>` | Override the delegate agent name (OpenCode provider only). | `/dispatch --provider opencode -a delegate ...` |
+| `-v` | Stream live verbose execution traces to the active terminal (interactive debugging). | `/dispatch -v Run complex benchmark trace` |
+| `--no-config` | Skip loading cascade config; requires `--provider`. | `/dispatch --no-config --provider claude ...` |
+| `--validate-only` | Validate loaded configuration shape and exit without dispatching. | `node scripts/dispatch.mjs --validate-only` |
+| `--max-buffer <MB>` | Raise subprocess stdout/stderr buffer cap (default: `10` MB) if delegate output is truncated. | `/dispatch --max-buffer 25 ...` |
 
 ---
 
-## Configuration
+## Configuration & Cascade Routing
 
-Cascade order and per-provider `model`/`effort` defaults live in a JSONC config, not in the runner scripts. `dispatch` loads exactly one config file — no merging across tiers — from the first of, in precedence order: `skills/dispatch/config.local.jsonc`, `skills/dispatch/config.jsonc`, then the shipped [`config.default.jsonc`](config.default.jsonc). `config.local.jsonc` and `config.jsonc` are git-ignored, so an override never lands in a commit by accident.
+Cascade order, per-provider models, and reasoning effort defaults live in JSONC configuration files.
 
-Schema:
+### Configuration Precedence
+
+`dispatch` loads the first configuration file found in the following precedence order (no merging across tiers):
+1. `skills/dispatch/config.local.jsonc` *(project/user local override; git-ignored)*
+2. `skills/dispatch/config.jsonc` *(project override; git-ignored)*
+3. `skills/dispatch/config.default.jsonc` *(shipped repository default)*
+
+### Example `config.jsonc`
 
 ```jsonc
 {
   "platforms": {
-    // Key order seeds the cascade (see below). A platform key absent here is never dispatched.
+    // Key order defines initial cascade priority
     "claude": { "model": ["claude-opus-5", "claude-sonnet-5"], "effort": "high" },
-    "agy": {},
-    "copilot": { "model": "gpt-5.6-luna" },
+    "agy": { "model": "gemini-3.8-flash", "effort": "medium" },
+    "copilot": { "model": "gpt-5.6-luna", "effort": "max" },
     "opencode": [
       { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
       { "model": "opencode-go/deepseek-v4.1-flash", "effort": "max" },
@@ -153,52 +178,60 @@ Schema:
 }
 ```
 
-Each platform entry can be a single object or an array of candidate objects. The cascade is diversity-sorted: every platform's first entry is tried, in key order, before any platform's second entry; remaining array entries follow in their original order, and the orchestrator's own platform is tried last (with candidates matching the orchestrator's active model placed after alternative models on that platform). With the config above and Claude Code orchestrating, the cascade is agy → copilot → GLM → DeepSeek → LM Studio → claude. A pinned `--provider` walks only that platform's entries, in order. `model` accepts a string or an array of strings inside candidate objects; every runner (claude, agy, copilot, opencode) tries an array's models in order as fallbacks within that candidate slot. An entry may be `{}` — dispatched with no `-m`/`-e` override, i.e. that CLI's own default applies. `-m`/`-e` passed to `dispatch.mjs` directly always win over the config entry.
+### Cascade Rules & Diversity Sorting
 
-Copy `config.default.jsonc` to `config.jsonc` (or `config.local.jsonc`) next to this skill, and edit it to change the cascade.
+- **Diversity-Sorted Cascade**: To ensure independent perspectives, `dispatch` tries the first candidate of each configured platform in key order before trying any platform's second candidate.
+- **Orchestrator Demotion**: The host agent's own platform is tried last (and candidates matching the active orchestrator model are demoted further) to avoid self-reinforcing echo chambers.
+- **In-Slot Fallbacks**: When `model` is configured as an array (e.g. `["claude-opus-5", "claude-sonnet-5"]`), the runner cascades through those models within that candidate slot before moving to the next platform.
+- **Explicit Flag Precedence**: Command-line flags (`-m`, `-e`) always override config values.
 
 ---
 
-## High-Level Behavior & Invariants
+## Key Features & Behaviors
 
-- **Alternative Platforms Prioritized**: The dispatcher inspects environment markers to identify the host platform (e.g., detecting if it is being run from Claude Code or Antigravity). It tries alternative platforms first to engage a differentiated platform/model for a different opinion, cascading to the host platform only as a last resort before falling back to an in-process subagent.
-- **Strictly Read-Only by Design**: Delegates operate in structurally enforced read-only modes (`--mode plan` on Antigravity and Copilot; `--permission-mode plan` with read-only tool allowlists and denied write tools on Claude Code; Bubblewrap read-only mounts on Linux with `bwrap`, credential stripping, and dead-end WAN proxies for local backends on OpenCode). Exception: OpenCode on macOS, Windows, and Linux without Bubblewrap (`bwrap`) has no structural boundary and relies on prompt guardrails plus the git integrity check (accepted risk; see [references/providers.md](references/providers.md)). Antigravity also passes `--dangerously-skip-permissions` to auto-approve read-only tool requests without interactive prompts in headless mode.
-- **Context Window Protection**: Raw terminal logs, tool iterations, and search sweeps are piped to temporary OS log files (OS temp). The orchestrating agent receives only the final synthesized summary and session link.
-- **Session Continuity & Deep-Links**: When supported, `dispatch` captures and returns session identifiers:
-  - **Antigravity 2.0**: `conversation://<id>` deep-links that open directly in the Antigravity desktop canvas.
-  - **Claude Code**: `claude --resume <session_id>` command handles.
-  - **GitHub Copilot**: `copilot --resume <session_id>` command handles.
-- **Pre/Post Git Integrity Checks**: A `git status --porcelain` snapshot is taken before and after every dispatch. Any file modifications created during the run are immediately flagged as integrity warnings.
-- **Graceful Degradation**: If every external CLI candidate is missing, unauthenticated, or rate-limited, the runner exits `NO_DISPATCH_AVAILABLE` and the orchestrator falls back to an in-process native subagent (`research` in Antigravity, `Explore` in Claude Code, `explore` in OpenCode) or local direct execution without crashing the workflow.
+- **Structural Read-Only Enforcement**: Delegates operate under strict read-only execution modes:
+  - **Antigravity & Copilot**: Enforced via `--mode plan`.
+  - **Claude Code**: Enforced via `--permission-mode plan`, tool allowlists (`Read`, `Glob`, `Grep`), and explicit tool disallow rules (`Write`, `Edit`, `NotebookEdit`).
+  - **OpenCode**: Enforced via prompt guardrails, credential stripping, and Bubblewrap (`bwrap`) read-only mounts on Linux.
+- **Context Window Protection**: All verbose subprocess logs, search dumps, and tool iterations stream to OS temp files (`os.tmpdir()`). Only the high-signal synthesized conclusion reaches the orchestrator's context window.
+- **Session Continuity & Deep-Links**: When supported by the delegate, `dispatch` captures persistent session handles:
+  - **Antigravity 2.0**: Emits a `conversation://<id>` deep-link that opens the full trajectory directly in the Antigravity desktop canvas.
+  - **Claude Code**: Emits a `claude --resume <session_id>` command handle.
+  - **GitHub Copilot**: Emits a `copilot --resume <session_id>` command handle.
+- **Pre- and Post-Run Git Integrity Checks**: Takes a `git status --porcelain` snapshot before and after delegate execution. Any detected file modifications are flagged immediately as integrity warnings.
+- **Graceful In-Process Fallback**: If all configured external CLIs are unavailable, unauthenticated, or rate-limited, the runner exits `NO_DISPATCH_AVAILABLE`. The orchestrator cleanly falls back to an in-process read-only subagent (`research` in Antigravity, `Explore` in Claude Code, `explore` in OpenCode, `self` in Copilot) without failing the workflow.
 
 ---
 
 ## Nuances, Quirks & Troubleshooting
 
 ### Binary Auto-Discovery
-`dispatch` automatically searches known standard locations across macOS, Linux, and Windows for Desktop applications, VS Code extension bundles, and standalone CLI binaries. You do not need to configure explicit binary paths in your environment.
+`dispatch` automatically scans standard directories across macOS, Windows, and Linux for standalone CLI binaries, Desktop application bundles, and VS Code extension caches. Explicit binary paths do not need to be configured in your environment.
 
-### Claude Code Sandbox Behavior
-When Claude Code dispatches a task to Antigravity, it executes the runner with `dangerouslyDisableSandbox: true`. This is required because Antigravity's local language server binds to a local TCP socket, which is blocked by Claude Code's restricted bash sandbox (`bind: operation not permitted`). Safety remains guaranteed through Antigravity's structural `--mode plan` flag.
+### Claude Code Sandbox & Antigravity Language Server
+When Claude Code dispatches a task to Antigravity, it executes the runner with `dangerouslyDisableSandbox: true`. This is required because Antigravity's local language server binds to a local TCP socket, which Claude Code's restricted Bash sandbox blocks (`bind: operation not permitted`). Safety remains structurally guaranteed through Antigravity's `--mode plan` flag.
 
 ### Inspecting In-Flight Progress
-If a complex dispatch is taking several minutes, you can inspect the real-time activity log emitted in the launch banner:
+If a long-running dispatch task is in progress, you can inspect real-time delegate output using the log path emitted in the launch banner:
+
+**macOS / Linux:**
 ```bash
 tail -n 30 "<logFilePath>"
 ```
-PowerShell:
+
+**Windows PowerShell:**
 ```powershell
 Get-Content -Tail 30 "<logFilePath>"
 ```
 
-### Delegate Environment & Authentication
-Delegates run in a filtered environment with credential stripping. Non-secret identity and reachability variables pass through; API keys and tokens are stripped (see [references/providers.md § 1 Safe Environment Variable Pass-Through](references/providers.md#safe-environment-variable-pass-through)). Sign each CLI in interactively once (`claude`, `agy`, `copilot`), or provide remote credentials in `opencode.jsonc`.
+### Environment Isolation & Authentication
+Delegates run in a sanitized environment where sensitive API keys and tokens are stripped from environment variables (see [references/providers.md](references/providers.md) for the exact variable allowlist). Ensure each CLI is logged in interactively once on your system (`claude`, `agy`, `copilot`), or provide credentials in `opencode.jsonc`.
 
 ### Git Integrity False Positives
-`dispatch` verifies that the delegate made no file changes. However, concurrent background tasks—such as IDE auto-saves, active file watchers, or background builds running in parallel—can trigger git integrity warnings. Always check which files were touched before assuming a violation.
+`dispatch` checks for workspace file changes across each run. Concurrent background activities—such as IDE auto-saves, background compilers, or active test watchers—can trigger false-positive integrity warnings. Check the modified files list reported in the warning before assuming delegate misbehavior.
 
 ### OpenCode Provider Setup
-`opencode` targets whatever `provider/model` `opencode.jsonc` resolves, local or remote. With no `model` configured anywhere, `opencode`'s own CLI default applies.
+`opencode` resolves models and providers via `opencode.jsonc`:
+- **Local LLMs (e.g. LM Studio)**: Ensure the local server is running at `http://127.0.0.1:1234/v1` and `opencode` is on `PATH`. Outbound network traffic is confined to prevent data leakage.
+- **Remote Providers**: Specify any `<provider>/<model>` pair (e.g. `anthropic/claude-opus-5`, `openrouter/...`) and configure credentials in `opencode.jsonc`.
 
-- **Local LM Studio**: When `opencode.jsonc`'s `model` is set to an `lmstudio/...` model, start LM Studio's local server at `http://127.0.0.1:1234/v1` and ensure `opencode` is on `PATH`.
-- **Any other provider**: Point `opencode.jsonc`'s `model` at a `<provider>/<model>` pair (e.g. `anthropic/claude-opus-5`, `openrouter/...`) and configure credentials in `opencode.jsonc`'s `provider.<name>.options.apiKey`. Preflight, GPU concurrency lock, and WAN trapping apply only to local endpoints; remote providers authenticate and cascade normally.
