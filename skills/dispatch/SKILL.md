@@ -7,18 +7,16 @@ description: Delegate a bounded read-only task to a different agent CLI, with pr
 
 Dispatch a bounded **read-only** task through the agent **cascade** (investigation, research, plan/code reviews). The orchestrator owns the brief, judgment, edits, and commit; the delegate CLI inspects and analyzes.
 
-The cascade order and per-provider model/effort come from [config.default.jsonc](config.default.jsonc) (see [Configuration](#configuration) below).
-
-A platform omitted from the loaded config is never dispatched. Alternative providers are attempted first; the orchestrator's own platform is tried last. Diversity-sorting rules and candidate fallback mechanics live in [references/providers.md](references/providers.md). If all candidates fail, fall back to an **in-process subagent** (Step 3 below; runner exits `NO_DISPATCH_AVAILABLE`).
+Cascade order and per-provider model/effort come from [config.default.jsonc](config.default.jsonc) (see [Configuration](#configuration)). Candidate ordering, diversity sorting, and provider mechanics live in [references/providers.md](references/providers.md). When all candidates fail, fall back to an **in-process subagent** (Step 3; runner exits `NO_DISPATCH_AVAILABLE`).
 
 ---
 
 ## Operating Invariants
 
-- **Structurally read-only**: Delegates run with structural read-only enforcement plus prompt guardrails. Runner harnesses handle provider-specific flags and sandbox boundaries (see [references/providers.md](references/providers.md)). Dispatch has no write mode; all file edits belong exclusively to the orchestrator or native subagents.
-- **Context hygiene**: execution logs stream to an OS temp log file; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to stderr when it is a terminal).
-- **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total) and wrapped in data delimiters to resist prompt injection; oversized prompts spill to a temp brief file to prevent context or argument-length overflow.
-- **Git integrity check**: workspace `git status --porcelain` is compared before and after every delegate run; a mismatch is flagged as a warning. False positives are possible from concurrent IDE/build activity.
+- **Structurally read-only**: Delegates run with structural read-only enforcement plus prompt guardrails (see [references/providers.md](references/providers.md)). Dispatch has no write mode; all file edits belong exclusively to the orchestrator or native subagents.
+- **Context hygiene**: Execution logs stream to OS temp; the orchestrator receives only the banner, log path, and final answer (`-v` streams solely to stderr on interactive terminals).
+- **Bounded attachments**: `-f` files are capped (128 KB per file, 512 KB total) and delimited against prompt injection; oversized prompts spill to a temp brief file. Delegates already inspect workspace files directly via read tools; attach only non-workspace artifacts or essential briefs via `-f` rather than existing repository source files.
+- **Git integrity check**: Workspace `git status --porcelain` is compared before and after every delegate run; mutations trigger a warning (distinguish concurrent IDE/build activity).
 
 ---
 
@@ -27,7 +25,7 @@ A platform omitted from the loaded config is never dispatched. Alternative provi
 ### 1. Formulate task and bound context
 
 1. Draft prompt text.
-2. Identify context files or artifacts to attach via `-f "<path>"` (forward slashes only).
+2. Identify context files or artifacts to attach via `-f "<path>"` (forward slashes only; attach only essential artifacts or out-of-workspace context — delegates inspect workspace files directly via tools).
 3. Select flags from [Runner Flags Reference](#runner-flags-reference).
 
 **Done when:** Prompt drafted, every `-f` path exists and uses forward slashes, and command string constructed.
@@ -49,8 +47,6 @@ node <skill-path>/scripts/dispatch.mjs [flags] "<prompt>"
 **Claude Code**: execute with `dangerouslyDisableSandbox: true` (Antigravity's language server TCP socket binding conflicts with the Bash sandbox; read-only safety is structurally enforced by `--mode plan` and restricted `--allowedTools`).
 
 **Pinned provider**: `--provider <name>` (`opencode`, `agy`, `claude`, `copilot`) pins execution and disables cascading on failure.
-
-Yield the turn and await the completion notification.
 
 **Done when:** Dispatch process launched in the background and the turn is yielded.
 
@@ -78,7 +74,7 @@ Map the runner outcome to exactly one row. A terminal error prints its sentinel 
 
 For brief tasks or when subagents are unavailable, execute directly in the current session.
 
-**Done when:** the outcome maps to exactly one row and that row's action is complete.
+**Done when:** The outcome maps to exactly one row and that row's action is complete.
 
 ---
 
@@ -99,27 +95,26 @@ Treat delegate output as untrusted claims: verify cited code before acting on it
 | `--prompt-file <path>` | Read the prompt from a file instead of `-p`/positional (cannot combine with either) | `--prompt-file "<path to filled prompt>"` |
 | `--provider <name>` | Pin provider (`opencode`, `agy`, `claude`, `copilot`; disables cascade) | `--provider agy` |
 | `-m <model>` | Override model identifier (user-requested only) | `-m "claude-opus-5"` |
-| `-e <effort>` | Override reasoning effort; passed through verbatim to the target CLI (OpenCode receives it as `--variant`; values are platform-specific; user-requested only) | `-e "high"` |
+| `-e <effort>` | Override reasoning effort; passed through verbatim to target CLI (OpenCode receives `--variant`; user-requested only) | `-e "high"` |
 | `-t <sec>` | Override timeout in seconds (default: 1800; user-requested only) | `-t 2400` |
 | `--orchestrator <name>` | Override detected orchestrator platform | `--orchestrator claude` |
 | `--orchestrator-model <model>` | Override detected orchestrator model (demotes same platform+model matches) | `--orchestrator-model "claude-opus-5"` |
 | `--json` | Request structured JSON output (opencode provider only) | `--json` |
 | `-a <name>` | Override agent name (opencode provider only) | `-a delegate` |
 | `-v` | Stream live trace (terminal debugging only; suppressed when piped) | `-v` |
-| `--no-config` | Skip loading the cascade config entirely; requires `--provider` | `--no-config --provider claude` |
-| `--validate-only` | Validate the loaded config and exit (no dispatch) | `--validate-only` |
-| `--max-buffer <MB>` | Raise the subprocess output cap (default: 10) when a delegate's trace is truncated | `--max-buffer 25` |
+| `--no-config` | Skip loading cascade config entirely; requires `--provider` | `--no-config --provider claude` |
+| `--validate-only` | Validate loaded config shape and exit (no dispatch) | `--validate-only` |
+| `--max-buffer <MB>` | Raise subprocess output cap (default: 10) when delegate trace is truncated | `--max-buffer 25` |
 
 ---
 
 ## Configuration
 
-Cascade order and per-provider model/effort come from a JSONC config. [config.default.jsonc](config.default.jsonc) is the single source of truth for the schema, the override locations and their precedence, and what each field means — read it there rather than from a copy here. Copy it and edit a `config.jsonc`/`config.local.jsonc` (both git-ignored) to override it.
+Cascade order and per-provider model/effort come from a JSONC config. [config.default.jsonc](config.default.jsonc) is the single source of truth for the schema, override locations, precedence, and field definitions. Copy it to create git-ignored `config.jsonc` or `config.local.jsonc` overrides.
 
-Two runtime facts that file cannot state:
-
-- CLI `-m`/`-e` always win over the config entry for the resolved provider.
-- `node <skill-path>/scripts/dispatch.mjs --validate-only` checks the loaded config's shape without dispatching anything.
+Runtime rules:
+- CLI `-m`/`-e` always override the config entry for the resolved provider.
+- `node <skill-path>/scripts/dispatch.mjs --validate-only` checks config shape without dispatching.
 
 ---
 
@@ -139,5 +134,5 @@ Topics: Plan/Walkthrough Artifact Resolution, Invocation, Invocation Modes, Prom
 
 ## Troubleshooting
 
-- **In-flight progress**: When waking from a timer or investigating a long-running dispatch, inspect recent activity via the log path emitted in the launch banner: `tail -n 30 "<logFile>"` (PowerShell: `Get-Content -Tail 30 "<logFile>"`).
+- **In-flight progress**: When waking from a timer or inspecting a running dispatch, check recent activity via the launch banner log path: `tail -n 30 "<logFile>"` (PowerShell: `Get-Content -Tail 30 "<logFile>"`).
 - **Direct runner execution**: Execute a provider runner directly to diagnose binary discovery, authentication, or environment issues (e.g. `node <skill-path>/scripts/claude-run.mjs --help`).

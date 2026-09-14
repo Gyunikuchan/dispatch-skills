@@ -1,7 +1,7 @@
 {
-  "SKILL.md": "87138aeedb9029613728fa745ddcc544331361fe21fb0e1b82486a402a97cbbc",
-  "references/alignment.md": "b4ff4ee7262854c17e86a506f233b29e11948654858e405c6ff7a90dbd7635ba",
-  "references/providers.md": "1113bfa16b7d63631ba35b83453795dcecd0fa91b6f0a4e9330fa7a76ce710bf",
+  "SKILL.md": "397bc6efb9c0edf26fdfed88f4212804699a8194f50bb27cb6ea9d24dfea918e",
+  "references/alignment.md": "95183c84f5dfd848eaf0584de70a8371ab85182c083527e0d7d8cd2f4f96652e",
+  "references/providers.md": "2d9908c2d8ae6e7ef455a2922438a6d2b397a513b7f589e9650e63e9d0d1bd0f",
   "scripts/agy-run.mjs": "746301586fcf36fcbf3002c1f8cbd3605df4ad88f3f7cfc3860d72a28ce4e7e6",
   "scripts/claude-run.mjs": "900a28e0662a9be75e4ce248792d41130c0c3c5b2a3db516b33762f518ef5e55",
   "scripts/common.mjs": "bf830ab09fd78bd42487ad4fe3fc29988264ffa08149970a8a0d50234702455b",
