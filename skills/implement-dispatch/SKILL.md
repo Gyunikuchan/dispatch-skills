@@ -7,7 +7,7 @@ disable-model-invocation: true
 # implement-dispatch
 
 Run a feature or fix through `scope → plan → review → approval → implementation → verification → review → handoff`.
-This skill owns orchestration; companion skills own runner behavior and review criteria.
+This skill owns orchestration; companion skills own runner behavior, review criteria, and templates.
 
 | Dependency | Role | If unavailable |
 |---|---|---|
@@ -15,12 +15,9 @@ This skill owns orchestration; companion skills own runner behavior and review c
 | `dispatch-plan-review` | Optional plan template, review, and adjudication | Skip Step 3 |
 | `dispatch-code-review` | Optional walkthrough template, review, and adjudication | Skip Steps 5–7 and record diagnostics on the plan |
 
-**Shared contracts.** Before a review wave, read [`dispatch`'s alignment contract](../dispatch/references/alignment.md), especially Invocation Modes, Target → Flag Mapping, Reserve Substitution, Adjudication, Resolutions Log, and Artifact Lifecycle. That document is authoritative for delegate invocation and finding grammar.
+**Review wave.** Before launching or adjudicating any plan/code review wave, read [`dispatch`'s alignment contract](../dispatch/references/alignment.md), especially Invocation Modes, Target → Flag Mapping, Reserve Substitution, Adjudication, Resolutions Log, and Artifact Lifecycle. That document owns delegate handover and finding grammar.
 
-**Review dispatch failures.** Read and apply
-[`dispatch`'s native fallback contract](../dispatch/references/providers.md#native-fallback) to
-every review target. Its same-platform branch is read-only and separate from the native write
-subagent used in Step 4.
+**Review failure.** When a review dispatch fails, read and apply [`dispatch`'s native fallback contract](../dispatch/references/providers.md#native-fallback). Use its terminal branch for configuration or integrity errors and its read-only native branch for runner failures; keep it separate from the native write subagent in Step 4.
 
 ## Invocation
 
@@ -40,7 +37,7 @@ Use `low` for a mechanical low-risk edit, `medium` for a bounded feature or fix,
 ### 1. Scope & Setup
 
 1. Convert the ask into checkable success criteria. Fold settled decisions from a preceding interview directly into the criteria and assumptions.
-2. Classify the scope as `trivial`, `focused`, or `cross-cutting`; map it to `low`, `medium`, or `high`. An explicit level overrides the mapping.
+2. Classify the scope as `trivial`, `focused`, or `cross-cutting`; map it to `low`, `medium`, or `high`. An explicit level overrides the mapping. Treat this as the initial classification; an automatic level may be reclassified after plan review.
 3. Resolve the execution flow:
 
    ```bash
@@ -57,53 +54,55 @@ Use `low` for a mechanical low-risk edit, `medium` for a bounded feature or fix,
    node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
    ```
 
-**Done when:** the criteria and assumptions are written, scope and level are fixed, `flow` is loaded, and both artifact paths are resolved.
+**Done when:** the criteria and assumptions are written, the initial scope and level are classified, `flow` is loaded, and both artifact paths are resolved.
 
 ### 2. Author Plan
 
-1. Write the plan at the resolved path. When `dispatch-plan-review` is installed, use its [plan template](../dispatch-plan-review/references/plan-template.md); otherwise use `## Key Decisions & Context`, `## Proposed Changes`, `## Rollback & Blast Radius`, `## Verification Plan`, and `## Out of Scope`.
+1. Write the plan at the resolved path. When `dispatch-plan-review` is installed, use its [plan template](../dispatch-plan-review/references/plan-template.md); otherwise include `## Key Decisions & Context`, `## User Review Required`, `## Open Questions & Assumptions`, `## Proposed Changes`, `## Rollback & Blast Radius`, `## Verification Plan`, and `## Out of Scope`.
 2. Make the plan self-contained for external reviewers. Group proposed changes by file and tag each entry `[NEW]`, `[MODIFY]`, or `[DELETE]`.
-3. Keep approval out of this step; Step 4 is the run's only approval gate.
+3. Reserve approval for Step 4; it is the run's only approval gate.
 
-**Done when:** the plan exists at the resolved path, every required section is populated, and each success criterion maps to a proposed change or verification.
+**Done when:** the plan exists at the resolved path, its required sections are populated, changes are grouped and tagged, and each success criterion maps to a proposed change or verification.
 
 ### 3. Plan Review Loop
 
-Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].maxRounds === 0`. When `maxRounds > 0` but `targets` is empty, run one in-process read-only fallback and record the substitution in the plan's round log and diagnostics.
+Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].maxRounds === 0`. When it is enabled but `targets` is empty, substitute one in-process read-only fallback for the first wave and record it in the plan's round log and diagnostics.
 
-1. Start the first wave in orchestrated mode with the plan path, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, and the plan budget from the [Review contract](#review-contract).
-2. Adjudicate every returned claim against the requirements, repository rules, and cited plan sections or code lines. Rewrite delegate text in your own words, apply accepted changes to the plan, and append the round log under `## Review Findings & Resolutions`.
-3. Run re-review waves while the [Review contract](#review-contract) says the loop is live. Narrow `targets` by target affinity to delegates with live findings; name changed sections and pending rebuttals in `Review Scope`.
+1. Start the first orchestrated wave with the plan path, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, and the plan budget from the [Review contract](#review-contract).
+2. Await every target and reserve outcome, including reports, native fallbacks, and terminal failures. Adjudicate each claim against the requirements, repository rules, and cited plan locus; rewrite delegate text, apply accepted changes, and append the round log under `## Review Findings & Resolutions`.
+3. Run re-review waves while the [Review contract](#review-contract) keeps the loop live. Narrow `targets` by target affinity to delegates with live findings; name changed sections and pending rebuttals in `Review Scope`.
 4. When a target or reserve fails with `[auth]` or `[quota]`, add its platform to the exclusion set and re-run `resolve-flow.mjs` with `--exclude <keys>` before the next wave or phase.
 
-Run:
+5. Run:
 
-```bash
-node <skills-dir>/implement-dispatch/scripts/check-consensus.mjs <plan path>
-```
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/check-consensus.mjs <plan path>
+   ```
 
-Exit `0` is the gate to approval; exit `1` sends the artifact back through the loop; exit `2` is a file or syntax error and halts the run.
+   Exit `0` is the gate to approval; exit `1` sends the artifact back through the loop; exit `2` is a file or syntax error and halts the run.
 
-**Done when:** the plan's consensus check exits `0`, or the user has ruled every item at the round cap and the resulting extra verification wave is settled.
+6. After the plan review loop reaches consensus, re-assess its scope and level against every accepted finding and the final proposed changes. For an automatic-level run, recompute the level from the final scope; preserve an explicit level as the user's override. If the final level differs from the level used to resolve `flow`, re-run `resolve-flow.mjs` with the current orchestrator, pins, and exclusion set, replace `flow`, and use the new phase settings from this point forward. Carry the initial and final scope/level and any shift into the run diagnostics.
+
+**Done when:** the plan's consensus check exits `0`, or the user has ruled every item at the round cap and the resulting extra verification wave is settled; the final scope and level are settled; and `flow` reflects that final level.
 
 ### 4. Implement
 
-**Approval gate:** After Step 3, or immediately after Step 2 when plan review is skipped, present the plan for approval exactly once. If it has a `## Review Findings & Resolutions` section, run `check-consensus.mjs` first. Write code only after approval; halt on exit `2`.
+**Approval gate:** After Step 3's final scope/level check, or immediately after Step 2 when plan review is skipped, present the plan for approval exactly once. If it has a `## Review Findings & Resolutions` section, run `check-consensus.mjs` first. After approval, write code; halt on exit `2`.
 
-1. For `trivial` scope, direct execution, or a failed implementation-subagent fallback, implement the proposed changes in the orchestrator and author the baseline walkthrough when the code-review phase is enabled (`dispatch-code-review` is installed and `flow['code-review'].maxRounds > 0`).
-2. For `focused` or `cross-cutting` scope, dispatch test-first to the native write subagent selected by `flow.implementation.platform`. Pass the plan and resolved walkthrough paths plus its `model` and `effort` hints. The source key is `implementation.platforms`; it is intentionally independent of `dispatch`'s external-provider configuration. Use the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md).
-3. Keep Git read-only throughout: use `git status`, `git diff`, `git log`, and `git show` for inspection, and leave the worktree and index intact so scratch artifacts and user changes survive. Hand this guard to any write subagent verbatim.
-4. Run the host repository's declared verification command until green. If no command is declared, record that fact in the walkthrough or plan; if two consecutive runs fail identically, halt implementation and report the stable failure.
+1. For `trivial` scope or a failed implementation-subagent fallback, implement the proposed changes in the orchestrator and author the baseline walkthrough from the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md) when the code-review phase is enabled (`dispatch-code-review` is installed and `flow['code-review'].maxRounds > 0`).
+2. For non-trivial (`focused` or `cross-cutting`) scope, dispatch test-first to the native write subagent selected by `flow.implementation.platform` (`claude` → `general-purpose`; `agy` and `copilot` → `self`; `opencode` → `general`). Pass the plan, the resolved walkthrough path when code review is enabled, and the `model`/`effort` hints. The source key is `implementation.platforms`; it is independent of `dispatch`'s external-provider configuration. When code review is enabled, use the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md); otherwise record diagnostics on the plan.
+3. Use only read-only Git inspection (`git status`, `git diff`, `git log`, `git show`) while implementing; preserve the index and unrelated worktree changes so user edits and scratch artifacts survive. Hand this guard to any write subagent.
+4. Read the host repository's `AGENTS.md` / `CLAUDE.md` and run its declared verification command until green. If none is declared, record that fact in the walkthrough or plan; after two identical failures, stop and report the stable failure.
 
-**Done when:** the approved changes are complete, host verification is green or explicitly recorded as unavailable, and the baseline walkthrough exists whenever the code-review phase is enabled.
+**Done when:** the approved changes are complete, host verification is green, unavailable, or recorded as a stable failure, and the baseline walkthrough exists whenever the code-review phase is enabled.
 
 ### 5. Code Review
 
-Skip Steps 5–7 when `dispatch-code-review` is absent or `flow['code-review'].maxRounds === 0`.
+Skip Steps 5–7 when `dispatch-code-review` is absent or `flow['code-review'].maxRounds === 0`. When it is enabled but `targets` is empty, substitute one in-process read-only fallback for the first wave and record it in the walkthrough and diagnostics.
 
 1. Verify the walkthrough exists; if it is missing, author it from the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md), run the host verification command, and record the result.
 2. Start the first orchestrated wave with walkthrough and plan paths, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, and the code budget from the [Review contract](#review-contract). Re-resolve with the current exclusion set when plan review excluded a platform.
-3. Await every target and reserve outcome, including report, fallback, or terminal failure, before adjudicating.
+3. Await every target and reserve outcome, including reports, native fallbacks, and terminal failures, before adjudicating.
 
 **Done when:** the walkthrough is attached, every launched review dispatch is settled, and round-one claims are ready for Step 6.
 
@@ -111,7 +110,7 @@ Skip Steps 5–7 when `dispatch-code-review` is absent or `flow['code-review'].m
 
 1. Verify each claim against the active code, requirements, and repository rules. Apply accepted fixes directly; record rejected or downgraded findings and their evidence in the walkthrough.
 2. Update `## Changes Made`, `## Verification & Validation`, and `## Review Findings & Resolutions` after every accepted fix or ruling. Rewrite ruled `[Disputed]` lines as `[Resolved Dispute]` and settle pending lines per the Review contract.
-3. Re-run the host verification command until green, or until two consecutive runs fail identically. Keep unrelated or persistent failures explicit in the walkthrough and handoff.
+3. Re-run the host verification command using Step 4's stop rule. Keep unrelated or persistent failures explicit in the walkthrough and handoff.
 4. Resolve `[Disputed]` items through counter-evidence or user ruling. Under `consensus: true`, rejection or downgrade of a delegate-reported MUST-FIX or SHOULD-FIX remains `[Rejected — pending confirmation]` until the citing delegate confirms the counter-evidence. Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
 
 **Done when:** accepted fixes are applied, verification is green or its stable failure is recorded, and every review item has a logged status.
@@ -127,9 +126,9 @@ Skip Steps 5–7 when `dispatch-code-review` is absent or `flow['code-review'].m
 
 Start handoff only after every target and reserve dispatch from every phase has a terminal outcome.
 
-1. Run `check-consensus.mjs` on the walkthrough, or on the plan when code review was skipped. Exit `1` returns to Step 7; exit `2` halts cleanup.
+1. Run `check-consensus.mjs` on the walkthrough, or on the plan when code review was skipped. Exit `1` returns to Step 3 for a plan or Step 7 for a walkthrough; exit `2` halts cleanup.
 2. Append `## Run Diagnostics` to the walkthrough or plan with:
-   - scope classification, evaluated level, `flow.diagnostics.effectiveLevel`, and any scope shift;
+   - initial and final scope classifications, evaluated level, `flow.diagnostics.effectiveLevel`, and any scope or level shift;
    - artifact slug and `slugSource` (`explicit`, `branch`, or `conversation`);
    - rounds used versus `maxRounds`;
    - active, failed, substituted, dropped, excluded, unavailable, and clamped delegates, plus exclusion reasons;
@@ -141,7 +140,7 @@ Start handoff only after every target and reserve dispatch from every phase has 
    ```
 
    Retain artifacts in place when the run is unresolved or halted and state why.
-4. Report diagnostics and the artifact path. Git operations, commits, pushes, branches, and pull requests remain outside this skill.
+4. Report diagnostics and the artifact path. Leave commits, pushes, branch changes, and pull requests to the caller.
 
 **Done when:** all review work is settled, diagnostics are appended, artifacts are relocated or their retention reason is recorded, and the handoff is delivered.
 
