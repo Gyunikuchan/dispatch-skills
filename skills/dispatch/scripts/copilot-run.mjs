@@ -78,6 +78,7 @@ import {
  * @property {string[]} [files]
  * @property {string} [model]
  * @property {string} [effort]
+ * @property {boolean} [sandbox] Enable Copilot's experimental OS-level command sandbox.
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [verbose]
@@ -138,6 +139,7 @@ export async function runCopilot(options = {}) {
     files = [],
     model = null,
     effort = null,
+    sandbox = true,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
@@ -193,6 +195,7 @@ export async function runCopilot(options = {}) {
           model: currentModel,
           formattedPrompt,
           effort: effectiveEffort,
+          sandbox,
           timeout,
           maxBufferMb,
           verbose,
@@ -295,14 +298,15 @@ function createNoTargetsError() {
 }
 
 /**
- * Builds the `copilot -p` argument array. `model`/`effort` are omitted entirely when
- * falsy so the Copilot CLI's own default applies — dispatch ships no hardcoded fallback.
+ * Builds the Copilot argument array. `model`/`effort` are omitted entirely when falsy so the
+ * Copilot CLI's own default applies — dispatch ships no hardcoded fallback. Copilot gates its
+ * command sandbox behind the experimental feature flag, so both flags travel together.
  * @param {string} argvPrompt
- * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
  * @returns {string[]}
  */
-export function buildCopilotArgs(argvPrompt, { model, effort } = {}) {
-  const args = ['-p', argvPrompt];
+export function buildCopilotArgs(argvPrompt, { model, effort, sandbox = true } = {}) {
+  const args = sandbox ? ['--experimental', '--sandbox', '-p', argvPrompt] : ['-p', argvPrompt];
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
   args.push('--mode', 'plan');
@@ -325,6 +329,7 @@ function executeOnTarget({
   model,
   formattedPrompt,
   effort,
+  sandbox,
   timeout,
   maxBufferMb,
   verbose,
@@ -335,7 +340,7 @@ function executeOnTarget({
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot', {
     binary: target.binary,
   });
-  const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort });
+  const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort, sandbox });
 
   const modeLabel = { desktop: 'copilot desktop', vscode: 'copilot vscode', cli: 'copilot cli' }[target.mode];
   const providerLabel = `GitHub Copilot [${target.mode}] (${modeLabel})`;
@@ -381,8 +386,14 @@ function executeOnTarget({
       const failureKind =
         classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }) ||
         outcome.truncated;
+      const effectiveExitCode = failureKind === 'sandbox-unsupported' ? 1 : exitCode;
 
-      emitCompletionBanner({ provider: providerLabel, sessionLink, exitCode, truncated: outcome.truncated });
+      emitCompletionBanner({
+        provider: providerLabel,
+        sessionLink,
+        exitCode: effectiveExitCode,
+        truncated: outcome.truncated,
+      });
 
       return {
         provider: 'copilot',
@@ -391,7 +402,7 @@ function executeOnTarget({
         stdout: cleanStdout,
         rawStdout: outcome.stdoutBuffer,
         stderr: outcome.stderrBuffer,
-        exitCode,
+        exitCode: effectiveExitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         sessionId,
@@ -443,6 +454,13 @@ export async function main() {
           `Session log: ${res.logFile}`,
       );
     }
+    if (res.failureKind === 'sandbox-unsupported') {
+      console.error(
+        `\n[dispatch] This Copilot CLI does not support the experimental sandbox flags. ` +
+          `Upgrade Copilot CLI, set platforms.copilot.sandbox to false, or use --no-sandbox.\n` +
+          `Session log: ${res.logFile}`,
+      );
+    }
     if (res.gitIntegrityViolation) {
       console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
       if (res.gitIntegrityDetails) {
@@ -450,7 +468,7 @@ export async function main() {
       }
       console.warn('');
     }
-    process.exit(res.exitCode);
+    process.exit(res.failureKind === 'sandbox-unsupported' ? 1 : res.exitCode);
   } catch (err) {
     console.error(formatCliError(err));
     process.exit(safeExitCode(err));
@@ -460,16 +478,17 @@ export async function main() {
 /** Runner-specific flags, exported so the flag-parity test checks `--help` against the real list. */
 export const CLI_FLAGS = {
   valueFlags: ['--copilot-mode'],
-  booleanFlags: ['--test', '--probe', '--check', '--test-modes'],
+  booleanFlags: ['--sandbox', '--no-sandbox', '--test', '--probe', '--check', '--test-modes'],
   aliases: { '--copilot-mode': 'copilotMode' },
 };
 
 /** Parses the runner-specific `--copilot-mode` and `--test`/`--probe` flags. */
-function parseCopilotArgs(argv) {
+export function parseCopilotArgs(argv) {
   const options = parseCommonArgs(argv, CLI_FLAGS);
   const { values, booleans } = parseRunnerModeArgs(argv.slice(2), CLI_FLAGS);
 
   options.copilotMode = values.copilotMode ?? 'auto';
+  options.sandbox = !booleans['--no-sandbox'];
   options.probeOnly =
     booleans['--test'] || booleans['--probe'] || booleans['--check'] || booleans['--test-modes'];
   return options;
@@ -522,6 +541,8 @@ Options:
   --prompt-file <path>          Read the prompt from a file instead of an argument
   --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
   --copilot-mode <mode>         Explicit mode preference: 'cli', 'desktop', 'vscode', or 'auto' (default: auto)
+  --sandbox                     Enable Copilot's experimental OS-level command sandbox (default)
+  --no-sandbox                  Disable Copilot's experimental OS-level command sandbox
   --test, --probe, --check, --test-modes
                                 Test reachability across modes without requiring tokens or prompt
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)
@@ -941,10 +962,14 @@ export function extractCopilotSessionId(text) {
  * but not subscribed or lacks tokens, then falls back to the shared classifier.
  *
  * @param {string} text Raw stdout and stderr
- * @returns {'quota'|'context-overflow'|'auth'|'model-not-loaded'|'not-found'|'timeout'|null}
+ * @returns {'quota'|'context-overflow'|'auth'|'sandbox-unsupported'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyCopilotFailure(text) {
   if (!text || typeof text !== 'string') return null;
+
+  if (isSandboxUnsupportedDiagnostic(text)) {
+    return 'sandbox-unsupported';
+  }
 
   // e.g. "Error: No authentication information found."
   // "Copilot can be authenticated with GitHub using an OAuth Token..."
@@ -969,9 +994,16 @@ export function classifyCopilotFailure(text) {
  * @returns {ReturnType<typeof classifyCopilotFailure>}
  */
 export function classifyCopilotResult({ exitCode, stderr = '', stdout = '' }) {
+  if (isSandboxUnsupportedDiagnostic(`${stderr}\n${stdout}`)) return 'sandbox-unsupported';
   return exitCode === 0
     ? classifyCopilotFailure(stderr)
     : classifyCopilotFailure(`${stderr}\n${stdout}`);
+}
+
+function isSandboxUnsupportedDiagnostic(text) {
+  return /(?:(?:--(?:experimental|sandbox)|\bsandbox(?:ing)?\b).{0,80}(?:unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires)|(?:unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires).{0,80}(?:--(?:experimental|sandbox)|\bsandbox(?:ing)?\b))/i.test(
+    text,
+  );
 }
 
 // ============================================================================

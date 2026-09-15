@@ -63,6 +63,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string[]} [files]
  * @property {string|string[]} [model]
  * @property {string} [effort]
+ * @property {boolean} [sandbox] Copilot-only sandbox override; omitted values default to enabled.
  * @property {string} [agent]
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
@@ -84,6 +85,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string} stdout Cleaned assistant response.
  * @property {string} stderr
  * @property {number} exitCode
+ * @property {string|null} [failureKind]
  * @property {string} logFile
  * @property {'timeout'|'buffer'|null} truncated
  * @property {boolean} [gitIntegrityViolation]
@@ -136,6 +138,7 @@ export async function dispatchTask(options = {}) {
     files = [],
     model = null,
     effort = null,
+    sandbox: sandboxOverride = undefined,
     agent = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
@@ -218,6 +221,7 @@ export async function dispatchTask(options = {}) {
         provider: candidateProvider,
         model: model ?? fallbackEntry.model ?? null,
         effort: effort ?? fallbackEntry.effort ?? null,
+        sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? fallbackEntry.sandbox ?? true : undefined,
         label: candidateProvider,
       });
     } else if (Array.isArray(entry)) {
@@ -229,6 +233,7 @@ export async function dispatchTask(options = {}) {
           provider: candidateProvider,
           model: cModel,
           effort: cEffort,
+          sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? c?.sandbox ?? true : undefined,
           label: modelLabel ? `${candidateProvider} (${modelLabel})` : candidateProvider,
         });
       }
@@ -238,13 +243,14 @@ export async function dispatchTask(options = {}) {
         provider: candidateProvider,
         model: singleEntry.model ?? null,
         effort: singleEntry.effort ?? null,
+        sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? singleEntry.sandbox ?? true : undefined,
         label: candidateProvider,
       });
     }
   }
 
   const runnerOptionsFor = (candidate) => {
-    return {
+    const runnerOptions = {
       prompt,
       initialGitStatus,
       files,
@@ -256,6 +262,8 @@ export async function dispatchTask(options = {}) {
       model: candidate.model,
       effort: candidate.effort,
     };
+    if (candidate.provider === 'copilot') runnerOptions.sandbox = candidate.sandbox;
+    return runnerOptions;
   };
 
   // Try every platform's first entry before any platform's second, externals before the orchestrator.
@@ -383,6 +391,13 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
       // A CLI that reports quota exhaustion or a refusal on stderr and still exits 0 is a
       // failure, not a silent success.
       absorbViolation(result);
+
+      if (result.failureKind === 'sandbox-unsupported') {
+        if (!shouldCascade('reported unsupported sandbox', result.failureKind)) {
+          return withViolations({ ...result, exitCode: 1 });
+        }
+        continue;
+      }
 
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
@@ -512,6 +527,13 @@ export async function main() {
     if (result.truncated) {
       console.warn(
         `\n[dispatch] WARNING: Output truncated (${result.truncated}). Full trace: ${result.logFile}\n`,
+      );
+    }
+
+    if (result.failureKind === 'sandbox-unsupported') {
+      console.error(
+        `\n[dispatch] Copilot sandbox support is unavailable. ` +
+          `Upgrade Copilot CLI or set platforms.copilot.sandbox to false.\n`,
       );
     }
 

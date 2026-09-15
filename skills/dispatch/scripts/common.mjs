@@ -2127,6 +2127,8 @@ export function validateDispatchConfig(config) {
       problems.push(`${where} must be an object (${hint}).`);
       return;
     }
+    const supportsSandbox = key === 'copilot';
+    const validKeys = supportsSandbox ? 'model, effort, sandbox' : 'model, effort';
     for (const [field, value] of Object.entries(candidate)) {
       if (field === 'model') {
         const isString = typeof value === 'string';
@@ -2138,8 +2140,12 @@ export function validateDispatchConfig(config) {
         if (typeof value !== 'string') {
           problems.push(`${where}.effort must be a string (${hint}).`);
         }
+      } else if (field === 'sandbox' && supportsSandbox) {
+        if (typeof value !== 'boolean') {
+          problems.push(`${where}.sandbox must be a boolean (${hint}).`);
+        }
       } else {
-        problems.push(`${where} has unrecognized key "${field}". Valid keys: model, effort (${hint}).`);
+        problems.push(`${where} has unrecognized key "${field}". Valid keys: ${validKeys} (${hint}).`);
       }
     }
   }

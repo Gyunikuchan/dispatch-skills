@@ -89,8 +89,18 @@
         },
       },
       "copilot": {
-        "model": "gpt-5.6-luna",
-        "effort": "max",
+        "low": {
+          "model": "gpt-5.6-luna",
+          "effort": "max",
+        },
+        "medium": {
+          "model": "gpt-6-astra",
+          "effort": "low",
+        },
+        "max": {
+          "model": "gpt-6-astra",
+          "effort": "high",
+        },
       },
       "opencode": [
         {
@@ -177,8 +187,18 @@
         },
       },
       "copilot": {
-        "model": "gpt-5.6-luna",
-        "effort": "max",
+        "low": {
+          "model": "gpt-5.6-luna",
+          "effort": "max",
+        },
+        "medium": {
+          "model": "gpt-6-astra",
+          "effort": "low",
+        },
+        "max": {
+          "model": "gpt-6-astra",
+          "effort": "high",
+        },
       },
       "opencode": [
         {

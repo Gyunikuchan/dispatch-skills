@@ -184,7 +184,7 @@ Cascade order, per-provider models, and reasoning effort defaults live in JSONC 
     // Key order defines initial cascade priority
     "claude": { "model": ["claude-opus-5", "claude-sonnet-5"], "effort": "high" },
     "agy": { "model": "gemini-3.8-flash", "effort": "medium" },
-    "copilot": { "model": "gpt-5.6-luna", "effort": "max" },
+    "copilot": { "model": "gpt-5.6-luna", "effort": "max", "sandbox": true },
     "opencode": [
       { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
       { "model": "opencode-go/deepseek-v4.1-flash", "effort": "max" },

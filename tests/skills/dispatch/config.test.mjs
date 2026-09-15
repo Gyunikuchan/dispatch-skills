@@ -88,10 +88,25 @@ describe('validateDispatchConfig', () => {
   it('accepts a well-formed config', () => {
     assert.deepEqual(
       validateDispatchConfig({
-        platforms: { claude: { model: ['a', 'b'], effort: 'medium' }, agy: { model: 'x' }, opencode: {} },
+        platforms: {
+          claude: { model: ['a', 'b'], effort: 'medium' },
+          agy: { model: 'x' },
+          copilot: { model: 'y', sandbox: true },
+          opencode: {},
+        },
       }),
       [],
     );
+  });
+
+  describe('shipped dispatch defaults', () => {
+    it('enables Copilot sandboxing when the shipped config is loaded', () => {
+      const { config } = loadSkillConfig({
+        skillRoot: path.resolve(process.cwd(), 'skills', 'dispatch'),
+        defaultOnly: true,
+      });
+      assert.equal(config.platforms.copilot.sandbox, true);
+    });
   });
 
   it('rejects a non-object config', () => {
@@ -146,6 +161,16 @@ describe('validateDispatchConfig', () => {
   it('rejects an unrecognized key inside a platform entry', () => {
     const problems = validateDispatchConfig({ platforms: { claude: { timeout: 10 } } });
     assert.match(problems.join('\n'), /unrecognized key "timeout"/);
+  });
+
+  it('rejects a non-boolean Copilot sandbox setting', () => {
+    const problems = validateDispatchConfig({ platforms: { copilot: { sandbox: 'yes' } } });
+    assert.match(problems.join('\n'), /platforms\.copilot\.sandbox must be a boolean/);
+  });
+
+  it('rejects sandbox settings on non-Copilot platforms', () => {
+    const problems = validateDispatchConfig({ platforms: { claude: { sandbox: true } } });
+    assert.match(problems.join('\n'), /unrecognized key "sandbox"/);
   });
 
   it('accepts a platform entry as an array of candidate objects, including model arrays', () => {

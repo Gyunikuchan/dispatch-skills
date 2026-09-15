@@ -636,6 +636,116 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(passedOpts.effort, 'low');
     });
 
+    it('passes the Copilot sandbox setting from config to the runner', async () => {
+      clearOrchestratorEnv();
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        config: {
+          platforms: {
+            copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: true },
+          },
+        },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(copilotRunner.mock.calls[0].arguments[0].sandbox, true);
+    });
+
+    it('defaults the Copilot sandbox setting to true when config omits it', async () => {
+      clearOrchestratorEnv();
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        config: {
+          platforms: {
+            copilot: { model: 'gpt-5.6-luna', effort: 'max' },
+          },
+        },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(copilotRunner.mock.calls[0].arguments[0].sandbox, true);
+    });
+
+    it('passes an explicit false Copilot sandbox setting through to the runner', async () => {
+      clearOrchestratorEnv();
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        config: {
+          platforms: {
+            copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: false },
+          },
+        },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(copilotRunner.mock.calls[0].arguments[0].sandbox, false);
+    });
+
+    it('allows the programmatic sandbox override to disable the config default', async () => {
+      clearOrchestratorEnv();
+      const copilotRunner = mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        sandbox: false,
+        config: { platforms: { copilot: { model: 'gpt-5.6-luna', effort: 'max' } } },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(copilotRunner.mock.calls[0].arguments[0].sandbox, false);
+    });
+
+    it('fails closed when Copilot reports unsupported sandbox flags with exit code 0', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerRunners, 'copilot', async () => ({
+        provider: 'copilot',
+        stdout: 'answer without sandbox',
+        stderr: 'Warning: --sandbox was ignored because the sandbox feature is unavailable',
+        exitCode: 0,
+        failureKind: 'sandbox-unsupported',
+      }));
+      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+
+      const result = await dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        config: { platforms: { copilot: {} } },
+        configPath: 'custom.jsonc',
+      });
+      assert.equal(result.exitCode, 1);
+      assert.equal(result.failureKind, 'sandbox-unsupported');
+    });
+
     it('cascades across multiple candidate models within a platform array', async () => {
       clearOrchestratorEnv();
       mock.method(providerProbes, 'isOpencodeAvailable', async () => true);

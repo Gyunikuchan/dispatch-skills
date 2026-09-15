@@ -99,6 +99,7 @@ Delegates execute in a sanitized environment with credentials stripped. Safe var
 
 ### Defaults & Overrides
 - **Model/Effort**: from `config.default.jsonc` (`platforms.copilot`); override via `-m <model>`/`-e <level>` (`-e` passes through to `-e`). `model` arrays cascade within this slot. Unset values omit flags.
+- **Sandbox**: set `platforms.copilot.sandbox` to `false` to disable the paired `--experimental --sandbox` flags (Copilot gates the sandbox behind `--experimental`). It defaults to `true` in the shipped config.
 - **Default Mode**: `--mode plan` (structural read-only)
 - **Mode Override**: `--copilot-mode <cli|desktop|vscode|auto>`
 - **Reachability Probe**: `--test` / `--probe` (tests `--version` across all modes without token spend)
@@ -119,6 +120,7 @@ Delegates execute in a sanitized environment with credentials stripped. Safe var
 
 ### Sandboxing & Isolation
 - **Structural Read-Only**: Enforced via `--mode plan`.
+- **Optional Command Sandbox**: When `platforms.copilot.sandbox` is enabled, shell commands run inside Copilot CLI's experimental OS-level sandbox. The required `--experimental` flag also opts into Copilot CLI's broader experimental feature surface. This is defense in depth: built-in file edits are not OS-sandboxed, sandbox policies may block legitimate build or service commands, and host prerequisites vary by platform.
 - **Safety Prompt & Integrity Check**: Prepends standard denied path rules; tracks workspace mutations via pre/post git status checks.
 - **Token Independence**: Reachability probes validate binary launch without requiring active subscriptions.
 

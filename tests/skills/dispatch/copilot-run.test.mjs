@@ -17,6 +17,7 @@ import {
   testCopilotReachability,
   probeCopilotModes,
   isCopilotAvailable,
+  parseCopilotArgs,
   classifyCopilotFailure,
   classifyCopilotResult,
 } from '../../../skills/dispatch/scripts/copilot-run.mjs';
@@ -33,6 +34,26 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       const args = buildCopilotArgs('prompt', { model: 'gpt-5.6-luna', effort: 'max' });
       assert.equal(args[args.indexOf('--model') + 1], 'gpt-5.6-luna');
       assert.equal(args[args.indexOf('--effort') + 1], 'max');
+    });
+
+    it('enables the experimental sandbox flags by default and omits them when disabled', () => {
+      assert.deepEqual(buildCopilotArgs('prompt', { sandbox: true }), [
+        '--experimental',
+        '--sandbox',
+        '-p',
+        'prompt',
+        '--mode',
+        'plan',
+      ]);
+      assert.deepEqual(buildCopilotArgs('prompt'), [
+        '--experimental',
+        '--sandbox',
+        '-p',
+        'prompt',
+        '--mode',
+        'plan',
+      ]);
+      assert.deepEqual(buildCopilotArgs('prompt', { sandbox: false }), ['-p', 'prompt', '--mode', 'plan']);
     });
   });
 
@@ -143,6 +164,24 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       assert.equal(classifyCopilotFailure('Execution timed out'), 'timeout');
       assert.equal(classifyCopilotFailure('All good, no issues.'), null);
     });
+
+    it('classifies unsupported sandbox flags explicitly', () => {
+      assert.equal(classifyCopilotFailure('Unknown option: --sandbox'), 'sandbox-unsupported');
+      assert.equal(classifyCopilotFailure('Unknown option: --experimental'), 'sandbox-unsupported');
+      assert.equal(
+        classifyCopilotFailure('--sandbox was ignored because the sandbox feature is unavailable'),
+        'sandbox-unsupported',
+      );
+      assert.equal(classifyCopilotFailure('Sandboxing is not supported on this platform'), 'sandbox-unsupported');
+    });
+
+    it('defaults the direct runner to sandboxed execution with an explicit opt-out', () => {
+      assert.equal(parseCopilotArgs(['node', 'copilot-run.mjs', '-p', 'prompt']).sandbox, true);
+      assert.equal(
+        parseCopilotArgs(['node', 'copilot-run.mjs', '--no-sandbox', '-p', 'prompt']).sandbox,
+        false,
+      );
+    });
   });
 
   describe('classifyCopilotResult (stdout only on non-zero exit)', () => {
@@ -154,6 +193,13 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
 
     it('exit 0 with auth text on stderr -> auth', () => {
       assert.equal(classifyCopilotResult({ exitCode: 0, stderr: authText, stdout: 'answer' }), 'auth');
+    });
+
+    it('exit 0 with a sandbox diagnostic on stdout -> sandbox-unsupported', () => {
+      assert.equal(
+        classifyCopilotResult({ exitCode: 0, stderr: '', stdout: 'Warning: sandbox is unavailable' }),
+        'sandbox-unsupported',
+      );
     });
 
     it('non-zero exit with auth text on stdout -> auth', () => {
@@ -271,6 +317,20 @@ describe('runCopilot cascade loop', () => {
     const result = await runCopilot(h.options);
     assert.deepEqual(h.calls, ['desktop', 'vscode']);
     assert.equal(result.exitCode, 0);
+  });
+
+  it('passes the sandbox setting to the target executor', async () => {
+    const h = harness({ targets: [target('cli')] });
+    const seen = [];
+    await runCopilot({
+      ...h.options,
+      sandbox: true,
+      execute: async (options) => {
+        seen.push(options.sandbox);
+        return okResult();
+      },
+    });
+    assert.deepEqual(seen, [true]);
   });
 
   it('throws the not-found marked CLI_NOT_FOUND error when no target is viable', async () => {

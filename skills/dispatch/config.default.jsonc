@@ -3,7 +3,7 @@
  * order/membership. This is the single source of truth for dispatch's defaults — no
  * model/effort default lives in the runner scripts themselves.
  *
- * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string } | Array<{ "model"?: string | string[], "effort"?: string }> } }
+ * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Copilot only) } | Array<{ "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Copilot only) }> } }
  *   - Cascade order is diversity-sorted from "platforms" key order: each platform's first
  *     entry in key order, then remaining array entries in their original order; the
  *     orchestrator's own platform is sorted the same way and tried last (with candidates matching
@@ -38,8 +38,9 @@
       "effort": "medium",
     },
     "copilot": {
-      "model": "gpt-5.6-luna",
-      "effort": "max",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "sandbox": true,
     },
     "opencode": [
       {
