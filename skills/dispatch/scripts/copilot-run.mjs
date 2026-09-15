@@ -125,8 +125,9 @@ const MODE_DEFINITIONS = [
 
 /**
  * Runs a prompt through GitHub Copilot using the preferred mode (cli > desktop > vscode).
- * If a mode is reachable but lacks subscription/tokens, cascades to the next available
- * mode in preference order unless pinned via `copilotMode`.
+ * If a mode hits a quota/rate limit or fails to spawn, cascades to the next available mode in
+ * preference order unless pinned via `copilotMode`. An auth failure does not cascade — all modes
+ * share one credential store; see {@link nextCopilotStep}.
  *
  * @param {RunCopilotOptions} options
  * @returns {Promise<RunCopilotResult>}
@@ -202,7 +203,7 @@ export async function runCopilot(options = {}) {
         const step = nextCopilotStep({ result, error: null, canCascade });
         if (step === 'next-target') {
           process.stderr.write(
-            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed).\n` +
+            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (quota/rate limit).\n` +
               `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
           );
           lastResult = result;
