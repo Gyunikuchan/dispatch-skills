@@ -25,7 +25,9 @@ If an optional skill is absent, name its absence in the handoff and proceed with
 
 Extends `dispatch`'s `references/alignment.md` § Invocation grammar. `<level>` and `(<pins>)` are optional:
 - `<level>`: `low`, `medium`, `high`, `xhigh`, `max`. Controls wave caps, reviewer breadth, consensus gates, and model budgets.
-- `(<pins>)`: Comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`), `--provider` aliases, or `all`. Overrides breadth to target specified platforms. Or a single reviewer count `n ≥ 1` (alone), replacing the level's `targetCount` for both review phases. Selection, reserves, and clamping stay as in an unpinned run.
+- `(<pins>)`: platform keys, aliases, or `all` per that shared grammar, overriding breadth to target the specified platforms. Or a single reviewer count `n ≥ 1` (alone), replacing the level's `targetCount` for both review phases. Selection, reserves, and clamping stay as in an unpinned run.
+
+Pass pins through to `resolve-flow.mjs --pins` and use the platforms it returns. It expands `all` from this skill's own config sections, so do not expand pins yourself or substitute `dispatch --list-platforms` here.
 
 ---
 
@@ -46,6 +48,8 @@ Extends `dispatch`'s `references/alignment.md` § Invocation grammar. `<level>` 
    ```
 
    `--platform` is the orchestrator's provider key (`claude`, `agy`, `copilot`, `opencode`); `--orchestrator-model` optionally overrides auto-detected model. Pass `--exclude <keys>` with platforms that failed on `[auth]` / `[quota]` in earlier review waves (**Platform exclusion**); omit on first run. Resolver checks `skill-hashes.json` before loading config; on integrity failure (non-zero exit), report modified files and halt immediately. Save output as `flow`.
+
+   The resolver also rejects any platform configured here but absent from `dispatch`'s effective config, since dispatching to it would exit `PLATFORM_NOT_CONFIGURED` mid-wave. On `Invalid config:` naming such a platform, relay the resolver's lines verbatim and halt — the fix is a config edit the user owns, so never work around it by dropping the platform or editing either config yourself. If the dispatch config cannot be loaded or validated, relay the loader or validation diagnostic and halt before resolving targets.
 4. **Resolve artifacts**: Use host repo explicit path (`AGENTS.md` / `CLAUDE.md`) if named. Otherwise resolve paths via `dispatch`'s `resolve-artifact-paths.mjs` per `alignment.md` § Plan/Walkthrough Artifact Resolution:
 
    ```bash
@@ -175,10 +179,3 @@ At round cap, escalate remaining items to user (**Ruling resets rounds**) and wr
 - **Ruling resets rounds**: When round cap is reached or an unsettled item is escalated, user ruling settles dispute (`[Resolved Dispute]`) and grants exactly one additional re-review round for that phase (with refreshed tool turn budget) to verify amendments. Rounds already spent are not forgiven; reaching cap a second time ends loop and escalates.
 - **Platform exclusion**: When a target or reserve fails `[auth]` or `[quota]`, add platform to exclusion set and re-run Step 1.3 `resolve-flow.mjs` with `--exclude <set>` before next wave or phase. Exclusion is platform-granular. Target affinity still narrows re-review targets to live citing delegates.
 - **Budget formula**: Handed-over `Tool Turn Budget` per reviewer is `8 + 2 × <units under review>`, where unit is changed file (code review) or `## Proposed Changes` entry (plan review). On re-review rounds, count only units changed since previous round. Reviewers get what the work requires with no artificial ceiling.
-
-### Dispatch Invocation Rules
-
-- **Flags**: Review skill maps handed-over target to `dispatch` flags per `dispatch`'s `references/alignment.md` § Invocation Modes.
-- **Parallelism**: Launch all targets in a wave concurrently in background; yield turn and await completion notifications.
-- **Isolation**: External delegates are structurally read-only (`--mode plan` / read-only tools), except OpenCode on platforms without Bubblewrap (`bwrap`) (accepted risk; see `dispatch`'s `references/providers.md`). Orchestrator / native subagents alone write code.
-- **Reserve substitution**: Failed targets substitute from `reserves` in order (unpinned and count-pinned runs only); once reserves exhaust, fall back to `dispatch`'s in-process read-only subagent.

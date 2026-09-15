@@ -231,6 +231,15 @@ describe('review skill templates live in references/', () => {
       assert.deepEqual(JSON.parse(result.stdout.trim()), expected);
     });
   }
+
+  it('review skills use the canonical shell-safe fill-template transport', () => {
+    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      const skill = readSkill(skillPath);
+      assert.match(skill, /canonical stdin\/temp-output protocol/);
+      assert.match(skill, /--vars - --temp-out/);
+      assert.doesNotMatch(skill, /--vars <json file>.*--out <path>/s);
+    }
+  });
 });
 
 describe('orchestrated handover contract', () => {

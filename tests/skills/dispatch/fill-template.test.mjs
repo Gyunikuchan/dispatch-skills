@@ -119,7 +119,11 @@ describe('fill-template: CLI', () => {
     return filePath;
   };
 
-  const run = (args) => cp.spawnSync(process.execPath, [FILL_TEMPLATE_SCRIPT, ...args], { encoding: 'utf8' });
+  const run = (args, options = {}) => cp.spawnSync(
+    process.execPath,
+    [FILL_TEMPLATE_SCRIPT, ...args],
+    { encoding: 'utf8', ...options },
+  );
 
   it('--list prints declared variable names as a JSON array and exits 0', () => {
     const skill = writeFixture(
@@ -146,6 +150,41 @@ describe('fill-template: CLI', () => {
     assert.ok(result.stdout.includes('line one\nline two'));
   });
 
+  it('fills via --vars - reading a multi-line JSON value from stdin', () => {
+    const skill = writeFixture(
+      'FIXTURE_STDIN.md',
+      '#### Prompt template\n\n- `<Plan Path>` — path.\n- `<Requirement>` — verbatim ask.\n\n```\nPlan: <Plan Path>\nAsk:\n<Requirement>\n```\n',
+    );
+    const result = run(['--skill', skill, '--vars', '-'], {
+      input: JSON.stringify({ 'Plan Path': '.scratch/plan/x.md', Requirement: 'line one\nline two' }),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes('Plan: .scratch/plan/x.md'));
+    assert.ok(result.stdout.includes('line one\nline two'));
+  });
+
+  it('exits 1 when --vars - receives malformed JSON', () => {
+    const skill = writeFixture(
+      'FIXTURE_BAD_STDIN.md',
+      '#### Prompt template\n\n- `<Name>` — a value.\n\n```\nHello <Name>\n```\n',
+    );
+    const result = run(['--skill', skill, '--vars', '-'], { input: 'not json' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--vars stdin is not valid JSON/);
+  });
+
+  it('exits 1 when the --vars path is a directory', () => {
+    const skill = writeFixture(
+      'FIXTURE_VARS_DIRECTORY.md',
+      '#### Prompt template\n\n- `<Name>` — a value.\n\n```\nHello <Name>\n```\n',
+    );
+    const varsDirectory = path.join(scratchDir, 'vars-directory');
+    fs.mkdirSync(varsDirectory);
+    const result = run(['--skill', skill, '--vars', varsDirectory]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--vars file could not be read/);
+  });
+
   it('--var wins over --vars on a name collision', () => {
     const skill = writeFixture(
       'FIXTURE_SKILL2.md',
@@ -167,6 +206,36 @@ describe('fill-template: CLI', () => {
     assert.equal(result.status, 0);
     assert.equal(result.stdout.trim(), outFile);
     assert.equal(fs.readFileSync(outFile, 'utf8').trim(), 'Hello World');
+  });
+
+  it('--temp-out writes a private prompt file under the OS temp directory', () => {
+    const skill = writeFixture(
+      'FIXTURE_TEMP_OUT.md',
+      '#### Prompt template\n\n- `<Name>` — a value.\n\n```\nHello <Name>\n```\n',
+    );
+    const result = run(['--skill', skill, '--var', 'Name=World', '--temp-out']);
+    assert.equal(result.status, 0, result.stderr);
+    const outFile = result.stdout.trim();
+    assert.ok(path.isAbsolute(outFile));
+    const relative = path.relative(os.tmpdir(), outFile);
+    assert.ok(relative && !relative.startsWith('..') && !path.isAbsolute(relative));
+    assert.equal(fs.readFileSync(outFile, 'utf8').trim(), 'Hello World');
+    fs.rmSync(path.dirname(outFile), { recursive: true, force: true });
+  });
+
+  it('rejects --out combined with --temp-out', () => {
+    const skill = writeFixture(
+      'FIXTURE_TEMP_OUT_CONFLICT.md',
+      '#### Prompt template\n\n- `<Name>` — a value.\n\n```\nHello <Name>\n```\n',
+    );
+    const result = run([
+      '--skill', skill,
+      '--var', 'Name=World',
+      '--out', path.join(scratchDir, 'out.md'),
+      '--temp-out',
+    ]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /cannot be combined/);
   });
 
   // Real review-skill templates are exercised end-to-end by tests/integration/review-skill-parity

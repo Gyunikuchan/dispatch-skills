@@ -14,6 +14,9 @@ When working with an AI coding assistant (the **orchestrator**—such as Claude 
 3. **Returns clean syntheses & session handles**: Delivers a concise answer to the orchestrator along with an interactive session resume command or Antigravity canvas deep-link.
 4. **Enforces structural read-only safety**: Delegates cannot mutate workspace code or stage git commits. File edits and final decisions remain strictly with your primary orchestrator agent.
 
+This is the canonical reference for the shared runtime, installation, provider-pin grammar,
+runner flags, configuration, and troubleshooting used by the companion skills.
+
 ```mermaid
 flowchart TD
     User(["👤 User Prompt"]) --> Orchestrator["🤖 Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot)"]
@@ -93,15 +96,27 @@ Attach specific files or out-of-workspace artifacts as bounded context:
 
 ### 3. Pinning a Specific Provider (`--provider`)
 
-Force delegation to a specific provider and bypass the automatic fallback cascade:
+Force delegation to a specific provider and bypass fallback to other platforms. If that provider has
+multiple configured candidates, dispatch may still try those candidates in order:
 
 ```markdown
-/dispatch --provider agy Analyze the state transitions in src/workflow/engine.ts
+/dispatch --provider claude Analyze the state transitions in src/workflow/engine.ts
 ```
 
 ```markdown
 /dispatch --provider claude Review our GraphQL schema definition for N+1 query vulnerabilities
 ```
+
+The review and orchestration skills share the same provider-pin grammar:
+
+```markdown
+/dispatch (all) Audit the configured delegate platforms in parallel
+/dispatch (claude,copilot) Compare two configured delegates
+```
+
+Pins are limited to platform keys printed by `node scripts/dispatch.mjs --list-platforms` (aliases
+such as `antigravity` and `claudecode` are normalized first). `all` expands to that effective
+configuration; it never includes a platform that is only present in the shipped defaults.
 
 ### 4. Overriding Model & Reasoning Effort (`-m`, `-e`)
 
@@ -134,7 +149,7 @@ The following flags are supported when calling `/dispatch` or configuring dispat
 | `-f <path>` | Attach context file or artifact (repeatable; capped at 128 KB/file, 512 KB total). | `/dispatch -f src/api.ts Audit error handling` |
 | `-p <string>` | Pass the prompt explicitly as a flag instead of positional text. | `/dispatch -p "Trace the retry path"` |
 | `--prompt-file <path>` | Read the prompt from a file on disk (mutually exclusive with `-p` and positional prompt). | `/dispatch --prompt-file .scratch/brief.md` |
-| `--provider <name>` | Pin provider (`claude`, `agy`, `copilot`, `opencode`); disables fallback cascading. | `/dispatch --provider agy Trace workflow state` |
+| `--provider <name>` | Pin one platform key printed by `--list-platforms`; disables fallback to other platforms while retaining that platform's configured candidates. | `/dispatch --provider claude Trace workflow state` |
 | `-m <model>` | Override the delegate model identifier. | `/dispatch -m claude-opus-5 Review core types` |
 | `-e <level>` | Override reasoning effort (CLI-specific, e.g. `low`, `medium`, `high`, `max`; OpenCode receives `--variant`). | `/dispatch -e max Verify crypto primitives` |
 | `-t <sec>` | Override execution timeout in seconds (default: `1800`). | `/dispatch -t 600 Inspect index coverage` |
@@ -145,6 +160,7 @@ The following flags are supported when calling `/dispatch` or configuring dispat
 | `-v` | Stream live verbose execution traces to the active terminal (interactive debugging). | `/dispatch -v Run complex benchmark trace` |
 | `--no-config` | Skip loading cascade config; requires `--provider`. | `/dispatch --no-config --provider claude ...` |
 | `--validate-only` | Validate loaded configuration shape and exit without dispatching. | `node scripts/dispatch.mjs --validate-only` |
+| `--list-platforms` | Print the effective config's platform keys in cascade order, one per line, and exit. Answers "which platforms can this repo actually dispatch to?" and is how an `all` pin is expanded. | `node scripts/dispatch.mjs --list-platforms` |
 | `--max-buffer <MB>` | Raise subprocess stdout/stderr buffer cap (default: `10` MB) if delegate output is truncated. | `/dispatch --max-buffer 25 ...` |
 
 ---
@@ -234,4 +250,3 @@ Delegates run in a sanitized environment where sensitive API keys and tokens are
 `opencode` resolves models and providers via `opencode.jsonc`:
 - **Local LLMs (e.g. LM Studio)**: Ensure the local server is running at `http://127.0.0.1:1234/v1` and `opencode` is on `PATH`. Outbound network traffic is confined to prevent data leakage.
 - **Remote Providers**: Specify any `<provider>/<model>` pair (e.g. `anthropic/claude-opus-5`, `openrouter/...`) and configure credentials in `opencode.jsonc`.
-

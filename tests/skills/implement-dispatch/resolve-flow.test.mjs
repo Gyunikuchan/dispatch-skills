@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { KNOWN_PROVIDERS } from '../../../skills/dispatch/scripts/common.mjs';
 
 import {
   resolveFlow,
@@ -9,6 +13,7 @@ import {
   resolveLevelScalar,
   resolvePlatformCandidates,
   validateConfig,
+  loadDispatchPlatformKeys,
   selectLevel,
   normalizePin,
   parsePins,
@@ -785,6 +790,92 @@ describe('resolveFlow', () => {
   describe('validateConfig', () => {
     it('accepts the stub config', () => {
       assert.deepEqual(validateConfig(BASE_CONFIG), []);
+    });
+
+    // Membership is injected, never read from disk, so these stay hermetic across machines whose
+    // git-ignored dispatch config configures a different platform set.
+    describe('dispatch platform cross-check', () => {
+      const ALL_FOUR = { keys: ['claude', 'agy', 'copilot', 'opencode'], path: '/fake/dispatch/config.jsonc' };
+
+      it('accepts a config whose platforms dispatch also configures', () => {
+        assert.deepEqual(validateConfig(BASE_CONFIG, { dispatchPlatforms: ALL_FOUR }), []);
+      });
+
+      it('reports every section configuring a platform dispatch lacks', () => {
+        const dispatchPlatforms = { keys: ['claude'], path: '/fake/dispatch/config.jsonc' };
+        const problems = validateConfig(BASE_CONFIG, { dispatchPlatforms });
+        // plan-review and code-review carry agy/copilot/opencode; implementation carries agy/copilot.
+        assert.equal(problems.length, 8);
+        for (const section of ['plan-review', 'implementation', 'code-review']) {
+          assert.ok(
+            problems.some(p => p.startsWith(`${section}.platforms."agy"`)),
+            `expected an agy problem for ${section}`
+          );
+        }
+        assert.match(problems[0], /not configured in \/fake\/dispatch\/config\.jsonc \(configured there: claude\)/);
+        assert.match(problems[0], /exits PLATFORM_NOT_CONFIGURED/);
+      });
+
+      it('resolves aliases before comparing, so `antigravity` here matches `agy` there', () => {
+        const config = withSections({
+          'plan-review': { platforms: { claude: {}, antigravity: {} } },
+          implementation: { platforms: { claude: {} } },
+          'code-review': { platforms: { claude: {} } },
+        });
+        assert.deepEqual(
+          validateConfig(config, { dispatchPlatforms: { keys: ['claude', 'agy'], path: null } }),
+          []
+        );
+      });
+
+      it('skips the cross-check when dispatch membership is unreadable', () => {
+        assert.deepEqual(validateConfig(BASE_CONFIG, { dispatchPlatforms: { keys: null, path: null } }), []);
+        assert.deepEqual(validateConfig(BASE_CONFIG, { dispatchPlatforms: null }), []);
+      });
+
+      it('falls back to a generic location when dispatch config path is unknown', () => {
+        const problems = validateConfig(BASE_CONFIG, { dispatchPlatforms: { keys: ['claude'], path: null } });
+        assert.match(problems[0], /is not configured in dispatch's config/);
+      });
+
+      it('reports shape problems without cross-checking an unusable platforms map', () => {
+        const config = withSections({ 'plan-review': { platforms: 'nope' } });
+        const problems = validateConfig(config, { dispatchPlatforms: { keys: ['claude'], path: null } });
+        assert.ok(problems.some(p => /plan-review\.platforms/.test(p) && !/PLATFORM_NOT_CONFIGURED/.test(p)));
+        assert.ok(!problems.some(p => p.startsWith('plan-review.platforms."')));
+      });
+    });
+
+    describe('loadDispatchPlatformKeys', () => {
+      it('reads the sibling dispatch config into canonical keys', () => {
+        const { keys, path: configPath } = loadDispatchPlatformKeys(DISPATCH_SCRIPTS);
+        assert.ok(Array.isArray(keys) && keys.length > 0);
+        for (const key of keys) assert.ok(KNOWN_PROVIDERS.includes(key), `unknown key "${key}"`);
+        assert.match(configPath, /config(\.local|\.default)?\.jsonc$/);
+      });
+
+      it('degrades to keys: null when dispatch is not installed alongside', () => {
+        const result = loadDispatchPlatformKeys(path.join(os.tmpdir(), 'no-such-dispatch', 'scripts'));
+        assert.equal(result.keys, null);
+        assert.equal(result.path, null);
+        assert.match(result.error, /Config file not found/);
+      });
+
+      it('degrades to keys: null when the dispatch config contains an unsupported alias', () => {
+        const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-config-'));
+        const scripts = path.join(fixtureRoot, 'scripts');
+        const configPath = path.join(fixtureRoot, 'config.jsonc');
+        fs.mkdirSync(scripts);
+        fs.writeFileSync(configPath, JSON.stringify({ platforms: { antigravity: {} } }));
+        try {
+          const result = loadDispatchPlatformKeys(scripts);
+          assert.equal(result.keys, null);
+          assert.equal(result.path, configPath);
+          assert.ok(result.problems?.some((problem) => /unrecognized key "antigravity"/.test(problem)));
+        } finally {
+          fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+      });
     });
 
     it('rejects an unknown platform key (e.g. local)', () => {

@@ -11,7 +11,8 @@
  *
  * Usage:
  *   node fill-template.mjs --skill <template path> [--section "Prompt template"]
- *                           (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
+ *                           (--var Name=Value)... [--vars <json file>|-]
+ *                           [--out <path>|--temp-out] [--list]
  *
  * `--section` defaults to "Prompt template" and matches any heading level (`#`-`######`) with
  * that exact text. Declared variables are the backtick-quoted `<Name>` bullets (`` - `<Name>` —
@@ -22,13 +23,14 @@
  * so the inner fence stays intact as template content.
  *
  * `--list` prints the declared variable names as a JSON array and exits before filling.
- * `--var Name=Value` and `--vars <json file>` (a JSON object of strings; multi-line values
- * supported) supply substitutions; `--var` wins over `--vars` on a name collision. Every
- * declared variable must be supplied and no undeclared name may be; substitution is single-pass
- * over declared names only, so a supplied value containing another placeholder's literal text
- * (e.g. a `<Plan Path>`-shaped string) is not re-substituted, and ungoverned grammar placeholders
- * in the template body (`<file>:L<line>`, `<tag>`, `<axis>`, `<Section>`) are left untouched
- * because they were never declared.
+ * `--var Name=Value` and `--vars <json file>|-` (a JSON object of strings; multi-line values
+ * supported, with `-` reading JSON from stdin) supply substitutions; `--var` wins over `--vars`
+ * on a name collision. `-` is reserved as the stdin sentinel; use a path such as `./-` for a
+ * literal file named `-`. Every declared variable must be supplied and no undeclared name may be;
+ * substitution is single-pass over declared names only, so a supplied value containing another
+ * placeholder's literal text (e.g. a `<Plan Path>`-shaped string) is not re-substituted, and
+ * ungoverned grammar placeholders in the template body (`<file>:L<line>`, `<tag>`, `<axis>`,
+ * `<Section>`) are left untouched because they were never declared.
  *
  * Before filling, the owning skill's `skill-hashes.json` (one directory up from a
  * `references/` template) is checked when present: drift in the template itself aborts the
@@ -38,10 +40,12 @@
  * manifest is filled without a check.
  *
  * `--out <path>` writes the filled prompt as UTF-8 (creating parent directories) and prints the
- * path; omitted, the filled prompt is printed to stdout.
+ * path; `--temp-out` creates a private file in a unique directory under `os.tmpdir()` and prints
+ * its path; omitted, the filled prompt is printed to stdout.
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { hashFile, isMainModule, verifySkillIntegrity } from './common.mjs';
@@ -223,7 +227,14 @@ function assertTemplateIntegrity(templatePath) {
 }
 
 function parseArgs(args) {
-  const opts = { section: DEFAULT_SECTION, vars: [], varsFile: null, out: null, list: false };
+  const opts = {
+    section: DEFAULT_SECTION,
+    vars: [],
+    varsFile: null,
+    out: null,
+    tempOut: false,
+    list: false,
+  };
 
   const value = (i) => {
     const next = args[i + 1];
@@ -247,36 +258,63 @@ function parseArgs(args) {
     }
     else if (arg === '--vars') { opts.varsFile = value(i); i++; }
     else if (arg === '--out') { opts.out = value(i); i++; }
+    else if (arg === '--temp-out') { opts.tempOut = true; }
     else if (arg === '--list') { opts.list = true; }
     else {
       throw new Error(`Unrecognized argument "${arg}"`);
     }
+  }
+  if (opts.out && opts.tempOut) {
+    throw new Error('--out cannot be combined with --temp-out');
   }
   return opts;
 }
 
 function loadVarsFile(varsFile) {
   let raw;
-  try {
-    raw = fs.readFileSync(varsFile, 'utf8');
-  } catch {
-    throw new Error(`--vars file not found: ${varsFile}`);
+  const source = varsFile === '-' ? 'stdin' : 'file';
+  if (varsFile === '-') {
+    if (process.stdin.isTTY) {
+      throw new Error('--vars - requires JSON on stdin; pipe a JSON object or use --vars <file>');
+    }
+    try {
+      raw = fs.readFileSync(0, 'utf8');
+    } catch (err) {
+      throw new Error(`--vars stdin could not be read: ${err.message}`);
+    }
+  } else {
+    try {
+      raw = fs.readFileSync(varsFile, 'utf8');
+    } catch (err) {
+      if (err?.code === 'ENOENT') {
+        throw new Error(`--vars file not found: ${varsFile}`);
+      }
+      throw new Error(`--vars file could not be read: ${varsFile} (${err.message})`);
+    }
   }
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`--vars file is not valid JSON: ${err.message}`);
+    throw new Error(`--vars ${source} is not valid JSON: ${err.message}`);
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('--vars file must contain a JSON object of strings');
+    throw new Error(`--vars ${source} must contain a JSON object of strings`);
   }
   for (const [key, val] of Object.entries(parsed)) {
     if (typeof val !== 'string') {
-      throw new Error(`--vars file value for "${key}" must be a string`);
+      throw new Error(`--vars ${source} value for "${key}" must be a string`);
     }
   }
   return parsed;
+}
+
+function writeTempOutput(contents) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fill-template-'));
+  const outputPath = path.join(tempDir, 'prompt.md');
+  fs.writeFileSync(outputPath, contents, { encoding: 'utf8', mode: 0o600 });
+  // Drive-qualified forward-slash paths survive handoff between Git Bash and native Node.
+  return process.platform === 'win32' ? outputPath.replace(/\\/g, '/') : outputPath;
 }
 
 /**
@@ -289,15 +327,17 @@ Fill a review skill's prompt template (fill-template.mjs)
 
 Usage:
   node fill-template.mjs --skill <template path> [--section "Prompt template"]
-                         (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
+                         (--var Name=Value)... [--vars <json file>|-]
+                         [--out <path>|--temp-out] [--list]
 
 Options:
   --skill <template path>   The template file to read. Spelled --skill for callers' sake, but
                             its value is a references/prompt-template.md path, not a SKILL.md.
   --section <heading>       Heading holding the template (default: "Prompt template").
   --var Name=Value          One substitution; repeatable. Wins over --vars on a collision.
-  --vars <json file>        A JSON object of string values; use it for multi-line values.
+  --vars <json file>|-      A JSON object of string values; use "-" to read it from stdin.
   --out <path>              Write the filled prompt here instead of stdout.
+  --temp-out                Write to a private file in a unique os.tmpdir() directory and print its path.
   --list                    Print the declared variable names as JSON and exit.
   -h, --help                Show this help.
 
@@ -367,7 +407,10 @@ function main() {
     process.exit(1);
   }
 
-  if (opts.out) {
+  if (opts.tempOut) {
+    const outputPath = writeTempOutput(filled);
+    process.stdout.write(`${outputPath}\n`);
+  } else if (opts.out) {
     fs.mkdirSync(path.dirname(opts.out), { recursive: true });
     fs.writeFileSync(opts.out, filled, 'utf8');
     process.stdout.write(`${opts.out}\n`);

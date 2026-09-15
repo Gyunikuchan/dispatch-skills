@@ -70,7 +70,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [orchestratorModel] Explicit orchestrator model override; skips detection.
- * @property {string|null} [provider] Pins the cascade to a single provider (no fallback).
+ * @property {string|null} [provider] Pins the cascade to one provider; no fallback to other
+ *   providers, while that provider's configured candidates may still be tried.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
  * @property {object} [config] Injected config object (bypasses loading config from disk).
@@ -434,35 +435,31 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 // ============================================================================
 
 export async function main() {
-  const options = parseCommonArgs(process.argv, { booleanFlags: ['--no-config', '--validate-only'] });
-  const { noConfig, validateOnly } = parseDispatchFlags(process.argv);
+  const options = parseCommonArgs(process.argv, {
+    booleanFlags: ['--no-config', '--validate-only', '--list-platforms'],
+  });
+  const { noConfig, validateOnly, listPlatforms } = parseDispatchFlags(process.argv);
 
   if (options.help) {
     printHelp();
     process.exit(0);
   }
 
-  if (validateOnly) {
+  if (validateOnly && listPlatforms) {
+    console.error('Error: --validate-only and --list-platforms are separate inspection modes; run one at a time.');
+    process.exit(1);
+  }
+
+  if (validateOnly || listPlatforms) {
+    const mode = validateOnly ? '--validate-only' : '--list-platforms';
+    const purpose = validateOnly
+      ? 'checks the dispatch config schema alone'
+      : 'prints the effective config\'s platform keys alone';
     // Refuse the combination rather than silently ignoring flags the user believes were
-    // checked: --validate-only inspects the dispatch config schema and nothing else.
-    const ignored = [];
-    if (options.prompt) ignored.push('prompt');
-    if (options.files.length > 0) ignored.push('--file');
-    if (options.model !== null) ignored.push('--model');
-    if (options.effort !== null) ignored.push('--effort');
-    if (options.agent !== null) ignored.push('--agent');
-    if (options.timeout !== DEFAULT_TIMEOUT_SECONDS) ignored.push('--timeout');
-    if (options.maxBufferMb !== DEFAULT_MAX_BUFFER_MB) ignored.push('--max-buffer');
-    if (options.json) ignored.push('--json');
-    if (options.verbose) ignored.push('--verbose');
-    if (options.orchestrator !== null) ignored.push('--orchestrator');
-    if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
-    if (options.provider !== null) ignored.push('--provider');
-    if (noConfig) ignored.push('--no-config');
+    // honored: both inspection modes read the config and nothing else.
+    const ignored = collectRunFlags(options, noConfig);
     if (ignored.length > 0) {
-      console.error(
-        `Error: --validate-only checks the dispatch config schema alone and cannot be combined with: ${ignored.join(', ')}`,
-      );
+      console.error(`Error: ${mode} ${purpose} and cannot be combined with: ${ignored.join(', ')}`);
       process.exit(1);
     }
 
@@ -477,6 +474,13 @@ export async function main() {
     if (problems.length > 0) {
       console.error(`Invalid dispatch config (${loaded.path}):\n- ${problems.join('\n- ')}`);
       process.exit(1);
+    }
+    if (listPlatforms) {
+      // Cascade order, one key per line, so a caller expanding an `all` pin can split on newlines
+      // without parsing JSON. Availability is deliberately not probed: membership is a config fact,
+      // and liveness is the fallback gate's job per dispatch.
+      console.log(Object.keys(loaded.config.platforms).join('\n'));
+      return;
     }
     console.log('Config is valid.');
     return;
@@ -554,21 +558,44 @@ Options:
   --orchestrator-model <name> Override detected orchestrator model
   --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
   --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
+  --list-platforms            Print the effective config's platform keys in cascade order, one per line, and exit
   --json                      Request structured JSON output (opencode provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
 `);
 }
 
-/** Parses dispatch.mjs's own `--no-config` / `--validate-only` flags. */
+/** Parses dispatch.mjs's own `--no-config` / `--validate-only` / `--list-platforms` flags. */
 function parseDispatchFlags(argv) {
   let noConfig = false;
   let validateOnly = false;
+  let listPlatforms = false;
   for (const arg of argv.slice(2)) {
+    if (arg === '--') break;
     if (arg === '--no-config') noConfig = true;
     else if (arg === '--validate-only') validateOnly = true;
+    else if (arg === '--list-platforms') listPlatforms = true;
   }
-  return { noConfig, validateOnly };
+  return { noConfig, validateOnly, listPlatforms };
+}
+
+/** Names the run flags set on `options`, for an inspection mode to reject as unhonored. */
+function collectRunFlags(options, noConfig) {
+  const ignored = [];
+  if (options.prompt) ignored.push('prompt');
+  if (options.files.length > 0) ignored.push('--file');
+  if (options.model !== null) ignored.push('--model');
+  if (options.effort !== null) ignored.push('--effort');
+  if (options.agent !== null) ignored.push('--agent');
+  if (options.timeout !== DEFAULT_TIMEOUT_SECONDS) ignored.push('--timeout');
+  if (options.maxBufferMb !== DEFAULT_MAX_BUFFER_MB) ignored.push('--max-buffer');
+  if (options.json) ignored.push('--json');
+  if (options.verbose) ignored.push('--verbose');
+  if (options.orchestrator !== null) ignored.push('--orchestrator');
+  if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
+  if (options.provider !== null) ignored.push('--provider');
+  if (noConfig) ignored.push('--no-config');
+  return ignored;
 }
 
 // ============================================================================

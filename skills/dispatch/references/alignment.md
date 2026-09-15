@@ -47,10 +47,12 @@ Base command grammar for standalone review skills:
 /<review-skill> (<pins>) [<artifact path>] [<focus>]
 ```
 
-- `(<pins>)`: Comma-separated provider keys (`claude`, `agy`, `copilot`, `opencode`) or aliases (`antigravity`, `claudecode`). Standalone reviews run a single round.
-- **Unpinned (no pins)**: Use default `dispatch` cascade (single dispatch cascading on failure).
-- **Pinned (pins provided)**: Fan out one backgrounded `dispatch --provider <key>` per pin in parallel (inherits config defaults; never `--no-config`). Pinned failures fall back in-process to `dispatch`'s read-only subagent for that pin only.
-- `implement-dispatch` extends this grammar with `<level>`, `: <ask>`, and multi-reviewer options (see its own `## Invocation`).
+`(<pins>)` forms, alias resolution, and `all` expansion via `--list-platforms` are defined once in [dispatch's `SKILL.md` § Invocation](../SKILL.md#invocation). Review-specific additions:
+
+- Standalone reviews run a single round.
+- Pinned fan-out inherits config defaults; never `--no-config`.
+- A pinned failure falls back in-process to `dispatch`'s read-only subagent for that pin only, leaving the other pins untouched.
+- `implement-dispatch` extends this grammar with `<level>`, `: <ask>`, and multi-reviewer options (see its own `## Invocation`). Its resolver expands `all` from the review sections in its own config, then requires those keys to be a subset of `dispatch`'s effective `--list-platforms` set before emitting any flow; a mismatch fails closed rather than invoking an unconfigured provider.
 
 ---
 
@@ -76,13 +78,16 @@ The orchestrator supplies data only; the review skill builds invocations, fills 
 
 ### Target → Flag Mapping (Orchestrated)
 
-Map each target to: `dispatch --provider <target.platform> --no-config [-m <target.model>] [-e <target.effort>] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
+Map each target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
 - Include `-m` and `-e` only when specified in the target entry.
+- When a target omits `model`, omit `-m` and let dispatch select the configured model for that
+  platform; do not use `--no-config`, because effective membership and configured defaults are
+  authoritative for pinned runs.
 - Redirect execution logs to OS temp (workspace logs violate delegate read-only checks).
 
 ### Reserve Substitution (Orchestrated)
 
-Pinned targets (`--no-config`) substitute via the `reserves` list rather than cascading:
+Pinned targets substitute via the `reserves` list rather than cascading:
 1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` or workspace modification (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
 2. **Usability**: Dispatch the first unused reserve in list order (diversity-sorted) whose `(platform, model, effort)` tuple was not already dispatched in this wave.
 3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then fall back to `dispatch`'s in-process read-only subagent.
@@ -98,13 +103,48 @@ How review skills materialize `references/prompt-template.md` into concrete prom
 
 ```bash
 node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/<review-skill>/references/prompt-template.md \
-  [--section "Prompt template"] (--var Name=Value)... [--vars <json file>] [--out <path>] [--list]
+  [--section "Prompt template"] (--var Name=Value)... [--vars <json file>|-] \
+  [--out <path>|--temp-out] [--list]
 ```
 
 - **Variables**: Declared variables are backtick-quoted `` `<Name>` `` bullets between the heading and fenced block (`--list` outputs them as JSON).
-- **Filling**: Pass `--var Name=Value` (repeatable) or `--vars <json file>`. Single-pass replacement preserves output grammar placeholders (`<file>:L<line>`, `<tag>`, `<axis>`, `§ <Section>`).
+- **Canonical review workflow**: Every review-skill orchestrator uses `--vars - --temp-out`: send the JSON object through stdin and let Node create the prompt file. This keeps vars transport and output-path handling out of the host shell, so all agents follow the same protocol across POSIX shells, Git Bash, and PowerShell.
+- **Direct CLI compatibility**: `--var Name=Value`, `--vars <json file>`, and `--out <path>` remain supported for direct callers that already own safe paths. They are not the review-skill workflow; do not make a review orchestrator choose between transports.
+- **Filling**: Single-pass replacement preserves output grammar placeholders (`<file>:L<line>`, `<tag>`, `<axis>`, `§ <Section>`). Capture the path printed by `--temp-out`, pass it to `dispatch --prompt-file`, and remove its parent directory after dispatch finishes.
 - **Integrity Gate**: `fill-template.mjs` automatically validates `skill-hashes.json` before filling and fails closed (exit 1) on template hash drift.
-- **Output**: Write to `--out <path>` (recommended: `<os-temp>/<date>-<slug>-<kind>-review-prompt[-<target>].md`) and pass via `--prompt-file <path>` to `dispatch`.
+- **Output**: `--temp-out` creates a private file in a unique directory under `os.tmpdir()` and prints its path. The caller removes that parent directory after dispatch finishes.
+
+The canonical protocol has shell-specific syntax, but the same stdin/temp-output transport in each:
+
+**POSIX shells / Git Bash**
+```bash
+node <skills-dir>/dispatch/scripts/fill-template.mjs \
+  --skill <skills-dir>/<review-skill>/references/prompt-template.md \
+  --vars - --temp-out <<'EOF'
+{
+  "Plan Path": ".scratch/plan/<date>-<slug>.md",
+  "Requirement": "<requirement>",
+  "User Focus Areas": "General review",
+  "Review Scope": "Full review",
+  "Tool Turn Budget": "Unspecified"
+}
+EOF
+```
+
+**PowerShell**
+```powershell
+@'
+{
+  "Plan Path": ".scratch/plan/<date>-<slug>.md",
+  "Requirement": "<requirement>",
+  "User Focus Areas": "General review",
+  "Review Scope": "Full review",
+  "Tool Turn Budget": "Unspecified"
+}
+'@ | node <skills-dir>/dispatch/scripts/fill-template.mjs `
+  --skill <skills-dir>/<review-skill>/references/prompt-template.md `
+  --vars - --temp-out
+```
 
 ---
 

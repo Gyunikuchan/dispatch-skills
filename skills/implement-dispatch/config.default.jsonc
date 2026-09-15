@@ -32,6 +32,11 @@
  * is the single sentinel: a phase is off when 0, providers merely unavailable when
  * `> 0` with an empty targets list.
  *
+ * Every platform keyed here must also be keyed in the dispatch skill's own config, whose
+ * effective membership `dispatch/scripts/dispatch.mjs --list-platforms` prints: targets are
+ * dispatched as `dispatch --provider <key>`, so a platform dispatch does not configure exits
+ * PLATFORM_NOT_CONFIGURED. `--validate-only` cross-checks the two and reports any mismatch.
+ *
  * `platforms` holds the per-platform model/effort settings. Candidates are flattened in key
  * order, then diversity-sorted: each platform's first candidate before any platform's second,
  * repeats keeping their relative order, the orchestrator's platform last. Each platform entry can be a single

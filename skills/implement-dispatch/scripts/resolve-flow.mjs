@@ -24,6 +24,7 @@ import {
   isMainModule,
   getConfigCandidates,
   loadSkillConfig,
+  validateDispatchConfig,
   detectOrchestratorModel,
   isSameModel,
   verifySkillIntegrity,
@@ -239,6 +240,40 @@ export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) 
   return config;
 }
 
+/**
+ * Reads the platform keys of `dispatch`'s effective config — the set this skill's own platforms
+ * must be a subset of, since every wave target is dispatched as `dispatch --provider <key>`.
+ *
+ * Yields `keys: null` instead of throwing when that config is unreadable or invalid (dispatch not
+ * installed as a sibling, unparsable, or containing unsupported platform keys). The CLI treats
+ * that as a fatal dependency error and refuses to resolve a flow without authoritative dispatch
+ * membership.
+ *
+ * @param {string} [dispatchScripts] Directory holding dispatch's scripts.
+ * @returns {{
+ *   keys: string[] | null,
+ *   path: string | null,
+ *   error?: string,
+ *   problems?: string[],
+ * }}
+ */
+export function loadDispatchPlatformKeys(dispatchScripts = DISPATCH_SCRIPTS) {
+  try {
+    const { config, path: configPath } = loadSkillConfig({
+      skillRoot: path.resolve(dispatchScripts, '..'),
+    });
+    const problems = validateDispatchConfig(config);
+    if (problems.length > 0) return { keys: null, path: configPath, problems };
+    return { keys: Object.keys(config.platforms).map(normalizePin), path: configPath };
+  } catch (err) {
+    return {
+      keys: null,
+      path: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // ============================================================================
 // SECTION: Config validation
 // ============================================================================
@@ -399,14 +434,46 @@ function validateKnob(section, name, knob, problems) {
 }
 
 /**
+ * Flags platforms this skill configures that `dispatch` does not. Each one plans a wave target
+ * that exits `PLATFORM_NOT_CONFIGURED` once dispatched, so catching it during validation turns a
+ * mid-flow failure into a startup error naming both configs.
+ *
+ * @param {object} config
+ * @param {{ keys: string[], path: string | null }} dispatchPlatforms
+ * @param {string[]} problems Accumulator, appended in place.
+ */
+function crossCheckDispatchPlatforms(config, dispatchPlatforms, problems) {
+  const allowed = new Set(dispatchPlatforms.keys);
+  const where = dispatchPlatforms.path ?? "dispatch's config";
+  const configured = allowed.size > 0 ? [...allowed].join(', ') : 'none';
+  for (const section of SECTIONS) {
+    const platforms = config?.[section]?.platforms;
+    // Shape problems are already reported by validatePlatforms; only cross-check a usable map.
+    if (!isPlainObject(platforms)) continue;
+    for (const key of Object.keys(platforms)) {
+      if (allowed.has(normalizePin(key))) continue;
+      problems.push(
+        `${section}.platforms."${key}" is not configured in ${where} (configured there: ${configured}). ` +
+          `Dispatching to it exits PLATFORM_NOT_CONFIGURED; add it there or remove it here.`
+      );
+    }
+  }
+}
+
+/**
  * Validates a parsed config against the flow schema.
  *
  * Reports every problem found in one pass; callers join and throw.
  *
  * @param {object} config
+ * @param {object} [options]
+ * @param {{ keys: string[] | null, path: string | null } | null} [options.dispatchPlatforms]
+ *   `dispatch`'s effective platform membership, from {@link loadDispatchPlatformKeys}. Supplying it
+ *   adds the subset cross-check; omitting it (or passing `keys: null`) validates this config's own
+ *   schema alone, keeping this function pure for callers that have no filesystem access.
  * @returns {string[]} problem descriptions, empty when the config is valid
  */
-export function validateConfig(config) {
+export function validateConfig(config, { dispatchPlatforms = null } = {}) {
   const problems = [];
 
   if (!isPlainObject(config)) {
@@ -452,6 +519,10 @@ export function validateConfig(config) {
       }
       validateKnob(section, knob, value, problems);
     }
+  }
+
+  if (dispatchPlatforms?.keys) {
+    crossCheckDispatchPlatforms(config, dispatchPlatforms, problems);
   }
 
   return problems;
@@ -610,14 +681,16 @@ export function assertKnownExcludeKeys(excluded, reviewKeys) {
  *
  * @param {{ platform: string, level?: string, pins?: string[], exclude?: string[],
  *           orchestratorModel?: string | null,
+ *           dispatchPlatforms?: { keys: string[] | null, path: string | null } | null,
  *           livenessSource?: 'env-override' | 'probe' }} options
- *   `livenessSource` is passed in rather than read from the environment, keeping this pure.
+ *   `livenessSource` and `dispatchPlatforms` are passed in rather than read from the environment
+ *   or disk, keeping this pure.
  * @param {Record<string, boolean>} liveness - map of platform key → available
  * @param {object} config                    - parsed config object
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
-  const { level = 'medium', pins: rawPins, orchestratorModel = null } = options;
+  const { level = 'medium', pins: rawPins, orchestratorModel = null, dispatchPlatforms = null } = options;
   // Same alias normalization as pins, so `claudecode` still self-excludes `claude`.
   const platform = options.platform ? normalizePin(options.platform) : options.platform;
   // An unvalidated platform self-excludes nothing, so the orchestrator's own agent would be
@@ -644,7 +717,7 @@ export function resolveFlow(options, liveness, config) {
     throw new Error(`Unknown level "${level}". Valid levels: ${LEVELS.join(', ')}`);
   }
 
-  const problems = validateConfig(config);
+  const problems = validateConfig(config, { dispatchPlatforms });
   if (problems.length > 0) {
     throw new Error(`Invalid config:\n- ${problems.join('\n- ')}`);
   }
@@ -920,6 +993,24 @@ async function main() {
     process.exit(1);
   }
 
+  // Read once and share: both the validate-only path and the resolve path cross-check this skill's
+  // platforms against dispatch's, and neither should pay a second config read.
+  const dispatchPlatforms = loadDispatchPlatformKeys();
+  if (!dispatchPlatforms.keys) {
+    const diagnostics = [];
+    if (dispatchPlatforms.error) diagnostics.push(dispatchPlatforms.error);
+    if (dispatchPlatforms.problems?.length) {
+      const location = dispatchPlatforms.path ? ` (${dispatchPlatforms.path})` : '';
+      diagnostics.push(`Invalid dispatch config${location}:`, ...dispatchPlatforms.problems);
+    }
+    const detail = diagnostics.length > 0 ? `\n- ${diagnostics.join('\n- ')}` : '';
+    process.stderr.write(
+      "[implement-dispatch] ERROR: dispatch's effective platform set could not be loaded; " +
+        `refusing to resolve provider targets.${detail}\n`
+    );
+    process.exit(1);
+  }
+
   // `--validate-only` short-circuits before liveness so it spawns no provider probes.
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
@@ -933,7 +1024,7 @@ async function main() {
       );
       process.exit(1);
     }
-    const problems = validateConfig(config);
+    const problems = validateConfig(config, { dispatchPlatforms });
     if (problems.length > 0) {
       process.stderr.write(`Invalid config:\n- ${problems.join('\n- ')}\n`);
       process.exit(1);
@@ -964,7 +1055,7 @@ async function main() {
     );
     process.exit(1);
   }
-  const configProblems = validateConfig(config);
+  const configProblems = validateConfig(config, { dispatchPlatforms });
   if (configProblems.length > 0) {
     process.stderr.write(`Invalid config:\n- ${configProblems.join('\n- ')}\n`);
     process.exit(1);
@@ -1019,7 +1110,7 @@ async function main() {
 
   let result;
   try {
-    result = resolveFlow({ ...opts, orchestratorModel, livenessSource }, liveness, config);
+    result = resolveFlow({ ...opts, orchestratorModel, livenessSource, dispatchPlatforms }, liveness, config);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);

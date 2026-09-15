@@ -7,9 +7,9 @@ import { describe, it, afterEach, mock } from 'node:test';
 
 import {
   detectOrchestrator,
-  resolveProvider,
-  getCandidateProviders,
-  dispatchTask,
+  resolveProvider as resolveProviderImpl,
+  getCandidateProviders as getCandidateProvidersImpl,
+  dispatchTask as dispatchTaskImpl,
   executeProvider,
   providerProbes,
   providerRunners,
@@ -21,6 +21,27 @@ import {
   validateDispatchConfig,
   verifySkillIntegrity,
 } from '../../../skills/dispatch/scripts/common.mjs';
+
+const TEST_DISPATCH_CONFIG = {
+  platforms: {
+    claude: { model: 'claude-opus-5', effort: 'low' },
+    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+    copilot: { model: 'gpt-5.6-luna', effort: 'max' },
+    opencode: [
+      { model: 'opencode-go/glm-5.3-flash', effort: 'max' },
+      { model: 'opencode-go/deepseek-v4.1-flash', effort: 'max' },
+      { model: 'lmstudio/qwen3.8-27b-ridge' },
+    ],
+  },
+};
+const TEST_DISPATCH_CONFIG_ARGS = {
+  config: TEST_DISPATCH_CONFIG,
+  configPath: 'config.default.jsonc',
+};
+
+const resolveProvider = (options = {}) => resolveProviderImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
+const getCandidateProviders = (options = {}) => getCandidateProvidersImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
+const dispatchTask = (options = {}) => dispatchTaskImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 
 describe('dispatch: orchestrator detection & provider resolution', () => {
   const originalEnv = { ...process.env };
@@ -1156,5 +1177,50 @@ describe('dispatch --validate-only CLI', () => {
       res.stderr || '',
       /--validate-only checks the dispatch config schema alone and cannot be combined with: prompt, --model/,
     );
+  });
+
+  // config.jsonc / config.local.jsonc are git-ignored, so the CLI still asserts the effective
+  // membership shape rather than a specific platform set.
+  it('--list-platforms prints the effective config platform keys, one per line', () => {
+    const res = run(['--list-platforms']);
+    assert.equal(res.status, 0, res.stderr);
+    const keys = (res.stdout || '').trim().split('\n').filter(Boolean);
+    assert.ok(keys.length > 0, 'expected at least one configured platform');
+    for (const key of keys) assert.ok(KNOWN_PROVIDERS.includes(key), `unknown platform key "${key}"`);
+    assert.equal(new Set(keys).size, keys.length, 'platform keys must be unique');
+  });
+
+  it('--list-platforms agrees with the unpinned cascade membership', async () => {
+    const res = run(['--list-platforms']);
+    const listed = (res.stdout || '').trim().split('\n').filter(Boolean);
+    // Availability is probed by getCandidateProviders but never by --list-platforms, so the
+    // candidates are a subset of the listed keys, never a superset.
+    const candidates = await getCandidateProvidersImpl({ orchestrator: 'claude' });
+    for (const c of candidates) assert.ok(listed.includes(c), `candidate "${c}" absent from --list-platforms`);
+  });
+
+  it('rejects combining --list-platforms with run flags', () => {
+    const res = run(['--list-platforms', '--provider', 'claude']);
+    assert.equal(res.status, 1);
+    assert.match(
+      res.stderr || '',
+      /--list-platforms prints the effective config's platform keys alone and cannot be combined with: --provider/,
+    );
+  });
+
+  it('rejects --list-platforms together with --validate-only', () => {
+    const res = run(['--list-platforms', '--validate-only']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /separate inspection modes/);
+  });
+
+  it('does not treat inspection flags after -- as dispatch flags', () => {
+    const res = run(['--validate-only', '--', '--list-platforms']);
+    assert.equal(res.status, 1);
+    assert.match(
+      res.stderr || '',
+      /--validate-only checks the dispatch config schema alone and cannot be combined with: prompt/,
+    );
+    assert.doesNotMatch(res.stderr || '', /--list-platforms prints the effective config/);
   });
 });

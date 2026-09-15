@@ -2,10 +2,15 @@
 
 [![Version](https://img.shields.io/badge/version-v0.1.0-blue.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](package.json)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
 [![GitHub](https://img.shields.io/badge/GitHub-Gyunikuchan%2Fdispatch--skills-181717?logo=github)](https://github.com/Gyunikuchan/dispatch-skills)
 
-Four production-grade agent skills for **cross-agent CLI delegation, multi-axis adversarial review, and autonomous consensus** across [Claude Code](https://claude.ai), [Antigravity](https://deepmind.google), [GitHub Copilot](https://github.com/features/copilot), and [OpenCode](https://opencode.ai).
+Composable agent skills for **cross-agent delegation, adversarial review, and autonomous
+implementation** across Claude Code, Antigravity, GitHub Copilot, and OpenCode.
+
+Delegates launched through `dispatch` are read-only. The host orchestrator verifies their claims
+against the active repository before accepting findings or applying changes; `implement-dispatch`
+uses a separate native write subagent for the implementation phase.
 
 ---
 
@@ -13,49 +18,49 @@ Four production-grade agent skills for **cross-agent CLI delegation, multi-axis 
 
 - [Why Dispatch Skills?](#why-dispatch-skills)
   - [Key Differentiators & Unique Strengths](#key-differentiators--unique-strengths)
-  - [What Review Claims Look Like](#what-review-claims-look-like)
-- [The Skills Suite](#the-skills-suite)
+- [Choose a skill](#choose-a-skill)
 - [Installation](#installation)
-- [Quick Start & Usage Examples](#quick-start--usage-examples)
-- [Evaluation Axes Overview](#evaluation-axes-overview)
-- [Supported Providers & Requirements](#supported-providers--requirements)
-- [Architecture Invariants](#architecture-invariants)
-- [Contributing & Local Development](#contributing--local-development)
+- [Quick start](#quick-start)
+  - [Delegate a bounded task](#delegate-a-bounded-task)
+  - [Review a plan before coding](#review-a-plan-before-coding)
+  - [Review code changes](#review-code-changes)
+  - [Run the full implementation loop](#run-the-full-implementation-loop)
+- [Review coverage](#review-coverage)
+- [Requirements and provider routing](#requirements-and-provider-routing)
 - [License](#license)
 
 ---
 
 ## Why Dispatch Skills?
 
-Single-agent coding is stochastic: every prompt is a roll of the dice. Asking the same model to review its own output creates an echo chamber where blind spots and flawed assumptions slip through.
-
-`dispatch-skills` introduces structured cross-agent collaboration, enabling you to harness multiple AI models and subscriptions with zero token bloat and zero human babysitting.
+Single-agent workflows can miss context, repeat the same assumptions, or discover a design flaw
+only after implementation. `dispatch-skills` separates planning, implementation, and review so
+each stage can be checked by independent agents while the host retains control of the working
+tree.
 
 ```mermaid
 flowchart TD
-    User(["👤 User Prompt / Task"]) --> Orchestrator["🤖 Orchestrator Agent<br/>(Claude Code / Antigravity / Copilot / OpenCode)"]
-    
-    subgraph PlanPhase ["1. Plan & Adversarial Review"]
-        Orchestrator -->|"Drafts plan"| PlanFile[("📝 Implementation Plan")]
-        PlanFile -->|"Dispatches read-only"| PlanReviewer["🔍 External Reviewer CLIs<br/>(7 Architectural Axes)"]
-        PlanReviewer -->|"Line-cited claims"| PlanAdjudicate{"⚖️ Verify Claims"}
-        PlanAdjudicate -->|"Update plan on disk"| PlanApproved[("✅ Approved Plan")]
-    end
-
-    subgraph ImplPhase ["2. Test-First Implementation"]
-        PlanApproved -->|"Single user gate"| WriteSubagent["💻 Native Write Subagent<br/>(Test-first execution)"]
-        WriteSubagent -->|"Working tree edits"| WorkingTree[("💻 Working Tree & Tests Green")]
-    end
-
-    subgraph CodePhase ["3. Code Review & Consensus"]
-        WorkingTree -->|"Dispatches diff"| CodeReviewer["🔍 External Reviewer CLIs<br/>(6 Code Engineering Axes)"]
-        CodeReviewer -->|"Line-cited claims"| CodeAdjudicate{"⚖️ Verify Claims"}
-        CodeAdjudicate -->|"Apply fixes & re-verify"| Consensus{"🔄 Consensus Engine"}
-        Consensus -->|"Clean consensus"| CleanHandoff[("📦 Clean Working Tree")]
-    end
-
-    CleanHandoff --> FinalReport(["👤 Final Deliverables & Diagnostics"])
+    User(["👤 User Request"]) --> Scope["⚙️ Scope & Flow"]
+    Scope --> Plan["📝 Plan"]
+    Plan --> PlanReview["⚡ Plan Review"]
+    PlanReview --> Gate{"🛑 Single Approval Gate"}
+    Gate --> Implementation["💻 Test-First Implementation"]
+    Implementation --> CodeReview["⚡ Code Review"]
+    CodeReview --> Fix["🔧 Apply Fixes & Verify"]
+    Fix --> Consensus{"🔄 Consensus?"}
+    Consensus -->|Findings remain| CodeReview
+    Consensus -->|Settled| Handoff["📦 Handoff & Cleanup"]
+    Consensus -->|Cap or deadlock| User
 ```
+
+The design emphasizes:
+
+- **Evidence over votes:** reviewers return claims with plan-section or code-line citations, and
+  the orchestrator verifies each claim before accepting it.
+- **Early feedback:** plan review catches missing requirements, unsafe assumptions, and migration
+  risks before code is written.
+- **Bounded context:** delegated traces and tool logs stay out of the host context; only the
+  synthesized result is returned.
 
 ### Key Differentiators & Unique Strengths
 
@@ -71,159 +76,135 @@ flowchart TD
 
 ---
 
-## The Skills Suite
+## Choose a skill
 
-Each skill is modular, self-contained, and follows strict downward independence:
-
-| Skill | Description | Role & Dependencies |
+| Skill | Use it for | Dependencies |
 |---|---|---|
-| [`dispatch`](skills/dispatch/README.md) | **Cross-agent CLI delegation bridge**. Routes bounded, read-only tasks to external agent CLIs through a diversity-sorted provider cascade, isolating logs in OS temp. | **Base runner**<br/>*(Depends on: nothing)* |
-| [`dispatch-plan-review`](skills/dispatch-plan-review/README.md) | **7-axis pre-implementation plan review**. Evaluates implementation plans *before* code is written, verifies claims against codebase truth, and updates plans on disk. | **Plan Review**<br/>*(Depends on: `dispatch`)* |
-| [`dispatch-code-review`](skills/dispatch-code-review/README.md) | **6-axis working-tree code review**. Inspects uncommitted diffs or branch changes, verifies claims against exact `<file>:L<line>` citations, and applies accepted fixes. | **Code Review**<br/>*(Depends on: `dispatch`)* |
-| [`implement-dispatch`](skills/implement-dispatch/README.md) | **End-to-end autonomous development loop**. Orchestrates: scope evaluation → plan authoring → plan review → single approval gate → test-first implementation → code review → consensus loop. | **Full Orchestration**<br/>*(Composes: all three skills)* |
+| [`dispatch`](skills/dispatch/README.md) | Delegate a bounded investigation, code trace, or architecture question to another agent CLI. | None |
+| [`dispatch-plan-review`](skills/dispatch-plan-review/README.md) | Review or author a plan before implementation, then fold verified findings back into the plan. | `dispatch` required |
+| [`dispatch-code-review`](skills/dispatch-code-review/README.md) | Review staged, unstaged, untracked, or branch changes, then apply verified fixes. | `dispatch` required |
+| [`implement-dispatch`](skills/implement-dispatch/README.md) | Run scope evaluation, plan review, one approval gate, implementation, code review, and consensus. | `dispatch` required; review skills optional |
+
+If an optional review companion is not installed, `implement-dispatch` skips that phase and reports
+the reduced workflow.
 
 ---
 
 ## Installation
 
-Install all four skills in one command:
+Install the complete suite:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
-Or install individual skills independently:
+Install only the skills you need:
 
 ```bash
-# Core delegation bridge
+# Delegation
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 
-# Standalone plan review
+# Plan review
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
 
-# Standalone code review
+# Code review
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
 
-# End-to-end development loop
+# End-to-end implementation
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill implement-dispatch
 ```
 
-> [!TIP]
-> Add `-g` to install globally across all your projects. When installing multiple skills, ensure they share the **same scope** (all global or all project-local) so companion scripts can resolve siblings.
+Add `-g` to install globally. Keep companion skills in the same scope: install all of them
+project-local or all of them globally so sibling scripts can resolve one another.
 
 ---
 
-## Quick Start & Usage Examples
+## Quick start
 
-### 1. Delegate Bounded Investigations (`/dispatch`)
-*Offload deep code traces, architectural questions, or security checks without bloating your active context:*
+### Delegate a bounded task
 
-```markdown
-/dispatch Trace how discount stacking is calculated in src/domain/pricing.ts and check for order dependence
+```text
+/dispatch Trace how discount stacking is calculated in src/domain/pricing.ts
+/dispatch --provider claude Review the GraphQL schema for N+1 query risks
 ```
 
-```markdown
-/dispatch --provider claude -m claude-opus-5 -e high Review GraphQL schema for N+1 query vulnerabilities
+Use `-f <path>` to attach a file, `-m <model>` to override the model, `-e <level>` to override
+reasoning effort, and `-t <seconds>` to override the timeout. Use `(<pins>)` or
+`--provider <key>` when a specific configured platform should be used.
+
+### Review a plan before coding
+
+```text
+/dispatch-plan-review .scratch/plan/2026-09-08-billing-engine.md
+/dispatch-plan-review (all) focus on backward compatibility and data migrations
 ```
 
-➡️ *Read the full [`dispatch` manual](skills/dispatch/README.md) for provider cascades, file attachments (`-f`), and configuration overrides.*
+If no plan exists, pass the requirement and the skill authors a scratch plan before reviewing it.
+Run the command again after edits for a targeted subsequent round.
+
+### Review code changes
+
+```text
+/dispatch-code-review
+/dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
+/dispatch-code-review .scratch/plan/2026-09-08-auth-v2-walkthrough.md
+```
+
+Dirty trees review staged, unstaged, and untracked changes. A clean tree is reviewed against the
+branch base. Accepted fixes are verified and recorded in the walkthrough.
+
+### Run the full implementation loop
+
+```text
+/implement-dispatch Add a CSV export button to the transactions table
+/implement-dispatch high (claude,copilot): Refactor payment webhook idempotency
+/implement-dispatch max (all): Migrate the database schema and state machine to v4
+```
+
+Levels are `low`, `medium`, `high`, `xhigh`, and `max`. The scope gate selects `low` through
+`high` automatically; `xhigh` and `max` are explicit. The workflow never commits, pushes, creates
+branches, or opens pull requests.
 
 ---
 
-### 2. Adversarial Plan Review (`/dispatch-plan-review`)
-*Stress-test an implementation plan across 7 architectural axes before writing any code:*
+## Review coverage
 
-```markdown
-/dispatch-plan-review .scratch/plan/2026-09-14-billing-v2.md focus on idempotency and migration safety
-```
+`dispatch-plan-review` evaluates seven axes: requirement fidelity, domain logic, architecture,
+security, blast radius, testability, and simplicity/failure modes.
 
-```markdown
-/dispatch-plan-review (claude,agy) Add token bucket rate limiting to /api/v1/auth endpoints
-```
+`dispatch-code-review` evaluates six axes: architecture, domain logic, security/resource safety,
+simplicity, compatibility/blast radius, and test quality/UI/UX.
 
-➡️ *Read the full [`dispatch-plan-review` manual](skills/dispatch-plan-review/README.md) for the 7 review axes, adjudication decision tables, and on-disk plan update workflows.*
-
----
-
-### 3. Working-Tree Code Review & Auto-Fix (`/dispatch-code-review`)
-*Get a rigorous second opinion on uncommitted changes, verify claims against cited lines, and apply fixes automatically:*
-
-```markdown
-/dispatch-code-review focus on auth boundaries, token lifecycle, and error recovery
-```
-
-```markdown
-/dispatch-code-review (claude) .scratch/plan/2026-09-14-auth-walkthrough.md
-```
-
-➡️ *Read the full [`dispatch-code-review` manual](skills/dispatch-code-review/README.md) for the 6 code engineering axes, line-citation grammar, and verification loops.*
+Both review skills require evidence for actionable findings and classify claims as accepted,
+rejected, downgraded, or disputed. See the individual manuals for their finding grammar,
+adjudication rules, and artifact lifecycle.
 
 ---
 
-### 4. Autonomous End-to-End Development (`/implement-dispatch`)
-*Run the complete plan → review → gate → implement → review → consensus lifecycle with a single prompt:*
+## Requirements and provider routing
 
-```markdown
-/implement-dispatch high (claude,agy): Refactor session store to use Redis cluster with connection pooling
+- Node.js `>=22`, as declared by [`package.json`](package.json).
+- A Git repository working tree.
+- At least one available provider CLI, unless the host uses the documented in-process fallback.
+
+| Platform key | Provider CLI |
+|---|---|
+| `claude` | Claude Code (`claude`) |
+| `agy` | Antigravity (`agy`) |
+| `copilot` | GitHub Copilot (`copilot`) |
+| `opencode` | OpenCode (`opencode`) |
+
+Provider availability is environment and configuration dependent. The shipped defaults do not
+mean every platform is enabled for every installation. From a checkout, inspect the effective
+dispatch keys with:
+
+```bash
+node skills/dispatch/scripts/dispatch.mjs --list-platforms
 ```
 
-```markdown
-/implement-dispatch low: Rename Household.owner field to primaryHolder
-```
-
-```markdown
-/implement-dispatch max (all): Migrate database schema and state machine to v4
-```
-
-➡️ *Read the full [`implement-dispatch` manual](skills/implement-dispatch/README.md) for review levels (`low` to `max`), platform write subagents, and the consensus engine.*
-
----
-
-## Evaluation Axes Overview
-
-Reviews follow rigorous domain checklists rather than generic open-ended critique:
-
-### Plan Review (7 Axes)
-1. **Requirement & Intent Fidelity** (`traceability`, `user-gap`, `scope-creep`)
-2. **Domain & Business Logic** (`domain-logic`, `invariant`, `state-machine`)
-3. **Plan Coherence & Architecture** (`coherence`, `approach`, `standards`)
-4. **Security & Permissions** (`security`, `auth`, `validation`)
-5. **Blast Radius & Reversibility** (`blast-radius`, `migration`, `compat`)
-6. **Testability & Success Criteria** (`testability`, `spec-gap`)
-7. **Simplicity & Failure Modes** (`simplicity`, `yagni`, `edge-case`)
-
-### Code Review (6 Axes)
-1. **Architecture & Module Design** (`shallow`, `seam`, `adapter`, `coupling`)
-2. **Domain & Business Logic** (`domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type`)
-3. **Security & Resource Safety** (`vuln`, `auth`, `leak`, `perf`)
-4. **Simplicity & Anti-Bloat** (`yagni`, `reuse`, `stdlib`, `root-cause`)
-5. **Blast Radius & Compatibility** (`breaking`, `compat`, `migration`, `scope-creep`)
-6. **Test Quality & UI/UX** (`test-gap`, `test-leak`, `ui`, `a11y`)
-
----
-
-## Supported Providers & Requirements
-
-### System Requirements
-- **Runtime**: Node.js `>= 18.0.0` (zero npm runtime dependencies).
-- **Git**: Git repository working tree.
-
-### Supported Agent Platforms
-`dispatch-skills` works seamlessly whether your host orchestrator or delegate CLI is:
-
-| Platform | CLI Binary | Discovery Modes | Sandboxed Mode |
-|---|---|---|---|
-| **Claude Code** | `claude` | Standalone CLI, Claude Desktop, VS Code Extension | `--permission-mode plan`, tool allowlists |
-| **Antigravity 2.0** | `agy` | Standalone CLI, Antigravity Desktop app, VS Code Extension | `--mode plan` |
-| **GitHub Copilot** | `copilot` | Standalone CLI, GitHub Copilot Desktop, VS Code Extension | `--mode plan` |
-| **OpenCode** | `opencode` | Standalone CLI (`opencode.jsonc` configured for local or remote LLMs) | Bubblewrap (`bwrap`) sandbox & guardrails |
-
----
-
-## Architecture Invariants
-
-- **Host-Neutral**: Zero opinions about your codebase are hardcoded. Delegates read repository conventions directly from `AGENTS.md` or `CLAUDE.md` in the workspace root.
-- **Single Source of Truth**: All findings and resolutions are appended directly to human-readable on-disk artifacts (`.scratch/plan/*.md` and `.scratch/plan/*-walkthrough.md`) for easy viewing and tracing.
+`all` expands only to those effective configured keys. Configuration is loaded per skill with
+first-match precedence: `config.local.jsonc`, then `config.jsonc`, then `config.default.jsonc`;
+the selected file replaces the lower-priority file rather than merging with it.
 
 ---
 

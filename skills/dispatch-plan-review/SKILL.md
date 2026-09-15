@@ -41,7 +41,7 @@ Attach the plan file plus any user-specified files with `-f "<path>"` (forward s
 
 **Re-review round** (standalone): derive `<Review Scope>` from the resolved plan. No `### Round` headings under `## Review Findings & Resolutions` means `Full review`; `n` such headings mean `Re-review round <n+1>`, naming the sections edited since that last round. Count the headings, not the finding bullets — see `dispatch`'s `references/alignment.md` § Resolutions Log.
 
-**Prompt**: fill [references/prompt-template.md](references/prompt-template.md) via `dispatch`'s `fill-template.mjs` per `references/alignment.md` § Prompt Template Filling: `node <skills-dir>/dispatch/scripts/fill-template.mjs --skill <skills-dir>/dispatch-plan-review/references/prompt-template.md --vars <json file> --out <path>` (a JSON vars file carries multi-line values such as `<Requirement>`), then `dispatch --prompt-file <out>`.
+**Prompt**: fill [references/prompt-template.md](references/prompt-template.md) via `dispatch`'s `fill-template.mjs` using the canonical stdin/temp-output protocol in `references/alignment.md` § Prompt Template Filling: `--vars - --temp-out`. Capture the printed temp path, pass it to `dispatch --prompt-file`, and remove its parent directory after dispatch finishes.
 
 Supply all declared variables to `fill-template.mjs`:
 - `<Plan Path>`: path to the resolved or authored plan.

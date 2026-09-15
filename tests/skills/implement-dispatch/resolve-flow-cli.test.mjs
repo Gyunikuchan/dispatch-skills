@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
 
@@ -50,6 +50,85 @@ function run(...args) {
   );
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
+
+/**
+ * Copies the dispatch skill beside a fixture so resolve-flow.mjs's sibling imports resolve, then
+ * drops the git-ignored config overrides. Without that, the fixture would inherit whichever
+ * platforms the developer's own `config.jsonc` happens to configure, and the platform cross-check
+ * against implement-dispatch's 4-platform default would pass or fail per machine.
+ */
+function copyDispatchSkill(destination) {
+  fs.cpSync(path.join(REPO_ROOT, 'skills/dispatch'), destination, { recursive: true });
+  for (const override of ['config.jsonc', 'config.local.jsonc']) {
+    fs.rmSync(path.join(destination, override), { force: true });
+  }
+}
+
+/**
+ * Builds a throwaway implement-dispatch skill dir with dispatch copied beside it, so the script's
+ * sibling imports and config lookups both resolve inside the fixture.
+ *
+ * Both skills fall back to their shipped `config.default.jsonc` (all four platforms) unless a
+ * caller overrides one, which is what makes a fixture run independent of the developer's own
+ * git-ignored configs.
+ *
+ * @param {object} [options]
+ * @param {string} [options.prefix] mkdtemp prefix, for readable temp paths on failure.
+ * @param {string|null} [options.config] Contents for this skill's `config.jsonc`.
+ * @param {string|null} [options.dispatchConfig] Contents for dispatch's `config.jsonc`.
+ * @param {boolean} [options.hashable] Also copy the files the integrity manifest covers.
+ * @returns {{ dir: string, skillDir: string }}
+ */
+function buildFixture({ prefix = 'resolve-flow-', config = null, dispatchConfig = null, hashable = false } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const skillDir = path.join(dir, 'implement-dispatch');
+  fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+  fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
+  fs.copyFileSync(
+    path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
+    path.join(skillDir, 'config.default.jsonc'),
+  );
+  if (config !== null) fs.writeFileSync(path.join(skillDir, 'config.jsonc'), config);
+  if (hashable) {
+    fs.copyFileSync(path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'), path.join(skillDir, 'SKILL.md'));
+    fs.copyFileSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs'),
+      path.join(skillDir, 'scripts', 'check-consensus.mjs'),
+    );
+  }
+  const dispatchDir = path.join(dir, 'dispatch');
+  copyDispatchSkill(dispatchDir);
+  if (dispatchConfig !== null) fs.writeFileSync(path.join(dispatchDir, 'config.jsonc'), dispatchConfig);
+  return { dir, skillDir };
+}
+
+/** Runs a fixture's copy of the script under the same liveness seam {@link run} uses. */
+function runFixtureScript(skillDir, args = [], { liveness = ALL_LIVE } = {}) {
+  const result = spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    killSignal: 'SIGKILL',
+    env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: liveness, IMPLEMENT_DISPATCH_TEST_MODE: '1' },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+/**
+ * One fixture on the shipped defaults, shared by every test that names a specific platform.
+ *
+ * Those cases cannot use {@link run}: it executes the real script, whose effective config is the
+ * developer's git-ignored `config.jsonc`, so pinning a platform that config omits fails as an
+ * unrecognized pin instead of exercising the behaviour under test.
+ */
+let defaultsFixture;
+function runOnDefaults(args, opts) {
+  defaultsFixture ??= buildFixture({ prefix: 'resolve-flow-defaults-' });
+  return runFixtureScript(defaultsFixture.skillDir, args, opts);
+}
+
+after(() => {
+  if (defaultsFixture) fs.rmSync(defaultsFixture.dir, { recursive: true, force: true });
+});
 
 describe('resolve-flow CLI', () => {
   it('validates the shipped config without any other flag', () => {
@@ -162,10 +241,10 @@ describe('resolve-flow CLI', () => {
   });
 
   it('resolves space-separated "--pins claude,agy" the same as "--pins=claude,agy"', () => {
-    const spaced = run('--platform', 'claude', '--pins', 'claude,agy');
-    const equals = run('--platform=claude', '--pins=claude,agy');
-    assert.equal(spaced.status, 0);
-    assert.equal(equals.status, 0);
+    const spaced = runOnDefaults(['--platform', 'claude', '--pins', 'claude,agy']);
+    const equals = runOnDefaults(['--platform=claude', '--pins=claude,agy']);
+    assert.equal(spaced.status, 0, spaced.stderr);
+    assert.equal(equals.status, 0, equals.stderr);
     assert.deepEqual(JSON.parse(spaced.stdout), JSON.parse(equals.stdout));
   });
 
@@ -185,11 +264,13 @@ describe('resolve-flow CLI', () => {
   });
 
   it('exits 1 when every pinned platform is dead', () => {
-    const { status, stderr } = run('--platform', 'claude', '--pins', 'agy', {
+    const { status, stderr } = runOnDefaults(['--platform', 'claude', '--pins', 'agy'], {
       liveness: JSON.stringify({ claude: true, agy: false, copilot: false, opencode: false }),
     });
     assert.equal(status, 1);
     assert.match(stderr, /agy/);
+    // The pin must die on liveness, not on membership, or this asserts nothing about dead pins.
+    assert.doesNotMatch(stderr, /Unrecognized pin key/);
   });
 
   it('exits 1 when the liveness seam yields unparsable JSON', () => {
@@ -199,10 +280,10 @@ describe('resolve-flow CLI', () => {
   });
 
   it('reports a pinned platform that is unreachable in diagnostics', () => {
-    const { status, stdout } = run('--platform', 'claude', '--pins', 'agy,copilot', {
+    const { status, stdout, stderr } = runOnDefaults(['--platform', 'claude', '--pins', 'agy,copilot'], {
       liveness: JSON.stringify({ claude: true, agy: true, copilot: false, opencode: false }),
     });
-    assert.equal(status, 0);
+    assert.equal(status, 0, stderr);
     const flow = JSON.parse(stdout);
     assert.ok(
       JSON.stringify(flow.diagnostics).includes('copilot'),
@@ -211,8 +292,10 @@ describe('resolve-flow CLI', () => {
   });
 
   it('accepts --exclude and --exclude= forms equivalently', () => {
-    const spaced = run('--platform', 'claude', '--level', 'high', '--exclude', 'copilot');
-    const equals = run('--platform=claude', '--level=high', '--exclude=copilot');
+    // Exclude keys are validated against the configured platforms, so this needs a config known
+    // to carry copilot rather than the developer's.
+    const spaced = runOnDefaults(['--platform', 'claude', '--level', 'high', '--exclude', 'copilot']);
+    const equals = runOnDefaults(['--platform=claude', '--level=high', '--exclude=copilot']);
     assert.equal(spaced.status, 0, spaced.stderr);
     assert.equal(equals.status, 0, equals.stderr);
     const flow = JSON.parse(spaced.stdout);
@@ -320,7 +403,7 @@ describe('resolve-flow CLI: invalid config', () => {
       path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
       path.join(skillDir, 'config.default.jsonc'),
     );
-    fs.cpSync(path.join(REPO_ROOT, 'skills/dispatch'), path.join(dir, 'dispatch'), { recursive: true });
+    copyDispatchSkill(path.join(dir, 'dispatch'));
 
     try {
       const result = spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
@@ -376,7 +459,7 @@ describe('resolve-flow CLI: integrity manifest', () => {
       path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
       path.join(skillDir, 'config.default.jsonc'),
     );
-    fs.cpSync(path.join(REPO_ROOT, 'skills/dispatch'), path.join(dir, 'dispatch'), { recursive: true });
+    copyDispatchSkill(path.join(dir, 'dispatch'));
     return { dir, skillDir };
   };
 
@@ -440,6 +523,102 @@ describe('resolve-flow CLI: integrity manifest', () => {
       assert.equal(status, 0);
       assert.match(stdout, /Config is valid\./);
       assert.match(stderr, /integrity manifest.*not found/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('resolve-flow CLI: dispatch platform cross-check', () => {
+  /**
+   * Builds an implement-dispatch fixture beside a dispatch whose config we control, so the
+   * subset check can be exercised end-to-end without touching either shipped config.
+   *
+   * @param {string|null} dispatchConfig Contents for dispatch's `config.jsonc`; `null` leaves the
+   *   shipped default (all four platforms) in place, and `''` writes an unparsable file.
+   */
+  const setup = (dispatchConfig) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-crosscheck-'));
+    const skillDir = path.join(dir, 'implement-dispatch');
+    fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+    fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
+    fs.cpSync(
+      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
+      path.join(skillDir, 'config.default.jsonc'),
+    );
+    const dispatchDir = path.join(dir, 'dispatch');
+    copyDispatchSkill(dispatchDir);
+    if (dispatchConfig !== null) {
+      fs.writeFileSync(path.join(dispatchDir, 'config.jsonc'), dispatchConfig);
+    }
+    return { dir, skillDir };
+  };
+
+  const run = (skillDir, args = ['--validate-only']) =>
+    spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
+      encoding: 'utf8',
+      timeout: 60_000,
+      killSignal: 'SIGKILL',
+      env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE, IMPLEMENT_DISPATCH_TEST_MODE: '1' },
+    });
+
+  const ONLY_CLAUDE = '{ "platforms": { "claude": { "model": "m", "effort": "low" } } }';
+
+  it('passes when dispatch configures every platform this skill does', () => {
+    const { dir, skillDir } = setup(null);
+    try {
+      const { status, stdout } = run(skillDir);
+      assert.equal(status, 0);
+      assert.match(stdout, /Config is valid\./);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('exits 1 naming each section and the offending platform when dispatch lacks it', () => {
+    const { dir, skillDir } = setup(ONLY_CLAUDE);
+    try {
+      const { status, stderr } = run(skillDir);
+      assert.equal(status, 1);
+      assert.match(stderr, /Invalid config:/);
+      assert.match(stderr, /plan-review\.platforms\."agy" is not configured in .*config\.jsonc/);
+      assert.match(stderr, /implementation\.platforms\."copilot"/);
+      assert.match(stderr, /code-review\.platforms\."opencode"/);
+      assert.match(stderr, /exits PLATFORM_NOT_CONFIGURED; add it there or remove it here/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks the run path too, before any liveness probing', () => {
+    const { dir, skillDir } = setup(ONLY_CLAUDE);
+    try {
+      const { status, stdout, stderr } = run(skillDir, ['--platform', 'claude']);
+      assert.equal(status, 1);
+      assert.equal(stdout, '');
+      assert.match(stderr, /is not configured in/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when dispatch config is unreadable', () => {
+    const { dir, skillDir } = setup(null);
+    try {
+      // Remove dispatch config entirely: membership cannot be established, so neither validation
+      // nor a normal resolve run may proceed.
+      fs.rmSync(path.join(dir, 'dispatch', 'config.default.jsonc'), { force: true });
+      const validation = run(skillDir);
+      assert.equal(validation.status, 1);
+      assert.equal(validation.stdout, '');
+      assert.match(validation.stderr, /effective platform set could not be loaded/);
+      assert.match(validation.stderr, /Config file not found/);
+
+      const resolution = run(skillDir, ['--platform', 'claude']);
+      assert.equal(resolution.status, 1);
+      assert.equal(resolution.stdout, '');
+      assert.match(resolution.stderr, /effective platform set could not be loaded/);
+      assert.match(resolution.stderr, /Config file not found/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
