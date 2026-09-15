@@ -237,7 +237,7 @@ running:
 1. `dispatch` sends the prompt to the selected provider or providers in read-only mode.
 2. The result is a synthesized answer rather than raw provider logs.
 3. When supported, the result includes a provider session link or resume command.
-4. The host agent remains responsible for verifying findings and applying any edits.
+4. The user or an upstream review/orchestration skill verifies and adjudicates reports before edits or other action; the host agent remains responsible for applying any resulting edits.
 
 > [!NOTE]
 > Delegates can inspect the workspace but do not edit files, create commits, or push changes.
