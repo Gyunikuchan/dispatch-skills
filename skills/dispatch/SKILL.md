@@ -61,15 +61,8 @@ Map the result to exactly one row before deciding what to report.
 |---------|--------|
 | Exit 0 with useful output | Capture stdout and the session handle; continue to relay. |
 | Truncated or partial output | Use it when it fulfils the brief; otherwise re-dispatch a narrower task. |
-| `NO_DISPATCH_AVAILABLE`, a pinned non-zero run, or another runner error | Use the platform's read-only in-process subagent with the identical prompt and attachments. |
+| `NO_DISPATCH_AVAILABLE`, a pinned non-zero run, or another runner error | Read and apply the [native fallback contract](references/providers.md#native-fallback). |
 | `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, `NO_CONFIG_REQUIRES_PROVIDER`, or `PLATFORM_NOT_CONFIGURED` | Stop and report the exact error; do not invent a fallback. |
-
-| Failed platform | Read-only in-process fallback |
-|-----------------|-------------------------------|
-| `claude` | `Explore` |
-| `agy` | `research` |
-| `copilot` | `self` |
-| `opencode` | `explore` |
 
 **Done when:** the outcome is mapped and any fallback or stop condition is complete.
 

@@ -59,13 +59,13 @@ describe('common: diversitySort', () => {
   const c = (platform, model) => ({ platform, model });
 
   it('moves repeat platforms behind every first occurrence, keeping their order', () => {
-    const input = [c('agy'), c('copilot'), c('opencode', 'glm'), c('opencode', 'deepseek'), c('opencode', 'qwen')];
-    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['agy', 'copilot', 'glm', 'deepseek', 'qwen']);
+    const input = [c('agy'), c('copilot'), c('opencode', 'glm'), c('opencode', 'mistral'), c('opencode', 'qwen')];
+    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['agy', 'copilot', 'glm', 'mistral', 'qwen']);
   });
 
   it('interleaves a second agy model after the first occurrences of every platform', () => {
-    const input = [c('agy', 'a1'), c('agy', 'a2'), c('copilot'), c('opencode', 'glm'), c('opencode', 'deepseek'), c('opencode', 'qwen')];
-    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['a1', 'copilot', 'glm', 'a2', 'deepseek', 'qwen']);
+    const input = [c('agy', 'a1'), c('agy', 'a2'), c('copilot'), c('opencode', 'glm'), c('opencode', 'mistral'), c('opencode', 'qwen')];
+    assert.deepEqual(diversitySort(input).map((x) => x.model ?? x.platform), ['a1', 'copilot', 'glm', 'a2', 'mistral', 'qwen']);
   });
 
   it('accepts a custom key and is stable for a single platform', () => {
@@ -85,7 +85,7 @@ describe('common: normalizeModelId & isSameModel', () => {
   it('strips provider prefixes up to the last slash', () => {
     assert.equal(normalizeModelId('opencode-go/glm-5.3-flash'), 'glm-5.3-flash');
     assert.equal(normalizeModelId('anthropic/claude-3-7-sonnet'), 'claude-3-7-sonnet');
-    assert.equal(normalizeModelId('openrouter/deepseek/deepseek-chat'), 'deepseek-chat');
+    assert.equal(normalizeModelId('openrouter/mistral/mistral-chat'), 'mistral-chat');
   });
 
   it('strips trailing 8-digit date suffixes', () => {
@@ -114,7 +114,7 @@ describe('common: normalizeModelId & isSameModel', () => {
 
   it('isSameModel handles candidate model arrays with any-match', () => {
     assert.ok(isSameModel(['claude-opus-5', 'claude-sonnet-5'], 'claude-sonnet-5'));
-    assert.ok(isSameModel(['opencode-go/glm-5.3-flash', 'deepseek-v4.1-flash'], 'glm-5.3-flash'));
+    assert.ok(isSameModel(['opencode-go/glm-5.3-flash', 'mistral-small'], 'glm-5.3-flash'));
     assert.ok(!isSameModel(['claude-opus-5', 'claude-sonnet-5'], 'gemini-3.8-flash'));
   });
 

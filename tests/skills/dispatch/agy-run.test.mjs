@@ -146,10 +146,14 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-scan-'));
       const originalAppData = process.env.APPDATA;
       const originalLocalAppData = process.env.LOCALAPPDATA;
+      const originalHome = process.env.HOME;
       try {
         process.env.APPDATA = fixture;
         process.env.LOCALAPPDATA = fixture;
-        const brainDir = path.join(fixture, 'antigravity', 'brain');
+        process.env.HOME = fixture;
+        const brainDir = process.platform === 'win32'
+          ? path.join(fixture, 'antigravity', 'brain')
+          : path.join(fixture, '.gemini', 'antigravity', 'brain');
         fs.mkdirSync(brainDir, { recursive: true });
         fs.mkdirSync(path.join(brainDir, 'older-conversation'));
         fs.mkdirSync(path.join(brainDir, 'newest-conversation'));
@@ -169,6 +173,8 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
         else process.env.APPDATA = originalAppData;
         if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
         else process.env.LOCALAPPDATA = originalLocalAppData;
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });
@@ -177,10 +183,14 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-filter-'));
       const originalAppData = process.env.APPDATA;
       const originalLocalAppData = process.env.LOCALAPPDATA;
+      const originalHome = process.env.HOME;
       try {
         process.env.APPDATA = fixture;
         process.env.LOCALAPPDATA = fixture;
-        const brainDir = path.join(fixture, 'antigravity', 'brain');
+        process.env.HOME = fixture;
+        const brainDir = process.platform === 'win32'
+          ? path.join(fixture, 'antigravity', 'brain')
+          : path.join(fixture, '.gemini', 'antigravity', 'brain');
         fs.mkdirSync(brainDir, { recursive: true });
         fs.mkdirSync(path.join(brainDir, 'stale-conversation'));
         const stale = new Date(Date.now() - 600000);
@@ -193,6 +203,8 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
         else process.env.APPDATA = originalAppData;
         if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
         else process.env.LOCALAPPDATA = originalLocalAppData;
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });

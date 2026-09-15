@@ -49,10 +49,6 @@
         "effort": "max",
       },
       {
-        "model": "opencode-go/deepseek-v4.1-flash",
-        "effort": "max",
-      },
-      {
         "model": "lmstudio/qwen3.8-27b-ridge",
       },
     ],

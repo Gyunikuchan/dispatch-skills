@@ -17,6 +17,11 @@ This skill owns orchestration; companion skills own runner behavior and review c
 
 **Shared contracts.** Before a review wave, read [`dispatch`'s alignment contract](../dispatch/references/alignment.md), especially Invocation Modes, Target → Flag Mapping, Reserve Substitution, Adjudication, Resolutions Log, and Artifact Lifecycle. That document is authoritative for delegate invocation and finding grammar.
 
+**Review dispatch failures.** Read and apply
+[`dispatch`'s native fallback contract](../dispatch/references/providers.md#native-fallback) to
+every review target. Its same-platform branch is read-only and separate from the native write
+subagent used in Step 4.
+
 ## Invocation
 
 ```text

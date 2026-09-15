@@ -29,7 +29,7 @@ const TEST_DISPATCH_CONFIG = {
     copilot: { model: 'gpt-5.6-luna', effort: 'max' },
     opencode: [
       { model: 'opencode-go/glm-5.3-flash', effort: 'max' },
-      { model: 'opencode-go/deepseek-v4.1-flash', effort: 'max' },
+      { model: 'opencode-go/mistral-small', effort: 'max' },
       { model: 'lmstudio/qwen3.8-27b-ridge' },
     ],
   },
@@ -755,7 +755,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         platforms: {
           opencode: [
             { model: 'glm-5.3-flash', effort: 'max' },
-            { model: 'deepseek-v4.1-flash', effort: 'max' },
+            { model: 'mistral-small', effort: 'max' },
             { model: 'lmstudio/qwen3.8-27b-ridge' },
           ],
         },
@@ -767,7 +767,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         if (opts.model === 'glm-5.3-flash') {
           return { provider: 'opencode', stdout: '', exitCode: 1, failureKind: 'model-not-loaded' };
         }
-        if (opts.model === 'deepseek-v4.1-flash') {
+        if (opts.model === 'mistral-small') {
           return { provider: 'opencode', stdout: '', exitCode: 1, failureKind: 'quota' };
         }
         return { provider: 'opencode', stdout: 'Success from local LLM', exitCode: 0 };
@@ -779,7 +779,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(calls.length, 3);
       assert.deepEqual(calls, [
         { model: 'glm-5.3-flash', effort: 'max' },
-        { model: 'deepseek-v4.1-flash', effort: 'max' },
+        { model: 'mistral-small', effort: 'max' },
         { model: 'lmstudio/qwen3.8-27b-ridge', effort: null },
       ]);
     });
@@ -790,7 +790,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         platforms: {
           opencode: [
             { model: 'glm-5.3-flash' },
-            { model: 'deepseek-v4.1-flash' },
+            { model: 'mistral-small' },
           ],
           copilot: { model: 'gpt-5.6-luna' },
         },
@@ -817,7 +817,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       assert.equal(result.provider, 'opencode');
       assert.equal(result.exitCode, 1);
-      assert.deepEqual(opencodeCalls, ['glm-5.3-flash', 'deepseek-v4.1-flash']);
+      assert.deepEqual(opencodeCalls, ['glm-5.3-flash', 'mistral-small']);
       assert.equal(copilotRunner.mock.calls.length, 0, 'did not cascade to copilot');
     });
 
@@ -829,7 +829,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const multiConfig = {
         platforms: {
           claude: { model: 'claude-opus-5' },
-          opencode: [{ model: 'glm-5.3-flash' }, { model: 'deepseek-v4.1-flash' }, { model: 'qwen3.8-27b' }],
+          opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }, { model: 'qwen3.8-27b' }],
           agy: { model: 'gemini-3.8-flash' },
           copilot: { model: 'gpt-5.6-luna' },
         },
@@ -850,7 +850,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         'glm-5.3-flash',
         'gemini-3.8-flash',
         'gpt-5.6-luna',
-        'deepseek-v4.1-flash',
+        'mistral-small',
         'qwen3.8-27b',
         'claude-opus-5',
       ]);
@@ -1073,7 +1073,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         platforms: {
-          opencode: [{ model: 'glm-5.3-flash' }, { model: 'deepseek-v4.1-flash' }],
+          opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }],
           agy: { model: 'gemini-3.8-flash' },
         },
       };
@@ -1094,7 +1094,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         platforms: {
           opencode: [
             { model: 'glm-5.3-flash' },
-            { model: 'deepseek-v4.1-flash' },
+            { model: 'mistral-small' },
           ],
         },
       };

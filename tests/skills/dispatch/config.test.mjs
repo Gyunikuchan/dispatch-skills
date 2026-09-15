@@ -142,7 +142,7 @@ describe('validateDispatchConfig', () => {
           claude: { model: ['a', 'b'] },
           agy: { model: ['gemini-3.8-flash', 'gemini-3.7-flash'] },
           copilot: { model: ['gpt-5.6-luna'] },
-          opencode: { model: ['glm-5.3-flash', 'deepseek-v4.1-flash'] },
+          opencode: { model: ['glm-5.3-flash', 'mistral-small'] },
         },
       }),
       [],

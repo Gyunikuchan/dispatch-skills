@@ -66,7 +66,7 @@ The design emphasizes:
 
 | Differentiator | How Dispatch Skills Solves It |
 |---|---|
-| **🎲 Roll the Dice a Few More Times** | Don't let a single model grade its own homework. Route tasks across fundamentally different model architectures (e.g. Claude Opus/Fable, Gemini 3.8 Flash, GPT-5.6 Luna, DeepSeek, GLM, Qwen) to eliminate blind spots, invariant breaks, and edge cases. |
+| **🎲 Roll the Dice a Few More Times** | Don't let a single model grade its own homework. Route tasks across fundamentally different model architectures (e.g. Claude Opus/Fable, Gemini 3.8 Flash, GPT-5.6 Luna, GLM, Qwen) to eliminate blind spots, invariant breaks, and edge cases. |
 | **⚖️ Claims, Not Blind Verdicts** | Unlike simplistic voting systems where hallucinating models outvote correct ones, `dispatch-skills` enforces **evidence over votes**. Reviewers must cite exact lines (`<file>:L<line>`) or plan sections (`§ Section`). The orchestrator verifies every claim against code lines and repository rules (`AGENTS.md` / `CLAUDE.md`). If the code refutes it, it is rejected. |
 | **💡 Catch Bugs Upfront (1-Shot Economics)** | Catching a premise flaw or missing migration in a plan markdown file costs pennies. Debugging 500 lines of regression-laden code burns thousands of tokens. Plan review before implementation dramatically increases one-shot completion rates. |
 | **🛡️ Structural Least Privilege** | Delegate CLIs run in read-only harnesses (`--mode plan` / tool whitelists), guarded against mutating workspace files, touching git history, or leaking credentials. |

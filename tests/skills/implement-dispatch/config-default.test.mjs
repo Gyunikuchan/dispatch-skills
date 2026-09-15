@@ -23,23 +23,23 @@ const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 const LEVEL_PARITY = {
   low: {
     'plan-review': { maxRounds: 0, targetCount: 0, consensus: false, targets: 0, reserves: 0 },
-    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, targets: 1, reserves: 4 },
+    'code-review': { maxRounds: 1, targetCount: 1, consensus: false, targets: 1, reserves: 3 },
   },
   medium: {
-    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, targets: 1, reserves: 4 },
-    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 3 },
+    'plan-review': { maxRounds: 2, targetCount: 1, consensus: true, targets: 1, reserves: 3 },
+    'code-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 2 },
   },
   high: {
-    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 3 },
-    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 2 },
+    'plan-review': { maxRounds: 3, targetCount: 2, consensus: true, targets: 2, reserves: 2 },
+    'code-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 1 },
   },
   xhigh: {
-    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 2 },
-    'code-review': { maxRounds: 3, targetCount: 4, consensus: true, targets: 4, reserves: 1 },
+    'plan-review': { maxRounds: 3, targetCount: 3, consensus: true, targets: 3, reserves: 1 },
+    'code-review': { maxRounds: 3, targetCount: 4, consensus: true, targets: 4, reserves: 0 },
   },
   max: {
-    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5, reserves: 0 },
-    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 5, reserves: 0 },
+    'plan-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 4, reserves: 0 },
+    'code-review': { maxRounds: 5, targetCount: 'all', consensus: true, targets: 4, reserves: 0 },
   },
 };
 

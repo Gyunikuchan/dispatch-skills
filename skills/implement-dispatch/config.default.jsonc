@@ -110,10 +110,6 @@
           "effort": "max",
         },
         {
-          "model": "opencode-go/deepseek-v4.1-flash",
-          "effort": "max",
-        },
-        {
           "model": "lmstudio/qwen3.8-27b-ridge",
         },
       ],
@@ -205,10 +201,6 @@
       "opencode": [
         {
           "model": "opencode-go/glm-5.3-flash",
-          "effort": "max",
-        },
-        {
-          "model": "opencode-go/deepseek-v4.1-flash",
           "effort": "max",
         },
         {

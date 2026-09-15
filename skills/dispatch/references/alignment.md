@@ -90,8 +90,13 @@ Map each target to: `dispatch --provider <target.platform> [-m <target.model>] [
 Pinned targets substitute via the `reserves` list rather than cascading:
 1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
 2. **Usability**: Dispatch the first unused reserve in list order (diversity-sorted) whose `(platform, model, effort)` tuple was not already dispatched in this wave.
-3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then fall back to `dispatch`'s in-process read-only subagent.
+3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then use the
+   platform fallback in [`providers.md` § Native fallback](providers.md#native-fallback).
 4. **Diagnostics**: Use each reserve at most once per wave. Record substitutions (`<failed target> → <reserve>: <reason>`).
+
+A same-platform failure takes the native branch immediately in
+[`providers.md` § Native fallback](providers.md#native-fallback), rather than retrying it through a
+reserve or another same-platform candidate.
 
 ---
 

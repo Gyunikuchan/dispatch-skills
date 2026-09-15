@@ -1347,7 +1347,7 @@ describe('resolveFlow — diversity-sorted candidates', () => {
   const ALL_UP = { claude: true, agy: true, copilot: true, opencode: true };
   const OPENCODE_MULTI = [
     { model: 'glm-5.3-flash' },
-    { model: 'deepseek-v4.1-flash' },
+    { model: 'mistral-small' },
     { model: 'qwen3.8-27b' },
   ];
   const label = (t) => (t.platform === 'opencode' ? t.model : t.platform);
@@ -1364,17 +1364,17 @@ describe('resolveFlow — diversity-sorted candidates', () => {
       },
     });
 
-  it('yields agy, copilot, glm as targets and deepseek, qwen, claude as reserves', () => {
+  it('yields agy, copilot, glm as targets and mistral, qwen, claude as reserves', () => {
     const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, multi());
     assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'copilot', 'glm-5.3-flash']);
-    assert.deepEqual(out['code-review'].reserves.map(label), ['deepseek-v4.1-flash', 'qwen3.8-27b', 'claude']);
+    assert.deepEqual(out['code-review'].reserves.map(label), ['mistral-small', 'qwen3.8-27b', 'claude']);
   });
 
   it('moves a second agy model behind the first occurrence of every platform', () => {
     const config = multi([{ model: 'a1' }, { model: 'a2' }]);
     const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, config);
     const all = [...out['code-review'].targets, ...out['code-review'].reserves];
-    assert.deepEqual(all.map((t) => t.model), ['a1', 'gpt-5.6-luna', 'glm-5.3-flash', 'a2', 'deepseek-v4.1-flash', 'qwen3.8-27b', 'claude-opus-5']);
+    assert.deepEqual(all.map((t) => t.model), ['a1', 'gpt-5.6-luna', 'glm-5.3-flash', 'a2', 'mistral-small', 'qwen3.8-27b', 'claude-opus-5']);
   });
 
   it('diversity-sorts the orchestrator group among itself, after every external', () => {
@@ -1385,7 +1385,7 @@ describe('resolveFlow — diversity-sorted candidates', () => {
       },
     });
     const out = resolveFlow({ platform: 'opencode', level: 'low' }, ALL_UP, config);
-    assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'deepseek-v4.1-flash']);
+    assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'mistral-small']);
   });
 
   it('demotes same platform + model match to dead last behind alternative models on orchestrator platform', () => {
@@ -1469,7 +1469,7 @@ describe('resolveFlow — diversity-sorted candidates', () => {
   describe('exclude', () => {
     it('removes excluded platforms from candidates and reports them only in diagnostics.excluded', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high', exclude: ['copilot'] }, ALL_UP, multi());
-      assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'deepseek-v4.1-flash']);
+      assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'mistral-small']);
       assert.ok(out['code-review'].reserves.every((t) => t.platform !== 'copilot'));
       assert.deepEqual(out.diagnostics.excluded, ['copilot']);
       assert.ok(!out.diagnostics.unavailable.includes('copilot'));
