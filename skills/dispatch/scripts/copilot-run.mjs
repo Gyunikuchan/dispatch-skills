@@ -36,8 +36,8 @@ import {
   extractSessionIdFromOutput,
   findBinary,
   findFirstExistingFile,
-  getGitStatus,
   getSanitizedEnv,
+  isSandboxUnsupportedDiagnostic,
   isMainModule,
   parseCommonArgs,
   parseRunnerModeArgs,
@@ -100,8 +100,6 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
- * @property {boolean} gitIntegrityViolation
- * @property {string|null} gitIntegrityDetails
  */
 
 // ============================================================================
@@ -144,10 +142,9 @@ export async function runCopilot(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     copilotMode = 'auto',
-    initialGitStatus: baselineGitStatus = null,
     // Test seams: each defaults to the real implementation, so production calls are unchanged.
-    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
-    // opens a session log and runs a git integrity check.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess
+    // and opens a session log.
     execute = executeOnTarget,
     discoverTargets = findViableTargets,
     createLogger = createSessionLogger,
@@ -158,8 +155,6 @@ export async function runCopilot(options = {}) {
     throw createNoTargetsError();
   }
 
-  // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
-  const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const effectiveEffort = effort || null;
 
@@ -200,7 +195,6 @@ export async function runCopilot(options = {}) {
           maxBufferMb,
           verbose,
           sessionLogger,
-          initialGitStatus,
         });
 
         const step = nextCopilotStep({ result, error: null, canCascade });
@@ -315,7 +309,7 @@ export function buildCopilotArgs(argvPrompt, { model, effort, sandbox = true } =
 
 /**
  * Spawns Copilot on a single resolved target and resolves once the process exits,
- * enforcing the timeout and buffer caps and checking git integrity.
+ * enforcing the timeout and buffer caps.
  *
  * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
  * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
@@ -334,7 +328,6 @@ function executeOnTarget({
   maxBufferMb,
   verbose,
   sessionLogger,
-  initialGitStatus,
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot', {
@@ -367,7 +360,6 @@ function executeOnTarget({
     maxBufferMb,
     sessionLogger,
     trace,
-    initialGitStatus,
     onFail: (err, { stderrBuffer }) => {
       err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
     },
@@ -409,8 +401,6 @@ function executeOnTarget({
         sessionLink,
         truncated: outcome.truncated,
         failureKind,
-        gitIntegrityViolation: outcome.gitIntegrity.violation,
-        gitIntegrityDetails: outcome.gitIntegrity.details,
       };
     },
   });
@@ -460,13 +450,6 @@ export async function main() {
           `Upgrade Copilot CLI, set platforms.copilot.sandbox to false, or use --no-sandbox.\n` +
           `Session log: ${res.logFile}`,
       );
-    }
-    if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (res.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
-      }
-      console.warn('');
     }
     process.exit(res.failureKind === 'sandbox-unsupported' ? 1 : res.exitCode);
   } catch (err) {
@@ -998,12 +981,6 @@ export function classifyCopilotResult({ exitCode, stderr = '', stdout = '' }) {
   return exitCode === 0
     ? classifyCopilotFailure(stderr)
     : classifyCopilotFailure(`${stderr}\n${stdout}`);
-}
-
-function isSandboxUnsupportedDiagnostic(text) {
-  return /(?:(?:--(?:experimental|sandbox)|\bsandbox(?:ing)?\b).{0,80}(?:unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires)|(?:unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires).{0,80}(?:--(?:experimental|sandbox)|\bsandbox(?:ing)?\b))/i.test(
-    text,
-  );
 }
 
 // ============================================================================

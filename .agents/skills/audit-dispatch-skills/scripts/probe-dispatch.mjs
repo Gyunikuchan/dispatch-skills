@@ -85,9 +85,8 @@ async function main() {
   let fixture = null;
   if (!opts.discoverOnly) {
     fixture = createFixture(repoRoot);
-    // Captures are staged outside the repo: `outDir` is under `.scratch/`, which is deliberately
-    // not git-ignored, so a capture landing there while a sibling dispatch is live trips that
-    // delegate's read-only `git status` guard — the probe would manufacture the violation it checks.
+    // Captures are staged outside the repo so live delegate output cannot mix with the audit's
+    // working files while sibling runs are still active.
     const stageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-probe-captures-'));
 
     // `finally` never runs when the process is signalled, and the fixture holds nonce files in the
@@ -119,8 +118,7 @@ async function main() {
       const targets = buildTargets(rows, { modes: opts.modes, config, scriptsDir });
       const ctx = { repoRoot, stageDir, fixture, timeout: opts.timeout, classifyFailure: mods.common.classifyFailure };
       // `allSettled`, not `all`: `all` rejects on the first failure while sibling delegates are
-      // still running, so the `finally` below would drain captures into the repo mid-flight and
-      // trip exactly the read-only guard this staging exists to protect.
+      // still running, so the `finally` below would drain captures into the repo mid-flight.
       const settled = await Promise.allSettled(targets.map((t) => runTarget(t, ctx)));
       const failed = settled.find((s) => s.status === 'rejected');
       if (failed) throw failed.reason;
@@ -278,8 +276,6 @@ async function runTarget(target, { repoRoot, stageDir, fixture, timeout, classif
     sibling: read.stdout.includes(fixture.nonces.sibling),
     // Rejected at the runner, so the delegate never sees the nonce; runners word the rejection differently.
     denylist: !deny.stdout.includes(fixture.nonces.denylisted) && /rejected|denylist/i.test(deny.stderr),
-    // The delegate's own read-only integrity guard: a run that modified the working tree cannot PASS.
-    readonly: !/Workspace was modified during READ-ONLY execution/.test(`${read.stderr}${deny.stderr}`),
   };
   const pass = Object.values(checks).every(Boolean);
   const logOf = (res) => /\| Log: (.+)$/m.exec(res.stderr)?.[1]?.trim() ?? null;
@@ -412,11 +408,11 @@ export function renderSummary({ rows, live, fixture, config, opts }) {
 
   lines.push('', `## Live probe (${opts.modes ? 'per binary, via runner' : 'per provider, via dispatch.mjs'})`, '');
   lines.push(`Outside-repo fixture: \`${fixture.dir}\` (removed after the run)`, '');
-  lines.push('| Target | Modes covered | Exit | -f outside repo | Delegate file read | Denylist | Read-only | Secs | Result |', '|---|---|---|---|---|---|---|---|---|');
+  lines.push('| Target | Modes covered | Exit | -f outside repo | Delegate file read | Denylist | Secs | Result |', '|---|---|---|---|---|---|---|---|');
   for (const r of live) {
     const c = r.checks;
     const result = r.pass ? 'PASS' : `FAIL (${r.failure})`;
-    lines.push(`| ${r.id} | ${r.aliases.join(', ')} | ${r.exitCode} | ${mark(c.attached)} | ${mark(c.sibling)} | ${mark(c.denylist)} ${r.denylistBehaviour} | ${mark(c.readonly)} | ${r.seconds} | ${result} |`);
+    lines.push(`| ${r.id} | ${r.aliases.join(', ')} | ${r.exitCode} | ${mark(c.attached)} | ${mark(c.sibling)} | ${mark(c.denylist)} ${r.denylistBehaviour} | ${r.seconds} | ${result} |`);
   }
   lines.push('', 'Logs:', ...live.map((r) => {
     // Both runs open their own session log; a target whose runs share one renders it once.

@@ -100,11 +100,12 @@ describe('validateDispatchConfig', () => {
   });
 
   describe('shipped dispatch defaults', () => {
-    it('enables Copilot sandboxing when the shipped config is loaded', () => {
+    it('enables Claude and Copilot sandboxing when the shipped config is loaded', () => {
       const { config } = loadSkillConfig({
         skillRoot: path.resolve(process.cwd(), 'skills', 'dispatch'),
         defaultOnly: true,
       });
+      assert.equal(config.platforms.claude.sandbox, true);
       assert.equal(config.platforms.copilot.sandbox, true);
     });
   });
@@ -168,9 +169,15 @@ describe('validateDispatchConfig', () => {
     assert.match(problems.join('\n'), /platforms\.copilot\.sandbox must be a boolean/);
   });
 
-  it('rejects sandbox settings on non-Copilot platforms', () => {
-    const problems = validateDispatchConfig({ platforms: { claude: { sandbox: true } } });
-    assert.match(problems.join('\n'), /unrecognized key "sandbox"/);
+  it('accepts a boolean Claude sandbox setting', () => {
+    assert.deepEqual(validateDispatchConfig({ platforms: { claude: { sandbox: true } } }), []);
+  });
+
+  it('rejects sandbox settings on unsupported platforms', () => {
+    for (const platform of ['agy', 'opencode']) {
+      const problems = validateDispatchConfig({ platforms: { [platform]: { sandbox: true } } });
+      assert.match(problems.join('\n'), new RegExp(`platforms\\.${platform}.*unrecognized key "sandbox"`));
+    }
   });
 
   it('accepts a platform entry as an array of candidate objects, including model arrays', () => {

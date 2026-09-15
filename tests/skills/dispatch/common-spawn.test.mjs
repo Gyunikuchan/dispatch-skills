@@ -449,17 +449,6 @@ describe('common: runDelegateCapture (shared executor machinery)', () => {
     }
   });
 
-  it('stamps git-integrity results into the close outcome (null baseline: not checked)', async () => {
-    const result = await runDelegateCapture({
-      spawnChild: () => fakeChild({}),
-      timeoutSeconds: 30,
-      maxBufferMb: 1,
-      initialGitStatus: null,
-      onClose: (outcome) => outcome.gitIntegrity,
-    });
-    assert.deepEqual(result, { violation: false, details: null });
-  });
-
   it('delivers arrival-ordered chunks to the onChunk hook', async () => {
     const seen = [];
     await runDelegateCapture({

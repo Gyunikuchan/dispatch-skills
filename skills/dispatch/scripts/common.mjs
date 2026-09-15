@@ -2,8 +2,8 @@
 
 /**
  * @file common.mjs
- * @description Cross-platform utilities, binary resolution, Git integrity,
- * and context-clean session logging for dispatch runners.
+ * @description Cross-platform utilities, binary resolution, and context-clean
+ * session logging for dispatch runners.
  *
  * Supports Windows, macOS, Linux (bash, zsh, PowerShell).
  */
@@ -72,12 +72,6 @@ import { fileURLToPath } from 'node:url';
  */
 
 /**
- * @typedef {object} GitIntegrityResult
- * @property {boolean} violation
- * @property {string|null} details
- */
-
-/**
  * @typedef {object} SkillIntegrityResult
  * @property {boolean} valid
  * @property {string[]} violations
@@ -98,10 +92,9 @@ import { fileURLToPath } from 'node:url';
 /**
  * Resolves the workspace a dispatch acts on.
  *
- * This is the delegate's cwd, the Git integrity root, and the sandbox bind
- * boundary, so it must track the caller's repository rather than this file's
- * own location — the runner ships as a portable skill and cannot assume a
- * fixed depth beneath the workspace.
+ * This is the delegate's cwd and sandbox bind boundary, so it must track the
+ * caller's repository rather than this file's own location — the runner ships
+ * as a portable skill and cannot assume a fixed depth beneath the workspace.
  */
 function resolveWorkspaceRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], {
@@ -131,6 +124,28 @@ export const MAX_ATTACHMENT_BYTES_TOTAL = 512 * 1024;
 
 /** Canonical provider keys a dispatch config's `platforms` map may key on. */
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
+
+/** Providers whose `platforms.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
+export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot'];
+
+/**
+ * Detects a provider diagnostic saying that a requested sandbox flag or setting is unsupported.
+ *
+ * @param {string} text
+ * @param {{ includeSettings?: boolean, strict?: boolean }} [options]
+ */
+export function isSandboxUnsupportedDiagnostic(text, { includeSettings = false, strict = false } = {}) {
+  const flagPattern = includeSettings
+    ? '--(?:experimental|settings|sandbox)|\\bsandbox(?:ing)?\\b'
+    : '--(?:experimental|sandbox)|\\bsandbox(?:ing)?\\b';
+  const reasonPattern = strict
+    ? 'unknown|unrecognized|unsupported|invalid'
+    : "unknown|unrecognized|unsupported|invalid|ignored|unavailable|not available|not supported|disabled|cannot|can't|requires";
+  return new RegExp(
+    `(?:(?:${flagPattern}).{0,80}(?:${reasonPattern})|(?:${reasonPattern}).{0,80}(?:${flagPattern}))`,
+    'i',
+  ).test(text || '');
+}
 
 // ============================================================================
 // SECTION: Security Invariants
@@ -871,8 +886,8 @@ export function createNoTargetsError(headline, failureKind = null) {
 
 /**
  * Runs a delegate child to completion under the shared subprocess machinery: byte-capped
- * output buffering, a timeout kill, the `settled` guard that keeps Node's `error`+`close`
- * double-fire from resolving twice, and the git-integrity check.
+ * output buffering, a timeout kill, and the `settled` guard that keeps Node's `error`+`close`
+ * double-fire from resolving twice.
  *
  * Owns the subprocess lifecycle only. Callers own their session logger (created and closed
  * per their cascade design — claude holds one logger for the whole cascade, agy/opencode
@@ -890,7 +905,6 @@ export function createNoTargetsError(headline, failureKind = null) {
  * @param {((chunk: string|Buffer) => void)|null} [opts.trace] Verbose trace sink.
  * @param {((stream: 'stdout'|'stderr', chunk: Buffer) => void)|null} [opts.onChunk]
  *   Arrival-ordered hook for stream-interleaved diagnostics (opencode's log tail).
- * @param {string|null} [opts.initialGitStatus] Pre-run snapshot for the integrity check.
  * @param {(outcome: DelegateCaptureOutcome) => object|Promise<object>} opts.onClose
  *   Assembles the run result from the captured state.
  * @param {(err: Error, captured: { stdoutBuffer: string, stderrBuffer: string }) => void} [opts.onFail]
@@ -905,7 +919,6 @@ export function createNoTargetsError(headline, failureKind = null) {
  * @property {'timeout'|'buffer'|null} truncated
  * @property {boolean} isTimedOut
  * @property {boolean} isBufferExceeded
- * @property {{ violation: boolean, details: string|null }} gitIntegrity
  */
 export function runDelegateCapture({
   spawnChild,
@@ -914,7 +927,6 @@ export function runDelegateCapture({
   sessionLogger = null,
   trace = null,
   onChunk = null,
-  initialGitStatus = null,
   onClose,
   onFail = null,
 }) {
@@ -965,7 +977,6 @@ export function runDelegateCapture({
       settled = true;
       clearTimeout(timer);
 
-      const gitIntegrity = checkGitIntegrity(initialGitStatus);
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
       const outcome = {
         code,
@@ -975,7 +986,6 @@ export function runDelegateCapture({
         truncated,
         isTimedOut,
         isBufferExceeded,
-        gitIntegrity,
       };
 
       try {
@@ -1433,7 +1443,7 @@ export function extractCleanResponse(rawOutput) {
 }
 
 // ============================================================================
-// SECTION: Git & Integrity Validation
+// SECTION: Skill Hash Validation
 // ============================================================================
 
 
@@ -1519,121 +1529,6 @@ export function generateSkillHashes(skillDir) {
     manifest[key] = entries[key];
   }
   return manifest;
-}
-
-/** Recorded in place of a content hash for a path with no worktree file (a deletion). */
-const DELETED_FINGERPRINT = '-';
-
-/**
- * Parses `git status --porcelain=v1 -uall -z` output into `{ xy, entryPath }` records.
- *
- * NUL-delimited rather than line-delimited because a path containing a newline would otherwise
- * split into two bogus entries. A rename or copy (`R`/`C`) is emitted as *two* NUL-terminated
- * tokens — `XY<space>new` then `old` — so the origin token is consumed here and the destination is
- * what gets fingerprinted.
- */
-function parsePorcelainZ(stdout) {
-  const tokens = stdout.split('\0').filter((token) => token.length > 0);
-  const entries = [];
-
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    if (token.length < 4) continue;
-    const xy = token.slice(0, 2);
-    entries.push({ xy, entryPath: token.slice(3) });
-    // A rename/copy carries its origin path in the following token; skip it.
-    if (xy[0] === 'R' || xy[0] === 'C' || xy[1] === 'R' || xy[1] === 'C') i++;
-  }
-
-  return entries;
-}
-
-/**
- * Captures a content-addressed fingerprint of the working tree, to verify read-only integrity.
- *
- * Status lines alone are not enough: a delegate that edits an already-` M` file leaves the porcelain
- * output byte-identical, so a second edit reads as no change at all. Each entry therefore carries a
- * hash of its current worktree content. `-uall` keeps new files under an untracked directory from
- * collapsing into one `?? dir/` line (this repo's `.scratch/` is untracked and not git-ignored).
- *
- * Hashing runs in-process rather than through `git hash-object` per entry — a dirty tree of N files
- * would otherwise cost N extra process spawns on every dispatch.
- *
- * @returns {string|null} Newline-joined `XY <hash> <path>` records sorted by path, or null when the
- *   cwd is not a usable git repository.
- */
-export function getGitStatus(cwd = PROJECT_ROOT) {
-  try {
-    const res = spawnSync('git', ['status', '--porcelain=v1', '-uall', '-z'], {
-      cwd,
-      encoding: 'utf8',
-      timeout: 5000,
-    });
-    if (res.status !== 0) return null;
-
-    return parsePorcelainZ(res.stdout)
-      .sort((a, b) => (a.entryPath < b.entryPath ? -1 : a.entryPath > b.entryPath ? 1 : 0))
-      .map(({ xy, entryPath }) => {
-        let fingerprint = DELETED_FINGERPRINT;
-        try {
-          // A deleted (or otherwise absent) path has no content to hash; the tombstone stands in,
-          // and still differs from any hash a later re-creation of that path would produce.
-          fingerprint = hashFile(path.join(cwd, entryPath));
-        } catch {}
-        return `${xy} ${fingerprint} ${entryPath}`;
-      })
-      .join('\n');
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Returns a human-readable description of what changed between two `getGitStatus` fingerprints.
- *
- * Reports entries that disappeared as well as ones that appeared, so deleting an untracked file is
- * described rather than reported as a violation with no detail. Paths are deduplicated: a file whose
- * content changed between snapshots occupies a record in both, and is one change, not two.
- */
-export function describeGitStatusDiff(before, after) {
-  if (before === null || after === null) return null;
-
-  const parse = (raw) => new Set(raw.split('\n').filter(Boolean));
-  const beforeSet = parse(before);
-  const afterSet = parse(after);
-
-  // `XY <hash> <path>` → `XY <path>`: the hash drives detection, but it is noise to a reader. The
-  // status column is fixed-width two chars and may lead with a space (` M`), so slice rather than
-  // split on whitespace.
-  const display = (record) => {
-    const rest = record.slice(3);
-    const hashEnd = rest.indexOf(' ');
-    if (hashEnd === -1) return record.trim();
-    return `${record.slice(0, 2)} ${rest.slice(hashEnd + 1)}`.trim();
-  };
-
-  const changed = new Set();
-  for (const record of afterSet) if (!beforeSet.has(record)) changed.add(display(record));
-  for (const record of beforeSet) if (!afterSet.has(record)) changed.add(display(record));
-
-  if (changed.size === 0) return null;
-  return [...changed].sort().join('\n');
-}
-
-/**
- * Compares the pre-run git status snapshot against the current one.
- * Single-arg by design: calls the zero-arg getGitStatus() internally so no caller
- * can pair a baseline and a check taken at different cwds.
- * @param {string|null} initialGitStatus - Snapshot from before the delegate ran.
- * @returns {{ violation: boolean, details: string|null }}
- */
-export function checkGitIntegrity(initialGitStatus) {
-  if (initialGitStatus === null) return { violation: false, details: null };
-  const finalGitStatus = getGitStatus();
-  if (finalGitStatus === null || finalGitStatus === initialGitStatus) {
-    return { violation: false, details: null };
-  }
-  return { violation: true, details: describeGitStatusDiff(initialGitStatus, finalGitStatus) };
 }
 
 // ============================================================================
@@ -2127,7 +2022,7 @@ export function validateDispatchConfig(config) {
       problems.push(`${where} must be an object (${hint}).`);
       return;
     }
-    const supportsSandbox = key === 'copilot';
+    const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(key);
     const validKeys = supportsSandbox ? 'model, effort, sandbox' : 'model, effort';
     for (const [field, value] of Object.entries(candidate)) {
       if (field === 'model') {
@@ -2264,8 +2159,7 @@ export function resolveModelsToTry(model) {
 /**
  * Runs `attempt(model)` for each model in order. Advances on a thrown error or a non-zero exit;
  * the last model's outcome is returned/thrown unchanged, so a single-model list behaves exactly
- * like one direct call. Never retries after a git-integrity violation: the workspace was written,
- * and another attempt would hide it.
+ * like one direct call.
  * @template T
  * @param {(string|null)[]} models Non-empty; use {@link resolveModelsToTry}.
  * @param {(model: string|null) => Promise<T>} attempt Resolves a result carrying a numeric `exitCode`.
@@ -2284,13 +2178,13 @@ export async function cascadeModels(models, attempt, { label }) {
     try {
       result = await attempt(current);
     } catch (err) {
-      if (isLast || err?.gitIntegrityViolation) throw err;
+      if (isLast) throw err;
       process.stderr.write(
         `[dispatch] Warning: Model '${current}' execution failed on ${label} (${err?.message ?? err}). Trying fallback model '${next}'...\n`,
       );
       continue;
     }
-    if (isLast || result?.gitIntegrityViolation || result?.exitCode === 0) return result;
+    if (isLast || result?.exitCode === 0) return result;
     process.stderr.write(
       `[dispatch] Notice: Model '${current}' failed on ${label} (exit ${result?.exitCode}${result?.failureKind ? `, failure: ${result.failureKind}` : ''}). Trying fallback model '${next}'...\n`,
     );

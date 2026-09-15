@@ -6,6 +6,9 @@ import {
   MODE_DEFINITIONS,
   buildClaudeArgs,
   claudeFixedArgBytes,
+  classifyClaudeFailure,
+  classifyClaudeResult,
+  CLI_FLAGS,
   extractClaudeSessionId,
   getClaudeBinary,
   getClaudeDesktopBinary,
@@ -13,10 +16,13 @@ import {
   getClaudeCliBinary,
   isClaudeAvailable,
   nextClaudeStep,
+  parseModeFlags,
   parseClaudeEnvelope,
   probeAllClaudeModes,
+  resolveClaudeOutcome,
   resolveClaudeTarget,
   runClaude,
+  shouldPrintClaudeStdout,
   testClaudeBinaryReachability,
 } from '../../../skills/dispatch/scripts/claude-run.mjs';
 
@@ -168,6 +174,16 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       const whole = buildClaudeArgs('z'.repeat(500), {}).reduce((n, a) => n + Buffer.byteLength(String(a), 'utf8') + 1, 0);
       assert.equal(whole - fixed, 500, 'the only difference must be the prompt itself');
     });
+
+    it('accounts for the sandbox setting when explicitly disabled', () => {
+      const enabledSettingsBytes = Buffer.byteLength(JSON.stringify({ sandbox: { enabled: true } }), 'utf8');
+      const disabledSettingsBytes = Buffer.byteLength(JSON.stringify({ sandbox: { enabled: false } }), 'utf8');
+      assert.equal(
+        claudeFixedArgBytes({ sandbox: false }) - claudeFixedArgBytes({ sandbox: true }),
+        disabledSettingsBytes - enabledSettingsBytes,
+        'the serialized sandbox setting must be budgeted',
+      );
+    });
   });
 
   describe('buildClaudeArgs', () => {
@@ -183,10 +199,107 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.equal(args.filter((a) => a === '--allowedTools').length, READ_ONLY_ALLOWED_TOOLS.length);
     });
 
+    it('enables the native sandbox by default and supports an explicit opt-out', () => {
+      const enabled = buildClaudeArgs('hello', {});
+      const disabled = buildClaudeArgs('hello', { sandbox: false });
+      const enabledSettings = JSON.parse(enabled[enabled.indexOf('--settings') + 1]);
+      const disabledSettings = JSON.parse(disabled[disabled.indexOf('--settings') + 1]);
+      assert.deepEqual(enabledSettings, { sandbox: { enabled: true } });
+      assert.deepEqual(disabledSettings, { sandbox: { enabled: false } });
+    });
+
     it('omits --model/--effort when null', () => {
       const args = buildClaudeArgs('hello', { model: null, effort: null });
       assert.ok(!args.includes('--model'));
       assert.ok(!args.includes('--effort'));
+    });
+
+    describe('Claude sandbox flags and diagnostics', () => {
+      it('parses the direct-runner sandbox flags with enabled as the default', () => {
+        assert.equal(parseModeFlags([]).sandbox, true);
+        assert.equal(parseModeFlags(['--sandbox']).sandbox, true);
+        assert.equal(parseModeFlags(['--no-sandbox']).sandbox, false);
+        assert.ok(CLI_FLAGS.booleanFlags.includes('--sandbox'));
+        assert.ok(CLI_FLAGS.booleanFlags.includes('--no-sandbox'));
+      });
+
+      it('classifies unsupported settings diagnostics and preserves shared failures', () => {
+        assert.equal(classifyClaudeFailure('Unknown option: --settings'), 'sandbox-unsupported');
+        assert.equal(
+          classifyClaudeResult({
+            exitCode: 1,
+            stderr: 'Warning: sandbox is unavailable on this platform',
+            stdout: '{"type":"result","result":"answer"}',
+          }),
+          'sandbox-unsupported',
+        );
+        assert.equal(
+          classifyClaudeResult({
+            exitCode: 0,
+            stderr: '',
+            stdout: 'The answer explains that sandbox is not supported by this provider.',
+          }),
+          null,
+        );
+        assert.equal(
+          classifyClaudeResult({
+            exitCode: 0,
+            stderr: 'Warning: sandbox disabled for this command because it requires network access',
+            stdout: '{"type":"result","result":"answer"}',
+          }),
+          null,
+        );
+        assert.equal(
+          classifyClaudeResult({
+            exitCode: 1,
+            stderr: 'quota reached; sandbox disabled for this command because it requires network access',
+            stdout: 'partial answer discusses sandbox unsupported behavior',
+          }),
+          'quota',
+        );
+        assert.equal(
+          classifyClaudeResult({
+            exitCode: 1,
+            stderr: '',
+            stdout: 'partial answer discusses sandbox unsupported behavior',
+          }),
+          null,
+        );
+        assert.equal(classifyClaudeFailure('usage limit reached'), 'quota');
+      });
+
+      it('preserves envelope subtypes and forces a non-zero sandbox failure', () => {
+        assert.deepEqual(
+          resolveClaudeOutcome({
+            envelope: { isError: true, subtype: 'error_max_turns' },
+            classifiedFailure: 'quota',
+            exitCode: 1,
+          }),
+          { failureKind: 'error_max_turns', effectiveExitCode: 1 },
+        );
+        assert.deepEqual(
+          resolveClaudeOutcome({
+            envelope: { isError: false },
+            classifiedFailure: 'sandbox-unsupported',
+            exitCode: 0,
+          }),
+          { failureKind: 'sandbox-unsupported', effectiveExitCode: 1 },
+        );
+        assert.deepEqual(
+          resolveClaudeOutcome({
+            envelope: { isError: false },
+            classifiedFailure: null,
+            exitCode: 1,
+            truncated: 'truncated',
+          }),
+          { failureKind: 'truncated', effectiveExitCode: 1 },
+        );
+      });
+
+      it('suppresses direct-runner output when sandbox support is unverified', () => {
+        assert.equal(shouldPrintClaudeStdout({ failureKind: 'sandbox-unsupported' }), false);
+        assert.equal(shouldPrintClaudeStdout({ failureKind: null }), true);
+      });
     });
 
     it('includes --model/--effort when set', () => {
@@ -223,6 +336,15 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
     it('failure, not last model -> next-model', () => {
       const step = nextClaudeStep({ ...base, result: { exitCode: 1, failureKind: 'other' }, error: null });
       assert.equal(step, 'next-model');
+    });
+
+    it('does not retry an unsupported sandbox setting across Claude models', () => {
+      const step = nextClaudeStep({
+        ...base,
+        result: { exitCode: 1, failureKind: 'sandbox-unsupported' },
+        error: null,
+      });
+      assert.equal(step, 'return');
     });
 
     it('quota/auth failure, last model, not last target, unpinned -> next-target', () => {
@@ -289,21 +411,6 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.equal(step, 'throw');
     });
 
-    // The workspace was written: retrying on another model or target would hide the violation.
-    it('git-integrity violation on a result, not last model/target -> return', () => {
-      const step = nextClaudeStep({
-        ...base,
-        result: { exitCode: 1, failureKind: 'quota', gitIntegrityViolation: true },
-        error: null,
-      });
-      assert.equal(step, 'return');
-    });
-
-    it('git-integrity violation on a thrown error, not last model/target -> throw', () => {
-      const error = Object.assign(new Error('written'), { gitIntegrityViolation: true });
-      const step = nextClaudeStep({ ...base, result: null, error });
-      assert.equal(step, 'throw');
-    });
   });
 });
 
@@ -318,18 +425,20 @@ describe('runClaude cascade loop', () => {
 
   function harness({ results = [], targets = [target('desktop'), target('vscode')] } = {}) {
     const calls = [];
+    const sandboxValues = [];
     let closed = 0;
     return {
       calls,
+      sandboxValues,
       closedCount: () => closed,
       options: {
         prompt: 'x',
         model: ['model-a', 'model-b'],
-        initialGitStatus: '',
         discoverTargets: () => targets,
         createLogger: () => ({ logFile: null, write() {}, close() { closed += 1; } }),
-        execute: async ({ target: t, model }) => {
+        execute: async ({ target: t, model, sandbox }) => {
           calls.push(`${t.name}:${model}`);
+          sandboxValues.push(sandbox);
           const next = results[calls.length - 1];
           if (next instanceof Error) throw next;
           return next ?? okResult();
@@ -348,6 +457,12 @@ describe('runClaude cascade loop', () => {
     const h = harness({ results: [quotaResult(), quotaResult(), okResult()] });
     await runClaude(h.options);
     assert.deepEqual(h.calls, ['desktop:model-a', 'desktop:model-b', 'vscode:model-a']);
+  });
+
+  it('propagates the sandbox option through the cascade executor', async () => {
+    const h = harness({ results: [okResult()] });
+    await runClaude({ ...h.options, sandbox: false });
+    assert.deepEqual(h.sandboxValues, [false]);
   });
 
   it('advances the target only after the last model, and only on quota or auth', async () => {

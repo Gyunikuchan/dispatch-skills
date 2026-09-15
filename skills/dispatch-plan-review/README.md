@@ -1,172 +1,148 @@
 # dispatch-plan-review
 
-Get a rigorous second opinion on an implementation plan before code is written, then adjudicate
-every claim against the requirement and host repository rules.
-
----
-
-## What It Does
-
-`dispatch-plan-review` delegates inspection of an implementation plan to external agent CLIs. It
-keeps delegates read-only, asks for section-level claims (and line citations when existing code is
-involved), and folds only verified findings back into the plan.
+Get a rigorous second opinion on an implementation plan before code is written. The skill checks
+the plan against the requirement, the host repository, and the existing code, then records
+verified findings and resolutions in the plan.
 
 ```mermaid
 flowchart TD
-    Prompt(["👤 Plan or Requirement"]) --> Orchestrator["🤖 Orchestrator"]
-    Orchestrator -->|"Resolve or author"| Plan[("📄 Implementation Plan")]
-    Plan -->|"Dispatch read-only review"| Dispatch["⚡ dispatch"]
-    Dispatch --> Delegate["🔍 External Reviewer"]
-    Delegate -->|"Structured claims"| Adjudicate["⚖️ Verify Against Requirement & Code"]
-    Adjudicate -->|"Fold accepted findings"| UpdatedPlan[("📄 Updated Plan")]
-    Adjudicate --> Report(["👤 Review Report"])
+    User(["👤 Review Request"]) --> Resolve["📝 Resolve or author plan"]
+    Resolve --> Review["⚡ Dispatch read-only review"]
+    Review --> Verify["⚖️ Verify each claim"]
+    Verify --> Update["📄 Update plan & review log"]
+    Update --> Report(["📦 Review report"])
 ```
 
 ## Prerequisites & Installation
 
-`dispatch` is the source of truth for runtime requirements, provider CLIs, installation scopes,
-runner flags, and shared fallback behavior. See its
+`dispatch` provides the provider setup and runner used by this skill. See its
 [prerequisites and installation guide](../dispatch/README.md#prerequisites--installation) first.
 
-Install both skills together:
+Install both skills in the same scope:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
 ```
 
-Add `-g` to install globally, or use `--all` for the complete suite. Keep companion skills in the
-same scope so sibling scripts and prompt templates can resolve one another.
+Use `-g` for a global installation, or `--all` to install the complete suite.
 
----
+> [!NOTE]
+> `dispatch-plan-review` has no separate provider configuration. It uses the effective
+> configuration from `dispatch`.
 
 ## How to Use
 
-Trigger `/dispatch-plan-review` directly or describe the plan review in natural language.
+Run `/dispatch-plan-review` in your agent session.
 
-### 1. Review an Existing Plan
+### Review an existing plan
 
-Review the active plan:
+Review the plan resolved for the current branch:
 
-```markdown
+```text
 /dispatch-plan-review
 ```
 
-Or pass an explicit plan:
+Review a specific plan instead:
 
-```markdown
+```text
 /dispatch-plan-review .scratch/plan/2026-09-08-billing-engine.md
 ```
 
-### 2. Focus the Review
+### Add review focus
 
-Pass focus areas after the command:
+Name the risks that deserve extra attention after the plan path:
 
-```markdown
-/dispatch-plan-review focus on backward compatibility and data migrations
-```
-
-```markdown
+```text
 /dispatch-plan-review .scratch/plan/2026-09-08-auth-v2.md focus on trust boundaries and session revocation
 ```
 
-### 3. Pin Reviewer Providers
+If the plan is already well-scoped, a general review is enough:
 
-Use the shared `(<pins>)` grammar from [`dispatch`](../dispatch/SKILL.md#invocation). Pins are
-effective configured platform keys, supported aliases, or `all`; inspect the effective keys with
-`node <dispatch-skill>/scripts/dispatch.mjs --list-platforms`.
-
-```markdown
-/dispatch-plan-review (all)
-/dispatch-plan-review (claude,copilot) focus on state-machine lifecycles
+```text
+/dispatch-plan-review focus on backward compatibility and data migrations
 ```
 
-Unpinned runs use `dispatch`'s diversity-sorted cascade. Every pinned key, including keys expanded
-from `all`, must be present in the effective configuration.
+### Review from a requirement
 
-### 4. Author and Review on the Fly
+When no plan exists, provide the requirement and the skill creates a structured scratch plan before
+reviewing it:
 
-If no plan exists, provide the requirement. The skill authors a structured scratch plan and reviews
-it immediately:
-
-```markdown
+```text
 /dispatch-plan-review Replace redis-pubsub with Postgres LISTEN/NOTIFY
 ```
 
-```markdown
+```text
 /dispatch-plan-review Add token bucket rate limiting to /api/v1/auth endpoints
 ```
 
-### 5. Multi-Round Re-Reviews
+> [!NOTE]
+> A requirement can produce a new plan, but the skill does not implement the change. Use
+> the repository's implementation workflow when you want the reviewed plan to drive implementation.
 
-Run the command again after editing the plan. The skill counts `### Round` headings under
-`## Review Findings & Resolutions` and reviews only sections changed since the previous round.
+### Choose reviewers
 
----
-
-## Review Behavior
-
-- **Plan-first**: Accepted findings and user-resolved disputes are folded into the plan on disk,
-  including `Proposed Changes`, `Verification Plan`, and `Rollback & Blast Radius`.
-- **Plan resolution**: The skill resolves or authors the target plan, records each round, and checks
-  for a stale plan before dispatching a new requirement.
-- **Requirement grounding**: Claims are checked against the requirement, the plan, cited code, and
-  host repository rules.
-- **Orchestrated handoff**: `implement-dispatch` owns artifact resolution, approval, and final
-  reporting when it invokes this skill.
-
-Claim adjudication, provider fallback, read-only enforcement, and shared artifact conventions are
-defined by [`dispatch`](../dispatch/README.md) and its
-[alignment reference](../dispatch/references/alignment.md).
-
----
-
-## The Seven Evaluation Axes
-
-Every plan is evaluated across seven dimensions:
-
-| Axis | Focus Tags | What Is Evaluated |
-|---|---|---|
-| **Requirement & Intent Fidelity** | `traceability`, `user-gap`, `scope-creep` | Requirement coverage, premise flaws, missing prerequisites, and unrequested scope. |
-| **Domain & Business Logic** | `domain-logic`, `invariant`, `state-machine` | Domain rules, invariants, units, and valid lifecycle transitions. |
-| **Plan Coherence & Architecture** | `coherence`, `approach`, `standards` | Producer-consumer contracts, sequencing, layering, and repository conventions. |
-| **Security & Permissions** | `security`, `auth`, `validation` | Trust boundaries, credentials, tenant isolation, authorization, and input validation. |
-| **Blast Radius & Reversibility** | `blast-radius`, `migration`, `compat` | Caller impact, persisted data changes, serialization compatibility, and rollback. |
-| **Testability & Success Criteria** | `testability`, `spec-gap` | Checkable acceptance criteria and named automated tests. |
-| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | YAGNI, simpler alternatives, boundary values, and recovery paths. |
-
----
-
-## Findings Grammar & Adjudication
-
-Every actionable finding cites a target plan section:
+Use the provider-pin syntax documented by [`dispatch`](../dispatch/README.md#choose-a-provider) when
+you need a particular provider or several independent perspectives:
 
 ```text
-§ <Section> — <tag>: <defect> → <required change>
+/dispatch-plan-review (claude,copilot) .scratch/plan/2026-09-08-auth-v2.md
+/dispatch-plan-review (all) focus on state-machine lifecycles
 ```
 
-Include an exact `<file>:L<line>` when the finding relies on existing code. Verify each claim before
-classifying it:
+Leave providers unpinned to use `dispatch`'s normal cascade and fallback behavior.
 
-| Verdict | Criterion | Action |
+### Re-review an edited plan
+
+Run the command again after changing the plan:
+
+```text
+/dispatch-plan-review .scratch/plan/2026-09-08-billing-engine.md focus on the revised migration steps
+```
+
+The skill uses the `### Round` headings in `## Review Findings & Resolutions` to identify the next
+review round and narrow the review to changed sections.
+
+## What to expect
+
+1. The skill resolves the target plan, or authors one from the requirement.
+2. Delegates inspect the workspace in read-only mode and return claims about the plan.
+3. The skill verifies each claim against the requirement, cited code, and repository rules.
+4. Accepted findings are folded into the plan, and every review round is recorded in
+   `## Review Findings & Resolutions`.
+5. The standalone run returns a concise report; another workflow can receive the reviewed plan.
+
+> [!NOTE]
+> This skill may update the target plan, but delegates never edit files, create commits, or push
+> changes. The skill never changes code.
+
+## Review coverage
+
+Every plan is checked across seven areas:
+
+| Area | Focus tags | Questions it answers |
 |---|---|---|
-| **Accept** | The requirement, rules, or cited code confirms the defect. | Fold the change into the plan and record the resolution. |
-| **Reject** | The claim is contradicted, already handled, uncited, or unverifiable. | Drop it and record the rationale. |
-| **Downgrade** | The issue is real but subjective or minor. | Move it to `## Out of Scope` or drop it. |
-| **Disputed** | Intent or trade-offs cannot be settled from the plan and code. | Ask the user in standalone mode; return it to the consensus loop when orchestrated. |
+| **Requirement & Intent Fidelity** | `traceability`, `user-gap`, `scope-creep` | Does the plan solve the requested problem without scope creep? |
+| **Domain & Business Logic** | `domain-logic`, `invariant`, `state-machine` | Are rules, invariants, units, and lifecycle transitions correct? |
+| **Plan Coherence & Architecture** | `coherence`, `approach`, `standards` | Do interfaces, sequencing, layering, and repository conventions line up? |
+| **Security & Permissions** | `security`, `auth`, `validation` | Are trust boundaries, credentials, authorization, and validation covered? |
+| **Blast Radius & Reversibility** | `blast-radius`, `migration`, `compat` | Are callers, persisted data, compatibility, and reversal paths accounted for? |
+| **Testability & Success Criteria** | `testability`, `spec-gap` | Are success criteria concrete and backed by named verification? |
+| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Is there a smaller safe approach, and what happens at the edges or on failure? |
 
-Append every round under `## Review Findings & Resolutions`. In orchestrated `consensus: true`
-runs, rejections of delegate-reported MUST-FIX / SHOULD-FIX findings remain
-`[Rejected — pending confirmation]` until the citing reviewer confirms the counter-evidence.
+## Findings and resolutions
 
----
+Actionable findings identify the plan section they affect:
 
-## Troubleshooting & Artifacts
+```text
+§ Verification Plan — testability: missing coverage for expired sessions → add an integration test
+```
 
-- If a requirement does not match the existing plan for the resolved slug, the stale-plan guard asks
-  whether to reuse it, overwrite it, or create a fresh slug.
-- On protected branches or detached HEADs, pass an explicit plan path or slug when automatic
-  resolution cannot derive one.
-- Keep dependent code present in the workspace before review; delegates inspect the active tree,
-  including uncommitted changes.
-- For provider discovery, authentication, fallback, live logs, and platform-specific behavior, use
-  the [`dispatch` troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
+Claims based on existing code include an exact file and line. The skill classifies each claim as
+accepted, rejected, downgraded, or disputed, then records the rationale in the plan.
+
+## Nuances & troubleshooting
+
+- **The plan is stale:** If a new requirement does not match the plan resolved for its branch slug,
+  choose whether to reuse it, overwrite it, or review under a fresh slug.
+- **No automatic plan path:** On a protected branch or detached `HEAD`, pass an explicit plan path.
+- **Provider or authentication issue:** Follow [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).

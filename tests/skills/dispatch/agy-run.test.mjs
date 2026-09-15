@@ -464,9 +464,9 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
   });
 });
 
-// The cascade loop was uncovered because executeAgyInMode spawns a subprocess, opens a session
-// log and runs a git integrity check. runAgy now takes those as seams, so these tests assert what
-// the loop itself decides — nothing about subprocess plumbing.
+// The cascade loop was uncovered because executeAgyInMode spawns a subprocess and opens a session
+// log. runAgy takes those as seams, so these tests assert what the loop itself decides — nothing
+// about subprocess plumbing.
 describe('runAgy cascade loop', () => {
   const MODES = [AGY_MODES.ANTIGRAVITY_CLI, AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE];
 
@@ -486,7 +486,6 @@ describe('runAgy cascade loop', () => {
       closedCount: () => closed,
       options: {
         prompt: 'x',
-        initialGitStatus: '',
         getBinary: () => '/fake/agy',
         getAvailableModes: async () => {
           probed += 1;

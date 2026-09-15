@@ -34,7 +34,6 @@ import {
   existsAny,
   extractCleanResponse,
   findBinary,
-  getGitStatus,
   getSanitizedEnv,
   isMainModule,
   parseCommonArgs,
@@ -97,8 +96,6 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
- * @property {boolean} gitIntegrityViolation
- * @property {string|null} gitIntegrityDetails
  */
 
 // ============================================================================
@@ -151,10 +148,9 @@ export async function runAgy(options = {}) {
     verbose = false,
     modeVariant = null,
     agyMode = null,
-    initialGitStatus: baselineGitStatus = null,
     // Test seams: each defaults to the real implementation, so production calls are unchanged.
-    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
-    // opens a session log and runs a git integrity check.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess
+    // and opens a session log.
     execute = executeAgyInMode,
     getAvailableModes = getAvailableAgyModes,
     getBinary = getAgyBinary,
@@ -181,10 +177,8 @@ export async function runAgy(options = {}) {
     : resolveModePlan({ requestedMode, availableModes: await getAvailableModes() });
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
-  // See claude-run.mjs: the dispatch-level baseline outlives a failed provider's attempt.
-  const initialGitStatus = baselineGitStatus ?? getGitStatus();
 
-  // Each configured model gets the full mode cascade; discovery and the baseline above run once.
+  // Each configured model gets the full mode cascade; discovery runs once.
   return cascadeModels(resolveModelsToTry(model), runModeCascade, { label: 'Google Antigravity' });
 
   async function runModeCascade(currentModel) {
@@ -203,7 +197,6 @@ export async function runAgy(options = {}) {
           maxBufferMb,
           verbose,
           sessionLogger,
-          initialGitStatus,
           formattedPrompt,
         });
 
@@ -222,8 +215,7 @@ export async function runAgy(options = {}) {
           continue;
         }
 
-        // Covers both the success return and the "no further cascade" return (including
-        // a workspace integrity violation in read-only mode) — both return the captured result.
+        // Covers both the success return and the "no further cascade" return.
         return result;
       } catch (err) {
         lastError = err;
@@ -297,8 +289,7 @@ export function resolveModePlan({ requestedMode = null, availableModes = [] } = 
  * Pure cascade decision for one mode attempt's result path (the `catch (err)` path is not
  * extracted — it stays inline, since its logic is a single `hasNextMode` branch). Success is
  * exit 0 with non-empty stdout; a token/subscription issue with another mode available cascades,
- * otherwise the result is returned as-is (covers both a clean non-cascading failure and a
- * workspace integrity violation, which the caller returns immediately either way).
+ * otherwise the result is returned as-is (covers a clean non-cascading failure).
  * @param {{ result: object, hasNextMode: boolean }} args
  * @returns {'return'|'next-mode'}
  */
@@ -382,7 +373,7 @@ export function parseAgyEnvelope(stdout) {
 
 /**
  * Spawns Antigravity for a single mode and resolves once the process exits, enforcing
- * the timeout and buffer caps and checking git integrity.
+ * the timeout and buffer caps.
  *
  * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
  * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
@@ -400,7 +391,6 @@ function executeAgyInMode(mode, options) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     sessionLogger,
-    initialGitStatus,
     formattedPrompt,
   } = options;
 
@@ -449,7 +439,6 @@ function executeAgyInMode(mode, options) {
     maxBufferMb,
     sessionLogger,
     trace,
-    initialGitStatus,
     onClose: (outcome) => {
       // The envelope names its own conversation; the mtime scan is the fallback for an older agy
       // that ignored --output-format, and it cannot tell two concurrent dispatches apart.
@@ -487,8 +476,6 @@ function executeAgyInMode(mode, options) {
         sessionLink,
         truncated: outcome.truncated,
         failureKind,
-        gitIntegrityViolation: outcome.gitIntegrity.violation,
-        gitIntegrityDetails: outcome.gitIntegrity.details,
       };
     },
   });
@@ -527,13 +514,6 @@ export async function main() {
     const res = await runAgy({ ...options, prompt: finalPrompt });
     if (res.stdout) {
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
-    }
-    if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (res.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
-      }
-      console.warn('');
     }
     process.exit(res.exitCode);
   } catch (err) {

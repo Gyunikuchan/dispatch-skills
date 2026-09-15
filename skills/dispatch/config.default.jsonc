@@ -3,7 +3,7 @@
  * order/membership. This is the single source of truth for dispatch's defaults — no
  * model/effort default lives in the runner scripts themselves.
  *
- * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Copilot only) } | Array<{ "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Copilot only) }> } }
+ * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Claude/Copilot) } | Array<{ "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Claude/Copilot) }> } }
  *   - Cascade order is diversity-sorted from "platforms" key order: each platform's first
  *     entry in key order, then remaining array entries in their original order; the
  *     orchestrator's own platform is sorted the same way and tried last (with candidates matching
@@ -32,6 +32,7 @@
     "claude": {
       "model": "claude-opus-5",
       "effort": "low",
+      "sandbox": true,
     },
     "agy": {
       "model": "gemini-3.8-flash",

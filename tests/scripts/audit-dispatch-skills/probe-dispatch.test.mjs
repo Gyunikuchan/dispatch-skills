@@ -219,7 +219,7 @@ describe('probe-dispatch: renderSummary', () => {
     aliases: ['cli'],
     exitCode: 0,
     seconds: 12,
-    checks: { exit: true, attached: true, sibling: true, denylist: true, readonly: true },
+    checks: { exit: true, attached: true, sibling: true, denylist: true },
     denylistBehaviour: 'skipped file',
     failure: null,
     pass: true,
@@ -242,22 +242,22 @@ describe('probe-dispatch: renderSummary', () => {
     assert.ok(!out.includes('## Live probe'), 'discover-only must not render the live section');
   });
 
-  it('renders a Read-only column and marks a tripped integrity guard as FAIL', () => {
+  it('renders the live checks without a workspace-mutation column', () => {
     const out = renderSummary({
       rows,
       live: [
         result({
-          checks: { exit: true, attached: true, sibling: true, denylist: true, readonly: false },
+          checks: { exit: true, attached: true, sibling: true, denylist: false },
           pass: false,
-          failure: 'unclassified — read the captures',
+          failure: 'denylist failure',
         }),
       ],
       fixture,
       config,
       opts: { discoverOnly: false, modes: false },
     });
-    assert.match(out, /\| Read-only \|/);
-    assert.match(out, /FAIL \(unclassified — read the captures\)/);
+    assert.ok(!out.includes('| Read-only |'));
+    assert.match(out, /FAIL \(denylist failure\)/);
   });
 
   it('lists both session logs, and a shared log path only once', () => {

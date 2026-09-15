@@ -1,14 +1,14 @@
 {
-  "SKILL.md": "cf8c7b524708be47c5738496090bf237e71ec3135982e4f0bb41f6203be89295",
-  "references/alignment.md": "04a08df584855f51a13b2250c6da28c696f49e01aed540e2045036b6b6c59539",
-  "references/providers.md": "21583a9b519d994098349e322c09ce38257cbe1d1b61d2c254f9cf5c62de0363",
-  "scripts/agy-run.mjs": "bd81aa5a511e65c532b056436e4e1c334e00d64f7ab97e62229051ed28e308f1",
-  "scripts/claude-run.mjs": "6d3b715b6f729c6a7f61bbf4b2e7b90889ba810c2e34adc9cf678be4c3fe58c4",
-  "scripts/common.mjs": "9361d2de29836e5fed8fb7bdfa00a9d2da15106f9d7e789a0288745e7ce0579a",
-  "scripts/copilot-run.mjs": "707368b2c951cb98a54eedff560a56bf85ad5c6a951f136ead79e87679db8946",
-  "scripts/dispatch.mjs": "893cd460810f63d88f583408a70e82d57278db71847aea0a1c4b16d5ccd79317",
+  "SKILL.md": "458e921d8b9d74ae6b94533d621348627db0201b8ae83ecd414c19f8984ba37e",
+  "references/alignment.md": "6d838f060f55e36ab527fdd4b95250158ec3310731feb5bfab92fce7f7e9512d",
+  "references/providers.md": "d607c1dec5d2122489f657aa3d5d4a955cc30898f73e439e6ec3f83e9da5054d",
+  "scripts/agy-run.mjs": "1f0b55dcd724ccec503653e454f8b3d9902517633196655b79e4700fe494b837",
+  "scripts/claude-run.mjs": "10270041fb1504a4df8f88494043e32a156dfd8c582256d793820eb508ccb813",
+  "scripts/common.mjs": "f40c045b1ac366de2b736901a0f9617dd22a05cb38946f4be59aebc7f0e70df3",
+  "scripts/copilot-run.mjs": "b36055b36e2ddb42f35ca8bbfb4ab4c6611899f02aba70c79302adfcf81a6948",
+  "scripts/dispatch.mjs": "ab6e10bd8a0fbbc487eea07a0c1fbd8f39d274266c061613000948da5e0cbefe",
   "scripts/fill-template.mjs": "47295ee6008f3a419f958c958e562386eb8a1168f70b2c507387df0ae35e1310",
-  "scripts/opencode-run.mjs": "8f14800980423b3c5ef088b2b589301360aa560f6a506a0a2c2162d82d739396",
+  "scripts/opencode-run.mjs": "0e3c0a7efe65b98f2fb80783267b8ee5ebfde4159f9555f1d3937f69d61e64eb",
   "scripts/relocate-scratch.mjs": "83659674079eda078b95dd2481cf418ade07c05ce2956a89adef8c95073677e1",
   "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581"
 }

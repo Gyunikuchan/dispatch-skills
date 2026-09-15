@@ -241,8 +241,10 @@ export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) 
 }
 
 /**
- * Reads the platform keys of `dispatch`'s effective config — the set this skill's own platforms
- * must be a subset of, since every wave target is dispatched as `dispatch --provider <key>`.
+ * Reads the platform keys of `dispatch`'s effective config — the set this skill's review
+ * platforms must be a subset of, since every review wave target is dispatched as
+ * `dispatch --provider <key>`. Native implementation subagents are intentionally outside this
+ * check.
  *
  * Yields `keys: null` instead of throwing when that config is unreadable or invalid (dispatch not
  * installed as a sibling, unparsable, or containing unsupported platform keys). The CLI treats
@@ -434,9 +436,10 @@ function validateKnob(section, name, knob, problems) {
 }
 
 /**
- * Flags platforms this skill configures that `dispatch` does not. Each one plans a wave target
- * that exits `PLATFORM_NOT_CONFIGURED` once dispatched, so catching it during validation turns a
- * mid-flow failure into a startup error naming both configs.
+ * Flags review platforms this skill configures that `dispatch` does not. Review sections plan
+ * external dispatch targets that exit `PLATFORM_NOT_CONFIGURED` once dispatched. The
+ * implementation section is intentionally excluded: its platforms select native write
+ * subagents and do not need to be present in dispatch's external-provider config.
  *
  * @param {object} config
  * @param {{ keys: string[], path: string | null }} dispatchPlatforms
@@ -446,7 +449,7 @@ function crossCheckDispatchPlatforms(config, dispatchPlatforms, problems) {
   const allowed = new Set(dispatchPlatforms.keys);
   const where = dispatchPlatforms.path ?? "dispatch's config";
   const configured = allowed.size > 0 ? [...allowed].join(', ') : 'none';
-  for (const section of SECTIONS) {
+  for (const section of REVIEW_SECTIONS) {
     const platforms = config?.[section]?.platforms;
     // Shape problems are already reported by validatePlatforms; only cross-check a usable map.
     if (!isPlainObject(platforms)) continue;

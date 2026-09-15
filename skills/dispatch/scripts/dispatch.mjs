@@ -22,7 +22,6 @@ import { fileURLToPath } from 'node:url';
 import {
   formatCliError,
   safeExitCode,
-  getGitStatus,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
   detectOrchestrator,
@@ -36,6 +35,7 @@ import {
   loadSkillConfig,
   parseCommonArgs,
   readStdin,
+  SANDBOX_SUPPORTED_PROVIDERS,
   validateDispatchConfig,
   verifySkillIntegrity,
 } from './common.mjs';
@@ -63,7 +63,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string[]} [files]
  * @property {string|string[]} [model]
  * @property {string} [effort]
- * @property {boolean} [sandbox] Copilot-only sandbox override; omitted values default to enabled.
+ * @property {boolean} [sandbox] Sandbox override for Claude/Copilot candidates only (see
+ *   SANDBOX_SUPPORTED_PROVIDERS); omitted values default to enabled.
  * @property {string} [agent]
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
@@ -88,8 +89,6 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string|null} [failureKind]
  * @property {string} logFile
  * @property {'timeout'|'buffer'|null} truncated
- * @property {boolean} [gitIntegrityViolation]
- * @property {string|null} [gitIntegrityDetails]
  */
 
 // ============================================================================
@@ -121,6 +120,11 @@ export const providerRunners = {
   agy: runAgy,
   claude: runClaude,
   copilot: runCopilot,
+};
+
+const PROVIDER_DISPLAY_NAMES = {
+  claude: 'Claude Code',
+  copilot: 'Copilot',
 };
 
 // ============================================================================
@@ -205,11 +209,6 @@ export async function dispatchTask(options = {}) {
     throw err;
   }
 
-  // One baseline for the whole cascade, taken before any provider runs. Per-runner baselines let a
-  // write by a provider that then failed become the *next* provider's clean starting point, so the
-  // breach was reported by nobody.
-  const initialGitStatus = getGitStatus();
-
   // Build target candidates list: expanding array platform entries when no CLI -m/-e override
   // is passed; CLI -m/-e overrides collapse a platform to a single candidate target.
   const targetCandidates = [];
@@ -217,14 +216,16 @@ export async function dispatchTask(options = {}) {
     const entry = config?.platforms?.[candidateProvider];
     if (model !== null || effort !== null) {
       const fallbackEntry = Array.isArray(entry) ? (entry[0] ?? {}) : (entry ?? {});
+      const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
       targetCandidates.push({
         provider: candidateProvider,
         model: model ?? fallbackEntry.model ?? null,
         effort: effort ?? fallbackEntry.effort ?? null,
-        sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? fallbackEntry.sandbox ?? true : undefined,
+        sandbox: supportsSandbox ? sandboxOverride ?? fallbackEntry.sandbox ?? true : undefined,
         label: candidateProvider,
       });
     } else if (Array.isArray(entry)) {
+      const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
       for (const c of entry) {
         const cModel = c?.model ?? null;
         const cEffort = c?.effort ?? null;
@@ -233,17 +234,18 @@ export async function dispatchTask(options = {}) {
           provider: candidateProvider,
           model: cModel,
           effort: cEffort,
-          sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? c?.sandbox ?? true : undefined,
+          sandbox: supportsSandbox ? sandboxOverride ?? c?.sandbox ?? true : undefined,
           label: modelLabel ? `${candidateProvider} (${modelLabel})` : candidateProvider,
         });
       }
     } else {
+      const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
       const singleEntry = entry ?? {};
       targetCandidates.push({
         provider: candidateProvider,
         model: singleEntry.model ?? null,
         effort: singleEntry.effort ?? null,
-        sandbox: candidateProvider === 'copilot' ? sandboxOverride ?? singleEntry.sandbox ?? true : undefined,
+        sandbox: supportsSandbox ? sandboxOverride ?? singleEntry.sandbox ?? true : undefined,
         label: candidateProvider,
       });
     }
@@ -252,7 +254,6 @@ export async function dispatchTask(options = {}) {
   const runnerOptionsFor = (candidate) => {
     const runnerOptions = {
       prompt,
-      initialGitStatus,
       files,
       agent,
       timeout,
@@ -262,7 +263,7 @@ export async function dispatchTask(options = {}) {
       model: candidate.model,
       effort: candidate.effort,
     };
-    if (candidate.provider === 'copilot') runnerOptions.sandbox = candidate.sandbox;
+    if (SANDBOX_SUPPORTED_PROVIDERS.includes(candidate.provider)) runnerOptions.sandbox = candidate.sandbox;
     return runnerOptions;
   };
 
@@ -324,33 +325,6 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   const attemptFailures = [];
   let bestPartial = null;
 
-  // A provider that wrote to the workspace and *then* failed still breached read-only isolation.
-  // Its result is discarded by the cascade, so the violation is accumulated here and stamped onto
-  // whatever the cascade ultimately returns or throws.
-  let sawViolation = false;
-  const violationDetails = [];
-
-  /** Records any integrity breach reported by one attempt, whoever ends up answering. */
-  const absorbViolation = (outcome) => {
-    if (!outcome?.gitIntegrityViolation) return;
-    sawViolation = true;
-    const provider = outcome.provider ?? 'unknown';
-    const detail = outcome.gitIntegrityDetails
-      ? `${provider}:\n${outcome.gitIntegrityDetails}`
-      : `${provider}: (no detail)`;
-    if (!violationDetails.includes(detail)) violationDetails.push(detail);
-  };
-
-  /** Stamps the accumulated integrity state onto the cascade's answer. */
-  const withViolations = (result) => {
-    if (!result || !sawViolation) return result;
-    return {
-      ...result,
-      gitIntegrityViolation: true,
-      gitIntegrityDetails: violationDetails.join('\n') || null,
-    };
-  };
-
   for (let i = 0; i < targetCandidates.length; i++) {
     const current = targetCandidates[i];
     const next = targetCandidates[i + 1] ?? null;
@@ -388,13 +362,9 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
     try {
       const result = await executeProvider(currentProvider, runnerOptionsFor(current));
 
-      // A CLI that reports quota exhaustion or a refusal on stderr and still exits 0 is a
-      // failure, not a silent success.
-      absorbViolation(result);
-
       if (result.failureKind === 'sandbox-unsupported') {
         if (!shouldCascade('reported unsupported sandbox', result.failureKind)) {
-          return withViolations({ ...result, exitCode: 1 });
+          return { ...result, exitCode: 1 };
         }
         continue;
       }
@@ -402,12 +372,12 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
         if (!shouldCascade('exited 0 with no output', kind))
-          return withViolations({ ...result, exitCode: 1 });
+          return { ...result, exitCode: 1 };
         continue;
       }
 
       if (result.exitCode === 0) {
-        return withViolations(result);
+        return result;
       }
 
       if (!isEmptyResult(result)) {
@@ -416,10 +386,8 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 
       const kind =
         result.failureKind || classifyFailure(`${result.stderr || ''}\n${result.stdout || ''}`);
-      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) return withViolations(result);
+      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) return result;
     } catch (err) {
-      // A runner can throw after the delegate already wrote; the error carries the same fields.
-      absorbViolation(err);
       const kind = err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`);
       if (!shouldCascade(err.message, kind)) throw err;
     }
@@ -429,7 +397,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
     process.stderr.write(
       `[dispatch] All providers failed; returning partial output from '${bestPartial.provider}'.\n`,
     );
-    return withViolations(bestPartial);
+    return bestPartial;
   }
 
   const err = new Error(
@@ -439,9 +407,6 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   );
   err.code = 'NO_DISPATCH_AVAILABLE';
   err.failures = attemptFailures;
-  // Nobody answered, but somebody may still have written; the caller must hear about it.
-  err.gitIntegrityViolation = sawViolation;
-  err.gitIntegrityDetails = sawViolation ? violationDetails.join('\n') : null;
   throw err;
 }
 
@@ -531,18 +496,11 @@ export async function main() {
     }
 
     if (result.failureKind === 'sandbox-unsupported') {
+      const providerName = PROVIDER_DISPLAY_NAMES[result.provider] ?? result.provider ?? 'Unknown provider';
       console.error(
-        `\n[dispatch] Copilot sandbox support is unavailable. ` +
-          `Upgrade Copilot CLI or set platforms.copilot.sandbox to false.\n`,
+        `\n[dispatch] ${providerName} sandbox support is unavailable. ` +
+          `Upgrade the provider CLI or set platforms.${result.provider}.sandbox to false.\n`,
       );
-    }
-
-    if (result.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (result.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${result.gitIntegrityDetails}`);
-      }
-      console.warn('');
     }
 
     process.exit(result.exitCode ?? 0);

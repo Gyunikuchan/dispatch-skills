@@ -299,7 +299,6 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         stdout: 'Success from copilot fallback',
         exitCode: 0,
         logFile: path.join(os.tmpdir(), 'copilot.log'),
-        gitIntegrityViolation: false,
       }));
 
       const result = await dispatchTask({ prompt: 'Test task' });
@@ -324,85 +323,6 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         dispatchTask({ prompt: 'Test task' }),
         /All candidate dispatch agents failed execution/,
       );
-    });
-
-    it('surfaces a failed provider gitIntegrityViolation on the succeeding result', async () => {
-      // The breach a failed provider caused used to vanish with its discarded result, and the next
-      // provider's own baseline absorbed the write.
-      clearOrchestratorEnv();
-      process.env.CLAUDE_CODE = '1';
-      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
-      mock.method(providerProbes, 'isAgyAvailable', async () => true);
-      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-
-      mock.method(providerRunners, 'agy', async () => ({
-        provider: 'agy',
-        stdout: '',
-        exitCode: 1,
-        gitIntegrityViolation: true,
-        gitIntegrityDetails: 'M src/app.ts',
-      }));
-      mock.method(providerRunners, 'copilot', async () => ({
-        provider: 'copilot',
-        stdout: 'Clean review from copilot',
-        exitCode: 0,
-        gitIntegrityViolation: false,
-      }));
-
-      const result = await dispatchTask({ prompt: 'Review' });
-      assert.equal(result.provider, 'copilot');
-      assert.equal(result.gitIntegrityViolation, true);
-      assert.match(result.gitIntegrityDetails, /agy:/);
-      assert.match(result.gitIntegrityDetails, /src\/app\.ts/);
-    });
-
-    it('surfaces a gitIntegrityViolation on the NO_DISPATCH_AVAILABLE error when every provider fails', async () => {
-      clearOrchestratorEnv();
-      process.env.CLAUDE_CODE = '1';
-      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
-      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
-      mock.method(providerProbes, 'isAgyAvailable', async () => true);
-      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
-
-      mock.method(providerRunners, 'agy', async () => ({
-        provider: 'agy',
-        stdout: '',
-        exitCode: 1,
-        gitIntegrityViolation: true,
-        gitIntegrityDetails: '?? leaked.txt',
-      }));
-
-      const err = await dispatchTask({ prompt: 'Review' }).then(
-        () => null,
-        (e) => e,
-      );
-      assert.ok(err, 'the cascade rejects when nothing answers');
-      assert.equal(err.code, 'NO_DISPATCH_AVAILABLE');
-      assert.equal(err.gitIntegrityViolation, true);
-      assert.match(err.gitIntegrityDetails, /leaked\.txt/);
-    });
-
-    it('passes one cascade-level git baseline to every runner', async () => {
-      // Per-runner baselines cannot span a write made by an earlier provider.
-      clearOrchestratorEnv();
-      process.env.CLAUDE_CODE = '1';
-      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
-      mock.method(providerProbes, 'isAgyAvailable', async () => true);
-      mock.method(providerProbes, 'isCopilotAvailable', async () => true);
-
-      const seen = [];
-      mock.method(providerRunners, 'agy', async (opts) => {
-        seen.push(opts.initialGitStatus);
-        return { provider: 'agy', stdout: '', exitCode: 1 };
-      });
-      mock.method(providerRunners, 'copilot', async (opts) => {
-        seen.push(opts.initialGitStatus);
-        return { provider: 'copilot', stdout: 'ok', exitCode: 0 };
-      });
-
-      await dispatchTask({ prompt: 'Review' });
-      assert.equal(seen.length, 2);
-      assert.equal(seen[0], seen[1], 'both runners receive the identical baseline');
     });
 
     it('aborts before probing when the pinned provider is absent from config', async () => {
@@ -723,6 +643,87 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       });
 
       assert.equal(copilotRunner.mock.calls[0].arguments[0].sandbox, false);
+    });
+
+    it('passes the Claude sandbox setting from config to the runner', async () => {
+      clearOrchestratorEnv();
+      const claudeRunner = mock.method(providerRunners, 'claude', async () => ({
+        provider: 'claude',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        config: {
+          platforms: {
+            claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: true },
+          },
+        },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(claudeRunner.mock.calls[0].arguments[0].sandbox, true);
+    });
+
+    it('defaults the Claude sandbox setting to true when config omits it', async () => {
+      clearOrchestratorEnv();
+      const claudeRunner = mock.method(providerRunners, 'claude', async () => ({
+        provider: 'claude',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(claudeRunner.mock.calls[0].arguments[0].sandbox, true);
+    });
+
+    it('passes an explicit false Claude sandbox setting through to the runner', async () => {
+      clearOrchestratorEnv();
+      const claudeRunner = mock.method(providerRunners, 'claude', async () => ({
+        provider: 'claude',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: false } } },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(claudeRunner.mock.calls[0].arguments[0].sandbox, false);
+    });
+
+    it('allows the programmatic sandbox override to disable the Claude config default', async () => {
+      clearOrchestratorEnv();
+      const claudeRunner = mock.method(providerRunners, 'claude', async () => ({
+        provider: 'claude',
+        stdout: 'ok',
+        exitCode: 0,
+      }));
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        sandbox: false,
+        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(claudeRunner.mock.calls[0].arguments[0].sandbox, false);
     });
 
     it('fails closed when Copilot reports unsupported sandbox flags with exit code 0', async () => {
@@ -1231,8 +1232,6 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
           verbose: true,
         },
       );
-      // The baseline is dispatchTask's own single snapshot — a string fingerprint, shared by every attempt.
-      assert.equal(typeof opts.initialGitStatus, 'string', 'the runner receives the cascade-level git baseline');
     } finally {
       // This describe has no afterEach of its own; restore here so the mocks cannot leak into
       // later tests if this file grows (mocks persist across sibling tests otherwise).

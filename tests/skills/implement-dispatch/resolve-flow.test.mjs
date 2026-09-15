@@ -804,16 +804,30 @@ describe('resolveFlow', () => {
       it('reports every section configuring a platform dispatch lacks', () => {
         const dispatchPlatforms = { keys: ['claude'], path: '/fake/dispatch/config.jsonc' };
         const problems = validateConfig(BASE_CONFIG, { dispatchPlatforms });
-        // plan-review and code-review carry agy/copilot/opencode; implementation carries agy/copilot.
-        assert.equal(problems.length, 8);
-        for (const section of ['plan-review', 'implementation', 'code-review']) {
+        // Only review sections dispatch through the external provider cascade; implementation
+        // platforms select native write subagents and may not be in dispatch's config.
+        assert.equal(problems.length, 6);
+        for (const section of ['plan-review', 'code-review']) {
           assert.ok(
             problems.some(p => p.startsWith(`${section}.platforms."agy"`)),
             `expected an agy problem for ${section}`
           );
         }
+        assert.ok(!problems.some(p => p.startsWith('implementation.platforms.')));
         assert.match(problems[0], /not configured in \/fake\/dispatch\/config\.jsonc \(configured there: claude\)/);
         assert.match(problems[0], /exits PLATFORM_NOT_CONFIGURED/);
+      });
+
+      it('allows an implementation-only Copilot platform when dispatch config has only Claude', () => {
+        const config = withSections({
+          'plan-review': { platforms: { claude: {} } },
+          implementation: { platforms: { copilot: {} } },
+          'code-review': { platforms: { claude: {} } },
+        });
+        assert.deepEqual(
+          validateConfig(config, { dispatchPlatforms: { keys: ['claude'], path: '/fake/dispatch/config.jsonc' } }),
+          [],
+        );
       });
 
       it('resolves aliases before comparing, so `antigravity` here matches `agy` there', () => {

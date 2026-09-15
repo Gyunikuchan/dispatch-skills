@@ -249,24 +249,6 @@ describe('common: cascadeModels', () => {
     assert.equal(stderr, "[dispatch] Warning: Model 'a' execution failed on X (boom). Trying fallback model 'b'...\n");
   });
 
-  it('never retries after a git-integrity violation (result or thrown)', async () => {
-    const calls = [];
-    const violated = { ...fail('a'), gitIntegrityViolation: true };
-    const { value } = await captureStderr(() =>
-      cascadeModels(['a', 'b'], async (m) => (calls.push(m), violated), { label: 'X' }),
-    );
-    assert.deepEqual(calls, ['a']);
-    assert.equal(value, violated);
-
-    const thrownCalls = [];
-    const err = Object.assign(new Error('written'), { gitIntegrityViolation: true });
-    await assert.rejects(
-      captureStderr(() => cascadeModels(['a', 'b'], async (m) => { thrownCalls.push(m); throw err; }, { label: 'X' })),
-      (e) => e === err,
-    );
-    assert.deepEqual(thrownCalls, ['a']);
-  });
-
   it('returns / throws the last model outcome unchanged', async () => {
     const last = fail('b', 'other');
     const { value } = await captureStderr(() =>

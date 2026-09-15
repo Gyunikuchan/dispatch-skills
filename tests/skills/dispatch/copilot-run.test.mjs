@@ -299,7 +299,6 @@ describe('runCopilot cascade loop', () => {
       closedCount: () => closed,
       options: {
         prompt: 'x',
-        initialGitStatus: '',
         discoverTargets: () => targets,
         createLogger: () => ({ logFile: null, write() {}, close() { closed += 1; } }),
         execute: async ({ target: t }) => {

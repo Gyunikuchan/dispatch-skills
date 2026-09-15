@@ -88,7 +88,7 @@ Map each target to: `dispatch --provider <target.platform> [-m <target.model>] [
 ### Reserve Substitution (Orchestrated)
 
 Pinned targets substitute via the `reserves` list rather than cascading:
-1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` or workspace modification (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
+1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
 2. **Usability**: Dispatch the first unused reserve in list order (diversity-sorted) whose `(platform, model, effort)` tuple was not already dispatched in this wave.
 3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then fall back to `dispatch`'s in-process read-only subagent.
 4. **Diagnostics**: Use each reserve at most once per wave. Record substitutions (`<failed target> → <reserve>: <reason>`).
@@ -182,7 +182,7 @@ Evaluate every actionable claim (proposed defect, missing requirement, cut, reco
 
 ### Terminal Outcomes
 
-Dispatches ending without a report (`INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, unconfigured platform, non-zero exit, workspace modification) follow `dispatch` Step 3 after exhausting reserve substitutions in orchestrated mode.
+Dispatches ending without a report (`INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, unconfigured platform, or non-zero exit) follow `dispatch` Step 3 after exhausting reserve substitutions in orchestrated mode.
 
 When **no** invocation in a wave produces a report, skip adjudication and resolutions logging (do not append an empty round log). Standalone mode reports tried providers and failure causes; orchestrated mode returns the outcome to the caller.
 

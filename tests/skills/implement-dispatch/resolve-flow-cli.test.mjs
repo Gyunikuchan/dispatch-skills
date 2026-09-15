@@ -336,7 +336,7 @@ describe('resolve-flow CLI', () => {
   });
 
   it('resolves --pins=2 under the liveness env seam', () => {
-    const { status, stdout } = run('--platform=claude', '--level=medium', '--pins=2');
+    const { status, stdout } = runOnDefaults(['--platform=claude', '--level=medium', '--pins=2']);
     assert.equal(status, 0);
     const flow = JSON.parse(stdout);
     assert.equal(flow.diagnostics.targetCountPin, 2);
@@ -582,9 +582,36 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
       assert.equal(status, 1);
       assert.match(stderr, /Invalid config:/);
       assert.match(stderr, /plan-review\.platforms\."agy" is not configured in .*config\.jsonc/);
-      assert.match(stderr, /implementation\.platforms\."copilot"/);
+      assert.doesNotMatch(stderr, /implementation\.platforms\."copilot"/);
       assert.match(stderr, /code-review\.platforms\."opencode"/);
       assert.match(stderr, /exits PLATFORM_NOT_CONFIGURED; add it there or remove it here/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows a Copilot native implementation subagent without dispatch membership', () => {
+    const implementationOnlyCopilot = JSON.stringify({
+      'plan-review': {
+        maxRounds: { low: 0 },
+        targetCount: { low: 0 },
+        consensus: { low: false },
+        platforms: { claude: {} },
+      },
+      implementation: { platforms: { copilot: { model: 'gpt-5.6-luna' } } },
+      'code-review': {
+        maxRounds: { low: 0 },
+        targetCount: { low: 0 },
+        consensus: { low: false },
+        platforms: { claude: {} },
+      },
+    });
+    const { dir, skillDir } = setup(ONLY_CLAUDE);
+    try {
+      fs.writeFileSync(path.join(skillDir, 'config.jsonc'), implementationOnlyCopilot);
+      const { status, stdout } = runFixtureScript(skillDir, ['--validate-only']);
+      assert.equal(status, 0);
+      assert.match(stdout, /Config is valid\./);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

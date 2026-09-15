@@ -1,18 +1,8 @@
 # implement-dispatch
 
-Implement features and fixes through an autonomous plan → review → implementation → consensus
-loop. `implement-dispatch` owns control flow; the companion skills provide the review criteria.
-
----
-
-## What It Does
-
-1. Classifies scope and resolves the review flow.
-2. Authors and reviews a plan before code is written.
-3. Pauses for one plan approval gate.
-4. Implements test-first through a native write subagent when the task is non-trivial.
-5. Reviews the resulting changes, applies verified fixes, and repeats until consensus.
-6. Records diagnostics and cleans up artifacts after completion.
+Run a feature or fix through a plan, implementation, verification, and review loop when a single
+agent pass is not enough. It coordinates optional plan and code review skills around
+[`dispatch`](../dispatch/README.md).
 
 ```mermaid
 flowchart TD
@@ -31,192 +21,125 @@ flowchart TD
 
 ## Prerequisites & Installation
 
-`dispatch` is required. Its README is the source of truth for Node.js, provider CLIs, installation
-scopes, runner flags, sandboxing, and provider cascade behavior.
+### Requirements
 
-### Companion Skills
+`dispatch` is required. Install `dispatch-plan-review` to review the plan before implementation
+and `dispatch-code-review` to review the resulting changes. See [`dispatch`'s prerequisites and
+installation guide](../dispatch/README.md#prerequisites--installation) for Node.js, provider
+setup, installation scopes, and shared runner behavior.
 
-| Skill | Role | Status |
-|---|---|---|
-| [`dispatch`](../dispatch/README.md) | Runner, flags, sandboxing, and provider cascade | **Required** |
-| [`dispatch-plan-review`](../dispatch-plan-review/README.md) | Plan template, review axes, and plan adjudication | **Optional** |
-| [`dispatch-code-review`](../dispatch-code-review/README.md) | Walkthrough template, review axes, and code adjudication | **Optional** |
+### Install
 
-If an optional companion is absent, its phase is skipped and the final diagnostics name the
-reduced workflow.
-
-### Installation
-
-Install `implement-dispatch` alongside `dispatch`:
+Install the workflow with its required dependency:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill implement-dispatch
 ```
 
-Install the complete suite with:
+Install the complete suite to enable both optional review phases:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --all
 ```
 
-Add `-g` to either command for a global installation. Keep companion skills in the same scope.
-
----
+> [!NOTE]
+> Install companion skills in the same scope: keep them all project-local or all global so sibling
+> scripts and templates can resolve one another.
 
 ## How to Use
 
-Trigger `/implement-dispatch` directly or describe the task in natural language.
+Run `/implement-dispatch` and describe the feature or fix.
 
-### Invocation Grammar
+### Basic examples
+
+Use automatic scope selection for a typical feature:
 
 ```text
-/implement-dispatch [<level>] [(<pins>)]: <feature | fix | task description>
-```
-
-- **`<level>`**: `low`, `medium`, `high`, `xhigh`, or `max`; controls wave caps, reviewer breadth,
-  consensus gates, and model budgets.
-- **`(<pins>)`**: Uses the shared platform-key, alias, `all`, or reviewer-count syntax from
-  [`dispatch`](../dispatch/SKILL.md#invocation). `implement-dispatch` resolves platform pins through
-  `resolve-flow.mjs`; `all` is limited to platforms configured for both this skill and `dispatch`.
-- **Reviewer count**: A single integer such as `(3)` replaces the level's `targetCount` for both
-  review phases.
-
-### Basic Invocations
-
-```markdown
 /implement-dispatch Add a CSV export button to the transactions table
-/implement-dispatch Fix off-by-one error in cursor pagination
-/implement-dispatch low: Rename Household.owner field to primaryHolder
-/implement-dispatch high: Refactor payment webhook idempotency handler
-/implement-dispatch (all): Implement OAuth2 PKCE authorization flow
-/implement-dispatch high (3): Refactor payment webhook idempotency handler
 ```
 
----
-
-## Review Levels & Scope Gating
-
-Levels are policy profiles resolved from `config.default.jsonc`, or a local `config.jsonc` /
-`config.local.jsonc` override.
-
-| Level | Ideal For | Plan Review | Code Review | Consensus Gate |
-|---|---|---|---|---|
-| **`low`** | Minor bug fixes, mechanical changes, typos, renames | Off (`maxRounds: 0`, `targetCount: 0`) | One reviewer, one round | Relaxed (`consensus: false`) |
-| **`medium`** *(default)* | Standard features and bounded multi-file changes | One reviewer, up to two rounds | Two reviewers, up to three rounds | Strict (`consensus: true`) |
-| **`high`** | Complex refactors and public contract changes | Two reviewers, up to three rounds | Three reviewers, up to three rounds | Strict (`consensus: true`) |
-| **`xhigh`** | Security-sensitive or invariant-heavy work | Three reviewers, up to three rounds | Four reviewers, up to three rounds | Strict (`consensus: true`) |
-| **`max`** | Critical migrations and subsystem overhauls | All configured reviewers, up to five rounds | All configured reviewers, up to five rounds | Strict (`consensus: true`) |
-
-When no level is given, the scope gate selects `low` for trivial work, `medium` for focused work,
-or `high` for cross-cutting work. `xhigh` and `max` are manual-only. Pins and reviewer counts do
-not change automatic level selection.
-
----
-
-## Configuration & Flow Policy
-
-### Loading and Precedence
-
-The resolver loads one complete config, without deep merging:
-
-1. `config.local.jsonc`
-2. `config.jsonc`
-3. `config.default.jsonc`
-
-Each phase (`plan-review`, `implementation`, and `code-review`) uses level-keyed policy knobs:
-
-| Knob | Meaning |
-|---|---|
-| `maxRounds` | Maximum review waves; `0` disables the phase. |
-| `targetCount` | Unpinned reviewer count, or `"all"`; `0` disables unpinned waves. |
-| `consensus` | Whether MUST-FIX / SHOULD-FIX rejections require reviewer confirmation or a user ruling. |
-
-Levels resolve by exact match, nearest lower level, then lowest higher level.
-
-### Platform Agreement
-
-Every review target is dispatched through `dispatch --provider <key>`. `resolve-flow.mjs` therefore
-fails closed when a platform configured in this skill is absent from `dispatch`'s effective set,
-instead of allowing a later `PLATFORM_NOT_CONFIGURED` failure.
-
-Inspect the authoritative set with:
-
-```bash
-node <skills-dir>/dispatch/scripts/dispatch.mjs --list-platforms
-```
-
-Validate the flow without dispatching:
-
-```bash
-node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --validate-only
-```
-
-Unpinned waves inherit `dispatch`'s diversity-sorted ordering. The resolver records targets and
-reserves, and excludes platforms that fail authentication or quota checks.
-
----
-
-## Workflow Invariants
-
-- **Single approval gate**: The user approves the reviewed plan exactly once before implementation.
-- **Test-first implementation**: Focused and cross-cutting work uses the native write subagent;
-  trivial work may run directly in the orchestrator.
-- **Mechanical consensus**: `check-consensus.mjs` must report every finding settled before handoff.
-- **Optional phases**: Missing review companions skip only their phase and are named in diagnostics.
-- **Artifact lifecycle**: Scratch artifacts remain on escalation and move to OS temp only after
-  successful completion.
-- **Git boundary**: The skill modifies the working tree but never commits, pushes, creates branches,
-  or opens pull requests.
-
-Read-only delegation, claim verification, provider fallback, and host convention discovery are
-shared behavior documented by [`dispatch`](../dispatch/README.md) and the
-[alignment reference](../dispatch/references/alignment.md).
-
-## Platform Write Subagents
-
-| Platform | Native Write Subagent |
-|---|---|
-| `claude` | `general-purpose` |
-| `agy` | `self` |
-| `copilot` | `self` |
-| `opencode` | `general` |
-
----
-
-## Finding Grammar & Consensus
-
-Reviewers cite plan sections or code lines:
+Choose a lighter pass for a small, mechanical change:
 
 ```text
-<locus> — <tag>: <defect> → <required change>
+/implement-dispatch low: Rename Household.owner to primaryHolder
 ```
 
-The orchestrator verifies every claim, applies accepted fixes, and records the result in the plan
-or walkthrough:
+Request deeper review for a cross-cutting change:
 
-| State | Meaning |
+```text
+/implement-dispatch high: Refactor the payment webhook idempotency handler
+```
+
+### Choose a review level
+
+The level is optional. If omitted, the skill selects `low`, `medium`, or `high` from the
+request's scope.
+
+| Level | Use for |
 |---|---|
-| **Accepted** | Requirement or evidence confirms the defect; apply the fix and log it. |
-| **Pending rejection** | Under `consensus: true`, a rejected delegate MUST-FIX / SHOULD-FIX awaits citing-reviewer confirmation. |
-| **Settled rejection** | Counter-evidence is confirmed, or consensus is disabled. |
-| **Downgrade** | A minor or subjective issue moves to follow-ups or out of scope. |
-| **Disputed** | User intent or a trade-off needs a ruling before the loop can settle it. |
+| `low` | Small, mechanical, or low-risk changes |
+| `medium` | Typical features, fixes, and bounded refactors |
+| `high` | Cross-cutting changes, complex refactors, or public contracts |
+| `xhigh` | Security-sensitive or invariant-heavy work |
+| `max` | Critical migrations or subsystem overhauls |
 
-`check-consensus.mjs` is the mechanical gate: exit `0` means settled, exit `1` lists unsettled
-entries, and exit `2` reports a file or syntax error.
+`medium` is the usual choice. Request `xhigh` or `max` explicitly when the change warrants it.
 
----
+> [!NOTE]
+> With the shipped defaults, `low` skips plan review but still runs one code-review round. An
+> uninstalled optional companion skips its phase entirely.
 
-## Troubleshooting & Run Diagnostics
+### Choose providers or reviewer count
 
-- If an optional review skill is absent, the corresponding phase is skipped and named in the handoff.
-- When a review phase reaches its round cap, the skill escalates remaining disputes; a user ruling
-  grants one additional verification round.
-- Write subagents may inspect Git but must not run commands that rewrite or discard the working tree
-  or index, including `git stash`, `git reset`, `git checkout -- <path>`, or `git clean`.
-- Trivial mechanical tasks can run directly without a background implementation subagent.
-- Failed authentication or quota checks exclude that platform from later waves; reserves are resolved
-  again before the next wave.
-- Reviewer budget is `8 + 2 × <units under review>` tool turns; later rounds count only changed units.
-- For provider discovery, authentication, fallback, live logs, and platform-specific behavior, use
-  the [`dispatch` troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
+Use the same provider-pin syntax as [`dispatch`](../dispatch/README.md#choose-a-provider), or
+replace the configured reviewer count for both review phases:
+
+```text
+/implement-dispatch (all): Implement the OAuth2 PKCE authorization flow
+/implement-dispatch (claude,copilot): Compare two approaches to the cache invalidation change
+/implement-dispatch high (3): Refactor the payment webhook idempotency handler
+```
+
+`all` uses every provider configured for this workflow and available to `dispatch`. A number such
+as `(3)` requests three reviewers for each enabled review phase.
+
+> [!NOTE]
+> Provider pins select review delegates. The implementation subagent is selected separately in
+> this skill's configuration, and every review provider must also be enabled in `dispatch`.
+
+## Configuration
+
+Most users can use the shipped defaults. To customize review depth, reviewer breadth, or the
+implementation subagent, create `config.local.jsonc` or `config.jsonc` beside this skill and use
+[`config.default.jsonc`](config.default.jsonc) as the schema reference. Provider credentials,
+models, fallback, and shared runner settings remain in `dispatch`.
+
+> [!NOTE]
+> Configuration files replace one another rather than merge. Copy the complete default
+> configuration before editing it, and keep every review provider enabled in `dispatch` as well.
+
+## What to expect
+
+1. The skill scopes the request and prepares a plan.
+2. It reviews the plan when `dispatch-plan-review` is installed and enabled.
+3. It asks for approval once, after plan review and before changing code.
+4. It implements the approved plan and runs the repository's verification command.
+5. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
+   repeating the review until findings are settled or the configured limit is reached.
+6. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
+
+> [!NOTE]
+> Plan approval is the workflow's only approval gate. The skill does not write code before you
+> approve the reviewed plan.
+
+The skill changes the working tree but does not commit, push, create branches, or open pull
+requests.
+
+## Nuances, Quirks & Troubleshooting
+
+- **A review phase is missing:** Install the corresponding companion skill, or install the complete
+  suite with `npx skills add Gyunikuchan/dispatch-skills --all`.
+- **A provider is unavailable:** Configure and authenticate it through `dispatch`; see
+  [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
+- **You need a different review depth:** Pass a level such as `low` or `high`, or adjust the
+  level-specific settings in `config.local.jsonc`.

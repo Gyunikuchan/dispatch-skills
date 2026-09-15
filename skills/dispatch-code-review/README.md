@@ -1,33 +1,27 @@
 # dispatch-code-review
 
-Get a rigorous cross-agent second opinion on code changes, then adjudicate every claim against the
-active codebase before updating the walkthrough or reporting the result.
-
----
-
-## What It Does
-
-`dispatch-code-review` delegates inspection of working-tree or branch changes to external agent
-CLIs. It keeps delegates read-only, asks for exact line citations, and lets the orchestrator apply
-only verified fixes.
+Get an independent second opinion on code changes, verify each finding against the active
+codebase, and resolve the changes that are worth acting on.
 
 ```mermaid
 flowchart TD
-    Prompt(["👤 Review Request"]) --> Orchestrator["🤖 Orchestrator"]
-    Orchestrator -->|"Resolve or author"| Walkthrough[("📄 Walkthrough & Diff")]
-    Walkthrough -->|"Dispatch read-only review"| Dispatch["⚡ dispatch"]
-    Dispatch --> Delegate["🔍 External Reviewer"]
-    Delegate -->|"Line-cited claims"| Adjudicate["⚖️ Verify Against Code"]
-    Adjudicate -->|"Apply and re-verify"| WorkTree[("💻 Working Tree")]
-    Adjudicate -->|"Record round"| UpdatedWalkthrough[("📄 Updated Walkthrough")]
-    Adjudicate --> Report(["👤 Review Report"])
+    User(["👤 Review Request"]) --> Scope["⚙️ Review Scope"]
+    Scope --> Context["📄 Walkthrough & Context"]
+    Context --> Review["⚡ Independent Review (Dispatch)"]
+    Review --> Verify["⚖️ Verify Findings"]
+    Verify --> Fix["🔧 Apply Safe Fixes"]
+    Fix --> Handoff["📦 Report & Record Round"]
 ```
 
 ## Prerequisites & Installation
 
-`dispatch` is the source of truth for runtime requirements, provider CLIs, installation scopes,
-runner flags, and shared fallback behavior. See its
-[prerequisites and installation guide](../dispatch/README.md#prerequisites--installation) first.
+### Requirements
+
+`dispatch` is required. It provides the provider setup, runner behavior, fallback, and shared
+command syntax. See [`dispatch`'s prerequisites and installation guide](../dispatch/README.md#prerequisites--installation)
+for Node.js, provider, and installation details.
+
+### Install
 
 Install both skills together:
 
@@ -35,130 +29,124 @@ Install both skills together:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
 ```
 
-Add `-g` to install globally, or use `--all` for the complete suite. Keep companion skills in the
-same scope so sibling scripts and prompt templates can resolve one another.
+Add `-g` to install globally, or use `--all` to install the complete suite:
 
----
+```bash
+npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
+npx skills add Gyunikuchan/dispatch-skills --all
+```
+
+> [!NOTE]
+> Install `dispatch` and its companion skills in the same scope: keep them all project-local or
+> all global so sibling scripts and templates can resolve one another.
 
 ## How to Use
 
-Trigger `/dispatch-code-review` directly or describe the review in natural language.
+Run `/dispatch-code-review` in your agent session. Review the current changes as-is, or add a
+focus area, provider pin, task summary, or walkthrough path.
 
-### 1. Basic Code Review
+### Basic review
 
-Review staged, unstaged, and untracked changes:
+Review the current staged, unstaged, and untracked changes:
 
-```markdown
+```text
 /dispatch-code-review
 ```
 
-### 2. Focused Review
+Focus the review on a risk area:
 
-Pass focus areas after the command:
-
-```markdown
-/dispatch-code-review focus on auth boundaries, token lifecycle, and error handling
+```text
+/dispatch-code-review Focus on auth boundaries, token lifecycle, and error handling
+/dispatch-code-review Check the CPF allocation math and accessibility
 ```
 
-```markdown
-/dispatch-code-review focus on the CPF allocation math and a11y
+### Choose reviewers
+
+Use the shared provider-pin syntax from [`dispatch`](../dispatch/README.md#choose-a-provider) when
+you need a particular provider or independent perspectives:
+
+```text
+/dispatch-code-review (claude) Review the GraphQL authorization changes
+/dispatch-code-review (claude,copilot) Focus on resource lifecycle and memory leaks
+/dispatch-code-review (all) Audit the authentication flow from independent perspectives
 ```
 
-### 3. Pinning Reviewer Providers
+Unpinned runs use `dispatch`'s configured provider cascade. Provider configuration, model
+selection, fallback, and command-line options are documented in [`dispatch`](../dispatch/README.md).
 
-Use the shared `(<pins>)` grammar from [`dispatch`](../dispatch/SKILL.md#invocation). Pins are
-effective configured platform keys, supported aliases, or `all`; inspect the effective keys with
-`node <dispatch-skill>/scripts/dispatch.mjs --list-platforms`.
+### Supply context
 
-```markdown
-/dispatch-code-review (all)
-/dispatch-code-review (claude,copilot) focus on resource lifecycle and memory leaks
-```
+Pass a walkthrough or plan when one already describes the intended change:
 
-Unpinned runs use `dispatch`'s diversity-sorted cascade. Every pinned key, including keys expanded
-from `all`, must be present in the effective configuration.
-
-### 4. Context and Task Targeting
-
-Pass a walkthrough or plan to anchor the review:
-
-```markdown
+```text
 /dispatch-code-review .scratch/plan/2026-09-08-auth-v2-walkthrough.md
 ```
 
-Or provide a task summary:
-
-```markdown
-/dispatch-code-review Refactored session store to use Redis cluster with connection pooling
-```
-
-### 5. Multi-Round Re-Reviews
-
-Run the command again after changes. The skill counts `### Round` headings under
-`## Review Findings & Resolutions` and reviews only paths changed since the previous round.
-
----
-
-## Review Behavior
-
-- **Working-tree first**: Dirty trees review staged, unstaged, and untracked changes. A clean tree
-  expands the review to the branch diff from its base.
-- **Standalone fixes**: Accepted `MUST-FIX` and safe `SHOULD-FIX` findings are applied, the host
-  verify command is rerun, and deferred items are recorded under `## Follow-ups`.
-- **Walkthrough lifecycle**: The skill resolves or authors a walkthrough, records each round, and
-  checks for stale descriptions before dispatching.
-- **Orchestrated handoff**: `implement-dispatch` owns artifact resolution, fix application,
-  verification, and final reporting when it invokes this skill.
-
-Claim verification, provider fallback, read-only enforcement, and shared artifact conventions are
-defined by [`dispatch`](../dispatch/README.md) and its
-[alignment reference](../dispatch/references/alignment.md).
-
----
-
-## The Six Evaluation Axes
-
-Every code change is evaluated across six dimensions:
-
-| Axis | Focus Tags | What Is Evaluated |
-|---|---|---|
-| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Depth and leverage; real seams; dependency boundaries. |
-| **Domain & Business Logic** | `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Domain rules, invariants, units, formulas, indexing, and type/runtime behavior. |
-| **Security & Resource Safety** | `vuln`, `auth`, `leak`, `perf` | Injection, traversal, secrets, authorization, resource leaks, and hot-path cost. |
-| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Deletion, reuse, standard-library choices, and root-cause fixes. |
-| **Blast Radius & Compatibility** | `breaking`, `compat`, `migration`, `scope-creep` | Caller compatibility, migrations, serialization, and scope boundaries. |
-| **Test Quality & UI/UX** | `test-gap`, `test-leak`, `ui`, `a11y` | Observable failure coverage, test coupling, visual hierarchy, responsiveness, and accessibility. |
-
----
-
-## Finding Grammar & Adjudication
-
-Every actionable finding cites an exact file path and line:
+For a change without an artifact, provide a short task summary:
 
 ```text
-<file>:L<line> — <tag>: <defect> → <required change>
+/dispatch-code-review Refactored the session store to use Redis clustering and connection pooling
 ```
 
-Verify each claim against the cited code and repository rules:
+### Run another round
 
-| Verdict | Criterion | Action |
+Run the command again after applying changes:
+
+```text
+/dispatch-code-review
+```
+
+The skill uses the walkthrough's review history to check resolutions and focus subsequent rounds
+on paths changed since the previous round.
+
+> [!NOTE]
+> A clean working tree is not automatically a no-op. When there are no current changes, the skill
+> reviews the branch diff from its base instead.
+
+## What Gets Reviewed
+
+| Area | Focus tags | What is evaluated |
 |---|---|---|
-| **Accept** | The requirement, rules, or cited code confirms the defect. | Apply the fix or record it for the orchestrator; update the walkthrough. |
-| **Reject** | The claim is contradicted, already handled, uncited, or unverifiable. | Drop it and record the rationale. |
-| **Downgrade** | The issue is real but subjective or minor. | Move it to `## Follow-ups` or drop it. |
-| **Disputed** | Intent or trade-offs cannot be settled from code alone. | Ask the user in standalone mode; return it to the consensus loop when orchestrated. |
+| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Module boundaries, dependency direction, seams, and unnecessary indirection |
+| **Domain & Business Logic** | `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Domain rules, invariants, units, formulas, indexing, and runtime/type behavior |
+| **Security & Resource Safety** | `vuln`, `auth`, `leak`, `perf` | Injection, authorization, secrets, traversal, leaks, and hot-path cost |
+| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Deletion, reuse, standard-library choices, and root-cause fixes |
+| **Blast Radius & Compatibility** | `breaking`, `compat`, `migration`, `scope-creep` | Caller contracts, migrations, serialization, and scope boundaries |
+| **Test Quality & UI/UX** | `test-gap`, `test-leak`, `ui`, `a11y` | Observable failure coverage, test coupling, accessibility, and interface behavior |
 
-Append every round under `## Review Findings & Resolutions`. In orchestrated `consensus: true`
-runs, rejections of delegate-reported MUST-FIX / SHOULD-FIX findings remain
-`[Rejected — pending confirmation]` until the citing reviewer confirms the counter-evidence.
+## What to Expect
 
----
+1. The skill resolves or authors a walkthrough and attaches any supplied plan or context.
+2. It inspects the relevant diff and checks the repository's verification guidance.
+3. It sends the review to read-only delegates through `dispatch`.
+4. It verifies each actionable finding against the cited code before accepting it.
+5. When run directly, it applies accepted fixes that are safe to make automatically, reruns
+   verification, and records unresolved items as follow-ups.
+6. It records the review round in the walkthrough and reports the result.
 
-## Troubleshooting & Artifacts
+> [!NOTE]
+> A delegate's report is a claim, not a verdict. The skill checks the cited lines and surrounding
+> code before applying a finding.
 
-- A stale walkthrough is compared with the active diff; the run asks whether to reuse it, overwrite
-  it, or create a fresh slug.
-- On protected branches or detached HEADs, pass an explicit walkthrough path or slug when automatic
-  resolution cannot derive one.
-- For provider discovery, authentication, fallback, live logs, and platform-specific behavior, use
-  the [`dispatch` troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
+When an orchestrating workflow invokes this skill, that workflow owns plan approval, fix
+application, verification, and the final handoff.
+
+The skill changes the working tree but does not commit, push, create branches, or open pull
+requests.
+
+## Configuration
+
+There is no separate provider configuration for `dispatch-code-review`. Configure provider
+membership, models, reasoning effort, fallback, and runner options in [`dispatch`](../dispatch/README.md#configuration).
+
+When using an orchestrating workflow, configure review breadth and rounds in its configuration.
+
+## Nuances & Troubleshooting
+
+- **A walkthrough does not match the current diff:** the skill pauses and asks whether to reuse it,
+  overwrite it, or create a fresh one.
+- **You want a narrower review:** add a concrete focus area to the command, such as
+  `Focus on authorization and tenant isolation`.
+- **You want another perspective:** pin multiple providers with `(claude,copilot)` or use `(all)`.
+- **A provider is unavailable:** configure or authenticate it through `dispatch`; see its
+  [troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).

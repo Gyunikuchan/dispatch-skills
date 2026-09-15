@@ -482,22 +482,21 @@ describe('opencode-run', () => {
       );
     });
 
-    it('an array model runs one single-model attempt per model, in order, sharing one git baseline', async () => {
+    it('an array model runs one single-model attempt per model, in order', async () => {
       const attempts = [];
       const result = await runOpencode({
         prompt: 'Review this diff',
         model: ['anthropic/model-a', 'anthropic/model-b'],
-        initialGitStatus: 'BASELINE',
         runSingle: async (opts) => {
-          attempts.push({ model: opts.model, baseline: opts.initialGitStatus });
+          attempts.push({ model: opts.model });
           return opts.model === 'anthropic/model-a'
             ? { exitCode: 1, failureKind: 'other' }
             : { exitCode: 0, failureKind: null, model: opts.model };
         },
       });
       assert.deepEqual(attempts, [
-        { model: 'anthropic/model-a', baseline: 'BASELINE' },
-        { model: 'anthropic/model-b', baseline: 'BASELINE' },
+        { model: 'anthropic/model-a' },
+        { model: 'anthropic/model-b' },
       ]);
       assert.equal(result.model, 'anthropic/model-b');
     });

@@ -37,8 +37,8 @@ import {
   extractSessionIdFromOutput,
   findBinary,
   findFirstExistingFile,
-  getGitStatus,
   getSanitizedEnv,
+  isSandboxUnsupportedDiagnostic,
   isMainModule,
   parseCommonArgs,
   parseRunnerModeArgs,
@@ -78,6 +78,7 @@ import {
  * @property {string[]} [files]
  * @property {string|string[]} [model] Model id, comma-separated list, or array — tried in order.
  * @property {string} [effort]
+ * @property {boolean} [sandbox] Enable Claude's native OS-level Bash sandbox (default true).
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [verbose]
@@ -100,8 +101,6 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
- * @property {boolean} gitIntegrityViolation
- * @property {string|null} gitIntegrityDetails
  */
 
 // ============================================================================
@@ -186,14 +185,14 @@ export async function runClaude(options = {}) {
     files = [],
     model = null,
     effort = null,
+    sandbox = true,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
     claudeMode = null,
-    initialGitStatus: baselineGitStatus = null,
     // Test seams: each defaults to the real implementation, so production calls are unchanged.
-    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess,
-    // opens a session log and runs a git integrity check.
+    // The cascade loop is otherwise unreachable in a test — its executor spawns a subprocess
+    // and opens a session log.
     execute = executeOnTarget,
     discoverTargets = findViableTargets,
     createLogger = createSessionLogger,
@@ -205,9 +204,6 @@ export async function runClaude(options = {}) {
   }
 
   const sessionLogger = createLogger('claude');
-  // Prefer the dispatch-level baseline: taken once before the cascade, it still spans a write made
-  // by an earlier provider that failed. Self-baseline only when run standalone via this CLI.
-  const initialGitStatus = baselineGitStatus ?? getGitStatus();
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const modelsToTry = resolveModelsToTry(model);
   const effectiveEffort = effort || null;
@@ -231,11 +227,11 @@ export async function runClaude(options = {}) {
           model: currentModel,
           formattedPrompt,
           effort: effectiveEffort,
+          sandbox,
           timeout,
           maxBufferMb,
           verbose,
           sessionLogger,
-          initialGitStatus,
         });
         lastResult = result;
 
@@ -293,11 +289,11 @@ export async function runClaude(options = {}) {
  * Byte length of every argument `buildClaudeArgs` adds around the prompt, plus a separator per
  * argument. Used to reserve room against the batch-launcher command-line ceiling.
  *
- * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
  * @returns {number}
  */
-export function claudeFixedArgBytes({ model, effort } = {}) {
-  const withPrompt = buildClaudeArgs('', { model, effort });
+export function claudeFixedArgBytes({ model, effort, sandbox = true } = {}) {
+  const withPrompt = buildClaudeArgs('', { model, effort, sandbox });
   return withPrompt.reduce((sum, arg) => sum + Buffer.byteLength(String(arg), 'utf8') + 1, 0);
 }
 
@@ -305,15 +301,18 @@ export function claudeFixedArgBytes({ model, effort } = {}) {
  * Builds the `claude -p` argument array. `model`/`effort` are omitted entirely when
  * falsy so the Claude CLI's own default applies — dispatch ships no hardcoded fallback.
  * `--permission-mode plan` and `--disallowedTools` layer on the allowlist so a write tool
- * stays denied even if a future CLI widens what the allowlist implies.
+ * stays denied even if a future CLI widens what the allowlist implies. The inline
+ * `--settings` JSON enables Claude's native OS-level Bash sandbox by default, layering
+ * defense in depth on top of the structural read-only controls above.
  * @param {string} argvPrompt
- * @param {{ model?: string|null, effort?: string|null }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
  * @returns {string[]}
  */
-export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
+export function buildClaudeArgs(argvPrompt, { model, effort, sandbox = true } = {}) {
   const args = ['-p', argvPrompt, '--output-format', 'json', '--permission-mode', 'plan'];
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
+  args.push('--settings', JSON.stringify({ sandbox: { enabled: sandbox } }));
   for (const tool of READ_ONLY_ALLOWED_TOOLS) {
     args.push('--allowedTools', tool);
   }
@@ -331,9 +330,6 @@ export function buildClaudeArgs(argvPrompt, { model, effort } = {}) {
  * @returns {'return'|'throw'|'next-model'|'next-target'}
  */
 export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinned }) {
-  // A git-integrity violation means the workspace was written; retrying would hide it.
-  if (error?.gitIntegrityViolation) return 'throw';
-  if (result?.gitIntegrityViolation) return 'return';
   if (error) {
     if (!isLastModel) return 'next-model';
     if (!isLastTarget && !pinned) return 'next-target';
@@ -342,6 +338,12 @@ export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinne
   // resolveRunnerExitCode already maps an error envelope, empty output, and truncation to
   // non-zero, so exit 0 is a real answer whatever label failureKind carries.
   if (result.exitCode === 0) return 'return';
+  // An unsupported sandbox setting is a property of the CLI/mode, not the model — retrying
+  // across models or execution modes would just repeat the same diagnostic. Return so the
+  // outer dispatch cascade can choose another provider.
+  if (result.failureKind === 'sandbox-unsupported') {
+    return 'return';
+  }
   if (!isLastModel) return 'next-model';
   const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
   if (isQuotaOrAuth && !isLastTarget && !pinned) return 'next-target';
@@ -379,7 +381,7 @@ function createNoTargetsError() {
 
 /**
  * Spawns Claude Code on a single resolved target/model pair and resolves once the
- * process exits, enforcing the timeout and buffer caps and checking git integrity.
+ * process exits, enforcing the timeout and buffer caps.
  *
  * The subprocess lifecycle (buffering, timers, caps, kill, the error+close settled guard)
  * is shared machinery — `runDelegateCapture` in common.mjs. This function keeps only what
@@ -393,21 +395,21 @@ function executeOnTarget({
   model,
   formattedPrompt,
   effort,
+  sandbox,
   timeout,
   maxBufferMb,
   verbose,
   sessionLogger,
-  initialGitStatus,
 }) {
   // Headless print mode (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'claude', {
     binary: target.bin,
     // `buildClaudeArgs` appends an `--allowedTools` pair per read-only tool plus the variadic
-    // `--disallowedTools` list; measured here so the batch-launcher check budgets the whole
-    // command line rather than the prompt alone.
-    reservedBytes: claudeFixedArgBytes({ model, effort }),
+    // `--disallowedTools` list and the inline `--settings` sandbox JSON; measured here so the
+    // batch-launcher check budgets the whole command line rather than the prompt alone.
+    reservedBytes: claudeFixedArgBytes({ model, effort, sandbox }),
   });
-  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort });
+  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox });
 
   const providerLabel = `Claude Code [${target.mode}] (claude)`;
   emitInitBanner({
@@ -432,7 +434,6 @@ function executeOnTarget({
     maxBufferMb,
     sessionLogger,
     trace,
-    initialGitStatus,
     onClose: (outcome) => {
       const envelope = parseClaudeEnvelope(outcome.stdoutBuffer);
       const sessionId = envelope.sessionId || extractClaudeSessionId(outcome.stderrBuffer);
@@ -446,10 +447,23 @@ function executeOnTarget({
         isError: envelope.isError,
       });
 
+      // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
+      const classifiedFailure = classifyClaudeResult({
+        exitCode,
+        stderr: outcome.stderrBuffer,
+        stdout: envelope.text,
+      });
+      const { failureKind, effectiveExitCode } = resolveClaudeOutcome({
+        envelope,
+        classifiedFailure,
+        exitCode,
+        truncated: outcome.truncated,
+      });
+
       emitCompletionBanner({
         provider: providerLabel,
         sessionLink,
-        exitCode,
+        exitCode: effectiveExitCode,
         truncated: outcome.truncated,
       });
 
@@ -461,19 +475,13 @@ function executeOnTarget({
         stdout: envelope.text,
         rawStdout: outcome.stdoutBuffer,
         stderr: outcome.stderrBuffer,
-        exitCode,
+        exitCode: effectiveExitCode,
         logFile: sessionLogger.logFile,
         briefFile,
         sessionId,
         sessionLink,
         truncated: outcome.truncated,
-        // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
-        failureKind:
-          (envelope.isError && envelope.subtype) ||
-          classifyFailure(`${outcome.stderrBuffer}\n${envelope.text}`) ||
-          (outcome.truncated ? outcome.truncated : null),
-        gitIntegrityViolation: outcome.gitIntegrity.violation,
-        gitIntegrityDetails: outcome.gitIntegrity.details,
+        failureKind,
       };
     },
   });
@@ -487,13 +495,13 @@ function executeOnTarget({
  * `aliases` maps both mode spellings onto one canonical value — the last spelling on argv wins. */
 export const CLI_FLAGS = {
   valueFlags: ['--claude-mode', '--mode'],
-  booleanFlags: ['--test-modes', '--probe-modes', '--reachability'],
+  booleanFlags: ['--test-modes', '--probe-modes', '--reachability', '--sandbox', '--no-sandbox'],
   aliases: { '--claude-mode': 'requestedMode', '--mode': 'requestedMode' },
 };
 
 export async function main() {
   const options = parseCommonArgs(process.argv, CLI_FLAGS);
-  const { requestedMode, testModes } = parseModeFlags(process.argv.slice(2));
+  const { requestedMode, testModes, sandbox } = parseModeFlags(process.argv.slice(2));
 
   if (testModes) {
     printReachabilityReport();
@@ -520,17 +528,18 @@ export async function main() {
     const res = await runClaude({
       ...options,
       claudeMode: requestedMode,
+      sandbox,
       prompt: finalPrompt,
     });
-    if (res.stdout) {
+    if (shouldPrintClaudeStdout(res) && res.stdout) {
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
     }
-    if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (res.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
-      }
-      console.warn('');
+    if (res.failureKind === 'sandbox-unsupported') {
+      console.error(
+        `\n[dispatch] This Claude CLI does not support the inline --settings sandbox JSON. ` +
+          `Upgrade Claude Code, set platforms.claude.sandbox to false, or use --no-sandbox.\n` +
+          `Session log: ${res.logFile}`,
+      );
     }
     process.exit(res.exitCode);
   } catch (err) {
@@ -539,14 +548,72 @@ export async function main() {
   }
 }
 
-/** Parses the runner-specific `--claude-mode`/`--mode` and `--test-modes` flags. */
-function parseModeFlags(args) {
+/** Parses runner-specific mode, sandbox, and reachability flags. */
+export function parseModeFlags(args) {
   const { values, booleans } = parseRunnerModeArgs(args, CLI_FLAGS);
   return {
     requestedMode: values.requestedMode,
     testModes:
       booleans['--test-modes'] || booleans['--probe-modes'] || booleans['--reachability'],
+    sandbox: !booleans['--no-sandbox'],
   };
+}
+
+/**
+ * Classifies Claude-specific diagnostics before applying the shared failure classifier.
+ *
+ * @param {string} text Raw stdout and stderr
+ * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-loaded'|'not-found'|'timeout'|null}
+ */
+export function classifyClaudeFailure(text) {
+  const standardFailure = classifyFailure(text);
+  if (standardFailure) return standardFailure;
+  if (isSandboxUnsupportedDiagnostic(text, { includeSettings: true })) {
+    return 'sandbox-unsupported';
+  }
+  return null;
+}
+
+/**
+ * Classifies one completed Claude run. A successful answer is kept out of diagnostic matching;
+ * a non-zero run may include provider details on either stream.
+ *
+ * @param {{ exitCode: number, stderr?: string, stdout?: string }} result
+ * @returns {ReturnType<typeof classifyClaudeFailure>}
+ */
+export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
+  if (exitCode === 0) {
+    const standardFailure = classifyFailure(stderr);
+    if (standardFailure) return standardFailure;
+    return isSandboxUnsupportedDiagnostic(stderr, { includeSettings: true, strict: true })
+      ? 'sandbox-unsupported'
+      : null;
+  }
+  const standardFailure = classifyFailure(`${stderr}\n${stdout}`);
+  if (standardFailure) return standardFailure;
+  return isSandboxUnsupportedDiagnostic(stderr, { includeSettings: true })
+    ? 'sandbox-unsupported'
+    : null;
+}
+
+/**
+ * Applies Claude's error-envelope precedence and the fail-closed exit status for sandbox
+ * contract failures in one pure seam.
+ */
+export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, exitCode, truncated = null }) {
+  const failureKind =
+    classifiedFailure === 'sandbox-unsupported'
+      ? classifiedFailure
+      : (envelope.isError && envelope.subtype) || classifiedFailure || truncated || null;
+  return {
+    failureKind,
+    effectiveExitCode: failureKind === 'sandbox-unsupported' ? 1 : exitCode,
+  };
+}
+
+/** Whether the direct runner may print the delegate's answer to stdout. */
+export function shouldPrintClaudeStdout(result) {
+  return result?.failureKind !== 'sandbox-unsupported';
 }
 
 function printReachabilityReport() {
@@ -585,6 +652,8 @@ Options:
   --prompt-file <path>          Read the prompt from a file instead of an argument
   --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})
   --claude-mode, --mode <mode>  Select execution mode: cli | desktop | vscode
+  --sandbox                     Enable Claude's native OS-level Bash sandbox (default)
+  --no-sandbox                  Disable Claude's native OS-level Bash sandbox
   --test-modes, --probe-modes, --reachability
                                 Test reachability of all modes (--version) without token consumption
   -v, --verbose                 Stream live trace to stderr (terminal only; ignored when piped)

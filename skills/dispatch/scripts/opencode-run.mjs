@@ -19,7 +19,7 @@
  * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
  * 5. Attachment boundary warning (an attachment outside the workspace, Antigravity brain, agent
  *    configs, or OS temp is kept but flagged — `-f` is orchestrator-chosen, not delegate-chosen)
- * 6. Read-only safety prompt framing & Git integrity check (alerts if files were touched)
+ * 6. Read-only safety prompt framing
  * 7. GPU concurrency lockfile for local backends only (prevents concurrent hooks from thrashing
  *    local VRAM; a remote API call has no such contention and is not serialized behind it)
  * 8. Output buffer cap (10 MB default, prevents infinite-loop memory exhaustion)
@@ -73,7 +73,6 @@ import {
   emitInitBanner,
   extractCleanResponse,
   buildFormattedPrompt,
-  getGitStatus,
   isExecutableFile,
   isMainModule,
   parseCommonArgs,
@@ -174,8 +173,6 @@ import {
  *   `opencode:<provider>/<model>` descriptor when no host is known.
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
- * @property {boolean} gitIntegrityViolation
- * @property {string|null} gitIntegrityDetails
  */
 
 // ============================================================================
@@ -272,7 +269,6 @@ export async function runOpencode(options = {}) {
   const {
     prompt = '',
     model = null,
-    initialGitStatus: baselineGitStatus = null,
     // Test seam: defaults to the real single-model run, so production calls are unchanged.
     runSingle = runOpencodeSingle,
   } = options;
@@ -281,11 +277,9 @@ export async function runOpencode(options = {}) {
     throw new Error('No prompt provided for opencode agent execution.');
   }
 
-  // One baseline spans every model attempt, so a write by an earlier attempt stays visible.
-  const initialGitStatus = baselineGitStatus ?? getGitStatus();
   return cascadeModels(
     resolveModelsToTry(model),
-    (currentModel) => runSingle({ ...options, model: currentModel, initialGitStatus }),
+    (currentModel) => runSingle({ ...options, model: currentModel }),
     { label: 'OpenCode' },
   );
 }
@@ -306,7 +300,6 @@ async function runOpencodeSingle(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
     verbose = false,
-    initialGitStatus: baselineGitStatus = null,
   } = options;
 
   // Step 1: one config parse, threaded through every step below. A CLI -m override is folded in
@@ -426,12 +419,7 @@ async function runOpencodeSingle(options = {}) {
 
     const trace = createTraceWriter(verbose);
 
-    // Step 8: `runOpencode` owns the baseline (dispatch-level, else one snapshot before the model
-    // cascade) so a write by an earlier failed provider or model stays inside the compared window;
-    // the fallback only serves a direct `runSingle` call.
-    const initialGitStatus = baselineGitStatus ?? getGitStatus();
-
-    // Steps 9-11: spawn, stream into logger + trace, and resolve on close.
+    // Steps 8-10: spawn, stream into logger + trace, and resolve on close.
     return await spawnOpencode({
       command,
       args,
@@ -442,7 +430,6 @@ async function runOpencodeSingle(options = {}) {
       trace,
       sessionLogger,
       sessionLink,
-      initialGitStatus,
       effectiveModel,
       effectiveAgent,
       engineType,
@@ -507,7 +494,6 @@ function spawnOpencode({
   trace,
   sessionLogger,
   sessionLink,
-  initialGitStatus,
   effectiveModel,
   effectiveAgent,
   engineType,
@@ -544,7 +530,6 @@ function spawnOpencode({
     maxBufferMb,
     sessionLogger,
     trace,
-    initialGitStatus,
     onChunk: (_stream, chunk) => {
       logTail = (logTail + chunk.toString('utf8')).slice(-LOG_TAIL_CHARS);
     },
@@ -614,8 +599,6 @@ function spawnOpencode({
         sessionLink,
         truncated,
         failureKind,
-        gitIntegrityViolation: outcome.gitIntegrity.violation,
-        gitIntegrityDetails: outcome.gitIntegrity.details,
       };
     },
   });
@@ -1711,8 +1694,7 @@ export function buildCommand({
     binary: effectiveBinary,
   });
   // NOTE: accepted risk — headless runs cannot answer permission prompts, so `--auto` stays;
-  // read-only on macOS/Windows rests on the prompt guardrail + git integrity check (see
-  // references/providers.md).
+  // read-only on macOS/Windows rests on the prompt guardrail.
   const opencodeArgs = ['run', '--auto', '--pure'];
 
   const effectiveAgent = agent || (config ? resolveDefaultAgent(config) : resolveDefaultAgent());
@@ -1801,13 +1783,6 @@ export async function main() {
     const res = await runOpencode({ ...options, prompt: finalPrompt });
     if (res.stdout) {
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
-    }
-    if (res.gitIntegrityViolation) {
-      console.warn(`\n[dispatch] WARNING: Workspace was modified during READ-ONLY execution!`);
-      if (res.gitIntegrityDetails) {
-        console.warn(`[dispatch] Changed files:\n${res.gitIntegrityDetails}`);
-      }
-      console.warn('');
     }
     process.exit(res.exitCode);
   } catch (err) {
