@@ -227,7 +227,7 @@ Each script should:
 
 The preparation script does not wait for delegate reports. The host uses its manifest to launch one `dispatch` command in the background and yields, preserving the current lifecycle. On completion, report fields remain untrusted and are sanitized under `alignment.md` § Delegate Text Sanitization before logging or relay.
 
-Each new script must call `verifySkillIntegrity` before processing input, remain compatible with the skill runtime's Node 18+ baseline, and have direct CLI/unit tests. `npm run hashes` must include it in the owning review skill's manifest; verify `.husky/pre-commit` still matches the new `scripts/` paths.
+Each new script must call `verifySkillIntegrity` before processing input, target the suite-wide Node.js 22+ runtime baseline, and have direct CLI/unit tests. `npm run hashes` must include it in the owning review skill's manifest; verify `.husky/pre-commit` still matches the new `scripts/` paths.
 
 Expected effect:
 
@@ -747,7 +747,7 @@ Proceed only after Phase 3 is stable and measured host setup errors/context cost
 1. Add `dispatch-plan-review/scripts/prepare-review.mjs` and golden tests for every plan input branch.
 2. Add `dispatch-code-review/scripts/prepare-review.mjs`, including explicit range and freshness metadata.
 3. Accept request data through JSON stdin/file input and return preparation manifests only.
-4. Add top-of-process integrity gates, Node 18 compatibility tests, and legacy artifact fallback coverage.
+4. Add top-of-process integrity gates, Node.js 22+ runtime coverage, and legacy artifact fallback coverage.
 5. Share only generic artifact, template, and invocation helpers.
 6. Remove prompt-filling and artifact-resolution mechanics from the two review skills.
 7. Regenerate review-skill hashes and verify `.husky/pre-commit` still matches both new script paths.
@@ -774,13 +774,14 @@ Deliver with link-integrity, review-skill-parity, flag-parity, dependency-direct
 - Phase 4 preparation scripts are additive until their `SKILL.md` callers switch over. Rollback restores the prose path without changing artifact contents.
 - Frontmatter adoption is write-on-success and legacy-readable. Removing metadata falls back to the existing semantic guards; no source artifact is made unreadable.
 - Whole-file configuration precedence, provider membership, model/effort defaults, and existing pin grammar do not migrate.
+- Node.js 22+ becomes the explicit skill-runtime prerequisite, matching `package.json`; update repository guidance and every installation/prerequisite surface in the same phase that first relies on it.
 
 ## Out of scope
 
 - Removing or weakening consensus, reviewer confirmation, round caps, or the user tie-break.
 - Merging configuration tiers or eliminating phase/level model and effort controls.
 - Changing provider defaults, credentials, sandbox posture, or read-only boundaries.
-- Adding external runtime dependencies.
+- Adding runtime dependencies beyond Node.js 22+ and its standard library.
 - Implementing all five phases as one change; only Phase 1 is currently committed.
 
 ## Acceptance metrics
@@ -817,7 +818,7 @@ Quality gates:
 - orchestrator rejections of MUST-FIX/SHOULD-FIX findings remain pending until the citing reviewer confirms the counter-evidence or the user rules;
 - claim-specific rebuttal packets preserve all evidence needed to challenge an orchestrator hallucination;
 - read-only, credential stripping, sandbox, and integrity tests remain green;
-- new skill scripts remain compatible with Node 18 even though repository test tooling requires Node 22;
+- all shipped skill scripts and documentation consistently require Node.js 22+;
 - old invocations receive deterministic compatibility behavior or a corrective diagnostic;
 - no success path hides provider, verification, or artifact failures.
 
@@ -830,7 +831,7 @@ Quality gates:
 - **[Accepted]** [R1-F003] [MUST] § P1: Make `dispatch` own fan-out — architecture: generic fan-out risked pulling downstream reserve policy into `dispatch` → kept target/reserve resolution with callers and limited `dispatch` to standalone selectors or explicitly supplied target/reserve data.
 - **[Accepted]** [R1-F004] [MUST] § P2: Add one user-facing diagnostic command — standards: cross-config diagnosis in `dispatch` violated `dispatch -> (nothing)` → scoped `dispatch --doctor` to standalone/provider diagnostics and kept workflow mismatch checks in `resolve-flow.mjs --show-effective`.
 - **[Accepted]** [R1-F005] [MUST] § Migration plan, Phase 1 — spec-gap: no configuration surface existed for prompt variants → removed the flag and scheduled in-place prompt replacement with hash regeneration as a measured Phase 2 change.
-- **[Accepted]** [R1-F006] [MUST] § P1: Mechanize preparation inside each review skill — blast-radius: new scripts lacked integrity and hook obligations → required top-of-process integrity checks, manifest regeneration, pre-commit pattern verification, direct tests, and Node 18 compatibility.
+- **[Accepted]** [R1-F006] [MUST] § P1: Mechanize preparation inside each review skill — blast-radius: new scripts lacked integrity and hook obligations → required top-of-process integrity checks, manifest regeneration, pre-commit pattern verification, direct tests, and explicit runtime coverage.
 - **[Accepted]** [R1-F007] [MUST] § P1: Store machine-readable artifact metadata — migration: existing artifacts had no metadata path → committed to frontmatter with legacy prose/round fallback and post-success metadata adoption.
 - **[Accepted]** [R1-F008] [SHOULD] § P1: Mechanize preparation inside each review skill — coherence: a preparation envelope containing reports conflicted with background launch/yield → changed scripts to return preparation manifests only; the host launches `dispatch` in the background.
 - **[Accepted]** [R1-F009] [SHOULD] § P1: Mechanize preparation inside each review skill — security: free text in CLI arguments reintroduced shell quoting hazards → moved all request data to JSON stdin/file transport.
@@ -843,7 +844,7 @@ Quality gates:
 - **[Accepted]** [R1-F016] [SHOULD] § Acceptance metrics — testability: word-count goals had no drift gate or measurement scope → added a named integration test, explicit file sets, counter semantics, and exclusions.
 - **[Accepted]** [R1-F017] [SHOULD] § Migration plan — blast-radius: documentation and CLI changes omitted existing integration guards → named parity, link, dependency, path, integrity, and full-suite checks in each phase.
 - **[Accepted]** [R1-F018] [CONSIDER] § P2: Add one user-facing diagnostic command — standards: a `doctor` subcommand diverged from the flag-only CLI → changed it to `--doctor` and included flag-parity obligations.
-- **[Accepted]** [R1-F019] [CONSIDER] § P1: Mechanize preparation inside each review skill — yagni: new runtime scripts could accidentally use Node 22-only APIs → added Node 18 compatibility as a quality gate.
+- **[Rejected / Downgraded]** [R1-F019] [CONSIDER] § P1: Mechanize preparation inside each review skill — yagni: new runtime scripts could accidentally use Node 22-only APIs → superseded by the user's decision to require Node.js 22+ for skill runtime.
 - **[Accepted]** [R1-F020] [CONSIDER] § Acceptance metrics — traceability: "more user friendly" had no observable criterion → required known failure paths to emit a corrective command.
 - **[Accepted]** [R1-F021] [CONSIDER] § P1: Shrink delegate output to findings only — edge-case: pipe-delimited prose had no escaping rule → switched findings to JSONL with standard JSON escaping.
 
@@ -928,6 +929,16 @@ Recorded after proposal review on 2026-09-16.
 **Decision:** Keep the exact formula as the soft budget, calculate it mechanically, and pre-authorize evidence-backed scoped headroom. Headroom is capped at `min(ceil(soft budget / 2), 8)`, may be activated unilaterally by the reviewer during the same dispatch, and must be accounted for in its report.
 
 **Amendment:** Replaced scope classes and the host-approved extension request with a two-stage in-run budget: soft formula plus self-authorized headroom, claim-specific rebuttal budgets, a fixed hard ceiling, and diagnostic accounting. "Headroom" distinguishes tool turns from provider reserves.
+
+### Node.js runtime
+
+**User comment:** "It's ok to require node >=22."
+
+**Response:** This aligns shipped skill runtime with the repository's existing `package.json` engine requirement and removes the need to constrain new scripts to Node 18-compatible APIs. Because it changes a previously documented runtime invariant, every prerequisite and repository-guidance surface must change together.
+
+**Decision:** Require Node.js 22+ for both shipped skills and development tooling.
+
+**Amendment:** Removed Node 18 compatibility requirements and tests; added Node.js 22+ to runtime, documentation, rollback, and quality-gate requirements. The earlier Node 18 review recommendation is marked superseded.
 
 ## Recommended first change
 
