@@ -378,7 +378,7 @@ export function buildFormattedPrompt(prompt, files = []) {
 export const COMMON_VALUE_FLAGS = new Set([
   '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
   '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
-  '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider',
+  '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
 ]);
 
 // Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
@@ -399,7 +399,9 @@ export const DOCUMENTED_COMMON_FLAGS = [
 ];
 
 /** Common flags deliberately absent from every runner's help — see DOCUMENTED_COMMON_FLAGS. */
-export const RUNNER_IRRELEVANT_COMMON_FLAGS = ['-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider'];
+export const RUNNER_IRRELEVANT_COMMON_FLAGS = [
+  '-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
+];
 
 /**
  * One canonical option field per common-flag spelling. Every `COMMON_VALUE_FLAGS` member
@@ -429,6 +431,7 @@ export const FLAG_ALIASES = new Map([
   ['--orchestrator', 'orchestrator'],
   ['--orchestrator-model', 'orchestratorModel'],
   ['--provider', 'provider'],
+  ['--candidate-index', 'candidateIndex'],
 ]);
 
 /** Option fields whose value is a positive integer, with silent-default on a bad value. */
@@ -482,6 +485,7 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     orchestrator: null,
     orchestratorModel: null,
     provider: null,
+    candidateIndex: null,
     help: false,
     promptFile: null,
   };
@@ -1826,6 +1830,44 @@ export function isSameModel(candidateModel, orchestratorModel) {
 
   const candidate = normalizeModelId(candidateModel);
   return Boolean(candidate && candidate === target);
+}
+
+/**
+ * Preserves configured target order while moving the orchestrator platform behind alternatives
+ * and exact orchestrator platform/model matches to the end.
+ *
+ * @template T
+ * @param {T[]} candidates
+ * @param {string|null|undefined} orchestrator
+ * @param {string|null|undefined} orchestratorModel
+ * @param {(candidate: T) => string} [platformOf]
+ * @param {(candidate: T) => string|string[]|null|undefined} [modelOf]
+ * @param {(group: T[]) => T[]} [sortGroup]
+ * @returns {T[]}
+ */
+export function demoteOrchestratorTargets(
+  candidates,
+  orchestrator,
+  orchestratorModel,
+  platformOf = (candidate) => candidate.platform,
+  modelOf = (candidate) => candidate.model,
+  sortGroup = (group) => group,
+) {
+  if (!orchestrator) return sortGroup([...candidates]);
+  const alternatives = candidates.filter((candidate) => platformOf(candidate) !== orchestrator);
+  const orchestratorOtherModels = candidates.filter(
+    (candidate) =>
+      platformOf(candidate) === orchestrator && !isSameModel(modelOf(candidate), orchestratorModel),
+  );
+  const orchestratorSameModel = candidates.filter(
+    (candidate) =>
+      platformOf(candidate) === orchestrator && isSameModel(modelOf(candidate), orchestratorModel),
+  );
+  return [
+    ...sortGroup(alternatives),
+    ...sortGroup(orchestratorOtherModels),
+    ...sortGroup(orchestratorSameModel),
+  ];
 }
 
 /**

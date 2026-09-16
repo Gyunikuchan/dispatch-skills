@@ -13,17 +13,20 @@ Run `dispatch` when a task benefits from an independent, read-only agent context
 /dispatch (<pins>) <task>
 ```
 
-`(<pins>)` is optional: comma-separated provider keys, aliases, or `all`. Aliases are `antigravity` -> `agy`, `claudecode` -> `claude`, and `github-copilot` -> `copilot`.
+`(<pins>)` is optional: comma-separated provider keys or aliases, one target count `n ≥ 1`, or `all`. Aliases are `antigravity` -> `agy`, `claudecode` -> `claude`, and `github-copilot` -> `copilot`.
 
 | Form | Dispatch behavior |
 |------|-------------------|
 | Unpinned | Run one process through the configured provider cascade. |
-| Pinned | Run one background process per pin in parallel; disable cross-provider fallback, while configured candidates for that provider may still cascade. |
-| `all` | Run `node <skill-path>/scripts/dispatch.mjs --list-platforms`, then launch one pinned run for every printed key. |
+| Named platforms | Launch every listed platform that appears in the effective configuration, in pin order. |
+| Count | Launch up to `n` configured targets. |
+| `all` | Launch every configured target. |
 
-`<skill-path>` is the directory containing this skill. A platform absent from `--list-platforms` is out of scope for every pin form, including `all`.
+For a count or `all`, run `node <skill-path>/scripts/dispatch.mjs --list-targets`, take the first `n` entries or the whole array, and launch each with `--provider <platform> --candidate-index <candidateIndex>`. The command preserves configured order, then stably moves targets on the orchestrator platform behind other platforms and exact orchestrator platform/model matches to the end. Named platforms are an explicit set: target-count limits and host/model demotion do not remove or reorder them. Each launched target is pinned, so cross-provider fallback is disabled; named platforms may cascade through their configured candidates, while candidate-index launches execute exactly one candidate.
 
-**Done when:** every requested pin resolves to a printed key and exactly one dispatch is launched for each resolved key.
+`<skill-path>` is the directory containing this skill. Use `node <skill-path>/scripts/dispatch.mjs --list-platforms` as the membership check; a platform absent from its output is out of scope for every pin form.
+
+**Done when:** every named platform is accounted for, or the requested count/all candidate pool is exhausted, and exactly the resolved target set has been launched.
 
 ## Operating contract
 
@@ -37,7 +40,7 @@ Run `dispatch` when a task benefits from an independent, read-only agent context
 
 1. Write a bounded prompt with the target, scope, evidence to inspect, and required output shape.
 2. Attach only non-workspace artifacts or essential briefs; delegates can read repository files directly.
-3. Select provider pins and runner flags. Expand `all` with `--list-platforms`, never by reading a config file or this document.
+3. Select provider pins and runner flags. Resolve named membership with `--list-platforms`; resolve count/all candidates with `--list-targets`. Never infer membership or order from defaults.
 
 **Done when:** the prompt, attachments, and flags are fixed, every attachment exists, and no repository source file is attached unnecessarily.
 
@@ -49,7 +52,7 @@ Run the dispatcher in the background:
 node <skill-path>/scripts/dispatch.mjs [flags] "<task>"
 ```
 
-For multiple pins, launch one `--provider <key>` process per resolved key in parallel. Yield the turn after the processes are running. Keep the launch banner and log path for diagnosis.
+For a resolved target set, launch one pinned process per target in parallel. Yield the turn after the processes are running. Keep the launch banner and log path for diagnosis.
 
 **Done when:** each requested process has been launched in the background and its launch metadata is captured.
 
@@ -93,7 +96,9 @@ Map the result to exactly one row before deciding what to report.
 | `--orchestrator-model` | Declare the host model for same-model demotion. |
 | `--no-config` | Ignore config, model, effort, and membership; requires `--provider`. |
 | `--validate-only` | Validate the effective config and exit; rejects other run flags. |
-| `--list-platforms` | Print effective configured platform keys in cascade order and exit. |
+| `--list-platforms` | Print effective configured platform keys in config order and exit. |
+| `--list-targets` | Print configured targets in count/all selection order as JSON and exit. |
+| `--candidate-index` | Execute one zero-based configured candidate; requires `--provider`. |
 | `--json` | Request structured output (opencode provider only). |
 | `-v`, `--verbose` | Stream live trace to stderr in an interactive terminal. |
 

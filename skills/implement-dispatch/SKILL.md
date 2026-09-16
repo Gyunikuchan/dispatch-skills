@@ -28,7 +28,7 @@ Companion skills own runner behavior, review criteria, and templates.
 `<level>` and `(<pins>)` are optional; use the colon when either is present.
 
 - `<level>`: `low`, `medium`, `high`, `xhigh`, or `max`. Without one, choose `low`, `medium`, or `high` from scope. `xhigh` and `max` are explicit only.
-- `(<pins>)`: provider keys, aliases, `all`, or one reviewer count `n ≥ 1`. Pass it unchanged to `resolve-flow.mjs`; it expands `all` from this skill's review configuration. Pins change reviewer breadth, not the selected level.
+- `(<pins>)`: use `dispatch`'s named-platform, count, or `all` grammar. Pass it unchanged to `resolve-flow.mjs`; named platforms all run when configured, while a count or `all` selects from configured order with the orchestrator platform and exact orchestrator model shifted back. Pins change reviewer breadth, not the selected level.
 
 Map a mechanical low-risk edit to `low`, a bounded feature or fix to `medium`, and a cross-cutting change, complex refactor, or public contract to `high`. Pins without a level preserve automatic selection.
 

@@ -47,12 +47,12 @@ Base command grammar for standalone review skills:
 /<review-skill> (<pins>) [<artifact path>] [<focus>]
 ```
 
-`(<pins>)` forms, alias resolution, and `all` expansion via `--list-platforms` are defined once in [dispatch's `SKILL.md` § Invocation](../SKILL.md#invocation). Review-specific additions:
+`(<pins>)` forms, alias resolution, named-platform fan-out, and count/`all` target ordering are defined once in [dispatch's `SKILL.md` § Invocation](../SKILL.md#invocation). Review-specific additions:
 
 - Standalone reviews run a single round.
 - Pinned fan-out inherits config defaults; never `--no-config`.
 - A pinned failure falls back in-process to `dispatch`'s read-only subagent for that pin only, leaving the other pins untouched.
-- `implement-dispatch` extends this grammar with `<level>`, `: <ask>`, and multi-reviewer options (see its own `## Invocation`). Its resolver expands `all` from the review sections in its own config, then requires those keys to be a subset of `dispatch`'s effective `--list-platforms` set before emitting any flow; a mismatch fails closed rather than invoking an unconfigured provider.
+- `implement-dispatch` extends this grammar with `<level>` and `: <ask>` (see its own `## Invocation`). Its resolver applies the same named versus count/`all` split to each review section, then requires every configured review key to be a member of `dispatch`'s effective `--list-platforms` set before emitting any flow; a mismatch fails closed rather than invoking an unconfigured provider.
 
 ---
 
@@ -78,18 +78,21 @@ The orchestrator supplies data only; the review skill builds invocations, fills 
 
 ### Target → Flag Mapping (Orchestrated)
 
-Map each target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
+Map an `implement-dispatch` target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
 - Include `-m` and `-e` only when specified in the target entry.
 - When a target omits `model`, omit `-m` and let dispatch select the configured model for that
   platform; do not use `--no-config`, because effective membership and configured defaults are
   authoritative for pinned runs.
+- Standalone count/`all` targets come from `dispatch --list-targets`; map each to
+  `dispatch --provider <target.platform> --candidate-index <target.candidateIndex>` so model,
+  effort, sandbox, and omitted values remain exact.
 - Redirect execution logs to OS temp (workspace logs violate delegate read-only checks).
 
 ### Reserve Substitution (Orchestrated)
 
 Pinned targets substitute via the `reserves` list rather than cascading:
 1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
-2. **Usability**: Dispatch the first unused reserve in list order (diversity-sorted) whose `(platform, model, effort)` tuple was not already dispatched in this wave.
+2. **Usability**: Dispatch the first unused reserve in resolved candidate order whose `(platform, model, effort)` tuple was not already dispatched in this wave.
 3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then use the
    platform fallback in [`providers.md` § Native fallback](providers.md#native-fallback).
 4. **Diagnostics**: Use each reserve at most once per wave. Record substitutions (`<failed target> → <reserve>: <reason>`).

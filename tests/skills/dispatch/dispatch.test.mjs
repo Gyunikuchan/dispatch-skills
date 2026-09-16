@@ -14,6 +14,7 @@ import {
   providerProbes,
   providerRunners,
   PROVIDER_ALIASES,
+  resolveConfiguredTargets,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import {
   KNOWN_PROVIDERS,
@@ -42,6 +43,48 @@ const TEST_DISPATCH_CONFIG_ARGS = {
 const resolveProvider = (options = {}) => resolveProviderImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 const getCandidateProviders = (options = {}) => getCandidateProvidersImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 const dispatchTask = (options = {}) => dispatchTaskImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
+
+describe('dispatch: configured target resolution', () => {
+  it('preserves config order while shifting the orchestrator and exact model match back', () => {
+    const targets = resolveConfiguredTargets(
+      {
+        platforms: {
+          claude: [
+            { model: 'claude-opus-5', effort: 'high' },
+            { model: 'claude-sonnet-5', effort: 'medium' },
+          ],
+          agy: { model: 'gemini-3.8-flash' },
+          opencode: [
+            { model: 'glm-5.3-flash' },
+            { model: 'mistral-small' },
+          ],
+        },
+      },
+      'claude',
+      'claude-opus-5',
+    );
+
+    assert.deepEqual(targets, [
+      { platform: 'agy', candidateIndex: 0, model: 'gemini-3.8-flash' },
+      { platform: 'opencode', candidateIndex: 0, model: 'glm-5.3-flash' },
+      { platform: 'opencode', candidateIndex: 1, model: 'mistral-small' },
+      {
+        platform: 'claude',
+        candidateIndex: 1,
+        model: 'claude-sonnet-5',
+        effort: 'medium',
+        sandbox: true,
+      },
+      {
+        platform: 'claude',
+        candidateIndex: 0,
+        model: 'claude-opus-5',
+        effort: 'high',
+        sandbox: true,
+      },
+    ]);
+  });
+});
 
 describe('dispatch: orchestrator detection & provider resolution', () => {
   const originalEnv = { ...process.env };
@@ -821,6 +864,49 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(copilotRunner.mock.calls.length, 0, 'did not cascade to copilot');
     });
 
+    it('executes exactly one configured candidate by index with its sandbox setting', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      const calls = [];
+      mock.method(providerRunners, 'claude', async (opts) => {
+        calls.push({ model: opts.model, effort: opts.effort, sandbox: opts.sandbox });
+        return { provider: 'claude', stdout: 'selected', exitCode: 0 };
+      });
+
+      const result = await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        candidateIndex: 1,
+        config: {
+          platforms: {
+            claude: [
+              { model: 'claude-opus-5', effort: 'low', sandbox: true },
+              { effort: 'high', sandbox: false },
+            ],
+          },
+        },
+        configPath: 'custom.jsonc',
+      });
+
+      assert.equal(result.stdout, 'selected');
+      assert.deepEqual(calls, [{ model: null, effort: 'high', sandbox: false }]);
+    });
+
+    it('rejects an out-of-range configured candidate index', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+      await assert.rejects(
+        dispatchTask({
+          prompt: 'Test',
+          provider: 'claude',
+          candidateIndex: 2,
+          config: { platforms: { claude: [{ model: 'claude-opus-5' }] } },
+          configPath: 'custom.jsonc',
+        }),
+        /candidate index 2 is out of range/,
+      );
+    });
+
     it('diversity-sorts the unpinned cascade: first entry per platform, then repeats, orchestrator last', async () => {
       clearOrchestratorEnv();
       for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
@@ -1308,6 +1394,34 @@ describe('dispatch --validate-only CLI', () => {
     for (const c of candidates) assert.ok(listed.includes(c), `candidate "${c}" absent from --list-platforms`);
   });
 
+  it('--list-targets prints configured targets as JSON', () => {
+    const res = run(['--list-targets']);
+    assert.equal(res.status, 0, res.stderr);
+    const targets = JSON.parse(res.stdout || '[]');
+    assert.ok(targets.length > 0, 'expected at least one configured target');
+    for (const target of targets) {
+      assert.ok(KNOWN_PROVIDERS.includes(target.platform), `unknown platform key "${target.platform}"`);
+      assert.equal(Number.isInteger(target.candidateIndex), true);
+    }
+  });
+
+  it('--list-targets accepts orchestrator ordering overrides', () => {
+    const res = run(['--list-targets', '--orchestrator', 'claude', '--orchestrator-model', 'claude-opus-5']);
+    assert.equal(res.status, 0, res.stderr);
+    const targets = JSON.parse(res.stdout || '[]');
+    const firstClaude = targets.findIndex(target => target.platform === 'claude');
+    const lastAlternative = targets.findLastIndex(target => target.platform !== 'claude');
+    assert.notEqual(firstClaude, -1, 'effective config must include claude for this ordering assertion');
+    assert.notEqual(lastAlternative, -1, 'effective config must include an alternative for this ordering assertion');
+    assert.ok(firstClaude > lastAlternative);
+  });
+
+  it('rejects an empty candidate index', () => {
+    const res = run(['--provider', 'claude', '--candidate-index=', 'Review this change']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /--candidate-index must be a non-negative integer/);
+  });
+
   it('rejects combining --list-platforms with run flags', () => {
     const res = run(['--list-platforms', '--provider', 'claude']);
     assert.equal(res.status, 1);
@@ -1319,6 +1433,12 @@ describe('dispatch --validate-only CLI', () => {
 
   it('rejects --list-platforms together with --validate-only', () => {
     const res = run(['--list-platforms', '--validate-only']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /separate inspection modes/);
+  });
+
+  it('rejects --list-targets together with another inspection mode', () => {
+    const res = run(['--list-targets', '--list-platforms']);
     assert.equal(res.status, 1);
     assert.match(res.stderr || '', /separate inspection modes/);
   });

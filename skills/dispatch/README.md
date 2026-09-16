@@ -45,7 +45,7 @@ npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch
 To install the complete dispatch-skills suite:
 
 ```bash
-npx skills add Gyunikuchan/dispatch-skills --all
+npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 > [!NOTE]
@@ -102,11 +102,12 @@ Run several providers in parallel for independent perspectives:
 
 ```text
 /dispatch (claude,copilot) Compare two approaches to the retry logic
+/dispatch (2) Review the migration with two configured targets
 /dispatch (all) Audit the authentication flow from independent perspectives
 ```
 
-`all` uses every provider enabled by the effective configuration. The available provider keys are
-`claude`, `agy`, `copilot`, and `opencode`.
+Named platforms all run when configured. A number launches up to that many configured targets;
+`all` launches every configured target. The available provider keys are `claude`, `agy`, `copilot`, and `opencode`.
 
 > [!NOTE]
 > A provider pin disables fallback to other providers. Remove the pin when resilience matters more
@@ -134,6 +135,7 @@ Command-line overrides are useful for one-off runs:
 | `-p <string>` / `--prompt <string>` | Pass the prompt as an option instead of trailing text. |
 | `--prompt-file <path>` | Read the prompt from a file. |
 | `--provider <name>` | Restrict the run to one configured provider. |
+| `--candidate-index <n>` | Select one zero-based configured candidate; requires `--provider`. |
 | `-m <model>` / `--model <model>` | Override the configured model for one run. |
 | `-e <level>` / `--effort <level>` | Override reasoning effort for one run. |
 | `-t <seconds>` / `--timeout <seconds>` | Set the execution timeout. |
@@ -154,6 +156,7 @@ diagnostics.
 | `--no-config` | Skip configuration; requires `--provider`. |
 | `--validate-only` | Validate configuration without dispatching. |
 | `--list-platforms` | List provider keys in the effective configuration. |
+| `--list-targets` | List configured targets in count/`all` selection order as JSON. |
 
 ## Configuration
 

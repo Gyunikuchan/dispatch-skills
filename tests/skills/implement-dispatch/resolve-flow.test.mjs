@@ -196,13 +196,13 @@ describe('resolveFlow', () => {
       );
     });
 
-    it('drops dead pins while keeping the live ones', () => {
+    it('keeps every configured named pin regardless of probe status', () => {
       const out = resolveFlow(
         { platform: 'claude', level: 'medium', pins: ['agy', 'copilot'] },
         LIVE_ALL,
         BASE_CONFIG
       );
-      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'copilot']);
     });
 
     it('pin on orchestrator platform: targets orchestrator platform directly', () => {
@@ -216,11 +216,13 @@ describe('resolveFlow', () => {
       assert.deepEqual(out['code-review'].reserves, []);
     });
 
-    it('throws when all pinned platforms are unavailable', () => {
-      assert.throws(
-        () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['copilot'] }, LIVE_ALL, BASE_CONFIG),
-        /unavailable/i
+    it('keeps a configured named pin when its liveness probe fails', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['copilot'] },
+        LIVE_ALL,
+        BASE_CONFIG
       );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['copilot']);
     });
 
     it('throws on unrecognized pin key with valid keys listed', () => {
@@ -257,7 +259,7 @@ describe('resolveFlow', () => {
       assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
     });
 
-    it('pins "all" dispatches to all live configured platforms regardless of level', () => {
+    it('pins "all" dispatches to every configured target in count order', () => {
       // BASE_CONFIG has platforms: claude, agy, copilot, opencode
       // LIVE_ALL: claude: true, agy: true, copilot: false, opencode: true
       // At level 'low', code-review targetCount is 1, but pins: ['all'] dispatches all 3 live platforms
@@ -268,7 +270,7 @@ describe('resolveFlow', () => {
       );
       assert.deepEqual(
         out['code-review'].targets.map(t => t.platform),
-        ['claude', 'agy', 'opencode']
+        ['agy', 'copilot', 'opencode', 'claude']
       );
       const selfTarget = out['code-review'].targets.find(t => t.platform === 'claude');
       assert.ok(selfTarget);
@@ -283,30 +285,33 @@ describe('resolveFlow', () => {
       );
       assert.deepEqual(
         mediumOut['plan-review'].targets.map(t => t.platform),
-        ['claude', 'agy', 'opencode']
+        ['agy', 'copilot', 'opencode', 'claude']
       );
     });
 
-    it('pins "all" reports dropped offline platforms in droppedPins', () => {
+    it('pins "all" reports offline platforms as unavailable rather than dropped named pins', () => {
       const out = resolveFlow(
         { platform: 'claude', level: 'medium', pins: ['all'] },
         LIVE_ALL,
         BASE_CONFIG
       );
-      // copilot is configured in BASE_CONFIG but offline in LIVE_ALL
-      assert.deepEqual(out.diagnostics.droppedPins['plan-review'], ['copilot']);
-      assert.deepEqual(out.diagnostics.droppedPins['code-review'], ['copilot']);
+      assert.deepEqual(out.diagnostics.unavailable, ['copilot']);
+      assert.deepEqual(out.diagnostics.droppedPins, {});
     });
 
-    it('pins "all" throws when all configured platforms are unavailable', () => {
-      assert.throws(
-        () =>
-          resolveFlow(
-            { platform: 'claude', level: 'medium', pins: ['all'] },
-            { claude: false, agy: false, copilot: false, opencode: false },
-            BASE_CONFIG
-          ),
-        /All pinned platforms unavailable/
+    it('pins "all" keeps configured targets when every liveness probe fails', () => {
+      const out = resolveFlow(
+        { platform: 'claude', level: 'medium', pins: ['all'] },
+        { claude: false, agy: false, copilot: false, opencode: false },
+        BASE_CONFIG
+      );
+      assert.deepEqual(
+        out['plan-review'].targets.map(target => target.platform),
+        ['agy', 'copilot', 'opencode', 'claude']
+      );
+      assert.deepEqual(
+        out['code-review'].targets.map(target => target.platform),
+        ['agy', 'copilot', 'opencode', 'claude']
       );
     });
 
@@ -318,19 +323,18 @@ describe('resolveFlow', () => {
       );
       assert.deepEqual(
         out['code-review'].targets.map(t => t.platform),
-        ['claude', 'agy', 'opencode']
+        ['agy', 'copilot', 'opencode', 'claude']
       );
     });
 
-    it('pins "all" combined with a specific platform dedupes correctly', () => {
-      const out = resolveFlow(
-        { platform: 'claude', level: 'low', pins: ['agy', 'all'] },
-        LIVE_ALL,
-        BASE_CONFIG
-      );
-      assert.deepEqual(
-        out['code-review'].targets.map(t => t.platform),
-        ['agy', 'claude', 'opencode']
+    it('rejects "all" combined with a named platform', () => {
+      assert.throws(
+        () => resolveFlow(
+          { platform: 'claude', level: 'low', pins: ['agy', 'all'] },
+          LIVE_ALL,
+          BASE_CONFIG
+        ),
+        /A reviewer count or "all" pin must stand alone/
       );
     });
   });
@@ -338,14 +342,14 @@ describe('resolveFlow', () => {
   describe('count pins', () => {
     it('a count of 2 at a level whose targetCount is 1 gives 2 targets plus reserves, orchestrator last', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['2'] }, LIVE_ALL, BASE_CONFIG);
-      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'opencode']);
-      assert.deepEqual(out['code-review'].reserves.map(t => t.platform), ['claude']);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy', 'copilot']);
+      assert.deepEqual(out['code-review'].reserves.map(t => t.platform), ['opencode', 'claude']);
     });
 
     it('clamps a count above live candidates and records clamped', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['9'] }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].targets.length, 3);
-      assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 9, resolved: 3 });
+      assert.equal(out['code-review'].targets.length, 4);
+      assert.deepEqual(out.diagnostics.clamped['code-review'], { requested: 9, resolved: 4 });
     });
 
     it('forces a phase whose targetCount is 0 to run when maxRounds > 0', () => {
@@ -368,7 +372,7 @@ describe('resolveFlow', () => {
         LIVE_ALL,
         BASE_CONFIG
       );
-      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['opencode', 'claude']);
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['copilot', 'opencode']);
     });
 
     it('reports diagnostics.targetCountPin for a count-pinned run', () => {
@@ -383,6 +387,11 @@ describe('resolveFlow', () => {
       assert.equal(pinnedOut.diagnostics.targetCountPin, null);
     });
 
+    it('reports diagnostics.targetCountPin as all for an all-pinned run', () => {
+      const out = resolveFlow({ platform: 'claude', level: 'medium', pins: ['all'] }, LIVE_ALL, BASE_CONFIG);
+      assert.equal(out.diagnostics.targetCountPin, 'all');
+    });
+
     it('throws on a count pin of 0', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['0'] }, LIVE_ALL, BASE_CONFIG),
@@ -393,21 +402,21 @@ describe('resolveFlow', () => {
     it('throws when a count pin is mixed with a provider key', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['2', 'claude'] }, LIVE_ALL, BASE_CONFIG),
-        /A reviewer count pin must stand alone/
+        /A reviewer count or "all" pin must stand alone/
       );
     });
 
     it('throws when a count pin is mixed with "all"', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['all', '2'] }, LIVE_ALL, BASE_CONFIG),
-        /A reviewer count pin must stand alone/
+        /A reviewer count or "all" pin must stand alone/
       );
     });
 
     it('throws on two count pins', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'medium', pins: ['2', '3'] }, LIVE_ALL, BASE_CONFIG),
-        /A reviewer count pin must stand alone/
+        /A reviewer count or "all" pin must stand alone/
       );
     });
   });
@@ -441,9 +450,9 @@ describe('resolveFlow', () => {
     });
 
     it('throws when a count pin is combined with anything else', () => {
-      assert.throws(() => parsePins(['2', 'claude']), /A reviewer count pin must stand alone/);
-      assert.throws(() => parsePins(['all', '2']), /A reviewer count pin must stand alone/);
-      assert.throws(() => parsePins(['2', '3']), /A reviewer count pin must stand alone/);
+      assert.throws(() => parsePins(['2', 'claude']), /A reviewer count or "all" pin must stand alone/);
+      assert.throws(() => parsePins(['all', '2']), /A reviewer count or "all" pin must stand alone/);
+      assert.throws(() => parsePins(['2', '3']), /A reviewer count or "all" pin must stand alone/);
     });
   });
 
@@ -557,18 +566,19 @@ describe('resolveFlow', () => {
       );
       assert.deepEqual(
         out['code-review'].targets.map(t => t.platform),
-        ['claude', 'agy', 'opencode']
+        ['agy', 'copilot', 'opencode', 'claude']
       );
       assert.equal(out['code-review'].maxRounds, 2);
     });
 
-    it('targetCount=0 with an all-dead pin still raises the all-pinned-unavailable error', () => {
+    it('targetCount=0 still runs a configured named pin whose probe failed', () => {
       const config = withSections({ 'code-review': { targetCount: { low: 0 } } });
-      assert.throws(
-        () =>
-          resolveFlow({ platform: 'claude', level: 'low', pins: ['copilot'] }, LIVE_ALL, config),
-        /All pinned platforms unavailable: copilot/
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', pins: ['copilot'] },
+        LIVE_ALL,
+        config
       );
+      assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['copilot']);
     });
 
     it('skips a phase with zero live platforms without erroring', () => {
@@ -618,15 +628,15 @@ describe('resolveFlow', () => {
       assert.deepEqual(out.diagnostics.droppedPins['plan-review'], ['opencode']);
     });
 
-    it('reports droppedPins for a pin that is configured but currently offline', () => {
-      // 'copilot' is configured in BASE_CONFIG but LIVE_ALL marks it offline — a pin can
-      // be dropped for being dead, not just for being absent from the section's config.
+    it('keeps an offline named pin and reports its probe result separately', () => {
       const out = resolveFlow(
         { platform: 'claude', level: 'medium', pins: ['agy', 'copilot'] },
         LIVE_ALL,
         BASE_CONFIG
       );
-      assert.deepEqual(out.diagnostics.droppedPins['code-review'], ['copilot']);
+      assert.deepEqual(out['code-review'].targets.map(target => target.platform), ['agy', 'copilot']);
+      assert.equal(out.diagnostics.droppedPins['code-review'], undefined);
+      assert.ok(out.diagnostics.unavailable.includes('copilot'));
     });
 
     it('omits droppedPins when maxRounds is 0', () => {
@@ -1343,7 +1353,7 @@ describe('resolveFlow', () => {
   });
 });
 
-describe('resolveFlow — diversity-sorted candidates', () => {
+describe('resolveFlow — configured-order candidates', () => {
   const ALL_UP = { claude: true, agy: true, copilot: true, opencode: true };
   const OPENCODE_MULTI = [
     { model: 'glm-5.3-flash' },
@@ -1370,14 +1380,37 @@ describe('resolveFlow — diversity-sorted candidates', () => {
     assert.deepEqual(out['code-review'].reserves.map(label), ['mistral-small', 'qwen3.8-27b', 'claude']);
   });
 
-  it('moves a second agy model behind the first occurrence of every platform', () => {
+  it('diversity-sorts repeated external candidates for an unpinned target count', () => {
     const config = multi([{ model: 'a1' }, { model: 'a2' }]);
     const out = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, config);
     const all = [...out['code-review'].targets, ...out['code-review'].reserves];
     assert.deepEqual(all.map((t) => t.model), ['a1', 'gpt-5.6-luna', 'glm-5.3-flash', 'a2', 'mistral-small', 'qwen3.8-27b', 'claude-opus-5']);
   });
 
-  it('diversity-sorts the orchestrator group among itself, after every external', () => {
+  it('preserves repeated external candidates in configured order for an all pin', () => {
+    const config = multi([{ model: 'a1' }, { model: 'a2' }]);
+    const out = resolveFlow(
+      { platform: 'claude', level: 'high', pins: ['all'] },
+      ALL_UP,
+      config
+    );
+    assert.deepEqual(
+      out['code-review'].targets.map((target) => target.model),
+      ['a1', 'a2', 'gpt-5.6-luna', 'glm-5.3-flash', 'mistral-small', 'qwen3.8-27b', 'claude-opus-5']
+    );
+  });
+
+  it('preserves unpinned diversity when a programmatic caller omits the orchestrator', () => {
+    const config = multi([{ model: 'a1' }, { model: 'a2' }]);
+    const out = resolveFlow({ level: 'high' }, ALL_UP, config);
+    const all = [...out['code-review'].targets, ...out['code-review'].reserves];
+    assert.deepEqual(
+      all.map((target) => target.model),
+      ['claude-opus-5', 'a1', 'gpt-5.6-luna', 'glm-5.3-flash', 'a2', 'mistral-small', 'qwen3.8-27b']
+    );
+  });
+
+  it('preserves orchestrator candidate order after every external', () => {
     const config = withSections({
       'code-review': {
         targetCount: { low: 'all' },
@@ -1401,7 +1434,11 @@ describe('resolveFlow — diversity-sorted candidates', () => {
         },
       },
     });
-    const out = resolveFlow({ platform: 'claude', orchestratorModel: 'claude-opus-5', level: 'low' }, ALL_UP, config);
+    const out = resolveFlow(
+      { platform: 'claude', orchestratorModel: 'claude-opus-5', pins: ['all'], level: 'low' },
+      ALL_UP,
+      config
+    );
     assert.deepEqual(
       out['code-review'].targets.map((t) => `${t.platform}:${t.model}`),
       ['agy:gemini-3.8-flash', 'claude:claude-sonnet-5', 'claude:claude-opus-5']
@@ -1536,7 +1573,7 @@ describe('resolveFlow — diversity-sorted candidates', () => {
     it('throws when every pin is excluded', () => {
       assert.throws(
         () => resolveFlow({ platform: 'claude', level: 'high', pins: ['copilot'], exclude: ['copilot'] }, ALL_UP, multi()),
-        /All pinned platforms excluded or unavailable/
+        /All pinned platforms excluded/
       );
     });
   });

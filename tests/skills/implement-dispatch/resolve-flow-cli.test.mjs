@@ -263,14 +263,14 @@ describe('resolve-flow CLI', () => {
     assert.match(stderr, /Unrecognized argument "--rounds"/);
   });
 
-  it('exits 1 when every pinned platform is dead', () => {
-    const { status, stderr } = runOnDefaults(['--platform', 'claude', '--pins', 'agy'], {
+  it('keeps a configured named pin when its liveness probe fails', () => {
+    const { status, stdout } = runOnDefaults(['--platform', 'claude', '--pins', 'agy'], {
       liveness: JSON.stringify({ claude: true, agy: false, copilot: false, opencode: false }),
     });
-    assert.equal(status, 1);
-    assert.match(stderr, /agy/);
-    // The pin must die on liveness, not on membership, or this asserts nothing about dead pins.
-    assert.doesNotMatch(stderr, /Unrecognized pin key/);
+    assert.equal(status, 0);
+    const flow = JSON.parse(stdout);
+    assert.deepEqual(flow['code-review'].targets.map(target => target.platform), ['agy']);
+    assert.ok(flow.diagnostics.unavailable.includes('agy'));
   });
 
   it('exits 1 when the liveness seam yields unparsable JSON', () => {
@@ -332,7 +332,7 @@ describe('resolve-flow CLI', () => {
     const broken = { liveness: '{not json' };
     const { status, stderr } = run('--platform', 'claude', '--pins', '2,claude', broken);
     assert.equal(status, 1);
-    assert.match(stderr, /A reviewer count pin must stand alone/);
+    assert.match(stderr, /A reviewer count or "all" pin must stand alone/);
   });
 
   it('resolves --pins=2 under the liveness env seam', () => {

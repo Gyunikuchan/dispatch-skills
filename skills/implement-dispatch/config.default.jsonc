@@ -20,11 +20,13 @@
  * Review-section knobs:
  *   maxRounds   — cap on total fan-out waves for the phase, counting the first review.
  *   targetCount — how many review candidates a wave dispatches to when unpinned; a whole
- *                 number or "all". Candidates are diversity-sorted (see `platforms` below)
- *                 and the first targetCount become targets; the rest are ordered reserves.
- *                 The orchestrator's own platform is always eligible to fulfil targetCount,
- *                 but is sorted last so external reviewers are preferred.
- *                 Pinned runs dispatch to every live pin instead, ignoring this knob.
+ *                 number or "all". Unpinned candidates are diversity-sorted, with the
+ *                 orchestrator platform shifted behind alternatives and its exact model match
+ *                 shifted to the end. The first targetCount become targets; the rest are ordered
+ *                 reserves. Named pins dispatch every listed configured, non-excluded platform.
+ *                 Count and "all" pins replace this knob, preserve configured candidate order
+ *                 with the same orchestrator/model demotion, and retain candidates whose probes
+ *                 failed; diagnostics.unavailable records those failures.
  *   consensus   — when true, no finding may be dismissed without counter-evidence.
  *
  * Either `maxRounds: 0` or `targetCount: 0` skips the phase entirely. When
@@ -40,8 +42,8 @@
  * only the two review sections and reports any mismatch.
  *
  * `platforms` holds the per-platform model/effort settings. Candidates are flattened in key
- * order, then diversity-sorted: each platform's first candidate before any platform's second,
- * repeats keeping their relative order, the orchestrator's platform last. Each platform entry can be a single
+ * order, with the orchestrator's platform moved behind alternatives and its exact model match
+ * moved to the end. Each platform entry can be a single
  * model/effort object or an array of objects to run multiple candidates on that platform
  * (e.g. OpenCode running both a remote model and a local LLM). Flat model/effort keys
  * alongside level keys act as defaults the matched level overrides.

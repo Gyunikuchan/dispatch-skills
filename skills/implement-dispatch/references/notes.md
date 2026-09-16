@@ -44,9 +44,10 @@ Resolves reviewer candidate targets, reserve lists, level knobs, and platform hi
 - **Exit Codes**:
   - `0`: Valid flow JSON emitted to `stdout` (or config schema valid under `--validate-only`).
   - `1`: Invalid arguments, configuration schema violation, integrity check failure, or unresolvable pins.
-- **Candidate Ordering & Diversity Sorting**:
-  - Live external candidates sorted across platforms (each platform's first candidate before any platform's second).
-  - Orchestrator candidates placed last, with distinct models diversity-sorted before same-model matches (demoted to dead last).
+- **Candidate Ordering**:
+  - Live external candidates preserve configured platform and candidate order.
+  - Orchestrator candidates follow every external, with exact model matches demoted to the end.
+  - Named pins dispatch every listed configured platform; count and `all` pins select from the ordered candidate pool.
   - Candidates beyond `targetCount` populate `reserves` in order for dynamic substitution during `[auth]` / `[quota]` failures.
 
 ### Consensus Gate (`scripts/check-consensus.mjs`)
@@ -79,7 +80,7 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
 
 ### Test Suite Structure
 
-- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate sorting, diversity ordering, level-knob fallback, pin normalization, candidate array expansion, and platform exclusions.
+- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate ordering, host/model demotion, level-knob fallback, pin normalization, candidate array expansion, and platform exclusions.
 - `tests/skills/implement-dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
 - `tests/skills/implement-dispatch/check-consensus.test.mjs`: Consensus parser tests, fenced markdown handling, dash variations, and exit codes.
 - `tests/skills/implement-dispatch/config-default.test.mjs`: Schema validation of `config.default.jsonc`.

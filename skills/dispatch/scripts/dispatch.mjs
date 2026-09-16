@@ -24,6 +24,7 @@ import {
   safeExitCode,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
+  demoteOrchestratorTargets,
   detectOrchestrator,
   detectOrchestratorModel,
   isSameModel,
@@ -74,6 +75,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string|null} [orchestratorModel] Explicit orchestrator model override; skips detection.
  * @property {string|null} [provider] Pins the cascade to one provider; no fallback to other
  *   providers, while that provider's configured candidates may still be tried.
+ * @property {number|string|null} [candidateIndex] Selects one configured candidate within a
+ *   pinned provider. Zero-based; incompatible with model/effort overrides and `noConfig`.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
  * @property {object} [config] Injected config object (bypasses loading config from disk).
@@ -151,6 +154,7 @@ export async function dispatchTask(options = {}) {
     orchestrator = null,
     orchestratorModel = undefined,
     provider = null,
+    candidateIndex: rawCandidateIndex = null,
     noConfig = false,
     config: injectedConfig = undefined,
     configPath: injectedConfigPath = undefined,
@@ -162,6 +166,30 @@ export async function dispatchTask(options = {}) {
     const err = new Error('--no-config ignores cascade membership entirely and requires --provider.');
     err.code = 'NO_CONFIG_REQUIRES_PROVIDER';
     throw err;
+  }
+  const hasCandidateIndex = rawCandidateIndex !== null && rawCandidateIndex !== undefined;
+  if (
+    hasCandidateIndex &&
+    typeof rawCandidateIndex === 'string' &&
+    !/^(0|[1-9]\d*)$/.test(rawCandidateIndex)
+  ) {
+    throw new Error('--candidate-index must be a non-negative integer.');
+  }
+  const candidateIndex = hasCandidateIndex ? Number(rawCandidateIndex) : null;
+  if (
+    candidateIndex !== null &&
+    (!Number.isSafeInteger(candidateIndex) || candidateIndex < 0)
+  ) {
+    throw new Error('--candidate-index must be a non-negative integer.');
+  }
+  if (candidateIndex !== null && !provider) {
+    throw new Error('--candidate-index requires --provider.');
+  }
+  if (candidateIndex !== null && noConfig) {
+    throw new Error('--candidate-index requires the effective dispatch configuration.');
+  }
+  if (candidateIndex !== null && (model !== null || effort !== null)) {
+    throw new Error('--candidate-index cannot be combined with --model or --effort.');
   }
 
   let config = injectedConfig;
@@ -214,7 +242,25 @@ export async function dispatchTask(options = {}) {
   const targetCandidates = [];
   for (const candidateProvider of candidates) {
     const entry = config?.platforms?.[candidateProvider];
-    if (model !== null || effort !== null) {
+    if (candidateIndex !== null) {
+      const entries = Array.isArray(entry) ? entry : [entry ?? {}];
+      const selected = entries[candidateIndex];
+      if (!selected) {
+        const err = new Error(
+          `Configured candidate index ${candidateIndex} is out of range for provider "${candidateProvider}".`,
+        );
+        err.code = 'CANDIDATE_NOT_CONFIGURED';
+        throw err;
+      }
+      const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
+      targetCandidates.push({
+        provider: candidateProvider,
+        model: selected.model ?? null,
+        effort: selected.effort ?? null,
+        sandbox: supportsSandbox ? selected.sandbox ?? true : undefined,
+        label: `${candidateProvider} candidate ${candidateIndex}`,
+      });
+    } else if (model !== null || effort !== null) {
       const fallbackEntry = Array.isArray(entry) ? (entry[0] ?? {}) : (entry ?? {});
       const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
       targetCandidates.push({
@@ -272,18 +318,14 @@ export async function dispatchTask(options = {}) {
   // A pin cascades over one provider's entries only, so the sort is a no-op there.
   let orderedCandidates;
   if (!provider && effectiveOrchestrator) {
-    const externals = targetCandidates.filter((c) => c.provider !== effectiveOrchestrator);
-    const orchestratorDiffModel = targetCandidates.filter(
-      (c) => c.provider === effectiveOrchestrator && !isSameModel(c.model, effectiveOrchestratorModel),
+    orderedCandidates = demoteOrchestratorTargets(
+      targetCandidates,
+      effectiveOrchestrator,
+      effectiveOrchestratorModel,
+      (candidate) => candidate.provider,
+      (candidate) => candidate.model,
+      (group) => diversitySort(group, (candidate) => candidate.provider),
     );
-    const orchestratorSameModel = targetCandidates.filter(
-      (c) => c.provider === effectiveOrchestrator && isSameModel(c.model, effectiveOrchestratorModel),
-    );
-    orderedCandidates = [
-      ...diversitySort(externals, (c) => c.provider),
-      ...diversitySort(orchestratorDiffModel, (c) => c.provider),
-      ...diversitySort(orchestratorSameModel, (c) => c.provider),
-    ];
   } else {
     orderedCandidates = diversitySort(targetCandidates, (c) => c.provider);
   }
@@ -416,28 +458,33 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 
 export async function main() {
   const options = parseCommonArgs(process.argv, {
-    booleanFlags: ['--no-config', '--validate-only', '--list-platforms'],
+    booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets'],
   });
-  const { noConfig, validateOnly, listPlatforms } = parseDispatchFlags(process.argv);
+  const { noConfig, validateOnly, listPlatforms, listTargets } = parseDispatchFlags(process.argv);
 
   if (options.help) {
     printHelp();
     process.exit(0);
   }
 
-  if (validateOnly && listPlatforms) {
-    console.error('Error: --validate-only and --list-platforms are separate inspection modes; run one at a time.');
+  if ([validateOnly, listPlatforms, listTargets].filter(Boolean).length > 1) {
+    console.error('Error: --validate-only, --list-platforms, and --list-targets are separate inspection modes; run one at a time.');
     process.exit(1);
   }
 
-  if (validateOnly || listPlatforms) {
-    const mode = validateOnly ? '--validate-only' : '--list-platforms';
+  if (validateOnly || listPlatforms || listTargets) {
+    const mode = validateOnly ? '--validate-only' : listPlatforms ? '--list-platforms' : '--list-targets';
     const purpose = validateOnly
       ? 'checks the dispatch config schema alone'
-      : 'prints the effective config\'s platform keys alone';
+      : listPlatforms
+        ? 'prints the effective config\'s platform keys alone'
+        : 'prints the effective config\'s ordered targets';
     // Refuse the combination rather than silently ignoring flags the user believes were
     // honored: both inspection modes read the config and nothing else.
-    const ignored = collectRunFlags(options, noConfig);
+    let ignored = collectRunFlags(options, noConfig);
+    if (listTargets) {
+      ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
+    }
     if (ignored.length > 0) {
       console.error(`Error: ${mode} ${purpose} and cannot be combined with: ${ignored.join(', ')}`);
       process.exit(1);
@@ -456,10 +503,19 @@ export async function main() {
       process.exit(1);
     }
     if (listPlatforms) {
-      // Cascade order, one key per line, so a caller expanding an `all` pin can split on newlines
-      // without parsing JSON. Availability is deliberately not probed: membership is a config fact,
-      // and liveness is the fallback gate's job per dispatch.
+      // Config order, one key per line, so named pins can validate membership without parsing JSON.
+      // Availability is deliberately not probed: membership is a config fact, and liveness is the
+      // fallback gate's job per dispatch.
       console.log(Object.keys(loaded.config.platforms).join('\n'));
+      return;
+    }
+    if (listTargets) {
+      const orchestrator = normalizeOrchestrator(options.orchestrator || detectOrchestrator());
+      const orchestratorModel =
+        options.orchestratorModel !== null
+          ? (options.orchestratorModel || null)
+          : detectOrchestratorModel({ orchestrator });
+      console.log(JSON.stringify(resolveConfiguredTargets(loaded.config, orchestrator, orchestratorModel), null, 2));
       return;
     }
     console.log('Config is valid.');
@@ -534,11 +590,13 @@ Options:
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
+  --candidate-index <n>       Select one configured candidate for a pinned provider (zero-based)
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator-model <name> Override detected orchestrator model
   --no-config                 Ignore the dispatch config entirely (model, effort, membership); requires --provider
   --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
-  --list-platforms            Print the effective config's platform keys in cascade order, one per line, and exit
+  --list-platforms            Print the effective config's platform keys in config order, one per line, and exit
+  --list-targets              Print configured targets in count/all selection order as JSON and exit
   --json                      Request structured JSON output (opencode provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
@@ -550,13 +608,15 @@ function parseDispatchFlags(argv) {
   let noConfig = false;
   let validateOnly = false;
   let listPlatforms = false;
+  let listTargets = false;
   for (const arg of argv.slice(2)) {
     if (arg === '--') break;
     if (arg === '--no-config') noConfig = true;
     else if (arg === '--validate-only') validateOnly = true;
     else if (arg === '--list-platforms') listPlatforms = true;
+    else if (arg === '--list-targets') listTargets = true;
   }
-  return { noConfig, validateOnly, listPlatforms };
+  return { noConfig, validateOnly, listPlatforms, listTargets };
 }
 
 /** Names the run flags set on `options`, for an inspection mode to reject as unhonored. */
@@ -574,8 +634,29 @@ function collectRunFlags(options, noConfig) {
   if (options.orchestrator !== null) ignored.push('--orchestrator');
   if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
   if (options.provider !== null) ignored.push('--provider');
+  if (options.candidateIndex !== null) ignored.push('--candidate-index');
   if (noConfig) ignored.push('--no-config');
   return ignored;
+}
+
+/**
+ * Expands configured platform entries into the stable target order used by count and `all` pins.
+ */
+export function resolveConfiguredTargets(config, orchestrator = null, orchestratorModel = null) {
+  const targets = [];
+  for (const [platform, rawEntry] of Object.entries(config.platforms)) {
+    const entries = Array.isArray(rawEntry) ? rawEntry : [rawEntry];
+    for (const [candidateIndex, entry] of entries.entries()) {
+      const target = { platform, candidateIndex };
+      if (entry?.model !== undefined) target.model = entry.model;
+      if (entry?.effort !== undefined) target.effort = entry.effort;
+      if (SANDBOX_SUPPORTED_PROVIDERS.includes(platform)) {
+        target.sandbox = entry?.sandbox ?? true;
+      }
+      targets.push(target);
+    }
+  }
+  return demoteOrchestratorTargets(targets, orchestrator, orchestratorModel);
 }
 
 // ============================================================================

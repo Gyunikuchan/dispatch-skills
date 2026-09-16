@@ -41,7 +41,7 @@ npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill implement-di
 Install the complete suite to enable both optional review phases:
 
 ```bash
-npx skills add Gyunikuchan/dispatch-skills --all
+npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 > [!NOTE]
@@ -101,8 +101,10 @@ replace the configured reviewer count for both review phases:
 /implement-dispatch high (3): Refactor the payment webhook idempotency handler
 ```
 
-`all` uses every provider configured for this workflow and available to `dispatch`. A number such
-as `(3)` requests three reviewers for each enabled review phase.
+Named platforms all run when configured. A number such as `(3)` requests up to three reviewers
+for each enabled review phase; `(all)` uses every configured review target. Count and `all`
+selection preserve configured order, moving the current platform behind alternatives and an exact
+current platform/model match to the end.
 
 > [!NOTE]
 > Provider pins select review delegates. The implementation subagent is selected separately in
@@ -140,7 +142,7 @@ requests.
 ## Nuances, Quirks & Troubleshooting
 
 - **A review phase is missing:** Install the corresponding companion skill, or install the complete
-  suite with `npx skills add Gyunikuchan/dispatch-skills --all`.
+  suite with `npx skills add Gyunikuchan/dispatch-skills -s '*'`.
 - **A provider is unavailable:** Configure and authenticate it through `dispatch`; see
   [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
 - **You need a different review depth:** Pass a level such as `low` or `high`, or adjust the

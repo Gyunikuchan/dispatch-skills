@@ -20,13 +20,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
   KNOWN_PROVIDERS,
+  demoteOrchestratorTargets,
   diversitySort,
   isMainModule,
   getConfigCandidates,
   loadSkillConfig,
   validateDispatchConfig,
   detectOrchestratorModel,
-  isSameModel,
   verifySkillIntegrity,
 } from '../../dispatch/scripts/common.mjs';
 import { PROVIDER_ALIASES } from '../../dispatch/scripts/dispatch.mjs';
@@ -65,9 +65,9 @@ export function normalizePin(rawPin) {
 }
 
 /**
- * Splits a raw `--pins` list into either provider keys (and/or "all") or a single reviewer
- * count. The two forms never mix: a count pin replaces breadth entirely, so pairing it with a
- * provider key or a second count would be ambiguous about how many reviewers to run.
+ * Splits a raw `--pins` list into either provider keys, "all", or a single reviewer count.
+ * The three forms never mix: "all" and a count both select from the ordered candidate pool,
+ * while provider keys name an explicit reviewer set.
  *
  * @param {Array<string|number>|undefined} rawPins
  * @returns {{ keys: string[] | undefined, count: number | undefined }}
@@ -76,9 +76,12 @@ export function parsePins(rawPins) {
   if (!rawPins || rawPins.length === 0) return { keys: undefined, count: undefined };
   const trimmed = rawPins.map(p => String(p).trim());
   const isCountLike = s => /^-?\d+$/.test(s);
-  if (trimmed.some(isCountLike)) {
+  if (trimmed.some(isCountLike) || trimmed.some(s => s.toLowerCase() === 'all')) {
     if (rawPins.length > 1) {
-      throw new Error(`A reviewer count pin must stand alone: ${rawPins.join(', ')}`);
+      throw new Error(`A reviewer count or "all" pin must stand alone: ${rawPins.join(', ')}`);
+    }
+    if (trimmed[0].toLowerCase() === 'all') {
+      return { keys: ['all'], count: undefined };
     }
     const count = Number(trimmed[0]);
     if (!Number.isSafeInteger(count) || count < 1) {
@@ -703,8 +706,7 @@ export function resolveFlow(options, liveness, config) {
       `Unknown platform "${options.platform}". Valid platforms: ${KNOWN_PROVIDERS.join(', ')}`
     );
   }
-  // A count pin (e.g. `(3)`) replaces provider-key pins entirely; parsePins throws on any
-  // mix of the two forms before either is normalized.
+  // Count and "all" pins replace provider-key pins entirely; parsePins rejects mixed forms.
   const { keys: pinKeys, count } = parsePins(rawPins);
   // Normalize through the same aliases `dispatch.mjs --provider` accepts (e.g.
   // `antigravity` -> `agy`) before deduping, so a pin spelled either way collapses
@@ -713,6 +715,8 @@ export function resolveFlow(options, liveness, config) {
   // Dedupe once at entry so a repeated `--pins x,x` cannot produce duplicate
   // dispatch targets in the same wave.
   const pins = normalizedPins ? [...new Set(normalizedPins)] : normalizedPins;
+  const isAllPin = pins?.includes('all') === true;
+  const hasExplicitBreadth = count !== undefined || isAllPin;
   const excluded = normalizeExcludeKeys(options.exclude);
   assertOrchestratorNotExcluded(excluded, platform);
 
@@ -746,8 +750,8 @@ export function resolveFlow(options, liveness, config) {
   }
   assertKnownExcludeKeys(excluded, reviewKeys);
 
-  // An excluded platform fails liveness, so candidate selection, `--pins all` expansion and the
-  // live-pin filter all skip it without special cases; `unavailable` is computed from the raw map.
+  // An excluded platform fails liveness, so candidate selection and the live-pin filter skip it
+  // without special cases; `unavailable` is computed from the raw map.
   const rawLiveness = liveness;
   liveness = { ...rawLiveness };
   for (const k of excluded) liveness[k] = false;
@@ -755,34 +759,25 @@ export function resolveFlow(options, liveness, config) {
   const clamped = {};
   const droppedPins = {};
 
-  function expandPins(sectionName) {
-    if (!pins || pins.length === 0) return [];
-    const sectionKeys = Object.keys(platformsOf(sectionName));
-    return pins.includes('all')
-      ? [...new Set(pins.flatMap(p => (p === 'all' ? sectionKeys : p)))]
-      : pins;
-  }
-
   /**
    * Builds the live candidate list for one review section.
-   * Pins override `targetCount`. Unpinned runs diversity-sort externals (every platform's first
-   * candidate before any platform's second), then the orchestrator's candidates sorted the same
-   * way, so external reviewers are preferred while the orchestrator can still satisfy targetCount.
+   * Named pins dispatch every listed configured platform. Count and "all" selection preserves
+   * configured candidate order, moving the orchestrator platform behind alternatives and an exact
+   * orchestrator platform/model match to the end.
    */
   function getCandidates(sectionName, targetCount) {
     const platforms = platformsOf(sectionName);
     const allKeys = Object.keys(platforms);
+    const namedPins = pins && !isAllPin ? pins : [];
 
-    if (pins && pins.length > 0) {
-      const sectionPins = expandPins(sectionName);
-      const validPins = sectionPins.filter(p => allKeys.includes(p));
-      const livePins = validPins.filter(p => liveness[p] === true);
-      if (validPins.length > 0 && livePins.length === 0) {
-        const cause = validPins.some(p => excluded.includes(p)) ? 'excluded or unavailable' : 'unavailable';
-        throw new Error(`All pinned platforms ${cause}: ${validPins.join(', ')}`);
+    if (namedPins.length > 0) {
+      const validPins = namedPins.filter(p => allKeys.includes(p));
+      const eligiblePins = validPins.filter(p => !excluded.includes(p));
+      if (validPins.length > 0 && eligiblePins.length === 0) {
+        throw new Error(`All pinned platforms excluded: ${validPins.join(', ')}`);
       }
       const targets = [];
-      for (const p of livePins) {
+      for (const p of eligiblePins) {
         const candidates = resolvePlatformCandidates(platforms[p], level);
         for (const c of candidates) {
           const target = { platform: p };
@@ -795,35 +790,29 @@ export function resolveFlow(options, liveness, config) {
       return { targets, reserves: [] };
     }
 
-    // Unpinned: gather live candidates for each configured platform
-    const externalCandidates = [];
-    const orchestratorDiffModel = [];
-    const orchestratorSameModel = [];
+    // Explicit count/all uses every configured candidate. Unpinned selection keeps its liveness
+    // filter and diversity ordering so a narrow configured targetCount prefers distinct platforms.
+    const configuredCandidates = [];
 
     for (const k of allKeys) {
-      if (liveness[k] !== true) continue;
+      if (excluded.includes(k) || (!hasExplicitBreadth && liveness[k] !== true)) continue;
       const candidates = resolvePlatformCandidates(platforms[k], level);
       for (const c of candidates) {
         const target = { platform: k };
         if (c.model !== undefined) target.model = c.model;
         if (c.effort !== undefined) target.effort = c.effort;
-        if (k === platform) {
-          if (isSameModel(c.model, orchestratorModel)) {
-            orchestratorSameModel.push(target);
-          } else {
-            orchestratorDiffModel.push(target);
-          }
-        } else {
-          externalCandidates.push(target);
-        }
+        configuredCandidates.push(target);
       }
     }
 
-    const orderedCandidates = [
-      ...diversitySort(externalCandidates),
-      ...diversitySort(orchestratorDiffModel),
-      ...diversitySort(orchestratorSameModel),
-    ];
+    const orderedCandidates = demoteOrchestratorTargets(
+      configuredCandidates,
+      platform,
+      orchestratorModel,
+      undefined,
+      undefined,
+      hasExplicitBreadth ? undefined : diversitySort,
+    );
     const requested = targetCount === 'all' ? orderedCandidates.length : targetCount;
     const resolved = Math.min(requested, orderedCandidates.length);
     if (resolved < requested) clamped[sectionName] = { requested, resolved };
@@ -835,9 +824,9 @@ export function resolveFlow(options, liveness, config) {
   function buildReviewSection(sectionName) {
     const section = config[sectionName];
     let maxRounds = resolveLevelScalar(section.maxRounds, level);
-    // A count pin overrides the level's targetCount outright, the same way a provider-key
-    // pin overrides breadth by naming candidates instead of a count.
-    const targetCount = count ?? resolveLevelScalar(section.targetCount, level);
+    // Count and "all" override the level's targetCount; named pins override breadth by naming
+    // the complete explicit platform set.
+    const targetCount = isAllPin ? 'all' : count ?? resolveLevelScalar(section.targetCount, level);
     const consensus = resolveLevelScalar(section.consensus, level);
 
     // `targetCount: 0` means skip the phase; express it the same way `maxRounds: 0`
@@ -855,13 +844,12 @@ export function resolveFlow(options, liveness, config) {
 
     // Only meaningful for a phase that actually runs: a phase with maxRounds 0 drops
     // every pin by construction, which is not a diagnostic worth reporting. Covers
-    // both an unrecognized pin key and a pin that's configured but currently offline —
-    // either way it's absent from the resolved targets and worth surfacing.
-    if (maxRounds > 0 && pins && pins.length > 0) {
-      const sectionPins = expandPins(sectionName);
-      const liveKeys = new Set(targets.map(t => t.platform));
+    // a named pin configured for another review section but absent from this one.
+    if (maxRounds > 0 && pins && pins.length > 0 && !isAllPin) {
+      const sectionPins = pins;
+      const resolvedKeys = new Set(targets.map(t => t.platform));
       // An excluded pin is reported once, in `diagnostics.excluded`, not as a dropped pin.
-      const dropped = sectionPins.filter(p => !liveKeys.has(p) && !excluded.includes(p));
+      const dropped = sectionPins.filter(p => !resolvedKeys.has(p) && !excluded.includes(p));
       if (dropped.length > 0) droppedPins[sectionName] = dropped;
     }
 
@@ -891,7 +879,7 @@ export function resolveFlow(options, liveness, config) {
       excluded,
       droppedPins,
       clamped,
-      targetCountPin: count ?? null,
+      targetCountPin: isAllPin ? 'all' : count ?? null,
       livenessSource: options.livenessSource ?? 'probe',
     },
   };

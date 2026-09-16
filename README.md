@@ -97,7 +97,7 @@ the reduced workflow.
 Install the complete suite:
 
 ```bash
-npx skills add Gyunikuchan/dispatch-skills --all
+npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 Install only the skills you need:
@@ -204,9 +204,9 @@ dispatch keys with:
 node skills/dispatch/scripts/dispatch.mjs --list-platforms
 ```
 
-`all` expands only to those effective configured keys. Configuration is loaded per skill with
-first-match precedence: `config.local.jsonc`, then `config.jsonc`, then `config.default.jsonc`;
-the selected file replaces the lower-priority file rather than merging with it.
+Configuration is loaded per skill with first-match
+precedence: `config.local.jsonc`, then `config.jsonc`, then `config.default.jsonc`; the selected
+file replaces the lower-priority file rather than merging with it.
 
 ---
 
