@@ -6,10 +6,12 @@ agent pass is not enough. It coordinates optional plan and code review skills ar
 
 ```mermaid
 flowchart TD
-    User(["👤 User Request"]) --> Scope["⚙️ Scope & Flow"]
-    Scope --> Plan["📝 Plan"]
-    Plan --> PlanReview["⚡ Plan Review"]
-    PlanReview --> Gate{"🛑 Single Approval Gate"}
+    User(["👤 User Request"]) --> Plan["📝 Draft Plan"]
+    Plan --> Scope["⚙️ Initial Scope & Flow"]
+    Scope --> PlanReview["⚡ Plan Review"]
+    PlanReview --> FinalScope["⚙️ Final Scope & Level Check"]
+    Scope -.->|review skipped| FinalScope
+    FinalScope --> Gate{"🛑 Single Approval Gate"}
     Gate --> Implementation["💻 Test-First Implementation"]
     Implementation --> CodeReview["⚡ Code Review"]
     CodeReview --> Fix["🔧 Apply Fixes & Verify"]
@@ -72,8 +74,7 @@ Request deeper review for a cross-cutting change:
 
 ### Choose a review level
 
-The level is optional. If omitted, the skill selects `low`, `medium`, or `high` from the
-request's scope.
+The level is optional. If omitted, the skill selects `low`, `medium`, or `high` from the request's scope.
 
 | Level | Use for |
 |---|---|
@@ -120,13 +121,14 @@ models, fallback, and shared runner settings remain in `dispatch`.
 
 ## What to expect
 
-1. The skill scopes the request and prepares a plan.
-2. It reviews the plan when `dispatch-plan-review` is installed and enabled.
-3. It asks for approval once, after plan review and before changing code.
-4. It implements the approved plan and runs the repository's verification command.
-5. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
+1. The skill prepares an initial draft plan.
+2. It scopes the draft and resolves the execution flow.
+3. It reviews the plan when `dispatch-plan-review` is installed and enabled.
+4. It asks for approval once, after the final scope check and before changing code.
+5. It implements the approved plan and runs the repository's verification command.
+6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.
-6. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
+7. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
 
 > [!NOTE]
 > Plan approval is the workflow's only approval gate. The skill does not write code before you

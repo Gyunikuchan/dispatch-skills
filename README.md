@@ -40,10 +40,12 @@ tree.
 
 ```mermaid
 flowchart TD
-    User(["👤 User Request"]) --> Scope["⚙️ Scope & Flow"]
-    Scope --> Plan["📝 Plan"]
-    Plan --> PlanReview["⚡ Plan Review"]
-    PlanReview --> Gate{"🛑 Single Approval Gate"}
+    User(["👤 User Request"]) --> Plan["📝 Draft Plan"]
+    Plan --> Scope["⚙️ Initial Scope & Flow"]
+    Scope --> PlanReview["⚡ Plan Review"]
+    PlanReview --> FinalScope["⚙️ Final Scope & Level Check"]
+    Scope -.->|review skipped| FinalScope
+    FinalScope --> Gate{"🛑 Single Approval Gate"}
     Gate --> Implementation["💻 Test-First Implementation"]
     Implementation --> CodeReview["⚡ Code Review"]
     CodeReview --> Fix["🔧 Apply Fixes & Verify"]
