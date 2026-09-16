@@ -2,6 +2,8 @@
 
 Date: 2026-09-16
 
+**Path exception:** This already tracked/staged proposal remains at `.scratch/audit/refactor-proposal.md` by explicit user decision even though new scratch audit artifacts must follow `.scratch/audits/<run>-audit.md` or `<run>-work/`. Do not treat this one-file exception as precedent.
+
 ## Executive recommendation
 
 Refactor the suite around review-owned executable preparation, generic `dispatch` fan-out, and short semantic `SKILL.md` workflows.
@@ -10,21 +12,23 @@ The current design has strong safety properties, but the host agent repeatedly i
 
 Prioritize these changes:
 
-1. Add stable finding IDs and delegate severity to the shared resolution-log schema.
-2. Preserve consensus as an adversarial evidence debate, but send claim-specific rebuttal packets instead of replaying a broad review.
-3. Preserve exact tool-turn budgets, compute them mechanically, and pre-authorize bounded evidence-backed headroom.
-4. Measure those consensus-path changes before expanding scope.
-5. If measurements support it, replace both full-review prompts in place with compact findings-only JSONL contracts.
-6. Add review-owned preparation and generic fan-out only when Phase 1 measurements justify their added code surface.
-7. Preserve phase/level provider matrices and whole-file replacement; make the effective flow easier to inspect.
+1. Add durable, machine-readable run measurements before using measurements as a gate.
+2. State the resolved review flow before wave 1, explicitly including `plan review: off`, while retaining the single implementation approval gate.
+3. Fix the clean-tree `HEAD~1` fallback and make successful artifact cleanup explicitly ephemeral.
+4. Bound re-review payload growth with a generated review view while preserving the complete canonical audit log.
+5. Replace both full-review prompts in place with compact findings-only JSONL contracts; this is the largest certain saving on the highest-multiplicity path.
+6. Then add stable finding IDs, delegate severity, and claim-specific consensus rebuttal packets for the minority dispute path.
+7. Prune duplicated skill/reference prose after the compact contracts establish the smaller semantic core.
+8. Add generic fan-out and review-owned preparation only when measured host overhead justifies their runtime and CLI surface.
+9. Preserve phase/level provider matrices and whole-file replacement; make the effective workflow inspectable from one workflow diagnostic.
 
 This should preserve the suite's important guarantees: delegates remain read-only, claims require evidence, the host adjudicates findings, implementation requires approval, edits are verified, and configuration/integrity failures remain explicit.
 
-**Implementation boundary:** Phase 1 is ready and is the only committed scope. Each later phase is a separate go/no-go decision after the preceding measurements; a failed Phase 2 prompt experiment retains the Phase 1 prompts and does not by itself forbid separately justified fan-out or preparation work.
+**Implementation boundary:** Phase 0 is the only committed scope because it makes later gates observable and fixes two correctness/UX defects. Each later phase is a separate go/no-go decision. Phase 1 is the first optimization experiment; if its compact prompt contract fails the review corpus, restore the original prompts without blocking separately justified later work.
 
 ## Measured baseline
 
-Word counts are a stable instruction-load proxy rather than exact model token counts.
+The table preserves the original whitespace-word baseline for comparison. Word counts are descriptive only: they underprice punctuation- and table-dense text. Automated drift gates use raw character counts and `ceil(characters / 4)` as a model-neutral **estimated text-token** proxy. They never label that estimate as provider-billed tokens; exact tokenizer counts are model-specific and would add a dependency without making cross-provider comparisons exact.
 
 | Surface | Words |
 |---|---:|
@@ -41,6 +45,8 @@ Word counts are a stable instruction-load proxy rather than exact model token co
 | **Total reviewed instruction surface** | **10,936** |
 
 The four entry-point skills alone contain **5,366 words**. A normal `implement-dispatch` run can expose the entry points, `alignment.md`, both prompts, and both templates: approximately **9,719 words before the plan, walkthrough, repository instructions, source context, or delegate output**. A fallback path that also reads `providers.md` reaches the full 10,936-word surface.
+
+The same reviewed surface contains **80,420 characters**, or approximately **20,105 estimated text tokens** at `ceil(characters / 4)`. The normal implementation instruction path contains **71,170 characters**, or approximately **17,793 estimated text tokens**. These estimates are only drift indicators; Phase 0 records actual prompt/report characters at each dispatch boundary.
 
 Prompt multiplication is more important than entry-point size. The shipped review caps allow these maximum review slots:
 
@@ -99,9 +105,18 @@ These are state transitions and parsing rules, not semantic judgment. Encoding t
 
 Consensus is an epistemic safeguard, not a vote. The orchestrator can hallucinate its counter-evidence just as a reviewer can hallucinate a finding. Requiring the citing reviewer to accept the counter-reading or rebut it is therefore valuable; the user remains the tie-breaker when the agents cannot converge.
 
-The efficiency problem is the payload, not the debate. A re-review can reload the full artifact, full review prompt, and broad axis contract when only one `[Rejected - pending confirmation]` or `[Disputed]` claim remains live. Target affinity narrows the reviewer set, but the prompt/context cost can still resemble a full review.
+The efficiency problem is the payload, not the debate. A re-review can reload the full artifact, full review prompt, and broad axis contract when only one `[Rejected — pending confirmation]` or `[Disputed]` claim remains live. Target affinity narrows the reviewer set, but the prompt/context cost can still resemble a full review.
 
 The consensus mechanism should remain. Its rebuttal path should carry only the live claim, original locus and severity, exact orchestrator counter-evidence, relevant changed excerpts, and a bounded request to confirm or rebut.
+
+The canonical plan/walkthrough is also attached again on every round, so its growing resolution log compounds the cost. At five targets across five rounds, even a 700-word accumulated log can be resent up to 25 times in one phase. Do not solve that by deleting the audit trail. For re-review, generate a bounded view containing:
+
+- the complete semantic artifact body without the canonical resolution log;
+- every entry from the immediately preceding round, so the reviewer can verify that accepted resolutions landed;
+- every still-live finding from any round;
+- one fixed summary for each older settled round: `R<n> settled accepted=<n> rejected=<n> disputed=0 hash=<12-hex-prefix>`.
+
+The canonical artifact retains every original entry and remains the source of truth. The generated view is an OS-temp projection attached only to the next wave and removed after that wave settles. Handover keeps `Canonical Artifact Path` distinct from optional `Review View Path`: review skills attach the view and fill the delegate's plan/walkthrough path variable with it, while adjudication and edits always target the canonical path. The projection starts with a data-only banner naming the canonical artifact and marking the projection read-only.
 
 ### 4. Provider policy is expressive but hard to inspect
 
@@ -120,11 +135,11 @@ The plan prompt requires seven clean/finding axis lines, a verdict, three severi
 
 For clean reviews, nearly all output is scaffolding. For reviews with findings, "Actionable Next Steps" often repeats the required change already carried by every finding. Expanded axis prose also repeats concepts the tags and repository context already communicate.
 
-### 6. Tool-turn budgets need mechanical calculation and bounded escalation
+### 6. Tool-turn budgets are advisory, not enforceable
 
-The exact `8 + 2 x units` budget gives a reviewer useful freedom: it can spend turns where evidence leads instead of following rigid per-file quotas. The friction is that the host calculates and transports the number, while a hard cap can cut off a concrete security, concurrency, migration, or lifecycle risk discovered late.
+The `8 + 2 x units` target gives a reviewer useful freedom: it can spend turns where evidence leads instead of following rigid per-file quotas. The runner does not enforce delegate tool calls, however, so `soft`, `headroom`, and `hard` values would be self-reported ceremony rather than real ceilings.
 
-Keep the numeric budget, compute it in the flow tooling, and let the reviewer allocate it freely. Pre-authorize bounded evidence-backed **budget headroom** that the dispatched reviewer may activate during the same run without waiting for the orchestrator. "Headroom" avoids collision with provider **reserves**, which remain substitute targets. Timeout and output caps remain defense-in-depth controls rather than substitutes for tool turns.
+Keep one advisory target, let the reviewer allocate it freely, and permit evidence-backed overflow without a host round-trip. Record actual tool use only when the provider exposes it; otherwise record the target and any delegate-reported overflow reason without treating either as authoritative. `--timeout` and `--max-buffer` remain the enforceable runaway controls. Do not add budget-kind, unit, headroom, or hard-ceiling CLI fields.
 
 ### 7. Artifact freshness is inferred from prose
 
@@ -141,6 +156,55 @@ The delegate prompt reviews `HEAD~1` when the merge-base equals `HEAD`. On a cle
 `alignment.md` combines artifact resolution, invocation modes, target mapping, reserve substitution, prompt transport, adjudication, logging, reporting, and lifecycle. A consumer needing one section commonly loads a 2,045-word monolith.
 
 `dispatch/SKILL.md` also caches detailed configuration semantics already exposed by `config.default.jsonc`. Its complete flag table is intentional duplication enforced by parity tests; optimize the descriptions around it rather than removing it.
+
+### 10. Later phases have no observable baseline
+
+The proposal gates later work on rebuttal convergence, payload size, tool-turn use, and user escalation, but `## Run Diagnostics` is prose inside an artifact that successful runs relocate to OS temp. No durable record captures per-target input, delegate output entering host context, waves, slots, or substitutions. A gate that cannot be measured will either block forever or be waived by intuition.
+
+Phase 0 must write content-free run records outside the worktree under `<git-common-dir>/dispatch-skills/runs/<run-id>/`; `.scratch/audit/runs/` is inside the worktree and is not ignored in this repository, so it would pollute user status. Resolve `git rev-parse --git-common-dir` against the repository root when Git returns a relative path. Add one internal `dispatch --metrics-file <absolute-path>` transport, plus `implement-dispatch/scripts/run-record.mjs init|finalize|pin-baseline`. `init` creates the owner-only run directory and returns its path. Each target gets a unique metrics path and writes one atomic JSON record on every terminal outcome. Resolve real paths, reject symlinks and destinations outside the initialized run directory, and use temp-file-plus-rename with owner-only permissions. `finalize` receives `expectedSlots` as a count, aggregates every present slot record, rejects duplicate embedded slot IDs, fails if the count differs, adds wave/finding/substitution totals, writes `run.json`, retains the latest 100 unpinned finalized runs per repository, and removes incomplete runs older than seven days. `pin-baseline --label <phase:corpus>` gives a finalized run a validated unique label; `pin-baseline --clear <phase:corpus>` removes it after its dependent gate. Pinned baselines are exempt from age/count pruning until explicitly superseded or cleared. Durable repository-local telemetry is required because later phases compare separate runs; OS temp remains appropriate for disposable logs, prompt spills, and review projections.
+
+One slot can contain several same-provider candidate attempts because pinned `dispatch` still cascades within that provider. The slot record therefore contains `attempts[]` plus nullable `effectiveAttempt`, and is written once when the slot terminates; it never overwrites an earlier attempt. Each attempt measures the exact fully formatted prompt after attachment truncation and safety-wrapper insertion, plus the final output returned by that attempt. Count normalized Unicode code points and `ceil(characters / 4)` estimates. Record phase, level, wave, slot, provider/model, result/failure class, truncation, and provider-reported usage when available. The finalized run adds live/settled finding and substitution totals. Use `null` for unavailable values. Do not store prompt/report text, paths outside stable repository-relative artifact labels, environment values, or credentials.
+
+```json
+{
+  "schemaVersion": 1,
+  "runId": "2026-09-16T11:00:00Z-a1b2",
+  "level": "high",
+  "waves": [{
+    "phase": "plan-review",
+    "round": 1,
+    "targets": [{
+      "slotId": "plan-review:R1:S1",
+      "attempts": [{
+        "provider": "claude",
+        "model": "claude-sonnet-5",
+        "inputChars": 12000,
+        "inputEstimate": 3000,
+        "outputChars": 0,
+        "outputEstimate": 0,
+        "toolTurns": null,
+        "result": "error"
+      }, {
+        "provider": "claude",
+        "model": "claude-opus-5",
+        "inputChars": 12000,
+        "inputEstimate": 3000,
+        "outputChars": 900,
+        "outputEstimate": 225,
+        "toolTurns": null,
+        "result": "ok"
+      }],
+      "effectiveAttempt": 1
+    }]
+  }]
+}
+```
+
+### 11. Review-cost and artifact-lifecycle UX is hidden
+
+`low` resolves `plan-review.maxRounds` and `targetCount` to zero, silently skipping plan review. At higher levels, plan review intentionally happens before the implementation approval gate because it helps produce the plan being approved; moving approval earlier would defeat that gate's purpose. Before the first wave, state the resolved level, whether each review phase is on, reviewer platforms/models, maximum rounds, and consensus mode. This is disclosure, not a second confirmation gate.
+
+Successful runs relocate the plan and walkthrough to OS temp, where the OS may eventually remove the audit trail. Keep that behavior by user decision, but warn clearly before relocation and report the exact destination afterward.
 
 ## Proposed target architecture
 
@@ -171,39 +235,81 @@ flowchart TD
 | Finding IDs, severity, sources, finality, and resolution-log grammar | Shared alignment contract |
 | Phase-specific argument parsing, freshness, round state, and prompt creation | Each review skill's `scripts/prepare-review.mjs` |
 | Generic artifact and template primitives | Shared helpers, currently under `dispatch/scripts` |
+| Fence-aware resolution-log scanning | `dispatch/scripts/resolution-log.mjs` |
 | Review policy, resolved targets, and ordered provider reserves | `implement-dispatch` / calling review skill |
 | Data-driven fan-out, supplied-reserve execution, provider fallback, normalized result envelope | `dispatch.mjs` |
 | Review breadth, rounds, consensus, and model/effort by phase and level | `implement-dispatch` configuration |
 | Review criteria and delegate output schema | Compact kind-specific prompt |
+| Per-target content-free measurements | `dispatch` provider result + internal `--metrics-file` |
+| Run initialization, aggregation, retention | `implement-dispatch/scripts/run-record.mjs` |
+| Bounded orchestrated re-review projection | `implement-dispatch/scripts/build-review-view.mjs` until reuse justifies extraction |
 | Provider installation and diagnostics | CLI `--doctor`/`--help` plus provider-specific references |
+
+### Working glossary
+
+| Term | Meaning |
+|---|---|
+| candidate | One configured provider/model/effort entry before selection |
+| target | A candidate selected for the current wave |
+| reserve | An ordered substitute candidate used after an eligible target failure |
+| pin | User-supplied provider/count selector that overrides default breadth |
+| level | `low` through `max`; selects policy and model/effort settings |
+| change class | `trivial`, `focused`, or `cross-cutting`; host judgment used to derive an automatic level |
+| review scope | Artifact sections, files, lines, or finding IDs a reviewer may inspect in one wave |
+| blast radius | Adjacent contracts and behavior a change can affect |
+| round | One numbered adjudication record in the canonical artifact |
+| wave | One concurrent set of review targets launched for a round |
+| slot | One target execution within a wave |
+| affinity | Reusing a finding's source reviewer, or a recorded replacement, for rebuttal/recheck |
+
+Use **change class**, **review scope**, and **blast radius** instead of overloading "scope" for all three.
 
 ## Detailed proposals
 
-### P0: Establish a stable finding schema
+The sections below are grouped by architectural concern. Their `P<n>` prefixes, not document order, define the implementation sequence in the Migration plan.
 
-Change the shared resolution-log entry syntax before introducing compact prompts or rebuttal packets:
+### P0: Record runs and project bounded re-review context
+
+Add:
+
+```text
+node implement-dispatch/scripts/run-record.mjs init
+node implement-dispatch/scripts/run-record.mjs finalize --run-dir <path> --summary <json-file|->
+node implement-dispatch/scripts/build-review-view.mjs \
+  --artifact <canonical-path> --next-round <n> --temp-out
+```
+
+`init` resolves the Git common directory against the repository root, creates an owner-only run directory, and returns JSON containing `runId` and `runDir`. `dispatch --metrics-file` writes one unique slot record within that directory. `finalize` accepts an `expectedSlots` count, aggregates all present slot files, rejects duplicate embedded slot IDs, reports count mismatches rather than inventing records, writes `run.json` atomically, and applies retention only after the new manifest is durable. `pin-baseline --label` atomically labels one finalized run and exempts it from rotation; replacement and `--clear` are explicit so a phase gate cannot silently lose its comparator. Phase 0 does not require the host to predict source-key-based slot IDs; stable candidate/source identity arrives in Phase 2.
+
+Extract the generic fence-aware findings/round scan into `dispatch/scripts/resolution-log.mjs`, imported by `check-consensus.mjs`, `build-review-view.mjs`, and later both review preparation scripts. This preserves the enforced `review skills -> dispatch` dependency direction and avoids moving the module in Phase 5. The view builder fails closed on malformed round structure and returns JSON containing `canonicalPath`, `viewPath`, `sourceRoundCount`, and `canonicalLogHash`. It never mutates the canonical artifact. Add the optional `Review View Path` field to the orchestrated handover; review skills attach/read that path but continue writing only `Canonical Artifact Path`.
+
+### P2: Establish a stable finding schema
+
+Change the shared resolution-log entry syntax before introducing rebuttal packets. Phase 1's compact reports carry severity but continue writing the legacy log grammar; Phase 2 enriches newly appended entries and treats earlier Phase 1 entries as legacy.
 
 ```markdown
-- **[<status>]** [R<round>-F<sequence>] [<severity>] [sources=<source-id>[,<source-id>...]] <locus> — <tag>: <defect> → <resolution>
+- **[<status>]** [R<round>-F<sequence>] [<severity>] [sources=<source-key>[,<source-key>...]] <locus> — <tag>: <defect> → <resolution>
 ```
 
 - The host assigns the deterministic ID when appending a finding, for example `R1-F003`; delegates do not invent IDs.
-- Every launched orchestrated target receives a stable `sourceId` from `resolve-flow.mjs` in the form `<phase>:<platform>:<configured-candidate-index>`; its target object retains the resolved model and effort. A fallback result retains the failed target ID with a `fallback:` prefix; a substituted provider reserve uses the reserve's ID.
-- Deduplicated findings retain every citing `sourceId`, which makes target-affinity rebuttals mechanical even when one platform contributes multiple candidates.
+- Every candidate in the resolved level's full configured list receives a `candidateId` before liveness, exclusions, sorting, or target/reserve slicing, in the form `<phase>:<platform>:<resolved-level-candidate-index>`. Each wave pairs it with `roundId=<phase>:R<round>` to form source key `<phase>:R<round>:<platform>:<resolved-level-candidate-index>`. Exclusion re-resolution therefore cannot renumber surviving candidates within that level.
+- Findings cite only source keys that actually produced their reports. A same-provider fallback or reserve substitution uses the effective candidate's source key; diagnostics separately retain the failed attempted source and `substitutesFor` relationship. Target affinity resumes the effective session, never the failed slot.
+- Deduplicated findings retain every effective citing source key, which makes target-affinity rebuttals mechanical even when one platform contributes multiple candidates.
 - Severity is required and preserved across status rewrites: `MUST`, `SHOULD`, or `CONSIDER`.
 - Delegate output vocabulary maps directly to existing finality terms: `MUST` -> `MUST-FIX`, `SHOULD` -> `SHOULD-FIX`, and `CONSIDER` -> `CONSIDER`.
+- The structured severity field replaces the existing special-case `<tag> (CONSIDER)` encoding for newly written lines and adds severity to `[Accepted]` lines for the first time. Legacy `(CONSIDER)` lines remain readable as `severity: "CONSIDER"`. Update `review-skill-parity.test.mjs` from requiring the parenthetical form to asserting structured-severity plus legacy-read compatibility.
 - Parsers also accept `ACTIONABLE` as a read-only legacy log severity for unresolved entries that predate severity recording. Delegates never emit it; finality treats it like `MUST-FIX`/`SHOULD-FIX`, so it remains consensus-bound and is never silently downgraded.
-- IDs remain stable when `[Rejected - pending confirmation]` becomes `[Rejected / Downgraded]` or `[Resolved Dispute]`.
+- IDs remain stable when `[Rejected — pending confirmation]` becomes `[Rejected / Downgraded]` or `[Resolved Dispute]`.
 - Keep the status immediately after the list marker so existing fail-closed detection remains structurally compatible.
-- Immediately below each round heading, record a source map from every `sourceId` to provider, candidate index, effective model/effort, fallback/substitution status, and session handle. This preserves target affinity if configuration changes before a later round.
+- Immediately below each round heading, record a source map from every source key to provider, configured candidate index, effective model/effort, fallback/substitution status, and session handle. This preserves target affinity if configuration changes before a later round.
 
-Update `alignment.md`, `resolve-flow.mjs`, both review skills, walkthrough/plan examples, and `check-consensus.mjs`. Add `check-consensus.mjs --json` output containing `id`, `severity`, `sourceIds`, `status`, `lineNumber`, and `originalLine`. Do not parse arbitrary defect/resolution prose back into fields; the fixed prefix is machine state and the original line is the durable human claim. Extend tests for new entries, legacy entries, status rewrites, duplicate text with distinct IDs, multi-source findings, delimiter characters inside prose, and fenced examples.
+Update `alignment.md`, `resolve-flow.mjs`, both review skills, walkthrough/plan examples, and `check-consensus.mjs`. `check-consensus.mjs --json` returns `{ settled, unsettled }`; every unsettled item contains `key`, nullable `id`, `severity`, `sourceKeys`, `status`, `lineNumber`, and `originalLine`. For enriched entries, `key === id`; legacy entries receive an invocation-local key such as `legacy:R2:L417`. Do not parse arbitrary defect/resolution prose back into fields; the fixed prefix is machine state and the original line is the durable human claim. Extend tests for new entries, legacy entries, status rewrites, duplicate text with distinct IDs, multi-source findings, delimiter characters inside prose, and fenced examples.
 
-`check-consensus.mjs` remains read-only and preserves exit codes `0` settled, `1` unsettled, and `2` invalid input in JSON mode. For a legacy unsettled entry without ID/source/severity, JSON output returns `id: null`, `sourceIds` derived coarsely from the round heading when possible, `severity: "ACTIONABLE"`, and its line number. Before dispatching a rebuttal, the orchestrator rewrites those live legacy entries with durable IDs and sources, then reruns `--json`. When exact source recovery is impossible, target affinity falls back to every reviewer named by that round rather than guessing one.
+`check-consensus.mjs` remains read-only and preserves exit codes `0` settled, `1` unsettled, and `2` invalid input in JSON mode. For a legacy unsettled entry without ID/source/severity, JSON output returns an invocation-local `key`, `id: null`, `sourceKeys` derived coarsely from the round heading when possible, `severity: "ACTIONABLE"`, and its line number. Do not make the host rewrite legacy state on the fail-closed path. Legacy rebuttals use that temporary key and conservative round-wide affinity for the invocation; only newly appended entries receive durable IDs.
 
 Regenerate all affected skill hashes.
 
-### P1: Mechanize preparation inside each review skill
+### P5: Mechanize preparation inside each review skill
 
 Create two cohesive entry points:
 
@@ -223,47 +329,46 @@ Each script should:
 4. record or compare freshness metadata;
 5. derive first-review, re-review, or rebuttal scope;
 6. fill its own compact prompt;
-7. return a preparation manifest containing artifact paths, prompt path, scope, resolved dispatch arguments, budget/headroom, and cleanup paths.
+7. return a preparation manifest containing artifact paths, prompt path, scope, resolved dispatch arguments, advisory review target, and cleanup paths.
 
 The preparation script does not wait for delegate reports. The host uses its manifest to launch one `dispatch` command in the background and yields, preserving the current lifecycle. On completion, report fields remain untrusted and are sanitized under `alignment.md` § Delegate Text Sanitization before logging or relay.
 
-Each new script must call `verifySkillIntegrity` before processing input, target the suite-wide Node.js 22+ runtime baseline, and have direct CLI/unit tests. `npm run hashes` must include it in the owning review skill's manifest; verify `.husky/pre-commit` still matches the new `scripts/` paths.
+Each new script must call `verifySkillIntegrity` before processing input, target the suite-wide Node.js 22+ runtime baseline, and have direct CLI/unit tests. `npm run hashes` must include it in the owning review skill's manifest. The existing `.husky/pre-commit` hashed-skill `scripts/` pattern already covers these locations; no hook change is required unless that pattern changes.
 
 Expected effect:
 
-- reduce each review `SKILL.md` to approximately 350-500 words;
+- reduce each review `SKILL.md` to approximately 2,800-4,000 characters;
 - remove most of `alignment.md`'s resolution, prompt-filling, target-mapping, and lifecycle sections;
 - make standalone and orchestrated modes data flags in their owning review skill rather than separate prose workflows;
 - enable direct integration tests for every branch now interpreted by the model.
 
-### P1: Make `dispatch` own fan-out
+### P4: Make `dispatch` own fan-out with one internal batch interface
 
-Support selectors directly:
+Do not add a second user-facing selector grammar beside the skill's existing `(<pins>)` syntax. Add only an internal/direct CLI transport:
 
 ```text
-dispatch --targets claude,copilot
-dispatch --targets 2
-dispatch --targets all
-dispatch --targets-file /tmp/resolved-review-targets.json
+dispatch --batch-file /tmp/resolved-review-targets.json
 ```
 
-`--targets-file` accepts:
+`--batch-file` accepts:
 
 ```json
 {
   "targets": [
     {
-      "sourceId": "code-review:claude:0",
+      "roundId": "code-review:R1",
+      "candidateId": "code-review:claude:0",
       "platform": "claude",
       "model": "claude-opus-5",
-      "effort": "low"
+      "effort": "low",
+      "metricsFile": "/absolute/git-common-dir/dispatch-skills/runs/<run-id>/code-review-R1-S1.json"
     }
   ],
   "reserves": []
 }
 ```
 
-Require a 64 KiB maximum file, at least one target, unique `sourceId` values, and configured platform membership. Each entry uses either `candidateIndex` or explicit `model`/`effort`, never both. Reject unknown fields, malformed values, duplicate target tuples, and combinations of `--targets-file` with `--provider`, `--candidate-index`, `--model`, `--effort`, or `--targets`. Parse data and spawn commands through argument arrays; never evaluate shell text. Keep the target file in OS temp and remove it after the wave. Preserve input order in the result envelope and echo `sourceId` on every success, failure, fallback, and substitution record.
+Require a 64 KiB maximum file, at least one target, unique source keys, configured platform membership, and metrics paths within the initialized run directory. Each entry uses either `candidateIndex` or explicit `model`/`effort`, never both. Reject unknown fields, malformed values, duplicate target tuples, and combinations of `--batch-file` with `--provider`, `--candidate-index`, `--model`, or `--effort`. Parse data and spawn commands through argument arrays; never evaluate shell text. Keep the batch file in OS temp and remove it after the wave. Preserve input order in the result envelope and echo attempted/effective source keys on every success, failure, fallback, and substitution record.
 
 Return one machine-readable envelope:
 
@@ -271,11 +376,15 @@ Return one machine-readable envelope:
 {
   "targets": [
     {
+      "roundId": "code-review:R1",
+      "candidateId": "code-review:claude:0",
+      "sourceKey": "code-review:R1:claude:0",
       "platform": "claude",
       "candidateIndex": 0,
       "status": "ok",
       "session": "claude:...",
-      "report": "..."
+      "report": "...",
+      "substitutesFor": null
     }
   ],
   "failures": [],
@@ -283,20 +392,22 @@ Return one machine-readable envelope:
 }
 ```
 
-For standalone calls, `--targets <selector>` resolves candidates only from `dispatch`'s own effective config. For orchestrated calls, `--targets-file` receives a fully resolved JSON object containing ordered `targets` and `reserves` from `resolve-flow.mjs`; `dispatch` executes that data but never reads `implement-dispatch` configuration or decides review policy. Same-platform fallback and supplied-reserve behavior remain the shared alignment contract.
+For orchestrated calls, `--batch-file` receives a fully resolved JSON object containing ordered `targets` and `reserves` from `resolve-flow.mjs`; `dispatch` executes that data but never reads `implement-dispatch` configuration or decides review policy. Standalone multi-review selection remains the owning skill's concern unless measured demand justifies a public batch selector. Same-platform fallback and supplied-reserve behavior remain the shared alignment contract.
 
-This eliminates host-managed process fan-out while preserving the dependency invariant. The existing single-target behavior remains compatible. Add both flags to `--help`, `SKILL.md`, and `README.md` together so flag-parity tests remain authoritative.
+This eliminates host-managed process fan-out while preserving the dependency invariant and adding one flag rather than two. Existing single-target behavior remains compatible. Add the flag to `--help`, `SKILL.md`, and `README.md` together so flag-parity tests remain authoritative.
 
-### P0: Make consensus rebuttals claim-specific
+### P2: Make consensus rebuttals claim-specific
 
 Preserve the existing finality model:
 
-- `[Rejected - pending confirmation]` means the orchestrator's counter-reading is itself an unverified claim.
-- The citing reviewer must accept that counter-evidence or rebut it.
+- `[Rejected — pending confirmation]` means the orchestrator's counter-reading is itself an unverified claim.
+- The citing reviewer, or a recorded replacement when that source is unreachable, must accept that counter-evidence or rebut it.
 - `[Disputed]` remains live when evidence cannot settle intent or a deliberate trade-off.
 - `check-consensus.mjs`, target affinity, round caps, and user tie-breaking remain workflow gates.
 
-Change the re-review payload. Send packets only for statuses that `check-consensus.mjs` treats as unsettled: `[Rejected - pending confirmation]` and `[Disputed]`. A downgrade of a delegate-reported MUST/SHOULD remains represented by `[Rejected - pending confirmation]` until confirmed.
+Change the re-review payload. Send packets only for statuses that `check-consensus.mjs` treats as unsettled: `[Rejected — pending confirmation]` and `[Disputed]`. A downgrade of a delegate-reported MUST/SHOULD remains represented by `[Rejected — pending confirmation]` until confirmed.
+
+Attach the bounded re-review view rather than the growing canonical artifact. The view carries the complete semantic body, the immediately preceding round, all live findings, and summaries of older settled rounds. It is a projection only: adjudication always updates the canonical artifact.
 
 ```text
 Finding ID and original severity
@@ -311,37 +422,39 @@ Do not replay clean axes, closed findings, unrelated artifact sections, or the f
 
 At the configured cap, present the surviving claim, reviewer rebuttal, and orchestrator counter-evidence to the user. The user's ruling remains final. This retains the safeguard against orchestrator hallucination while reducing the cost of each debate turn.
 
-Build packets from `check-consensus.mjs --json`; do not rediscover IDs or severity from prose. A rebuttal reviewer returns `CONFIRM`, `REBUT` with a cited locus, or `INTENT-DISPUTE` for each supplied ID.
+Build packets from `check-consensus.mjs --json`; do not rediscover keys or severity from prose. A rebuttal reviewer returns `CONFIRM`, `REBUT` with a cited locus, or `INTENT-DISPUTE` for each supplied finding key.
 
 Add `references/rebuttal-template.md` to each review skill. Extend the orchestrated handover with:
 
 ```text
 Review Mode: rebuttal
 Finding Packet Path: <OS-temp JSON path>
-Review Scope: the supplied finding IDs only
-Tool Turn Budget: soft=<n>; headroom=<n>; hard=<n>
+Review Scope: the supplied finding keys only
+Tool Turn Budget: <advisory target>
 ```
 
-Plan rebuttal template variables are `Plan Path`, `Finding Packet Path`, `Review Scope`, and `Tool Turn Budget`. Code rebuttal variables are `Walkthrough Path`, `Plan Path`, `Finding Packet Path`, `Review Scope`, and `Tool Turn Budget`. The JSON packet contains each finding's ID, severity, source IDs, original resolution-log line, orchestrator verdict, cited counter-evidence, and relevant changed excerpts. Attach the packet from OS temp and remove it with the filled prompt after the dispatch settles.
+Plan rebuttal template variables are `Plan Path`, `Finding Packet Path`, `Review Scope`, and `Tool Turn Budget`. Code rebuttal variables are `Walkthrough Path`, `Plan Path`, `Finding Packet Path`, `Review Scope`, and `Tool Turn Budget`. The JSON packet contains each finding's key, nullable durable ID, severity, source keys, original resolution-log line, orchestrator verdict, cited counter-evidence, and relevant changed excerpts. Attach the packet from OS temp and remove it with the filled prompt after the dispatch settles.
 
-Return one JSON object per supplied ID:
+Return exactly one JSON object per supplied key:
 
 ```json
-{"type":"rebuttal","id":"R1-F003","verdict":"CONFIRM|REBUT|INTENT-DISPUTE","evidence":"<cited explanation>"}
+{"type":"rebuttal","key":"R1-F003","verdict":"CONFIRM|REBUT|INTENT-DISPUTE","evidence":"<cited explanation>"}
 ```
 
-Precede replies with the same budget summary record defined for compact full reviews below. Reject missing/duplicate/unknown IDs and malformed verdicts. Group live findings by `sourceId`, so each citing reviewer receives only its own claims.
+Do not prepend the full-review `CLEAN|FINDINGS` summary: neither status describes a rebuttal packet. Completeness is exact key-set equality between packet and response. Reject missing, duplicate, or unknown keys and malformed verdicts. Group live findings by source key, so each citing reviewer receives only its own claims.
 
-For a deduplicated finding with multiple sources, `[Rejected - pending confirmation]` closes only after every reachable citing source returns `CONFIRM`. Any `REBUT` keeps it live; any `INTENT-DISPUTE` converts it to `[Disputed]`. A source that cannot be resumed or redispatched follows the existing fallback path; if no reviewer can test the counter-evidence before the cap, present the missing confirmation explicitly to the user rather than treating silence as agreement.
+For a deduplicated finding with multiple sources, `[Rejected — pending confirmation]` closes only after every reachable citing source returns `CONFIRM`. Any `REBUT` keeps it live; any `INTENT-DISPUTE` converts it to `[Disputed]`.
+
+If an original source cannot be resumed or redispatched after an auth/quota exclusion, dispatch the packet to a replacement reviewer holding the same bounded view. Record `substitutesFor`, provider/model, and session in the round source map. A replacement `CONFIRM` may settle that source; a replacement `REBUT` or `INTENT-DISPUTE` keeps it live. Escalate to the user only when no replacement can test the counter-evidence or the replacement review remains unresolved at the cap. This deliberately relaxes "the exact original reviewer must agree" to "an independent reviewer must test the rejection" while preserving adversarial confirmation and avoiding automatic piles of user questions.
 
 ### P1: Shrink delegate output to findings only
 
-After Phase 1 measurements, replace both prompt templates in place; do not add a prompt-variant config flag. Regenerate hashes in the same change. Use a compact JSONL contract:
+After Phase 0 captures a baseline, replace both prompt templates in place; do not add a prompt-variant config flag. Regenerate hashes in the same change. Use a compact JSONL contract:
 
 ```text
 Inspect only the supplied scope and its direct contracts.
 Return JSON Lines. First emit exactly one summary:
-{"type":"summary","status":"CLEAN|FINDINGS","headroomUsed":0}
+{"type":"summary","status":"CLEAN|FINDINGS"}
 
 Then, only when status is FINDINGS, emit one object per finding:
 {"type":"finding","severity":"MUST|SHOULD|CONSIDER","locus":"<file/section>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}
@@ -350,17 +463,21 @@ Every finding requires a verifiable locus. Omit praise, clean-axis summaries,
 verdicts, repeated next steps, and findings outside scope.
 ```
 
-When headroom is activated, the summary also requires `headroomLocus`, `headroomEvidence`, and `headroomChecks`; the normal run does not emit a separate budget block. JSON escaping is authoritative; no custom delimiter escaping is required. The host validates record order and required fields, assigns a finding ID, and treats malformed or uncited lines as unverifiable claims rather than guessing their structure.
+The prompt carries one advisory review target: `8 + 2 x units under review`. It tells the reviewer to stop early when grounded, and to exceed the target only for a named in-scope risk supported by evidence. If the provider exposes actual tool-use metadata, the runner records it; otherwise no self-reported count is required. JSON escaping is authoritative; no custom delimiter escaping is required.
 
-Keep `fill-template.mjs`'s declared-variable mechanism. The plan template retains `Plan Path`, `Requirement`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`; the code template retains `Task Summary`, `Walkthrough Path`, `Plan Path`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`. Encode the three budget values in the existing variable as `soft=<n>; headroom=<n>; hard=<n>` rather than adding three more variables.
+Add `scripts/parse-report.mjs` to each review skill in this phase. Each parser reads line-wise through stdin/file transport. Ignore non-JSON provider chrome and count it in `ignoredLineCount`; any line whose first non-whitespace character is `{` must parse and satisfy the schema. Validate exactly one leading summary object among parsed records, status consistency, severity, kind-specific tags, required strings, duplicate records, and plan/code locus form. Exit `0` returns a valid normalized report, exit `1` identifies an unusable delegate report with field-level diagnostics, and exit `2` is invocation/I/O failure. The host never repairs guessed JSON. Exit `1` produces no adjudication/log entries and follows the existing empty-report reserve/fallback path while recording `invalid-report`; exit `2` halts. Phase 1 continues writing the existing resolution-log grammar and does not assign durable finding IDs; Phase 2 adds enriched log state.
+
+Keep `fill-template.mjs`'s declared-variable mechanism. The plan template retains `Plan Path`, `Requirement`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`; the code template retains `Task Summary`, `Walkthrough Path`, `Plan Path`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`. The existing budget variable carries the single advisory target, so no CLI fields or extra template variables are added.
 
 Update `tests/integration/review-skill-parity.test.mjs` in the same change:
 
 - replace the pipe-grammar assertion with JSONL field/schema parity;
 - replace required report-skeleton headings with summary/finding JSONL schema assertions;
 - retain and adapt re-review-scope and blast-radius assertions;
-- update the budget assertion for the structured `Tool Turn Budget` value;
+- retain the budget assertion for the single numeric `Tool Turn Budget` target;
 - retain the exact declared-variable arrays above and `fill-template.mjs`'s variable-block/integrity coverage.
+
+Add direct parser tests for clean output, multiple findings, leading/interleaved provider chrome, malformed JSON-looking lines, invalid tags/severity, duplicate records, mismatched summary status, and missing/invalid loci. Include both parsers in their skill hash manifests.
 
 Keep concise phase-specific checks:
 
@@ -371,48 +488,48 @@ The existing six/seven-axis taxonomies can remain in a disclosed review rubric f
 
 Target:
 
-- plan prompt: 928 words to <=350;
-- code prompt: 1,032 words to <=400;
+- plan prompt: 6,854 characters to <=2,800;
+- code prompt: 7,169 characters to <=3,200;
 - clean output: exactly one compact summary JSON object;
 - remove `Axis Coverage`, duplicate `Verdict`, and duplicate next-step sections.
 
-### P1: Simplify invocation grammar
+### P0: Clarify invocation without growing the public CLI
 
-Shape-based natural-language parsing is ambiguous. Preserve the short default command, but add explicit options:
-
-```text
-/dispatch-plan-review [plan.md] [--requirement "..."] [--focus "..."]
-/dispatch-code-review [walkthrough.md] [--summary "..."] [--focus "..."] [--range "..."]
-```
+Do not add `--requirement`, `--summary`, `--focus`, or `--range` to the slash-skill grammar. Their descriptions would expand always-loaded skill/help surfaces and duplicate meanings already available in the request handover.
 
 Rules:
 
-- existing `(<pins>)` syntax remains the only user-facing reviewer selector; review skills translate it to internal target data, and `implement-dispatch (<pins>)` continues to pass pins into `resolve-flow.mjs`;
-- an existing `.md` token can still be recognized as the artifact for convenience;
-- all other trailing prose is the focus by default;
-- authoring from a requirement requires `--requirement`;
-- code intent requires `--summary`;
-- during one compatibility release, a clean base-branch tree retains the implicit `HEAD~1` review but emits `Implicit HEAD~1 review is deprecated; pass --range HEAD~1..HEAD`; the following release returns "No reviewable changes" unless `--range` is supplied.
+- existing `(<pins>)` syntax remains the only user-facing reviewer selector;
+- an existing `.md` token remains the artifact path;
+- other trailing prose remains review focus unless the skill cannot distinguish an authoring request from a review request, in which case it asks one focused question;
+- internal preparation manifests may carry explicit `requirement`, `summary`, `focus`, and `range` fields without exposing four new flags;
+- Phase 0 adds a code-review preflight before dispatch: inspect working/staged/untracked changes and the branch merge-base; when the default scope is empty, return `No reviewable changes` without launching a delegate;
+- when the user explicitly names a commit/range before Phase 5, the host resolves and validates it, then carries the exact range in the existing `Review Scope` variable; Phase 5 moves that interpretation into the preparation manifest;
+- the delegate prompt obeys an explicit range in `Review Scope` and never silently substitutes `HEAD~1`.
 
-This trades a little syntax for predictable behavior and eliminates stale-artifact questions caused by misclassified prose.
+This fixes the correctness bug without creating a second mini-CLI inside each skill.
 
-### P1: Store machine-readable artifact metadata
+### P5: Store machine-readable artifact metadata
 
-Add compact frontmatter to the existing plan/walkthrough artifact:
+Add compact JSON-in-YAML-frontmatter to the existing plan/walkthrough artifact. JSON is valid YAML 1.2, but the implementation deliberately parses only the JSON object with `JSON.parse`; it does not introduce or hand-roll a general YAML parser:
 
 ```yaml
-dispatch:
-  kind: code
-  slug: auth-v2
-  baseSha: abc123
-  headSha: def456
-  worktreeHash: sha256:...
-  contentHash: sha256:...
-  sectionHashes:
-    Proposed Changes: sha256:...
-  pathHashes:
-    src/auth.ts: sha256:...
-  reviewedAt: 2026-09-16T10:00:00Z
+---
+{
+  "dispatch": {
+    "schemaVersion": 1,
+    "kind": "code",
+    "slug": "auth-v2",
+    "baseSha": "abc123",
+    "headSha": "def456",
+    "worktreeHash": "sha256:...",
+    "contentHash": "sha256:...",
+    "sectionHashes": {"Proposed Changes": "sha256:..."},
+    "pathHashes": {"src/auth.ts": "sha256:..."},
+    "reviewedAt": "2026-09-16T10:00:00Z"
+  }
+}
+---
 ```
 
 Use it to:
@@ -426,9 +543,11 @@ Frontmatter is the only persistent metadata location; sidecars would violate the
 
 Legacy artifacts without metadata remain supported: run the existing semantic stale guard and `### Round` counting, then add frontmatter after the review succeeds. Missing metadata alone never fails closed. Once metadata exists, it is authoritative; retain the prose guard only as a human-readable cross-check.
 
-Consensus status rewrites and appended entries under `## Review Findings & Resolutions` are excluded from the semantic body hash. Accepted edits to substantive plan sections intentionally change the hash and therefore trigger freshness handling.
+Consensus status rewrites and appended entries under `## Review Findings & Resolutions` are excluded from the semantic body hash. Accepted edits to substantive plan sections intentionally change the hash and therefore become visible to the next invocation's freshness check.
 
-### P1: Make `implement-dispatch` policy-only
+Freshness is an invocation-boundary guard, not an intra-run round guard. Snapshot metadata once when a review invocation begins; accepted edits during that loop define the next re-review scope and do not trigger a stale-artifact failure. Refresh persistent hashes only after the invocation settles. A later invocation compares against that settled checkpoint.
+
+### P3: Make `implement-dispatch` policy-only
 
 Keep the host-visible workflow to six steps:
 
@@ -458,7 +577,7 @@ Preserve its existing kebab-case output keys and extend them only compatibly:
 
 The skill can collapse duplicated prose around initial/final resolution, but it still classifies the initial plan, calls the resolver with that level, reclassifies after accepted plan changes, and re-resolves immediately before approval only when the level or exclusions changed. Update `resolve-flow-cli.test.mjs` and `resolve-flow.test.mjs` for any additive flags or fields without renaming the existing interface.
 
-### P1: Make configuration inspectable without changing its semantics
+### P4: Make configuration inspectable without changing its semantics
 
 Keep both matrices and their current responsibilities:
 
@@ -471,68 +590,30 @@ Whole-file replacement is clearer and less error-prone for provider policy becau
 1. a shorter annotated example for one provider, one candidate array, and one level override;
 2. schema validation that names the exact phase/platform/level path;
 3. `resolve-flow.mjs --show-effective`, reporting the selected config path, requested/effective level, inherited level key, candidate order, model, effort, exclusions, reserves, and cross-config membership;
-4. `dispatch.mjs --show-effective`, reporting standalone membership and candidate order;
-5. documentation that explicitly explains why standalone defaults may differ from implementation-review policy.
+4. `dispatch --doctor`, which composes validation, effective standalone configuration, and provider health rather than adding a separate `dispatch --show-effective`; keep `--validate-only`, `--list-platforms`, and `--list-targets` as stable narrow/machine-readable interfaces;
+5. documentation that explicitly explains why standalone defaults may differ from implementation-review policy, including a three-line inheritance example for requests below, at, and above the lowest defined level.
+
+For example, with keys `{ medium: A, max: B }`: requesting `low` selects `medium` because no lower key exists; requesting `high` selects `medium`; requesting `max` selects `max`. Replace the current contradictory "only ever rounded down" sentence with this exact-match, nearest-lower, otherwise-lowest-higher rule.
 
 Do not add partial merging or move phase/level model selection into `dispatch`.
 
-### P1: Keep exact budgets with self-authorized headroom
+### P0: Keep one advisory review target
 
-Retain the current formula and adaptive allocation:
-
-```text
-initial tool turns = 8 + 2 x units under review
-```
-
-Move calculation into `resolve-flow.mjs` or the owning review preparation script so the host passes resolved numbers rather than performing arithmetic. Give a full reviewer a soft budget and pre-authorized headroom:
+Retain the current formula as a planning target:
 
 ```text
-soft budget = 8 + 2 x units under review
-headroom = min(ceil(soft budget / 2), 8)
-hard ceiling = soft budget + headroom
+review target = 8 + 2 x units under review
 ```
 
-The reviewer may spend the soft budget anywhere within the declared blast radius and may stop early. When concrete in-scope evidence reveals an unresolved risk near the soft limit, it may activate headroom unilaterally during the same dispatch. It must spend headroom only on that named risk. During Phase 1's existing report format, append:
+The reviewer may allocate the target anywhere within the declared blast radius and stop early. Concrete in-scope evidence may justify exceeding it during the same dispatch; the reviewer names that risk and continues without a host round-trip. The number is guidance, not a security boundary or acceptance gate.
 
-```text
-BUDGET_HEADROOM_USED
-Locus: <file/section>
-Evidence at activation: <specific evidence>
-Checks completed with headroom: <specific checks>
-Headroom turns used: <n>
-```
+The owning preparation layer eventually computes the target and fills the existing `<Tool Turn Budget>` variable. Until then, preserve the current self-calculation. Do not add `--budget-kind`, `--budget-units`, `headroom`, or `hard` fields to `resolve-flow.mjs`.
 
-After Phase 2, carry the same fields in the compact JSONL summary record. No host round-trip or restarted dispatch is required. The hard ceiling remains fixed before launch.
+Record provider-reported tool use when available. If it is unavailable, record `toolTurns: null`; never infer an exact count from prose. Wall-clock timeout and output caps are the enforceable bounds.
 
-A consensus rebuttal uses:
+### P3: Split provider reference by trigger
 
-```text
-soft budget = 4 + 2 x live claim IDs
-headroom = min(ceil(soft budget / 2), 4)
-hard ceiling = soft budget + headroom
-```
-
-The one additional post-ruling wave allowed by the current ruling-reset contract receives a fresh rebuttal soft budget and headroom. Record soft budget, headroom available, activation, reason, and turns used in diagnostics. Keep wall-clock timeout and output caps as separate runaway controls.
-
-For the first implementation phase, extend `resolve-flow.mjs` additively with `--budget-kind full|rebuttal` and `--budget-units <n>`. Keep `--platform` required and preserve all existing output keys; when both budget flags are present, add:
-
-```json
-{
-  "review-budget": {
-    "kind": "full",
-    "units": 3,
-    "soft": 14,
-    "headroom": 7,
-    "hard": 21
-  }
-}
-```
-
-The caller still supplies the deterministic unit count; `resolve-flow.mjs` owns the arithmetic and validation. Standalone review keeps the prompt's self-calculated default until its Phase 4 preparation script can derive units and compute the same values mechanically. The caller formats the resolved object into the existing `<Tool Turn Budget>` variable.
-
-### P2: Split provider reference by trigger
-
-Defer this split until Phase 1 measurements show that provider-reference loading is a material cost on actual failure paths.
+Defer this split until Phase 0 measurements show that provider-reference loading is a material cost on actual failure paths.
 
 Keep `providers.md` as a short index and disclose:
 
@@ -544,19 +625,18 @@ Keep `providers.md` as a short index and disclose:
 
 Normal `dispatch` runs need none of them. A provider-specific failure loads only its provider page plus the fallback contract. Keep shared credential stripping, read-only guarantees, and terminal error classes in the main runner contract.
 
-### P2: Remove environment caches from skill instructions
+### P3: Remove environment caches from skill instructions
 
-Delete or replace with pointers:
+Delete or replace in Phase 3:
 
 - repetitive explanations surrounding the runner flag tables; keep the complete tables in `dispatch/SKILL.md` and `README.md` because `flag-parity.test.mjs` requires both to mirror `--help`;
-- detailed config schema prose -> `config.default.jsonc` plus the owning CLI's `--show-effective`;
-- exact resolver output shape -> `resolve-artifact-paths.mjs --help` or `--json-schema`;
-- prompt transport examples for POSIX and PowerShell -> hidden implementation inside each review skill's preparation script;
 - maintainer-facing integrity and test details -> maintainer notes only.
 
-`SKILL.md` should contain actions, completion criteria, and the concise flag reference required by parity tests.
+Retain prompt transport, artifact resolution, target mapping, and lifecycle mechanics until Phase 5's preparation scripts replace them. Removing those instructions earlier would leave the host without an executable path. Phase 4 may replace detailed config schema prose with `config.default.jsonc`, `resolve-flow.mjs --show-effective`, and `dispatch --doctor` only after those commands exist.
 
-### P2: Add one user-facing diagnostic command
+After the Phase 5 cutover, `SKILL.md` should contain actions, completion criteria, and the concise flag reference required by parity tests.
+
+### P4: Add one user-facing diagnostic command
 
 Provide:
 
@@ -574,6 +654,8 @@ It should report:
 - suggested corrective command.
 
 `dispatch --doctor` remains strictly standalone/provider-scoped and never reads downstream skill configuration. Cross-config review membership and implementation-flow mismatches belong only to `resolve-flow.mjs --show-effective`. This preserves `dispatch -> (nothing)` and the dependency-direction test. Add `--doctor` to CLI help and both flag tables in the same change.
+
+Do not remove or silently change `--validate-only`, `--list-platforms`, or `--list-targets`. `--doctor` may reuse their resolution logic, but its human-oriented report supersets rather than duplicates their public purpose: unlike current `--validate-only`, it must name the selected config path; unlike the list flags, it adds reachability and corrective diagnostics.
 
 Every diagnosed failure should emit at least one concrete corrective command when remediation is known. This is the user-facing acceptance criterion for "more user friendly."
 
@@ -599,7 +681,7 @@ Move out:
 - detailed config semantics;
 - provider discovery and recovery.
 
-Target size: **450-600 words**.
+Target size: **3,500-4,500 characters**.
 
 ### `dispatch-plan-review`
 
@@ -620,7 +702,7 @@ Move to `dispatch-plan-review/scripts/prepare-review.mjs`:
 - template filling;
 - target mapping and cleanup.
 
-Target size: **350-450 words**.
+Target size: **2,800-3,600 characters**.
 
 ### `dispatch-code-review`
 
@@ -641,7 +723,7 @@ Move to `dispatch-code-review/scripts/prepare-review.mjs`:
 - baseline walkthrough generation;
 - recheck scope and prompt filling.
 
-Target size: **400-550 words**.
+Target size: **3,200-4,400 characters**.
 
 ### `implement-dispatch`
 
@@ -665,7 +747,7 @@ Remove:
 
 Keep the per-wave `check-consensus.mjs` gate and user tie-break because they protect against both reviewer and orchestrator error.
 
-Target size: **650-850 words**.
+Target size: **5,200-6,800 characters**.
 
 ## User experience proposal
 
@@ -674,7 +756,7 @@ Target size: **650-850 words**.
 ```text
 /dispatch Trace the cache invalidation path
 /dispatch-plan-review .scratch/plan/cache-v2.md
-/dispatch-code-review --focus "authorization and tenant isolation"
+/dispatch-code-review Focus on authorization and tenant isolation
 /implement-dispatch Add CSV export to the transactions table
 ```
 
@@ -682,96 +764,115 @@ Target size: **650-850 words**.
 
 ```text
 /dispatch (2) Trace the cache invalidation path
-/dispatch-plan-review --requirement "Replace Redis pubsub" --focus "rollback"
-/dispatch-code-review --range origin/main...HEAD --focus "migration compatibility"
+/dispatch-plan-review .scratch/plan/redis-pubsub.md Focus on rollback
+/dispatch-code-review Review origin/main...HEAD for migration compatibility
 /implement-dispatch high (claude,copilot): Refactor webhook idempotency
 ```
 
 ### Predictable outcomes
 
-- no current diff -> during the compatibility release, warn with the exact implicit `HEAD~1` range; afterward, "No reviewable changes; pass `--range` to review committed work";
-- missing plan with no requirement -> ask for a path or `--requirement`;
+- before wave 1 -> state level, plan-review/code-review on/off, reviewer platforms/models, rounds, and consensus; do not add a confirmation gate;
+- no current diff -> "No reviewable changes"; review committed work only when the request explicitly names a commit/range;
+- missing plan with ambiguous authoring intent -> ask one focused question;
 - stale metadata -> state the mismatched SHA/hash and offer reuse or new artifact;
 - provider failure -> one normalized diagnostic with attempted target and corrective action;
 - clean review -> `CLEAN`, recorded without verbose axis boilerplate;
-- genuine intent dispute -> one focused user decision.
+- genuine intent dispute -> one focused user decision;
+- successful cleanup -> warn that the plan/walkthrough are moving to OS temp and may be deleted by the OS, then report the exact destination.
 
 ## Migration plan
 
-### Phase 1: Cut consensus-wave context and mechanize budgets
+### Phase 0: Make optimization observable and fix unsafe defaults
 
-1. Add finding IDs and severity to the shared resolution-log grammar.
-2. Add stable `sourceId` values to `resolve-flow.mjs` targets/reserves and preserve them through fallback diagnostics.
-3. Extend `check-consensus.mjs` with backward-compatible parsing and `--json`.
-4. Add review-owned claim-specific rebuttal templates for `[Rejected - pending confirmation]` and `[Disputed]` IDs, plus `Review Mode`/`Finding Packet Path` handover fields.
-5. Add the optional `resolve-flow.mjs` budget flags/output and pass `soft/headroom/hard` through the existing `Tool Turn Budget` variable.
-6. Update `implement-dispatch` and both review skills to build, route, validate, and clean up per-source rebuttal packets while preserving reviewer confirmation, round caps, and user tie-breaking.
-7. Measure rebuttal convergence, rebuttal payload size, and tool-turn use.
+**Phase 0A — instrument and baseline**
 
-Phase 1 touches `alignment.md`, `implement-dispatch/SKILL.md`, both review `SKILL.md` files, both new `references/rebuttal-template.md` files, `resolve-flow.mjs`, `check-consensus.mjs`, their targeted tests, parity tests, and manifests. Deliver with:
+1. Add internal `dispatch --metrics-file`, have provider results report exact formatted-input/final-output counts, and add `implement-dispatch/scripts/run-record.mjs init|finalize|pin-baseline` under the Git common directory with atomic per-slot files and bounded retention.
+2. Create `tests/fixtures/review-corpus/manifest.json` plus at least eight synthetic repository fixtures spanning plan/code, clean/seeded-defect, full/re-review, and multi-source cases. The benchmark materializes each fixture as a temporary Git repository so code-review commands operate on the fixture rather than this repository. Each oracle lists required MUST findings, scored SHOULD findings, allowed optional findings, and forbidden findings by kind/tag/locus. Add `scripts/benchmark-review-prompts.mjs` with adapters for the current Markdown grammar and candidate JSONL. Keep live provider benchmarking opt-in rather than part of `npm test`; run the same pinned provider/model matrix three times per prompt version and retain normalized scores plus metrics, not raw provider reports.
+3. Capture and freeze the current full-artifact/full-prompt baseline before changing review payloads.
 
-- 100% fixture parity for existing settled/unsettled outcomes, including legacy entries;
-- `check-consensus --json` returning all and only `[Rejected - pending confirmation]`/`[Disputed]` entries with stable IDs, severity, and sources;
-- each rebuttal template at <=250 words before substituted evidence;
-- packet routing tests proving every live ID reaches all and only its citing sources;
-- exact budget/headroom formula and hard-ceiling tests;
-- no increase in review rounds or user escalations across the consensus fixture corpus.
+**Phase 0B — fix correctness and disclose behavior**
 
-Run `npm run hashes` and `npm test`. This is the committed first implementation scope.
+4. State the resolved flow immediately after initial resolution, including level, phase on/off state, reviewer platforms/models, rounds, and consensus. When final re-scope changes it, state the delta before approval. Keep the single implementation approval gate.
+5. Add a pre-dispatch code-review range check. Replace the clean-base `HEAD~1` fallback with `No reviewable changes`; carry an explicitly requested and validated commit/range in `Review Scope`.
+6. Add the pre-relocation ephemerality warning to `implement-dispatch/SKILL.md` and the shared alignment lifecycle contract. Keep `relocate-scratch.mjs` responsible for relocation and its existing exact destination output.
 
-### Phase 2: Compact the full-review prompts
+**Phase 0C — bound repeated artifact context**
 
-Proceed only after Phase 1 measurements establish a useful baseline.
+7. Extract the shared resolution-log scanner and add `implement-dispatch/scripts/build-review-view.mjs`; extend the shared handover with optional `Review View Path`. Keep the semantic body, the immediately preceding round, all live findings, and fixed-size summaries of older settled rounds; attach/fill from the view while preserving the canonical artifact as the only adjudication/edit target.
+8. Measure the projection against the frozen Phase 0A baseline, then make the projected path the Phase 1 baseline.
+9. Add instruction drift gates using normalized Unicode-code-point counts plus `ceil(characters / 4)`.
+
+Deliver with metrics-path boundary, atomic-write, same-provider fallback attempts, all-terminal-outcome, redaction, aggregation, expected-count mismatch, retention, baseline-pin replacement/exemption, and stale-incomplete cleanup tests; deterministic review-view fixtures including fences and malformed sections; clean-tree/explicit-range behavior coverage; low-level flow-disclosure coverage; lifecycle-message coverage; and a recorded baseline for the versioned corpus. Add `--metrics-file` to help/SKILL/README parity and regenerate all affected hashes. Run `npm run hashes` and `npm test`. Record Phase 0B's instruction-character increase as an intentional, measured exception to the non-increasing ratchet: flow disclosure, range safety, and the lifecycle warning are correctness/UX additions whose delta becomes part of the Phase 0C baseline.
+
+This is the committed first implementation scope, but land 0A, 0B, and 0C as independently revertible changes in that order. It creates the baseline required by every later gate without changing finding finality, consensus semantics, or user-facing skill invocation; the only CLI addition is the internal metrics transport.
+
+### Phase 1: Compact the guaranteed full-review path
 
 1. Replace both full-review prompt templates in place with the compact JSONL contract.
-2. Preserve the declared-variable sets and structured `Tool Turn Budget` transport.
-3. Update every affected review-skill-parity assertion listed in P0.
-4. Compare the compact prompts with the Phase 1 prompts on a fixed corpus containing clean reviews, accepted defects, refuted defects, multi-source duplicates, and scoped re-reviews.
-5. Regenerate hashes and run targeted parity/fill-template tests plus `npm test`.
+2. Preserve declared variables and the single advisory `Tool Turn Budget` target.
+3. Delete expanded axis sub-bullets from the default prompts; keep concise tags and move the detailed taxonomy to disclosed rubric tables in each review skill's README for focused/high-risk use.
+4. Remove `Axis Coverage`, duplicate verdict prose, `Actionable Next Steps`, and equivalent clean-output scaffolding.
+5. Add one strict report parser to each review skill and use its normalized output for adjudication; continue writing the legacy resolution-log grammar in this phase.
+6. Compare baseline and compact prompts on the versioned Phase 0 corpus with the same provider/model/repeat matrix.
+7. Update every axis/count dependency in `review-skill-parity.test.mjs`: prompt-to-README axis parity, literal axis count wording/headings, required clean/finding skeleton sections, and any review-skill frontmatter that declares an axis count. Regenerate hashes and run parser, parity, and fill-template tests plus `npm test`.
 
-Advance only when both prompts meet their word targets, retain every baseline accepted finding on the corpus, introduce no additional accepted false positive after host adjudication, and preserve exact scope/finality behavior. Otherwise retain the Phase 1 full-review prompts.
+Advance when both prompts meet their estimated-text-token targets; every required MUST appears in at least two of three candidate runs and no less often than baseline; aggregate SHOULD recall is no more than five percentage points below baseline; forbidden-finding, clean-case false-positive, and `invalid-report` frequencies do not increase; and prompt/output characters decline. Otherwise restore the baseline prompts and parsers.
 
-### Phase 3: Centralize fan-out and configuration
+### Phase 2: Compact the minority consensus path
 
-Proceed only when measured host fan-out overhead justifies the new CLI surface.
+1. Add finding IDs and severity to the shared resolution-log grammar.
+2. Assign configured `candidateId` values before exclusions, pair them with `roundId`, and preserve attempted/effective source keys through fallback and substitution.
+3. Extend `check-consensus.mjs` with backward-compatible parsing and `--json`; leave legacy artifacts read-only and use conservative round-wide affinity.
+4. Add review-owned claim-specific rebuttal templates for `[Rejected — pending confirmation]` and `[Disputed]`.
+5. Route each packet to its citing source; when that source is unavailable after auth/quota exclusion, use a recorded replacement reviewer before escalating.
+6. Measure rebuttal input/output characters, convergence, substitutions, rounds, and user escalations against the Phase 0 baseline.
 
-1. Add `dispatch --targets` for standalone selection and `--targets-file` for caller-resolved targets/reserves.
+Deliver with 100% settled/unsettled fixture parity, structured-output tests, source-key stability across exclusion re-resolution, bounded-view packet routing, replacement-confirmation coverage, and no increase in accepted false positives or unresolved findings on the corpus.
+
+### Phase 3: Prune and disclose
+
+1. Prune no-op and duplicated prose that does not carry current executable mechanics.
+2. Add a short glossary for targets, reserves, pins, candidates, levels, rounds, waves, slots, affinity, and the three meanings currently carried by "scope"; rename ambiguous uses where practical.
+3. Replace the contradictory "only ever rounded down" sentence in `skills/implement-dispatch/config.default.jsonc` and add a three-line exact -> nearest lower -> lowest higher inheritance example beside it.
+4. Split provider references by trigger only if Phase 0 measurements show material loaded-context savings.
+5. Retain prompt filling, artifact resolution, target mapping, lifecycle, and full review-skill workflow steps until Phase 5 replaces them.
+
+Deliver with link-integrity, review-skill-parity, and a non-increasing character-budget ratchet. Final size targets do not gate this phase because the still-live mechanics cannot yet be removed.
+
+### Phase 4: Centralize fan-out and configuration
+
+Proceed only when measured host fan-out overhead justifies one new internal CLI surface.
+
+1. Add `dispatch --batch-file` for caller-resolved targets/reserves; do not add public `--targets`.
 2. Preserve phase/level provider matrices and whole-file replacement.
-3. Add `--show-effective` to `dispatch.mjs` and `resolve-flow.mjs`.
+3. Add `resolve-flow.mjs --show-effective`; fold standalone effective-config reporting into `dispatch --doctor`.
 4. Improve schema diagnostics and explain standalone-versus-workflow model policy.
+5. Replace detailed config caches only after both diagnostics exist.
 
-### Phase 4: Mechanize review setup
+### Phase 5: Mechanize review setup and freshness
 
-Proceed only after Phase 3 is stable and measured host setup errors/context cost justify two new runtime scripts.
+Proceed only after Phase 4 is stable and measured host setup errors/context cost justify two new runtime scripts.
 
 1. Add `dispatch-plan-review/scripts/prepare-review.mjs` and golden tests for every plan input branch.
-2. Add `dispatch-code-review/scripts/prepare-review.mjs`, including explicit range and freshness metadata.
+2. Add `dispatch-code-review/scripts/prepare-review.mjs`, including explicit request-manifest range data and freshness metadata.
 3. Accept request data through JSON stdin/file input and return preparation manifests only.
-4. Add top-of-process integrity gates, Node.js 22+ runtime coverage, and legacy artifact fallback coverage.
-5. Share only generic artifact, template, and invocation helpers.
-6. Remove prompt-filling and artifact-resolution mechanics from the two review skills.
-7. Regenerate review-skill hashes and verify `.husky/pre-commit` still matches both new script paths.
+4. Treat freshness as an invocation-boundary checkpoint; accepted intra-run edits define re-review scope rather than firing stale-artifact failures.
+5. Add top-of-process integrity gates, Node.js 22+ runtime coverage, and legacy artifact fallback coverage.
+6. Move bounded-view creation into the owning preparation scripts and delete `implement-dispatch/scripts/build-review-view.mjs` once both modes use the new owner.
+7. Share only generic artifact, template, and invocation helpers; then remove prompt-filling, artifact-resolution, target-mapping, and lifecycle mechanics from the two review skills and `alignment.md`.
+8. Rewrite the four `SKILL.md` files to their final target roles and enforce the final character ceilings.
+9. Regenerate review-skill hashes.
 
-Deliver Phases 3-4 with targeted dispatch/config, dependency-direction, path-convention, flag-parity, review-skill-parity, integrity, and new preparation-script tests, then run `npm test`.
-
-### Phase 5: Prune and disclose
-
-1. Rewrite the four `SKILL.md` files to their target roles.
-2. Reduce `alignment.md` to a short adjudication/logging contract or replace it with focused references.
-3. Split provider references by trigger only if post-Phase-1 measurement shows material normal-path or failure-path savings.
-4. Add `dispatch --doctor`; keep cross-config diagnostics in `resolve-flow.mjs --show-effective`.
-5. Deprecate implicit clean-base `HEAD~1` review for one release with a corrective `--range` command before removing it.
-6. Update all links, anchors, README flag tables, and parity expectations in the same changes.
-
-Deliver with link-integrity, review-skill-parity, flag-parity, dependency-direction, and instruction-budget tests, then run `npm test`.
+Deliver Phases 4-5 with targeted dispatch/config, dependency-direction, path-convention, flag-parity, review-skill-parity, integrity, and preparation-script tests, then run `npm test`.
 
 ## Rollback and compatibility
 
-- Land each phase independently; do not combine Phase 1 with the conditional runtime/CLI work.
-- Phase 1 readers accept both legacy and enriched resolution lines. New lines keep the existing status prefix, so reverting structured output does not hide unsettled findings from the current checker.
-- Phase 2 changes only prompt/template contracts and their parity tests; rollback restores the prior templates and regenerates hashes.
-- Phase 3 flags are additive and mutually exclusive with existing single-target flags; existing invocations remain unchanged.
-- Phase 4 preparation scripts are additive until their `SKILL.md` callers switch over. Rollback restores the prose path without changing artifact contents.
+- Land each phase independently; do not combine Phase 0 or the compact-prompt experiment with conditional fan-out/preparation work.
+- Phase 0 metrics transport and run records are additive and content-free. The bounded view is disposable; the canonical artifact remains unchanged. Each correctness/UX change can roll back independently, and removing `--metrics-file` restores the prior runner interface.
+- Phase 1 changes prompt/template contracts plus their strict parsers and tests; rollback restores the prior templates, removes the parsers, and regenerates hashes.
+- Phase 2 readers accept both legacy and enriched resolution lines. New lines keep the existing status prefix, so reverting structured output does not hide unsettled findings from the current checker.
+- Phase 4's `--batch-file` is additive and mutually exclusive with existing single-target flags; existing invocations remain unchanged.
+- Phase 5 preparation scripts are additive until their `SKILL.md` callers switch over. Rollback restores the prose path without changing artifact contents.
 - Frontmatter adoption is write-on-success and legacy-readable. Removing metadata falls back to the existing semantic guards; no source artifact is made unreadable.
 - Whole-file configuration precedence, provider membership, model/effort defaults, and existing pin grammar do not migrate.
 - Node.js 22+ becomes the explicit skill-runtime prerequisite, matching `package.json`; update repository guidance and every installation/prerequisite surface in the same phase that first relies on it.
@@ -779,10 +880,12 @@ Deliver with link-integrity, review-skill-parity, flag-parity, dependency-direct
 ## Out of scope
 
 - Removing or weakening consensus, reviewer confirmation, round caps, or the user tie-break.
+- Treating an advisory tool-turn target as an enforceable security or cost boundary.
+- Claiming exact provider token usage from the model-neutral character estimate.
 - Merging configuration tiers or eliminating phase/level model and effort controls.
 - Changing provider defaults, credentials, sandbox posture, or read-only boundaries.
 - Adding runtime dependencies beyond Node.js 22+ and its standard library.
-- Implementing all five phases as one change; only Phase 1 is currently committed.
+- Implementing all six phases as one change; only Phase 0 is currently committed.
 
 ## Acceptance metrics
 
@@ -790,39 +893,54 @@ Set measurable completion criteria:
 
 | Metric | Current | Target |
 |---|---:|---:|
-| Four entry-point `SKILL.md` files | 5,366 words | <=2,450 words |
-| Normal implementation instruction path | ~9,719 words | <=4,000 words |
-| Shared alignment loaded on the normal path | 2,045 words | <=450 words |
-| Plan delegate base prompt | 928 words | <=350 words |
-| Code delegate base prompt | 1,032 words | <=400 words |
+| Four entry-point `SKILL.md` files | 39,027 chars / ~9,757 est. tokens | <=20,000 chars / <=5,000 est. tokens |
+| Normal implementation instruction path | 71,170 chars / ~17,793 est. tokens | <=32,000 chars / <=8,000 est. tokens |
+| Shared alignment loaded on the normal path | 15,526 chars / ~3,882 est. tokens | <=3,600 chars / <=900 est. tokens |
+| Plan delegate base prompt | 6,854 chars / ~1,714 est. tokens | <=2,800 chars / <=700 est. tokens |
+| Code delegate base prompt | 7,169 chars / ~1,793 est. tokens | <=3,200 chars / <=800 est. tokens |
+| Base prompt characters | 6,854 plan / 7,169 code | Phase 1 reduces each >=55% |
+| Total formatted input entering providers | Unmeasured | Recorded per target; Phase 1 does not increase any corpus case and reports median savings |
+| Per-wave delegate output entering host context | Unmeasured | Recorded per target; clean report <=160 chars; corpus median reduced >=40% |
+| Terminal target run-record coverage | 0% | 100% for success, failure, timeout, truncation, and fallback outcomes |
+| Re-review attachment growth | Full canonical log resent | Prior round + live findings + <=120-char fixed count/hash summary per older settled round |
 | Consensus rebuttal payload | Broad review prompt/context | One live claim plus cited evidence |
 | Clean delegate output | Verdict + 6/7 axes + sections | One summary JSON object |
 | Phase/level model tuning | Full matrices, hard to inspect | Preserved matrices plus effective-flow output |
 | Config override behavior | Whole-file replacement | Preserved and documented |
 | Model-interpreted setup branches | Multiple across 3 documents | 2 cohesive tested preparation scripts |
-| Tool-turn escalation | Hard formula only | Soft formula plus self-authorized evidence-backed headroom under a fixed ceiling |
-| Clean-tree code-review scope | Implicit `HEAD~1` | Explicit no-diff or `--range` |
+| Tool-turn guidance | Formula described as a budget | One advisory target; actual usage recorded only when observable |
+| Clean-tree code-review scope | Implicit `HEAD~1` | Explicit no-diff unless the request names committed work |
+| Low-level plan review | Off without disclosure | Resolved flow explicitly states `plan review: off` |
 | Failure-path UX | Inconsistent troubleshooting prose | Every known failure emits a corrective command |
+| Successful artifact cleanup | Relocated silently | Ephemerality warning plus exact OS-temp destination |
 
-Make instruction-size targets executable in `tests/integration/instruction-budget.test.mjs` using a documented whitespace-word counter:
+The final entry-point/alignment ceilings gate Phase 5, after executable preparation replaces the prose mechanics. Phases 0-4 use non-increasing ratchets for surfaces they do not intentionally expand; an intentional flag/schema addition records its measured delta in the phase result.
+
+Make instruction-size targets executable in `tests/integration/instruction-budget.test.mjs` using LF-normalized Unicode-code-point counts and `Math.ceil(characters / 4)` estimates:
 
 - entry-point total: the four `skills/*/SKILL.md` files named in the baseline;
 - normal implementation path: those four entry points plus `dispatch/references/alignment.md`, both delegate prompt templates, and both artifact templates;
 - prompt limits: each `references/prompt-template.md` independently.
 
-READMEs and maintainer-only `references/notes.md` are excluded because they are not loaded on the normal agent execution path. Threshold changes require an explicit test update rather than silent drift.
+READMEs and maintainer-only `references/notes.md` are excluded because they are not loaded on the normal agent execution path. The test reports both raw characters and estimates, never calls them exact tokens, and requires an explicit threshold update rather than silent drift.
 
 Quality gates:
 
 - every accepted finding still has a verifiable locus;
-- orchestrator rejections of MUST-FIX/SHOULD-FIX findings remain pending until the citing reviewer confirms the counter-evidence or the user rules;
+- compact reports pass a deterministic kind-specific parser before adjudication;
+- orchestrator rejections of MUST-FIX/SHOULD-FIX findings remain pending until the citing reviewer, a recorded replacement reviewer, or the user confirms/rules on the counter-evidence;
 - claim-specific rebuttal packets preserve all evidence needed to challenge an orchestrator hallucination;
+- the canonical artifact preserves every full finding even when re-review delegates receive a bounded projection;
+- every measurement gate reads durable structured data rather than relocated prose diagnostics, and telemetry creates no worktree files;
+- benchmark gates name the corpus version, provider/model matrix, repeat count, and finding oracle used for the comparison;
 - read-only, credential stripping, sandbox, and integrity tests remain green;
 - all shipped skill scripts and documentation consistently require Node.js 22+;
 - old invocations receive deterministic compatibility behavior or a corrective diagnostic;
 - no success path hides provider, verification, or artifact failures.
 
 ## Review Findings & Resolutions
+
+This log is chronological. Later accepted entries and Decision record amendments supersede conflicting earlier resolutions.
 
 ### Round 1 — Claude Code, 2026-09-16
 
@@ -853,7 +971,7 @@ Quality gates:
 - **[Accepted]** [R2-F001] [MUST] § P2: Remove environment caches from skill instructions — coherence: removing the `dispatch/SKILL.md` flag table contradicted the fan-out change and existing parity guard → retained complete SKILL/README flag tables and limited pruning to surrounding prose.
 - **[Accepted]** [R2-F002] [MUST] § P1: Shrink delegate output to findings only — testability: the compact contract invalidates several hard-coded parity assertions → enumerated replacement assertions, preserved `fill-template.mjs`'s declared-variable mechanism, and kept the existing variable sets by encoding `soft/headroom/hard` in `Tool Turn Budget`.
 - **[Accepted]** [R2-F003] [MUST] § P1: Make `implement-dispatch` policy-only — coherence: the proposed resolver command/output dropped required orchestrator inputs and renamed stable keys → restored `--platform`, optional `--orchestrator-model`, existing flags, and kebab-case output keys; budget output is additive only.
-- **[Accepted]** [R2-F004] [MUST] § P0: Make consensus rebuttals claim-specific — state-machine: packets included terminal `[Rejected / Downgraded]` findings → restricted packets to `[Rejected - pending confirmation]` and `[Disputed]`, exactly matching structured unsettled output.
+- **[Accepted]** [R2-F004] [MUST] § P0: Make consensus rebuttals claim-specific — state-machine: packets included terminal `[Rejected / Downgraded]` findings → restricted packets to `[Rejected — pending confirmation]` and `[Disputed]`, exactly matching structured unsettled output.
 - **[Accepted]** [R2-F005] [SHOULD] § P1: Make `implement-dispatch` policy-only — domain-logic: `--ask-file` would mechanize host-owned scope judgment → retained host classification after plan authoring and passed only the selected `--level` to the existing resolver.
 - **[Accepted]** [R2-F006] [SHOULD] § P0: Establish a stable finding schema — validation: legacy `ACTIONABLE` severity lacked parser/finality semantics → defined it as read-only legacy vocabulary treated like MUST/SHOULD and prohibited delegates from emitting it.
 - **[Accepted]** [R2-F007] [SHOULD] § P1: Shrink delegate output to findings only — coherence: compact `MUST`/`SHOULD` vocabulary did not map to existing `MUST-FIX`/`SHOULD-FIX` finality terms → added an explicit mapping.
@@ -882,6 +1000,57 @@ Quality gates:
 - **[Accepted]** [R3-F014] [SHOULD] [sources=host:gpt-5.6-sol] § P0: Establish a stable finding schema — simplicity: parsing free-form defect/resolution prose into structured consensus fields reintroduced delimiter ambiguity → limited machine parsing to the fixed prefix and retained the complete original line as the durable claim.
 - **[Accepted]** [R3-F015] [SHOULD] [sources=host:gpt-5.6-sol] § Rollback and compatibility — migration: the phased roadmap lacked explicit rollback and non-goals → added phase-local rollback boundaries, dual-read compatibility, additive CLI behavior, frontmatter fallback, and an out-of-scope list.
 
+### Round 4 — Claude Opus 5, 2026-09-16
+
+- **Sources:** `external:claude-opus-5` = user-supplied independent review of the proposal and repository.
+- **[Accepted]** [R4-F001] [MUST] [sources=external:claude-opus-5] § Main friction / Phase 0 — testability: later phases were gated on measurements no durable mechanism produced → added content-free per-run JSON records with actual dispatch-boundary input/output characters, waves, slots, findings, substitutions, and observable provider usage.
+- **[Accepted]** [R4-F002] [MUST] [sources=external:claude-opus-5] § Consensus payload / Phase 0 — efficiency: the growing resolution log was reattached on the highest-multiplicity path → accepted with modification: added a bounded re-review projection, but retained the complete canonical log because destructive round collapse would discard the audit evidence the workflow intentionally creates.
+- **[Accepted]** [R4-F003] [MUST] [sources=external:claude-opus-5] § Acceptance metrics — testability: delegate output entering host context was unmeasured → added per-target output characters/estimates and reduction thresholds.
+- **[Accepted]** [R4-F004] [SHOULD] [sources=external:claude-opus-5] § Measured baseline / Acceptance metrics — measurement: whitespace words underprice table/punctuation-heavy prompts → accepted with modification: changed drift gates to raw characters plus `ceil(characters / 4)` estimates; rejected a "real tokenizer" requirement because no tokenizer is exact across all configured providers and a dependency would not make the cross-provider metric authoritative.
+- **[Accepted]** [R4-F005] [MUST] [sources=external:claude-opus-5] § Migration plan — approach: the guaranteed full-review prompt saving was gated behind the minority rebuttal path → inserted a small Phase 0 baseline and reordered optimization to compact prompts, rebuttals, pruning, fan-out, then preparation.
+- **[Accepted]** [R4-F006] [MUST] [sources=external:claude-opus-5] § Stable finding schema — safety: host-written legacy migration reintroduced model-executed state mutation on the fail-closed path → kept `check-consensus` read-only and made legacy entries use temporary references plus round-wide affinity.
+- **[Accepted]** [R4-F007] [MUST] [sources=external:claude-opus-5] § Stable finding schema / Rebuttals — state-machine: source IDs shifted under exclusion and unavailable original reviewers caused automatic escalation → user decision: assign candidate identity before filtering, key sources by round plus candidate, and allow a recorded replacement reviewer to test counter-evidence before escalating.
+- **[Accepted]** [R4-F008] [SHOULD] [sources=external:claude-opus-5] § Advisory review target — correctness: the proposed hard ceiling was not runner-enforced → accepted with modification: removed soft/headroom/hard fields and budget CLI flags; retained one advisory target because the user values adaptive depth, with enforceable timeout/output limits stated separately.
+- **[Accepted]** [R4-F009] [SHOULD] [sources=external:claude-opus-5] § CLI surface — simplicity: the roadmap added too many flags and diagnostics → removed four review-skill flags, public `--targets`, `dispatch --show-effective`, and all budget flags; retained only one internal batch interface, workflow `--show-effective`, and provider `--doctor`.
+- **[Accepted]** [R4-F010] [MUST] [sources=external:claude-opus-5] § Artifact metadata — state-machine: persistent freshness would fire after every accepted intra-run plan edit → made freshness an invocation-boundary checkpoint and intra-run changes re-review scope.
+- **[Accepted]** [R4-F011] [MUST] [sources=external:claude-opus-5] § Review-cost UX — user-gap: low silently disables plan review and review cost is hidden → accepted with modification: disclose the resolved flow before wave 1, including `plan review: off`; rejected calling this a cancel point because that would require a second confirmation gate, which the user chose not to add.
+- **[Accepted]** [R4-F012] [SHOULD] [sources=external:claude-opus-5] § Artifact lifecycle — user-gap: successful audit artifacts move to sweepable OS temp without warning → user decision: preserve the current cleanup behavior, but warn that it is ephemeral and report the exact destination.
+- **[Accepted]** [R4-F013] [SHOULD] [sources=external:claude-opus-5] § Compact prompts / Prune and disclose — efficiency: axis prose, duplicate report sections, invocation-mode prose, and terminology add load → moved prompt/output deletion to Phase 1 and alignment/glossary pruning to Phase 3.
+
+### Round 5 — GPT-5.6 Sol (host), 2026-09-16
+
+- **Sources:** `host:gpt-5.6-sol:rereview` = host / GPT-5.6 Sol / direct coherence and implementation-readiness review against the current repository.
+- **[Accepted]** [R5-F001] [MUST] [sources=host:gpt-5.6-sol:rereview] § Phase 0 observability — approach: `.scratch/audit/runs/` is tracked and the current runner exposes no durable per-target metrics channel → moved records under the Git common directory and specified internal `--metrics-file`, exact provider-boundary measurement, atomic slot files, aggregation, redaction, and retention.
+- **[Accepted]** [R5-F002] [MUST] [sources=host:gpt-5.6-sol:rereview] § Phase 1 compact reports — state-machine: Phase 1 assigned stable IDs that Phase 2 had not introduced and left JSONL validation to the host → kept Phase 1 logs legacy-compatible and added strict kind-specific report parsers with tests and hash coverage.
+- **[Accepted]** [R5-F003] [MUST] [sources=host:gpt-5.6-sol:rereview] § Phase ordering — coherence: Phase 3 removed prompt/artifact/target mechanics before Phase 5 replaced them → limited Phase 3 to safe pruning and moved final workflow thinning plus size gates after the Phase 5 preparation cutover.
+- **[Accepted]** [R5-F004] [MUST] [sources=host:gpt-5.6-sol:rereview] § Rebuttal contract — edge-case: legacy findings have `id: null`, yet responses required IDs; the full-review summary vocabulary also did not describe rebuttals → added a non-null durable-or-legacy `key`, exact packet/response key-set validation, and removed the inapplicable summary record.
+- **[Accepted]** [R5-F005] [MUST] [sources=host:gpt-5.6-sol:rereview] § Clean-tree behavior — coherence: explicit range review was deferred to Phase 5 even though Phase 0 removed the only fallback → added Phase 0 preflight plus exact-range transport through the existing `Review Scope`.
+- **[Accepted]** [R5-F006] [SHOULD] [sources=host:gpt-5.6-sol:rereview] § Source provenance — state-machine: attempted and effective fallback/reserve identities were ambiguous → findings now cite only the effective reporting source; diagnostics retain failed attempts and `substitutesFor`.
+- **[Accepted]** [R5-F007] [MUST] [sources=host:gpt-5.6-sol:rereview] § Measurement gates — testability: no versioned corpus or repeat/oracle protocol existed, and a 50% total-input target could be impossible when artifacts dominate → specified fixtures, an opt-in benchmark adapter, a three-run matrix, quality thresholds, prompt-specific reduction, and non-increase/reporting for total formatted input.
+- **[Accepted]** [R5-F008] [SHOULD] [sources=host:gpt-5.6-sol:rereview] § Bounded review view — safety: the projection/canonical write targets were not distinguished and ID-rich summaries could exceed the fixed bound before IDs exist → added separate handover paths, a data-only projection banner, canonical-only edits, and fixed count/hash summaries.
+- **[Accepted]** [R5-F009] [SHOULD] [sources=host:gpt-5.6-sol:rereview] § Artifact metadata — dependency: nested YAML required a parser despite the no-dependency constraint → constrained frontmatter to a versioned JSON object parsed with `JSON.parse`.
+- **[Accepted]** [R5-F010] [SHOULD] [sources=host:gpt-5.6-sol:rereview] § Diagnostics and pruning — coherence: workflow diagnostics were scheduled in both Phases 3 and 4, and final character ceilings gated prose still required until Phase 5 → assigned diagnostics to Phase 4 and made final size gates apply only after preparation cutover.
+- **[Accepted]** [R5-F011] [SHOULD] [sources=host:gpt-5.6-sol:rereview] § Metrics coverage — failure-mode: "successful run" coverage omitted the runs most useful for diagnostics → required per-slot records for success, failure, timeout, truncation, and fallback outcomes.
+- **[Accepted]** [R5-F012] [MUST] [sources=host:gpt-5.6-sol:rereview] § Phase 0 sequencing — testability: measuring only after installing the bounded view would erase the current full-artifact baseline and confound its savings with later prompt changes → split Phase 0 into instrument/baseline, correctness/UX, and bounded-view slices, with measurements frozen between them.
+
+### Round 6 — Claude Opus 5 and host adjudication, 2026-09-16
+
+- **Sources:** `external:claude-opus-5:rereview` = dispatched independent proposal/repository review; `host:gpt-5.6-sol:adjudication` = direct verification and user-decided resolution.
+- **[Accepted]** [R6-F001] [MUST] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Phase 0 telemetry — state-machine: one pinned provider slot may attempt several same-provider candidates, so a scalar provider/result record loses failed attempts → changed each slot to one terminal record containing `attempts[]` and nullable `effectiveAttempt`, with all failure/truncation classes retained.
+- **[Accepted]** [R6-F002] [MUST] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Resolution-log scanner — dependency: placing a helper under `implement-dispatch/scripts/` would violate the test-enforced prohibition on review skills naming or importing `implement-dispatch` → assigned generic scanner ownership to `dispatch/scripts/resolution-log.mjs`.
+- **[Accepted]** [R6-F003] [MUST] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § JSONL parsing — compatibility: provider CLI chrome can survive response cleanup, so rejecting every non-JSON line would discard otherwise valid reports → user decision: ignore/count non-JSON lines, but require every JSON-looking line to parse and validate; malformed or invalid JSON-looking output fails closed.
+- **[Accepted]** [R6-F004] [MUST] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Finding-schema migration — compatibility: current canonical logs and parity tests encode advisory severity as `<tag> (CONSIDER)`, while the proposal did not define its migration and used inconsistent pending-status punctuation → specified legacy `(CONSIDER)` reads, structured severity for new lines, parity-test migration, and canonical `[Rejected — pending confirmation]`.
+- **[Accepted]** [R6-F005] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Phase 1 axis pruning — blast-radius: prompt axes are coupled to README tables, count wording/headings, parity tests, and review-skill frontmatter → enumerated those surfaces and retained the full taxonomies as disclosed README rubrics.
+- **[Accepted]** [R6-F006] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Artifact lifecycle — ownership: `relocate-scratch.mjs` already reports destination paths, while the required pre-relocation warning is an orchestration/lifecycle responsibility → assigned the warning to `implement-dispatch/SKILL.md` and `alignment.md` without inventing redundant script behavior.
+- **[Accepted]** [R6-F007] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Run finalization — scope: requiring predicted slot IDs before Phase 2 would add host bookkeeping that Phase 0 does not otherwise need → finalize all present records against `expectedSlots` count; stable candidate/source IDs remain a Phase 2 concern.
+- **[Accepted]** [R6-F008] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Diagnostics — interface: existing inspection flags overlap with but do not replace the proposed health report, and `--validate-only` does not expose the config path → made `--doctor` a human-oriented superset while preserving narrow `--validate-only`, `--list-platforms`, and `--list-targets` behavior.
+- **[Rejected / Downgraded]** [R6-F009] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Telemetry location — approach: Claude preferred OS temp because repository-internal Git state is a new storage surface → user decision: cross-run gates require durable records, so retain owner-only Git-common storage, resolve relative Git output correctly, rotate the newest 100 unpinned finalized runs, delete incomplete runs after seven days, and exempt explicitly pinned baselines until their dependent gate completes.
+- **[Accepted]** [R6-F010] [CONSIDER] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Integrity obligations — simplicity: repeated hash/pre-commit language obscured that current hook patterns already cover hashed skill script directories → consolidated the requirement around manifest inclusion and normal `npm run hashes`/test verification rather than proposing hook changes.
+- **[Rejected / Downgraded]** [R6-F011] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Recorded baseline — measurement: Claude reported drift in four character counts → direct repository measurements reproduced the proposal's values (`8,971`, `15,526`, `6,854`, `7,169`, total `39,027`), so no baseline correction was made.
+- **[Accepted]** [R6-F012] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Level inheritance — precision: the implementation follows exact -> nearest lower -> lowest higher, but the proposal did not identify the contradictory source sentence → named `skills/implement-dispatch/config.default.jsonc` as the required edit surface.
+- **[Rejected / Downgraded]** [R6-F013] [CONSIDER] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Proposal location — repository-convention: `.scratch/audit/refactor-proposal.md` is outside the documented `.scratch/audits/` convention → user decision: leave this already tracked/staged file in place as an explicit one-file exception rather than create rename/staging churn; do not reuse the exception for new artifacts.
+- **[Accepted]** [R6-F014] [SHOULD] [sources=external:claude-opus-5:rereview,host:gpt-5.6-sol:adjudication] § Phase 0B size ratchet — coherence: flow disclosure, range safety, and the ephemerality warning intentionally add prose before later pruning → record their measured delta as a correctness/UX exception and roll it into the Phase 0C baseline.
+
 ## Decision record
 
 Recorded after proposal review on 2026-09-16.
@@ -892,7 +1061,7 @@ Recorded after proposal review on 2026-09-16.
 
 **Response:** The original proposal incorrectly treated orchestrator adjudication as ground truth. Both agents are fallible. Consensus is an adversarial evidence exchange in which the orchestrator's rejection must survive challenge by the citing reviewer; it is not reviewer voting.
 
-**Decision:** Keep consensus, but send targeted evidence packets only for live `[Rejected - pending confirmation]` and `[Disputed]` findings. Preserve target affinity, round caps, `check-consensus.mjs`, and the user tie-break.
+**Decision:** Keep consensus, but send targeted evidence packets only for live `[Rejected — pending confirmation]` and `[Disputed]` findings. Preserve target affinity, round caps, `check-consensus.mjs`, and the user tie-break.
 
 **Amendment:** Replaced the proposal to remove consensus with "Make consensus rebuttals claim-specific"; updated the architecture, migration plan, skill targets, metrics, and quality gates.
 
@@ -920,15 +1089,87 @@ Recorded after proposal review on 2026-09-16.
 
 **User comment:** "`P1: Replace exact tool-turn formulas with scope classes`: I'd still want to give the reviewer the space to go deep when needed, as the need arises during the review; wouldn't a tool-turn budget give it more flexibility on how to spend it?"
 
-**Response:** Yes. A numeric pool lets the reviewer allocate effort adaptively; scope classes would constrain breadth but would not solve depth. The robust pattern is bounded autonomy with progressive escalation: deterministic initial allowance, free allocation, early stopping, and evidence-backed headroom under a hard ceiling.
+**Response:** Yes. A numeric target lets the reviewer allocate effort adaptively; scope classes would constrain breadth but would not solve depth. The initial proposal overstated enforcement, however: the runner cannot count or stop delegate tool calls.
 
 **Follow-up user comment:** "`The orchestrator validates that the request is evidence-backed and in scope.`: the dispatch does not direct 2-way communication to request for budget increase without restarting the dispatch -> it's ok to let the dispatch make the decision to extend it unilaterally."
 
-**Response:** Agreed. A host-approved extension would require the reviewer to end its run and restart or resume after another turn. Instead, calculate a soft budget and headroom before launch. The dispatched reviewer may activate the headroom itself when concrete in-scope evidence warrants deeper inspection, while remaining under the predeclared hard ceiling and reporting its rationale and use.
+**Response:** Agreed. A host-approved extension would require the reviewer to end its run and restart or resume after another turn. The review target should therefore permit evidence-backed overflow during the same dispatch, but it must not be described as a hard ceiling.
 
-**Decision:** Keep the exact formula as the soft budget, calculate it mechanically, and pre-authorize evidence-backed scoped headroom. Headroom is capped at `min(ceil(soft budget / 2), 8)`, may be activated unilaterally by the reviewer during the same dispatch, and must be accounted for in its report.
+**Decision:** Keep `8 + 2 x units` as one advisory target. Permit evidence-backed overflow without a host round-trip. Record actual tool use only when provider metadata exposes it; timeout and output limits are the enforceable bounds.
 
-**Amendment:** Replaced scope classes and the host-approved extension request with a two-stage in-run budget: soft formula plus self-authorized headroom, claim-specific rebuttal budgets, a fixed hard ceiling, and diagnostic accounting. "Headroom" distinguishes tool turns from provider reserves.
+**Amendment:** Removed soft/headroom/hard transport, budget-specific resolver flags, and mandatory self-report blocks. Retained the existing template variable with a single target.
+
+### Re-review payload and audit retention
+
+**External recommendation:** Collapse settled rounds in the canonical resolution log so they are not retransmitted to every reviewer.
+
+**Response:** The payload diagnosis is correct, but destructive collapse conflicts with the audit-trail purpose of the artifact and makes later review of prior rulings impossible.
+
+**Decision:** Preserve the full canonical log. Re-review delegates receive a generated bounded view containing the semantic body, the immediately preceding round, all live findings, and summaries of older settled rounds.
+
+### Replacement confirmation
+
+**External recommendation:** When an original citing reviewer becomes unreachable, allow another reviewer holding the same artifact to test the orchestrator's counter-evidence.
+
+**Response:** This changes the original consensus identity rule, but preserves the stronger invariant: an independent reviewer must test the rejection. It also avoids turning one provider auth/quota failure into many user questions.
+
+**Decision:** Allow a recorded replacement reviewer to confirm or rebut on behalf of an unreachable source. Preserve `substitutesFor` provenance and escalate only when replacement review cannot settle the claim.
+
+### Flow disclosure and approval count
+
+**External recommendation:** State the resolved flow before wave 1 to expose that low disables plan review and to provide a cancellation point.
+
+**Response:** Disclosure is necessary. A guaranteed cancellation point would require pausing for confirmation, adding a second gate before the existing implementation approval.
+
+**Decision:** State level, phase on/off state, reviewer platforms/models, rounds, and consensus before wave 1. Explicitly say `plan review: off`. Keep one approval gate after the plan is reviewed.
+
+### Successful artifact lifecycle
+
+**External question:** Is moving the plan and walkthrough to sweepable OS temp after success intentional?
+
+**Decision:** Keep relocation to OS temp. Before moving, warn that the audit artifacts are ephemeral; afterward, report their exact destination.
+
+### Measurement unit
+
+**External recommendation:** Replace whitespace-word thresholds with a real tokenizer because tables and punctuation are undercounted.
+
+**Response:** Word counts are too weak, but no one tokenizer is exact for Claude, Gemini, OpenAI, and local models. Adding one would produce false precision and violate the no-runtime-dependency goal.
+
+**Decision:** Use raw character counts and `ceil(characters / 4)` as a clearly labelled model-neutral estimate. Record actual provider usage separately when available.
+
+### Implementation readiness after host re-review
+
+**Finding:** The revised direction was sound, but Phase 0 lacked a writable telemetry boundary, Phase 1 depended on Phase 2 state, Phase 3 removed live mechanics too early, and the benchmark/rebuttal contracts were underspecified.
+
+**Decision:** Correct those dependencies in Round 5. Phase 0 is ready to break into implementation tasks in its listed order. Phases 1-5 are viable roadmap stages, but each remains conditional on the preceding measurements and must not be implemented as one batch.
+
+### Strict JSONL boundary
+
+**External recommendation:** Ignore every unparseable non-JSON line so provider CLI chrome cannot invalidate an otherwise useful structured report.
+
+**Response:** Tolerating chrome is necessary, but ignoring a malformed JSON-looking finding could silently turn a damaged report into a clean one. A fixed provider-chrome allowlist would fail whenever CLI wording changes.
+
+**Decision:** Parse line-wise, ignore and count lines that do not begin with `{` after whitespace, and fail closed when any JSON-looking line is malformed or schema-invalid.
+
+### Durable telemetry and retention
+
+**External recommendation:** Keep metrics in OS temp rather than introduce repository-internal state beneath the Git common directory.
+
+**Response:** OS temp is appropriate for disposable payloads but cannot reliably support gates that compare separately executed phases. Plain newest-100 retention also risks deleting the comparator before a later phase uses it.
+
+**Decision:** Store content-free owner-only run records beneath the resolved Git common directory. Retain the newest 100 unpinned finalized runs, remove incomplete runs older than seven days, and exempt explicitly pinned phase/corpus baselines until superseded or unpinned after the dependent gate.
+
+### Proposal path exception
+
+**External finding:** This proposal's `.scratch/audit/` location does not follow the repository's `.scratch/audits/` allowlist.
+
+**Decision:** Leave the already tracked/staged file in place as an explicit one-file exception to avoid rename/staging churn. All new audit artifacts must follow the documented convention.
+
+### Implementation readiness after external re-review
+
+**Finding:** Claude's implementation blockers were the multi-attempt metrics shape, helper dependency direction, parser boundary, schema migration, and enumerated parity/test surfaces. The remaining points were interface refinements or explicit design choices.
+
+**Decision:** Corrected the substantiated blockers in Round 6 and recorded the three user-decided disagreements above. Phase 0 remains ready for implementation as ordered 0A -> 0B -> 0C; Phases 1-5 remain measurement-gated.
 
 ### Node.js runtime
 
@@ -942,6 +1183,6 @@ Recorded after proposal review on 2026-09-16.
 
 ## Recommended first change
 
-Start with the committed Phase 1 scope: stable finding IDs, required delegate severity, backward-compatible structured consensus output, claim-specific rebuttal templates, and additive budget/headroom calculation in `resolve-flow.mjs`.
+Start with Phase 0: durable content-free run records, bounded re-review projections, resolved-flow disclosure, removal of the implicit clean-tree `HEAD~1` fallback, explicit OS-temp ephemerality messaging, and character-based instruction drift gates.
 
-Measure that change before replacing the full-review prompts or committing to preparation scripts, generalized fan-out, artifact fingerprints, diagnostics, or provider-reference splitting. If the targeted consensus savings meet the acceptance thresholds without reducing review quality, implement the later phases in order and prune only the prose each executable path replaces.
+Then run Phase 1's compact full-review prompt experiment against the fixed corpus. It attacks the guaranteed multiplicative cost before the minority consensus path. Only after input/output measurements preserve finding quality should the roadmap proceed to targeted rebuttals, prose pruning, generic batch fan-out, or review preparation/freshness scripts.
