@@ -24,6 +24,10 @@
     "skills/dispatch-plan-review/references/plan-template.md": 1568,
     "skills/dispatch-code-review/references/walkthrough-template.md": 1026
   },
+  "phase1": {
+    "skills/dispatch-plan-review/references/prompt-template.md": 2800,
+    "skills/dispatch-code-review/references/prompt-template.md": 3200
+  },
   "aggregateBaselines": {
     "phase0a": {
       "entryPointCharacters": 39027,
@@ -36,6 +40,12 @@
       "entryPointEstimate": 10690,
       "normalPathCharacters": 75271,
       "normalPathEstimate": 18818
+    },
+    "phase1": {
+      "entryPointCharacters": 42392,
+      "entryPointEstimate": 10598,
+      "normalPathCharacters": 66953,
+      "normalPathEstimate": 16739
     }
   },
   "intentionalPhase0bDelta": {

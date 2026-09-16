@@ -55,11 +55,22 @@ describe('common: skill hash validation', () => {
     }
   });
 
-  it('generateSkillHashes hashes references/*.md and excludes config files', () => {
-    const manifest = generateSkillHashes(path.join(PROJECT_ROOT, 'skills', 'dispatch'));
-    assert.ok('references/alignment.md' in manifest);
-    assert.ok(!Object.keys(manifest).some((k) => k.startsWith('config')));
-    assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
+  it('generateSkillHashes hashes reference Markdown and JSON while excluding config files', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-reference-hash-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      fs.mkdirSync(path.join(tmpDir, 'references'));
+      fs.writeFileSync(path.join(tmpDir, 'references', 'guide.md'), '# Guide', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'references', 'schema.json'), '{}', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'config.jsonc'), '{}', 'utf8');
+      const manifest = generateSkillHashes(tmpDir);
+      assert.ok('references/guide.md' in manifest);
+      assert.ok('references/schema.json' in manifest);
+      assert.ok(!Object.keys(manifest).some((key) => key.startsWith('config')));
+      assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('verifySkillIntegrity detects a tampered file', () => {

@@ -80,6 +80,7 @@ import {
  * @property {string|string[]} [model] Model id, comma-separated list, or array — tried in order.
  * @property {string} [effort]
  * @property {boolean} [sandbox] Enable Claude's native OS-level Bash sandbox (default true).
+ * @property {object|null} [responseSchema] JSON Schema enforced by Claude's structured output.
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [verbose]
@@ -187,6 +188,7 @@ export async function runClaude(options = {}) {
     model = null,
     effort = null,
     sandbox = true,
+    responseSchema = null,
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     verbose = false,
@@ -230,6 +232,7 @@ export async function runClaude(options = {}) {
           formattedPrompt,
           effort: effectiveEffort,
           sandbox,
+          responseSchema,
           timeout,
           maxBufferMb,
           verbose,
@@ -317,8 +320,8 @@ export async function runClaude(options = {}) {
  * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
  * @returns {number}
  */
-export function claudeFixedArgBytes({ model, effort, sandbox = true } = {}) {
-  const withPrompt = buildClaudeArgs('', { model, effort, sandbox });
+export function claudeFixedArgBytes({ model, effort, sandbox = true, responseSchema = null } = {}) {
+  const withPrompt = buildClaudeArgs('', { model, effort, sandbox, responseSchema });
   return withPrompt.reduce((sum, arg) => sum + Buffer.byteLength(String(arg), 'utf8') + 1, 0);
 }
 
@@ -330,13 +333,14 @@ export function claudeFixedArgBytes({ model, effort, sandbox = true } = {}) {
  * `--settings` JSON enables Claude's native OS-level Bash sandbox by default, layering
  * defense in depth on top of the structural read-only controls above.
  * @param {string} argvPrompt
- * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean, responseSchema?: object|null }} [opts]
  * @returns {string[]}
  */
-export function buildClaudeArgs(argvPrompt, { model, effort, sandbox = true } = {}) {
+export function buildClaudeArgs(argvPrompt, { model, effort, sandbox = true, responseSchema = null } = {}) {
   const args = ['-p', argvPrompt, '--output-format', 'json', '--permission-mode', 'plan'];
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
+  if (responseSchema) args.push('--json-schema', JSON.stringify(responseSchema));
   args.push('--settings', JSON.stringify({ sandbox: { enabled: sandbox } }));
   for (const tool of READ_ONLY_ALLOWED_TOOLS) {
     args.push('--allowedTools', tool);
@@ -421,6 +425,7 @@ function executeOnTarget({
   formattedPrompt,
   effort,
   sandbox,
+  responseSchema,
   timeout,
   maxBufferMb,
   verbose,
@@ -432,9 +437,9 @@ function executeOnTarget({
     // `buildClaudeArgs` appends an `--allowedTools` pair per read-only tool plus the variadic
     // `--disallowedTools` list and the inline `--settings` sandbox JSON; measured here so the
     // batch-launcher check budgets the whole command line rather than the prompt alone.
-    reservedBytes: claudeFixedArgBytes({ model, effort, sandbox }),
+    reservedBytes: claudeFixedArgBytes({ model, effort, sandbox, responseSchema }),
   });
-  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox });
+  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox, responseSchema });
 
   const providerLabel = `Claude Code [${target.mode}] (claude)`;
   emitInitBanner({

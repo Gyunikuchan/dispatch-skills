@@ -7,7 +7,8 @@ import { describe, it } from 'node:test';
 import {
   materializeFixture,
   aggregate,
-  parseJsonlReport,
+  parseBenchmarkReport,
+  parseStructuredReport,
   parseMarkdownReport,
   renderFixturePrompt,
   scoreFindings,
@@ -31,8 +32,8 @@ describe('review prompt benchmark', () => {
     const manifest = validateCorpus(corpus);
     const planPrompt = renderFixturePrompt(manifest.fixtures.find((fixture) => fixture.kind === 'plan'));
     const codePrompt = renderFixturePrompt(manifest.fixtures.find((fixture) => fixture.kind === 'code'));
-    assert.match(planPrompt, /Review an implementation plan across seven axes/);
-    assert.match(codePrompt, /Evaluate recent session changes across six axes/);
+    assert.match(planPrompt, /Review the plan/);
+    assert.match(codePrompt, /Review the changes/);
   });
 
   it('keeps unavailable runs out of recall denominators', () => {
@@ -73,7 +74,28 @@ describe('review prompt benchmark', () => {
     ]);
     assert.equal(totals.failed, 1);
     assert.equal(totals.skipped, 1);
+    assert.equal(totals.invalidReports, 0);
     assert.equal(totals.mustTotal, 0);
+  });
+
+  it('counts invalid reports separately', () => {
+    const totals = aggregate([{
+      status: 'failed',
+      failureKind: 'invalid-report',
+      score: {
+        mustFound: 0,
+        mustTotal: 1,
+        shouldFound: 0,
+        shouldTotal: 0,
+        forbiddenFound: 0,
+        unexpected: 0,
+        cleanFalsePositive: false,
+      },
+      input: { characters: 4 },
+      output: { characters: 4 },
+    }]);
+    assert.equal(totals.failed, 1);
+    assert.equal(totals.invalidReports, 1);
   });
 
   it('materializes a fixture as an isolated Git repository', () => {
@@ -87,14 +109,42 @@ describe('review prompt benchmark', () => {
     }
   });
 
-  it('adapts Markdown and JSONL reports to the same finding shape', () => {
-    const markdown = parseMarkdownReport('## MUST-FIX\n§ Verification Plan — verification: absent → add it\n');
-    const jsonl = parseJsonlReport('chrome\n{"type":"finding","severity":"MUST","tag":"verification","locus":"§ Verification Plan"}\n');
-    assert.deepEqual(markdown, jsonl);
+  it('adapts Markdown and schema-constrained reports to the same finding shape', () => {
+    const markdown = parseMarkdownReport(
+      '## MUST-FIX\n- § Verification Plan — verification: absent → add it\n' +
+      '- `src/value.mjs:L2` — `correctness`: broken → fix it\n',
+    );
+    const structured = parseStructuredReport(JSON.stringify({
+      status: 'FINDINGS',
+      findings: [{
+        severity: 'MUST',
+        tag: 'verification',
+        locus: '§ Verification Plan',
+        defect: 'absent',
+        requiredChange: 'add it',
+      }],
+    }), 'plan');
+    assert.deepEqual(markdown[0], structured[0]);
+    assert.deepEqual(markdown[1], {
+      kind: 'MUST',
+      locus: 'src/value.mjs:L2',
+      tag: 'correctness',
+    });
   });
 
-  it('fails closed on malformed JSON-looking report lines', () => {
-    assert.throws(() => parseJsonlReport('{broken'), /Malformed JSON-looking/);
+  it('fails closed on malformed structured reports', () => {
+    assert.throws(() => parseStructuredReport('{broken', 'plan'), /Invalid delegate report/);
+  });
+
+  it('counts an empty successful response as an invalid report', () => {
+    assert.deepEqual(parseBenchmarkReport('', 'plan', 'json', 0), {
+      findings: [],
+      parseFailure: true,
+    });
+    assert.deepEqual(parseBenchmarkReport('', 'plan', 'json', 1), {
+      findings: [],
+      parseFailure: false,
+    });
   });
 
   it('scores required, forbidden, and clean false-positive findings', () => {

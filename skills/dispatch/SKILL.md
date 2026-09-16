@@ -5,7 +5,8 @@ description: Run a bounded read-only investigation, research task, or plan/code 
 
 # Dispatch
 
-Run `dispatch` when a task benefits from an independent, read-only agent context. The host owns the prompt, judgment, edits, and commit; delegates inspect the workspace and return claims. Provider mechanics and failure classes live in [references/providers.md](references/providers.md).
+Dispatch bounded read-only work to an independent provider. The host owns judgment and changes;
+provider mechanics live in [references/providers.md](references/providers.md).
 
 ## Invocation
 
@@ -22,7 +23,11 @@ Run `dispatch` when a task benefits from an independent, read-only agent context
 | Count | Launch up to `n` configured targets. |
 | `all` | Launch every configured target. |
 
-For a count or `all`, run `node <skill-path>/scripts/dispatch.mjs --list-targets`, take the first `n` entries or the whole array, and launch each with `--provider <platform> --candidate-index <candidateIndex>`. The command preserves configured order, then stably moves targets on the orchestrator platform behind other platforms and exact orchestrator platform/model matches to the end. Named platforms are an explicit set: target-count limits and host/model demotion do not remove or reorder them. Each launched target is pinned, so cross-provider fallback is disabled; named platforms may cascade through their configured candidates, while candidate-index launches execute exactly one candidate.
+For a count or `all`, run `node <skill-path>/scripts/dispatch.mjs --list-targets`, select the
+requested entries, and launch each with `--provider <platform> --candidate-index <candidateIndex>`.
+The command preserves config order while moving the orchestrator platform, then its exact model,
+last. Named platforms retain pin order. Pins disable cross-provider fallback; named platforms may
+cascade through their candidates, while candidate-index launches run exactly one.
 
 `<skill-path>` is the directory containing this skill. Use `node <skill-path>/scripts/dispatch.mjs --list-platforms` as the membership check; a platform absent from its output is out of scope for every pin form.
 
@@ -65,6 +70,7 @@ Map the result to exactly one row before deciding what to report.
 | Exit 0 with useful output | Capture stdout and the session handle; continue to relay. |
 | Truncated or partial output | Use it when it fulfils the brief; otherwise re-dispatch a narrower task. |
 | `NO_DISPATCH_AVAILABLE`, a pinned non-zero run, or another runner error | Read and apply the [native fallback contract](references/providers.md#native-fallback). |
+| `RESPONSE_SCHEMA_UNSUPPORTED` | Treat that target as unavailable; use reserve/native fallback. |
 | `INVALID_DISPATCH_CONFIG`, `INTEGRITY_VIOLATION`, `NO_CONFIG_REQUIRES_PROVIDER`, or `PLATFORM_NOT_CONFIGURED` | Stop and report the exact error; do not invent a fallback. |
 
 **Done when:** the outcome is mapped and any fallback or stop condition is complete.
@@ -92,6 +98,7 @@ Map the result to exactly one row before deciding what to report.
 | `-t`, `--timeout` | Override the timeout in seconds; default `1800`. |
 | `--max-buffer` | Raise the output cap in MB; default `10`. |
 | `--metrics-file` | Write one content-free terminal slot record to an initialized absolute path. |
+| `--response-schema-file` | Require native JSON Schema output (Claude only). |
 | `--provider` | Pin one provider; accepts canonical keys and aliases. |
 | `--orchestrator` | Declare the host platform for unpinned ordering. |
 | `--orchestrator-model` | Declare the host model for same-model demotion. |

@@ -36,6 +36,18 @@ describe('instruction character ratchet', () => {
     });
   }
 
+  for (const [file, ceiling] of Object.entries(budgets.phase1)) {
+    it(`${file} meets the Phase 1 compact-prompt target`, () => {
+      const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
+      assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(
+        measured.characters <= Math.floor(budgets.phase0a[file] * 0.45),
+        `${file}: ${measured.characters} is not at least 55% below ${budgets.phase0a[file]}`,
+      );
+      assert.equal(measured.estimate, Math.ceil(measured.characters / 4));
+    });
+  }
+
   it('gates the complete entry-point and normal implementation paths', () => {
     assert.deepEqual(Object.keys(budgets.phase0c).sort(), [...normalPath].sort());
     const countPath = (files) => files.reduce(
@@ -52,13 +64,22 @@ describe('instruction character ratchet', () => {
       normalCharacters <= budgets.aggregateBaselines.phase0c.normalPathCharacters,
       `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase0c.normalPathCharacters}`,
     );
-    assert.equal(
-      Math.ceil(entryCharacters / 4),
-      budgets.aggregateBaselines.phase0c.entryPointEstimate,
+    assert.ok(
+      Math.ceil(entryCharacters / 4) <= budgets.aggregateBaselines.phase0c.entryPointEstimate,
+      `entry-point estimate: ${Math.ceil(entryCharacters / 4)} > ${budgets.aggregateBaselines.phase0c.entryPointEstimate}`,
     );
-    assert.equal(
-      Math.ceil(normalCharacters / 4),
-      budgets.aggregateBaselines.phase0c.normalPathEstimate,
+    assert.ok(
+      Math.ceil(normalCharacters / 4) <= budgets.aggregateBaselines.phase0c.normalPathEstimate,
+      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > ${budgets.aggregateBaselines.phase0c.normalPathEstimate}`,
+    );
+    assert.deepEqual(
+      {
+        entryPointCharacters: entryCharacters,
+        entryPointEstimate: Math.ceil(entryCharacters / 4),
+        normalPathCharacters: normalCharacters,
+        normalPathEstimate: Math.ceil(normalCharacters / 4),
+      },
+      budgets.aggregateBaselines.phase1,
     );
   });
 

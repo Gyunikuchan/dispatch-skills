@@ -1,16 +1,17 @@
 {
-  "SKILL.md": "cd32288379eeba92d3844934b497c092f6baa181b1d58019d06e6706759e1ce6",
-  "references/alignment.md": "f338f6080f1e7ec02cd0f8e08e11e29d93df32589f56ffd3ff86b052a2b492d7",
-  "references/providers.md": "9b707a50f6a4691457f73f41eef3c1c0f818b14ffd199179c0ed8c1f8d2d200e",
+  "SKILL.md": "48c999621543d3c6d8544b51c22ce1a675214076ea10bd655eb9c9559137c3ed",
+  "references/alignment.md": "a083626ae5da3ca4523a8bbc89d07352c9b06f1840781f467123ca40f1bd1833",
+  "references/providers.md": "f8b63382b481ce7c3574c507696e545bdbc9c951f730439c910bfe1aeeb9a3f5",
   "scripts/agy-run.mjs": "58729ef90d7e855e63f4bed0979ccf2c0beadc7e78e6a7db8e3ec8cc4779a6fa",
-  "scripts/claude-run.mjs": "85025470b3622f9283aeaa3f5c45352d1b9a50b066d4cef87af44b98fa958ed1",
-  "scripts/common.mjs": "5697579b367938f05b8b41cd44fb5ea7f266ce6128e383f7cb51ff70cc731741",
+  "scripts/claude-run.mjs": "2fe2d5f1ed244c2008923a749b6c759968817d19cc85debe8a1e2cdc9cb7d2bb",
+  "scripts/common.mjs": "2ecc631b9d6bcac0000ba0ce823819582b837bcaef340d539b6ddc7a80b27f21",
   "scripts/copilot-run.mjs": "aec3f33a148b59d3e5703a1b577b526bca952747908b450554dcfde88251e2a3",
-  "scripts/dispatch.mjs": "875e1f51a038e7439a4c703b780075102a1f5c8d7ad2e3c78df7ba963d87bfad",
+  "scripts/dispatch.mjs": "dbd85ba7c0496efa3e89e49736d11fd081a92b653098c0242fd1dbe287575311",
   "scripts/fill-template.mjs": "47295ee6008f3a419f958c958e562386eb8a1168f70b2c507387df0ae35e1310",
   "scripts/opencode-run.mjs": "3a4ad60b7dd110df850af675f2c6e3ddf959a7f4c833f43fffaac845743f7db6",
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
   "scripts/resolution-log.mjs": "11ca4e1ac425b5b329c24d22ee22ff03876e036772211cb335ba186ed1ccd784",
   "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581",
+  "scripts/review-report.mjs": "a87812f08f4f6bf2dff615d39af8a7592994c12e21996f643eb8be85cecf4045",
   "scripts/slot-metrics.mjs": "44226614e7c77d7c1ee8a25c91a26d95b53a6f633c2950a08f30fb23771eb1b0"
 }

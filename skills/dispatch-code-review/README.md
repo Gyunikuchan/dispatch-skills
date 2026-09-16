@@ -104,16 +104,18 @@ on paths changed since the previous round.
 > `No reviewable changes`; explicitly name a commit or `a..b` / `a...b` range to review committed
 > work.
 
-## What Gets Reviewed
+## Detailed review rubric
+
+Use this disclosed rubric for focused or high-risk reviews.
 
 | Area | Focus tags | What is evaluated |
 |---|---|---|
-| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Module boundaries, dependency direction, seams, and unnecessary indirection |
-| **Domain & Business Logic** | `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Domain rules, invariants, units, formulas, indexing, and runtime/type behavior |
-| **Security & Resource Safety** | `vuln`, `auth`, `leak`, `perf` | Injection, authorization, secrets, traversal, leaks, and hot-path cost |
-| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Deletion, reuse, standard-library choices, and root-cause fixes |
-| **Blast Radius & Compatibility** | `breaking`, `compat`, `migration`, `scope-creep` | Caller contracts, migrations, serialization, and scope boundaries |
-| **Test Quality & UI/UX** | `test-gap`, `test-leak`, `ui`, `a11y` | Observable failure coverage, test coupling, accessibility, and interface behavior |
+| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Deep interfaces, real rather than speculative seams, private internal boundaries, dependency tiers, and unnecessary indirection. |
+| **Domain & Business Logic** | `correctness`, `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Project rules, valid state, units and signs, formula and boundary accuracy, promise handling, indexing, and exhaustive branches. |
+| **Security & Resource Safety** | `security`, `vuln`, `auth`, `leak`, `perf` | Injection, traversal, escaping, secrets, permissions, lifecycle cleanup, bounded concurrency/memory, event-loop blocking, and hot-path cost. |
+| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Delete/reuse/stdlib before new code, shortest working diff, and fixes at the shared source rather than scattered call sites. |
+| **Blast Radius & Compatibility** | `compatibility`, `breaking`, `compat`, `migration`, `scope-creep` | Caller and client compatibility, persisted and serialized formats, migrations, and changes outside the requested boundary. |
+| **Test Quality & UI/UX** | `tests`, `test-gap`, `test-leak`, `ui`, `a11y` | Observable interface and failure coverage, coupling to private internals, CLI/API ergonomics, responsive behavior, and accessibility. |
 
 ## What to Expect
 

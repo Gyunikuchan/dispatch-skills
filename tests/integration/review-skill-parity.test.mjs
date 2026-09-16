@@ -6,6 +6,14 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import { extractTemplate } from '../../skills/dispatch/scripts/fill-template.mjs';
+import {
+  CODE_LOCUS_PATTERN,
+  CODE_TAGS,
+} from '../../skills/dispatch-code-review/scripts/parse-report.mjs';
+import {
+  PLAN_LOCUS_PATTERN,
+  PLAN_TAGS,
+} from '../../skills/dispatch-plan-review/scripts/parse-report.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -15,6 +23,8 @@ const PLAN_PROMPT_PATH = 'skills/dispatch-plan-review/references/prompt-template
 const CODE_PROMPT_PATH = 'skills/dispatch-code-review/references/prompt-template.md';
 const PLAN_REVIEW_README_PATH = 'skills/dispatch-plan-review/README.md';
 const CODE_REVIEW_README_PATH = 'skills/dispatch-code-review/README.md';
+const PLAN_SCHEMA_PATH = 'skills/dispatch-plan-review/references/report-schema.json';
+const CODE_SCHEMA_PATH = 'skills/dispatch-code-review/references/report-schema.json';
 const ALIGNMENT_PATH = 'skills/dispatch/references/alignment.md';
 const IMPLEMENT_PATH = 'skills/implement-dispatch/SKILL.md';
 const FILL_TEMPLATE_SCRIPT = path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', 'fill-template.mjs');
@@ -34,33 +44,8 @@ function readSkill(rel) {
   return readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 }
 
-/** Extracts the fenced finding-grammar line following the given anchor sentence. */
-function extractFindingGrammar(text) {
-  const anchor = 'Write every finding as one line in this grammar:';
-  const at = text.indexOf(anchor);
-  assert.ok(at !== -1, 'finding-grammar anchor sentence not found');
-  const after = text.slice(at + anchor.length);
-  const match = after.match(/```\s*\n(.+?)\n\s*```/s);
-  assert.ok(match, 'finding-grammar fenced block not found');
-  return match[1].trim();
-}
-
-/** Normalizes a finding-grammar line's locus term to a shared placeholder. */
-function normalizeLocus(line) {
-  return line.replace('§ <Section>', '<LOCUS>').replace('<file>:L<line>', '<LOCUS>');
-}
-
-/** Extracts the bullet-heading tokens under "Structure your review as:", excluding the final (intentionally divergent) bullet. */
-function extractSkeletonHeadings(text) {
-  const anchor = 'Structure your review as:';
-  const at = text.indexOf(anchor);
-  assert.ok(at !== -1, 'report-skeleton anchor not found');
-  const after = text.slice(at + anchor.length, at + anchor.length + 2000);
-  const headings = [...after.matchAll(/^- `(## [^`]+)`:/gm)].map(m => m[1]);
-  assert.ok(headings.length >= 6, `expected at least 6 skeleton bullets, found ${headings.length}`);
-  // Drop the final bullet (`## Shorter Path` / `## Actionable Next Steps`): an
-  // intentional divergence called out in the plan, not part of shared skeleton.
-  return headings.slice(0, 5);
+function extractJsonExamples(text) {
+  return [...text.matchAll(/```json\n(.+?)\n```/gs)].map((match) => JSON.parse(match[1]));
 }
 
 /** Extracts the backtick-quoted re-review template following "On a re-review,". */
@@ -83,42 +68,20 @@ function normalizeReReviewTemplate(template) {
     .replace('<changed paths>', '<changed SCOPE>');
 }
 
-/** Extracts the "Tool Turn Budget counts ... Then emit the report immediately." budget sentence. */
-function extractToolTurnBudget(text) {
-  const anchor = 'Tool Turn Budget counts every tool call';
-  const at = text.indexOf(anchor);
-  assert.ok(at !== -1, 'tool-turn budget anchor not found');
-  const end = text.indexOf('Then emit the report immediately.', at);
-  assert.ok(end !== -1, 'tool-turn budget sentence end not found');
-  return text.slice(at, end + 'Then emit the report immediately.'.length);
-}
-
-/** Normalizes the per-skill review unit and the code-only verification clause to shared placeholders. */
-function normalizeToolTurnBudget(sentence) {
-  return sentence
-    .replace('Complete grounding within it', 'Complete ACTION within it')
-    .replace('Complete inspection within it', 'Complete ACTION within it')
-    .replace(', verification runs included', '')
-    .replace(/Complete (?:grounding|inspection) within it/, 'Complete WORK within it')
-    .replace(/`\d+ \+ (?:\d+ × )?<[^>]+>`/, '`N + <UNIT>`')
-    .replace(/counting only [^.]+ since the previous round/, 'counting only UNITs since the previous round');
-}
-
 /** Extracts the "stop at that blast radius" inspection-bound sentence. */
 function extractBlastRadiusBound(text) {
-  const match = text.match(/Read ([^.]*?); stop at that blast radius\./);
+  const match = text.match(/Stop at that\s+blast\s+radius\./);
   assert.ok(match, 'blast-radius bound sentence not found');
   return match[0];
 }
 
-const CONVENTIONS_LINE = "Adhere to this project's conventions (read `AGENTS.md` / `CLAUDE.md` from the workspace)";
+const CONVENTIONS_LINE = /Adhere to this project's conventions\s+\(read `AGENTS\.md` \/ `CLAUDE\.md` from the workspace\)/;
 
-/** Extracts `- **<Axis>** (\`tag\`, ...)` bullets from a prompt template's axis list. */
-function extractSkillAxes(text) {
-  return [...text.matchAll(/^- \*\*([^*]+)\*\* \(((?:`[^`]+`,?\s*)+)\):/gm)].map(([, axis, tags]) => ({
-    axis: axis.trim(),
-    tags: [...tags.matchAll(/`([^`]+)`/g)].map((m) => m[1]),
-  }));
+/** Extracts compact `- check: `tag`, ...` groups from a prompt template. */
+function extractPromptTags(text) {
+  return [...text.matchAll(/^- [^:\n]+: ((?:`[^`]+`,?\s*)+)$/gm)]
+    .flatMap(([, tags]) => [...tags.matchAll(/`([^`]+)`/g)].map((match) => match[1]))
+    .sort();
 }
 
 /** Extracts `| **<Axis>** | \`tag\`, ... |` table rows from a README's axis table. */
@@ -139,20 +102,32 @@ describe('review skill prompt template parity', () => {
   });
 
   it('both templates read the same conventions line', () => {
-    assert.ok(planText.includes(CONVENTIONS_LINE), `${PLAN_PROMPT_PATH} missing shared conventions line`);
-    assert.ok(codeText.includes(CONVENTIONS_LINE), `${CODE_PROMPT_PATH} missing shared conventions line`);
+    assert.match(planText, CONVENTIONS_LINE, `${PLAN_PROMPT_PATH} missing shared conventions line`);
+    assert.match(codeText, CONVENTIONS_LINE, `${CODE_PROMPT_PATH} missing shared conventions line`);
   });
 
-  it('share the finding-grammar shape modulo the locus term', () => {
-    const planGrammar = normalizeLocus(extractFindingGrammar(planText));
-    const codeGrammar = normalizeLocus(extractFindingGrammar(codeText));
-    assert.equal(planGrammar, codeGrammar);
+  it('shares the structured report shape modulo locus examples', () => {
+    const normalize = (record) => ({
+      ...record,
+      findings: record.findings.map((finding) => ({ ...finding, locus: '<LOCUS>' })),
+    });
+    const planRecords = extractJsonExamples(planText).map(normalize);
+    const codeRecords = extractJsonExamples(codeText).map(normalize);
+    assert.deepEqual(planRecords, codeRecords);
+    assert.deepEqual(Object.keys(planRecords[0]).sort(), ['findings', 'status']);
+    assert.deepEqual(
+      Object.keys(planRecords[1].findings[0]).sort(),
+      ['defect', 'locus', 'requiredChange', 'severity', 'tag'],
+    );
   });
 
-  it('share the same five report-skeleton headings, in order', () => {
-    const planHeadings = extractSkeletonHeadings(planText);
-    const codeHeadings = extractSkeletonHeadings(codeText);
-    assert.deepEqual(planHeadings, codeHeadings);
+  it('requires one schema-constrained object and findings only when status is FINDINGS', () => {
+    for (const [rel, text] of [[PLAN_PROMPT_PATH, planText], [CODE_PROMPT_PATH, codeText]]) {
+      assert.match(text, /Return only the schema-constrained JSON object/);
+      assert.match(text, /Otherwise use status `FINDINGS` and one or more findings with every field/);
+      assert.doesNotMatch(text, /Axis Coverage|## Verdict|Actionable Next Steps|## Shorter Path/);
+      assert.equal(extractJsonExamples(text).length, 2, `${rel} must declare clean and finding examples`);
+    }
   });
 
   it('share the re-review scope template modulo section/line wording', () => {
@@ -161,10 +136,15 @@ describe('review skill prompt template parity', () => {
     assert.equal(planTemplate, codeTemplate);
   });
 
-  it('share the default tool-turn budget sentence modulo scope wording', () => {
-    const planBudget = normalizeToolTurnBudget(extractToolTurnBudget(planText));
-    const codeBudget = normalizeToolTurnBudget(extractToolTurnBudget(codeText));
-    assert.equal(planBudget, codeBudget);
+  it('carries one advisory Tool Turn Budget target', () => {
+    for (const text of [planText, codeText]) {
+      const { template } = extractTemplate(text);
+      assert.equal(template.match(/<Tool Turn Budget>/g)?.length, 1);
+      assert.match(template, /one advisory target/);
+      assert.match(template, /8 \+ 2 ×/);
+      assert.match(template, /Stop early/);
+      assert.match(template, /Exceed it only for a\s+named in-scope risk supported by evidence/);
+    }
   });
 
   it('both bound inspection with a parallel "stop at that blast radius" sentence', () => {
@@ -187,7 +167,7 @@ describe('review skill templates live in references/', () => {
     const { variables, template } = extractTemplate(readSkill(PLAN_PROMPT_PATH));
     assert.deepEqual(variables, ['Plan Path', 'Requirement', 'User Focus Areas', 'Review Scope', 'Tool Turn Budget']);
     assert.ok(template.includes('<Plan Path>'));
-    assert.ok(template.includes('### Context & Objective'));
+    assert.ok(template.includes('### Context'));
   });
 
   it('extracts declared variables and an intact template from dispatch-code-review', () => {
@@ -240,6 +220,43 @@ describe('review skill templates live in references/', () => {
       assert.doesNotMatch(skill, /--vars <json file>.*--out <path>/s);
     }
   });
+
+  it('review skills require their native response schema', () => {
+    for (const [skillPath, schemaPath] of [
+      [PLAN_REVIEW_PATH, PLAN_SCHEMA_PATH],
+      [CODE_REVIEW_PATH, CODE_SCHEMA_PATH],
+    ]) {
+      const skill = readSkill(skillPath);
+      assert.match(skill, new RegExp(`--response-schema-file \"<skills-dir>/${schemaPath.slice('skills/'.length)}\"`));
+    }
+  });
+});
+
+describe('review response schemas', () => {
+  for (const [kind, schemaPath, tags, locusPattern] of [
+    ['plan', PLAN_SCHEMA_PATH, PLAN_TAGS, PLAN_LOCUS_PATTERN],
+    ['code', CODE_SCHEMA_PATH, CODE_TAGS, CODE_LOCUS_PATTERN],
+  ]) {
+    it(`${kind} schema matches parser tags and report fields`, () => {
+      const schema = JSON.parse(readSkill(schemaPath));
+      assert.deepEqual(schema.required, ['status', 'findings']);
+      assert.equal(schema.additionalProperties, false);
+      const finding = schema.properties.findings.items;
+      assert.deepEqual(
+        finding.required,
+        ['severity', 'locus', 'tag', 'defect', 'requiredChange'],
+      );
+      assert.equal(finding.additionalProperties, false);
+      assert.deepEqual([...finding.properties.tag.enum].sort(), [...tags].sort());
+      assert.equal(new RegExp(finding.properties.locus.pattern).source, locusPattern.source);
+      const manifestPath = `skills/dispatch-${kind}-review/skill-hashes.json`;
+      const manifest = JSON.parse(readSkill(manifestPath));
+      assert.ok(
+        'references/report-schema.json' in manifest,
+        `${manifestPath} must integrity-check its response schema`,
+      );
+    });
+  }
 });
 
 describe('orchestrated handover contract', () => {
@@ -266,11 +283,12 @@ describe('orchestrated handover contract', () => {
 
     const adjudication = alignment.slice(alignment.indexOf('## Adjudication'), alignment.indexOf('## Resolutions Log'));
     assert.ok(
-      adjudication.includes('applies only to findings the citing delegate reported as MUST-FIX or SHOULD-FIX'),
-      `${ALIGNMENT_PATH} § Finality does not scope pending form to delegate-reported MUST-FIX or SHOULD-FIX`
+      adjudication.includes('normalized `MUST` /') &&
+        adjudication.includes('`SHOULD` findings (legacy MUST-FIX / SHOULD-FIX)'),
+      `${ALIGNMENT_PATH} § Finality does not map normalized severity to legacy finality`
     );
     assert.ok(
-      adjudication.includes('Findings the citing delegate reported as CONSIDER are advisory and final'),
+      adjudication.includes('Normalized and legacy `CONSIDER` findings are advisory and final'),
       `${ALIGNMENT_PATH} § Finality does not state CONSIDER finality`
     );
 
@@ -303,18 +321,20 @@ describe('orchestrated handover contract', () => {
 });
 
 describe('review skill axis/tag parity: prompt template vs README.md', () => {
-  it('dispatch-plan-review: template axes match README.md table rows, same names, tags, and order', () => {
-    const skillAxes = extractSkillAxes(readSkill(PLAN_PROMPT_PATH));
-    const readmeAxes = extractReadmeAxes(readSkill(PLAN_REVIEW_README_PATH));
-    assert.ok(skillAxes.length > 0, `${PLAN_PROMPT_PATH} defines no axis bullets`);
-    assert.deepEqual(readmeAxes, skillAxes);
+  it('dispatch-plan-review: compact prompt tags match the disclosed README rubric', () => {
+    const promptTags = extractPromptTags(readSkill(PLAN_PROMPT_PATH));
+    const readmeTags = extractReadmeAxes(readSkill(PLAN_REVIEW_README_PATH)).flatMap(({ tags }) => tags).sort();
+    assert.ok(promptTags.length > 0, `${PLAN_PROMPT_PATH} defines no review tags`);
+    assert.deepEqual(readmeTags, promptTags);
+    assert.deepEqual([...PLAN_TAGS].sort(), promptTags);
   });
 
-  it('dispatch-code-review: template axes match README.md table rows, same names, tags, and order', () => {
-    const skillAxes = extractSkillAxes(readSkill(CODE_PROMPT_PATH));
-    const readmeAxes = extractReadmeAxes(readSkill(CODE_REVIEW_README_PATH));
-    assert.ok(skillAxes.length > 0, `${CODE_PROMPT_PATH} defines no axis bullets`);
-    assert.deepEqual(readmeAxes, skillAxes);
+  it('dispatch-code-review: compact prompt tags match the disclosed README rubric', () => {
+    const promptTags = extractPromptTags(readSkill(CODE_PROMPT_PATH));
+    const readmeTags = extractReadmeAxes(readSkill(CODE_REVIEW_README_PATH)).flatMap(({ tags }) => tags).sort();
+    assert.ok(promptTags.length > 0, `${CODE_PROMPT_PATH} defines no review tags`);
+    assert.deepEqual(readmeTags, promptTags);
+    assert.deepEqual([...CODE_TAGS].sort(), promptTags);
   });
 });
 
@@ -339,9 +359,6 @@ function templateBody(rel) {
 function extractTemplateHeadings(rel) {
   return [...templateBody(rel).matchAll(/^## (.+)$/gm)].map((m) => m[1].trim());
 }
-
-/** Spells out a small cardinal number the way the prose does. */
-const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
 
 describe('cross-skill prose contracts', () => {
   it('every plan section dispatch-plan-review Step 3 names is a plan-template heading', () => {
@@ -381,35 +398,11 @@ describe('cross-skill prose contracts', () => {
     }
   });
 
-  it('each prompt template axis count word matches the axes it actually declares', () => {
-    for (const rel of [PLAN_PROMPT_PATH, CODE_PROMPT_PATH]) {
-      const text = readSkill(rel);
-      const declared = extractSkillAxes(text).length;
-      const word = NUMBER_WORDS[declared];
-      assert.ok(word, `unexpected axis count ${declared} in ${rel}`);
-
-      // Both the opening line and the evaluation heading spell the count out.
-      const heading = new RegExp(`#### 2\\. ${word}-Axis Evaluation`, 'i');
-      assert.match(text, heading, `${rel} evaluation heading disagrees with its ${declared} axes`);
-      assert.match(
-        extractTemplate(text).template,
-        new RegExp(`across ${word} axes`, 'i'),
-        `${rel} opening line disagrees with its ${declared} axes`,
-      );
-    }
-  });
-
-  it('the code-review skill description axis count matches its prompt template', () => {
-    const declared = extractSkillAxes(readSkill(CODE_PROMPT_PATH)).length;
-    const description = readSkill(CODE_REVIEW_PATH).split('\n').find((l) => l.startsWith('description:'));
-    assert.ok(description, 'dispatch-code-review frontmatter has no description');
-    const stated = description.match(/across (\d+) axes/);
-    if (stated) {
-      assert.equal(
-        Number(stated[1]),
-        declared,
-        'dispatch-code-review description axis count disagrees with its prompt template',
-      );
+  it('review skill descriptions do not cache removed axis counts', () => {
+    for (const rel of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      const description = readSkill(rel).split('\n').find((line) => line.startsWith('description:'));
+      assert.ok(description, `${rel} frontmatter has no description`);
+      assert.doesNotMatch(description, /across \d+ axes/);
     }
   });
 });

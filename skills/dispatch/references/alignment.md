@@ -83,7 +83,9 @@ The orchestrator supplies data only; the review skill builds invocations, fills 
 
 ### Target → Flag Mapping (Orchestrated)
 
-Map an `implement-dispatch` target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] [--metrics-file "<metrics path>"] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
+Map an `implement-dispatch` target to:
+`dispatch --provider <platform> [-m <model>] [-e <effort>] [--metrics-file "<metrics>"] --response-schema-file "<schema>" -f "<artifact>" --prompt-file "<prompt>"`.
+The review skill supplies the schema; unsupported providers are unavailable.
 - Include `-m` and `-e` only when specified in the target entry.
 - When a target omits `model`, omit `-m` and let dispatch select the configured model for that
   platform; do not use `--no-config`, because effective membership and configured defaults are
@@ -184,8 +186,12 @@ Evaluate every actionable claim (proposed defect, missing requirement, cut, reco
 
 - **Standalone mode**: Reject and Downgrade rulings are final.
 - **Orchestrated mode**:
-  - `consensus: true`: An orchestrator Reject or Downgrade applies only to findings the citing delegate reported as MUST-FIX or SHOULD-FIX, logging as `[Rejected — pending confirmation]` for re-review in the next wave. Lowering a MUST-FIX / SHOULD-FIX is itself a Downgrade that remains pending.
-  - `CONSIDER` findings: Findings the citing delegate reported as CONSIDER are advisory and final at the orchestrator's ruling (Accept, Downgrade into Out of Scope / Follow-ups, or Reject) and logged `[Rejected / Downgraded] <locus> — <tag> (CONSIDER): <defect> → <rejection rationale>`, regardless of consensus settings.
+  - `consensus: true`: An orchestrator Reject or Downgrade applies only to normalized `MUST` /
+    `SHOULD` findings (legacy MUST-FIX / SHOULD-FIX), logging as
+    `[Rejected — pending confirmation]` for re-review. Lowering one is also a pending Downgrade.
+  - Normalized and legacy `CONSIDER` findings are advisory and final at the orchestrator's ruling,
+    regardless of `consensus` (Accept, Downgrade, or Reject), logged as
+    `[Rejected / Downgraded] <locus> — <tag> (CONSIDER): <defect> → <rejection rationale>`.
   - `consensus: false`: Orchestrator rejections and downgrades are final immediately.
 
 ### Dispute Escalation

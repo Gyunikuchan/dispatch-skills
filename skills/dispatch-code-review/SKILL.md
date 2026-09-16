@@ -76,21 +76,29 @@ Supply all declared variables to `fill-template.mjs`:
 - `<Review Scope>`: from handover (orchestrated) or derived round scope above (standalone).
 - `<Tool Turn Budget>`: from handover (orchestrated) or `Unspecified` (standalone).
 
-**Dispatch**: orchestrated — build one invocation per handed-over target per `dispatch`'s `references/alignment.md` § Invocation Modes; standalone — one per pin, or one cascade dispatch without pins, per § Invocation. Launch every invocation backgrounded and yield the turn; see `dispatch` for cascade, flags, and log monitoring.
+**Dispatch**: follow `dispatch`'s `references/alignment.md` § Invocation Modes. Add
+`--response-schema-file "<skills-dir>/dispatch-code-review/references/report-schema.json"` to every
+invocation. Launch all invocations in the background and yield.
 
 **Done when:** the walkthrough and plan (if present) are resolved (or walkthrough authored), attached with `-f`, prompt variables populated into a prompt file, and dispatch launched backgrounded with the turn yielded.
 
 ---
 
-### 2. Adjudicate each actionable claim
+### 2. Normalize and adjudicate each actionable claim
 
-Start once every launched dispatch has returned a report, `NO_DISPATCH_AVAILABLE`, or its per-pin fallback result. Dispatches ending in terminal errors or empty outputs follow `dispatch`'s `references/alignment.md` § Adjudication **Terminal outcomes** (skipping adjudication and resolutions logging if no invocation produced a report).
+After every launch settles, handle terminal errors and empty outputs per `dispatch`'s
+`references/alignment.md`
+§ Adjudication. Save each report verbatim to an owner-only OS-temp file, run
+`node <skills-dir>/dispatch-code-review/scripts/parse-report.mjs --file "<path>"`, then delete it.
+Adjudicate only normalized `findings`, mapping severity per `dispatch`'s
+`references/alignment.md` § Finality. Exit `1` is
+`invalid-report` and follows the empty-report fallback without log entries; exit `2` halts.
+Never repair guessed JSON.
 
-Adjudicate per `dispatch`'s `references/alignment.md` § Adjudication (scope, verdict table, evidence over votes, dispute escalation).
+Verify every finding against its `<file>:L<line>` and surrounding code; reject uncited,
+contradicted, or unverifiable claims.
 
-Locus note: ground truth for a code claim is the cited `<file>:L<line>` plus surrounding context in the active codebase. Verify every claim against the cited lines before accepting; classify uncited, contradicted, or unverifiable claims as **Reject**.
-
-**Done when:** every actionable claim carries a verdict and all disputes are resolved (by the user in standalone mode, or returned unescalated per the consensus rule in orchestrated mode).
+**Done when:** every usable report is normalized, every normalized finding carries a verdict, and all disputes are resolved (by the user in standalone mode, or returned unescalated per the consensus rule in orchestrated mode).
 
 ---
 

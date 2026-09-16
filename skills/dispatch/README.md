@@ -134,6 +134,7 @@ Command-line overrides are useful for one-off runs:
 | `-f <path>` / `--file` / `--artifact` | Attach a file or artifact; repeat for multiple files. |
 | `-p <string>` / `--prompt <string>` | Pass the prompt as an option instead of trailing text. |
 | `--prompt-file <path>` | Read the prompt from a file. |
+| `--response-schema-file <path>` | Require provider-native structured output matching a JSON Schema; currently Claude-only. |
 | `--provider <name>` | Restrict the run to one configured provider. |
 | `--candidate-index <n>` | Select one zero-based configured candidate; requires `--provider`. |
 | `-m <model>` / `--model <model>` | Override the configured model for one run. |

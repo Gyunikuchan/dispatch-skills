@@ -184,6 +184,14 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
         'the serialized sandbox setting must be budgeted',
       );
     });
+
+    it('accounts for a native response schema', () => {
+      const schema = { type: 'object', additionalProperties: false };
+      assert.ok(
+        claudeFixedArgBytes({ responseSchema: schema }) > claudeFixedArgBytes({}),
+        'the serialized schema must be reserved in the command-line budget',
+      );
+    });
   });
 
   describe('buildClaudeArgs', () => {
@@ -308,6 +316,16 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.equal(args[args.indexOf('--effort') + 1], 'high');
     });
 
+    it('passes a response schema through Claude native structured output', () => {
+      const schema = { type: 'object', additionalProperties: false };
+      const args = buildClaudeArgs('hello', { responseSchema: schema });
+      assert.equal(args[args.indexOf('--json-schema') + 1], JSON.stringify(schema));
+      assert.ok(
+        args.indexOf('--json-schema') < args.indexOf('--disallowedTools'),
+        'schema flag must precede the variadic disallowed-tools flag',
+      );
+    });
+
     it('buildClaudeArgs pins --permission-mode plan and disallows write tools', () => {
       const args = buildClaudeArgs('hello', { model: 'm', effort: 'e' });
       assert.equal(args[args.indexOf('--permission-mode') + 1], 'plan');
@@ -426,19 +444,22 @@ describe('runClaude cascade loop', () => {
   function harness({ results = [], targets = [target('desktop'), target('vscode')] } = {}) {
     const calls = [];
     const sandboxValues = [];
+    const responseSchemas = [];
     let closed = 0;
     return {
       calls,
       sandboxValues,
+      responseSchemas,
       closedCount: () => closed,
       options: {
         prompt: 'x',
         model: ['model-a', 'model-b'],
         discoverTargets: () => targets,
         createLogger: () => ({ logFile: null, write() {}, close() { closed += 1; } }),
-        execute: async ({ target: t, model, sandbox }) => {
+        execute: async ({ target: t, model, sandbox, responseSchema }) => {
           calls.push(`${t.name}:${model}`);
           sandboxValues.push(sandbox);
+          responseSchemas.push(responseSchema);
           const next = results[calls.length - 1];
           if (next instanceof Error) throw next;
           return next ?? okResult();
@@ -463,6 +484,13 @@ describe('runClaude cascade loop', () => {
     const h = harness({ results: [okResult()] });
     await runClaude({ ...h.options, sandbox: false });
     assert.deepEqual(h.sandboxValues, [false]);
+  });
+
+  it('propagates the response schema through the cascade executor', async () => {
+    const h = harness({ results: [okResult()] });
+    const schema = { type: 'object' };
+    await runClaude({ ...h.options, responseSchema: schema });
+    assert.deepEqual(h.responseSchemas, [schema]);
   });
 
   it('advances the target only after the last model, and only on quota or auth', async () => {

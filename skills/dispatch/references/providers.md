@@ -31,6 +31,8 @@ These are defense-in-depth controls, not a complete secret boundary.
 - **Direct runner:** `scripts/claude-run.mjs`; discovery order is CLI → Desktop → VS Code
   extension. Select with `--claude-mode`/`--mode`; probe all modes with `--test-modes` (aliases:
   `--probe-modes`, `--reachability`). The probe prints the resolved executable path.
+- **Structured output:** `dispatch --response-schema-file <path>` validates a bounded JSON Schema
+  and passes it to Claude as `--json-schema`. Other providers are unavailable for that invocation.
 - **Read-only:** `--permission-mode plan`, a read-tool allowlist, and an explicit write-tool
   denylist.
 - **Sandbox:** enabled by default through `--settings {"sandbox":{"enabled":true}}`. Set

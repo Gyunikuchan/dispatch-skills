@@ -115,19 +115,20 @@ review round and narrow the review to changed sections.
 > This skill may update the target plan, but delegates never edit files, create commits, or push
 > changes. The skill never changes code.
 
-## Review coverage
+## Detailed review rubric
 
-Every plan is checked across seven areas:
+Use this disclosed rubric for focused or high-risk reviews. Every plan is checked across seven
+areas:
 
 | Area | Focus tags | Questions it answers |
 |---|---|---|
-| **Requirement & Intent Fidelity** | `traceability`, `user-gap`, `scope-creep` | Does the plan solve the requested problem without scope creep? |
-| **Domain & Business Logic** | `domain-logic`, `invariant`, `state-machine` | Are rules, invariants, units, and lifecycle transitions correct? |
-| **Plan Coherence & Architecture** | `coherence`, `approach`, `standards` | Do interfaces, sequencing, layering, and repository conventions line up? |
-| **Security & Permissions** | `security`, `auth`, `validation` | Are trust boundaries, credentials, authorization, and validation covered? |
-| **Blast Radius & Reversibility** | `blast-radius`, `migration`, `compat` | Are callers, persisted data, compatibility, and reversal paths accounted for? |
-| **Testability & Success Criteria** | `testability`, `spec-gap` | Are success criteria concrete and backed by named verification? |
-| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Is there a smaller safe approach, and what happens at the edges or on failure? |
+| **Requirement & Intent Fidelity** | `intent`, `traceability`, `user-gap`, `scope`, `scope-creep` | Bidirectional requirement mapping; flawed premises, conflicts, and missing prerequisites; unrequested work or gold-plating. |
+| **Domain & Business Logic** | `correctness`, `domain-logic`, `invariant`, `state-machine` | Project and domain rules; state consistency across multi-step mutations; valid lifecycle transitions and reachable states. |
+| **Plan Coherence & Architecture** | `architecture`, `coherence`, `approach`, `standards` | Producer-consumer contract alignment, sequencing, module boundaries, codebase idioms, and authoritative specifications. |
+| **Security & Permissions** | `security`, `auth`, `validation` | Trust boundaries, credential exposure, isolation, authorization, input validation, injection, and traversal risks. |
+| **Blast Radius & Reversibility** | `compatibility`, `blast-radius`, `migration`, `compat`, `rollback` | Adjacent callers, persisted schemas, multi-version compatibility, graceful degradation, and rollback. |
+| **Testability & Success Criteria** | `verification`, `testability`, `spec-gap` | Checkable outcomes, named automated or concrete verification, edge expectations, and pass/fail definitions. |
+| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Delete/reuse/stdlib before new abstraction; empty, zero, boundary, partial-failure, race, and fallback behavior. |
 
 ## Findings and resolutions
 

@@ -11,6 +11,8 @@ import {
   getCandidateProviders as getCandidateProvidersImpl,
   dispatchTask as dispatchTaskImpl,
   executeProvider,
+  loadResponseSchema,
+  normalizeResponseSchema,
   providerProbes,
   providerRunners,
   PROVIDER_ALIASES,
@@ -281,6 +283,26 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       const provider = await resolveProvider();
       assert.equal(provider, null);
+    });
+
+    it('probes only providers allowed by a native capability', async () => {
+      const calls = [];
+      for (const [name, probe] of [
+        ['claude', 'isClaudeAvailable'],
+        ['agy', 'isAgyAvailable'],
+        ['copilot', 'isCopilotAvailable'],
+        ['opencode', 'isOpencodeAvailable'],
+      ]) {
+        mock.method(providerProbes, probe, async () => {
+          calls.push(name);
+          return true;
+        });
+      }
+      const providers = await getCandidateProviders({
+        allowedProviders: new Set(['claude']),
+      });
+      assert.deepEqual(providers, ['claude']);
+      assert.deepEqual(calls, ['claude']);
     });
 
     it('honors explicit provider override regardless of cascade', async () => {
@@ -1289,6 +1311,69 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
       () => executeProvider('nonexistent-provider', {}),
       /Unhandled provider: nonexistent-provider/,
     );
+  });
+
+  it('loads and validates bounded response schemas', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-response-schema-'));
+    try {
+      const file = path.join(dir, 'schema.json');
+      fs.writeFileSync(file, '{"type":"object","additionalProperties":false}\n');
+      assert.deepEqual(loadResponseSchema(file), {
+        type: 'object',
+        additionalProperties: false,
+      });
+      assert.throws(() => normalizeResponseSchema([]), /must contain one JSON object/);
+      fs.writeFileSync(file, '{broken');
+      assert.throws(() => loadResponseSchema(file), /contains invalid JSON/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when a pinned provider lacks native response schema support', async () => {
+    await assert.rejects(
+      () => dispatchTask({
+        prompt: 'Test',
+        provider: 'copilot',
+        responseSchema: { type: 'object' },
+      }),
+      (err) => err.code === 'RESPONSE_SCHEMA_UNSUPPORTED',
+    );
+  });
+
+  it('reports native schema unavailability without a double negative', async () => {
+    const config = { platforms: { copilot: {} } };
+    await assert.rejects(
+      () => dispatchTaskImpl({
+        prompt: 'Test',
+        responseSchema: { type: 'object' },
+        config,
+        configPath: 'copilot-only.jsonc',
+      }),
+      (err) =>
+        err.code === 'RESPONSE_SCHEMA_UNSUPPORTED' &&
+        err.message === 'No available provider supports native response schema transport.',
+    );
+  });
+
+  it('forwards a native response schema to Claude', async () => {
+    const schema = { type: 'object', additionalProperties: false };
+    try {
+      mock.method(providerRunners, 'claude', async (opts) => ({
+        exitCode: 0,
+        stdout: JSON.stringify(opts.responseSchema),
+        stderr: '',
+        provider: 'claude',
+      }));
+      const result = await dispatchTask({
+        prompt: 'Test',
+        provider: 'claude',
+        responseSchema: schema,
+      });
+      assert.deepEqual(JSON.parse(result.stdout), schema);
+    } finally {
+      mock.restoreAll();
+    }
   });
 
   it('dispatchTask forwards files, agent, timeout, maxBufferMb, json and verbose into the runner options', async () => {

@@ -37,6 +37,7 @@ import {
   loadSkillConfig,
   parseCommonArgs,
   readStdin,
+  parseRunnerModeArgs,
   SANDBOX_SUPPORTED_PROVIDERS,
   validateDispatchConfig,
   verifySkillIntegrity,
@@ -72,6 +73,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [json] Structured JSON output (opencode provider only).
+ * @property {object|null} [responseSchema] Native response schema. Currently supported by Claude.
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [orchestratorModel] Explicit orchestrator model override; skips detection.
@@ -132,6 +134,36 @@ const PROVIDER_DISPLAY_NAMES = {
   copilot: 'Copilot',
 };
 
+const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
+const MAX_RESPONSE_SCHEMA_BYTES = 64 * 1024;
+
+export function normalizeResponseSchema(value, source = 'response schema') {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${source} must contain one JSON object.`);
+  }
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_RESPONSE_SCHEMA_BYTES) {
+    throw new Error(`${source} exceeds 64 KiB.`);
+  }
+  return JSON.parse(serialized);
+}
+
+export function loadResponseSchema(file) {
+  let source;
+  try {
+    source = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new Error(`--response-schema-file not found or unreadable: ${file}`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch (err) {
+    throw new Error(`--response-schema-file contains invalid JSON: ${err.message}`);
+  }
+  return normalizeResponseSchema(parsed, '--response-schema-file');
+}
+
 // ============================================================================
 // SECTION: Main API — dispatchTask()
 // ============================================================================
@@ -152,6 +184,7 @@ export async function dispatchTask(options = {}) {
     timeout = DEFAULT_TIMEOUT_SECONDS,
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
+    responseSchema: rawResponseSchema = null,
     verbose = false,
     orchestrator = null,
     orchestratorModel = undefined,
@@ -163,6 +196,9 @@ export async function dispatchTask(options = {}) {
   } = options;
 
   assertSkillIntegrity();
+  const responseSchema = rawResponseSchema === null
+    ? null
+    : normalizeResponseSchema(rawResponseSchema);
 
   if (noConfig && !provider) {
     const err = new Error('--no-config ignores cascade membership entirely and requires --provider.');
@@ -221,13 +257,25 @@ export async function dispatchTask(options = {}) {
         ? (orchestratorModel || null)
         : detectOrchestratorModel({ orchestrator: effectiveOrchestrator });
 
-  const candidates = await getCandidateProviders({
+  let candidates = await getCandidateProviders({
     explicitProvider: provider,
     orchestrator: effectiveOrchestrator,
     noConfig,
     config,
     configPath,
+    allowedProviders: responseSchema ? RESPONSE_SCHEMA_PROVIDERS : null,
   });
+
+  if (responseSchema) {
+    if (candidates.length === 0) {
+      const message = provider
+        ? `Provider "${normalizeOrchestrator(provider)}" does not support native response schema transport.`
+        : 'No available provider supports native response schema transport.';
+      const err = new Error(message);
+      err.code = 'RESPONSE_SCHEMA_UNSUPPORTED';
+      throw err;
+    }
+  }
 
   if (candidates.length === 0) {
     const err = new Error(
@@ -307,6 +355,7 @@ export async function dispatchTask(options = {}) {
       timeout,
       maxBufferMb,
       json,
+      responseSchema,
       verbose,
       model: candidate.model,
       effort: candidate.effort,
@@ -484,8 +533,14 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 export async function main() {
   const options = parseCommonArgs(process.argv, {
     booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets'],
+    valueFlags: ['--response-schema-file'],
   });
   const { noConfig, validateOnly, listPlatforms, listTargets } = parseDispatchFlags(process.argv);
+  const { values: dispatchValues } = parseRunnerModeArgs(process.argv.slice(2), {
+    valueFlags: ['--response-schema-file'],
+    aliases: { '--response-schema-file': 'responseSchemaFile' },
+  });
+  const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
 
   if (options.help) {
     printHelp();
@@ -507,6 +562,7 @@ export async function main() {
     // Refuse the combination rather than silently ignoring flags the user believes were
     // honored: both inspection modes read the config and nothing else.
     let ignored = collectRunFlags(options, noConfig);
+    if (responseSchemaFile) ignored.push('--response-schema-file');
     if (listTargets) {
       ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
     }
@@ -568,6 +624,7 @@ export async function main() {
     result = await dispatchTask({
       ...options,
       prompt: finalPrompt,
+      responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
       noConfig,
       orchestratorModel: options.orchestratorModel ?? undefined,
     });
@@ -638,6 +695,8 @@ Options:
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --metrics-file <path>       Write one content-free terminal slot record (absolute initialized path)
+  --response-schema-file <path>
+                              Require provider-native structured output matching this JSON Schema
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
   --candidate-index <n>       Select one configured candidate for a pinned provider (zero-based)
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
@@ -730,10 +789,16 @@ export function resolveConfiguredTargets(config, orchestrator = null, orchestrat
  * @param {object|null} [params.config] Pre-loaded dispatch config; loaded fresh when omitted
  *   (and `noConfig` is false) so direct callers/tests need not load it themselves.
  * @param {string|null} [params.configPath] Path `config` was loaded from, for error messages.
+ * @param {Set<Provider>|null} [params.allowedProviders] Restrict providers before probing.
  * @returns {Promise<Provider[]>}
  */
 export async function getCandidateProviders(params = {}) {
-  const { explicitProvider = null, orchestrator = null, noConfig = false } = params;
+  const {
+    explicitProvider = null,
+    orchestrator = null,
+    noConfig = false,
+    allowedProviders = null,
+  } = params;
 
   let config = params.config;
   let configPath = params.configPath ?? (config ? '<injected>' : null);
@@ -759,10 +824,14 @@ export async function getCandidateProviders(params = {}) {
       err.code = 'PLATFORM_NOT_CONFIGURED';
       throw err;
     }
+    if (allowedProviders && !allowedProviders.has(resolved)) return [];
     return [resolved];
   }
 
-  const order = config ? Object.keys(config.platforms) : KNOWN_PROVIDERS;
+  const configuredOrder = config ? Object.keys(config.platforms) : KNOWN_PROVIDERS;
+  const order = allowedProviders
+    ? configuredOrder.filter((name) => allowedProviders.has(name))
+    : configuredOrder;
   const effectiveOrchestrator = normalizeOrchestrator(orchestrator || detectOrchestrator());
 
   // Probe concurrently: each probe spawns a CLI and waits on it, so serially they add up to seconds

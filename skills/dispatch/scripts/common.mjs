@@ -1554,7 +1554,7 @@ export function verifySkillIntegrity(skillDir, manifestName = 'skill-hashes.json
 
 /**
  * Generates a hash manifest for all tracked files in a skill directory: SKILL.md, every .mjs
- * under scripts/, and every .md under references/. Config files (`config*.jsonc`) are never
+ * under scripts/, and every .md/.json under references/. Config files (`config*.jsonc`) are never
  * hashed — they're user-edited/dynamic by design, not part of the skill's integrity surface.
  * Entries are sorted alphabetically for a stable, diff-friendly manifest.
  */
@@ -1575,7 +1575,7 @@ export function generateSkillHashes(skillDir) {
 
   const referencesDir = path.join(skillDir, 'references');
   if (fs.existsSync(referencesDir)) {
-    for (const entry of fs.readdirSync(referencesDir).filter((f) => f.endsWith('.md'))) {
+    for (const entry of fs.readdirSync(referencesDir).filter((f) => /\.(?:md|json)$/.test(f))) {
       const rel = `references/${entry}`;
       entries[rel] = hashFile(path.join(skillDir, rel));
     }

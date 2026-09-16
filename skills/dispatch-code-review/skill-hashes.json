@@ -1,6 +1,8 @@
 {
-  "SKILL.md": "15454611ce42e55ae165c66b2914da580f6253d0cbf8a764201f48ee0d01f5c4",
-  "references/prompt-template.md": "6e784aa5dc76ade430e07cdef691206588aa6deca4a380942068043386cb753a",
+  "SKILL.md": "c5a13b5ec760ff2bdbf0bc16bf9c77788f6ce0e8da0a4a2dce1e88752d805461",
+  "references/prompt-template.md": "fb377bc5cb3e17f4a8235ab3e270424c2457853c93a70314ad938fbc0b68db2a",
+  "references/report-schema.json": "23a9a9eec463ca7cbba27b08e580a4fd736d02e6015cc92f96ae824f56c6f980",
   "references/walkthrough-template.md": "0c817149a3ed4b58c5632ae340a967d4855678a67a19692955eb37e45bf415f3",
+  "scripts/parse-report.mjs": "b57b4341ed409fb400d5346ea8679d56a2ec195e83e283e55fabe638e7c60877",
   "scripts/resolve-review-range.mjs": "23b937487caa405d713db61be0abf2d77832e9d6a42a4db28e33f37ef0cf0251"
 }

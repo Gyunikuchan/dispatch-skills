@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 
 import { isMainModule, measureText } from '../skills/dispatch/scripts/common.mjs';
 import { extractTemplate, fillTemplate } from '../skills/dispatch/scripts/fill-template.mjs';
+import { parseReport as parseCodeReport } from '../skills/dispatch-code-review/scripts/parse-report.mjs';
+import { parseReport as parsePlanReport } from '../skills/dispatch-plan-review/scripts/parse-report.mjs';
 import { initRun } from '../skills/implement-dispatch/scripts/run-record.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -16,6 +18,10 @@ const DEFAULT_CORPUS = path.resolve(__dirname, '..', 'tests', 'fixtures', 'revie
 const PROMPT_PATHS = {
   plan: path.resolve(__dirname, '..', 'skills', 'dispatch-plan-review', 'references', 'prompt-template.md'),
   code: path.resolve(__dirname, '..', 'skills', 'dispatch-code-review', 'references', 'prompt-template.md'),
+};
+const SCHEMA_PATHS = {
+  plan: path.resolve(__dirname, '..', 'skills', 'dispatch-plan-review', 'references', 'report-schema.json'),
+  code: path.resolve(__dirname, '..', 'skills', 'dispatch-code-review', 'references', 'report-schema.json'),
 };
 
 function readJson(file) {
@@ -39,31 +45,36 @@ export function parseMarkdownReport(text) {
       kind = heading[1] === 'MUST-FIX' ? 'MUST' : heading[1] === 'SHOULD-FIX' ? 'SHOULD' : 'CONSIDER';
       continue;
     }
-    if (!kind || !line.trim().startsWith('§') && !/^[^:]+:L\d+/.test(line.trim())) continue;
-    const match = /^(.+?)\s+—\s+([^:]+):/.exec(line.trim());
-    if (match) findings.push({ kind, locus: match[1].trim(), tag: match[2].trim() });
+    const normalized = line.trim().replace(/^[-*]\s+/, '');
+    const separator = normalized.indexOf(' — ');
+    if (!kind || separator < 0) continue;
+    const locus = normalized.slice(0, separator).replace(/^`|`$/g, '').trim();
+    if (!locus.startsWith('§') && !/^[^:]+:L\d+$/.test(locus)) continue;
+    const tagMatch = /^`?([^`:]+)`?\s*:/.exec(normalized.slice(separator + 3));
+    if (tagMatch) findings.push({ kind, locus, tag: tagMatch[1].trim() });
   }
   return findings;
 }
 
-export function parseJsonlReport(text) {
-  const findings = [];
-  for (const [index, line] of String(text).split(/\r?\n/).entries()) {
-    if (!line.trimStart().startsWith('{')) continue;
-    let value;
-    try {
-      value = JSON.parse(line);
-    } catch (err) {
-      throw new Error(`Malformed JSON-looking line ${index + 1}: ${err.message}`);
-    }
-    if (value.type !== 'finding') continue;
-    if (!['MUST', 'SHOULD', 'CONSIDER'].includes(value.severity) ||
-        typeof value.tag !== 'string' || typeof value.locus !== 'string') {
-      throw new Error(`Invalid finding record on line ${index + 1}.`);
-    }
-    findings.push({ kind: value.severity, tag: value.tag, locus: value.locus });
+export function parseStructuredReport(text, kind) {
+  if (!['plan', 'code'].includes(kind)) throw new Error(`Unknown review kind: ${kind}`);
+  const parsed = kind === 'plan' ? parsePlanReport(text) : parseCodeReport(text);
+  return parsed.findings.map(({ severity, tag, locus }) => ({ kind: severity, tag, locus }));
+}
+
+export function parseBenchmarkReport(report, kind, grammar, exitCode) {
+  if (exitCode !== 0) return { findings: [], parseFailure: false };
+  if (!String(report).trim()) return { findings: [], parseFailure: true };
+  try {
+    return {
+      findings: grammar === 'json'
+        ? parseStructuredReport(report, kind)
+        : parseMarkdownReport(report),
+      parseFailure: false,
+    };
+  } catch {
+    return { findings: [], parseFailure: true };
   }
-  return findings;
 }
 
 export function scoreFindings(oracle, findings) {
@@ -162,6 +173,9 @@ function runLive(corpusDir, manifest, matrix, grammar) {
             '--provider', target.provider,
             ...(target.model ? ['--model', target.model] : []),
             ...(target.effort ? ['--effort', target.effort] : []),
+            ...(grammar === 'json'
+              ? ['--response-schema-file', SCHEMA_PATHS[fixture.kind]]
+              : []),
             '--metrics-file', metricsFile,
             prompt,
           ];
@@ -174,13 +188,8 @@ function runLive(corpusDir, manifest, matrix, grammar) {
           const report = result.status === 0 ? result.stdout : '';
           const slot = fs.existsSync(metricsFile) ? readJson(metricsFile) : null;
           const attempt = slot?.attempts?.[slot.effectiveAttempt ?? slot.attempts.length - 1] ?? null;
-          let findings = [];
-          let parseFailure = false;
-          try {
-            findings = grammar === 'jsonl' ? parseJsonlReport(report) : parseMarkdownReport(report);
-          } catch {
-            parseFailure = true;
-          }
+          const { findings, parseFailure } =
+            parseBenchmarkReport(report, fixture.kind, grammar, result.status);
           const status =
             parseFailure ? 'failed' :
               result.status === 0 ? 'ok' :
@@ -194,6 +203,7 @@ function runLive(corpusDir, manifest, matrix, grammar) {
             model: target.model ?? null,
             repeat,
             status,
+            failureKind: parseFailure ? 'invalid-report' : attempt?.failureKind ?? null,
             score: scoreFindings(fixture.oracle, findings),
             input: attempt
               ? { characters: attempt.inputChars, estimate: attempt.inputEstimate }
@@ -215,6 +225,7 @@ export function aggregate(runs) {
   return runs.reduce((total, run) => {
     total.runs++;
     total[run.status]++;
+    total.invalidReports += Number(run.failureKind === 'invalid-report');
     if (run.status === 'ok') {
       for (const key of ['mustFound', 'mustTotal', 'shouldFound', 'shouldTotal', 'forbiddenFound', 'unexpected']) {
         total[key] += run.score[key];
@@ -226,7 +237,7 @@ export function aggregate(runs) {
     return total;
   }, {
     runs: 0, ok: 0, failed: 0, skipped: 0, mustFound: 0, mustTotal: 0, shouldFound: 0,
-    shouldTotal: 0, forbiddenFound: 0, unexpected: 0, cleanFalsePositives: 0,
+    shouldTotal: 0, forbiddenFound: 0, unexpected: 0, cleanFalsePositives: 0, invalidReports: 0,
     inputChars: 0, outputChars: 0,
   });
 }
@@ -254,13 +265,13 @@ function parseArgs(argv) {
     else if (arg === '-h' || arg === '--help') out.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  if (!['markdown', 'jsonl'].includes(out.grammar)) throw new Error('--grammar must be markdown or jsonl.');
+  if (!['markdown', 'json'].includes(out.grammar)) throw new Error('--grammar must be markdown or json.');
   return out;
 }
 
 const USAGE = `Usage:
   node scripts/benchmark-review-prompts.mjs --validate-only [--corpus <path>]
-  node scripts/benchmark-review-prompts.mjs --live --grammar <markdown|jsonl> --out <path>
+  node scripts/benchmark-review-prompts.mjs --live --grammar <markdown|json> --out <path>
 `;
 
 function main() {
@@ -286,7 +297,7 @@ function main() {
     matrixVersion: matrix.matrixVersion,
     grammar: args.grammar,
     generatedAt: new Date().toISOString(),
-    command: 'node scripts/benchmark-review-prompts.mjs --live --grammar <markdown|jsonl> --out <path>',
+    command: 'node scripts/benchmark-review-prompts.mjs --live --grammar <markdown|json> --out <path>',
     environment: {
       node: process.version,
       git: spawnSync('git', ['--version'], { encoding: 'utf8' }).stdout.trim(),
@@ -294,6 +305,11 @@ function main() {
     promptHashes: Object.fromEntries(
       Object.entries(PROMPT_PATHS).map(([kind, file]) => [kind, sha256(fs.readFileSync(file, 'utf8'))]),
     ),
+    schemaHashes: args.grammar === 'json'
+      ? Object.fromEntries(
+          Object.entries(SCHEMA_PATHS).map(([kind, file]) => [kind, sha256(fs.readFileSync(file, 'utf8'))]),
+        )
+      : null,
     availabilityOutcomes: availabilityOutcomes(runs),
     runs,
     aggregate: aggregate(runs),

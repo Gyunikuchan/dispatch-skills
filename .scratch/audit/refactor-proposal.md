@@ -16,7 +16,7 @@ Prioritize these changes:
 2. State the resolved review flow before wave 1, explicitly including `plan review: off`, while retaining the single implementation approval gate.
 3. Fix the clean-tree `HEAD~1` fallback and make successful artifact cleanup explicitly ephemeral.
 4. Bound re-review payload growth with a generated review view while preserving the complete canonical audit log.
-5. Replace both full-review prompts in place with compact findings-only JSONL contracts; this is the largest certain saving on the highest-multiplicity path.
+5. Replace both full-review prompts in place with compact schema-constrained findings-only JSON contracts; this is the largest certain saving on the highest-multiplicity path.
 6. Then add stable finding IDs, delegate severity, and claim-specific consensus rebuttal packets for the minority dispute path.
 7. Prune duplicated skill/reference prose after the compact contracts establish the smaller semantic core.
 8. Add generic fan-out and review-owned preparation only when measured host overhead justifies their runtime and CLI surface.
@@ -459,15 +459,12 @@ If an original source cannot be resumed or redispatched after an auth/quota excl
 
 ### P1: Shrink delegate output to findings only
 
-After Phase 0 captures a baseline, replace both prompt templates in place; do not add a prompt-variant config flag. Regenerate hashes in the same change. Use a compact JSONL contract:
+After Phase 0 captures a baseline, replace both prompt templates in place; do not add a prompt-variant config flag. Regenerate hashes in the same change. Pass a kind-specific JSON Schema through the provider's native structured-output transport and use this compact object contract:
 
 ```text
 Inspect only the supplied scope and its direct contracts.
-Return JSON Lines. First emit exactly one summary:
-{"type":"summary","status":"CLEAN|FINDINGS"}
-
-Then, only when status is FINDINGS, emit one object per finding:
-{"type":"finding","severity":"MUST|SHOULD|CONSIDER","locus":"<file/section>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}
+Return exactly one object:
+{"status":"CLEAN|FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"<file/section>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 
 Every finding requires a verifiable locus. Omit praise, clean-axis summaries,
 verdicts, repeated next steps, and findings outside scope.
@@ -475,19 +472,19 @@ verdicts, repeated next steps, and findings outside scope.
 
 The prompt carries one advisory review target: `8 + 2 x units under review`. It tells the reviewer to stop early when grounded, and to exceed the target only for a named in-scope risk supported by evidence. If the provider exposes actual tool-use metadata, the runner records it; otherwise no self-reported count is required. JSON escaping is authoritative; no custom delimiter escaping is required.
 
-Add `scripts/parse-report.mjs` to each review skill in this phase. Each parser reads line-wise through stdin/file transport. Ignore non-JSON provider chrome and count it in `ignoredLineCount`; any line whose first non-whitespace character is `{` must parse and satisfy the schema. Validate exactly one leading summary object among parsed records, status consistency, severity, kind-specific tags, required strings, duplicate records, and plan/code locus form. Exit `0` returns a valid normalized report, exit `1` identifies an unusable delegate report with field-level diagnostics, and exit `2` is invocation/I/O failure. The host never repairs guessed JSON. Exit `1` produces no adjudication/log entries and follows the existing empty-report reserve/fallback path while recording `invalid-report`; exit `2` halts. Phase 1 continues writing the existing resolution-log grammar and does not assign durable finding IDs; Phase 2 adds enriched log state.
+Add `--response-schema-file` to `dispatch`; it validates a bounded schema file and routes only to providers with native schema enforcement. Claude receives the schema through `--json-schema`; providers without an equivalent native capability fail closed as unavailable for that invocation. Add `references/report-schema.json` and `scripts/parse-report.mjs` to each review skill in this phase. Each parser reads one complete JSON object through stdin/file transport and validates exact report/finding fields, status consistency, severity, kind-specific tags, required strings, duplicate findings, and plan/code locus form. Exit `0` returns a valid normalized report, exit `1` identifies an unusable delegate report with field-level diagnostics, and exit `2` is invocation/I/O failure. The parser remains defense in depth and never repairs guessed JSON. Exit `1` produces no adjudication/log entries and follows the existing empty-report reserve/fallback path while recording `invalid-report`; exit `2` halts. Phase 1 continues writing the existing resolution-log grammar and does not assign durable finding IDs; Phase 2 adds enriched log state.
 
 Keep `fill-template.mjs`'s declared-variable mechanism. The plan template retains `Plan Path`, `Requirement`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`; the code template retains `Task Summary`, `Walkthrough Path`, `Plan Path`, `User Focus Areas`, `Review Scope`, and `Tool Turn Budget`. The existing budget variable carries the single advisory target, so no CLI fields or extra template variables are added.
 
 Update `tests/integration/review-skill-parity.test.mjs` in the same change:
 
-- replace the pipe-grammar assertion with JSONL field/schema parity;
-- replace required report-skeleton headings with summary/finding JSONL schema assertions;
+- replace the pipe-grammar assertion with structured-object field/schema parity;
+- replace required report-skeleton headings with report/finding schema assertions;
 - retain and adapt re-review-scope and blast-radius assertions;
 - retain the budget assertion for the single numeric `Tool Turn Budget` target;
 - retain the exact declared-variable arrays above and `fill-template.mjs`'s variable-block/integrity coverage.
 
-Add direct parser tests for clean output, multiple findings, leading/interleaved provider chrome, malformed JSON-looking lines, invalid tags/severity, duplicate records, mismatched summary status, and missing/invalid loci. Include both parsers in their skill hash manifests.
+Add direct parser tests for clean output, multiple findings, malformed JSON, provider chrome, invalid tags/severity, duplicate findings, mismatched status, extra fields, and missing/invalid loci. Include both parsers and schemas in their skill hash manifests.
 
 Keep concise phase-specific checks:
 
@@ -818,11 +815,11 @@ This is the committed first implementation scope, but land 0A, 0B, and 0C as ind
 
 ### Phase 1: Compact the guaranteed full-review path
 
-1. Replace both full-review prompt templates in place with the compact JSONL contract.
+1. Replace both full-review prompt templates in place with the compact schema-constrained JSON contract.
 2. Preserve declared variables and the single advisory `Tool Turn Budget` target.
 3. Delete expanded axis sub-bullets from the default prompts; keep concise tags and move the detailed taxonomy to disclosed rubric tables in each review skill's README for focused/high-risk use.
 4. Remove `Axis Coverage`, duplicate verdict prose, `Actionable Next Steps`, and equivalent clean-output scaffolding.
-5. Add one strict report parser to each review skill and use its normalized output for adjudication; continue writing the legacy resolution-log grammar in this phase.
+5. Add one strict report parser and one native response schema to each review skill, use normalized output for adjudication, and continue writing the legacy resolution-log grammar in this phase.
 6. Compare baseline and compact prompts on the versioned Phase 0 corpus with the same provider/model/repeat matrix.
 7. Update every axis/count dependency in `review-skill-parity.test.mjs`: prompt-to-README axis parity, literal axis count wording/headings, required clean/finding skeleton sections, and any review-skill frontmatter that declares an axis count. Regenerate hashes and run parser, parity, and fill-template tests plus `npm test`.
 
@@ -1184,6 +1181,17 @@ Recorded after proposal review on 2026-09-16.
 **Response:** Tolerating chrome is necessary, but ignoring a malformed JSON-looking finding could silently turn a damaged report into a clean one. A fixed provider-chrome allowlist would fail whenever CLI wording changes.
 
 **Decision:** Parse line-wise, ignore and count lines that do not begin with `{` after whitespace, and fail closed when any JSON-looking line is malformed or schema-invalid.
+
+### Provider-enforced structured boundary
+
+**Observed failure:** Two prompt-only compact benchmark runs produced malformed JSONL, and stronger
+format wording still left one malformed report. That increased `invalid-report` frequency above
+the Phase 0 baseline and triggered the required rollback.
+
+**Decision:** Supersede the prompt-only JSONL boundary for Phase 1. Use one schema-constrained JSON
+object, require provider-native enforcement through `dispatch --response-schema-file`, and retain
+strict post-response parsing as defense in depth. Treat providers without a native schema mechanism
+as unavailable for these review invocations rather than claiming prompt-only enforcement.
 
 ### Durable telemetry and retention
 
