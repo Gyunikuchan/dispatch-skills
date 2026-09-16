@@ -27,9 +27,11 @@ When a plan already exists, `<Requirement>` comes from the plan's goal statement
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a plan path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over path, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a `Canonical Artifact Path` plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, optional `Review View Path`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over paths, skipping resolution.
 
-Attach the plan file plus any user-specified files with `-f "<path>"` (forward slashes throughout). Resolve the plan in order:
+Attach `Review View Path` when handed over, otherwise the canonical plan, plus any user-specified
+files with `-f "<path>"` (forward slashes throughout). The view is delegate input only; edit and
+append resolutions only at `Canonical Artifact Path`. Resolve the plan in order:
 
 1. **User- or orchestrator-supplied plan** when an explicit path is passed or an orchestrating skill hands one over.
 2. **Otherwise**, run the resolver per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (derives the slug; add `--slug <kebab-slug>` only when the user names one or derivation fails):
@@ -44,7 +46,7 @@ Attach the plan file plus any user-specified files with `-f "<path>"` (forward s
 **Prompt**: fill [references/prompt-template.md](references/prompt-template.md) via `dispatch`'s `fill-template.mjs` using the canonical stdin/temp-output protocol in `references/alignment.md` § Prompt Template Filling: `--vars - --temp-out`. Capture the printed temp path, pass it to `dispatch --prompt-file`, and remove its parent directory after dispatch finishes.
 
 Supply all declared variables to `fill-template.mjs`:
-- `<Plan Path>`: path to the resolved or authored plan.
+- `<Plan Path>`: `Review View Path` when handed over, otherwise the resolved or authored plan.
 - `<Requirement>`: from user ask (when authoring) or plan's `# <Goal Description>`.
 - `<User Focus Areas>`: from user arguments (standalone) or caller focus (orchestrated), defaulting to `General review`.
 - `<Review Scope>`: from handover (orchestrated) or derived round scope above (standalone).

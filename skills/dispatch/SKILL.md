@@ -91,6 +91,7 @@ Map the result to exactly one row before deciding what to report.
 | `-a`, `--agent` | Override the agent name (opencode provider only). |
 | `-t`, `--timeout` | Override the timeout in seconds; default `1800`. |
 | `--max-buffer` | Raise the output cap in MB; default `10`. |
+| `--metrics-file` | Write one content-free terminal slot record to an initialized absolute path. |
 | `--provider` | Pin one provider; accepts canonical keys and aliases. |
 | `--orchestrator` | Declare the host platform for unpinned ordering. |
 | `--orchestrator-model` | Declare the host model for same-model demotion. |

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "artifact": ".scratch/audit/refactor-proposal.md",
+  "promptRevision": "phase0b",
+  "sourceRounds": 7,
+  "canonicalCharacters": 122387,
+  "canonicalEstimate": 30597,
+  "projectedCharacters": 95333,
+  "projectedEstimate": 23834,
+  "canonicalLogHash": "7c41a6cde5a20534171db6078722a3fefadb97ce64971cb25549daf2543a44a7",
+  "phase1Baseline": "bounded-review-view-v1"
+}

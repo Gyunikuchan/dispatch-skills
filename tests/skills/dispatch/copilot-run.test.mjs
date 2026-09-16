@@ -154,6 +154,10 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
         classifyCopilotFailure('Please run `gh auth login` to authenticate'),
         'auth',
       );
+      assert.equal(
+        classifyCopilotFailure('Access denied by policy settings. Your Copilot CLI policy setting may be preventing access.'),
+        'auth',
+      );
     });
 
     it('falls back to the shared classifier for non-auth failures', () => {

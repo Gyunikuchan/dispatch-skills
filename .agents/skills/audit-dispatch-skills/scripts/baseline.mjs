@@ -17,15 +17,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { isMainModule } from '../../../../skills/dispatch/scripts/common.mjs';
+import { isMainModule, measureText } from '../../../../skills/dispatch/scripts/common.mjs';
 import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
 // SECTION: Configurable Constants
 // ============================================================================
 
-// Rough chars-per-token ratio for English Markdown; ranks footprint, not a billing figure.
-const CHARS_PER_TOKEN = 4;
 const SKIP_DIRS = new Set(['node_modules', '.git', '.scratch', 'worktrees']);
 const TEST_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -115,12 +113,13 @@ async function buildMetrics(root) {
 
   const out = ['# Audit Metrics', ''];
 
-  out.push('## Doc footprint', '', '| File | Words | ~Tokens | Description chars |', '|---|---|---|---|');
+  out.push('## Doc footprint', '', '| File | Words | Characters | ~Tokens | Description chars |', '|---|---|---|---|---|');
   for (const file of docs) {
     const text = fs.readFileSync(file, 'utf8');
     const description = frontmatterDescription(text);
     const words = text.split(/\s+/).filter(Boolean).length;
-    out.push(`| ${rel(file)} | ${words} | ${Math.round(text.length / CHARS_PER_TOKEN)} | ${description ? description.length : '—'} |`);
+    const measured = measureText(text);
+    out.push(`| ${rel(file)} | ${words} | ${measured.characters} | ${measured.estimate} | ${description ? description.length : '—'} |`);
   }
 
   const broken = docs.flatMap((file) => brokenLinks(file).map((b) => `- ${rel(file)}:${b.line} → \`${b.target}\` (${b.reason})`));

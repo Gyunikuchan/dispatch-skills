@@ -18,6 +18,7 @@
  */
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import {
   formatCliError,
@@ -48,6 +49,7 @@ import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
 import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
+import { prepareMetricsDestination, recordDispatchMetrics } from './slot-metrics.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -365,7 +367,22 @@ function assertSkillIntegrity() {
  */
 async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   const attemptFailures = [];
+  const metricsAttempts = [];
   let bestPartial = null;
+
+  const captureMetrics = (carrier) => {
+    const attempts = Array.isArray(carrier?.metricsAttempts) ? carrier.metricsAttempts : [];
+    const offset = metricsAttempts.length;
+    metricsAttempts.push(...attempts);
+    return Number.isSafeInteger(carrier?.effectiveAttempt)
+      ? offset + carrier.effectiveAttempt
+      : null;
+  };
+  const withMetrics = (result, effectiveAttempt) => ({
+    ...result,
+    metricsAttempts: [...metricsAttempts],
+    effectiveAttempt,
+  });
 
   for (let i = 0; i < targetCandidates.length; i++) {
     const current = targetCandidates[i];
@@ -403,10 +420,11 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 
     try {
       const result = await executeProvider(currentProvider, runnerOptionsFor(current));
+      const effectiveAttempt = captureMetrics(result);
 
       if (result.failureKind === 'sandbox-unsupported') {
         if (!shouldCascade('reported unsupported sandbox', result.failureKind)) {
-          return { ...result, exitCode: 1 };
+          return withMetrics({ ...result, exitCode: 1 }, effectiveAttempt);
         }
         continue;
       }
@@ -414,32 +432,38 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
         if (!shouldCascade('exited 0 with no output', kind))
-          return { ...result, exitCode: 1 };
+          return withMetrics({ ...result, exitCode: 1 }, effectiveAttempt);
         continue;
       }
 
       if (result.exitCode === 0) {
-        return result;
+        return withMetrics(result, effectiveAttempt);
       }
 
       if (!isEmptyResult(result)) {
-        bestPartial = bestPartial ?? result;
+        bestPartial = bestPartial ?? { result, effectiveAttempt };
       }
 
       const kind =
         result.failureKind || classifyFailure(`${result.stderr || ''}\n${result.stdout || ''}`);
-      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) return result;
+      if (!shouldCascade(`exited with code ${result.exitCode}`, kind)) {
+        return withMetrics(result, effectiveAttempt);
+      }
     } catch (err) {
+      captureMetrics(err);
       const kind = err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`);
-      if (!shouldCascade(err.message, kind)) throw err;
+      if (!shouldCascade(err.message, kind)) {
+        err.metricsAttempts = [...metricsAttempts];
+        throw err;
+      }
     }
   }
 
   if (bestPartial) {
     process.stderr.write(
-      `[dispatch] All providers failed; returning partial output from '${bestPartial.provider}'.\n`,
+      `[dispatch] All providers failed; returning partial output from '${bestPartial.result.provider}'.\n`,
     );
-    return bestPartial;
+    return withMetrics(bestPartial.result, bestPartial.effectiveAttempt);
   }
 
   const err = new Error(
@@ -449,6 +473,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   );
   err.code = 'NO_DISPATCH_AVAILABLE';
   err.failures = attemptFailures;
+  err.metricsAttempts = [...metricsAttempts];
   throw err;
 }
 
@@ -533,38 +558,61 @@ export async function main() {
     process.exit(1);
   }
 
+  let metricsReady = false;
+  let result;
   try {
-    const result = await dispatchTask({
+    if (options.metricsFile) {
+      prepareMetricsDestination(options.metricsFile);
+      metricsReady = true;
+    }
+    result = await dispatchTask({
       ...options,
       prompt: finalPrompt,
       noConfig,
       orchestratorModel: options.orchestratorModel ?? undefined,
     });
-
-    if (result.stdout) {
-      process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
-    }
-
-    if (result.truncated) {
-      console.warn(
-        `\n[dispatch] WARNING: Output truncated (${result.truncated}). Full trace: ${result.logFile}\n`,
-      );
-    }
-
-    if (result.failureKind === 'sandbox-unsupported') {
-      const providerName = PROVIDER_DISPLAY_NAMES[result.provider] ?? result.provider ?? 'Unknown provider';
-      console.error(
-        `\n[dispatch] ${providerName} sandbox support is unavailable. ` +
-          `Upgrade the provider CLI or set platforms.${result.provider}.sandbox to false.\n`,
-      );
-    }
-
-    process.exit(result.exitCode ?? 0);
   } catch (err) {
+    if (options.metricsFile) {
+      try {
+        if (!fs.existsSync(options.metricsFile)) recordDispatchMetrics(options.metricsFile, null, err);
+      } catch (metricsError) {
+        console.error(`[dispatch] Failed to write metrics: ${metricsError.message}`);
+      }
+    }
     console.error(formatCliError(err));
     const exitCode = safeExitCode(err);
     process.exit(exitCode);
+    return;
   }
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
+  }
+
+  if (result.truncated) {
+    console.warn(
+      `\n[dispatch] WARNING: Output truncated (${result.truncated}). Full trace: ${result.logFile}\n`,
+    );
+  }
+
+  if (result.failureKind === 'sandbox-unsupported') {
+    const providerName = PROVIDER_DISPLAY_NAMES[result.provider] ?? result.provider ?? 'Unknown provider';
+    console.error(
+      `\n[dispatch] ${providerName} sandbox support is unavailable. ` +
+        `Upgrade the provider CLI or set platforms.${result.provider}.sandbox to false.\n`,
+    );
+  }
+
+  if (metricsReady) {
+    try {
+      recordDispatchMetrics(options.metricsFile, result, null);
+    } catch (metricsError) {
+      console.error(`[dispatch] Failed to write metrics: ${metricsError.message}`);
+      process.exit(safeExitCode(metricsError));
+      return;
+    }
+  }
+  process.exit(result.exitCode ?? 0);
 }
 
 function printHelp() {
@@ -589,6 +637,7 @@ Options:
   -a, --agent <name>          Override agent name (opencode provider only)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
+  --metrics-file <path>       Write one content-free terminal slot record (absolute initialized path)
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
   --candidate-index <n>       Select one configured candidate for a pinned provider (zero-based)
   --orchestrator <name>       Explicitly declare orchestrator (${KNOWN_PROVIDERS.join(', ')})
@@ -635,6 +684,7 @@ function collectRunFlags(options, noConfig) {
   if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
   if (options.provider !== null) ignored.push('--provider');
   if (options.candidateIndex !== null) ignored.push('--candidate-index');
+  if (options.metricsFile !== null) ignored.push('--metrics-file');
   if (noConfig) ignored.push('--no-config');
   return ignored;
 }

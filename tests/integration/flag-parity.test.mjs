@@ -148,6 +148,9 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'check-consensus.mjs'],
+    ['skills', 'implement-dispatch', 'scripts', 'run-record.mjs'],
+    ['skills', 'dispatch-code-review', 'scripts', 'resolve-review-range.mjs'],
+    ['skills', 'implement-dispatch', 'scripts', 'build-review-view.mjs'],
   ]) {
     const name = script[script.length - 1];
     it(`${name} --help exits 0 and prints usage`, () => {

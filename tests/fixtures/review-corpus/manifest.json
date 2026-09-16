@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "review-corpus-v1",
+  "fixtures": [
+    {
+      "id": "plan-clean-full",
+      "kind": "plan",
+      "mode": "full",
+      "files": ["artifact.md"],
+      "oracle": {"must": [], "should": [], "optional": [], "forbidden": [{"kind": "MUST", "tag": "correctness", "locus": "§ Proposed Changes"}]}
+    },
+    {
+      "id": "plan-defect-full",
+      "kind": "plan",
+      "mode": "full",
+      "files": ["artifact.md"],
+      "oracle": {"must": [{"kind": "MUST", "tag": "verification", "locus": "§ Verification Plan"}], "should": [], "optional": [], "forbidden": []}
+    },
+    {
+      "id": "plan-clean-rereview",
+      "kind": "plan",
+      "mode": "re-review",
+      "files": ["artifact.md"],
+      "oracle": {"must": [], "should": [], "optional": [], "forbidden": [{"kind": "SHOULD", "tag": "scope", "locus": "§ Out of Scope"}]}
+    },
+    {
+      "id": "plan-defect-multi-source",
+      "kind": "plan",
+      "mode": "re-review",
+      "files": ["artifact.md"],
+      "oracle": {"must": [{"kind": "MUST", "tag": "security", "locus": "§ Proposed Changes"}], "should": [{"kind": "SHOULD", "tag": "rollback", "locus": "§ Rollback & Blast Radius"}], "optional": [], "forbidden": []}
+    },
+    {
+      "id": "code-clean-full",
+      "kind": "code",
+      "mode": "full",
+      "files": ["artifact.md", "src/value.mjs", "test/value.test.mjs"],
+      "oracle": {"must": [], "should": [], "optional": [], "forbidden": [{"kind": "MUST", "tag": "correctness", "locus": "src/value.mjs:L1"}]}
+    },
+    {
+      "id": "code-defect-full",
+      "kind": "code",
+      "mode": "full",
+      "files": ["artifact.md", "src/value.mjs", "test/value.test.mjs"],
+      "oracle": {"must": [{"kind": "MUST", "tag": "correctness", "locus": "src/value.mjs:L2"}], "should": [], "optional": [], "forbidden": []}
+    },
+    {
+      "id": "code-clean-rereview",
+      "kind": "code",
+      "mode": "re-review",
+      "files": ["artifact.md", "src/value.mjs"],
+      "oracle": {"must": [], "should": [], "optional": [], "forbidden": [{"kind": "SHOULD", "tag": "tests", "locus": "src/value.mjs:L1"}]}
+    },
+    {
+      "id": "code-defect-multi-source",
+      "kind": "code",
+      "mode": "re-review",
+      "files": ["artifact.md", "src/value.mjs"],
+      "oracle": {"must": [{"kind": "MUST", "tag": "security", "locus": "src/value.mjs:L2"}], "should": [{"kind": "SHOULD", "tag": "tests", "locus": "src/value.mjs:L2"}], "optional": [], "forbidden": []}
+    }
+  ]
+}

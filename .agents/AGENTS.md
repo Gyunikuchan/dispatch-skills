@@ -91,7 +91,7 @@ Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
 - **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
-- **Verify**: Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Dev/test tooling needs Node 22+ (the quoted test glob); skill runtime stays Node 18+.
+- **Verify**: Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Shipped skills and development tooling require Node 22+.
 
 ### Handoff Format
 

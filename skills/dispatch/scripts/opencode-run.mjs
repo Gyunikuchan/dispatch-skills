@@ -73,6 +73,7 @@ import {
   emitInitBanner,
   extractCleanResponse,
   buildFormattedPrompt,
+  buildMetricsAttempt,
   isExecutableFile,
   isMainModule,
   parseCommonArgs,
@@ -277,9 +278,41 @@ export async function runOpencode(options = {}) {
     throw new Error('No prompt provided for opencode agent execution.');
   }
 
+  const metricsAttempts = [];
   return cascadeModels(
     resolveModelsToTry(model),
-    (currentModel) => runSingle({ ...options, model: currentModel }),
+    async (currentModel) => {
+      try {
+        const result = await runSingle({ ...options, model: currentModel });
+        const input = result.formattedPromptForMetrics ?? prompt;
+        metricsAttempts.push(buildMetricsAttempt({
+          input,
+          output: result.stdout,
+          provider: 'opencode',
+          model: result.model ?? currentModel,
+          effort: options.effort ?? null,
+          mode: result.mode,
+          exitCode: result.exitCode,
+          failureKind: result.failureKind,
+          truncated: result.truncated,
+          usage: result.usage,
+        }));
+        delete result.formattedPromptForMetrics;
+        result.metricsAttempts = [...metricsAttempts];
+        result.effectiveAttempt = metricsAttempts.length - 1;
+        return result;
+      } catch (err) {
+        metricsAttempts.push(buildMetricsAttempt({
+          input: err.formattedPromptForMetrics ?? null,
+          provider: 'opencode',
+          model: currentModel,
+          effort: options.effort ?? null,
+          failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
+        }));
+        err.metricsAttempts = [...metricsAttempts];
+        throw err;
+      }
+    },
     { label: 'OpenCode' },
   );
 }
@@ -420,7 +453,7 @@ async function runOpencodeSingle(options = {}) {
     const trace = createTraceWriter(verbose);
 
     // Steps 8-10: spawn, stream into logger + trace, and resolve on close.
-    return await spawnOpencode({
+    const result = await spawnOpencode({
       command,
       args,
       settings,
@@ -437,11 +470,14 @@ async function runOpencodeSingle(options = {}) {
       mode: target?.mode ?? null,
       releaseOnce,
     });
+    result.formattedPromptForMetrics = formattedPrompt;
+    return result;
   } catch (err) {
     // Synchronous throws from Steps 5-8 (denylisted attachment, budget overrun, binary
     // resolution) would otherwise strand both the lockfile and the log file handle.
     releaseOnce();
     failLogger(sessionLogger, err?.message ?? String(err));
+    if (typeof formattedPrompt !== 'undefined') err.formattedPromptForMetrics = formattedPrompt;
     throw err;
   }
 }

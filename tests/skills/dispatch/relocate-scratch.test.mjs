@@ -190,5 +190,20 @@ describe('relocate-scratch', () => {
       assert.equal(res.status, 1);
       assert.match(res.stderr, /outside the \.scratch/);
     });
+
+    it('prints an earlier destination when a later move fails', () => {
+      const first = path.join(tmpWorkspace, '.scratch', 'plan', 'first.md');
+      const outside = path.join(tmpWorkspace, 'outside.md');
+      fs.writeFileSync(first, 'first');
+      fs.writeFileSync(outside, 'outside');
+      const res = cp.spawnSync(process.execPath, [SCRIPT_PATH, first, outside], {
+        cwd: tmpWorkspace,
+        encoding: 'utf8',
+      });
+      assert.equal(res.status, 1);
+      assert.match(res.stdout, /first-[^/\n]+\.md/);
+      assert.match(res.stderr, /outside the \.scratch/);
+      assert.equal(fs.existsSync(first), false);
+    });
   });
 });

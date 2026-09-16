@@ -42,8 +42,18 @@ Map a mechanical low-risk edit to `low`, a bounded feature or fix to `medium`, a
    ```bash
    node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
    ```
+3. Initialize the content-free run record:
 
-**Done when:** the criteria and assumptions are written, and both artifact paths are resolved.
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/run-record.mjs init
+   ```
+
+   Keep its absolute `runDir` outside the worktree. Allocate one new `<runDir>/<slot>.json`
+   metrics path for each review target or reserve dispatch; native in-process fallbacks are
+   substitution diagnostics, not dispatch slots.
+
+**Done when:** the criteria and assumptions are written, both artifact paths are resolved, and the
+run directory is initialized.
 
 ### 2. Author Plan
 
@@ -63,16 +73,31 @@ Map a mechanical low-risk edit to `low`, a bounded feature or fix to `medium`, a
    ```
 
    Use the orchestrator provider key for `--platform`, pass `--orchestrator-model` only when explicitly requested, and save the JSON output as `flow`. Treat resolver integrity and configuration diagnostics as terminal and relay them verbatim.
+3. State the resolved flow immediately without asking for confirmation:
+   `Resolved flow: level <level>; plan review <on|off> — <platform/model or native fallback>,
+   rounds <n>, consensus <on|off>; code review <on|off> — <platform/model or native fallback>,
+   rounds <n>, consensus <on|off>.` Name omitted models as `provider default` and missing optional
+   review skills as `off — companion unavailable`.
 
-**Done when:** the initial scope and level are classified from the draft and `flow` is loaded.
+**Done when:** the initial scope and level are classified from the draft, `flow` is loaded, and the
+resolved flow is disclosed.
 
 ### 4. Plan Review Loop
 
 Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
-1. Start the first orchestrated wave with the plan path, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, and the plan budget from the [Review contract](#review-contract).
+1. Start the first orchestrated wave with the plan path, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, one unique `Metrics File Path` per launched dispatch, and the plan budget from the [Review contract](#review-contract).
 2. Await every target and reserve outcome. Adjudicate every claim against the requirement, repository rules, and cited plan locus; sanitize delegate text, apply accepted changes, and append the round log under `## Review Findings & Resolutions`.
-3. While the [Review contract](#review-contract) keeps the loop live, re-review only with delegates that have live findings. Name changed sections and pending rebuttals in `Review Scope`.
+3. While the [Review contract](#review-contract) keeps the loop live, generate a bounded view and
+   re-review only with delegates that have live findings:
+
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/build-review-view.mjs \
+     --artifact "<plan path>" --next-round <n> --temp-out
+   ```
+
+   Hand over separate `Canonical Artifact Path` and `Review View Path`; name changed sections and
+   pending rebuttals in `Review Scope`. Remove the view's temp directory after the wave settles.
 4. After all launched outcomes are adjudicated, run:
 
    ```bash
@@ -87,6 +112,8 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
 
 1. Reclassify the final plan after review, including every accepted finding. Recompute an automatic level; preserve an explicit level.
 2. If the level changed, re-run `resolve-flow.mjs` with the orchestrator, pins, and exclusions, then replace `flow`. Relay terminal diagnostics verbatim. Record the initial and final scope/level for handoff.
+3. Before approval, state the exact phase/target/round/consensus delta when final re-scope changed
+   `flow`; otherwise state `Resolved flow unchanged after final scope check.`
 
 **Done when:** the final scope and level are settled and `flow` reflects that final level.
 
@@ -106,7 +133,7 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
 Skip Steps 7–9 when `dispatch-code-review` is absent or `flow['code-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
 1. Ensure the walkthrough exists; if missing, author it from the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md), run host verification, and record the result.
-2. Start the first orchestrated wave with walkthrough and plan paths, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, and the code budget from the [Review contract](#review-contract).
+2. Start the first orchestrated wave with walkthrough and plan paths, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, one unique `Metrics File Path` per launched dispatch, and the code budget from the [Review contract](#review-contract).
 3. Await every target and reserve outcome before adjudicating.
 
 **Done when:** the walkthrough is attached, every launched review dispatch is settled, and round-one claims are ready for Step 8.
@@ -122,7 +149,10 @@ Skip Steps 7–9 when `dispatch-code-review` is absent or `flow['code-review'].m
 
 ### 9. Re-Review Loop
 
-1. While the [Review contract](#review-contract) keeps the loop live, invoke `dispatch-code-review` with target affinity. Put changed lines and pending rebuttals in `Review Scope`.
+1. While the [Review contract](#review-contract) keeps the loop live, build a temporary bounded
+   walkthrough view with `build-review-view.mjs`, then invoke `dispatch-code-review` with target
+   affinity. Hand over separate canonical/view paths and put changed lines and pending rebuttals in
+   `Review Scope`. Remove the view's temp directory after the wave settles.
 2. Apply Step 8 after each wave, then run `check-consensus.mjs` on the walkthrough. Exit `0` settles the loop; exit `1` continues it; exit `2` halts.
 3. At the cap, obtain user rulings and run the contract's one additional verification wave.
 
@@ -139,16 +169,33 @@ Begin only after every plan and code review dispatch has a terminal outcome.
    - rounds used versus `maxRounds`;
    - active, failed, substituted, dropped, excluded, unavailable, and clamped delegates, plus exclusion reasons;
    - accepted, rejected, downgraded, disputed, and rebutted findings, and verification status.
-3. On a resolved run, relocate scratch artifacts:
+3. Finalize the content-free record with the number of `dispatch` slots actually launched and a
+   JSON summary carrying levels, waves, finding totals, and substitutions:
+
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/run-record.mjs finalize \
+     --run-dir "<runDir>" --expected-slots <count> --summary -
+   ```
+
+   `expectedSlots` is the number of `dispatch` slots actually launched, including slots that
+   failed after accepting their metrics destination; native in-process fallbacks are not slots.
+   On a count mismatch, keep the artifacts unresolved, inspect the named run directory for the
+   missing slot, and rerun that review slot with a fresh metrics path before finalizing again.
+4. On a resolved run, warn before relocation:
+   `The resolved plan and walkthrough are moving to OS temp and may be deleted by the OS.`
+   Pass only existing `.scratch/` artifacts to the relocator; retain and report native artifact
+   paths unchanged.
 
    ```bash
    node <skills-dir>/dispatch/scripts/relocate-scratch.mjs "<plan path>" "<walkthrough path>"
    ```
 
    Retain unresolved artifacts in place and state why.
-4. Report diagnostics and the artifact path. Leave commits, pushes, branch changes, and pull requests to the caller.
+5. Report diagnostics, durable run-record path, and artifact path. Leave commits, pushes, branch changes, and pull requests to the caller.
 
-**Done when:** all review work is settled, diagnostics are appended, artifacts are relocated or their retention reason is recorded, and the handoff is delivered.
+**Done when:** all review work is settled, diagnostics are appended, the ephemerality warning
+precedes relocation, every moved destination or retained native path is reported, and the handoff
+is delivered.
 
 ## Review contract
 

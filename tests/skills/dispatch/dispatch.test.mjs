@@ -335,18 +335,24 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isCopilotAvailable', async () => true);
 
       mock.method(providerRunners, 'agy', async () => {
-        throw new Error('Auth failed');
+        const error = new Error('Auth failed');
+        error.metricsAttempts = [{ provider: 'agy' }];
+        throw error;
       });
       mock.method(providerRunners, 'copilot', async () => ({
         provider: 'copilot',
         stdout: 'Success from copilot fallback',
         exitCode: 0,
         logFile: path.join(os.tmpdir(), 'copilot.log'),
+        metricsAttempts: [{ provider: 'copilot' }],
+        effectiveAttempt: 0,
       }));
 
       const result = await dispatchTask({ prompt: 'Test task' });
       assert.equal(result.provider, 'copilot');
       assert.equal(result.stdout, 'Success from copilot fallback');
+      assert.deepEqual(result.metricsAttempts.map((attempt) => attempt.provider), ['agy', 'copilot']);
+      assert.equal(result.effectiveAttempt, 1);
     });
 
     it('throws NO_DISPATCH_AVAILABLE when all candidate passes fail', async () => {
@@ -359,12 +365,18 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isCopilotAvailable', async () => false);
 
       mock.method(providerRunners, 'agy', async () => {
-        throw new Error('agy crashed');
+        const error = new Error('agy crashed');
+        error.metricsAttempts = [{ provider: 'agy' }];
+        throw error;
       });
 
       await assert.rejects(
         dispatchTask({ prompt: 'Test task' }),
-        /All candidate dispatch agents failed execution/,
+        (error) => {
+          assert.match(error.message, /All candidate dispatch agents failed execution/);
+          assert.deepEqual(error.metricsAttempts, [{ provider: 'agy' }]);
+          return true;
+        },
       );
     });
 

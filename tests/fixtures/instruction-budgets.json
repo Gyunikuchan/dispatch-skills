@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "metric": "NFC Unicode code points; estimate=ceil(characters/4)",
+  "phase0a": {
+    "skills/implement-dispatch/SKILL.md": 13698,
+    "skills/dispatch/references/alignment.md": 15743,
+    "skills/dispatch-plan-review/references/prompt-template.md": 6854,
+    "skills/dispatch-code-review/references/prompt-template.md": 7169
+  },
+  "phase0b": {
+    "skills/implement-dispatch/SKILL.md": 14566,
+    "skills/dispatch/references/alignment.md": 15902,
+    "skills/dispatch-plan-review/references/prompt-template.md": 6854,
+    "skills/dispatch-code-review/references/prompt-template.md": 6930
+  },
+  "phase0c": {
+    "skills/dispatch/SKILL.md": 9071,
+    "skills/dispatch-plan-review/SKILL.md": 7513,
+    "skills/dispatch-code-review/SKILL.md": 10729,
+    "skills/implement-dispatch/SKILL.md": 15447,
+    "skills/dispatch/references/alignment.md": 16133,
+    "skills/dispatch-plan-review/references/prompt-template.md": 6854,
+    "skills/dispatch-code-review/references/prompt-template.md": 6930,
+    "skills/dispatch-plan-review/references/plan-template.md": 1568,
+    "skills/dispatch-code-review/references/walkthrough-template.md": 1026
+  },
+  "aggregateBaselines": {
+    "phase0a": {
+      "entryPointCharacters": 39027,
+      "entryPointEstimate": 9757,
+      "normalPathCharacters": 71170,
+      "normalPathEstimate": 17793
+    },
+    "phase0c": {
+      "entryPointCharacters": 42760,
+      "entryPointEstimate": 10690,
+      "normalPathCharacters": 75271,
+      "normalPathEstimate": 18818
+    }
+  },
+  "intentionalPhase0bDelta": {
+    "reason": "Resolved-flow disclosure, range safety, and lifecycle warning are correctness/UX additions.",
+    "characters": 788
+  }
+}

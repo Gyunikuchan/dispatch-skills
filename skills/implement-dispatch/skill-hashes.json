@@ -1,6 +1,8 @@
 {
-  "SKILL.md": "762f07c514ae23c5d1a9089d19131b7bdcda97b7b7452f1aed87648180014569",
-  "references/notes.md": "4280bafe30a3e334a3dd321f37cdb5387c6f558f0b27b867c2cdf514448296bc",
-  "scripts/check-consensus.mjs": "ed70bab6a5fc80e21e358ec22fc50e4b204e81f5a0132deb97d2b203f49c5395",
-  "scripts/resolve-flow.mjs": "b86e9a90e0f65dbd1a28af1aa98a3f1747306158351b3162d49f2c9a8070e45e"
+  "SKILL.md": "f5f0cae805b5a6f1d36687f0e9ceb35e3f091c57d91b9830a41106c58b1dac02",
+  "references/notes.md": "9be6c14ec39393ab63a8dc2c4bcb053fdfaa699353744fe7482f0e94d9c03938",
+  "scripts/build-review-view.mjs": "4b523bfd8577478ae04e9079aa0c69bc4573cef56fb88373ab3dcff6dac8d359",
+  "scripts/check-consensus.mjs": "7203312b8c10223cedc5cd5e62231a695a5f178453a0de43a11a6456f4ceada7",
+  "scripts/resolve-flow.mjs": "b86e9a90e0f65dbd1a28af1aa98a3f1747306158351b3162d49f2c9a8070e45e",
+  "scripts/run-record.mjs": "a78959d8cb1e6a5569446554bb843ce835edb2d18876aaa42f4997510325d4c7"
 }

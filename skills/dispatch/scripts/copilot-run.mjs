@@ -23,6 +23,7 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
+  buildMetricsAttempt,
   classifyFailure,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
@@ -157,6 +158,7 @@ export async function runCopilot(options = {}) {
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const effectiveEffort = effort || null;
+  const metricsAttempts = [];
 
   // Each configured model gets the full target cascade; the attempt owns its logger, so a
   // fallback model never writes to a logger an earlier attempt closed.
@@ -196,6 +198,20 @@ export async function runCopilot(options = {}) {
           verbose,
           sessionLogger,
         });
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          output: result.stdout,
+          provider: 'copilot',
+          model: currentModel,
+          effort: effectiveEffort,
+          mode: target.mode,
+          exitCode: result.exitCode,
+          failureKind: result.failureKind,
+          truncated: result.truncated,
+          usage: result.usage,
+        }));
+        result.metricsAttempts = [...metricsAttempts];
+        result.effectiveAttempt = metricsAttempts.length - 1;
 
         const step = nextCopilotStep({ result, error: null, canCascade });
         if (step === 'next-target') {
@@ -209,6 +225,15 @@ export async function runCopilot(options = {}) {
 
         return result;
       } catch (err) {
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          provider: 'copilot',
+          model: currentModel,
+          effort: effectiveEffort,
+          mode: target.mode,
+          failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
+        }));
+        err.metricsAttempts = [...metricsAttempts];
         const step = nextCopilotStep({ result: null, error: err, canCascade });
         if (step === 'next-target') {
           process.stderr.write(

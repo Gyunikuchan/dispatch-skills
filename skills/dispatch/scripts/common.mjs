@@ -33,6 +33,7 @@ import { fileURLToPath } from 'node:url';
  * @property {string|null} orchestrator
  * @property {string|null} orchestratorModel
  * @property {string|null} provider
+ * @property {string|null} metricsFile
  * @property {boolean} help
  * @property {string|null} promptFile
  */
@@ -367,6 +368,7 @@ export function buildFormattedPrompt(prompt, files = []) {
   for (const note of attachments.notes) {
     process.stderr.write(`[dispatch] Attachment ${note}\n`);
   }
+
   const fullPrompt = attachments.text ? `${attachments.text}\n\n${prompt}` : prompt;
   return formatSafetyPrompt(fullPrompt, {
     workspaceRoot: PROJECT_ROOT,
@@ -374,11 +376,59 @@ export function buildFormattedPrompt(prompt, files = []) {
   });
 }
 
+/** Model-neutral instruction/telemetry counter: NFC Unicode code points plus a 4-char estimate. */
+export function measureText(text = '') {
+  const normalized = String(text ?? '').normalize('NFC');
+  const characters = [...normalized].length;
+  return { characters, estimate: Math.ceil(characters / 4) };
+}
+
+/** Builds one content-free provider attempt record. */
+export function buildMetricsAttempt({
+  input,
+  output = '',
+  provider,
+  model = null,
+  effort = null,
+  mode = null,
+  exitCode = null,
+  failureKind = null,
+  truncated = null,
+  usage = null,
+}) {
+  const result =
+    truncated ? 'partial' : exitCode === 0 ? 'ok' : exitCode === null ? 'error' : 'failed';
+  const inputCount = input === null ? null : measureText(input);
+  const outputCount = measureText(output);
+  return {
+    provider,
+    model: typeof model === 'string' ? model : null,
+    effort: typeof effort === 'string' ? effort : null,
+    mode: typeof mode === 'string' ? mode : null,
+    inputChars: inputCount?.characters ?? null,
+    inputEstimate: inputCount?.estimate ?? null,
+    outputChars: outputCount.characters,
+    outputEstimate: outputCount.estimate,
+    toolTurns: Number.isSafeInteger(usage?.toolTurns) ? usage.toolTurns : null,
+    providerUsage:
+      usage && typeof usage === 'object'
+        ? {
+            inputTokens: Number.isFinite(usage.inputTokens) ? usage.inputTokens : null,
+            outputTokens: Number.isFinite(usage.outputTokens) ? usage.outputTokens : null,
+          }
+        : null,
+    result,
+    failureKind: typeof failureKind === 'string' ? failureKind : null,
+    truncated: truncated === 'timeout' || truncated === 'buffer' ? truncated : null,
+  };
+}
+
 // Common value flags: each consumes the next token (or its `--name=value` form).
 export const COMMON_VALUE_FLAGS = new Set([
   '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
   '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
   '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
+  '--metrics-file',
 ]);
 
 // Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
@@ -401,6 +451,7 @@ export const DOCUMENTED_COMMON_FLAGS = [
 /** Common flags deliberately absent from every runner's help — see DOCUMENTED_COMMON_FLAGS. */
 export const RUNNER_IRRELEVANT_COMMON_FLAGS = [
   '-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
+  '--metrics-file',
 ];
 
 /**
@@ -432,6 +483,7 @@ export const FLAG_ALIASES = new Map([
   ['--orchestrator-model', 'orchestratorModel'],
   ['--provider', 'provider'],
   ['--candidate-index', 'candidateIndex'],
+  ['--metrics-file', 'metricsFile'],
 ]);
 
 /** Option fields whose value is a positive integer, with silent-default on a bad value. */
@@ -485,6 +537,7 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     orchestrator: null,
     orchestratorModel: null,
     provider: null,
+    metricsFile: null,
     candidateIndex: null,
     help: false,
     promptFile: null,
@@ -2155,7 +2208,7 @@ export function classifyFailure(text) {
   if (/(context (window|length)|prompt is too long|maximum context|token limit|context_length_exceeded|too many tokens)/i.test(text)) {
     return 'context-overflow';
   }
-  if (/(unauthorized|not authenticated|authentication failed|no authentication|invalid api key|please (log|sign) in|\b401\b|\b403\b)/i.test(text)) {
+  if (/(unauthorized|not authenticated|authentication failed|no authentication|invalid api key|please (log|sign) in|access denied by policy|policy settings may be preventing access|\b401\b|\b403\b)/i.test(text)) {
     return 'auth';
   }
   if (/no models loaded|model (is )?not loaded/i.test(text)) {

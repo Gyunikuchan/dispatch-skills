@@ -27,9 +27,22 @@ When a walkthrough already exists, `<Task Summary>` is derived from its summary 
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a walkthrough path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves context files below; orchestrated uses handed-over paths, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a canonical walkthrough path plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, optional `Review View Path`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves context files below; orchestrated uses handed-over paths, skipping resolution.
 
-Attach the walkthrough and plan (if present), plus any user-specified files, with `-f "<path>"` (forward slashes throughout).
+Before resolving or authoring artifacts, run:
+
+```bash
+node <skills-dir>/dispatch-code-review/scripts/resolve-review-range.mjs [--range "<explicit commit/range>"]
+```
+
+Use `--range` only when the user explicitly names one. Exit without authoring or dispatching when
+the result says `reviewable: false`; report its exact `No reviewable changes` message. Begin
+`<Review Scope>` with `reviewScope` unchanged. In orchestrated mode, append the handed-over scope
+after it; the deterministic Git range remains authoritative while the handover narrows review focus.
+
+Attach `Review View Path` when handed over, otherwise the canonical walkthrough, plus the plan (if
+present) and user-specified files, with `-f "<path>"` (forward slashes throughout). The view is
+delegate input only; edit and append resolutions only at the canonical walkthrough path.
 
 Resolve context files in order (plan and walkthrough share one slug and one resolver invocation):
 
@@ -57,7 +70,7 @@ Resolve context files in order (plan and walkthrough share one slug and one reso
 
 Supply all declared variables to `fill-template.mjs`:
 - `<Task Summary>`: from user ask (standalone) or walkthrough summary and `## Changes Made` (orchestrated).
-- `<Walkthrough Path>`: path to the resolved or authored walkthrough.
+- `<Walkthrough Path>`: `Review View Path` when handed over, otherwise the resolved or authored walkthrough.
 - `<Plan Path>`: path to the attached plan, or `None`.
 - `<User Focus Areas>`: from user arguments (standalone) or caller focus (orchestrated), defaulting to `General review`.
 - `<Review Scope>`: from handover (orchestrated) or derived round scope above (standalone).

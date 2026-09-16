@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "matrixVersion": "phase0-high-v1",
+  "repeats": 3,
+  "targets": [
+    {"provider": "claude", "model": "bedrock.claude-opus-5", "effort": "medium", "required": false},
+    {"provider": "copilot", "model": "gpt-5.6-sol", "effort": "high", "required": false}
+  ]
+}

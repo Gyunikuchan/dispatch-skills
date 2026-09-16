@@ -13,15 +13,11 @@
 import fs from 'node:fs';
 
 import { isMainModule } from '../../dispatch/scripts/common.mjs';
+import { findUnsettledResolutionLines } from '../../dispatch/scripts/resolution-log.mjs';
 
 const USAGE = `Usage:
   node check-consensus.mjs <artifact path>
 `;
-
-const SECTION_HEADING = /^##\s+Review Findings & Resolutions\b/i;
-// Dash variants are accepted because editors and delegates silently swap em-dash, en-dash and hyphen.
-const UNSETTLED_LINE = /^\s*[-*]\s+\*\*\[(Disputed|Rejected\s*[—–-]+\s*pending confirmation)\]\*\*/i;
-const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
 
 /**
  * Returns the unsettled resolution lines of an artifact.
@@ -30,47 +26,7 @@ const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
  * @returns {string[]}
  */
 export function findUnsettled(markdown) {
-  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
-  const { indices, unterminated } = scan(lines, true);
-  // A stray unclosed fence would hide the real section; this is a safety gate, so fail closed.
-  // Merged by line index so identical bullets still count once each.
-  if (unterminated) for (const i of scan(lines, false).indices) indices.add(i);
-  return [...indices].sort((a, b) => a - b).map((i) => lines[i].trim());
-}
-
-/**
- * One pass over the lines. With `honorFences`, fenced blocks (templates and examples, whose headings
- * and bullets are not real log lines) are skipped; a fence closes only on the same marker character
- * at least as long as its opener, per CommonMark.
- */
-function scan(lines, honorFences) {
-  const indices = new Set();
-  let fence = null;
-  let inSection = false;
-  for (const [i, line] of lines.entries()) {
-    const match = honorFences ? FENCE.exec(line) : null;
-    if (match) {
-      const [, marker, rest] = match;
-      if (!fence) {
-        // CommonMark: a backtick fence's info string may not contain a backtick, else it is inline code.
-        if (!(marker[0] === '`' && rest.includes('`'))) {
-          fence = marker;
-          continue;
-        }
-      } else if (marker[0] === fence[0] && marker.length >= fence.length && !rest.trim()) {
-        fence = null;
-        continue;
-      }
-    }
-    if (fence) continue;
-    // Every findings section is checked: a duplicated or quoted section must not hide the real one.
-    if (/^##\s/.test(line)) {
-      inSection = SECTION_HEADING.test(line);
-      continue;
-    }
-    if (inSection && UNSETTLED_LINE.test(line)) indices.add(i);
-  }
-  return { indices, unterminated: fence !== null };
+  return findUnsettledResolutionLines(markdown);
 }
 
 function main(args) {

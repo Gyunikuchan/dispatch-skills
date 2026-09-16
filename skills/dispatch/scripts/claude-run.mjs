@@ -24,6 +24,7 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
+  buildMetricsAttempt,
   classifyFailure,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
@@ -209,6 +210,7 @@ export async function runClaude(options = {}) {
   const effectiveEffort = effort || null;
 
   let lastResult = null;
+  const metricsAttempts = [];
 
   // Cascade across viable targets, and within each target across candidate models,
   // both in priority order. A quota/auth failure advances to the next target; any
@@ -233,6 +235,20 @@ export async function runClaude(options = {}) {
           verbose,
           sessionLogger,
         });
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          output: result.stdout,
+          provider: 'claude',
+          model: currentModel,
+          effort: effectiveEffort,
+          mode: target.mode,
+          exitCode: result.exitCode,
+          failureKind: result.failureKind,
+          truncated: result.truncated,
+          usage: result.usage,
+        }));
+        result.metricsAttempts = [...metricsAttempts];
+        result.effectiveAttempt = metricsAttempts.length - 1;
         lastResult = result;
 
         const step = nextClaudeStep({ result, error: null, isLastModel, isLastTarget, pinned: !!claudeMode });
@@ -257,6 +273,15 @@ export async function runClaude(options = {}) {
         sessionLogger.close();
         return result;
       } catch (err) {
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          provider: 'claude',
+          model: currentModel,
+          effort: effectiveEffort,
+          mode: target.mode,
+          failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
+        }));
+        err.metricsAttempts = [...metricsAttempts];
         const step = nextClaudeStep({ result: null, error: err, isLastModel, isLastTarget, pinned: !!claudeMode });
 
         if (step === 'next-model') {

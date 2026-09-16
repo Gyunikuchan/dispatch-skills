@@ -177,9 +177,11 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   try {
-    const relocated = relocateScratchPaths(argv);
-    for (const d of relocated) {
-      process.stdout.write(d + '\n');
+    for (const source of argv) {
+      const destination = relocateScratchItem(source);
+      if (destination) {
+        process.stdout.write(destination + '\n');
+      }
     }
     process.exit(0);
   } catch (err) {

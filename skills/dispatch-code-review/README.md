@@ -100,8 +100,9 @@ The skill uses the walkthrough's review history to check resolutions and focus s
 on paths changed since the previous round.
 
 > [!NOTE]
-> A clean working tree is not automatically a no-op. When there are no current changes, the skill
-> reviews the branch diff from its base instead.
+> A clean feature branch reviews its merge-base-to-`HEAD` diff. A clean base branch reports
+> `No reviewable changes`; explicitly name a commit or `a..b` / `a...b` range to review committed
+> work.
 
 ## What Gets Reviewed
 

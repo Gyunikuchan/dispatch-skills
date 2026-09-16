@@ -58,13 +58,18 @@ Base command grammar for standalone review skills:
 
 ## Invocation Modes
 
-Detection: a review skill runs **orchestrated** when an orchestrating skill hands over an artifact path plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope`, `Tool Turn Budget` and `consensus: true|false`, and optionally an ordered **reserves** list of the same shape; otherwise it runs **standalone**.
+Detection: a review skill runs **orchestrated** when an orchestrating skill hands over a `Canonical Artifact Path` plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope`, `Tool Turn Budget` and `consensus: true|false`, and optionally an ordered
+**reserves** list of the same shape; otherwise it runs **standalone**. An orchestrated re-review
+may include `Review View Path`: attach it and fill the delegate artifact-path variable with it,
+while every adjudication and edit still targets `Canonical Artifact Path`. An orchestrated target
+may also carry a unique absolute `Metrics File Path`; pass it only to that target's
+`dispatch --metrics-file` invocation. Standalone reviews are untelemetered.
 
 The orchestrator supplies data only; the review skill builds invocations, fills prompt templates, and logs findings.
 
 | Review Step | Standalone Mode | Orchestrated Mode |
 |---|---|---|
-| **Artifact Resolution** | Run `resolve-artifact-paths.mjs` | Skip — use handed-over path |
+| **Artifact Resolution** | Run `resolve-artifact-paths.mjs` | Skip — use canonical path and optional review view |
 | **Artifact Authoring** | Author if absent (skill template) | Skip — orchestrator authored it |
 | **Dispatch Invocations** | From pins / cascade (§ Invocation) | One backgrounded `dispatch` per handed-over target |
 | **Prompt Filling** | Fill template (§ Prompt Template Filling) | Fill template with handed-over Scope & Budget |
@@ -78,7 +83,7 @@ The orchestrator supplies data only; the review skill builds invocations, fills 
 
 ### Target → Flag Mapping (Orchestrated)
 
-Map an `implement-dispatch` target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
+Map an `implement-dispatch` target to: `dispatch --provider <target.platform> [-m <target.model>] [-e <target.effort>] [--metrics-file "<metrics path>"] -f "<artifact path>" --prompt-file "<filled prompt path>"`.
 - Include `-m` and `-e` only when specified in the target entry.
 - When a target omits `model`, omit `-m` and let dispatch select the configured model for that
   platform; do not use `--no-config`, because effective membership and configured defaults are
@@ -239,7 +244,9 @@ Standalone mode only (orchestrated mode yields to orchestrator handoff; never ec
 ## Artifact Lifecycle
 
 - **Standalone reviews**: Retain scratch artifacts in place.
-- **Orchestrated runs**: Orchestrators owning the full lifecycle relocate scratch artifacts to OS temp upon completion or consensus:
+- **Orchestrated runs**: Before relocation, warn that resolved scratch artifacts are moving to OS
+  temp and may be deleted by the OS. Relocate only existing `.scratch/` paths; retain and report
+  native artifact paths unchanged. Report every destination printed before any later move fails:
 
 ```bash
 node <skills-dir>/dispatch/scripts/relocate-scratch.mjs "<plan path>" "<walkthrough path>"

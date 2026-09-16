@@ -67,6 +67,20 @@ Validates whether an artifact's `## Review Findings & Resolutions` section has c
   - Unclosed fence detection triggers fail-closed scan across the entire file.
   - Regex accepts em-dash, en-dash, and hyphens in `[Rejected — pending confirmation]`.
 
+### Run Records (`scripts/run-record.mjs`)
+
+Initializes marked owner-only directories beneath the absolute Git common directory, aggregates
+closed-schema `dispatch --metrics-file` slot records, rotates unpinned finalized runs, removes
+stale incomplete runs, and atomically replaces or clears `<phase>:<corpus>` baseline labels.
+Standalone review commands are untelemetered; an implement-dispatch slot is one launched dispatch,
+including reserves and excluding native in-process fallbacks.
+
+### Bounded Review Views (`scripts/build-review-view.mjs`)
+
+Uses `dispatch/scripts/resolution-log.mjs` to preserve the semantic artifact body, immediately
+preceding round, every older live finding, and fixed summaries of older settled rounds in a
+private OS-temp projection. The canonical artifact remains the only adjudication/edit target.
+
 ---
 
 ## 3. Test Harness Environment Hooks

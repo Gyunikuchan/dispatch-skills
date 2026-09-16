@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "review-corpus-v1",
+  "matrixVersion": "phase0-high-v1",
+  "promptVersion": "full-markdown-v1",
+  "repeats": 3,
+  "instructionCodePoints": {
+    "skills/implement-dispatch/SKILL.md": 8971,
+    "skills/dispatch/references/alignment.md": 15526,
+    "skills/dispatch-plan-review/references/prompt-template.md": 6854,
+    "skills/dispatch-code-review/references/prompt-template.md": 7169
+  },
+  "instructionTotal": 39027,
+  "status": "recorded-pre-phase0"
+}

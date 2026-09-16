@@ -132,6 +132,11 @@ models, fallback, and shared runner settings remain in `dispatch`.
    repeating the review until findings are settled or the configured limit is reached.
 7. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
 
+Each workflow also writes content-free measurements beneath the repository's Git common directory.
+Records contain counts and outcome metadata, never prompts, reports, environment values, or
+credentials. The newest 100 unpinned finalized runs are retained; explicitly pinned benchmark
+baselines remain until replaced or cleared.
+
 > [!NOTE]
 > Plan approval is the workflow's only approval gate. The skill does not write code before you
 > approve the reviewed plan.

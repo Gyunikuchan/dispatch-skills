@@ -23,6 +23,7 @@ import {
   formatCliError,
   safeExitCode,
   buildFormattedPrompt,
+  buildMetricsAttempt,
   classifyFailure,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
@@ -177,6 +178,7 @@ export async function runAgy(options = {}) {
     : resolveModePlan({ requestedMode, availableModes: await getAvailableModes() });
 
   const formattedPrompt = buildFormattedPrompt(prompt, files);
+  const metricsAttempts = [];
 
   // Each configured model gets the full mode cascade; discovery runs once.
   return cascadeModels(resolveModelsToTry(model), runModeCascade, { label: 'Google Antigravity' });
@@ -199,6 +201,20 @@ export async function runAgy(options = {}) {
           sessionLogger,
           formattedPrompt,
         });
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          output: result.stdout,
+          provider: 'agy',
+          model: currentModel,
+          effort,
+          mode: currentMode,
+          exitCode: result.exitCode,
+          failureKind: result.failureKind,
+          truncated: result.truncated,
+          usage: result.usage,
+        }));
+        result.metricsAttempts = [...metricsAttempts];
+        result.effectiveAttempt = metricsAttempts.length - 1;
 
         lastResult = result;
 
@@ -218,6 +234,15 @@ export async function runAgy(options = {}) {
         // Covers both the success return and the "no further cascade" return.
         return result;
       } catch (err) {
+        metricsAttempts.push(buildMetricsAttempt({
+          input: formattedPrompt,
+          provider: 'agy',
+          model: currentModel,
+          effort,
+          mode: currentMode,
+          failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
+        }));
+        err.metricsAttempts = [...metricsAttempts];
         lastError = err;
         const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
         if (hasNextMode) {
