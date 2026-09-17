@@ -134,17 +134,17 @@
       "codeRebuttalPathEstimate": 4892
     },
     "recall": {
-      "entryPointCeiling": 20600,
-      "normalPathCeiling": 36200,
-      "normalPathEstimateCeiling": 9050,
-      "entryPointCharacters": 20593,
-      "entryPointEstimate": 5149,
-      "normalPathCharacters": 36123,
-      "normalPathEstimate": 9031,
-      "planRebuttalPathCharacters": 21006,
-      "planRebuttalPathEstimate": 5252,
-      "codeRebuttalPathCharacters": 22073,
-      "codeRebuttalPathEstimate": 5519
+      "entryPointCeiling": 21000,
+      "normalPathCeiling": 36800,
+      "normalPathEstimateCeiling": 9200,
+      "entryPointCharacters": 20950,
+      "entryPointEstimate": 5238,
+      "normalPathCharacters": 36743,
+      "normalPathEstimate": 9186,
+      "planRebuttalPathCharacters": 21479,
+      "planRebuttalPathEstimate": 5370,
+      "codeRebuttalPathCharacters": 22549,
+      "codeRebuttalPathEstimate": 5638
     }
   },
   "intentionalPhase0bDelta": {
@@ -156,15 +156,15 @@
     "normalPathCharacters": 3803
   },
   "intentionalRecallDelta": {
-    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit.",
+    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit; later: run-dir, pin, and resolution-log format guidance.",
     "files": {
-      "skills/dispatch-plan-review/SKILL.md": 550,
-      "skills/dispatch-code-review/SKILL.md": 650,
-      "skills/implement-dispatch/SKILL.md": 850,
-      "skills/dispatch/references/alignment.md": 850,
+      "skills/dispatch-plan-review/SKILL.md": 700,
+      "skills/dispatch-code-review/SKILL.md": 800,
+      "skills/implement-dispatch/SKILL.md": 950,
+      "skills/dispatch/references/alignment.md": 1100,
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
       "skills/dispatch-code-review/references/prompt-template.md": 1300
     },
-    "normalPathCharacters": 5700
+    "normalPathCharacters": 6300
   }
 }

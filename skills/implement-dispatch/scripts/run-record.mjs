@@ -147,7 +147,9 @@ function validateSummary(summary) {
     'requestedLevel', 'initialLevel', 'finalLevel', 'waves', 'totals', 'benchmark',
   ]);
   for (const key of Object.keys(summary)) {
-    if (!allowed.has(key)) throw new Error(`Summary contains unsupported field "${key}".`);
+    if (!allowed.has(key)) {
+      throw new Error(`Summary contains unsupported field "${key}"; allowed: ${[...allowed].join(', ')}.`);
+    }
   }
   for (const key of ['requestedLevel', 'initialLevel', 'finalLevel']) {
     if (
@@ -170,7 +172,9 @@ function validateSummary(summary) {
         'phase', 'round', 'effectiveLevel', 'slotIds', 'sourceKeys', 'substitutions',
       ]);
       for (const key of Object.keys(wave)) {
-        if (!allowedWave.has(key)) throw new Error(`waves[${index}] contains unsupported field "${key}".`);
+        if (!allowedWave.has(key)) {
+          throw new Error(`waves[${index}] contains unsupported field "${key}"; allowed: ${[...allowedWave].join(', ')}.`);
+        }
       }
       if (typeof wave.phase !== 'string' || !IDENTIFIER_PATTERN.test(wave.phase)) {
         throw new Error(`waves[${index}].phase is invalid.`);
@@ -240,7 +244,7 @@ function validateSummary(summary) {
       throw new Error('totals must be an object.');
     }
     for (const [key, value] of Object.entries(summary.totals)) {
-      if (!TOTAL_KEYS.has(key)) throw new Error(`totals contains unsupported field "${key}".`);
+      if (!TOTAL_KEYS.has(key)) throw new Error(`totals contains unsupported field "${key}"; allowed: ${[...TOTAL_KEYS].join(', ')}.`);
       if (!Number.isSafeInteger(value) || value < 0) throw new Error(`totals.${key} must be a non-negative safe integer.`);
     }
   }
@@ -384,7 +388,12 @@ export function finalizeRun({ runDir, expectedSlots, summary = {} }) {
     if (!entry.isFile() || !entry.name.endsWith('.json') || [RUN_MARKER, 'run.json'].includes(entry.name)) continue;
     const file = path.join(resolved, entry.name);
     if (fs.lstatSync(file).isSymbolicLink()) throw new Error(`Slot file is a symbolic link: ${entry.name}`);
-    const record = validateSlotRecord(readJson(file));
+    let record;
+    try {
+      record = validateSlotRecord(readJson(file));
+    } catch (err) {
+      throw new Error(`${entry.name} is not a valid slot record (the run directory holds only dispatch slot metrics): ${err.message}`, { cause: err });
+    }
     if (record.runId !== marker.runId) throw new Error(`Slot ${record.slotId} belongs to another run.`);
     if (seen.has(record.slotId)) throw new Error(`Duplicate embedded slotId: ${record.slotId}`);
     seen.add(record.slotId);

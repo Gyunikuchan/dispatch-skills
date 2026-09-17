@@ -87,7 +87,9 @@ export function assertObjectKeys(value, allowed, label) {
     throw new Error(`${label} must be an object.`);
   }
   for (const key of Object.keys(value)) {
-    if (!allowed.includes(key)) throw new Error(`${label} contains unsupported field "${key}".`);
+    if (!allowed.includes(key)) {
+      throw new Error(`${label} contains unsupported field "${key}"; allowed: ${allowed.join(', ')}.`);
+    }
   }
 }
 

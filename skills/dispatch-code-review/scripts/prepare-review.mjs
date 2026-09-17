@@ -40,6 +40,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(__dirname, '..');
 const DISPATCH_DIR = path.resolve(__dirname, '../../dispatch');
+const CHECKPOINT_KEYS = ['action', 'invocationContext', 'settlement', 'settledWrites'];
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'walkthroughPath', 'planPath',
   'slug', 'date', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
@@ -112,8 +113,8 @@ function validateRequest(request) {
   }
   if (action === 'checkpoint') {
     for (const key of Object.keys(request)) {
-      if (!['action', 'invocationContext', 'settlement', 'settledWrites'].includes(key)) {
-        throw new Error(`checkpoint request contains inapplicable field "${key}".`);
+      if (!CHECKPOINT_KEYS.includes(key)) {
+        throw new Error(`checkpoint request contains inapplicable field "${key}"; allowed: ${CHECKPOINT_KEYS.join(', ')}.`);
       }
     }
   } else if (request.settlement !== undefined || request.settledWrites !== undefined) {
@@ -128,6 +129,13 @@ function validateRequest(request) {
         throw new Error(`settledWrites.${key} must be an array of strings.`);
       }
     }
+  }
+  // Batches need an initialized run directory that only orchestrators own.
+  if (action === 'prepare' && request.mode !== 'orchestrated' && (request.targets !== undefined || request.reserves !== undefined)) {
+    throw new Error('standalone requests cannot carry targets or reserves; prepare once per `dispatch.mjs --list-targets` entry with selector {provider: entry.platform, candidateIndex: entry.candidateIndex}.');
+  }
+  if (action === 'prepare' && request.mode === 'orchestrated' && request.selector !== undefined) {
+    throw new Error('orchestrated requests select sources through targets, not selector.');
   }
   if (request.targets !== undefined) validateTargets(request.targets, request.roundId, 'targets');
   if (request.reserves !== undefined) validateTargets(request.reserves, request.roundId, 'reserves');
@@ -439,6 +447,10 @@ export function prepareCodeReview(request, {
       persisted.baseSha !== gitSnapshot.baseSha ||
       persisted.headSha !== gitSnapshot.headSha),
   );
+  // Checkpoints land only at settlement, so later waves diff against the prior wave's snapshot.
+  const reReviewPaths = priorState?.snapshot?.git
+    ? changedKeys(priorState.snapshot.git.pathHashes, gitSnapshot.pathHashes)
+    : changedPaths;
   const freshness = {
     status: !persisted ? 'legacy' : contentChanged || gitChanged ? 'changed' : 'current',
     changedPaths,
@@ -501,7 +513,7 @@ export function prepareCodeReview(request, {
       ? scopeResult.reviewScope
       : freshness.bodyOnly
         ? `Re-review round ${round} — walkthrough body changed; review full selected range (${scopeResult.reviewScope})`
-        : `Re-review round ${round} — changed paths: ${changedPaths.join(', ') || 'review resolutions only'}; ${scopeResult.reviewScope}`;
+        : `Re-review round ${round} — changed paths: ${reReviewPaths.join(', ') || 'review resolutions only'}; ${scopeResult.reviewScope}`;
   const scope = request.reviewScope ? `${derivedScope}; ${request.reviewScope}` : derivedScope;
   const prompt = reviewMode === 'full'
     ? loadPrompt('prompt-template.md', {

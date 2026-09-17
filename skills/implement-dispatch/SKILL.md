@@ -26,8 +26,8 @@ explicit only. Pass pins unchanged to `resolve-flow.mjs`.
 1. Convert the ask into checkable success criteria and assumptions. Ask one focused question for
    each decision-changing ambiguity.
 2. Resolve paths with `dispatch/scripts/resolve-artifact-paths.mjs`; host convention wins.
-   Initialize `run-record.mjs init`. Keep its `runDir` outside the worktree and allocate one
-   new metrics path per launched dispatch slot; native fallback is a substitution, not a slot.
+   Initialize `run-record.mjs init`. Keep its `runDir` outside the worktree, reserved for slot metrics
+   (requests/reports go elsewhere in OS temp), and allocate one new metrics path per launched slot; native fallback is a substitution, not a slot.
 3. Author from the plan-review template. Group files by `[NEW]`/`[MODIFY]`/`[DELETE]`; map every
    criterion to changes or verification.
 4. Run:

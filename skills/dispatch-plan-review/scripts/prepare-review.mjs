@@ -31,6 +31,7 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(__dirname, '..');
 const DISPATCH_DIR = path.resolve(__dirname, '../../dispatch');
+const CHECKPOINT_KEYS = ['action', 'invocationContext', 'settlement', 'settledWrites'];
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'date', 'orchestrator',
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
@@ -94,8 +95,8 @@ function validateRequest(request) {
   }
   if (action === 'checkpoint') {
     for (const key of Object.keys(request)) {
-      if (!['action', 'invocationContext', 'settlement', 'settledWrites'].includes(key)) {
-        throw new Error(`checkpoint request contains inapplicable field "${key}".`);
+      if (!CHECKPOINT_KEYS.includes(key)) {
+        throw new Error(`checkpoint request contains inapplicable field "${key}"; allowed: ${CHECKPOINT_KEYS.join(', ')}.`);
       }
     }
   } else if (request.settlement !== undefined || request.settledWrites !== undefined) {
@@ -108,6 +109,13 @@ function validateRequest(request) {
     if (!Array.isArray(request.settledWrites.sections) || request.settledWrites.sections.some((value) => typeof value !== 'string')) {
       throw new Error('settledWrites.sections must be an array of strings.');
     }
+  }
+  // Batches need an initialized run directory that only orchestrators own.
+  if (action === 'prepare' && request.mode !== 'orchestrated' && (request.targets !== undefined || request.reserves !== undefined)) {
+    throw new Error('standalone requests cannot carry targets or reserves; prepare once per `dispatch.mjs --list-targets` entry with selector {provider: entry.platform, candidateIndex: entry.candidateIndex}.');
+  }
+  if (action === 'prepare' && request.mode === 'orchestrated' && request.selector !== undefined) {
+    throw new Error('orchestrated requests select sources through targets, not selector.');
   }
   if (request.targets !== undefined) validateTargets(request.targets, request.roundId, 'targets');
   if (request.reserves !== undefined) validateTargets(request.reserves, request.roundId, 'reserves');
@@ -299,6 +307,11 @@ export function preparePlanReview(request, {
   const snapshot = planSnapshot(artifact.source);
   const persisted = artifact.metadata;
   const changedSections = persisted ? changedKeys(persisted.sectionHashes, snapshot.sectionHashes) : [];
+  // Checkpoints land only at settlement, so later waves diff against the prior wave's snapshot.
+  const priorSnapshot = request.invocationContext ? readInvocationState(request.invocationContext).snapshot : null;
+  const reReviewSections = priorSnapshot?.sectionHashes
+    ? changedKeys(priorSnapshot.sectionHashes, snapshot.sectionHashes)
+    : changedSections;
   const freshness = {
     status: !persisted ? 'legacy' : changedSections.length || persisted.contentHash !== snapshot.contentHash ? 'changed' : 'current',
     changedSections,
@@ -341,7 +354,7 @@ export function preparePlanReview(request, {
     ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}`
     : round === 1
       ? 'Full review'
-      : `Re-review round ${round} — changed sections: ${changedSections.join(', ') || 'review resolutions only'}`;
+      : `Re-review round ${round} — changed sections: ${reReviewSections.join(', ') || 'review resolutions only'}`;
   const scope = request.reviewScope ? `${derivedScope}; ${request.reviewScope}` : derivedScope;
   const prompt = reviewMode === 'full'
     ? loadPrompt({

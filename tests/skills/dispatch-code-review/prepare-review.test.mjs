@@ -159,6 +159,16 @@ describe('code review preparation', () => {
     assert.equal(manifest.message, 'No reviewable changes; name a commit or range to review.');
   });
 
+  it('rejects standalone targets/reserves and orchestrated selectors', () => {
+    const repo = makeRepo();
+    const entry = { roundId: 'code-review:R1', candidateId: 'code-review:claude:0', platform: 'claude', candidateIndex: 0, metricsFile: path.join(repo, 'slot.json') };
+    assert.throws(() => prepareCodeReview({ roundId: 'code-review:R1', targets: [entry] }, { repoRoot: repo }), /standalone requests cannot carry targets/);
+    assert.throws(() => prepareCodeReview({ roundId: 'code-review:R1', reserves: [entry] }, { repoRoot: repo }), /standalone requests cannot carry targets/);
+    // Malformed --list-targets entries still get the standalone diagnostic first.
+    assert.throws(() => prepareCodeReview({ targets: [{ platform: 'claude', candidateIndex: 0 }] }, { repoRoot: repo }), /standalone requests cannot carry targets/);
+    assert.throws(() => prepareCodeReview({ mode: 'orchestrated', roundId: 'code-review:R1', targets: [entry], selector: { provider: 'claude', candidateIndex: 0 } }, { repoRoot: repo }), /not selector/);
+  });
+
   it('rejects inapplicable checkpoint fields and ineligible settled paths', () => {
     const repo = makeRepo();
     assert.throws(() => prepareCodeReview({

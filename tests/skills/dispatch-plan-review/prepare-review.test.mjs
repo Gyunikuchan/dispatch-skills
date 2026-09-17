@@ -73,6 +73,42 @@ describe('plan review preparation', () => {
     }
   });
 
+  it('rejects standalone targets and orchestrated selectors', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const target = { roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', candidateIndex: 0, metricsFile: path.join(repo, 'slot.json') };
+    assert.throws(() => preparePlanReview({
+      artifactPath: plan, slug: 'sample', artifactOwned: true, roundId: 'plan-review:R1', targets: [target],
+    }, { repoRoot: repo }), /standalone requests cannot carry targets/);
+    assert.throws(() => preparePlanReview({
+      mode: 'orchestrated', artifactPath: plan, slug: 'sample', artifactOwned: true, roundId: 'plan-review:R1',
+      targets: [target], selector: { provider: 'claude', candidateIndex: 0 },
+    }, { repoRoot: repo }), /not selector/);
+  });
+
+  it('scopes a later wave to sections changed since the prior wave', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const first = preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo });
+    fs.writeFileSync(plan, planBody
+      .replace('- First.', '- First, revised.')
+      .replace('*No reviews conducted yet.*', '### Round 1\n- *No actionable findings.*'));
+    const second = preparePlanReview({
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      invocationContext: first.invocationContext,
+    }, { repoRoot: repo });
+    try {
+      assert.match(second.scope, /changed sections: Proposed Changes/);
+    } finally {
+      cleanManifest(first);
+      cleanManifest(second);
+    }
+  });
+
   it('returns authoring-required for a missing plan', () => {
     const repo = makeRepo();
     const manifest = preparePlanReview({

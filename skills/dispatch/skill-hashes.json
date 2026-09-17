@@ -1,6 +1,6 @@
 {
   "SKILL.md": "427746b4e738bb9aa52d8059a737922425e274c31e71b9b2be5350424a3fb291",
-  "references/alignment.md": "367652fcf1941bd7b4e37905134c14283a436e436f4bf157aee1735c14c668f1",
+  "references/alignment.md": "0e1664678617e73d161998f7bf6d9530e7d15a32f48af7bdd223fa1fd01a43ac",
   "references/providers.md": "f8b63382b481ce7c3574c507696e545bdbc9c951f730439c910bfe1aeeb9a3f5",
   "scripts/agy-run.mjs": "4a49d8efe47d08572518cdb813eeee34b7e21bd0f18274ac77e542d4bb851907",
   "scripts/claude-run.mjs": "011b9d58cadadfe9747eebd65eac5adf8dbcc700c876409167582e2630b93638",
@@ -12,7 +12,7 @@
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
   "scripts/resolution-log.mjs": "b6018e6d884bb5089549598c3665a18adf3a2afb2ffe0d1df5db56023ab163b0",
   "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581",
-  "scripts/review-preparation.mjs": "a0b77d3a19924fe8cd4fb405a0ef65fa08cd4165c4ef3db66f0d6c28ef0f1e99",
+  "scripts/review-preparation.mjs": "e62113865ea93782d7cc3d7e1d5bceff5f3ec7b323d3676afb03927669ae0a35",
   "scripts/review-report.mjs": "fa89c023b905e8b5b584e0eb8f57034b94880e788361e567e5c3b60fbafb3398",
   "scripts/slot-metrics.mjs": "44226614e7c77d7c1ee8a25c91a26d95b53a6f633c2950a08f30fb23771eb1b0"
 }

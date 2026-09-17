@@ -53,12 +53,15 @@ Append under the first unfenced `## Review Findings & Resolutions`:
 ```text
 ### Round <n> — <date>
 - **Sources:** {<source-key>:<source-record>,...}
-- **[<status>]** [R<n>-F<sequence>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
+- **[<status>]** [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
 ```
 
-Source keys are `<phase>:R<n>:<platform>:<candidate-index>`. Records preserve candidate identity,
-model/effort, status, session, and `substitutesFor`. Cite only reporting sources. IDs survive status
-rewrites. Legacy lines remain readable; `ACTIONABLE` is legacy-only. Unknown bullets never settle.
+Source keys are `<phase>:R<n>:<platform>:<candidate-index>`. Records are JSON with exactly
+`provider`, `candidateIndex`, `model`, `effort`, `status` (`target`/`reserve`/`fallback`/`replacement`),
+`session`, `substitutesFor` (null or a same-round key). Entry statuses: `Accepted`, `Resolved dispute`,
+`Rejected / Downgraded`, `Disputed`, `Rejected — Pending Confirmation`. `<nnn>` is zero-padded to at
+least three digits. Cite only reporting sources. IDs survive status rewrites.
+Legacy lines remain readable; `ACTIONABLE` is legacy-only. Unknown bullets never settle.
 
 `check-consensus.mjs` exits `0` settled, `1` live, `2` invalid. Continue while the prior wave changed
 the artifact/code or live disputed/pending findings remain below the cap.

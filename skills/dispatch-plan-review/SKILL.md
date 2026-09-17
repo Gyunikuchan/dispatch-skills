@@ -26,7 +26,8 @@ coverage keeps the overwrite / review-as-is / fresh-slug choice.
    node <skill-path>/scripts/prepare-review.mjs --request <json-file|->
    ```
 
-   Standalone requests carry the user selector/text. Orchestrated requests carry `mode`,
+   Standalone requests carry the user selector/text; for count/`all` pins, prepare and launch once
+   per `dispatch.mjs --list-targets` entry with `selector: {provider: <platform>, candidateIndex}`. Orchestrated requests carry `mode`,
    `reviewMode`, `roundId`, `consensus`, caller-resolved `targets`/`reserves`, unique metrics
    paths, and optional packet/context. The manifest returns the canonical plan
    (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), freshness, scope, prompt/views, dispatch argv,

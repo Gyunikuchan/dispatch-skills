@@ -28,7 +28,9 @@ fresh-slug choice.
    node <skill-path>/scripts/prepare-review.mjs --request <json-file|->
    ```
 
-   Standalone requests carry selector/text and an explicit `range` only when the user named one.
+   Standalone requests carry selector/text and an explicit `range` only when the user named one;
+   for count/`all` pins, prepare and launch once per `dispatch.mjs --list-targets` entry with
+   `selector: {provider: <platform>, candidateIndex}`.
    Orchestrated requests carry `mode`, `reviewMode`, `roundId`, `consensus`, caller-resolved
    `targets`/`reserves`, unique metrics paths, and optional finding packet/context.
 2. Preparation validates the explicit commit/range or current staged, unstaged, untracked, or

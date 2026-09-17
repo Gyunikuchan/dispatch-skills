@@ -42,7 +42,7 @@ Downstream caller impacts, data/schema migrations, and fallback/rollback paths (
 
 ## Review Findings & Resolutions
 <!-- Populated during plan review cycles -->
-<!-- New rounds start with a structured source map and enriched [ID] [severity] [sources=...] entries. -->
+<!-- Rounds use the source-map and entry format in dispatch references/alignment.md § Resolution log. -->
 *No reviews conducted yet.*
 
 ## Out of Scope
