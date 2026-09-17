@@ -7,7 +7,7 @@
  *
  * Exits 0 (`Consensus: settled`) when `## Review Findings & Resolutions` holds no `[Disputed]` or
  * `[Rejected — pending confirmation]` line, or the section is absent; exits 1 listing each
- * unsettled line; exits 2 on a usage error or unreadable file.
+ * unsettled line; exits 2 on a usage error, unreadable file, or a log the strict parser rejects.
  */
 
 import fs from 'node:fs';
@@ -52,9 +52,9 @@ function main(args) {
   }
   let unsettled;
   try {
-    unsettled = json
-      ? scanResolutionLog(markdown, { strict: true }).unsettledItems
-      : findUnsettled(markdown);
+    // NOTE: both modes parse strictly so the gate never settles a log that preparation rejects.
+    const scan = scanResolutionLog(markdown, { strict: true });
+    unsettled = json ? scan.unsettledItems : scan.unsettled;
   } catch (err) {
     process.stderr.write(`Error: invalid resolution log: ${err.message}\n`);
     return 2;

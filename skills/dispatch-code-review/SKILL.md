@@ -62,8 +62,9 @@ terminal.
    items under `## Follow-ups`; reruns the host verify command until green or two identical
    failures; and updates `## Changes Made`, `## Verification & Validation`, and the enriched
    resolution log. Orchestrated mode records adjudications but leaves fixes to its caller.
-4. Re-review only changed paths/live findings within the cap. Rebuttal response keys must exactly
-   match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE` becomes disputed.
+4. Once verify is green, re-review only changed paths/live findings within the cap. Rebuttal
+   response keys must exactly match the packet: `CONFIRM` settles, `REBUT` remains live,
+   `INTENT-DISPUTE` becomes disputed.
 
 **Done when:** all findings are verified against code, permitted fixes pass host verification,
 resolutions are logged, and consensus is evaluated.

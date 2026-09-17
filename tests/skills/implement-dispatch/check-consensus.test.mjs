@@ -216,4 +216,13 @@ describe('check-consensus CLI', () => {
     assert.equal(malformed.status, 2);
     assert.match(malformed.stderr, /structured source map/);
   });
+
+  it('uses exit 2 for unpadded finding IDs in both output modes', () => {
+    const unpadded = doc('- **[Accepted]** [R1-F1] [MUST] [sources=plan-review:R1:claude:0] § A — tag: x → y');
+    for (const args of [[], ['--json']]) {
+      const result = runOn(unpadded, args);
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /malformed enriched finding prefix/);
+    }
+  });
 });

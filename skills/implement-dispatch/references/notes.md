@@ -62,7 +62,8 @@ Validates whether an artifact's `## Review Findings & Resolutions` section has c
 - **Exit Codes**:
   - `0`: Settled (`Consensus: settled`) — no unsettled lines found, or `## Review Findings & Resolutions` section absent.
   - `1`: Unsettled (`Consensus: <n> unsettled line(s)`) — lists active `[Disputed]` or `[Rejected — pending confirmation]` lines.
-  - `2`: Usage error, missing arguments, or unreadable artifact file.
+  - `2`: Usage error, missing arguments, unreadable artifact file, or invalid resolution log
+    (strict parse failure in both output modes).
 - **JSON Mode**: Returns `{ settled, unsettled }`; each unsettled record has a durable or
   invocation-local key, nullable ID, severity, source keys, status, line number, and original line.
 - **Parsing Invariants**:

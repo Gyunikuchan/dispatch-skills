@@ -134,17 +134,17 @@
       "codeRebuttalPathEstimate": 4892
     },
     "recall": {
-      "entryPointCeiling": 21300,
-      "normalPathCeiling": 37100,
-      "normalPathEstimateCeiling": 9275,
-      "entryPointCharacters": 21297,
-      "entryPointEstimate": 5325,
-      "normalPathCharacters": 37090,
-      "normalPathEstimate": 9273,
-      "planRebuttalPathCharacters": 21644,
-      "planRebuttalPathEstimate": 5411,
-      "codeRebuttalPathCharacters": 22746,
-      "codeRebuttalPathEstimate": 5687
+      "entryPointCeiling": 21400,
+      "normalPathCeiling": 37200,
+      "normalPathEstimateCeiling": 9300,
+      "entryPointCharacters": 21344,
+      "entryPointEstimate": 5336,
+      "normalPathCharacters": 37137,
+      "normalPathEstimate": 9285,
+      "planRebuttalPathCharacters": 21666,
+      "planRebuttalPathEstimate": 5417,
+      "codeRebuttalPathCharacters": 22793,
+      "codeRebuttalPathEstimate": 5699
     }
   },
   "intentionalPhase0bDelta": {
@@ -156,7 +156,7 @@
     "normalPathCharacters": 3803
   },
   "intentionalRecallDelta": {
-    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit; later: run-dir, pin, and resolution-log format guidance.",
+    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit; later: run-dir, pin, resolution-log format guidance, and the verify-before-next-code-wave gate.",
     "files": {
       "skills/dispatch-plan-review/SKILL.md": 850,
       "skills/dispatch-code-review/SKILL.md": 1000,
@@ -165,6 +165,6 @@
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
       "skills/dispatch-code-review/references/prompt-template.md": 1300
     },
-    "normalPathCharacters": 6600
+    "normalPathCharacters": 6700
   }
 }

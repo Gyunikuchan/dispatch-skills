@@ -83,10 +83,11 @@ Skip when disabled. Prepare `code-review:R1` with walkthrough, bounded plan evid
 targets/reserves, metrics paths, consensus, and budget. Resolve only in-run deterministic
 `decision-required` states; otherwise stop before dispatch.
 
-Launch/yield/wait as for plan review. Verify claims against active code; apply accepted fixes,
-record rulings, update the walkthrough, and reverify. Continue bounded full/rebuttal waves while
-code changed or findings remain live. Preserve affinity/candidate IDs; auth/quota exclusion
-re-resolves without renumbering. At the cap, obtain rulings and run one final verification wave.
+Launch/yield/wait as for plan review. Verify claims against code; apply accepted fixes, log rulings,
+update the walkthrough, and reverify green before consensus or a next wave. Loop bounded
+full/rebuttal waves while code changed or findings stay live. Preserve affinity/candidate IDs;
+auth/quota exclusion re-resolves without renumbering. At the cap, obtain rulings and run one final
+verification wave.
 
 After every expected source is terminal and consensus exits `0`, checkpoint exact settled code
 paths and walkthrough sections. Cleanup is finally-style; an unsettled/stable-failure run retains
