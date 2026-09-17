@@ -25,6 +25,10 @@ const PLAN_REVIEW_README_PATH = 'skills/dispatch-plan-review/README.md';
 const CODE_REVIEW_README_PATH = 'skills/dispatch-code-review/README.md';
 const PLAN_SCHEMA_PATH = 'skills/dispatch-plan-review/references/report-schema.json';
 const CODE_SCHEMA_PATH = 'skills/dispatch-code-review/references/report-schema.json';
+const PLAN_REBUTTAL_PATH = 'skills/dispatch-plan-review/references/rebuttal-template.md';
+const CODE_REBUTTAL_PATH = 'skills/dispatch-code-review/references/rebuttal-template.md';
+const PLAN_REBUTTAL_SCHEMA_PATH = 'skills/dispatch-plan-review/references/rebuttal-schema.json';
+const CODE_REBUTTAL_SCHEMA_PATH = 'skills/dispatch-code-review/references/rebuttal-schema.json';
 const ALIGNMENT_PATH = 'skills/dispatch/references/alignment.md';
 const IMPLEMENT_PATH = 'skills/implement-dispatch/SKILL.md';
 const FILL_TEMPLATE_SCRIPT = path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', 'fill-template.mjs');
@@ -215,7 +219,7 @@ describe('review skill templates live in references/', () => {
   it('review skills use the canonical shell-safe fill-template transport', () => {
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const skill = readSkill(skillPath);
-      assert.match(skill, /canonical stdin\/temp-output protocol/);
+      assert.match(skill, /canonical\s+stdin\/temp-output protocol/);
       assert.match(skill, /--vars - --temp-out/);
       assert.doesNotMatch(skill, /--vars <json file>.*--out <path>/s);
     }
@@ -264,6 +268,8 @@ describe('orchestrated handover contract', () => {
     const alignment = readSkill(ALIGNMENT_PATH);
     const modes = alignment.slice(alignment.indexOf('## Invocation Modes'), alignment.indexOf('## Prompt Template Filling'));
     assert.match(modes, /Detection:[^\n]*\*\*targets\*\*/, `${ALIGNMENT_PATH} § Invocation Modes detection does not name targets`);
+    assert.match(modes, /`Review Mode: full\|rebuttal`/);
+    assert.match(modes, /candidateId/);
 
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       assert.match(readSkill(skillPath), /\*\*targets\*\* list/, `${skillPath} mode detection does not name the targets list`);
@@ -294,14 +300,17 @@ describe('orchestrated handover contract', () => {
 
     const log = alignment.slice(alignment.indexOf('## Resolutions Log'));
     assert.ok(log.includes('**[Rejected — pending confirmation]**'), `${ALIGNMENT_PATH} Resolutions Log lacks the pending form`);
-    assert.ok(log.includes('(CONSIDER)'), `${ALIGNMENT_PATH} Resolutions Log lacks (CONSIDER) grammar tag`);
+    assert.ok(log.includes('[MUST|SHOULD|CONSIDER]'), `${ALIGNMENT_PATH} Resolutions Log lacks structured severity`);
+    assert.ok(log.includes('Legacy lines remain readable'), `${ALIGNMENT_PATH} lacks legacy log compatibility`);
+    assert.ok(log.includes('`<tag> (CONSIDER)`'), `${ALIGNMENT_PATH} lacks legacy CONSIDER compatibility`);
+    assert.ok(log.includes('`ACTIONABLE`'), `${ALIGNMENT_PATH} lacks ACTIONABLE compatibility`);
 
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const content = readSkill(skillPath);
       assert.ok(content.includes('[Rejected — pending confirmation]'), `${skillPath} does not name the pending form`);
       assert.ok(
-        content.includes('delegate-reported MUST-FIX / SHOULD-FIX'),
-        `${skillPath} does not scope pending form to delegate-reported MUST-FIX / SHOULD-FIX`
+        content.includes('`MUST`/`SHOULD`'),
+        `${skillPath} does not scope pending form to MUST/SHOULD`
       );
     }
 
@@ -310,12 +319,41 @@ describe('orchestrated handover contract', () => {
     assert.ok(implement.includes('check-consensus.mjs'), `${IMPLEMENT_PATH} does not gate on check-consensus.mjs`);
     assert.ok(implement.includes('--exclude'), `${IMPLEMENT_PATH} does not re-resolve with --exclude`);
     assert.ok(
-      implement.includes('delegate-reported MUST-FIX or SHOULD-FIX'),
-      `${IMPLEMENT_PATH} does not scope rejections to delegate-reported MUST-FIX or SHOULD-FIX`
+      implement.includes('rejection/downgrade of `MUST` or `SHOULD`'),
+      `${IMPLEMENT_PATH} does not scope pending rejections to MUST/SHOULD`
     );
-    assert.ok(
-      implement.includes("Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality"),
-      `${IMPLEMENT_PATH} does not reference alignment.md § Finality for CONSIDER findings`
+    assert.match(
+      implement,
+      /`CONSIDER`\s+follows `dispatch`'s `references\/alignment\.md` § Finality/,
+      `${IMPLEMENT_PATH} does not reference alignment.md § Finality for CONSIDER findings`,
+    );
+  });
+});
+
+describe('rebuttal contract parity', () => {
+  it('uses the same response envelope, variables, and schema in both review skills', () => {
+    const plan = readSkill(PLAN_REBUTTAL_PATH);
+    const code = readSkill(CODE_REBUTTAL_PATH);
+    const planExample = extractJsonExamples(plan)[0];
+    const codeExample = extractJsonExamples(code)[0];
+    assert.deepEqual(planExample, codeExample);
+    assert.deepEqual(Object.keys(planExample), ['responses']);
+    assert.deepEqual(
+      Object.keys(planExample.responses[0]).sort(),
+      ['evidence', 'key', 'type', 'verdict'],
+    );
+    for (const template of [plan, code]) {
+      assert.match(template, /<Finding Packet Path>/);
+      assert.match(template, /CONFIRM\|REBUT\|INTENT-DISPUTE/);
+    }
+    const planSchema = JSON.parse(readSkill(PLAN_REBUTTAL_SCHEMA_PATH));
+    const codeSchema = JSON.parse(readSkill(CODE_REBUTTAL_SCHEMA_PATH));
+    assert.deepEqual(planSchema, codeSchema);
+    assert.deepEqual(planSchema.required, ['responses']);
+    assert.equal(planSchema.additionalProperties, false);
+    assert.deepEqual(
+      planSchema.properties.responses.items.properties.verdict.enum,
+      ['CONFIRM', 'REBUT', 'INTENT-DISPUTE'],
     );
   });
 });

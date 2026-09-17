@@ -25,7 +25,8 @@ implement-dispatch
 6. **Implement**: Single user approval gate, native write subagent dispatch (test-first), boundary verification.
 7. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
 8. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
-9. **Re-Review Loop**: Re-dispatch narrowed by target affinity to live citing delegates until `check-consensus.mjs` exits 0 or wave cap reached.
+9. **Re-Review Loop**: Build source-grouped rebuttal packets and re-dispatch only live claims to
+   their citing candidates (or recorded replacements) until consensus or the wave cap.
 10. **Handoff & Cleanup**: Await all review dispatches, record run diagnostics, relocate scratch artifacts to OS temp, deliver user summary.
 
 ---
@@ -56,12 +57,14 @@ Validates whether an artifact's `## Review Findings & Resolutions` section has c
 
 - **CLI Usage**:
   ```bash
-  node check-consensus.mjs <artifact path>
+  node check-consensus.mjs [--json] <artifact path>
   ```
 - **Exit Codes**:
   - `0`: Settled (`Consensus: settled`) — no unsettled lines found, or `## Review Findings & Resolutions` section absent.
   - `1`: Unsettled (`Consensus: <n> unsettled line(s)`) — lists active `[Disputed]` or `[Rejected — pending confirmation]` lines.
   - `2`: Usage error, missing arguments, or unreadable artifact file.
+- **JSON Mode**: Returns `{ settled, unsettled }`; each unsettled record has a durable or
+  invocation-local key, nullable ID, severity, source keys, status, line number, and original line.
 - **Parsing Invariants**:
   - CommonMark-compliant fenced code block skipping (prevents example templates from triggering false positives).
   - Unclosed fence detection triggers fail-closed scan across the entire file.
@@ -81,6 +84,12 @@ Uses `dispatch/scripts/resolution-log.mjs` to preserve the semantic artifact bod
 preceding round, every older live finding, and fixed summaries of older settled rounds in a
 private OS-temp projection. The canonical artifact remains the only adjudication/edit target.
 
+### Rebuttal Packets (`scripts/build-rebuttal-packets.mjs`)
+
+Combines strict consensus JSON with explicit orchestrator counter-evidence, groups live findings by
+effective source key, and writes owner-only OS-temp packet files. Legacy findings use conservative
+round-wide affinity. Packet paths and cleanup directories are returned in a manifest.
+
 ---
 
 ## 3. Test Harness Environment Hooks
@@ -94,9 +103,14 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
 
 ### Test Suite Structure
 
-- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate ordering, host/model demotion, level-knob fallback, pin normalization, candidate array expansion, and platform exclusions.
+- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate ordering,
+  stable candidate IDs, host/model demotion, level-knob fallback, pin normalization, candidate
+  array expansion, and platform exclusions.
 - `tests/skills/implement-dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
-- `tests/skills/implement-dispatch/check-consensus.test.mjs`: Consensus parser tests, fenced markdown handling, dash variations, and exit codes.
+- `tests/skills/implement-dispatch/check-consensus.test.mjs`: Legacy/enriched consensus parsing,
+  structured output, fenced markdown handling, and exit codes.
+- `tests/skills/implement-dispatch/build-rebuttal-packets.test.mjs`: Source grouping, legacy
+  affinity, context validation, and private temp-file output.
 - `tests/skills/implement-dispatch/config-default.test.mjs`: Schema validation of `config.default.jsonc`.
 
 ---

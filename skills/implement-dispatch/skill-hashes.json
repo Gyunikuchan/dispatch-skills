@@ -1,8 +1,9 @@
 {
-  "SKILL.md": "f5f0cae805b5a6f1d36687f0e9ceb35e3f091c57d91b9830a41106c58b1dac02",
-  "references/notes.md": "9be6c14ec39393ab63a8dc2c4bcb053fdfaa699353744fe7482f0e94d9c03938",
-  "scripts/build-review-view.mjs": "4b523bfd8577478ae04e9079aa0c69bc4573cef56fb88373ab3dcff6dac8d359",
-  "scripts/check-consensus.mjs": "7203312b8c10223cedc5cd5e62231a695a5f178453a0de43a11a6456f4ceada7",
-  "scripts/resolve-flow.mjs": "b86e9a90e0f65dbd1a28af1aa98a3f1747306158351b3162d49f2c9a8070e45e",
-  "scripts/run-record.mjs": "a78959d8cb1e6a5569446554bb843ce835edb2d18876aaa42f4997510325d4c7"
+  "SKILL.md": "a5f61bbd166116038e4c027d2a93e4096d545581672d42b64fdb78b0922b60d4",
+  "references/notes.md": "becd7258f33909632841a31caccacb2b19ec90d10fc45d37c6785e247b89d686",
+  "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
+  "scripts/build-review-view.mjs": "1352ce2f3020379d8e6ca17df716344eed99b76635efba3bb543af939aec825c",
+  "scripts/check-consensus.mjs": "7c2a58ee79e2d97c0b1763332936b4ad7ca1cb60cb293bf6147af74239a8081f",
+  "scripts/resolve-flow.mjs": "fa2c4f8996b74588c4a60d42e543d8959a7d40d5c198892f91a265b0d895976d",
+  "scripts/run-record.mjs": "b0d559e689fb1085e583484fd2187c5696d09145d15d1cec254c72a5dcc60f9c"
 }

@@ -1,7 +1,9 @@
 {
-  "SKILL.md": "0477512987a2b5359ae060e1d8c5c47d47e217739f4c06df32546423beab4811",
-  "references/plan-template.md": "ce1a1e512da43a627d1a1752ce10b0882a64245be5c7bce9758b68015c4f29e0",
+  "SKILL.md": "953aa9fdc4c3f8fa31fc4d6c2dc4e8df256dca5b81779e2d7bda70b4436271f7",
+  "references/plan-template.md": "73912f48caba338d5e2c7de40737e1fd60f9a3a236412511fcbeb0fb5b45ea9f",
   "references/prompt-template.md": "832f6d545e9381952b6e139872f8441d9f8e2d432bc06f877cd4a95ed2de3b86",
+  "references/rebuttal-schema.json": "fdb63f9eb61276a9d431680c1071350a95c2ab7e95dff3a5a232b641451fad27",
+  "references/rebuttal-template.md": "edca4fa112c7909fbc5537b6a8c33099293eba51ceffe6e6808009f9c8ac198f",
   "references/report-schema.json": "89744f325e483dd0cdf75d645ec72ac6c28482d8ae57559a7f0b4e1517fdb3d5",
-  "scripts/parse-report.mjs": "85f522c9a407e51a42c6e501301a714035736736589df0697180da3bdcb6aa51"
+  "scripts/parse-report.mjs": "cff8b88c5d27c8350eeb3df81a38c5ac4e03f674c75acf870abba24c973e1842"
 }

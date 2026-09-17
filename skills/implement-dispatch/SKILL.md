@@ -86,8 +86,11 @@ resolved flow is disclosed.
 
 Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
-1. Start the first orchestrated wave with the plan path, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, one unique `Metrics File Path` per launched dispatch, and the plan budget from the [Review contract](#review-contract).
-2. Await every target and reserve outcome. Adjudicate every claim against the requirement, repository rules, and cited plan locus; sanitize delegate text, apply accepted changes, and append the round log under `## Review Findings & Resolutions`.
+1. Start the first orchestrated wave with `roundId=plan-review:R1`, `Review Mode: full`, the plan
+   path, `targets`/`reserves` (including `candidateId`), `consensus: true|false`,
+   `Review Scope: Full review`, one unique metrics path per dispatch, and the plan budget.
+2. Await every outcome. Adjudicate claims, apply accepted changes, then append the enriched finding
+   entries and structured source map under `## Review Findings & Resolutions`.
 3. While the [Review contract](#review-contract) keeps the loop live, generate a bounded view and
    re-review only with delegates that have live findings:
 
@@ -96,8 +99,17 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
      --artifact "<plan path>" --next-round <n> --temp-out
    ```
 
-   Hand over separate `Canonical Artifact Path` and `Review View Path`; name changed sections and
-   pending rebuttals in `Review Scope`. Remove the view's temp directory after the wave settles.
+   Run `check-consensus.mjs --json`, collect explicit verdict/counter-evidence/excerpts for its
+   unsettled keys, and build source-grouped packets:
+
+   ```bash
+   node <skills-dir>/implement-dispatch/scripts/build-rebuttal-packets.mjs \
+     --artifact "<plan path>" --context "<context.json|->" --temp-out
+   ```
+
+   Invoke `dispatch-plan-review` with `Review Mode: rebuttal`, separate canonical/view paths, and
+   each source's packet. Remove the view, packet, prompt, and report temp directories after the
+   wave settles.
 4. After all launched outcomes are adjudicated, run:
 
    ```bash
@@ -133,7 +145,11 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
 Skip Steps 7–9 when `dispatch-code-review` is absent or `flow['code-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
 1. Ensure the walkthrough exists; if missing, author it from the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md), run host verification, and record the result.
-2. Start the first orchestrated wave with walkthrough and plan paths, `targets`, `reserves`, `consensus: true|false`, `Review Scope: Full review`, one unique `Metrics File Path` per launched dispatch, and the code budget from the [Review contract](#review-contract).
+2. If the plan contains review rounds, generate a bounded plan projection with
+   `build-review-view.mjs`; never attach its canonical source-map session handles. Start the first
+   orchestrated wave with `roundId=code-review:R1`, `Review Mode: full`, walkthrough/bounded-plan
+   paths, `targets`/`reserves` including `candidateId`, `consensus: true|false`,
+   `Review Scope: Full review`, one unique metrics path per dispatch, and the code budget.
 3. Await every target and reserve outcome before adjudicating.
 
 **Done when:** the walkthrough is attached, every launched review dispatch is settled, and round-one claims are ready for Step 8.
@@ -149,10 +165,12 @@ Skip Steps 7–9 when `dispatch-code-review` is absent or `flow['code-review'].m
 
 ### 9. Re-Review Loop
 
-1. While the [Review contract](#review-contract) keeps the loop live, build a temporary bounded
-   walkthrough view with `build-review-view.mjs`, then invoke `dispatch-code-review` with target
-   affinity. Hand over separate canonical/view paths and put changed lines and pending rebuttals in
-   `Review Scope`. Remove the view's temp directory after the wave settles.
+1. While the loop is live, build a bounded walkthrough view, run `check-consensus.mjs --json`, and
+   create source-grouped packets with `build-rebuttal-packets.mjs`. Invoke `dispatch-code-review`
+   with `Review Mode: rebuttal`, canonical/view/packet paths, and the packet's effective source.
+   When plan evidence is required, generate and attach a separate bounded plan view; never attach a
+   canonical artifact containing source-map session handles. Remove all returned temp paths after
+   the wave settles.
 2. Apply Step 8 after each wave, then run `check-consensus.mjs` on the walkthrough. Exit `0` settles the loop; exit `1` continues it; exit `2` halts.
 3. At the cap, obtain user rulings and run the contract's one additional verification wave.
 
@@ -167,7 +185,8 @@ Begin only after every plan and code review dispatch has a terminal outcome.
    - initial and final scope classifications, evaluated level, `flow.diagnostics.effectiveLevel`, and any scope or level shift;
    - artifact slug and `slugSource` (`explicit`, `branch`, or `conversation`);
    - rounds used versus `maxRounds`;
-   - active, failed, substituted, dropped, excluded, unavailable, and clamped delegates, plus exclusion reasons;
+   - active, failed, substituted, dropped, excluded, unavailable, and clamped delegates, plus
+     candidate/source keys, `substitutesFor`, and exclusion reasons;
    - accepted, rejected, downgraded, disputed, and rebutted findings, and verification status.
 3. Finalize the content-free record with the number of `dispatch` slots actually launched and a
    JSON summary carrying levels, waves, finding totals, and substitutions:
@@ -202,7 +221,13 @@ is delivered.
 Apply this contract to Steps 4 and 7–9; use [`alignment.md`](../dispatch/references/alignment.md) for the full invocation and adjudication grammar.
 
 - **Mechanical loop exit:** Continue while the prior wave changed the artifact or code, or an active `[Disputed]` / `[Rejected — pending confirmation]` line remains, and the phase is below `maxRounds`.
-- **Pending confirmation:** With `consensus: true`, an orchestrator rejection or downgrade of a delegate-reported MUST-FIX or SHOULD-FIX uses `[Rejected — pending confirmation]`. Rewrite it to `[Rejected / Downgraded]` only after the citing delegate confirms the counter-evidence, or to `[Resolved Dispute]` after user ruling. Delegate-reported `CONSIDER` findings follow `dispatch`'s `references/alignment.md` § Finality.
+- **Pending confirmation:** With `consensus: true`, rejection/downgrade of `MUST` or `SHOULD` uses
+  `[Rejected — pending confirmation]`. It closes only after every reachable citing source returns
+  `CONFIRM`; `REBUT` keeps it live and `INTENT-DISPUTE` changes it to `[Disputed]`. `CONSIDER`
+  follows `dispatch`'s `references/alignment.md` § Finality.
 - **Ruling reset:** At the cap, a user ruling settles each escalated item and grants exactly one additional wave with a refreshed budget. A second cap ends the loop and escalates the unresolved result.
-- **Target exclusion:** On `[auth]` or `[quota]`, add the platform to the exclusion set and re-run `resolve-flow.mjs` before the next wave or phase. Target affinity narrows re-review to live citing delegates.
+- **Target exclusion:** On `[auth]` or `[quota]`, exclude the platform and re-resolve without
+  renumbering surviving `candidateId` values. Resume each citing source when supported; otherwise
+  freshly dispatch its effective candidate. If unavailable, use a recorded replacement reviewer
+  with `substitutesFor` before escalating.
 - **Budget:** Hand over `8 + 2 × <units under review>` tool turns per reviewer. A plan unit is a `## Proposed Changes` entry; a code unit is a changed file. Re-review counts only units changed since the previous wave.

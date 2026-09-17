@@ -493,8 +493,17 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, config);
       assert.deepEqual(out['code-review'].targets.map(t => t.platform), ['agy']);
       assert.deepEqual(out['code-review'].reserves, [
-        { platform: 'opencode', model: 'lmstudio/qwen3.8-27b-ridge' },
-        { platform: 'claude', model: 'claude-opus-5', effort: 'medium' },
+        {
+          candidateId: 'code-review:opencode:0',
+          platform: 'opencode',
+          model: 'lmstudio/qwen3.8-27b-ridge',
+        },
+        {
+          candidateId: 'code-review:claude:0',
+          platform: 'claude',
+          model: 'claude-opus-5',
+          effort: 'medium',
+        },
       ]);
     });
 
@@ -1261,8 +1270,17 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'low' }, live, config);
       assert.equal(out['code-review'].targets.length, 2);
       assert.deepEqual(out['code-review'].targets, [
-        { platform: 'opencode', model: 'glm-5.3-flash', effort: 'high' },
-        { platform: 'opencode', model: 'lmstudio/qwen3.8-27b-ridge' },
+        {
+          candidateId: 'code-review:opencode:0',
+          platform: 'opencode',
+          model: 'glm-5.3-flash',
+          effort: 'high',
+        },
+        {
+          candidateId: 'code-review:opencode:1',
+          platform: 'opencode',
+          model: 'lmstudio/qwen3.8-27b-ridge',
+        },
       ]);
     });
 
@@ -1504,6 +1522,27 @@ describe('resolveFlow — configured-order candidates', () => {
   });
 
   describe('exclude', () => {
+    it('keeps configured candidate IDs stable across exclusion re-resolution', () => {
+      const before = resolveFlow({ platform: 'claude', level: 'high' }, ALL_UP, multi());
+      const after = resolveFlow(
+        { platform: 'claude', level: 'high', exclude: ['copilot'] },
+        ALL_UP,
+        multi(),
+      );
+      const beforeIds = new Map(
+        [...before['code-review'].targets, ...before['code-review'].reserves]
+          .map((target) => [`${target.platform}:${target.model ?? ''}`, target.candidateId]),
+      );
+      for (const target of [...after['code-review'].targets, ...after['code-review'].reserves]) {
+        assert.equal(
+          target.candidateId,
+          beforeIds.get(`${target.platform}:${target.model ?? ''}`),
+        );
+      }
+      assert.equal(beforeIds.get('opencode:glm-5.3-flash'), 'code-review:opencode:0');
+      assert.equal(beforeIds.get('opencode:mistral-small'), 'code-review:opencode:1');
+    });
+
     it('removes excluded platforms from candidates and reports them only in diagnostics.excluded', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high', exclude: ['copilot'] }, ALL_UP, multi());
       assert.deepEqual(out['code-review'].targets.map(label), ['agy', 'glm-5.3-flash', 'mistral-small']);

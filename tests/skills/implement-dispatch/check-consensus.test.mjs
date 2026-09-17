@@ -141,12 +141,12 @@ describe('findUnsettled', () => {
 });
 
 describe('check-consensus CLI', () => {
-  const runOn = (content) => {
+  const runOn = (content, args = []) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-consensus-'));
     const file = path.join(dir, 'plan.md');
     fs.writeFileSync(file, content);
     try {
-      return spawnSync(process.execPath, [SCRIPT, file], { encoding: 'utf8' });
+      return spawnSync(process.execPath, [SCRIPT, ...args, file], { encoding: 'utf8' });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -168,5 +168,52 @@ describe('check-consensus CLI', () => {
   it('exits 2 on a missing file or missing argument', () => {
     assert.equal(spawnSync(process.execPath, [SCRIPT, path.join(os.tmpdir(), 'no-such-plan-xyz.md')], { encoding: 'utf8' }).status, 2);
     assert.equal(spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' }).status, 2);
+  });
+
+  it('returns structured enriched and legacy findings with unchanged exit codes', () => {
+    const sourceMap = JSON.stringify({
+      'plan-review:R1:claude:0': {
+        provider: 'claude',
+        candidateIndex: 0,
+        model: 'opus',
+        effort: null,
+        status: 'target',
+        session: 'abc',
+        substitutesFor: null,
+      },
+    });
+    const enriched = runOn([
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 1 — Claude',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — tag: x → y',
+    ].join('\n'), ['--json']);
+    assert.equal(enriched.status, 1, enriched.stderr);
+    assert.deepEqual(JSON.parse(enriched.stdout), {
+      settled: false,
+      unsettled: [{
+        key: 'R1-F001',
+        id: 'R1-F001',
+        severity: 'SHOULD',
+        sourceKeys: ['plan-review:R1:claude:0'],
+        status: 'pendingConfirmation',
+        lineNumber: 5,
+        originalLine: '- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — tag: x → y',
+      }],
+    });
+
+    const legacy = runOn(doc('- **[Disputed]** § A — tag: x → y'), ['--json']);
+    assert.equal(legacy.status, 1);
+    assert.equal(JSON.parse(legacy.stdout).unsettled[0].severity, 'ACTIONABLE');
+    assert.equal(JSON.parse(legacy.stdout).unsettled[0].id, null);
+  });
+
+  it('uses exit 2 for malformed enriched state in JSON mode', () => {
+    const malformed = runOn(doc(
+      '- **[Disputed]** [R1-F001] [MUST] [sources=plan-review:R1:claude:0] § A — tag: x → y',
+    ), ['--json']);
+    assert.equal(malformed.status, 2);
+    assert.match(malformed.stderr, /structured source map/);
   });
 });

@@ -3,8 +3,30 @@ import { describe, it } from 'node:test';
 
 import {
   findUnsettledResolutionLines,
+  nextFindingId,
   scanResolutionLog,
 } from '../../../skills/dispatch/scripts/resolution-log.mjs';
+
+const sourceMap = JSON.stringify({
+  'plan-review:R2:claude:0': {
+    provider: 'claude',
+    candidateIndex: 0,
+    model: 'opus',
+    effort: 'medium',
+    status: 'target',
+    session: 'session-1',
+    substitutesFor: null,
+  },
+  'plan-review:R2:copilot:0': {
+    provider: 'copilot',
+    candidateIndex: 0,
+    model: 'gpt',
+    effort: 'high',
+    status: 'replacement',
+    session: null,
+    substitutesFor: 'plan-review:R2:agy:0',
+  },
+});
 
 const document = [
   '# Plan',
@@ -94,5 +116,97 @@ describe('resolution log scanner', () => {
       assert.equal(scanResolutionLog(input).rounds[0].counts.pendingConfirmation, 1);
       assert.equal(scanResolutionLog(input).unsettled.length, 1);
     }
+  });
+
+  it('parses enriched findings and structured source maps without parsing prose', () => {
+    const input = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2 — Claude and Copilot',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Rejected — pending confirmation]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0,plan-review:R2:copilot:0] § A — scope: text contains ] and → delimiters → retained',
+      '- **[Disputed]** [R2-F002] [MUST] [sources=plan-review:R2:claude:0] § B — intent: x → y',
+    ].join('\n');
+    const scan = scanResolutionLog(input);
+    assert.equal(scan.rounds[0].entries[0].id, 'R2-F001');
+    assert.equal(scan.rounds[0].entries[0].severity, 'SHOULD');
+    assert.deepEqual(scan.rounds[0].entries[0].sourceKeys, [
+      'plan-review:R2:claude:0',
+      'plan-review:R2:copilot:0',
+    ]);
+    assert.equal(scan.unsettledItems[0].key, 'R2-F001');
+    assert.equal(scan.unsettledItems[0].lineNumber, 5);
+    assert.equal(nextFindingId(input, 2), 'R2-F003');
+  });
+
+  it('gives legacy findings invocation-local keys, severity, and coarse affinity', () => {
+    const scan = scanResolutionLog([
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 4 — Claude and Copilot, 2026-09-17',
+      '- **[Disputed]** § A — tag (CONSIDER): x → y',
+    ].join('\n'));
+    assert.deepEqual(scan.unsettledItems[0], {
+      key: 'legacy:R4:L4',
+      id: null,
+      severity: 'CONSIDER',
+      sourceKeys: ['legacy:R4:claude', 'legacy:R4:copilot'],
+      status: 'disputed',
+      lineNumber: 4,
+      originalLine: '- **[Disputed]** § A — tag (CONSIDER): x → y',
+    });
+  });
+
+  it('keeps pre-Phase 2 enriched-looking source keys readable without a source map', () => {
+    const scan = scanResolutionLog([
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 5 — Host',
+      '- **[Disputed]** [R5-F002] [MUST] [sources=host:gpt-5.6-sol:rereview] § A — tag: x → y',
+    ].join('\n'));
+    assert.equal(scan.unsettledItems[0].key, 'R5-F002');
+    assert.deepEqual(scan.unsettledItems[0].sourceKeys, ['host:gpt-5.6-sol:rereview']);
+  });
+
+  it('rejects malformed or duplicate IDs and invalid source-map references', () => {
+    const base = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Disputed]** [R2-F001] [MUST] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(`${base}\n${base.split('\n').at(-1)}`), /duplicate finding IDs/);
+    assert.throws(
+      () => scanResolutionLog(base.replace('R2-F001', 'R2-F1')),
+      /malformed enriched finding prefix/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace('plan-review:R2:claude:0] §', 'plan-review:R2:opencode:0] §')),
+      /source absent/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace(`- **Sources:** ${sourceMap}\n`, '')),
+      /without a structured source map/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace('"provider":"claude"', '"provider":"copilot"')),
+      /source map entry/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace('"candidateIndex":0', '"candidateIndex":9')),
+      /source map entry/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace('plan-review:R2:claude:0', 'plan-review:R3:claude:0')),
+      /source map entry|invalid source key/,
+    );
+    assert.throws(
+      () => scanResolutionLog(base.replace(
+        'plan-review:R2:agy:0',
+        'code-review:R2:agy:0',
+      )),
+      /source map entry/,
+    );
   });
 });

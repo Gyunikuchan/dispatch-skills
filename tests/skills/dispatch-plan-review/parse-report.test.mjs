@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 
 import {
   assertParserIntegrity,
+  parseRebuttal,
   parseReport,
 } from '../../../skills/dispatch-plan-review/scripts/parse-report.mjs';
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
@@ -122,5 +123,46 @@ describe('plan review report parser', () => {
     });
     assert.equal(missing.status, 2, missing.stderr);
     assert.match(missing.stderr, /could not read/);
+  });
+
+  it('validates exact rebuttal response key sets', () => {
+    const parsed = parseRebuttal(JSON.stringify({
+      responses: [{
+        type: 'rebuttal',
+        key: 'R1-F001',
+        verdict: 'CONFIRM',
+        evidence: '§ Verification Plan now names the failure case.',
+      }],
+    }), ['R1-F001']);
+    assert.equal(parsed.mode, 'rebuttal');
+    assert.equal(parsed.responses[0].verdict, 'CONFIRM');
+    for (const responses of [
+      [],
+      [
+        { type: 'rebuttal', key: 'R1-F001', verdict: 'REBUT', evidence: 'x' },
+        { type: 'rebuttal', key: 'R1-F001', verdict: 'REBUT', evidence: 'x' },
+      ],
+      [{ type: 'rebuttal', key: 'R1-F999', verdict: 'REBUT', evidence: 'x' }],
+      [{ type: 'rebuttal', key: 'R1-F001', verdict: 'UNKNOWN', evidence: 'x' }],
+    ]) {
+      assert.throws(
+        () => parseRebuttal(JSON.stringify({ responses }), ['R1-F001']),
+        /Invalid delegate report/,
+      );
+    }
+  });
+
+  it('requires rebuttal evidence to cite a plan or code locus', () => {
+    assert.throws(
+      () => parseRebuttal(JSON.stringify({
+        responses: [{
+          type: 'rebuttal',
+          key: 'R1-F001',
+          verdict: 'REBUT',
+          evidence: 'The plan is still incomplete.',
+        }],
+      }), ['R1-F001']),
+      (err) => err.diagnostics.some(({ field }) => field === 'evidence'),
+    );
   });
 });

@@ -21,6 +21,8 @@ const INCOMPLETE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const LABEL_PATTERN = /^[a-z0-9][a-z0-9._-]{0,47}:[a-z0-9][a-z0-9._-]{0,47}$/;
 const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9._-]{0,95}$/i;
 const SLOT_ID_PATTERN = /^[A-Za-z0-9._-]{1,128}$/;
+const CANDIDATE_ID_PATTERN = /^(plan-review|code-review):[a-z][a-z0-9-]*:[0-9]+$/;
+const SOURCE_KEY_PATTERN = /^(plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const MAX_WAVES = 64;
 const MAX_SUBSTITUTIONS = 64;
 const TOTAL_KEYS = new Set([
@@ -164,7 +166,9 @@ function validateSummary(summary) {
       if (!wave || typeof wave !== 'object' || Array.isArray(wave)) {
         throw new Error(`waves[${index}] must be an object.`);
       }
-      const allowedWave = new Set(['phase', 'round', 'effectiveLevel', 'slotIds', 'substitutions']);
+      const allowedWave = new Set([
+        'phase', 'round', 'effectiveLevel', 'slotIds', 'sourceKeys', 'substitutions',
+      ]);
       for (const key of Object.keys(wave)) {
         if (!allowedWave.has(key)) throw new Error(`waves[${index}] contains unsupported field "${key}".`);
       }
@@ -182,6 +186,13 @@ function validateSummary(summary) {
           wave.slotIds.some((slotId) => typeof slotId !== 'string' || !SLOT_ID_PATTERN.test(slotId))) {
         throw new Error(`waves[${index}].slotIds is invalid.`);
       }
+      if (wave.sourceKeys !== undefined &&
+          (!Array.isArray(wave.sourceKeys) ||
+            wave.sourceKeys.length > 128 ||
+            wave.sourceKeys.some((sourceKey) =>
+              typeof sourceKey !== 'string' || !SOURCE_KEY_PATTERN.test(sourceKey)))) {
+        throw new Error(`waves[${index}].sourceKeys is invalid.`);
+      }
       if (wave.substitutions !== undefined) {
         if (!Array.isArray(wave.substitutions) || wave.substitutions.length > MAX_SUBSTITUTIONS) {
           throw new Error(`waves[${index}].substitutions is invalid.`);
@@ -190,7 +201,10 @@ function validateSummary(summary) {
           if (!substitution || typeof substitution !== 'object' || Array.isArray(substitution)) {
             throw new Error(`waves[${index}].substitutions[${subIndex}] must be an object.`);
           }
-          const allowedSubstitution = new Set(['kind', 'failedSlot', 'replacementSlot', 'reason']);
+          const allowedSubstitution = new Set([
+            'kind', 'failedSlot', 'replacementSlot', 'attemptedCandidateId',
+            'effectiveSourceKey', 'substitutesFor', 'reason',
+          ]);
           for (const key of Object.keys(substitution)) {
             if (!allowedSubstitution.has(key)) {
               throw new Error(`waves[${index}].substitutions[${subIndex}] contains unsupported field "${key}".`);
@@ -203,7 +217,18 @@ function validateSummary(summary) {
                 (typeof substitution.replacementSlot !== 'string' ||
                   !SLOT_ID_PATTERN.test(substitution.replacementSlot)) ||
               typeof substitution.reason !== 'string' ||
-              !IDENTIFIER_PATTERN.test(substitution.reason)) {
+              !IDENTIFIER_PATTERN.test(substitution.reason) ||
+              substitution.attemptedCandidateId !== undefined &&
+                (typeof substitution.attemptedCandidateId !== 'string' ||
+                  !CANDIDATE_ID_PATTERN.test(substitution.attemptedCandidateId)) ||
+              substitution.effectiveSourceKey !== undefined &&
+                substitution.effectiveSourceKey !== null &&
+                (typeof substitution.effectiveSourceKey !== 'string' ||
+                  !SOURCE_KEY_PATTERN.test(substitution.effectiveSourceKey)) ||
+              substitution.substitutesFor !== undefined &&
+                substitution.substitutesFor !== null &&
+                (typeof substitution.substitutesFor !== 'string' ||
+                  !SOURCE_KEY_PATTERN.test(substitution.substitutesFor))) {
             throw new Error(`waves[${index}].substitutions[${subIndex}] is invalid.`);
           }
         }

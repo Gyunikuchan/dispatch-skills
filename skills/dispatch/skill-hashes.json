@@ -1,6 +1,6 @@
 {
   "SKILL.md": "48c999621543d3c6d8544b51c22ce1a675214076ea10bd655eb9c9559137c3ed",
-  "references/alignment.md": "a083626ae5da3ca4523a8bbc89d07352c9b06f1840781f467123ca40f1bd1833",
+  "references/alignment.md": "9f6535d66d383062902a84251b9275801cc35ba60c12f9cdbe41fc8aab60fd06",
   "references/providers.md": "f8b63382b481ce7c3574c507696e545bdbc9c951f730439c910bfe1aeeb9a3f5",
   "scripts/agy-run.mjs": "58729ef90d7e855e63f4bed0979ccf2c0beadc7e78e6a7db8e3ec8cc4779a6fa",
   "scripts/claude-run.mjs": "2fe2d5f1ed244c2008923a749b6c759968817d19cc85debe8a1e2cdc9cb7d2bb",
@@ -10,8 +10,8 @@
   "scripts/fill-template.mjs": "47295ee6008f3a419f958c958e562386eb8a1168f70b2c507387df0ae35e1310",
   "scripts/opencode-run.mjs": "3a4ad60b7dd110df850af675f2c6e3ddf959a7f4c833f43fffaac845743f7db6",
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
-  "scripts/resolution-log.mjs": "11ca4e1ac425b5b329c24d22ee22ff03876e036772211cb335ba186ed1ccd784",
+  "scripts/resolution-log.mjs": "2d1bb5c589af472cb2d48dd1d0786c1ef1333f0b8da4d5ef4784c1502f367fa7",
   "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581",
-  "scripts/review-report.mjs": "a87812f08f4f6bf2dff615d39af8a7592994c12e21996f643eb8be85cecf4045",
+  "scripts/review-report.mjs": "c318551f8560ab652187d48b7e4a04eda8624776736cf99187f1ce61837b34c3",
   "scripts/slot-metrics.mjs": "44226614e7c77d7c1ee8a25c91a26d95b53a6f633c2950a08f30fb23771eb1b0"
 }

@@ -9,9 +9,11 @@ import {
   aggregate,
   parseBenchmarkReport,
   parseStructuredReport,
+  parseStructuredRebuttal,
   parseMarkdownReport,
   renderFixturePrompt,
   scoreFindings,
+  scoreRebuttals,
   validateCorpus,
 } from '../../scripts/benchmark-review-prompts.mjs';
 
@@ -19,12 +21,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const corpus = path.join(root, 'tests', 'fixtures', 'review-corpus');
 
 describe('review prompt benchmark', () => {
-  it('validates and covers every plan/code full/re-review combination', () => {
+  it('validates and covers every plan/code full/re-review/rebuttal combination', () => {
     const manifest = validateCorpus(corpus);
-    assert.equal(manifest.fixtures.length, 8);
+    assert.equal(manifest.fixtures.length, 10);
     assert.deepEqual(
       new Set(manifest.fixtures.map((fixture) => `${fixture.kind}:${fixture.mode}`)),
-      new Set(['plan:full', 'plan:re-review', 'code:full', 'code:re-review']),
+      new Set([
+        'plan:full', 'plan:re-review', 'plan:rebuttal',
+        'code:full', 'code:re-review', 'code:rebuttal',
+      ]),
     );
   });
 
@@ -34,6 +39,12 @@ describe('review prompt benchmark', () => {
     const codePrompt = renderFixturePrompt(manifest.fixtures.find((fixture) => fixture.kind === 'code'));
     assert.match(planPrompt, /Review the plan/);
     assert.match(codePrompt, /Review the changes/);
+    const rebuttalPrompt = renderFixturePrompt(
+      manifest.fixtures.find((fixture) => fixture.mode === 'rebuttal'),
+      corpus,
+    );
+    assert.match(rebuttalPrompt, /Review only the supplied unsettled/);
+    assert.match(rebuttalPrompt, /R1-F001/);
   });
 
   it('keeps unavailable runs out of recall denominators', () => {
@@ -145,6 +156,13 @@ describe('review prompt benchmark', () => {
       findings: [],
       parseFailure: false,
     });
+    assert.deepEqual(parseBenchmarkReport('', 'plan', 'json', 1, {
+      mode: 'rebuttal',
+      expectedKeys: ['R1-F001'],
+    }), {
+      findings: [],
+      parseFailure: false,
+    });
   });
 
   it('scores required, forbidden, and clean false-positive findings', () => {
@@ -159,5 +177,91 @@ describe('review prompt benchmark', () => {
     ]);
     assert.equal(score.mustFound, 1);
     assert.equal(score.forbiddenFound, 1);
+  });
+
+  it('parses and scores rebuttal convergence and escalation', () => {
+    const report = JSON.stringify({
+      responses: [
+        { type: 'rebuttal', key: 'R1-F001', verdict: 'CONFIRM', evidence: '§ A settles it.' },
+        { type: 'rebuttal', key: 'R1-F002', verdict: 'INTENT-DISPUTE', evidence: '§ Scope leaves intent absent.' },
+      ],
+    });
+    const parsed = parseStructuredRebuttal(report, 'plan', ['R1-F001', 'R1-F002']);
+    const score = scoreRebuttals({
+      responses: [
+        { key: 'R1-F001', verdict: 'CONFIRM' },
+        { key: 'R1-F002', verdict: 'INTENT-DISPUTE' },
+      ],
+    }, parsed.responses);
+    assert.deepEqual(score, {
+      expected: 2,
+      matched: 2,
+      settled: 1,
+      unresolved: 1,
+      userEscalations: 1,
+      acceptedFalsePositives: 0,
+    });
+  });
+
+  it('aggregates rebuttal input/output, convergence, substitutions, rounds, and escalations', () => {
+    const totals = aggregate([{
+      status: 'ok',
+      mode: 'rebuttal',
+      score: {
+        mustFound: 0,
+        mustTotal: 0,
+        shouldFound: 0,
+        shouldTotal: 0,
+        forbiddenFound: 0,
+        unexpected: 0,
+        cleanFalsePositive: false,
+      },
+      rebuttal: {
+        expected: 2,
+        matched: 2,
+        settled: 1,
+        unresolved: 1,
+        userEscalations: 1,
+        acceptedFalsePositives: 0,
+      },
+      substitutions: 1,
+      rounds: 1,
+      input: { characters: 100 },
+      output: { characters: 40 },
+    }]);
+    assert.equal(totals.rebuttalInputChars, 100);
+    assert.equal(totals.rebuttalOutputChars, 40);
+    assert.equal(totals.converged, 1);
+    assert.equal(totals.unresolved, 1);
+    assert.equal(totals.substitutions, 1);
+    assert.equal(totals.rounds, 1);
+    assert.equal(totals.userEscalations, 1);
+  });
+
+  it('counts failed rebuttal traffic and keeps provider retries separate from substitutions', () => {
+    const totals = aggregate([{
+      status: 'failed',
+      mode: 'rebuttal',
+      failureKind: 'quota',
+      score: {
+        mustFound: 0,
+        mustTotal: 0,
+        shouldFound: 0,
+        shouldTotal: 0,
+        forbiddenFound: 0,
+        unexpected: 0,
+        cleanFalsePositive: false,
+      },
+      rebuttal: null,
+      substitutions: 0,
+      rounds: 1,
+      input: { characters: 70 },
+      output: { characters: 20 },
+    }]);
+    assert.equal(totals.failed, 1);
+    assert.equal(totals.rebuttalInputChars, 70);
+    assert.equal(totals.rebuttalOutputChars, 20);
+    assert.equal(totals.substitutions, 0);
+    assert.equal(totals.rounds, 1);
   });
 });

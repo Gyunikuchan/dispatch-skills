@@ -80,4 +80,13 @@ describe('bounded review views', () => {
     const view = buildReviewView(nonContiguous, { canonicalPath: 'x', nextRound: 6 });
     assert.match(view.contents, /one\n\n\ntwo/);
   });
+
+  it('does not disclose source-map session handles in a bounded view', () => {
+    const withSource = artifact.replace(
+      '### Round 3 — Claude\n',
+      '### Round 3 — Claude\n- **Sources:** {"code-review:R3:claude:0":{"provider":"claude","candidateIndex":0,"model":"opus","effort":"medium","status":"target","session":"secret-handle","substitutesFor":null}}\n',
+    );
+    const view = buildReviewView(withSource, { canonicalPath: 'x', nextRound: 4 });
+    assert.doesNotMatch(view.contents, /secret-handle|"\s*session\s*"/);
+  });
 });

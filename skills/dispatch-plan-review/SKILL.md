@@ -27,7 +27,11 @@ When a plan already exists, `<Requirement>` comes from the plan's goal statement
 
 ### 1. Assemble context and dispatch
 
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes: **orchestrated** when an orchestrating skill hands over a `Canonical Artifact Path` plus a **targets** list (with `Review Scope`, `Tool Turn Budget`, `consensus`, optional `Review View Path`, and optional ordered **reserves**), **standalone** otherwise. Standalone resolves the plan below; orchestrated uses the handed-over paths, skipping resolution.
+Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes:
+**orchestrated** when an orchestrator hands over a `Canonical Artifact Path` plus a **targets** list,
+`roundId`, `Review Mode`, `Review Scope`, `Tool Turn Budget`, `consensus`, and optional
+`Review View Path`/ordered **reserves**. Standalone resolves the plan below; orchestrated uses the
+handover.
 
 Attach `Review View Path` when handed over, otherwise the canonical plan, plus any user-specified
 files with `-f "<path>"` (forward slashes throughout). The view is delegate input only; edit and
@@ -43,18 +47,27 @@ append resolutions only at `Canonical Artifact Path`. Resolve the plan in order:
 
 **Re-review round** (standalone): derive `<Review Scope>` from the resolved plan. No `### Round` headings under `## Review Findings & Resolutions` means `Full review`; `n` such headings mean `Re-review round <n+1>`, naming the sections edited since that last round. Count the headings, not the finding bullets — see `dispatch`'s `references/alignment.md` § Resolutions Log.
 
-**Prompt**: fill [references/prompt-template.md](references/prompt-template.md) via `dispatch`'s `fill-template.mjs` using the canonical stdin/temp-output protocol in `references/alignment.md` § Prompt Template Filling: `--vars - --temp-out`. Capture the printed temp path, pass it to `dispatch --prompt-file`, and remove its parent directory after dispatch finishes.
+**Prompt**: for full review fill [references/prompt-template.md](references/prompt-template.md). For
+`Review Mode: rebuttal`, fill [references/rebuttal-template.md](references/rebuttal-template.md)
+with the handed-over source-specific `Finding Packet Path`. Use `dispatch`'s canonical
+stdin/temp-output protocol (`--vars - --temp-out`) and remove all returned cleanup paths after
+dispatch settles.
 
-Supply all declared variables to `fill-template.mjs`:
+Supply only the selected template's declared variables. Full review uses:
 - `<Plan Path>`: `Review View Path` when handed over, otherwise the resolved or authored plan.
 - `<Requirement>`: from user ask (when authoring) or plan's `# <Goal Description>`.
 - `<User Focus Areas>`: from user arguments (standalone) or caller focus (orchestrated), defaulting to `General review`.
 - `<Review Scope>`: from handover (orchestrated) or derived round scope above (standalone).
 - `<Tool Turn Budget>`: from handover (orchestrated) or `Unspecified` (standalone).
 
+Rebuttal uses `<Plan Path>` (the bounded view), `<Finding Packet Path>`, `<Review Scope>` (packet
+keys only), and `<Tool Turn Budget>`; omit full-review-only variables.
+
 **Dispatch**: follow `dispatch`'s `references/alignment.md` § Invocation Modes. Add
-`--response-schema-file "<skills-dir>/dispatch-plan-review/references/report-schema.json"` to every
-invocation. Launch all invocations in the background and yield.
+`--response-schema-file "<skills-dir>/dispatch-plan-review/references/report-schema.json"` for full
+review or the sibling `rebuttal-schema.json` for rebuttal mode.
+Launch all invocations in the background and yield. In rebuttal mode, dispatch only the source
+assigned to each packet; use fresh same-candidate dispatch when no resumable handle exists.
 
 **Done when:** the plan is resolved (or authored), attached with `-f`, prompt variables populated into a prompt file, and dispatch launched backgrounded with the turn yielded.
 
@@ -65,7 +78,8 @@ invocation. Launch all invocations in the background and yield.
 After every launch settles, handle terminal errors and empty outputs per `dispatch`'s
 `references/alignment.md`
 § Adjudication. Save each report verbatim to an owner-only OS-temp file, run
-`node <skills-dir>/dispatch-plan-review/scripts/parse-report.mjs --file "<path>"`, then delete it.
+`node <skills-dir>/dispatch-plan-review/scripts/parse-report.mjs --file "<path>"`, adding
+`--rebuttal-packet "<packet>"` in rebuttal mode, then delete it.
 Adjudicate only normalized `findings`, mapping severity per `dispatch`'s
 `references/alignment.md` § Finality. Exit `1` is
 `invalid-report` and follows the empty-report fallback without log entries; exit `2` halts.
@@ -74,7 +88,9 @@ Never repair guessed JSON.
 Ground findings in the requirement, repository rules, the target `§ <Section>`, and any cited
 `<file>:L<line>`.
 
-**Done when:** every usable report is normalized, every normalized finding carries a verdict, and all disputes are resolved (by the user in standalone mode, or returned unescalated per the consensus rule in orchestrated mode).
+**Done when:** every full-review finding carries a verdict, or every rebuttal packet has an exact
+validated response key set. Rebuttal `CONFIRM` settles that source, `REBUT` keeps the finding live,
+and `INTENT-DISPUTE` changes it to `[Disputed]`.
 
 ---
 
@@ -87,4 +103,6 @@ Ground findings in the requirement, repository rules, the target `§ <Section>`,
 
 **Standalone mode**: deliver the user report per `dispatch`'s `references/alignment.md` § User Report. **Orchestrated mode**: skip the user report (the orchestrator's own handoff covers reporting).
 
-**Done when:** the plan body reflects all accepted changes, `## Review Findings & Resolutions` is updated with this round's adjudications (orchestrated: unescalated disputes logged as `[Disputed]`, and rejections of delegate-reported MUST-FIX / SHOULD-FIX under a handed-over `consensus: true` as `[Rejected — pending confirmation]` per `dispatch`'s `references/alignment.md` § Finality), and (standalone only) the user report is delivered with provider prefix.
+**Done when:** the plan body reflects accepted changes and the enriched round/source log is updated
+(orchestrated: unconfirmed `MUST`/`SHOULD` rejections stay
+`[Rejected — pending confirmation]`); standalone also delivers the provider-prefixed report.

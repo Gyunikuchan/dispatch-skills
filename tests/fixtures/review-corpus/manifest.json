@@ -57,6 +57,20 @@
       "mode": "re-review",
       "files": ["artifact.md", "src/value.mjs"],
       "oracle": {"must": [{"kind": "MUST", "tag": "security", "locus": "src/value.mjs:L2"}], "should": [{"kind": "SHOULD", "tag": "tests", "locus": "src/value.mjs:L2"}], "optional": [], "forbidden": []}
+    },
+    {
+      "id": "plan-rebuttal",
+      "kind": "plan",
+      "mode": "rebuttal",
+      "files": ["artifact.md", "packet.json"],
+      "oracle": {"responses": [{"key": "R1-F001", "verdict": "CONFIRM"}]}
+    },
+    {
+      "id": "code-rebuttal",
+      "kind": "code",
+      "mode": "rebuttal",
+      "files": ["artifact.md", "packet.json"],
+      "oracle": {"responses": [{"key": "R1-F001", "verdict": "INTENT-DISPUTE"}]}
     }
   ]
 }

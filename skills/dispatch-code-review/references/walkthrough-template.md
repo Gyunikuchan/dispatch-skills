@@ -25,6 +25,7 @@ Deviations from original plan or design intent, with rationale (or "None").
 
 ## Review Findings & Resolutions
 <!-- Populated during code review cycles -->
+<!-- New rounds start with a structured source map and enriched [ID] [severity] [sources=...] entries. -->
 *No reviews conducted yet.*
 
 ## Follow-ups

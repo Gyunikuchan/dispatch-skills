@@ -4,6 +4,9 @@ const SEVERITIES = new Set(['MUST', 'SHOULD', 'CONSIDER']);
 const SUMMARY_STATUSES = new Set(['CLEAN', 'FINDINGS']);
 const REPORT_FIELDS = ['findings', 'status'];
 const FINDING_FIELDS = ['defect', 'locus', 'requiredChange', 'severity', 'tag'];
+const REBUTTAL_FIELDS = ['responses'];
+const RESPONSE_FIELDS = ['evidence', 'key', 'type', 'verdict'];
+const REBUTTAL_VERDICTS = new Set(['CONFIRM', 'REBUT', 'INTENT-DISPUTE']);
 
 export class InvalidReviewReportError extends Error {
   constructor(diagnostics) {
@@ -23,6 +26,12 @@ function nonEmptyString(value) {
 
 function diagnostic(index, field, message) {
   return { index, field, message };
+}
+
+function hasEvidenceLocus(kind, evidence) {
+  if (!nonEmptyString(evidence)) return false;
+  const codeLocus = /(?:^|\s)(?!\/)(?![A-Za-z]:)(?!\.\.\/)[^:\s]+:L[1-9]\d*\b/;
+  return kind === 'code' ? codeLocus.test(evidence) : /§\s+\S/.test(evidence) || codeLocus.test(evidence);
 }
 
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
@@ -128,8 +137,99 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
   };
 }
 
+export function parseRebuttalReport(text, { kind, expectedKeys }) {
+  const diagnostics = [];
+  let value;
+  try {
+    value = JSON.parse(String(text));
+  } catch (err) {
+    throw new InvalidReviewReportError([
+      diagnostic(null, '$', `malformed JSON: ${err.message}`),
+    ]);
+  }
+  if (!value || Array.isArray(value) || typeof value !== 'object') {
+    throw new InvalidReviewReportError([
+      diagnostic(null, '$', 'rebuttal report must be a JSON object'),
+    ]);
+  }
+  if (!exactFields(value, REBUTTAL_FIELDS)) {
+    diagnostics.push(diagnostic(null, '$', 'rebuttal report fields must be exactly: responses'));
+  }
+  if (!Array.isArray(value.responses)) {
+    diagnostics.push(diagnostic(null, 'responses', 'must be an array'));
+  }
+  const requiredKeys = new Set(expectedKeys);
+  if (requiredKeys.size !== expectedKeys.length || expectedKeys.some((key) => !nonEmptyString(key))) {
+    throw new Error('expected rebuttal keys must be unique non-empty strings');
+  }
+  const responses = [];
+  const seen = new Set();
+  if (Array.isArray(value.responses)) {
+    for (const [index, response] of value.responses.entries()) {
+      if (!response || Array.isArray(response) || typeof response !== 'object') {
+        diagnostics.push(diagnostic(index, '$', 'response must be a JSON object'));
+        continue;
+      }
+      if (!exactFields(response, RESPONSE_FIELDS)) {
+        diagnostics.push(
+          diagnostic(index, '$', 'response fields must be exactly: type, key, verdict, evidence'),
+        );
+      }
+      if (response.type !== 'rebuttal') {
+        diagnostics.push(diagnostic(index, 'type', 'must be rebuttal'));
+      }
+      if (!nonEmptyString(response.key)) {
+        diagnostics.push(diagnostic(index, 'key', 'must be a non-empty string'));
+      } else if (!requiredKeys.has(response.key)) {
+        diagnostics.push(diagnostic(index, 'key', 'was not supplied in the finding packet'));
+      } else if (seen.has(response.key)) {
+        diagnostics.push(diagnostic(index, 'key', 'duplicate response key'));
+      } else {
+        seen.add(response.key);
+      }
+      if (!REBUTTAL_VERDICTS.has(response.verdict)) {
+        diagnostics.push(
+          diagnostic(index, 'verdict', 'must be CONFIRM, REBUT, or INTENT-DISPUTE'),
+        );
+      }
+      if (!nonEmptyString(response.evidence)) {
+        diagnostics.push(diagnostic(index, 'evidence', 'must be a non-empty string'));
+      } else if (!hasEvidenceLocus(kind, response.evidence)) {
+        diagnostics.push(
+          diagnostic(index, 'evidence', `must cite a ${kind === 'code' ? 'code' : 'plan or code'} locus`),
+        );
+      }
+      if (
+        response.type === 'rebuttal' &&
+        nonEmptyString(response.key) &&
+        requiredKeys.has(response.key) &&
+        REBUTTAL_VERDICTS.has(response.verdict) &&
+        hasEvidenceLocus(kind, response.evidence)
+      ) {
+        responses.push({
+          type: 'rebuttal',
+          key: response.key,
+          verdict: response.verdict,
+          evidence: response.evidence.trim(),
+        });
+      }
+    }
+  }
+  for (const key of requiredKeys) {
+    if (!seen.has(key)) diagnostics.push(diagnostic(null, 'responses', `missing response for ${key}`));
+  }
+  if (diagnostics.length > 0) throw new InvalidReviewReportError(diagnostics);
+  return {
+    schemaVersion: 1,
+    reportKind: kind,
+    mode: 'rebuttal',
+    responses,
+  };
+}
+
 export function parseReportArgs(argv) {
   let file = '-';
+  let rebuttalPacket = null;
   let help = false;
   let sawFile = false;
   for (let index = 0; index < argv.length; index++) {
@@ -139,13 +239,17 @@ export function parseReportArgs(argv) {
       if (!value || sawFile) throw new Error('--file requires one path or -');
       file = value;
       sawFile = true;
+    } else if (arg === '--rebuttal-packet') {
+      const value = argv[++index];
+      if (!value || rebuttalPacket) throw new Error('--rebuttal-packet requires one path');
+      rebuttalPacket = value;
     } else if (arg === '-h' || arg === '--help') {
       help = true;
     } else {
       throw new Error(`unknown argument: ${arg}`);
     }
   }
-  return { file, help };
+  return { file, help, rebuttalPacket };
 }
 
 export function readReportInput(file) {

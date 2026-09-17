@@ -58,12 +58,14 @@ Base command grammar for standalone review skills:
 
 ## Invocation Modes
 
-Detection: a review skill runs **orchestrated** when an orchestrating skill hands over a `Canonical Artifact Path` plus a **targets** list (`{ platform, model?, effort? }` entries), with `Review Scope`, `Tool Turn Budget` and `consensus: true|false`, and optionally an ordered
+Detection: a review skill runs **orchestrated** when an orchestrating skill hands over a `Canonical Artifact Path` plus a **targets** list (`{ candidateId, platform, model?, effort? }` entries), with `roundId`, `Review Mode: full|rebuttal`, `Review Scope`, `Tool Turn Budget` and `consensus: true|false`, and optionally an ordered
 **reserves** list of the same shape; otherwise it runs **standalone**. An orchestrated re-review
 may include `Review View Path`: attach it and fill the delegate artifact-path variable with it,
 while every adjudication and edit still targets `Canonical Artifact Path`. An orchestrated target
 may also carry a unique absolute `Metrics File Path`; pass it only to that target's
-`dispatch --metrics-file` invocation. Standalone reviews are untelemetered.
+`dispatch --metrics-file` invocation. `Review Mode: rebuttal` additionally carries one
+source-specific `Finding Packet Path`. Code review uses a `Plan Review View Path` whenever the plan
+has review rounds, in both full and rebuttal modes. Standalone reviews are untelemetered.
 
 The orchestrator supplies data only; the review skill builds invocations, fills prompt templates, and logs findings.
 
@@ -72,7 +74,7 @@ The orchestrator supplies data only; the review skill builds invocations, fills 
 | **Artifact Resolution** | Run `resolve-artifact-paths.mjs` | Skip — use canonical path and optional review view |
 | **Artifact Authoring** | Author if absent (skill template) | Skip — orchestrator authored it |
 | **Dispatch Invocations** | From pins / cascade (§ Invocation) | One backgrounded `dispatch` per handed-over target |
-| **Prompt Filling** | Fill template (§ Prompt Template Filling) | Fill template with handed-over Scope & Budget |
+| **Prompt Filling** | Fill full-review template | Select full-review or rebuttal template from `Review Mode` |
 | **Adjudication** | Full table (§ Adjudication) | Full table (§ Adjudication) |
 | **Dispute Escalation** | Ask user interactively | Return unescalated to orchestrator consensus loop |
 | **Reject / Downgrade Log** | `[Rejected / Downgraded]` | `[Rejected — pending confirmation]` for delegate-reported MUST-FIX / SHOULD-FIX when handed `consensus: true`; else `[Rejected / Downgraded]` |
@@ -87,6 +89,9 @@ Map an `implement-dispatch` target to:
 `dispatch --provider <platform> [-m <model>] [-e <effort>] [--metrics-file "<metrics>"] --response-schema-file "<schema>" -f "<artifact>" --prompt-file "<prompt>"`.
 The review skill supplies the schema; unsupported providers are unavailable.
 - Include `-m` and `-e` only when specified in the target entry.
+- Preserve `candidateId` from the resolved flow. For round `n`, derive
+  `sourceKey=<phase>:R<n>:<platform>:<candidate-index>` by inserting `R<n>` into `candidateId`;
+  source keys are artifact identity and never metrics filenames.
 - When a target omits `model`, omit `-m` and let dispatch select the configured model for that
   platform; do not use `--no-config`, because effective membership and configured defaults are
   authoritative for pinned runs.
@@ -102,7 +107,8 @@ Pinned targets substitute via the `reserves` list rather than cascading:
 2. **Usability**: Dispatch the first unused reserve in resolved candidate order whose `(platform, model, effort)` tuple was not already dispatched in this wave.
 3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then use the
    platform fallback in [`providers.md` § Native fallback](providers.md#native-fallback).
-4. **Diagnostics**: Use each reserve at most once per wave. Record substitutions (`<failed target> → <reserve>: <reason>`).
+4. **Diagnostics**: Use each reserve at most once per wave. The reserve's effective source key cites
+   findings; record the attempted candidate/source separately as `substitutesFor`.
 
 A same-platform failure takes the native branch immediately in
 [`providers.md` § Native fallback](providers.md#native-fallback), rather than retrying it through a
@@ -160,6 +166,25 @@ EOF
   --skill <skills-dir>/<review-skill>/references/prompt-template.md `
   --vars - --temp-out
 ```
+
+### Rebuttal Mode
+
+Use the review skill's `references/rebuttal-template.md` and `references/rebuttal-schema.json`.
+Attach the bounded `Review View Path` and source-specific `Finding Packet Path`. Normalize with:
+
+```bash
+node <skills-dir>/<review-skill>/scripts/parse-report.mjs \
+  --file "<report>" --rebuttal-packet "<packet>"
+```
+
+The packet and response key sets must match exactly. Group packets by effective source key. Resume
+that source's session when supported; otherwise a fresh dispatch to the same candidate preserves
+affinity. After auth/quota exclusion, a recorded replacement reviewer may test the same packet and
+records `substitutesFor`; escalation begins only when no replacement can run or the claim remains
+live at the round cap. Code rebuttals attach a separately generated bounded plan view when plan
+evidence is needed, never the canonical plan. Bounded views and packets omit session handles; the
+orchestrator retains them only for routing. Remove packet and filled-prompt temp directories after
+dispatch settles.
 
 ---
 
@@ -223,15 +248,38 @@ Open each round with a marker heading (even when clean):
 ### Round <n> — <provider(s)>, <yyyy-mm-dd>
 ```
 
-When a round produces no actionable findings, write `- *No actionable findings.*` beneath the marker heading (ensures round counts remain countable across runs).
+Immediately below the heading, write one source map:
+
+```markdown
+- **Sources:** {"<source-key>":{"provider":"<key>","candidateIndex":0,"model":null,"effort":null,"status":"target|reserve|fallback|replacement","session":null,"substitutesFor":null}}
+```
+
+Every source key that produced a report appears once. A finding cites only effective reporting
+sources. When a round produces no actionable findings, write `- *No actionable findings.*` after
+the source map.
 
 ### Entry Syntax
 
-- `- **[Accepted]** <locus> — <tag>: <defect> → <resolution & where applied>`
-- `- **[Resolved Dispute]** <locus> — <tag>: <defect> → <user ruling & action>`
-- `- **[Rejected / Downgraded]** <locus> — <tag>: <defect> → <rejection rationale>` *(for CONSIDER findings, tag as `<tag> (CONSIDER)`)*
-- `- **[Disputed]** <locus> — <tag>: <defect> → <counter-reading>` *(orchestrated mode only; MUST-FIX or SHOULD-FIX returned to consensus loop; rewritten to `[Resolved Dispute]` once ruled)*
-- `- **[Rejected — pending confirmation]** <locus> — <tag>: <defect> → <counter-evidence>` *(orchestrated mode only under `consensus: true` for MUST-FIX / SHOULD-FIX; rewritten to `[Rejected / Downgraded]` upon confirmation or `[Resolved Dispute]` after user ruling)*
+New entries use:
+
+```markdown
+- **[<status>]** [R<round>-F<sequence>] [MUST|SHOULD|CONSIDER] [sources=<source-key>[,<source-key>...]] <locus> — <tag>: <defect> → <resolution>
+```
+
+`<status>` is exactly `Accepted`, `Resolved Dispute`, `Rejected / Downgraded`, `Disputed`, or
+`Rejected — pending confirmation`.
+
+Allocate IDs with `resolution-log.mjs`'s `nextFindingId`; preserve them and severity across status
+rewrites. Deduplicated findings retain every citing source. A multi-source pending rejection closes
+only after every reachable source returns `CONFIRM`; `REBUT` keeps it pending and
+`INTENT-DISPUTE` changes it to `[Disputed]`.
+The `**[Rejected — pending confirmation]**` form remains the live status for an unconfirmed
+`MUST`/`SHOULD` rejection.
+
+Legacy lines remain readable and are never rewritten merely to migrate them. Legacy
+`<tag> (CONSIDER)` maps to `CONSIDER`; other unsettled legacy lines map to `ACTIONABLE`, remain
+consensus-bound, receive invocation-local `legacy:R<n>:L<line>` keys, and use conservative
+round-wide affinity.
 
 ---
 

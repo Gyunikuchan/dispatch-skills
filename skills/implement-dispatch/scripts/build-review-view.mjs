@@ -18,6 +18,13 @@ function summaryLine(round) {
   return `- R${round.number} settled accepted=${accepted} rejected=${rejected} resolved=${resolvedDispute} disputed=${disputed + pendingConfirmation} unknown=${unknown} hash=${round.hash.slice(0, 12)}`;
 }
 
+function withoutSourceMap(roundText) {
+  return roundText
+    .split('\n')
+    .filter((line) => !/^\s*[-*]\s+\*\*Sources:\*\*/.test(line))
+    .join('\n');
+}
+
 export function buildReviewView(markdown, { canonicalPath, nextRound }) {
   if (!Number.isSafeInteger(nextRound) || nextRound < 1) throw new Error('nextRound must be a positive integer.');
   const scan = scanResolutionLog(markdown, { strict: true });
@@ -44,7 +51,7 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
   ];
   if (summaries.length) parts.push('', '### Older settled rounds', '', ...summaries.map(summaryLine));
   if (live.length) parts.push('', '### Live findings from older rounds', '', ...live);
-  if (previous) parts.push('', '### Immediately preceding round', '', previous.text);
+  if (previous) parts.push('', '### Immediately preceding round', '', withoutSourceMap(previous.text));
   return {
     contents: `${parts.join('\n').trim()}\n`,
     sourceRoundCount: scan.rounds.length,

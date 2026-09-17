@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "sourceKey": "code-review:R1:claude:0",
+  "canonicalLogHash": "fixture",
+  "findings": [
+    {
+      "key": "R1-F001",
+      "id": "R1-F001",
+      "severity": "MUST",
+      "sourceKeys": ["code-review:R1:claude:0"],
+      "originalLine": "- **[Disputed]** [R1-F001] [MUST] [sources=code-review:R1:claude:0] src/value.mjs:L1 — correctness: intent is unclear → requirement does not settle the trade-off",
+      "orchestratorVerdict": "disputed",
+      "counterEvidence": "The requirement does not define empty-input behavior.",
+      "changedExcerpts": ["export const value = input => input ?? 0;"]
+    }
+  ]
+}

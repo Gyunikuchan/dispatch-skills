@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   InvalidReviewReportError,
   parseReportArgs,
+  parseRebuttalReport,
   parseReviewReport,
   readReportInput,
 } from '../../dispatch/scripts/review-report.mjs';
@@ -58,6 +59,10 @@ export function parseReport(text) {
   });
 }
 
+export function parseRebuttal(text, expectedKeys) {
+  return parseRebuttalReport(text, { kind: 'plan', expectedKeys });
+}
+
 export function assertParserIntegrity(skillDir = SKILL_DIR, dispatchDir = DISPATCH_DIR) {
   for (const [label, directory] of [['dispatch-plan-review', skillDir], ['dispatch', dispatchDir]]) {
     const integrity = verifySkillIntegrity(directory);
@@ -68,7 +73,7 @@ export function assertParserIntegrity(skillDir = SKILL_DIR, dispatchDir = DISPAT
 }
 
 const USAGE = `Usage:
-  node scripts/parse-report.mjs [--file <path|->]
+  node scripts/parse-report.mjs [--file <path|->] [--rebuttal-packet <path>]
 
 Reads a schema-constrained delegate JSON report from stdin by default and writes normalized JSON.
 `;
@@ -77,7 +82,12 @@ function main() {
   assertParserIntegrity();
   const args = parseReportArgs(process.argv.slice(2));
   if (args.help) return process.stdout.write(USAGE);
-  const normalized = parseReport(readReportInput(args.file));
+  const expectedKeys = args.rebuttalPacket
+    ? JSON.parse(readReportInput(args.rebuttalPacket)).findings.map((finding) => finding.key)
+    : null;
+  const normalized = expectedKeys
+    ? parseRebuttal(readReportInput(args.file), expectedKeys)
+    : parseReport(readReportInput(args.file));
   process.stdout.write(`${JSON.stringify(normalized, null, 2)}\n`);
 }
 

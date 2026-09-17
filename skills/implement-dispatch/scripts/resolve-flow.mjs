@@ -769,6 +769,16 @@ export function resolveFlow(options, liveness, config) {
     const platforms = platformsOf(sectionName);
     const allKeys = Object.keys(platforms);
     const namedPins = pins && !isAllPin ? pins : [];
+    const configuredCandidates = allKeys.flatMap((key) =>
+      resolvePlatformCandidates(platforms[key], level).map((candidate, candidateIndex) => {
+        const target = {
+          candidateId: `${sectionName}:${key}:${candidateIndex}`,
+          platform: key,
+        };
+        if (candidate.model !== undefined) target.model = candidate.model;
+        if (candidate.effort !== undefined) target.effort = candidate.effort;
+        return target;
+      }));
 
     if (namedPins.length > 0) {
       const validPins = namedPins.filter(p => allKeys.includes(p));
@@ -776,37 +786,20 @@ export function resolveFlow(options, liveness, config) {
       if (validPins.length > 0 && eligiblePins.length === 0) {
         throw new Error(`All pinned platforms excluded: ${validPins.join(', ')}`);
       }
-      const targets = [];
-      for (const p of eligiblePins) {
-        const candidates = resolvePlatformCandidates(platforms[p], level);
-        for (const c of candidates) {
-          const target = { platform: p };
-          if (c.model !== undefined) target.model = c.model;
-          if (c.effort !== undefined) target.effort = c.effort;
-          targets.push(target);
-        }
-      }
+      const targets = eligiblePins.flatMap((pin) =>
+        configuredCandidates.filter((candidate) => candidate.platform === pin));
       // Pins name the whole reviewer set, so there is nothing to substitute from.
       return { targets, reserves: [] };
     }
 
     // Explicit count/all uses every configured candidate. Unpinned selection keeps its liveness
     // filter and diversity ordering so a narrow configured targetCount prefers distinct platforms.
-    const configuredCandidates = [];
-
-    for (const k of allKeys) {
-      if (excluded.includes(k) || (!hasExplicitBreadth && liveness[k] !== true)) continue;
-      const candidates = resolvePlatformCandidates(platforms[k], level);
-      for (const c of candidates) {
-        const target = { platform: k };
-        if (c.model !== undefined) target.model = c.model;
-        if (c.effort !== undefined) target.effort = c.effort;
-        configuredCandidates.push(target);
-      }
-    }
+    const eligibleCandidates = configuredCandidates.filter((candidate) =>
+      !excluded.includes(candidate.platform) &&
+      (hasExplicitBreadth || liveness[candidate.platform] === true));
 
     const orderedCandidates = demoteOrchestratorTargets(
-      configuredCandidates,
+      eligibleCandidates,
       platform,
       orchestratorModel,
       undefined,

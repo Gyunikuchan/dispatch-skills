@@ -59,7 +59,22 @@ describe('run records', () => {
         requestedLevel: 'high',
         initialLevel: 'high',
         finalLevel: 'high',
-        waves: [{ phase: 'plan-review', round: 1, effectiveLevel: 'high', slotIds: ['plan-r1-s1'] }],
+        waves: [{
+          phase: 'plan-review',
+          round: 1,
+          effectiveLevel: 'high',
+          slotIds: ['plan-r1-s1'],
+          sourceKeys: ['plan-review:R1:copilot:0'],
+          substitutions: [{
+            kind: 'reserve',
+            failedSlot: 'plan-r1-s1',
+            replacementSlot: 'plan-r1-s2',
+            attemptedCandidateId: 'plan-review:copilot:0',
+            effectiveSourceKey: 'plan-review:R1:claude:0',
+            substitutesFor: 'plan-review:R1:copilot:0',
+            reason: 'quota',
+          }],
+        }],
         totals: { liveFindings: 0, settledFindings: 2, substitutions: 0 },
       },
     });

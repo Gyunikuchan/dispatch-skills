@@ -11,6 +11,8 @@ import { isMainModule, measureText } from '../skills/dispatch/scripts/common.mjs
 import { extractTemplate, fillTemplate } from '../skills/dispatch/scripts/fill-template.mjs';
 import { parseReport as parseCodeReport } from '../skills/dispatch-code-review/scripts/parse-report.mjs';
 import { parseReport as parsePlanReport } from '../skills/dispatch-plan-review/scripts/parse-report.mjs';
+import { parseRebuttal as parseCodeRebuttal } from '../skills/dispatch-code-review/scripts/parse-report.mjs';
+import { parseRebuttal as parsePlanRebuttal } from '../skills/dispatch-plan-review/scripts/parse-report.mjs';
 import { initRun } from '../skills/implement-dispatch/scripts/run-record.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,9 +25,23 @@ const SCHEMA_PATHS = {
   plan: path.resolve(__dirname, '..', 'skills', 'dispatch-plan-review', 'references', 'report-schema.json'),
   code: path.resolve(__dirname, '..', 'skills', 'dispatch-code-review', 'references', 'report-schema.json'),
 };
+const REBUTTAL_PROMPT_PATHS = {
+  plan: path.resolve(__dirname, '..', 'skills', 'dispatch-plan-review', 'references', 'rebuttal-template.md'),
+  code: path.resolve(__dirname, '..', 'skills', 'dispatch-code-review', 'references', 'rebuttal-template.md'),
+};
+const REBUTTAL_SCHEMA_PATHS = {
+  plan: path.resolve(__dirname, '..', 'skills', 'dispatch-plan-review', 'references', 'rebuttal-schema.json'),
+  code: path.resolve(__dirname, '..', 'skills', 'dispatch-code-review', 'references', 'rebuttal-schema.json'),
+};
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function fixturePacketFile(fixture) {
+  const packet = fixture.files.find((file) => file.endsWith('.json'));
+  if (!packet) throw new Error(`Rebuttal fixture ${fixture.id} has no packet JSON file.`);
+  return packet;
 }
 
 function findingKey(finding) {
@@ -62,10 +78,24 @@ export function parseStructuredReport(text, kind) {
   return parsed.findings.map(({ severity, tag, locus }) => ({ kind: severity, tag, locus }));
 }
 
-export function parseBenchmarkReport(report, kind, grammar, exitCode) {
+export function parseStructuredRebuttal(text, kind, expectedKeys) {
+  if (!['plan', 'code'].includes(kind)) throw new Error(`Unknown review kind: ${kind}`);
+  return kind === 'plan'
+    ? parsePlanRebuttal(text, expectedKeys)
+    : parseCodeRebuttal(text, expectedKeys);
+}
+
+export function parseBenchmarkReport(report, kind, grammar, exitCode, options = {}) {
   if (exitCode !== 0) return { findings: [], parseFailure: false };
   if (!String(report).trim()) return { findings: [], parseFailure: true };
   try {
+    if (options.mode === 'rebuttal') {
+      return {
+        findings: [],
+        responses: parseStructuredRebuttal(report, kind, options.expectedKeys).responses,
+        parseFailure: false,
+      };
+    }
     return {
       findings: grammar === 'json'
         ? parseStructuredReport(report, kind)
@@ -98,6 +128,32 @@ export function scoreFindings(oracle, findings) {
   };
 }
 
+export function scoreRebuttals(oracle, responses) {
+  const expected = new Map((oracle.responses ?? []).map((response) => [response.key, response.verdict]));
+  let matched = 0;
+  let settled = 0;
+  let unresolved = 0;
+  let userEscalations = 0;
+  let acceptedFalsePositives = 0;
+  for (const response of responses) {
+    if (expected.get(response.key) === response.verdict) matched++;
+    if (response.verdict === 'CONFIRM') settled++;
+    else unresolved++;
+    if (response.verdict === 'INTENT-DISPUTE') userEscalations++;
+    if (response.verdict === 'CONFIRM' && expected.get(response.key) !== 'CONFIRM') {
+      acceptedFalsePositives++;
+    }
+  }
+  return {
+    expected: expected.size,
+    matched,
+    settled,
+    unresolved,
+    userEscalations,
+    acceptedFalsePositives,
+  };
+}
+
 export function validateCorpus(corpusDir = DEFAULT_CORPUS) {
   const manifest = readJson(path.join(corpusDir, 'manifest.json'));
   if (manifest.schemaVersion !== 1 || typeof manifest.corpusVersion !== 'string') {
@@ -110,7 +166,8 @@ export function validateCorpus(corpusDir = DEFAULT_CORPUS) {
   for (const fixture of manifest.fixtures) {
     if (ids.has(fixture.id)) throw new Error(`Duplicate fixture id: ${fixture.id}`);
     ids.add(fixture.id);
-    if (!['plan', 'code'].includes(fixture.kind) || !['full', 're-review'].includes(fixture.mode)) {
+    if (!['plan', 'code'].includes(fixture.kind) ||
+        !['full', 're-review', 'rebuttal'].includes(fixture.mode)) {
       throw new Error(`Fixture ${fixture.id} has invalid kind or mode.`);
     }
     for (const file of fixture.files) {
@@ -131,10 +188,32 @@ export function materializeFixture(corpusDir, fixture) {
   return target;
 }
 
-export function renderFixturePrompt(fixture) {
+export function renderFixturePrompt(fixture, corpusDir = DEFAULT_CORPUS) {
   const artifact = fixture.files.find((file) => file.endsWith('.md')) ?? fixture.files[0];
-  const templatePath = PROMPT_PATHS[fixture.kind];
+  const templatePath = fixture.mode === 'rebuttal'
+    ? REBUTTAL_PROMPT_PATHS[fixture.kind]
+    : PROMPT_PATHS[fixture.kind];
   const { variables, template } = extractTemplate(fs.readFileSync(templatePath, 'utf8'));
+  if (fixture.mode === 'rebuttal') {
+    const packet = fixturePacketFile(fixture);
+    const keys = readJson(path.join(corpusDir, fixture.id, packet))
+      .findings.map((finding) => finding.key);
+    const values = fixture.kind === 'plan'
+      ? {
+          'Plan Path': artifact,
+          'Finding Packet Path': packet,
+          'Review Scope': keys.join(', '),
+          'Tool Turn Budget': '10',
+        }
+      : {
+          'Walkthrough Path': artifact,
+          'Plan Path': 'None',
+          'Finding Packet Path': packet,
+          'Review Scope': keys.join(', '),
+          'Tool Turn Budget': '10',
+        };
+    return fillTemplate(template, variables, values);
+  }
   const reviewScope = fixture.mode === 'full'
     ? 'Full review'
     : 'Re-review synthetic fixture; verify the logged prior resolution and changed source.';
@@ -165,16 +244,19 @@ function runLive(corpusDir, manifest, matrix, grammar) {
       for (let repeat = 1; repeat <= matrix.repeats; repeat++) {
         const repo = materializeFixture(corpusDir, fixture);
         try {
-          const prompt = renderFixturePrompt(fixture);
+          const prompt = renderFixturePrompt(fixture, corpusDir);
           const initialized = initRun({ repoRoot: repo });
           const metricsFile = path.join(initialized.runDir, 'benchmark-slot.json');
+          const schemaPath = fixture.mode === 'rebuttal'
+            ? REBUTTAL_SCHEMA_PATHS[fixture.kind]
+            : SCHEMA_PATHS[fixture.kind];
           const args = [
             dispatch,
             '--provider', target.provider,
             ...(target.model ? ['--model', target.model] : []),
             ...(target.effort ? ['--effort', target.effort] : []),
             ...(grammar === 'json'
-              ? ['--response-schema-file', SCHEMA_PATHS[fixture.kind]]
+              ? ['--response-schema-file', schemaPath]
               : []),
             '--metrics-file', metricsFile,
             prompt,
@@ -188,8 +270,27 @@ function runLive(corpusDir, manifest, matrix, grammar) {
           const report = result.status === 0 ? result.stdout : '';
           const slot = fs.existsSync(metricsFile) ? readJson(metricsFile) : null;
           const attempt = slot?.attempts?.[slot.effectiveAttempt ?? slot.attempts.length - 1] ?? null;
-          const { findings, parseFailure } =
-            parseBenchmarkReport(report, fixture.kind, grammar, result.status);
+          const attempts = slot?.attempts ?? [];
+          const measuredInput = attempts.length > 0
+            ? {
+                characters: attempts.reduce((sum, item) => sum + (item.inputChars ?? 0), 0),
+                estimate: attempts.reduce((sum, item) => sum + (item.inputEstimate ?? 0), 0),
+              }
+            : { characters: 0, estimate: 0 };
+          const measuredOutput = attempts.length > 0
+            ? {
+                characters: attempts.reduce((sum, item) => sum + item.outputChars, 0),
+                estimate: attempts.reduce((sum, item) => sum + item.outputEstimate, 0),
+              }
+            : measureText(report);
+          const packet = fixture.mode === 'rebuttal'
+            ? readJson(path.join(corpusDir, fixture.id, fixturePacketFile(fixture)))
+            : null;
+          const parsed = parseBenchmarkReport(report, fixture.kind, grammar, result.status, {
+            mode: fixture.mode,
+            expectedKeys: packet?.findings.map((finding) => finding.key),
+          });
+          const { findings, parseFailure } = parsed;
           const status =
             parseFailure ? 'failed' :
               result.status === 0 ? 'ok' :
@@ -202,15 +303,18 @@ function runLive(corpusDir, manifest, matrix, grammar) {
             provider: target.provider,
             model: target.model ?? null,
             repeat,
+            mode: fixture.mode,
             status,
             failureKind: parseFailure ? 'invalid-report' : attempt?.failureKind ?? null,
             score: scoreFindings(fixture.oracle, findings),
-            input: attempt
-              ? { characters: attempt.inputChars, estimate: attempt.inputEstimate }
-              : { characters: 0, estimate: 0 },
-            output: attempt
-              ? { characters: attempt.outputChars, estimate: attempt.outputEstimate }
-              : measureText(report),
+            rebuttal: fixture.mode === 'rebuttal' && status === 'ok' && parsed.responses
+              ? scoreRebuttals(fixture.oracle, parsed.responses)
+              : null,
+            // Each fixture is one wave with one reviewer; provider retries are not substitutions.
+            substitutions: 0,
+            rounds: fixture.mode === 'rebuttal' ? 1 : 0,
+            input: measuredInput,
+            output: measuredOutput,
           });
         } finally {
           fs.rmSync(repo, { recursive: true, force: true });
@@ -231,14 +335,32 @@ export function aggregate(runs) {
         total[key] += run.score[key];
       }
       total.cleanFalsePositives += Number(run.score.cleanFalsePositive);
+      if (run.rebuttal) {
+        total.rebuttalRuns++;
+        total.rebuttalExpected += run.rebuttal.expected;
+        total.rebuttalMatched += run.rebuttal.matched;
+        total.converged += run.rebuttal.settled;
+        total.unresolved += run.rebuttal.unresolved;
+        total.userEscalations += run.rebuttal.userEscalations;
+        total.acceptedFalsePositives += run.rebuttal.acceptedFalsePositives;
+      }
     }
     total.inputChars += run.input.characters ?? 0;
     total.outputChars += run.output.characters ?? 0;
+    total.substitutions += run.substitutions ?? 0;
+    total.rounds += run.rounds ?? 0;
+    if (run.mode === 'rebuttal') {
+      total.rebuttalInputChars += run.input.characters ?? 0;
+      total.rebuttalOutputChars += run.output.characters ?? 0;
+    }
     return total;
   }, {
     runs: 0, ok: 0, failed: 0, skipped: 0, mustFound: 0, mustTotal: 0, shouldFound: 0,
     shouldTotal: 0, forbiddenFound: 0, unexpected: 0, cleanFalsePositives: 0, invalidReports: 0,
-    inputChars: 0, outputChars: 0,
+    inputChars: 0, outputChars: 0, rebuttalRuns: 0, rebuttalExpected: 0,
+    rebuttalMatched: 0, converged: 0, unresolved: 0, substitutions: 0, rounds: 0,
+    userEscalations: 0, acceptedFalsePositives: 0, rebuttalInputChars: 0,
+    rebuttalOutputChars: 0,
   });
 }
 
@@ -302,13 +424,19 @@ function main() {
       node: process.version,
       git: spawnSync('git', ['--version'], { encoding: 'utf8' }).stdout.trim(),
     },
-    promptHashes: Object.fromEntries(
-      Object.entries(PROMPT_PATHS).map(([kind, file]) => [kind, sha256(fs.readFileSync(file, 'utf8'))]),
-    ),
+    promptHashes: Object.fromEntries([
+      ...Object.entries(PROMPT_PATHS).map(([kind, file]) =>
+        [`${kind}:full`, sha256(fs.readFileSync(file, 'utf8'))]),
+      ...Object.entries(REBUTTAL_PROMPT_PATHS).map(([kind, file]) =>
+        [`${kind}:rebuttal`, sha256(fs.readFileSync(file, 'utf8'))]),
+    ]),
     schemaHashes: args.grammar === 'json'
-      ? Object.fromEntries(
-          Object.entries(SCHEMA_PATHS).map(([kind, file]) => [kind, sha256(fs.readFileSync(file, 'utf8'))]),
-        )
+      ? Object.fromEntries([
+          ...Object.entries(SCHEMA_PATHS).map(([kind, file]) =>
+            [`${kind}:full`, sha256(fs.readFileSync(file, 'utf8'))]),
+          ...Object.entries(REBUTTAL_SCHEMA_PATHS).map(([kind, file]) =>
+            [`${kind}:rebuttal`, sha256(fs.readFileSync(file, 'utf8'))]),
+        ])
       : null,
     availabilityOutcomes: availabilityOutcomes(runs),
     runs,

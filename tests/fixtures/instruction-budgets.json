@@ -28,6 +28,17 @@
     "skills/dispatch-plan-review/references/prompt-template.md": 2800,
     "skills/dispatch-code-review/references/prompt-template.md": 3200
   },
+  "phase2": {
+    "skills/dispatch/SKILL.md": 8911,
+    "skills/dispatch-plan-review/SKILL.md": 7622,
+    "skills/dispatch-code-review/SKILL.md": 11114,
+    "skills/implement-dispatch/SKILL.md": 16156,
+    "skills/dispatch/references/alignment.md": 18281,
+    "skills/dispatch-plan-review/references/prompt-template.md": 2712,
+    "skills/dispatch-code-review/references/prompt-template.md": 3152,
+    "skills/dispatch-plan-review/references/plan-template.md": 1675,
+    "skills/dispatch-code-review/references/walkthrough-template.md": 1133
+  },
   "aggregateBaselines": {
     "phase0a": {
       "entryPointCharacters": 39027,
@@ -46,10 +57,24 @@
       "entryPointEstimate": 10598,
       "normalPathCharacters": 66953,
       "normalPathEstimate": 16739
+    },
+    "phase2": {
+      "entryPointCharacters": 43803,
+      "entryPointEstimate": 10951,
+      "normalPathCharacters": 70756,
+      "normalPathEstimate": 17689,
+      "planRebuttalPathCharacters": 52010,
+      "planRebuttalPathEstimate": 13003,
+      "codeRebuttalPathCharacters": 55645,
+      "codeRebuttalPathEstimate": 13912
     }
   },
   "intentionalPhase0bDelta": {
     "reason": "Resolved-flow disclosure, range safety, and lifecycle warning are correctness/UX additions.",
     "characters": 788
+  },
+  "intentionalPhase2Delta": {
+    "reason": "Stable finding identity, source provenance, and claim-specific rebuttal mechanics.",
+    "normalPathCharacters": 3803
   }
 }

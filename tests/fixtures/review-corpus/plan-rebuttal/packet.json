@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "sourceKey": "plan-review:R1:claude:0",
+  "canonicalLogHash": "fixture",
+  "findings": [
+    {
+      "key": "R1-F001",
+      "id": "R1-F001",
+      "severity": "SHOULD",
+      "sourceKeys": ["plan-review:R1:claude:0"],
+      "originalLine": "- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § Proposed Changes — validation: validation is absent → the proposed change already requires validation",
+      "orchestratorVerdict": "reject",
+      "counterEvidence": "§ Proposed Changes explicitly requires validation.",
+      "changedExcerpts": ["Validate the input before writing it."]
+    }
+  ]
+}

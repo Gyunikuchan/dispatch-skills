@@ -8,6 +8,7 @@ import { describe, it } from 'node:test';
 
 import {
   assertParserIntegrity,
+  parseRebuttal,
   parseReport,
 } from '../../../skills/dispatch-code-review/scripts/parse-report.mjs';
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
@@ -131,5 +132,45 @@ describe('code review report parser', () => {
     });
     assert.equal(missing.status, 2, missing.stderr);
     assert.match(missing.stderr, /could not read/);
+  });
+
+  it('shares strict rebuttal validation with plan review', () => {
+    const parsed = parseRebuttal(JSON.stringify({
+      responses: [{
+        type: 'rebuttal',
+        key: 'R2-F004',
+        verdict: 'INTENT-DISPUTE',
+        evidence: 'src/value.mjs:L2 does not state the intended compatibility boundary.',
+      }],
+    }), ['R2-F004']);
+    assert.deepEqual(parsed.responses.map(({ key, verdict }) => ({ key, verdict })), [
+      { key: 'R2-F004', verdict: 'INTENT-DISPUTE' },
+    ]);
+    assert.throws(
+      () => parseRebuttal(JSON.stringify({
+        responses: [{
+          type: 'rebuttal',
+          key: 'R2-F004',
+          verdict: 'CONFIRM',
+          evidence: 'x',
+          extra: true,
+        }],
+      }), ['R2-F004']),
+      /Invalid delegate report/,
+    );
+  });
+
+  it('requires rebuttal evidence to cite a code locus', () => {
+    assert.throws(
+      () => parseRebuttal(JSON.stringify({
+        responses: [{
+          type: 'rebuttal',
+          key: 'R2-F004',
+          verdict: 'CONFIRM',
+          evidence: 'The change is correct.',
+        }],
+      }), ['R2-F004']),
+      (err) => err.diagnostics.some(({ field }) => field === 'evidence'),
+    );
   });
 });
