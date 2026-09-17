@@ -6,8 +6,7 @@ disable-model-invocation: true
 
 # implement-dispatch
 
-Orchestrate `setup → plan → scope → plan review → rescope → approval → implementation → verification → code review → handoff`.
-Companion skills own runner behavior, review criteria, and templates.
+Orchestrate `setup → plan → change scope → plan review → rescope → approval → implementation → verification → code review → handoff`.
 
 | Dependency | Role | If unavailable |
 |---|---|---|
@@ -27,7 +26,7 @@ Companion skills own runner behavior, review criteria, and templates.
 
 `<level>` and `(<pins>)` are optional; use the colon when either is present.
 
-- `<level>`: `low`, `medium`, `high`, `xhigh`, or `max`. Without one, choose `low`, `medium`, or `high` from scope. `xhigh` and `max` are explicit only.
+- `<level>`: `low`, `medium`, `high`, `xhigh`, or `max`. Without one, choose `low`, `medium`, or `high` from change scope. `xhigh` and `max` are explicit only.
 - `(<pins>)`: use `dispatch`'s named-platform, count, or `all` grammar. Pass it unchanged to `resolve-flow.mjs`; named platforms all run when configured, while a count or `all` selects from configured order with the orchestrator platform and exact orchestrator model shifted back. Pins change reviewer breadth, not the selected level.
 
 Map a mechanical low-risk edit to `low`, a bounded feature or fix to `medium`, and a cross-cutting change, complex refactor, or public contract to `high`. Pins without a level preserve automatic selection.
@@ -63,7 +62,7 @@ run directory is initialized.
 
 **Done when:** the populated plan exists, no decision-changing clarification is unanswered, every answer is incorporated, and every success criterion has a change or verification mapping.
 
-### 3. Initial Scope & Flow
+### 3. Initial Change Scope & Flow
 
 1. Classify the draft as `trivial`, `focused`, or `cross-cutting`, mapping to `low`, `medium`, or `high`. Preserve an explicit level; otherwise this is the initial automatic level.
 2. Resolve the execution flow:
@@ -79,7 +78,7 @@ run directory is initialized.
    rounds <n>, consensus <on|off>.` Name omitted models as `provider default` and missing optional
    review skills as `off — companion unavailable`.
 
-**Done when:** the initial scope and level are classified from the draft, `flow` is loaded, and the
+**Done when:** the initial change scope and level are classified from the draft, `flow` is loaded, and the
 resolved flow is disclosed.
 
 ### 4. Plan Review Loop
@@ -120,21 +119,21 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
 
 **Done when:** review is skipped, `check-consensus.mjs` exits `0`, or every item is user-ruled at the round cap and the resulting extra verification wave is settled.
 
-### 5. Final Scope & Flow
+### 5. Final Change Scope & Flow
 
-1. Reclassify the final plan after review, including every accepted finding. Recompute an automatic level; preserve an explicit level.
-2. If the level changed, re-run `resolve-flow.mjs` with the orchestrator, pins, and exclusions, then replace `flow`. Relay terminal diagnostics verbatim. Record the initial and final scope/level for handoff.
-3. Before approval, state the exact phase/target/round/consensus delta when final re-scope changed
+1. Reclassify the reviewed plan's change scope and recompute an automatic level; preserve an explicit level.
+2. If the level changed, re-run `resolve-flow.mjs` with the orchestrator, pins, and exclusions. Replace `flow`, relay terminal diagnostics verbatim, and record both classifications for handoff.
+3. Before approval, state the exact phase/target/round/consensus delta when the final change-scope check changed
    `flow`; otherwise state `Resolved flow unchanged after final scope check.`
 
-**Done when:** the final scope and level are settled and `flow` reflects that final level.
+**Done when:** the final change scope and level are settled and `flow` reflects that final level.
 
 ### 6. Implement
 
 **Approval gate:** Present the final plan exactly once. If it contains `## Review Findings & Resolutions`, run `check-consensus.mjs` first; only exit `0` permits approval. Write code only after approval.
 
-1. For `trivial` scope, or when the implementation subagent fails, implement in the orchestrator. When code review is enabled, author the baseline walkthrough from its [template](../dispatch-code-review/references/walkthrough-template.md).
-2. For `focused` or `cross-cutting` scope, dispatch test-first to the native write subagent selected by `flow.implementation.platform` (`claude` → `general-purpose`; `agy` and `copilot` → `self`; `opencode` → `general`). Pass the plan, `model`/`effort` hints, and the walkthrough path and template when code review is enabled. Otherwise, record diagnostics on the plan.
+1. For `trivial` change scope, or when the implementation subagent fails, implement in the orchestrator. When code review is enabled, author the baseline walkthrough from its [template](../dispatch-code-review/references/walkthrough-template.md).
+2. For `focused` or `cross-cutting` change scope, dispatch test-first to the native write subagent selected by `flow.implementation.platform` (`claude` → `general-purpose`; `agy` and `copilot` → `self`; `opencode` → `general`). Pass the plan, `model`/`effort` hints, and the walkthrough path and template when code review is enabled. Otherwise, record diagnostics on the plan.
 3. Use only read-only Git inspection (`git status`, `git diff`, `git log`, `git show`) while implementing; preserve the index and unrelated worktree changes so user edits and scratch artifacts survive. Hand this guard to any write subagent.
 4. Run the host repository's declared verification command until green. If none exists, record that fact; after two identical failures, stop and record the stable failure.
 
@@ -182,7 +181,7 @@ Begin only after every plan and code review dispatch has a terminal outcome.
 
 1. Run `check-consensus.mjs` on the walkthrough, or on the plan when code review was skipped. Exit `1` returns a walkthrough to Step 9 or a plan to Step 4 when plan review is enabled, without repeating Step 5 or the approval gate; otherwise halt and report the unsettled artifact. Exit `2` halts cleanup.
 2. Append `## Run Diagnostics` to the walkthrough or plan with:
-   - initial and final scope classifications, evaluated level, `flow.diagnostics.effectiveLevel`, and any scope or level shift;
+   - initial and final change-scope classifications, evaluated level, `flow.diagnostics.effectiveLevel`, and any scope or level shift;
    - artifact slug and `slugSource` (`explicit`, `branch`, or `conversation`);
    - rounds used versus `maxRounds`;
    - active, failed, substituted, dropped, excluded, unavailable, and clamped delegates, plus

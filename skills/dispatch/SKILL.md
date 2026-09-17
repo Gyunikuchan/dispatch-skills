@@ -29,7 +29,7 @@ The command preserves config order while moving the orchestrator platform, then 
 last. Named platforms retain pin order. Pins disable cross-provider fallback; named platforms may
 cascade through their candidates, while candidate-index launches run exactly one.
 
-`<skill-path>` is the directory containing this skill. Use `node <skill-path>/scripts/dispatch.mjs --list-platforms` as the membership check; a platform absent from its output is out of scope for every pin form.
+`<skill-path>` is this skill's directory. Use `node <skill-path>/scripts/dispatch.mjs --list-platforms` as the membership check; absent platforms are ineligible for every pin form.
 
 **Done when:** every named platform is accounted for, or the requested count/all candidate pool is exhausted, and exactly the resolved target set has been launched.
 
@@ -43,7 +43,7 @@ cascade through their candidates, while candidate-index launches run exactly one
 
 ### 1. Prepare the dispatch
 
-1. Write a bounded prompt with the target, scope, evidence to inspect, and required output shape.
+1. Write a bounded prompt with the target, task boundary, evidence to inspect, and required output shape.
 2. Attach only non-workspace artifacts or essential briefs; delegates can read repository files directly.
 3. Select provider pins and runner flags. Resolve named membership with `--list-platforms`; resolve count/all candidates with `--list-targets`. Never infer membership or order from defaults.
 

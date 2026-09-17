@@ -7,9 +7,9 @@ agent pass is not enough. It coordinates optional plan and code review skills ar
 ```mermaid
 flowchart TD
     User(["👤 User Request"]) --> Plan["📝 Draft Plan"]
-    Plan --> Scope["⚙️ Initial Scope & Flow"]
+    Plan --> Scope["⚙️ Initial Change Scope & Flow"]
     Scope --> PlanReview["⚡ Plan Review"]
-    PlanReview --> FinalScope["⚙️ Final Scope & Level Check"]
+    PlanReview --> FinalScope["⚙️ Final Change Scope & Level Check"]
     Scope -.->|review skipped| FinalScope
     FinalScope --> Gate{"🛑 Single Approval Gate"}
     Gate --> Implementation["💻 Test-First Implementation"]
@@ -45,7 +45,7 @@ npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 > [!NOTE]
-> Install companion skills in the same scope: keep them all project-local or all global so sibling
+> Install companion skills in the same installation scope: keep them all project-local or all global so sibling
 > scripts and templates can resolve one another.
 
 ## How to Use
@@ -54,7 +54,7 @@ Run `/implement-dispatch` and describe the feature or fix.
 
 ### Basic examples
 
-Use automatic scope selection for a typical feature:
+Use automatic change-scope selection for a typical feature:
 
 ```text
 /implement-dispatch Add a CSV export button to the transactions table
@@ -74,7 +74,7 @@ Request deeper review for a cross-cutting change:
 
 ### Choose a review level
 
-The level is optional. If omitted, the skill selects `low`, `medium`, or `high` from the request's scope.
+The level is optional. If omitted, the skill selects `low`, `medium`, or `high` from the request's change scope.
 
 | Level | Use for |
 |---|---|
@@ -126,7 +126,7 @@ models, fallback, and shared runner settings remain in `dispatch`.
 1. The skill prepares an initial draft plan.
 2. It scopes the draft and resolves the execution flow.
 3. It reviews the plan when `dispatch-plan-review` is installed and enabled.
-4. It asks for approval once, after the final scope check and before changing code.
+4. It asks for approval once, after the final change-scope check and before changing code.
 5. It implements the approved plan and runs the repository's verification command.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.

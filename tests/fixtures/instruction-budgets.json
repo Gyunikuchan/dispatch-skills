@@ -39,6 +39,17 @@
     "skills/dispatch-plan-review/references/plan-template.md": 1675,
     "skills/dispatch-code-review/references/walkthrough-template.md": 1133
   },
+  "phase3": {
+    "skills/dispatch/SKILL.md": 8888,
+    "skills/dispatch-plan-review/SKILL.md": 7341,
+    "skills/dispatch-code-review/SKILL.md": 10830,
+    "skills/implement-dispatch/SKILL.md": 16123,
+    "skills/dispatch/references/alignment.md": 18220,
+    "skills/dispatch-plan-review/references/prompt-template.md": 2712,
+    "skills/dispatch-code-review/references/prompt-template.md": 3152,
+    "skills/dispatch-plan-review/references/plan-template.md": 1675,
+    "skills/dispatch-code-review/references/walkthrough-template.md": 1133
+  },
   "aggregateBaselines": {
     "phase0a": {
       "entryPointCharacters": 39027,
@@ -67,6 +78,16 @@
       "planRebuttalPathEstimate": 13003,
       "codeRebuttalPathCharacters": 55645,
       "codeRebuttalPathEstimate": 13912
+    },
+    "phase3": {
+      "entryPointCharacters": 43182,
+      "entryPointEstimate": 10796,
+      "normalPathCharacters": 70074,
+      "normalPathEstimate": 17519,
+      "planRebuttalPathCharacters": 51612,
+      "planRebuttalPathEstimate": 12903,
+      "codeRebuttalPathCharacters": 55244,
+      "codeRebuttalPathEstimate": 13811
     }
   },
   "intentionalPhase0bDelta": {

@@ -11,11 +11,11 @@
  * opencode: https://opencode.ai/zen/go/v1/models
  *
  * Every knob and every platform entry may key its value by level (low, medium, high,
- * xhigh, max). Levels need not all be defined: the requested level is matched exactly, else
- * the nearest level below it, else the lowest level above it. Because a level is only
- * ever rounded down to, the lowest level key you define is the floor for every level
- * beneath it — define `low` to set the base and a higher key to mark the boundary
- * where the spend increases.
+ * xhigh, max). Resolution uses an exact key, otherwise the nearest lower key, otherwise
+ * the lowest higher key. With keys `{ medium: A, max: B }`:
+ *   `medium` -> `medium` (exact)
+ *   `high`   -> `medium` (nearest lower)
+ *   `low`    -> `medium` (lowest higher)
  *
  * Review-section knobs:
  *   maxRounds   — cap on total fan-out waves for the phase, counting the first review.

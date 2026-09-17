@@ -37,7 +37,7 @@ npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 > [!NOTE]
-> Install `dispatch` and its companion skills in the same scope: keep them all project-local or
+> Install `dispatch` and its companion skills in the same installation scope: keep them all project-local or
 > all global so sibling scripts and templates can resolve one another.
 
 ## How to Use

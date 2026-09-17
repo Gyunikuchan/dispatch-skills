@@ -18,7 +18,7 @@ flowchart TD
 `dispatch` provides the provider setup and runner used by this skill. See its
 [prerequisites and installation guide](../dispatch/README.md#prerequisites--installation) first.
 
-Install both skills in the same scope:
+Install both skills in the same installation scope:
 
 ```bash
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review

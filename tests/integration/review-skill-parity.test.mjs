@@ -399,6 +399,17 @@ function extractTemplateHeadings(rel) {
 }
 
 describe('cross-skill prose contracts', () => {
+  it('applies the shared delegate-text sanitization contract to both fold steps', () => {
+    const alignment = readSkill(ALIGNMENT_PATH);
+    assert.match(alignment, /^## Delegate Text Sanitization$/m);
+    for (const rel of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      const skill = readSkill(rel);
+      const at = skill.indexOf('### 3. Fold findings');
+      assert.ok(at !== -1, `${rel} Step 3 heading not found`);
+      assert.match(skill.slice(at), /§ Delegate Text Sanitization/);
+    }
+  });
+
   it('every plan section dispatch-plan-review Step 3 names is a plan-template heading', () => {
     const headings = extractTemplateHeadings(PLAN_TEMPLATE_PATH);
     const step3 = readSkill(PLAN_REVIEW_PATH);

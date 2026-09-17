@@ -28,10 +28,11 @@ describe('instruction character ratchet', () => {
     assert.deepEqual(measureText('e\u0301😀'), { characters: 2, estimate: 1 });
   });
 
-  for (const [file, ceiling] of Object.entries(budgets.phase2)) {
-    it(`${file} does not grow beyond the Phase 2 baseline`, () => {
+  for (const [file, ceiling] of Object.entries(budgets.phase3)) {
+    it(`${file} does not grow beyond the Phase 3 baseline`, () => {
       const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
       assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(ceiling <= budgets.phase2[file], `${file}: Phase 3 baseline exceeds Phase 2`);
       assert.equal(measured.estimate, Math.ceil(measured.characters / 4));
     });
   }
@@ -49,7 +50,7 @@ describe('instruction character ratchet', () => {
   }
 
   it('gates the complete entry-point and normal implementation paths', () => {
-    assert.deepEqual(Object.keys(budgets.phase2).sort(), [...normalPath].sort());
+    assert.deepEqual(Object.keys(budgets.phase3).sort(), [...normalPath].sort());
     const countPath = (files) => files.reduce(
       (sum, file) => sum + measureText(fs.readFileSync(path.join(root, file), 'utf8')).characters,
       0,
@@ -57,20 +58,20 @@ describe('instruction character ratchet', () => {
     const entryCharacters = countPath(entryPoints);
     const normalCharacters = countPath(normalPath);
     assert.ok(
-      entryCharacters <= budgets.aggregateBaselines.phase2.entryPointCharacters,
-      `entry-point total: ${entryCharacters} > ${budgets.aggregateBaselines.phase2.entryPointCharacters}`,
+      entryCharacters <= budgets.aggregateBaselines.phase3.entryPointCharacters,
+      `entry-point total: ${entryCharacters} > ${budgets.aggregateBaselines.phase3.entryPointCharacters}`,
     );
     assert.ok(
-      normalCharacters <= budgets.aggregateBaselines.phase2.normalPathCharacters,
-      `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase2.normalPathCharacters}`,
+      normalCharacters <= budgets.aggregateBaselines.phase3.normalPathCharacters,
+      `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase3.normalPathCharacters}`,
     );
     assert.ok(
-      Math.ceil(entryCharacters / 4) <= budgets.aggregateBaselines.phase2.entryPointEstimate,
-      `entry-point estimate: ${Math.ceil(entryCharacters / 4)} > ${budgets.aggregateBaselines.phase2.entryPointEstimate}`,
+      Math.ceil(entryCharacters / 4) <= budgets.aggregateBaselines.phase3.entryPointEstimate,
+      `entry-point estimate: ${Math.ceil(entryCharacters / 4)} > ${budgets.aggregateBaselines.phase3.entryPointEstimate}`,
     );
     assert.ok(
-      Math.ceil(normalCharacters / 4) <= budgets.aggregateBaselines.phase2.normalPathEstimate,
-      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > ${budgets.aggregateBaselines.phase2.normalPathEstimate}`,
+      Math.ceil(normalCharacters / 4) <= budgets.aggregateBaselines.phase3.normalPathEstimate,
+      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > ${budgets.aggregateBaselines.phase3.normalPathEstimate}`,
     );
     assert.deepEqual(
       {
@@ -80,12 +81,23 @@ describe('instruction character ratchet', () => {
         normalPathEstimate: Math.ceil(normalCharacters / 4),
       },
       {
-        entryPointCharacters: budgets.aggregateBaselines.phase2.entryPointCharacters,
-        entryPointEstimate: budgets.aggregateBaselines.phase2.entryPointEstimate,
-        normalPathCharacters: budgets.aggregateBaselines.phase2.normalPathCharacters,
-        normalPathEstimate: budgets.aggregateBaselines.phase2.normalPathEstimate,
+        entryPointCharacters: budgets.aggregateBaselines.phase3.entryPointCharacters,
+        entryPointEstimate: budgets.aggregateBaselines.phase3.entryPointEstimate,
+        normalPathCharacters: budgets.aggregateBaselines.phase3.normalPathCharacters,
+        normalPathEstimate: budgets.aggregateBaselines.phase3.normalPathEstimate,
       },
     );
+    for (const key of [
+      'entryPointCharacters',
+      'entryPointEstimate',
+      'normalPathCharacters',
+      'normalPathEstimate',
+    ]) {
+      assert.ok(
+        budgets.aggregateBaselines.phase3[key] <= budgets.aggregateBaselines.phase2[key],
+        `${key}: Phase 3 aggregate exceeds Phase 2`,
+      );
+    }
   });
 
   it('records bounded plan and code rebuttal paths', () => {
@@ -108,10 +120,39 @@ describe('instruction character ratchet', () => {
       'skills/dispatch-code-review/SKILL.md',
       'skills/dispatch-code-review/references/rebuttal-template.md',
     ]);
-    assert.equal(plan, budgets.aggregateBaselines.phase2.planRebuttalPathCharacters);
-    assert.equal(Math.ceil(plan / 4), budgets.aggregateBaselines.phase2.planRebuttalPathEstimate);
-    assert.equal(code, budgets.aggregateBaselines.phase2.codeRebuttalPathCharacters);
-    assert.equal(Math.ceil(code / 4), budgets.aggregateBaselines.phase2.codeRebuttalPathEstimate);
+    assert.equal(plan, budgets.aggregateBaselines.phase3.planRebuttalPathCharacters);
+    assert.equal(Math.ceil(plan / 4), budgets.aggregateBaselines.phase3.planRebuttalPathEstimate);
+    assert.equal(code, budgets.aggregateBaselines.phase3.codeRebuttalPathCharacters);
+    assert.equal(Math.ceil(code / 4), budgets.aggregateBaselines.phase3.codeRebuttalPathEstimate);
+    for (const key of [
+      'planRebuttalPathCharacters',
+      'planRebuttalPathEstimate',
+      'codeRebuttalPathCharacters',
+      'codeRebuttalPathEstimate',
+    ]) {
+      assert.ok(
+        budgets.aggregateBaselines.phase3[key] <= budgets.aggregateBaselines.phase2[key],
+        `${key}: Phase 3 aggregate exceeds Phase 2`,
+      );
+    }
+  });
+
+  it('defines shared workflow terms and disambiguates scope', () => {
+    const alignment = fs.readFileSync(path.join(root, 'skills/dispatch/references/alignment.md'), 'utf8');
+    for (const term of ['Candidate', 'Target', 'Reserve', 'Pin', 'Level', 'Round', 'Wave', 'Slot', 'Affinity']) {
+      assert.match(alignment, new RegExp(`- \\*\\*${term}\\*\\*:`));
+    }
+    for (const meaning of ['Change scope', 'Review Scope', 'Installation scope']) {
+      assert.match(alignment, new RegExp(`- \\*\\*${meaning}\\*\\*:`));
+    }
+  });
+
+  it('documents exact, nearest-lower, and lowest-higher level inheritance', () => {
+    const config = fs.readFileSync(path.join(root, 'skills/implement-dispatch/config.default.jsonc'), 'utf8');
+    assert.match(config, /`medium` -> `medium` \(exact\)/);
+    assert.match(config, /`high`\s+-> `medium` \(nearest lower\)/);
+    assert.match(config, /`low`\s+-> `medium` \(lowest higher\)/);
+    assert.doesNotMatch(config, /only ever rounded down/);
   });
 
   it('records Phase 0A, the intentional 0B delta, and the projected Phase 1 baseline', () => {

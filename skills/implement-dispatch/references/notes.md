@@ -19,9 +19,9 @@ implement-dispatch
 
 1. **Setup**: Success criteria formulation and artifact path derivation (`resolve-artifact-paths.mjs`).
 2. **Author Plan**: Initial plan creation from `dispatch-plan-review` template.
-3. **Initial Scope & Flow**: Scope gating (`trivial` → `low`, `focused` → `medium`, `cross-cutting` → `high`) from the initial draft, then flow resolution (`resolve-flow.mjs`).
+3. **Initial Change Scope & Flow**: Change-scope gating (`trivial` → `low`, `focused` → `medium`, `cross-cutting` → `high`) from the initial draft, then flow resolution (`resolve-flow.mjs`).
 4. **Plan Review Loop**: Multi-agent review waves via `dispatch-plan-review` (orchestrated mode) until consensus or wave cap (`maxRounds`).
-5. **Final Scope & Flow**: Reassess scope/level against the reviewed plan before the approval gate, then refresh `flow` if the level changed.
+5. **Final Change Scope & Flow**: Reassess change scope and level against the reviewed plan before the approval gate, then refresh `flow` if the level changed.
 6. **Implement**: Single user approval gate, native write subagent dispatch (test-first), boundary verification.
 7. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
 8. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
@@ -126,6 +126,9 @@ The flow resolver verifies its own files against `skill-hashes.json` before load
 
 ## 5. Maintainer Troubleshooting
 
+- **Provider Reference Split**: Phase 3 keeps `references/providers.md` intact. Phase 0 records
+  dispatch-boundary input/output counts, not conditional reference-load cost, so the proposal's
+  evidence gate for splitting it by provider has not been met.
 - **Sibling Import Failures**: `resolve-flow.mjs` imports `../../dispatch/scripts/common.mjs` and `dispatch.mjs` via relative paths. All skills must reside in the same `<skills-dir>`.
 - **Platform Exclusions**: When a delegate encounters `[auth]` or `[quota]`, `implement-dispatch` adds its platform to `--exclude <platform>` on subsequent `resolve-flow.mjs` calls. Exclusion is platform-wide (excludes all models on that provider).
 - **Target Affinity on Re-Review**: Re-review dispatches target only delegates that authored findings being re-evaluated, avoiding unnecessary token expenditure across uninvolved providers.

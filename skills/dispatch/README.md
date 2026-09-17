@@ -49,7 +49,7 @@ npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
 > [!NOTE]
-> If you install multiple skills from this repository, install them in the same scope: either all
+> If you install multiple skills from this repository, install them in the same installation scope: either all
 > project-local or all global. Companion skills share runner files and may not resolve correctly
 > when scopes are mixed.
 
