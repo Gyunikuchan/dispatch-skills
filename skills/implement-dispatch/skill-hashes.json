@@ -4,5 +4,5 @@
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
   "scripts/check-consensus.mjs": "7c2a58ee79e2d97c0b1763332936b4ad7ca1cb60cb293bf6147af74239a8081f",
   "scripts/resolve-flow.mjs": "6c5953bfffb5dc82711b0629d043f30976cbaae55bb94214dd9267a83ddb2f38",
-  "scripts/run-record.mjs": "b0d559e689fb1085e583484fd2187c5696d09145d15d1cec254c72a5dcc60f9c"
+  "scripts/run-record.mjs": "f471a2333319d9648e725b5134e6af07e8e8cf5cb83010ac8cdde069323a887c"
 }

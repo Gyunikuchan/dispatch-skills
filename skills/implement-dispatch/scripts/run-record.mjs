@@ -304,8 +304,16 @@ function pruneRunPaths(paths, now, { pruneFinalized = true } = {}) {
     const manifestPath = path.join(runDir, 'run.json');
     if (fs.existsSync(manifestPath)) {
       if (pruneFinalized) {
-        const manifest = readJson(manifestPath);
-        finalized.push({ runDir, runId: manifest.runId, finalizedAt: Date.parse(manifest.finalizedAt) || 0 });
+        try {
+          const manifest = readJson(manifestPath);
+          finalized.push({ runDir, runId: manifest.runId, finalizedAt: Date.parse(manifest.finalizedAt) || 0 });
+        } catch (err) {
+          if (err?.cause instanceof SyntaxError || err instanceof SyntaxError) {
+            finalized.push({ runDir, runId: null, finalizedAt: 0 });
+          } else {
+            throw err;
+          }
+        }
       }
       continue;
     }
@@ -424,7 +432,10 @@ export function pinBaseline({ repoRoot = process.cwd(), runDir = null, label, cl
       delete index.labels[label];
     } else {
       const { resolved, marker } = validateRunDir(runDir);
-      if (path.dirname(resolved) !== path.resolve(paths.runsDir)) {
+      const expectedRunsDir = fs.existsSync(paths.runsDir)
+        ? fs.realpathSync(paths.runsDir)
+        : path.resolve(paths.runsDir);
+      if (path.dirname(resolved) !== expectedRunsDir) {
         throw new Error('Pinned run must belong to this repository run directory.');
       }
       if (!fs.existsSync(path.join(resolved, 'run.json'))) throw new Error('Only a finalized run can be pinned.');

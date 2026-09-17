@@ -34,11 +34,26 @@ function hasEvidenceLocus(kind, evidence) {
   return kind === 'code' ? codeLocus.test(evidence) : /§\s+\S/.test(evidence) || codeLocus.test(evidence);
 }
 
+export function extractJsonText(raw) {
+  const str = String(raw ?? '').trim();
+  if (str.startsWith('{') && str.endsWith('}')) {
+    return str;
+  }
+  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(str);
+  if (fenceMatch) {
+    const candidate = fenceMatch[1].trim();
+    if (candidate.startsWith('{') && candidate.endsWith('}')) {
+      return candidate;
+    }
+  }
+  return str;
+}
+
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
   const diagnostics = [];
   let value;
   try {
-    value = JSON.parse(String(text));
+    value = JSON.parse(extractJsonText(text));
   } catch (err) {
     throw new InvalidReviewReportError([
       diagnostic(null, '$', `malformed JSON: ${err.message}`),
@@ -141,7 +156,7 @@ export function parseRebuttalReport(text, { kind, expectedKeys }) {
   const diagnostics = [];
   let value;
   try {
-    value = JSON.parse(String(text));
+    value = JSON.parse(extractJsonText(text));
   } catch (err) {
     throw new InvalidReviewReportError([
       diagnostic(null, '$', `malformed JSON: ${err.message}`),

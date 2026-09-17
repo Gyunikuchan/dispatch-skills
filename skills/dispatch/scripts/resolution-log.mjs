@@ -301,6 +301,8 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
   }
   if (strict && sections.length > 1) throw new Error('Artifact contains duplicate resolution-log sections.');
   const selected = strict ? sections.slice(0, 1) : sections;
+  // NOTE: lineOffset is body-relative so that round hashes, entries, and legacy keys
+  // remain invariant across metadata frontmatter adoption, as asserted by test contracts.
   const rounds = selected.flatMap((section) =>
     parseRounds(lines.slice(section.start, section.end), {
       strict,

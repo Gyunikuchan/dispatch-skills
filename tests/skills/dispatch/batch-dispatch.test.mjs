@@ -275,6 +275,79 @@ describe('dispatch batch manifest', () => {
     assert.equal(envelope.failures.length, 1);
     assert.equal(reserveCalls, 0);
   });
+
+  it('allows mixed-platform batches without failing non-Claude targets when responseSchema is provided', async () => {
+    mock.method(providerRunners, 'claude', async (options) => {
+      assert.ok(options.responseSchema);
+      return {
+        session: 'claude-session',
+        stdout: JSON.stringify({ status: 'CLEAN', findings: [] }),
+        stderr: '',
+        exitCode: 0,
+        failureKind: null,
+        logFile: path.join(root, 'claude.log'),
+        truncated: null,
+        metricsAttempts: [],
+      };
+    });
+    mock.method(providerRunners, 'agy', async (options) => {
+      assert.equal(options.responseSchema, null);
+      return {
+        session: 'agy-session',
+        stdout: JSON.stringify({ status: 'CLEAN', findings: [] }),
+        stderr: '',
+        exitCode: 0,
+        failureKind: null,
+        logFile: path.join(root, 'agy.log'),
+        truncated: null,
+        metricsAttempts: [],
+      };
+    });
+
+    const batch = loadBatchFile(writeBatch({
+      targets: [
+        entry({ candidateId: 'code-review:claude:0', platform: 'claude', metrics: 'claude.json' }),
+        entry({ candidateId: 'code-review:agy:0', platform: 'agy', metrics: 'agy.json' }),
+      ],
+      reserves: [],
+    }), CONFIG);
+
+    const envelope = await dispatchBatch(batch, {
+      prompt: 'Review',
+      files: [],
+      configPath: 'test-config',
+      orchestrator: 'copilot',
+      responseSchema: { type: 'object' },
+    }, CONFIG);
+
+    assert.equal(envelope.complete, true);
+    assert.equal(envelope.targets.length, 2);
+    assert.equal(envelope.failures.length, 0);
+  });
+
+  it('normalizes numeric error.code in batchRecord failureKind', async () => {
+    mock.method(providerRunners, 'claude', async () => {
+      const err = new Error('spawn failed');
+      err.code = 1;
+      throw err;
+    });
+
+    const batch = loadBatchFile(writeBatch({
+      targets: [entry({ candidateId: 'code-review:claude:0', platform: 'claude', metrics: 'claude.json' })],
+      reserves: [],
+    }), CONFIG);
+
+    const envelope = await dispatchBatch(batch, {
+      prompt: 'Review',
+      files: [],
+      configPath: 'test-config',
+      orchestrator: 'claude',
+    }, CONFIG);
+
+    assert.equal(envelope.complete, false);
+    assert.equal(envelope.failures.length, 1);
+    assert.notEqual(typeof envelope.failures[0].failureKind, 'number');
+  });
 });
 
 describe('dispatch doctor', () => {
@@ -287,5 +360,12 @@ describe('dispatch doctor', () => {
     assert.deepEqual(report.targets.map(target => target.platform), ['claude', 'agy']);
     assert.equal(report.health[0].sandboxSupported, true);
     assert.match(report.health[1].correctiveCommand, /agy/);
+  });
+
+  it('respects orchestrator candidate demotion in doctor report', async () => {
+    mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+    mock.method(providerProbes, 'isAgyAvailable', async () => true);
+    const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc', 'claude');
+    assert.deepEqual(report.targets.map(target => target.platform), ['agy', 'claude']);
   });
 });

@@ -135,7 +135,7 @@ const PROVIDER_DISPLAY_NAMES = {
   copilot: 'Copilot',
 };
 
-const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
+export const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
 const MAX_RESPONSE_SCHEMA_BYTES = 64 * 1024;
 const MAX_BATCH_FILE_BYTES = 64 * 1024;
 const BATCH_ENTRY_FIELDS = new Set([
@@ -290,7 +290,7 @@ function batchRecord(entry, status, result = null, error = null, substitutesFor 
     failureKind:
       result?.failureKind ??
       error?.failureKind ??
-      error?.code ??
+      (typeof error?.code === 'string' ? error.code : null) ??
       (result && result.exitCode !== 0 ? 'non-zero-exit' : null),
     substitutesFor,
     truncated: result?.truncated ?? null,
@@ -302,6 +302,7 @@ function batchRecord(entry, status, result = null, error = null, substitutesFor 
 async function runBatchEntry(entry, options, config, substitutesFor = null) {
   let result;
   let error;
+  const targetSupportsSchema = RESPONSE_SCHEMA_PROVIDERS.has(entry.platform);
   try {
     result = await dispatchTask({
       ...options,
@@ -310,6 +311,7 @@ async function runBatchEntry(entry, options, config, substitutesFor = null) {
       candidateIndex: entry.candidateIndex ?? null,
       model: entry.model ?? null,
       effort: entry.effort ?? null,
+      responseSchema: targetSupportsSchema ? options.responseSchema : null,
       metricsFile: null,
       config,
       configPath: options.configPath,
@@ -378,8 +380,8 @@ const PROVIDER_CORRECTIVE_COMMANDS = {
   opencode: 'opencode auth login',
 };
 
-export async function buildDoctorReport(config, configPath) {
-  const targets = resolveConfiguredTargets(config);
+export async function buildDoctorReport(config, configPath, orchestrator = null, orchestratorModel = null) {
+  const targets = resolveConfiguredTargets(config, orchestrator, orchestratorModel);
   const health = await Promise.all(Object.keys(config.platforms).map(async platform => {
     const reachable = await isProviderAvailable(platform);
     return {
@@ -851,16 +853,13 @@ export async function main() {
       return;
     }
     if (listTargets) {
-      const orchestrator = normalizeOrchestrator(options.orchestrator || detectOrchestrator());
-      const orchestratorModel =
-        options.orchestratorModel !== null
-          ? (options.orchestratorModel || null)
-          : detectOrchestratorModel({ orchestrator });
+      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
       console.log(JSON.stringify(resolveConfiguredTargets(loaded.config, orchestrator, orchestratorModel), null, 2));
       return;
     }
     if (doctor) {
-      const report = await buildDoctorReport(loaded.config, loaded.path);
+      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
+      const report = await buildDoctorReport(loaded.config, loaded.path, orchestrator, orchestratorModel);
       console.log(`Effective config: ${report.configPath}`);
       console.log('Configured candidates:');
       for (const [index, target] of report.targets.entries()) {
@@ -1157,6 +1156,16 @@ export async function getCandidateProviders(params = {}) {
   }
 
   return candidates;
+}
+
+/** Resolves orchestrator name and model context from options or environment detection. */
+export function resolveOrchestratorContext(options = {}) {
+  const orchestrator = normalizeOrchestrator(options.orchestrator || detectOrchestrator());
+  const orchestratorModel =
+    options.orchestratorModel !== null && options.orchestratorModel !== undefined
+      ? (options.orchestratorModel || null)
+      : detectOrchestratorModel({ orchestrator });
+  return { orchestrator, orchestratorModel };
 }
 
 /** Canonicalizes an orchestrator name via {@link PROVIDER_ALIASES}, passing unknown names through. */

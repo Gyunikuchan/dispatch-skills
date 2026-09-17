@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { verifySkillIntegrity } from './common.mjs';
+import { RESPONSE_SCHEMA_PROVIDERS } from './dispatch.mjs';
 import {
   scanResolutionLog,
   splitDispatchFrontmatter,
@@ -469,7 +470,11 @@ export function createDispatchFiles({
     if (selector.model) argv.push('--model', selector.model);
     if (selector.effort) argv.push('--effort', selector.effort);
   }
-  argv.push('--response-schema-file', path.resolve(responseSchemaPath), '--prompt-file', promptFile.path);
+  const supportsSchema = batch || !selector || !selector.provider || RESPONSE_SCHEMA_PROVIDERS.has(selector.provider);
+  if (supportsSchema) {
+    argv.push('--response-schema-file', path.resolve(responseSchemaPath));
+  }
+  argv.push('--prompt-file', promptFile.path);
   for (const attachment of attachments) argv.push('-f', attachment);
   if (orchestrator) argv.push('--orchestrator', orchestrator);
   if (orchestratorModel) argv.push('--orchestrator-model', orchestratorModel);

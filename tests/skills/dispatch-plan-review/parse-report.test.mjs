@@ -61,6 +61,33 @@ describe('plan review report parser', () => {
     });
   });
 
+  it('unwraps fenced json blocks', () => {
+    assert.deepEqual(parseReport(`\`\`\`json\n${report('CLEAN')}\n\`\`\``), {
+      schemaVersion: 1,
+      reportKind: 'plan',
+      summary: { type: 'summary', status: 'CLEAN' },
+      findings: [],
+    });
+  });
+
+  it('unwraps fenced json blocks preceded by preamble text or followed by trailing commentary', () => {
+    const preamble = `Here is my review report:\n\`\`\`json\n${report('CLEAN')}\n\`\`\``;
+    assert.deepEqual(parseReport(preamble), {
+      schemaVersion: 1,
+      reportKind: 'plan',
+      summary: { type: 'summary', status: 'CLEAN' },
+      findings: [],
+    });
+
+    const trailing = `\`\`\`json\n${report('CLEAN')}\n\`\`\`\nHope this review was helpful!`;
+    assert.deepEqual(parseReport(trailing), {
+      schemaVersion: 1,
+      reportKind: 'plan',
+      summary: { type: 'summary', status: 'CLEAN' },
+      findings: [],
+    });
+  });
+
   it('normalizes multiple findings', () => {
     const parsed = parseReport(report('FINDINGS', [
       finding(),

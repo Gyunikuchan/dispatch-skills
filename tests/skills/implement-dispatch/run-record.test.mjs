@@ -123,6 +123,20 @@ describe('run records', () => {
     }
   });
 
+  it('pins a baseline run when runs directory is accessed via a symlink or junction', (t) => {
+    const first = initRun({ repoRoot: repo });
+    finalizeRun({ runDir: first.runDir, expectedSlots: 0 });
+    const symlinkDir = path.join(repo, 'symlinked-runs');
+    try {
+      fs.symlinkSync(path.join(repo, '.git', 'dispatch-skills', 'runs'), symlinkDir, 'junction');
+    } catch {
+      t.skip('symlinks/junctions not supported in this environment');
+      return;
+    }
+    const symlinkedRunDir = path.join(symlinkDir, path.basename(first.runDir));
+    assert.doesNotThrow(() => pinBaseline({ repoRoot: repo, runDir: symlinkedRunDir, label: 'phase0:corpus-symlink' }));
+  });
+
   it('applies finalized-run retention only after the new manifest is durable', () => {
     const runsDir = path.join(repo, '.git', 'dispatch-skills', 'runs');
     fs.mkdirSync(runsDir, { recursive: true });
@@ -149,6 +163,15 @@ describe('run records', () => {
     fs.mkdirSync(corrupt, { recursive: true });
     fs.writeFileSync(path.join(corrupt, 'run.json'), '{');
     assert.doesNotThrow(() => initRun({ repoRoot: repo }));
+  });
+
+  it('does not fail finalization when historical finalized manifests are corrupt', () => {
+    const runsDir = path.join(repo, '.git', 'dispatch-skills', 'runs');
+    const corrupt = path.join(runsDir, 'corrupt-finalized');
+    fs.mkdirSync(corrupt, { recursive: true });
+    fs.writeFileSync(path.join(corrupt, 'run.json'), '{corrupt');
+    const initialized = initRun({ repoRoot: repo });
+    assert.doesNotThrow(() => finalizeRun({ runDir: initialized.runDir, expectedSlots: 0 }));
   });
 
   it('rejects unknown summary fields', () => {

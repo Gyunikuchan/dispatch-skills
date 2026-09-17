@@ -8,6 +8,7 @@ import {
   advanceInvocationState,
   buildReviewView,
   completeInvocationState,
+  createDispatchFiles,
   createInvocationState,
   readArtifact,
   readJsonRequest,
@@ -153,5 +154,54 @@ describe('review preparation primitives', () => {
     assert.ok(sectionHashes['Changes'], 'first Changes heading present');
     assert.ok(sectionHashes['Changes#2'], 'second duplicate Changes heading disambiguated as Changes#2');
     assert.notEqual(sectionHashes['Changes'], sectionHashes['Changes#2'], 'different hashes for distinct content');
+  });
+
+  it('selectively emits --response-schema-file in createDispatchFiles based on platform schema support', () => {
+    const baseParams = {
+      prompt: 'Test prompt',
+      attachments: [],
+      responseSchemaPath: 'schema.json',
+      dispatchScriptPath: 'dispatch.mjs',
+    };
+
+    // 1. Batch mode -> should include schema file
+    const batchRes = createDispatchFiles({
+      ...baseParams,
+      batch: { targets: [], reserves: [] },
+    });
+    tempDirs.push(...batchRes.cleanupPaths);
+    assert.ok(batchRes.dispatch.argv.includes('--response-schema-file'));
+
+    // 2. No selector -> should include schema file
+    const noSelectorRes = createDispatchFiles({
+      ...baseParams,
+      selector: null,
+    });
+    tempDirs.push(...noSelectorRes.cleanupPaths);
+    assert.ok(noSelectorRes.dispatch.argv.includes('--response-schema-file'));
+
+    // 3. Claude selector -> should include schema file
+    const claudeRes = createDispatchFiles({
+      ...baseParams,
+      selector: { provider: 'claude' },
+    });
+    tempDirs.push(...claudeRes.cleanupPaths);
+    assert.ok(claudeRes.dispatch.argv.includes('--response-schema-file'));
+
+    // 4. Non-Claude selector (agy) -> should NOT include schema file
+    const agyRes = createDispatchFiles({
+      ...baseParams,
+      selector: { provider: 'agy' },
+    });
+    tempDirs.push(...agyRes.cleanupPaths);
+    assert.equal(agyRes.dispatch.argv.includes('--response-schema-file'), false);
+
+    // 5. Non-Claude selector (opencode) -> should NOT include schema file
+    const opencodeRes = createDispatchFiles({
+      ...baseParams,
+      selector: { provider: 'opencode' },
+    });
+    tempDirs.push(...opencodeRes.cleanupPaths);
+    assert.equal(opencodeRes.dispatch.argv.includes('--response-schema-file'), false);
   });
 });
