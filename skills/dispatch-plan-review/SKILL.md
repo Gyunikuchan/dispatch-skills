@@ -46,8 +46,7 @@ terminal.
 
 1. Save each report to an owner-only OS-temp file. Normalize full reports with
    `scripts/parse-report.mjs --file <path>`; add `--rebuttal-packet <packet>` for rebuttals. Exit
-   `2` is terminal. Exit `1` on schema-enforced output is an invalid report (fallback); on a prose
-   report, read it per alignment. Never repair guessed JSON.
+   `3`: read the prose report per alignment; exit `1` is an invalid report; exit `2` is terminal.
 2. Verify each finding at its `§ <Section>` and any cited code; verify an `adjacent` finding at its
    cited code. Accept, reject, downgrade, or dispute under alignment finality. Rebuttal key sets
    must exactly match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE`

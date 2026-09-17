@@ -51,8 +51,7 @@ terminal.
 
 1. Save each report to owner-only OS temp. Normalize with
    `scripts/parse-report.mjs --file <path>`; add `--rebuttal-packet <packet>` for rebuttals. Exit
-   `2` is terminal. Exit `1` on schema-enforced output is an invalid report (fallback); on a prose
-   report, read it per alignment. Never repair guessed JSON.
+   `3`: read the prose report per alignment; exit `1` is an invalid report; exit `2` is terminal.
 2. Verify every in-scope finding against its cited changed line and surrounding contract, and every
    `adjacent` finding against its cited locus. Reject uncited, contradicted, or unverifiable claims.
    Apply alignment finality and sanitize every artifact write.

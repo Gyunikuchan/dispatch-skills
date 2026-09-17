@@ -303,15 +303,17 @@ describe('orchestrated handover contract', () => {
     assert.ok(!implement.includes('--prompt-file'), `${IMPLEMENT_PATH} still instructs --prompt-file`);
   });
 
-  it('prose reports from providers without native schema output are read, not discarded', () => {
+  it('reports are read as schema JSON or prose, not discarded', () => {
     const alignment = readSkill(ALIGNMENT_PATH);
-    assert.match(alignment, /`RESPONSE_SCHEMA_PROVIDERS`/, `${ALIGNMENT_PATH} does not name the schema providers`);
-    assert.match(alignment, /prose report/, `${ALIGNMENT_PATH} lacks the prose-report rule`);
-    assert.match(alignment, /prose rebuttal/, `${ALIGNMENT_PATH} lacks the prose-rebuttal rule`);
-    assert.match(alignment, /refusal, truncation/, `${ALIGNMENT_PATH} lets failed prose count as clean`);
+    assert.match(alignment, /Reports\s+arrive\s+as\s+schema\s+JSON\s+or\s+prose\./, `${ALIGNMENT_PATH} lacks the prose-report rule`);
+    assert.match(alignment, /restate\s+a\s+rebuttal\s+as\s+one\s+verdict\s+per\s+packet\s+key/, `${ALIGNMENT_PATH} lacks the prose-rebuttal rule`);
+    assert.match(alignment, /Refusal,\s+truncation,\s+empty\s+output/, `${ALIGNMENT_PATH} lets failed prose count as clean`);
+    assert.match(alignment, /schema-invalid\s+JSON/, `${ALIGNMENT_PATH} lets schema-invalid JSON pass as prose`);
+    assert.doesNotMatch(alignment, /RESPONSE_SCHEMA_PROVIDERS/, `${ALIGNMENT_PATH} still depends on script internals`);
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const content = readSkill(skillPath);
-      assert.match(content, /schema-enforced/, `${skillPath} treats every exit 1 as invalid`);
+      assert.match(content, /Exit\s+`3`:\s+read\s+the\s+prose\s+report\s+per\s+alignment/, `${skillPath} does not route prose reports`);
+      assert.match(content, /exit\s+`1`\s+is\s+an\s+invalid\s+report/, `${skillPath} does not route schema-invalid reports`);
     }
   });
 

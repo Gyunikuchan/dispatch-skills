@@ -144,6 +144,34 @@ describe('code review report parser', () => {
     }
   });
 
+  it('uses exit 3 for prose reports and exit 1 for empty or schema-invalid JSON', () => {
+    const run = (input, extra = []) => spawnSync(process.execPath, [cli, ...extra], {
+      cwd: root,
+      encoding: 'utf8',
+      input,
+    });
+    const prose = run('No defects found after reviewing the scope.\n');
+    assert.equal(prose.status, 3, prose.stderr);
+    assert.match(prose.stderr, /"error": "prose-report"/);
+
+    const truncated = run('{"status":"FINDINGS","findings":[\n');
+    assert.equal(truncated.status, 3, truncated.stderr);
+
+    const empty = run('  \n');
+    assert.equal(empty.status, 1, empty.stderr);
+    assert.match(empty.stderr, /"error": "invalid-report"/);
+
+    const packetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parse-report-prose-'));
+    try {
+      const packet = path.join(packetDir, 'packet.json');
+      fs.writeFileSync(packet, JSON.stringify({ findings: [{ key: 'R1-F001' }] }));
+      const rebuttal = run('I confirm R1-F001.\n', ['--rebuttal-packet', packet]);
+      assert.equal(rebuttal.status, 3, rebuttal.stderr);
+    } finally {
+      fs.rmSync(packetDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses exit 1 for invalid reports and exit 2 for invocation failures', () => {
     const invalid = spawnSync(process.execPath, [cli], {
       cwd: root,

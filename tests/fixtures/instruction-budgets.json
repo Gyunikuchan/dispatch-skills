@@ -134,17 +134,17 @@
       "codeRebuttalPathEstimate": 4892
     },
     "recall": {
-      "entryPointCeiling": 20800,
-      "normalPathCeiling": 36500,
-      "normalPathEstimateCeiling": 9125,
-      "entryPointCharacters": 20717,
-      "entryPointEstimate": 5180,
-      "normalPathCharacters": 36426,
-      "normalPathEstimate": 9107,
-      "planRebuttalPathCharacters": 21247,
-      "planRebuttalPathEstimate": 5312,
-      "codeRebuttalPathCharacters": 22314,
-      "codeRebuttalPathEstimate": 5579
+      "entryPointCeiling": 20600,
+      "normalPathCeiling": 36200,
+      "normalPathEstimateCeiling": 9050,
+      "entryPointCharacters": 20593,
+      "entryPointEstimate": 5149,
+      "normalPathCharacters": 36123,
+      "normalPathEstimate": 9031,
+      "planRebuttalPathCharacters": 21006,
+      "planRebuttalPathEstimate": 5252,
+      "codeRebuttalPathCharacters": 22073,
+      "codeRebuttalPathEstimate": 5519
     }
   },
   "intentionalPhase0bDelta": {
@@ -156,15 +156,15 @@
     "normalPathCharacters": 3803
   },
   "intentionalRecallDelta": {
-    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and prose-report handling for providers without native schema output.",
+    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit.",
     "files": {
-      "skills/dispatch-plan-review/SKILL.md": 600,
-      "skills/dispatch-code-review/SKILL.md": 700,
+      "skills/dispatch-plan-review/SKILL.md": 550,
+      "skills/dispatch-code-review/SKILL.md": 650,
       "skills/implement-dispatch/SKILL.md": 850,
-      "skills/dispatch/references/alignment.md": 1000,
+      "skills/dispatch/references/alignment.md": 850,
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
       "skills/dispatch-code-review/references/prompt-template.md": 1300
     },
-    "normalPathCharacters": 6000
+    "normalPathCharacters": 5700
   }
 }

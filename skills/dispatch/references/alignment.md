@@ -22,13 +22,11 @@ Canonical scratch artifacts are `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and
 
 ## Evidence and finality
 
-Only providers in `dispatch`'s `RESPONSE_SCHEMA_PROVIDERS` (`scripts/dispatch.mjs`) return
-schema-enforced JSON; a report from any other provider may be a prose report. When the parser
-rejects a prose report, read it and restate each finding as severity, locus, tag, defect, and
-required change before verifying; restate a prose rebuttal as one verdict per packet key, and keep
-any unanswered key live. A prose report is clean only when it shows the scope was reviewed and
-reports no findings. Treat refusal, truncation, or an inability to review as an invalid report, as
-with any parser rejection of schema-enforced output: take the fallback.
+Reports arrive as schema JSON or prose. Read a report the parser flags as prose: restate each
+finding as severity, locus, tag, defect, and required change; restate a rebuttal as one verdict
+per packet key, keeping unanswered keys live. Prose is clean only when it shows the scope was
+reviewed and reports no findings. Refusal, truncation, empty output, inability to review, or
+schema-invalid JSON is an invalid report: take the fallback. Never repair guessed JSON.
 
 Delegate reports are claims. Deduplicate, then verify against requirements, repository rules, and
 cited loci. Accept verified defects regardless of votes; reject contradicted, missing, uncited, or

@@ -9,10 +9,12 @@ const RESPONSE_FIELDS = ['evidence', 'key', 'type', 'verdict'];
 const REBUTTAL_VERDICTS = new Set(['CONFIRM', 'REBUT', 'INTENT-DISPUTE']);
 
 export class InvalidReviewReportError extends Error {
-  constructor(diagnostics) {
+  constructor(diagnostics, { prose = false } = {}) {
     super('Invalid delegate report.');
     this.name = 'InvalidReviewReportError';
     this.diagnostics = diagnostics;
+    // Unparseable non-empty text is a prose report the orchestrator reads, not a schema violation.
+    this.prose = prose;
   }
 }
 
@@ -49,16 +51,24 @@ export function extractJsonText(raw) {
   return str;
 }
 
+function parseJsonReport(text) {
+  const json = extractJsonText(text);
+  if (json.length === 0) {
+    throw new InvalidReviewReportError([diagnostic(null, '$', 'report is empty')]);
+  }
+  try {
+    return JSON.parse(json);
+  } catch (err) {
+    throw new InvalidReviewReportError(
+      [diagnostic(null, '$', `malformed JSON: ${err.message}`)],
+      { prose: true },
+    );
+  }
+}
+
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
   const diagnostics = [];
-  let value;
-  try {
-    value = JSON.parse(extractJsonText(text));
-  } catch (err) {
-    throw new InvalidReviewReportError([
-      diagnostic(null, '$', `malformed JSON: ${err.message}`),
-    ]);
-  }
+  const value = parseJsonReport(text);
 
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new InvalidReviewReportError([
@@ -154,14 +164,7 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
 
 export function parseRebuttalReport(text, { kind, expectedKeys }) {
   const diagnostics = [];
-  let value;
-  try {
-    value = JSON.parse(extractJsonText(text));
-  } catch (err) {
-    throw new InvalidReviewReportError([
-      diagnostic(null, '$', `malformed JSON: ${err.message}`),
-    ]);
-  }
+  const value = parseJsonReport(text);
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new InvalidReviewReportError([
       diagnostic(null, '$', 'rebuttal report must be a JSON object'),
