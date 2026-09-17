@@ -6,8 +6,8 @@ description: Review a selected diff, verify every claim, and apply safe accepted
 # dispatch-code-review
 
 The selected diff is authoritative. Verify every delegate claim against a changed line or direct
-contract locus. Shared finality and logging rules are in
-[`alignment.md`](../dispatch/references/alignment.md).
+contract locus; verify an `adjacent` finding at its cited locus. Shared finality and logging rules
+are in [`alignment.md`](../dispatch/references/alignment.md).
 
 ## Invocation
 
@@ -51,28 +51,38 @@ terminal.
 
 1. Save each report to owner-only OS temp. Normalize with
    `scripts/parse-report.mjs --file <path>`; add `--rebuttal-packet <packet>` for rebuttals. Exit
-   `1` is invalid report/fallback; exit `2` is terminal. Never repair guessed JSON.
-2. Verify every finding against its cited changed line and surrounding contract. Reject uncited,
-   contradicted, or unverifiable claims. Apply alignment finality and sanitize every artifact write.
-3. Standalone mode applies accepted `MUST` and safe `SHOULD` fixes; records deferred
-   `SHOULD`/`CONSIDER` items under `## Follow-ups`; reruns the host verify command until green or
-   two identical failures; and updates `## Changes Made`, `## Verification & Validation`, and the
-   enriched resolution log. Orchestrated mode records adjudications but leaves fixes to its caller.
+   `2` is terminal. Exit `1` on schema-enforced output is an invalid report (fallback); on a prose
+   report, read it per alignment. Never repair guessed JSON.
+2. Verify every in-scope finding against its cited changed line and surrounding contract, and every
+   `adjacent` finding against its cited locus. Reject uncited, contradicted, or unverifiable claims.
+   Apply alignment finality and sanitize every artifact write.
+3. Both modes record every accepted `adjacent` finding under `## Follow-ups`. Standalone mode
+   applies accepted in-scope `MUST` and safe `SHOULD` fixes; records deferred `SHOULD`/`CONSIDER`
+   items under `## Follow-ups`; reruns the host verify command until green or two identical
+   failures; and updates `## Changes Made`, `## Verification & Validation`, and the enriched
+   resolution log. Orchestrated mode records adjudications but leaves fixes to its caller.
 4. Re-review only changed paths/live findings within the cap. Rebuttal response keys must exactly
    match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE` becomes disputed.
 
 ## Settle and report
 
-After every expected source is terminal and consensus exits `0`, call preparation with
-`action: "checkpoint"`, terminal source keys, consensus result, and exact
-`settledWrites.paths`/`walkthroughSections`. It compares the declared post-adjudication state and
-atomically records range, path, worktree, and walkthrough-content freshness metadata. Failed,
-incomplete, or unsettled runs keep the previous checkpoint.
+After every expected source is terminal and consensus exits `0`, standalone mode lists accepted
+`adjacent` findings, if any, and asks the user which to address before the checkpoint. For chosen
+ones, apply the fixes, rerun verification, move them from `## Follow-ups` to `## Changes Made`, and
+re-review the changed paths in a new loop with a fresh round cap until consensus exits `0` again;
+offer that loop's `adjacent` findings the same way. Unchosen ones stay under `## Follow-ups`.
+Orchestrated mode returns them to its caller unasked.
+
+Then call preparation with `action: "checkpoint"`, terminal source keys, consensus result, and
+exact `settledWrites.paths`/`walkthroughSections`. It compares the declared post-adjudication state
+and atomically records range, path, worktree, and walkthrough-content freshness metadata, so the
+checkpoint is the last write. Failed, incomplete, or unsettled runs keep the previous checkpoint.
 
 Remove no-longer-needed `cleanupPaths` in finally-style handling on every outcome; retain invocation
 state only until checkpoint/abort and report cleanup failures. Standalone reports a concise
 provider-attributed result and applied fixes. Orchestrated mode returns adjudications without
 editing code or issuing another user report.
 
-**Done when:** every finding is ruled, permitted fixes are verified, the walkthrough is current,
-settled metadata is checkpointed, and temporary paths are handled.
+**Done when:** every finding is ruled, every accepted `adjacent` finding is offered or returned,
+permitted fixes are verified, the walkthrough is current, settled metadata is checkpointed, and
+temporary paths are handled.

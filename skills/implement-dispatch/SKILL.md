@@ -99,26 +99,36 @@ has a logged status, and settled freshness is checkpointed.
 
 1. Run final consensus on the walkthrough, or plan when code review was skipped. Exit `1` returns
    to its review loop; exit `2` halts.
-2. Append run diagnostics: initial/final/effective level, scope shift, slug/source, rounds used,
+2. List accepted `adjacent` findings from plan and code rounds, if any, and ask the user which to
+   address. Treat the chosen ones as a follow-up ask: implement test-first, verify, move them into
+   the walkthrough's `## Changes Made`, then run § 4 as a fresh orchestrated code-review invocation
+   scoped to those fixes with its own round cap and unique metrics paths, through its consensus
+   and checkpoint; offer its own `adjacent` findings the same way, then repeat step 1. Unchosen
+   ones stay where review recorded them: the walkthrough's `## Follow-ups` (code) or the plan's
+   `## Out of Scope` (plan). With code review disabled, list the findings as deferred and skip the
+   follow-up cycle. No code or artifact write follows the last checkpoint.
+3. Append run diagnostics: initial/final/effective level, scope shift, slug/source, rounds used,
    active/failed/substituted/dropped/excluded/unavailable/clamped candidates and source keys,
-   finding totals, and verification status.
-3. Finalize:
+   finding totals, `adjacent` findings offered and chosen, and verification status.
+4. Finalize:
 
    ```bash
    node <skill-path>/scripts/run-record.mjs finalize --run-dir "<runDir>" --expected-slots <count> --summary -
    ```
 
-   Count launched targets/reserves including failures; exclude native fallback. A mismatch keeps
-   artifacts unresolved until the missing slot is rerun with fresh metrics.
-4. Warn before relocation: `The resolved plan and walkthrough are moving to OS temp and may be
+   Count launched targets/reserves including failures and follow-up rounds; exclude native
+   fallback. A mismatch keeps artifacts unresolved until the missing slot is rerun with fresh
+   metrics.
+5. Warn before relocation: `The resolved plan and walkthrough are moving to OS temp and may be
    deleted by the OS.` Relocate existing `.scratch/` artifacts with
    `dispatch/scripts/relocate-scratch.mjs`; report each exact destination. Retain unresolved/native
    artifacts and state why.
-5. Report diagnostics, durable run record, destinations, and a suggested commit message. Git/PR
+6. Report diagnostics, durable run record, destinations, and a suggested commit message. Git/PR
    publication remains caller-owned.
 
-**Done when:** all review work is terminal and settled, the run record is durable, cleanup/relocation
-is explicit, and the handoff identifies every retained or moved artifact.
+**Done when:** all review work is terminal and settled, every accepted `adjacent` finding was
+offered, the run record is durable, cleanup/relocation is explicit, and the handoff identifies
+every retained or moved artifact.
 
 ## Review loop
 

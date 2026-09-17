@@ -21,6 +21,7 @@
           "tag": {
             "type": "string",
             "enum": [
+              "adjacent",
               "approach",
               "architecture",
               "auth",

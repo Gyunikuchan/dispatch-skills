@@ -20,7 +20,9 @@ const SKILL_DIR = path.resolve(__dirname, '..');
 const DISPATCH_DIR = path.resolve(__dirname, '../../dispatch');
 
 export const PLAN_TAGS = new Set([
+  'adjacent',
   'approach',
+  'architecture',
   'auth',
   'blast-radius',
   'coherence',
@@ -29,12 +31,12 @@ export const PLAN_TAGS = new Set([
   'correctness',
   'domain-logic',
   'edge-case',
+  'intent',
   'invariant',
   'migration',
-  'architecture',
-  'intent',
   'rollback',
   'scope',
+  'scope-creep',
   'security',
   'simplicity',
   'spec-gap',
@@ -46,7 +48,6 @@ export const PLAN_TAGS = new Set([
   'validation',
   'verification',
   'yagni',
-  'scope-creep',
 ]);
 export const PLAN_LOCUS_PATTERN = /^§\s+\S.*$/;
 

@@ -46,20 +46,29 @@ terminal.
 
 1. Save each report to an owner-only OS-temp file. Normalize full reports with
    `scripts/parse-report.mjs --file <path>`; add `--rebuttal-packet <packet>` for rebuttals. Exit
-   `1` is invalid report/fallback; exit `2` is terminal. Never repair guessed JSON.
-2. Verify each finding at its `§ <Section>` and any cited code. Accept, reject, downgrade, or
-   dispute under alignment finality. Rebuttal key sets must exactly match the packet:
-   `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE` becomes disputed.
-3. Apply accepted findings to the plan body. Append the enriched round source map and every ruling
+   `2` is terminal. Exit `1` on schema-enforced output is an invalid report (fallback); on a prose
+   report, read it per alignment. Never repair guessed JSON.
+2. Verify each finding at its `§ <Section>` and any cited code; verify an `adjacent` finding at its
+   cited code. Accept, reject, downgrade, or dispute under alignment finality. Rebuttal key sets
+   must exactly match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE`
+   becomes disputed.
+3. Apply accepted in-scope findings to the plan body; record accepted `adjacent` findings under
+   `## Out of Scope` as deferred follow-ups. Append the enriched round source map and every ruling
    under `## Review Findings & Resolutions`; sanitize delegate text first.
 4. Continue only while code/plan changed or consensus remains live within the round cap.
 
 ## Settle and report
 
-After every expected source is terminal and `check-consensus.mjs` exits `0`, call the same
-preparation CLI with `action: "checkpoint"`, terminal source keys, consensus result, and exact
-`settledWrites.sections`. It atomically records freshness metadata. A failed, incomplete, or
-unsettled run does not checkpoint.
+After every expected source is terminal and `check-consensus.mjs` exits `0`, standalone mode lists
+accepted `adjacent` findings, if any, and asks the user which to fold into `## Proposed Changes`
+before the checkpoint. When at least one is folded, re-review that section in a new loop with a
+fresh round cap until consensus exits `0` again, offering that loop's `adjacent` findings the same
+way. Unchosen ones stay under `## Out of Scope`. Orchestrated mode returns them to its caller
+unasked.
+
+Then call the same preparation CLI with `action: "checkpoint"`, terminal source keys, consensus
+result, and exact `settledWrites.sections`. It atomically records freshness metadata. A failed,
+incomplete, or unsettled run does not checkpoint.
 
 Remove no-longer-needed `cleanupPaths` on success, failure, checkpoint rejection, or abort; report
 cleanup failures. Standalone reports a concise provider-attributed result. Orchestrated returns

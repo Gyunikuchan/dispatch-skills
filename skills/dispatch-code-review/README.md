@@ -116,6 +116,8 @@ Use this disclosed rubric for focused or high-risk reviews.
 | **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Delete/reuse/stdlib before new code, shortest working diff, and fixes at the shared source rather than scattered call sites. |
 | **Blast Radius & Compatibility** | `compatibility`, `breaking`, `compat`, `migration`, `scope-creep` | Caller and client compatibility, persisted and serialized formats, migrations, and changes outside the requested boundary. |
 | **Test Quality & UI/UX** | `tests`, `test-gap`, `test-leak`, `ui`, `a11y` | Observable interface and failure coverage, coupling to private internals, CLI/API ergonomics, responsive behavior, and accessibility. |
+| **Host Standards** | `standards` | Violations of the repository's `AGENTS.md` / `CLAUDE.md` rules, including nested rule files on reviewed paths. |
+| **Adjacent Defects** | `adjacent` | Concrete bugs a reviewer meets outside the reviewed diff. They are verified and deferred to `## Follow-ups`; once the review settles, a direct run asks which ones to fix. |
 
 ## What to Expect
 

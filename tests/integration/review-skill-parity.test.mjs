@@ -63,13 +63,11 @@ function extractReReviewTemplate(text) {
   return match[1];
 }
 
-/** Normalizes the re-review template's plan/code-specific locus wording to shared placeholders. */
+/** Normalizes the produced re-review scope string's plan/code-specific wording to shared placeholders. */
 function normalizeReReviewTemplate(template) {
   return template
-    .replace('in sections changed', 'SCOPE changed')
-    .replace('on lines changed', 'SCOPE changed')
-    .replace('<changed sections>', '<changed SCOPE>')
-    .replace('<changed paths>', '<changed SCOPE>');
+    .replace('changed sections: <changed sections>', 'changed SCOPE: <changed SCOPE>')
+    .replace('changed paths: <changed paths>; <range>', 'changed SCOPE: <changed SCOPE>');
 }
 
 /** Extracts the "stop at that blast radius" inspection-bound sentence. */
@@ -79,12 +77,18 @@ function extractBlastRadiusBound(text) {
   return match[0];
 }
 
-const CONVENTIONS_LINE = /Adhere to this project's conventions\s+\(read `AGENTS\.md` \/ `CLAUDE\.md` from the workspace\)/;
+const CONVENTIONS_LINE =
+  /Adhere to this project's conventions: read\s+`AGENTS\.md` \/ `CLAUDE\.md`, including nested ones\s+on reviewed paths,\s+and flag violations as\s+`standards`\./;
+const ADJACENT_LINE = /^- out of scope: `adjacent` — /m;
+const RE_REVIEW_RULE =
+  /When\s+Scope\s+names\s+changed\s+(?:paths|sections),\s+raise\s+new\s+in-scope\s+findings\s+only\s+there;\s+`adjacent`\s+findings\s+may\s+cite\s+any\s+locus\./;
 
-/** Extracts compact `- check: `tag`, ...` groups from a prompt template. */
+/** Extracts `- group: `tag`, ... — gloss` tag lists; text after the first ` — ` is gloss, not tags. */
 function extractPromptTags(text) {
-  return [...text.matchAll(/^- [^:\n]+: ((?:`[^`]+`,?\s*)+)$/gm)]
-    .flatMap(([, tags]) => [...tags.matchAll(/`([^`]+)`/g)].map((match) => match[1]))
+  return [...text.matchAll(/^- [^:\n]+: (`[^\n]*)$/gm)]
+    .map(([, line]) => line.split(' — ')[0])
+    .filter((tags) => /^(?:`[^`]+`,?\s*)+$/.test(tags))
+    .flatMap((tags) => [...tags.matchAll(/`([^`]+)`/g)].map((match) => match[1]))
     .sort();
 }
 
@@ -108,6 +112,25 @@ describe('review skill prompt template parity', () => {
   it('both templates read the same conventions line', () => {
     assert.match(planText, CONVENTIONS_LINE, `${PLAN_PROMPT_PATH} missing shared conventions line`);
     assert.match(codeText, CONVENTIONS_LINE, `${CODE_PROMPT_PATH} missing shared conventions line`);
+  });
+
+  it('both templates review adversarially and invite adjacent findings', () => {
+    for (const [rel, text] of [[PLAN_PROMPT_PATH, planText], [CODE_PROMPT_PATH, codeText]]) {
+      assert.match(text, /adversarially/, `${rel} lacks the adversarial opening`);
+      assert.match(text, ADJACENT_LINE, `${rel} lacks the adjacent tag group`);
+      assert.match(text, RE_REVIEW_RULE, `${rel} lacks the conditioned re-review rule`);
+      assert.match(text, /Every finding needs a verifiable claim/, `${rel} lacks the verifiable-claim rule`);
+      assert.doesNotMatch(text, /findings outside scope/, `${rel} still forbids out-of-scope findings`);
+    }
+    assert.match(codeText, /^- standards: `standards` — /m, `${CODE_PROMPT_PATH} lacks the standards tag group`);
+  });
+
+  it('every tag-group line carries a gloss on one physical line', () => {
+    for (const [rel, text] of [[PLAN_PROMPT_PATH, planText], [CODE_PROMPT_PATH, codeText]]) {
+      const groups = [...text.matchAll(/^- [^:\n]+: `.*$/gm)].map(([line]) => line);
+      assert.ok(groups.length > 0, `${rel} defines no tag groups`);
+      for (const line of groups) assert.match(line, / — \S/, `${rel}: tag group lacks a gloss: ${line}`);
+    }
   });
 
   it('shares the structured report shape modulo locus examples', () => {
@@ -278,6 +301,32 @@ describe('orchestrated handover contract', () => {
     assert.ok(implement.includes('targets/reserves'), `${IMPLEMENT_PATH} does not hand over targets`);
     assert.ok(!implement.includes('fill-template'), `${IMPLEMENT_PATH} still instructs fill-template`);
     assert.ok(!implement.includes('--prompt-file'), `${IMPLEMENT_PATH} still instructs --prompt-file`);
+  });
+
+  it('prose reports from providers without native schema output are read, not discarded', () => {
+    const alignment = readSkill(ALIGNMENT_PATH);
+    assert.match(alignment, /`RESPONSE_SCHEMA_PROVIDERS`/, `${ALIGNMENT_PATH} does not name the schema providers`);
+    assert.match(alignment, /prose report/, `${ALIGNMENT_PATH} lacks the prose-report rule`);
+    assert.match(alignment, /prose rebuttal/, `${ALIGNMENT_PATH} lacks the prose-rebuttal rule`);
+    assert.match(alignment, /refusal, truncation/, `${ALIGNMENT_PATH} lets failed prose count as clean`);
+    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      const content = readSkill(skillPath);
+      assert.match(content, /schema-enforced/, `${skillPath} treats every exit 1 as invalid`);
+    }
+  });
+
+  it('adjacent findings are final, deferred, and offered to the user before checkpoint', () => {
+    const alignment = readSkill(ALIGNMENT_PATH);
+    assert.match(alignment, /`adjacent` finding/, `${ALIGNMENT_PATH} lacks the adjacent finality rule`);
+    assert.match(alignment, /never pending/, `${ALIGNMENT_PATH} does not keep adjacent out of consensus`);
+    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
+      const content = readSkill(skillPath);
+      assert.match(content, /`adjacent`/, `${skillPath} does not route adjacent findings`);
+      assert.match(content, /before (?:the )?checkpoint/i, `${skillPath} does not ask before checkpoint`);
+    }
+    const implement = readSkill(IMPLEMENT_PATH);
+    assert.match(implement, /`adjacent`/, `${IMPLEMENT_PATH} does not offer adjacent follow-ups`);
+    assert.match(implement, /--expected-slots/, `${IMPLEMENT_PATH} lost the slot count`);
   });
 
   it('the handover carries consensus, and pending rebuttals are a logged form in every consumer', () => {

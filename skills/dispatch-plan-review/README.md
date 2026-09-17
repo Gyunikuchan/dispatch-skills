@@ -120,7 +120,7 @@ review round and narrow the review to changed sections.
 ## Detailed review rubric
 
 Use this disclosed rubric for focused or high-risk reviews. Every plan is checked across seven
-areas:
+areas, and reviewers also report adjacent defects they meet in existing code:
 
 | Area | Focus tags | Questions it answers |
 |---|---|---|
@@ -131,6 +131,7 @@ areas:
 | **Blast Radius & Reversibility** | `compatibility`, `blast-radius`, `migration`, `compat`, `rollback` | Adjacent callers, persisted schemas, multi-version compatibility, graceful degradation, and rollback. |
 | **Testability & Success Criteria** | `verification`, `testability`, `spec-gap` | Checkable outcomes, named automated or concrete verification, edge expectations, and pass/fail definitions. |
 | **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Delete/reuse/stdlib before new abstraction; empty, zero, boundary, partial-failure, race, and fallback behavior. |
+| **Adjacent Defects** | `adjacent` | Concrete bugs in existing code outside the plan's scope. They are verified and recorded under `## Out of Scope`; once the review settles, a direct run asks which ones to add to the plan. |
 
 ## Findings and resolutions
 

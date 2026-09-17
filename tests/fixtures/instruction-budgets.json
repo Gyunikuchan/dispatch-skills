@@ -132,6 +132,19 @@
       "planRebuttalPathEstimate": 4678,
       "codeRebuttalPathCharacters": 19568,
       "codeRebuttalPathEstimate": 4892
+    },
+    "recall": {
+      "entryPointCeiling": 20800,
+      "normalPathCeiling": 36500,
+      "normalPathEstimateCeiling": 9125,
+      "entryPointCharacters": 20717,
+      "entryPointEstimate": 5180,
+      "normalPathCharacters": 36426,
+      "normalPathEstimate": 9107,
+      "planRebuttalPathCharacters": 21247,
+      "planRebuttalPathEstimate": 5312,
+      "codeRebuttalPathCharacters": 22314,
+      "codeRebuttalPathEstimate": 5579
     }
   },
   "intentionalPhase0bDelta": {
@@ -141,5 +154,17 @@
   "intentionalPhase2Delta": {
     "reason": "Stable finding identity, source provenance, and claim-specific rebuttal mechanics.",
     "normalPathCharacters": 3803
+  },
+  "intentionalRecallDelta": {
+    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and prose-report handling for providers without native schema output.",
+    "files": {
+      "skills/dispatch-plan-review/SKILL.md": 600,
+      "skills/dispatch-code-review/SKILL.md": 700,
+      "skills/implement-dispatch/SKILL.md": 850,
+      "skills/dispatch/references/alignment.md": 1000,
+      "skills/dispatch-plan-review/references/prompt-template.md": 1200,
+      "skills/dispatch-code-review/references/prompt-template.md": 1300
+    },
+    "normalPathCharacters": 6000
   }
 }

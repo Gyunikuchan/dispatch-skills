@@ -22,6 +22,9 @@ const normalPath = [
   'skills/dispatch-plan-review/references/plan-template.md',
   'skills/dispatch-code-review/references/walkthrough-template.md',
 ];
+const recall = budgets.aggregateBaselines.recall;
+// NOTE: allowances widen only the measured-vs-ceiling side; phase-to-phase ceiling checks stay raw.
+const allowance = (file) => budgets.intentionalRecallDelta.files[file] ?? 0;
 
 describe('instruction character ratchet', () => {
   it('uses the shared NFC code-point and ceiling estimator', () => {
@@ -31,7 +34,7 @@ describe('instruction character ratchet', () => {
   for (const [file, ceiling] of Object.entries(budgets.phase4)) {
     it(`${file} does not grow beyond the Phase 4 baseline`, () => {
       const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
-      assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(measured.characters <= ceiling + allowance(file), `${file}: ${measured.characters} > ${ceiling}`);
       assert.ok(ceiling <= budgets.phase3[file], `${file}: Phase 4 baseline exceeds Phase 3`);
       assert.equal(measured.estimate, Math.ceil(measured.characters / 4));
     });
@@ -40,7 +43,7 @@ describe('instruction character ratchet', () => {
   for (const [file, ceiling] of Object.entries(budgets.phase5)) {
     it(`${file} meets the Phase 5 final ceiling`, () => {
       const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
-      assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(measured.characters <= ceiling + allowance(file), `${file}: ${measured.characters} > ${ceiling}`);
       assert.ok(ceiling <= budgets.phase4[file], `${file}: Phase 5 ceiling exceeds Phase 4`);
     });
   }
@@ -48,9 +51,9 @@ describe('instruction character ratchet', () => {
   for (const [file, ceiling] of Object.entries(budgets.phase1)) {
     it(`${file} meets the Phase 1 compact-prompt target`, () => {
       const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
-      assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(measured.characters <= ceiling + allowance(file), `${file}: ${measured.characters} > ${ceiling}`);
       assert.ok(
-        measured.characters <= Math.floor(budgets.phase0a[file] * 0.45),
+        measured.characters <= Math.floor(budgets.phase0a[file] * 0.45) + allowance(file),
         `${file}: ${measured.characters} is not at least 55% below ${budgets.phase0a[file]}`,
       );
       assert.equal(measured.estimate, Math.ceil(measured.characters / 4));
@@ -66,20 +69,20 @@ describe('instruction character ratchet', () => {
     const entryCharacters = countPath(entryPoints);
     const normalCharacters = countPath(normalPath);
     assert.ok(
-      entryCharacters <= budgets.aggregateBaselines.phase5.entryPointCeiling,
-      `entry-point total: ${entryCharacters} > ${budgets.aggregateBaselines.phase5.entryPointCeiling}`,
+      entryCharacters <= recall.entryPointCeiling,
+      `entry-point total: ${entryCharacters} > ${recall.entryPointCeiling}`,
     );
     assert.ok(
-      normalCharacters <= budgets.aggregateBaselines.phase5.normalPathCeiling,
-      `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase5.normalPathCeiling}`,
+      normalCharacters <= recall.normalPathCeiling,
+      `normal-path total: ${normalCharacters} > ${recall.normalPathCeiling}`,
     );
     assert.ok(
-      Math.ceil(entryCharacters / 4) <= Math.ceil(budgets.aggregateBaselines.phase5.entryPointCeiling / 4),
+      Math.ceil(entryCharacters / 4) <= Math.ceil(recall.entryPointCeiling / 4),
       `entry-point estimate exceeds ceiling`,
     );
     assert.ok(
-      Math.ceil(normalCharacters / 4) <= 8000,
-      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > 8000`,
+      Math.ceil(normalCharacters / 4) <= recall.normalPathEstimateCeiling,
+      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > ${recall.normalPathEstimateCeiling}`,
     );
     assert.deepEqual(
       {
@@ -89,10 +92,10 @@ describe('instruction character ratchet', () => {
         normalPathEstimate: Math.ceil(normalCharacters / 4),
       },
       {
-        entryPointCharacters: budgets.aggregateBaselines.phase5.entryPointCharacters,
-        entryPointEstimate: budgets.aggregateBaselines.phase5.entryPointEstimate,
-        normalPathCharacters: budgets.aggregateBaselines.phase5.normalPathCharacters,
-        normalPathEstimate: budgets.aggregateBaselines.phase5.normalPathEstimate,
+        entryPointCharacters: recall.entryPointCharacters,
+        entryPointEstimate: recall.entryPointEstimate,
+        normalPathCharacters: recall.normalPathCharacters,
+        normalPathEstimate: recall.normalPathEstimate,
       },
     );
     for (const key of [
@@ -106,6 +109,16 @@ describe('instruction character ratchet', () => {
         `${key}: Phase 5 aggregate exceeds Phase 4`,
       );
     }
+  });
+
+  it('bounds the recall delta by a recorded aggregate cap', () => {
+    const delta = budgets.intentionalRecallDelta;
+    assert.match(delta.reason, /recall/);
+    const allowed = Object.values(delta.files).reduce((sum, value) => sum + value, 0);
+    const growth = recall.normalPathCharacters - budgets.aggregateBaselines.phase5.normalPathCharacters;
+    assert.ok(Object.keys(delta.files).every((file) => normalPath.includes(file)), 'allowance outside the normal path');
+    assert.ok(allowed <= delta.normalPathCharacters, `allowances ${allowed} > cap ${delta.normalPathCharacters}`);
+    assert.ok(growth <= delta.normalPathCharacters, `normal-path growth ${growth} > cap ${delta.normalPathCharacters}`);
   });
 
   it('records bounded plan and code rebuttal paths', () => {
@@ -128,10 +141,10 @@ describe('instruction character ratchet', () => {
       'skills/dispatch-code-review/SKILL.md',
       'skills/dispatch-code-review/references/rebuttal-template.md',
     ]);
-    assert.equal(plan, budgets.aggregateBaselines.phase5.planRebuttalPathCharacters);
-    assert.equal(Math.ceil(plan / 4), budgets.aggregateBaselines.phase5.planRebuttalPathEstimate);
-    assert.equal(code, budgets.aggregateBaselines.phase5.codeRebuttalPathCharacters);
-    assert.equal(Math.ceil(code / 4), budgets.aggregateBaselines.phase5.codeRebuttalPathEstimate);
+    assert.equal(plan, recall.planRebuttalPathCharacters);
+    assert.equal(Math.ceil(plan / 4), recall.planRebuttalPathEstimate);
+    assert.equal(code, recall.codeRebuttalPathCharacters);
+    assert.equal(Math.ceil(code / 4), recall.codeRebuttalPathEstimate);
     for (const key of [
       'planRebuttalPathCharacters',
       'planRebuttalPathEstimate',
