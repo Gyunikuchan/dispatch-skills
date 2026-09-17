@@ -147,10 +147,12 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const originalAppData = process.env.APPDATA;
       const originalLocalAppData = process.env.LOCALAPPDATA;
       const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
       try {
         process.env.APPDATA = fixture;
         process.env.LOCALAPPDATA = fixture;
         process.env.HOME = fixture;
+        process.env.USERPROFILE = fixture;
         const brainDir = process.platform === 'win32'
           ? path.join(fixture, 'antigravity', 'brain')
           : path.join(fixture, '.gemini', 'antigravity', 'brain');
@@ -175,6 +177,8 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
         else process.env.LOCALAPPDATA = originalLocalAppData;
         if (originalHome === undefined) delete process.env.HOME;
         else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });
@@ -184,10 +188,12 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       const originalAppData = process.env.APPDATA;
       const originalLocalAppData = process.env.LOCALAPPDATA;
       const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
       try {
         process.env.APPDATA = fixture;
         process.env.LOCALAPPDATA = fixture;
         process.env.HOME = fixture;
+        process.env.USERPROFILE = fixture;
         const brainDir = process.platform === 'win32'
           ? path.join(fixture, 'antigravity', 'brain')
           : path.join(fixture, '.gemini', 'antigravity', 'brain');
@@ -205,6 +211,39 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
         else process.env.LOCALAPPDATA = originalLocalAppData;
         if (originalHome === undefined) delete process.env.HOME;
         else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = originalUserProfile;
+        fs.rmSync(fixture, { recursive: true, force: true });
+      }
+    });
+
+    it('scans candidate directories in preference order when mode is unknown or null', () => {
+      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-unknown-mode-'));
+      const originalAppData = process.env.APPDATA;
+      const originalLocalAppData = process.env.LOCALAPPDATA;
+      const originalHome = process.env.HOME;
+      const originalUserProfile = process.env.USERPROFILE;
+      try {
+        process.env.APPDATA = fixture;
+        process.env.LOCALAPPDATA = fixture;
+        process.env.HOME = fixture;
+        process.env.USERPROFILE = fixture;
+        const brainDir = process.platform === 'win32'
+          ? path.join(fixture, 'antigravity', 'brain')
+          : path.join(fixture, '.gemini', 'antigravity', 'brain');
+        fs.mkdirSync(brainDir, { recursive: true });
+        fs.mkdirSync(path.join(brainDir, 'fallback-conversation'));
+
+        const id = getNewestBrainConversationId(0, 'unknown-mode');
+        assert.equal(id, 'fallback-conversation', 'falls back to preference order when mode is unmapped');
+      } finally {
+        if (originalAppData === undefined) delete process.env.APPDATA;
+        else process.env.APPDATA = originalAppData;
+        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+        else process.env.LOCALAPPDATA = originalLocalAppData;
+        if (originalHome === undefined) delete process.env.HOME;
+        else process.env.HOME = originalHome;
+        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
         fs.rmSync(fixture, { recursive: true, force: true });
       }
     });

@@ -201,7 +201,7 @@ describe('relocate-scratch', () => {
         encoding: 'utf8',
       });
       assert.equal(res.status, 1);
-      assert.match(res.stdout, /first-[^/\n]+\.md/);
+      assert.match(res.stdout, /first(\.md|-[^/\\\n]+\.md)/);
       assert.match(res.stderr, /outside the \.scratch/);
       assert.equal(fs.existsSync(first), false);
     });

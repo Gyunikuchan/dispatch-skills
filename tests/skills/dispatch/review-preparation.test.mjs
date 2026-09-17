@@ -12,6 +12,7 @@ import {
   readArtifact,
   readJsonRequest,
   requireNode22,
+  semanticSectionHashes,
   sha256,
   writeArtifactMetadata,
 } from '../../../skills/dispatch/scripts/review-preparation.mjs';
@@ -135,5 +136,22 @@ describe('review preparation primitives', () => {
       token: 'x',
     }), /statePath must be beneath OS temp|statePath is invalid/);
     assert.equal(fs.existsSync(lock), false);
+  });
+
+  it('disambiguates duplicate H2 headings in sectionHashes', () => {
+    const doc = [
+      '# Plan',
+      '## Changes',
+      'First changes block',
+      '## Changes',
+      'Second changes block',
+      '## Review Findings & Resolutions',
+      '### Round 1',
+      '- *No findings*',
+    ].join('\n');
+    const { sectionHashes } = semanticSectionHashes(doc);
+    assert.ok(sectionHashes['Changes'], 'first Changes heading present');
+    assert.ok(sectionHashes['Changes#2'], 'second duplicate Changes heading disambiguated as Changes#2');
+    assert.notEqual(sectionHashes['Changes'], sectionHashes['Changes#2'], 'different hashes for distinct content');
   });
 });

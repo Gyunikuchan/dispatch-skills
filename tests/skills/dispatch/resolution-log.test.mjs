@@ -183,6 +183,26 @@ describe('resolution log scanner', () => {
     });
   });
 
+  it('does not treat (CONSIDER) inside legacy defect prose as CONSIDER severity', () => {
+    const scan = scanResolutionLog([
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 4 — Claude, 2026-09-17',
+      '- **[Disputed]** § A — tag: defect mentions (CONSIDER) option → resolution',
+    ].join('\n'));
+    assert.equal(scan.unsettledItems[0].severity, 'ACTIONABLE');
+  });
+
+  it('correctly detects CONSIDER on legacy entries carrying a colon in locus', () => {
+    const scan = scanResolutionLog([
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 4 — Claude, 2026-09-17',
+      '- **[Disputed]** skills/x.mjs:L12 — tag (CONSIDER): defect → resolution',
+    ].join('\n'));
+    assert.equal(scan.unsettledItems[0].severity, 'CONSIDER');
+  });
+
   it('keeps pre-Phase 2 enriched-looking source keys readable without a source map', () => {
     const scan = scanResolutionLog([
       '# Plan',

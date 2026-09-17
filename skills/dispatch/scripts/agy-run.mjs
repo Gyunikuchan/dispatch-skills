@@ -1149,16 +1149,18 @@ export function getNewestBrainConversationId(modifiedAfterMs = 0, mode = null) {
     }
   }
 
-  // Fallback to searching all mode data directories in preference order
-  for (const m of AGY_MODE_PREFERENCE) {
-    const dirName = AGY_MODE_DATA_DIRS[m];
-    candidateDirs.push(path.join(homeDir, '.gemini', dirName, 'brain'));
-    if (isWin) {
-      if (process.env.APPDATA) {
-        candidateDirs.push(path.join(process.env.APPDATA, dirName, 'brain'));
-      }
-      if (process.env.LOCALAPPDATA) {
-        candidateDirs.push(path.join(process.env.LOCALAPPDATA, dirName, 'brain'));
+  // Search all mode data directories in preference order when no mode is specified or unknown
+  if (!mode || !AGY_MODE_DATA_DIRS[mode]) {
+    for (const m of AGY_MODE_PREFERENCE) {
+      const dirName = AGY_MODE_DATA_DIRS[m];
+      candidateDirs.push(path.join(homeDir, '.gemini', dirName, 'brain'));
+      if (isWin) {
+        if (process.env.APPDATA) {
+          candidateDirs.push(path.join(process.env.APPDATA, dirName, 'brain'));
+        }
+        if (process.env.LOCALAPPDATA) {
+          candidateDirs.push(path.join(process.env.LOCALAPPDATA, dirName, 'brain'));
+        }
       }
     }
   }

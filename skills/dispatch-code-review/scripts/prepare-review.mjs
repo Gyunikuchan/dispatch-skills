@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -240,11 +241,23 @@ function renderWalkthrough({ summary, paths, verification }) {
 
 function writeNewWalkthrough(file, contents, { overwrite = false } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${crypto.randomUUID()}.tmp`);
   fs.writeFileSync(temp, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   try {
-    if (overwrite) fs.renameSync(temp, file);
-    else fs.linkSync(temp, file);
+    if (overwrite) {
+      try {
+        fs.renameSync(temp, file);
+      } catch (err) {
+        if (err?.code === 'EPERM' && process.platform === 'win32') {
+          fs.rmSync(file, { force: true });
+          fs.renameSync(temp, file);
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      fs.linkSync(temp, file);
+    }
   } finally {
     fs.rmSync(temp, { force: true });
   }

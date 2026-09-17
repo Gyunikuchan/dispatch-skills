@@ -580,20 +580,14 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
     return { dir, skillDir };
   };
 
-  const run = (skillDir, args = ['--validate-only']) =>
-    spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
-      encoding: 'utf8',
-      timeout: 60_000,
-      killSignal: 'SIGKILL',
-      env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE, IMPLEMENT_DISPATCH_TEST_MODE: '1' },
-    });
+  const runInFixture = (skillDir, args = ['--validate-only']) => runFixtureScript(skillDir, args);
 
   const ONLY_CLAUDE = '{ "platforms": { "claude": { "model": "m", "effort": "low" } } }';
 
   it('passes when dispatch configures every platform this skill does', () => {
     const { dir, skillDir } = setup(null);
     try {
-      const { status, stdout } = run(skillDir);
+      const { status, stdout } = runInFixture(skillDir);
       assert.equal(status, 0);
       assert.match(stdout, /Config is valid\./);
     } finally {
@@ -604,7 +598,7 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
   it('exits 1 naming each section and the offending platform when dispatch lacks it', () => {
     const { dir, skillDir } = setup(ONLY_CLAUDE);
     try {
-      const { status, stderr } = run(skillDir);
+      const { status, stderr } = runInFixture(skillDir);
       assert.equal(status, 1);
       assert.match(stderr, /Invalid config:/);
       assert.match(stderr, /plan-review\.platforms\."agy" is not configured in .*config\.jsonc/);
@@ -619,7 +613,7 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
   it('--show-effective reports cross-config membership mismatches', () => {
     const { dir, skillDir } = setup(ONLY_CLAUDE);
     try {
-      const { status, stdout, stderr } = run(skillDir, [
+      const { status, stdout, stderr } = runInFixture(skillDir, [
         '--show-effective',
         '--platform',
         'claude',
@@ -668,7 +662,7 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
   it('blocks the run path too, before any liveness probing', () => {
     const { dir, skillDir } = setup(ONLY_CLAUDE);
     try {
-      const { status, stdout, stderr } = run(skillDir, ['--platform', 'claude']);
+      const { status, stdout, stderr } = runInFixture(skillDir, ['--platform', 'claude']);
       assert.equal(status, 1);
       assert.equal(stdout, '');
       assert.match(stderr, /is not configured in/);
@@ -683,13 +677,13 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
       // Remove dispatch config entirely: membership cannot be established, so neither validation
       // nor a normal resolve run may proceed.
       fs.rmSync(path.join(dir, 'dispatch', 'config.default.jsonc'), { force: true });
-      const validation = run(skillDir);
+      const validation = runInFixture(skillDir);
       assert.equal(validation.status, 1);
       assert.equal(validation.stdout, '');
       assert.match(validation.stderr, /effective platform set could not be loaded/);
       assert.match(validation.stderr, /Config file not found/);
 
-      const resolution = run(skillDir, ['--platform', 'claude']);
+      const resolution = runInFixture(skillDir, ['--platform', 'claude']);
       assert.equal(resolution.status, 1);
       assert.equal(resolution.stdout, '');
       assert.match(resolution.stderr, /effective platform set could not be loaded/);

@@ -216,7 +216,7 @@ export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = n
     const temp = path.join(path.dirname(resolved), `.${path.basename(resolved)}.${crypto.randomUUID()}.tmp`);
     fs.writeFileSync(temp, next, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     try {
-      fs.renameSync(temp, resolved);
+      safeRenameSync(temp, resolved);
     } finally {
       if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
     }
@@ -300,12 +300,25 @@ function contextFor(state) {
   };
 }
 
+function safeRenameSync(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err) {
+    if (err?.code === 'EPERM' && process.platform === 'win32') {
+      fs.rmSync(dest, { force: true });
+      fs.renameSync(src, dest);
+    } else {
+      throw err;
+    }
+  }
+}
+
 function writeState(state, { exclusive = false } = {}) {
   const temp = `${state.statePath}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   try {
     if (exclusive) fs.linkSync(temp, state.statePath);
-    else fs.renameSync(temp, state.statePath);
+    else safeRenameSync(temp, state.statePath);
   } finally {
     if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
   }
@@ -405,6 +418,7 @@ export function completeInvocationState(context) {
 export function semanticSectionHashes(source) {
   const body = scanResolutionLog(source, { strict: true }).semanticBody;
   const sections = {};
+  const headingCounts = new Map();
   let fence = null;
   let current = '__preamble__';
   let buffer = [];
@@ -421,7 +435,10 @@ export function semanticSectionHashes(source) {
     const heading = !fence && /^##\s+(.+?)\s*$/.exec(line);
     if (heading) {
       flush();
-      current = heading[1];
+      const rawHeading = heading[1];
+      const count = (headingCounts.get(rawHeading) ?? 0) + 1;
+      headingCounts.set(rawHeading, count);
+      current = count === 1 ? rawHeading : `${rawHeading}#${count}`;
     }
     buffer.push(line);
   }

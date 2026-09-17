@@ -189,6 +189,7 @@ describe('dispatch batch manifest', () => {
       prompt: 'Review',
       files: [],
       configPath: 'test-config',
+      orchestrator: 'opencode',
     }, CONFIG);
 
     assert.equal(envelope.targets.length, 1);

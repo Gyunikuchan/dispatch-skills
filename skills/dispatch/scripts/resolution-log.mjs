@@ -215,7 +215,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         const status = statusKey(entryMatch[1]);
         const enriched = ENRICHED_PREFIX.exec(entryMatch[2]);
         let id = null;
-        let severity = /\(CONSIDER\)/.test(entryMatch[2]) ? 'CONSIDER' : 'ACTIONABLE';
+        let severity = /(?:—\s*[^:]*|^[^:]*)\(CONSIDER\)\s*:/.test(entryMatch[2]) ? 'CONSIDER' : 'ACTIONABLE';
         let sourceKeys = [];
         let structured = false;
         if (enriched) {

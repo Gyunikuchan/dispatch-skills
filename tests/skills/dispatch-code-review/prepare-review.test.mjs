@@ -3,11 +3,16 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { prepareCodeReview } from '../../../skills/dispatch-code-review/scripts/prepare-review.mjs';
 
 const tempDirs = [];
+const CONVERSATION_ENV_KEYS = [
+  'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
+];
+let originalEnv = {};
+
 const makeRepo = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-prepare-test-'));
   tempDirs.push(dir);
@@ -28,7 +33,20 @@ const cleanupManifest = (manifest) => {
   for (const cleanup of paths) fs.rmSync(cleanup, { recursive: true, force: true });
 };
 
+beforeEach(() => {
+  originalEnv = {};
+  for (const key of CONVERSATION_ENV_KEYS) {
+    if (key in process.env) {
+      originalEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+  }
+});
+
 afterEach(() => {
+  for (const [key, val] of Object.entries(originalEnv)) {
+    process.env[key] = val;
+  }
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
