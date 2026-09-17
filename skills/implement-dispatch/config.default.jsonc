@@ -1,56 +1,22 @@
 /**
- * This file is the default configuration for the implement-dispatch agent.
- * It defines the flow policy and the platforms/models to use for plan review,
- * implementation, and code review.
- * Override by creating `config.local.jsonc` (highest precedence) or `config.jsonc` beside
- * this file; a local config replaces this file wholly rather than merging into it.
- * You may find the list of available models and their capabilities below
- * claude: https://code.claude.com/docs/en/model-config
- * agy: https://antigravity.google/docs/models/
- * copilot: https://docs.github.com/en/copilot/reference/ai-models/supported-models
- * opencode: https://opencode.ai/zen/go/v1/models
+ * Phase/level workflow policy. Run `node scripts/resolve-flow.mjs --show-effective --platform
+ * <key> --level <level>` to inspect inheritance, candidate order, reserves, and membership.
+ * Overrides are whole-file replacements: config.local.jsonc, config.jsonc, then this file.
  *
- * Every knob and every platform entry may key its value by level (low, medium, high,
- * xhigh, max). Resolution uses an exact key, otherwise the nearest lower key, otherwise
- * the lowest higher key. With keys `{ medium: A, max: B }`:
+ * A platform can define a base candidate plus level overrides:
+ *   "claude": { "model": "claude-sonnet-5", "high": { "model": "claude-opus-5" } }
+ *
+ * Resolution is exact, nearest lower, otherwise lowest higher. With `{ medium: A, max: B }`:
  *   `medium` -> `medium` (exact)
  *   `high`   -> `medium` (nearest lower)
  *   `low`    -> `medium` (lowest higher)
  *
- * Review-section knobs:
- *   maxRounds   — cap on total fan-out waves for the phase, counting the first review.
- *   targetCount — how many review candidates a wave dispatches to when unpinned; a whole
- *                 number or "all". Unpinned candidates are diversity-sorted, with the
- *                 orchestrator platform shifted behind alternatives and its exact model match
- *                 shifted to the end. The first targetCount become targets; the rest are ordered
- *                 reserves. Named pins dispatch every listed configured, non-excluded platform.
- *                 Count and "all" pins replace this knob, preserve configured candidate order
- *                 with the same orchestrator/model demotion, and retain candidates whose probes
- *                 failed; diagnostics.unavailable records those failures.
- *   consensus   — when true, no finding may be dismissed without counter-evidence.
- *
- * Either `maxRounds: 0` or `targetCount: 0` skips the phase entirely. When
- * `targetCount: 0`, the resolver normalizes `maxRounds` to `0` so `maxRounds === 0`
- * is the single sentinel: a phase is off when 0, providers merely unavailable when
- * `> 0` with an empty targets list.
- *
- * Every platform keyed in plan-review or code-review must also be keyed in the dispatch skill's
- * own config, whose effective membership `dispatch/scripts/dispatch.mjs --list-platforms` prints:
- * review targets are dispatched as `dispatch --provider <key>`, so a platform dispatch does not
- * exit PLATFORM_NOT_CONFIGURED. `implementation.platforms` is a separate native write-subagent
- * selection and is intentionally not required in dispatch's config. `--validate-only` cross-checks
- * only the two review sections and reports any mismatch.
- *
- * `platforms` holds the per-platform model/effort settings. Candidates are flattened in key
- * order, with the orchestrator's platform moved behind alternatives and its exact model match
- * moved to the end. Each platform entry can be a single
- * model/effort object or an array of objects to run multiple candidates on that platform
- * (e.g. OpenCode running both a remote model and a local LLM). Flat model/effort keys
- * alongside level keys act as defaults the matched level overrides.
- *
- * Accepted effort values are CLI-specific: Antigravity takes low/medium/high;
- * Claude Code adds xhigh; OpenCode receives the value as `--variant`. An effort a
- * CLI does not recognize is that CLI's error, not this config's.
+ * Review sections define `maxRounds`, `targetCount`, `consensus`, and `platforms`.
+ * `maxRounds: 0` or an unpinned `targetCount: 0` disables that phase. Review platforms must be
+ * standalone dispatch members; implementation platforms select native write subagents separately.
+ * `targetCount` accepts a non-negative integer or "all"; selected targets precede ordered reserves.
+ * Effort values are provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and
+ * OpenCode receives the value as `--variant`.
  */
 {
   "plan-review": {

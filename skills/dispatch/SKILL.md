@@ -14,7 +14,8 @@ provider mechanics live in [references/providers.md](references/providers.md).
 /dispatch (<pins>) <task>
 ```
 
-`(<pins>)` is optional: comma-separated provider keys or aliases, one target count `n ≥ 1`, or `all`. Aliases are `antigravity` -> `agy`, `claudecode` -> `claude`, and `github-copilot` -> `copilot`.
+`(<pins>)` is optional: provider keys/aliases, one count `n ≥ 1`, or `all`. Aliases:
+`antigravity` -> `agy`, `claudecode` -> `claude`, `github-copilot` -> `copilot`.
 
 | Form | Dispatch behavior |
 |------|-------------------|
@@ -23,11 +24,9 @@ provider mechanics live in [references/providers.md](references/providers.md).
 | Count | Launch up to `n` configured targets. |
 | `all` | Launch every configured target. |
 
-For a count or `all`, run `node <skill-path>/scripts/dispatch.mjs --list-targets`, select the
-requested entries, and launch each with `--provider <platform> --candidate-index <candidateIndex>`.
-The command preserves config order while moving the orchestrator platform, then its exact model,
-last. Named platforms retain pin order. Pins disable cross-provider fallback; named platforms may
-cascade through their candidates, while candidate-index launches run exactly one.
+For standalone count/`all`, select entries from `dispatch.mjs --list-targets` and launch each with
+`--provider <platform> --candidate-index <n>`. Ordering moves the orchestrator platform, then its
+exact model, last. Named pins retain input order. Orchestrated callers use `--batch-file`.
 
 `<skill-path>` is this skill's directory. Use `node <skill-path>/scripts/dispatch.mjs --list-platforms` as the membership check; absent platforms are ineligible for every pin form.
 
@@ -57,7 +56,8 @@ Run the dispatcher in the background:
 node <skill-path>/scripts/dispatch.mjs [flags] "<task>"
 ```
 
-For a resolved target set, launch one pinned process per target in parallel. Yield the turn after the processes are running. Keep the launch banner and log path for diagnosis.
+For an orchestrator-resolved set, launch its temporary `--batch-file`; otherwise launch one pinned
+process per target. Yield after launch.
 
 **Done when:** each requested process has been launched in the background and its launch metadata is captured.
 
@@ -98,6 +98,7 @@ Map the result to exactly one row before deciding what to report.
 | `-t`, `--timeout` | Override the timeout in seconds; default `1800`. |
 | `--max-buffer` | Raise the output cap in MB; default `10`. |
 | `--metrics-file` | Write one content-free terminal slot record to an initialized absolute path. |
+| `--batch-file` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
 | `--response-schema-file` | Require native JSON Schema output (Claude only). |
 | `--provider` | Pin one provider; accepts canonical keys and aliases. |
 | `--orchestrator` | Declare the host platform for unpinned ordering. |
@@ -106,21 +107,16 @@ Map the result to exactly one row before deciding what to report.
 | `--validate-only` | Validate the effective config and exit; rejects other run flags. |
 | `--list-platforms` | Print effective configured platform keys in config order and exit. |
 | `--list-targets` | Print configured targets in count/all selection order as JSON and exit. |
+| `--doctor` | Report the effective config, ordered candidates, and provider health. |
 | `--candidate-index` | Execute one zero-based configured candidate; requires `--provider`. |
 | `--json` | Request structured output (opencode provider only). |
 | `-v`, `--verbose` | Stream live trace to stderr in an interactive terminal. |
 
 ## Configuration
 
-The effective config is the first existing file in this order: `<skill-path>/config.local.jsonc`, `config.jsonc`, then `config.default.jsonc`. The selected file is used whole; tiers are not merged.
-
-- `platforms` controls cascade membership. Missing keys are never dispatched.
-- A platform value is one candidate object or an ordered array of candidates. A `model` array remains one candidate.
-- Without `-m` or `-e`, array entries expand into cascade targets. Either CLI override collapses each platform to its first entry with the override applied.
-- Omitted `model` or `effort` values are omitted from the provider command, so the provider CLI chooses its own default.
-- `sandbox` is valid only for Claude and Copilot and defaults to enabled when omitted. See [references/providers.md](references/providers.md) before changing it.
-
-Use `--validate-only` to check schema and `--list-platforms` to inspect effective membership. `--no-config` removes both config membership and defaults, so it always requires a provider pin.
+The first existing `config.local.jsonc`, `config.jsonc`, or `config.default.jsonc` file is used
+whole. Treat `config.default.jsonc` as the schema and `--doctor` as the human diagnostic; the
+validate/list flags remain narrow machine interfaces. `--no-config` requires a provider pin.
 
 ## Providers and session recovery
 

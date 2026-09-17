@@ -1,31 +1,13 @@
 /**
- * Default configuration for the dispatch cascade: per-platform model/effort and cascade
- * order/membership. This is the single source of truth for dispatch's defaults — no
- * model/effort default lives in the runner scripts themselves.
+ * Standalone cascade policy. Run `node scripts/dispatch.mjs --doctor` to inspect the selected
+ * whole-file config, ordered candidates, and provider health.
  *
- * Schema: { "platforms": { "<key>": { "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Claude/Copilot) } | Array<{ "model"?: string | string[], "effort"?: string, "sandbox"?: boolean (Claude/Copilot) }> } }
- *   - Cascade order is diversity-sorted from "platforms" key order: each platform's first
- *     entry in key order, then remaining array entries in their original order; the
- *     orchestrator's own platform is sorted the same way and tried last (with candidates matching
- *     the orchestrator's active model placed after alternative models on that platform). An in-slot "model"
- *     array stays one candidate and is unaffected.
- *   - A platform key absent from the loaded config is never dispatched to.
- *   - Each platform entry can be a single model/effort object or an array of candidate
- *     objects (e.g. Claude falling back across models, OpenCode cascading across remote models and a local LLM).
- *   - "model" within any candidate object can be a single string or an array of strings.
- *   - An entry omitting "model" / "effort" passes no `-m` / `-e`, so the provider CLI's
- *     own default applies.
+ * Each platform maps to one candidate or an ordered candidate array:
+ *   "claude": [{ "model": "claude-opus-5", "effort": "low", "sandbox": true }]
  *
- * Precedence: CLI `-m` / `-e` flags > this config's per-platform values > provider CLI's
- * own default.
- *
- * Override locations (loaded wholly — first match wins, no merging across tiers):
- *   1. <skill-root>/config.local.jsonc
- *   2. <skill-root>/config.jsonc
- *   3. <skill-root>/config.default.jsonc (this file)
- *
- * `--no-config` on dispatch.mjs ignores this file entirely (model, effort, and cascade
- * membership) and requires `--provider` — there is no cascade without a config.
+ * CLI model/effort overrides win; omitted values use provider defaults. `sandbox` is supported by
+ * Claude and Copilot. Overrides are selected whole in this order: config.local.jsonc,
+ * config.jsonc, then this file. Missing platforms are not cascade members.
  */
 {
   "platforms": {

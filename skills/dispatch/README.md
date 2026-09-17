@@ -153,18 +153,25 @@ diagnostics.
 | `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run. |
 | `--max-buffer <MB>` | Raise the output buffer if a provider result is truncated. |
 | `--metrics-file <path>` | Write one content-free terminal slot record to an initialized absolute path. |
+| `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
 | `--orchestrator <name>` | Override automatic host-platform detection. |
 | `--orchestrator-model <model>` | Override automatic host-model detection. |
 | `--no-config` | Skip configuration; requires `--provider`. |
 | `--validate-only` | Validate configuration without dispatching. |
 | `--list-platforms` | List provider keys in the effective configuration. |
 | `--list-targets` | List configured targets in count/`all` selection order as JSON. |
+| `--doctor` | Validate configuration and report the selected file, ordered candidates, and provider health. |
 
 ## Configuration
 
 The shipped defaults work without configuration. To customize provider membership, models, or
 reasoning effort, create `config.local.jsonc` or `config.jsonc` next to the installed skill. Use
 [`config.default.jsonc`](config.default.jsonc) as the schema reference.
+
+Run `node scripts/dispatch.mjs --doctor` from the installed skill directory to inspect the
+effective file, candidate order, binary/mode reachability, sandbox support, and corrective
+commands. Standalone defaults may intentionally differ from a workflow's phase-and-level model
+policy.
 
 The first existing file wins:
 

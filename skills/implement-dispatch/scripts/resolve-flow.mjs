@@ -7,6 +7,7 @@
  *                         [--level <low|medium|high|xhigh|max>]
  *                         [--pins <key,key,...|all|n>] [--exclude <key,key,...>]
  *   node resolve-flow.mjs --validate-only
+ *   node resolve-flow.mjs --show-effective --platform <key> [flow options]
  *   node resolve-flow.mjs --help
  *
  * Outputs JSON to stdout describing plan-review, implementation, and code-review
@@ -51,6 +52,7 @@ const USAGE = `Usage:
   --level <level>             ${LEVELS.join(' | ')} (default: medium)
   --pins <list>               comma-separated provider keys, "all", or a single reviewer count
   --exclude <list>            comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
+  --show-effective            report selected config, inheritance, candidate order, and membership
   --validate-only             validate the config schema and exit
   -h, --help                  show this help
 `;
@@ -241,6 +243,74 @@ export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) 
     defaultOnly,
   });
   return config;
+}
+
+export function loadConfigDetails(scriptDir = __dirname, { defaultOnly = false } = {}) {
+  return loadSkillConfig({
+    skillRoot: path.resolve(scriptDir, '..'),
+    defaultOnly,
+  });
+}
+
+function selectedLevelKey(value, requestedLevel) {
+  if (!isPlainObject(value)) return null;
+  return selectLevel(LEVELS.filter(level => value[level] !== undefined), requestedLevel) ?? null;
+}
+
+export function describeEffectiveFlow(config, flow, {
+  configPath,
+  requestedLevel,
+  dispatchPlatforms,
+}) {
+  const inheritance = {};
+  for (const sectionName of SECTIONS) {
+    const section = config[sectionName];
+    const sectionInfo = { platforms: {} };
+    for (const [platform, rawEntry] of Object.entries(section.platforms)) {
+      const entries = Array.isArray(rawEntry) ? rawEntry : [rawEntry];
+      sectionInfo.platforms[normalizePin(platform)] = entries.map(entry => ({
+        inheritedLevelKey: selectedLevelKey(entry, requestedLevel),
+        candidates: resolvePlatformCandidates(entry, requestedLevel),
+      }));
+    }
+    if (sectionName !== 'implementation') {
+      for (const knob of REVIEW_KNOBS) {
+        sectionInfo[knob] = {
+          inheritedLevelKey: selectedLevelKey(section[knob], requestedLevel),
+          value: resolveLevelScalar(section[knob], requestedLevel),
+        };
+      }
+    }
+    inheritance[sectionName] = sectionInfo;
+  }
+
+  const candidateOrder = Object.fromEntries(REVIEW_SECTIONS.map(section => [
+    section,
+    [
+      ...flow[section].targets.map(target => ({ ...target, disposition: 'target' })),
+      ...flow[section].reserves.map(target => ({ ...target, disposition: 'reserve' })),
+    ],
+  ]));
+  const reviewPlatforms = [...reviewSectionKeys(config)].sort();
+  const dispatchSet = new Set(dispatchPlatforms.keys);
+  const missingFromDispatch = reviewPlatforms.filter(platform => !dispatchSet.has(platform));
+  return {
+    configPath,
+    requestedLevel,
+    effectiveLevel: flow.diagnostics.effectiveLevel,
+    inheritance,
+    candidateOrder,
+    implementation: flow.implementation,
+    exclusions: flow.diagnostics.excluded,
+    reserves: Object.fromEntries(REVIEW_SECTIONS.map(section => [section, flow[section].reserves])),
+    crossConfigMembership: {
+      dispatchConfigPath: dispatchPlatforms.path,
+      dispatchPlatforms: dispatchPlatforms.keys,
+      reviewPlatforms,
+      missingFromDispatch,
+      valid: missingFromDispatch.length === 0,
+    },
+  };
 }
 
 /**
@@ -931,6 +1001,7 @@ function parseArgs(args) {
         setExclude(value(i));
         i++;
         break;
+      case '--show-effective': opts.showEffective = true; break;
       case '--validate-only': opts.validateOnly = true; break;
       case '-h':
       case '--help': opts.help = true; break;
@@ -999,11 +1070,11 @@ async function main() {
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
-    const ignored = ['platform', 'orchestratorModel', 'level', 'pins', 'exclude'].filter(k => opts[k] !== undefined);
+    const ignored = ['platform', 'orchestratorModel', 'level', 'pins', 'exclude', 'showEffective'].filter(k => opts[k] !== undefined);
     if (ignored.length > 0) {
       process.stderr.write(
         `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
-          .map(k => (k === 'orchestratorModel' ? '--orchestrator-model' : `--${k}`))
+          .map(k => (k === 'orchestratorModel' ? '--orchestrator-model' : k === 'showEffective' ? '--show-effective' : `--${k}`))
           .join(', ')}\n`
       );
       process.exit(1);
@@ -1039,9 +1110,14 @@ async function main() {
     );
     process.exit(1);
   }
-  const configProblems = validateConfig(config, { dispatchPlatforms });
-  if (configProblems.length > 0) {
-    process.stderr.write(`Invalid config:\n- ${configProblems.join('\n- ')}\n`);
+  const schemaProblems = validateConfig(config);
+  if (schemaProblems.length > 0) {
+    process.stderr.write(`Invalid config:\n- ${schemaProblems.join('\n- ')}\n`);
+    process.exit(1);
+  }
+  const membershipProblems = validateConfig(config, { dispatchPlatforms }).slice(schemaProblems.length);
+  if (!opts.showEffective && membershipProblems.length > 0) {
+    process.stderr.write(`Invalid config:\n- ${membershipProblems.join('\n- ')}\n`);
     process.exit(1);
   }
   // parsePins throws on an invalid count (below 1, unsafe) or a count mixed with anything
@@ -1094,13 +1170,25 @@ async function main() {
 
   let result;
   try {
-    result = resolveFlow({ ...opts, orchestratorModel, livenessSource, dispatchPlatforms }, liveness, config);
+    result = resolveFlow({
+      ...opts,
+      orchestratorModel,
+      livenessSource,
+      dispatchPlatforms: opts.showEffective ? null : dispatchPlatforms,
+    }, liveness, config);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
   }
 
-  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  const output = opts.showEffective
+    ? describeEffectiveFlow(config, result, {
+        configPath: loadConfigDetails().path,
+        requestedLevel: opts.level ?? 'medium',
+        dispatchPlatforms,
+      })
+    : result;
+  process.stdout.write(JSON.stringify(output, null, 2) + '\n');
 }
 
 // Run main only when invoked directly

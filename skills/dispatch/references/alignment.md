@@ -85,26 +85,26 @@ code-review fixes, and report to the user. Orchestrated reviews use handed-over 
 targets, return disputes without user escalation, leave code fixes to the orchestrator, and skip
 their own user report. Both modes adjudicate and log every actionable claim.
 
-### Target → Flag Mapping (Orchestrated)
+### Target Transport (Orchestrated)
 
-Map an `implement-dispatch` target to:
-`dispatch --provider <platform> [-m <model>] [-e <effort>] [--metrics-file "<metrics>"] --response-schema-file "<schema>" -f "<artifact>" --prompt-file "<prompt>"`.
-The review skill supplies the schema; unsupported providers are unavailable.
-- Include `-m` and `-e` only when specified in the target entry.
+Write the ordered targets and reserves to a temporary manifest and invoke:
+`dispatch --batch-file "<manifest>" --response-schema-file "<schema>" -f "<artifact>" --prompt-file "<prompt>"`.
+The review skill supplies the schema; unsupported providers are unavailable. The dispatcher
+launches targets in parallel, allocates each reserve at most once, preserves manifest order in its
+result envelope, and removes the manifest.
 - Preserve `candidateId` from the resolved flow. For round `n`, derive
   `sourceKey=<phase>:R<n>:<platform>:<candidate-index>` by inserting `R<n>` into `candidateId`;
   source keys are artifact identity and never metrics filenames.
-- When a target omits `model`, omit `-m` and let dispatch select the configured model for that
-  platform; do not use `--no-config`, because effective membership and configured defaults are
-  authoritative for pinned runs.
-- Standalone count/`all` targets come from `dispatch --list-targets`; map each to
-  `dispatch --provider <target.platform> --candidate-index <target.candidateIndex>` so model,
-  effort, sandbox, and omitted values remain exact.
+- A manifest entry uses `candidateIndex`, or explicit `model`/`effort`, never both. An omitted
+  model or effort delegates that value to the provider's configured candidate.
+- Standalone count/`all` targets come from `dispatch --list-targets`; launch pinned
+  `--provider <platform> --candidate-index <index>` processes. Batch manifests are orchestrated
+  transport only.
 - Redirect execution logs to OS temp (workspace logs violate delegate read-only checks).
 
 ### Reserve Substitution (Orchestrated)
 
-Pinned targets substitute via the `reserves` list rather than cascading:
+The batch dispatcher substitutes failed targets through the `reserves` list:
 1. **Trigger**: Target dispatch ends without a report for reasons other than `INTEGRITY_VIOLATION` (e.g. `[auth]`, `[quota]`, non-zero exit, empty output).
 2. **Usability**: Dispatch the first unused reserve in resolved candidate order whose `(platform, model, effort)` tuple was not already dispatched in this wave.
 3. **Fallback**: Repeat substitution until a report is produced or reserves exhaust, then use the

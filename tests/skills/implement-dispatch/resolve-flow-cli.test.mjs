@@ -220,6 +220,32 @@ describe('resolve-flow CLI', () => {
     assert.equal(flow.diagnostics.effectiveLevel, 'xhigh');
   });
 
+  it('--show-effective reports config, inheritance, order, reserves, and membership', () => {
+    const { status, stdout, stderr } = runOnDefaults([
+      '--show-effective',
+      '--platform',
+      'claude',
+      '--level',
+      'high',
+    ]);
+    assert.equal(status, 0, stderr);
+    const report = JSON.parse(stdout);
+    assert.match(report.configPath, /config\.default\.jsonc$/);
+    assert.equal(report.requestedLevel, 'high');
+    assert.equal(report.effectiveLevel, 'high');
+    assert.ok(report.inheritance['plan-review'].maxRounds.inheritedLevelKey);
+    assert.ok(Array.isArray(report.candidateOrder['code-review']));
+    assert.ok(Array.isArray(report.reserves['code-review']));
+    assert.equal(report.crossConfigMembership.valid, true);
+    assert.deepEqual(report.exclusions, []);
+  });
+
+  it('refuses --show-effective with --validate-only', () => {
+    const { status, stderr } = run('--show-effective', '--validate-only');
+    assert.equal(status, 1);
+    assert.match(stderr, /cannot be combined with: --show-effective/);
+  });
+
   it('accepts --flag=value form equivalently to space-separated flags', () => {
     const { status, stdout } = run('--platform=claude', '--level=low');
     assert.equal(status, 0);
@@ -585,6 +611,28 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
       assert.doesNotMatch(stderr, /implementation\.platforms\."copilot"/);
       assert.match(stderr, /code-review\.platforms\."opencode"/);
       assert.match(stderr, /exits PLATFORM_NOT_CONFIGURED; add it there or remove it here/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('--show-effective reports cross-config membership mismatches', () => {
+    const { dir, skillDir } = setup(ONLY_CLAUDE);
+    try {
+      const { status, stdout, stderr } = run(skillDir, [
+        '--show-effective',
+        '--platform',
+        'claude',
+        '--level',
+        'high',
+      ]);
+      assert.equal(status, 0, stderr);
+      const report = JSON.parse(stdout);
+      assert.equal(report.crossConfigMembership.valid, false);
+      assert.deepEqual(
+        report.crossConfigMembership.missingFromDispatch,
+        ['agy', 'copilot', 'opencode'],
+      );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

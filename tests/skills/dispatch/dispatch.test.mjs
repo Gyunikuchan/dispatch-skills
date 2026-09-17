@@ -1540,6 +1540,24 @@ describe('dispatch --validate-only CLI', () => {
     assert.match(res.stderr || '', /separate inspection modes/);
   });
 
+  it('rejects --doctor together with another inspection mode', () => {
+    const res = run(['--doctor', '--validate-only']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /separate inspection modes/);
+  });
+
+  it('rejects --batch-file combined with a single-target selector', () => {
+    const res = run(['--batch-file', path.join(os.tmpdir(), 'missing-batch.json'), '--provider', 'claude', 'Review']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /--batch-file cannot be combined with: --provider/);
+  });
+
+  it('rejects --batch-file combined with --no-config', () => {
+    const res = run(['--batch-file', path.join(os.tmpdir(), 'missing-batch.json'), '--no-config', 'Review']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /--batch-file cannot be combined with: --no-config/);
+  });
+
   it('does not treat inspection flags after -- as dispatch flags', () => {
     const res = run(['--validate-only', '--', '--list-platforms']);
     assert.equal(res.status, 1);

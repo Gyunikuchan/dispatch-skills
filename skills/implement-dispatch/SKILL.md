@@ -71,7 +71,9 @@ run directory is initialized.
    node <skills-dir>/implement-dispatch/scripts/resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>] [--pins <pins>] [--exclude <keys>]
    ```
 
-   Use the orchestrator provider key for `--platform`, pass `--orchestrator-model` only when explicitly requested, and save the JSON output as `flow`. Treat resolver integrity and configuration diagnostics as terminal and relay them verbatim.
+   Add `--show-effective` for config, inheritance, ordering, reserve, exclusion, and membership
+   diagnostics. Use the orchestrator key for `--platform`; pass its model only when explicitly
+   requested. Save the JSON as `flow`; relay terminal diagnostics verbatim.
 3. State the resolved flow immediately without asking for confirmation:
    `Resolved flow: level <level>; plan review <on|off> — <platform/model or native fallback>,
    rounds <n>, consensus <on|off>; code review <on|off> — <platform/model or native fallback>,
@@ -85,9 +87,9 @@ resolved flow is disclosed.
 
 Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
-1. Start the first orchestrated wave with `roundId=plan-review:R1`, `Review Mode: full`, the plan
-   path, `targets`/`reserves` (including `candidateId`), `consensus: true|false`,
-   `Review Scope: Full review`, one unique metrics path per dispatch, and the plan budget.
+1. Start `roundId=plan-review:R1` in full mode with the plan, target/reserve candidate IDs,
+   `consensus: true|false`, full scope, unique metrics paths, and budget. Execute one temporary
+   `dispatch --batch-file`.
 2. Await every outcome. Adjudicate claims, apply accepted changes, then append the enriched finding
    entries and structured source map under `## Review Findings & Resolutions`.
 3. While the [Review contract](#review-contract) keeps the loop live, generate a bounded view and
@@ -144,11 +146,10 @@ Skip this step when `dispatch-plan-review` is absent or `flow['plan-review'].max
 Skip Steps 7–9 when `dispatch-code-review` is absent or `flow['code-review'].maxRounds === 0`. If enabled with empty `targets`, run one in-process read-only fallback for the first wave and record the substitution.
 
 1. Ensure the walkthrough exists; if missing, author it from the [walkthrough template](../dispatch-code-review/references/walkthrough-template.md), run host verification, and record the result.
-2. If the plan contains review rounds, generate a bounded plan projection with
-   `build-review-view.mjs`; never attach its canonical source-map session handles. Start the first
-   orchestrated wave with `roundId=code-review:R1`, `Review Mode: full`, walkthrough/bounded-plan
-   paths, `targets`/`reserves` including `candidateId`, `consensus: true|false`,
-   `Review Scope: Full review`, one unique metrics path per dispatch, and the code budget.
+2. If the plan has review rounds, generate its bounded projection without canonical source-map
+   handles. Start `code-review:R1` in full mode with walkthrough/plan views, target/reserve
+   candidate IDs, consensus, full scope, unique metrics paths, and budget. Execute one temporary
+   `dispatch --batch-file`.
 3. Await every target and reserve outcome before adjudicating.
 
 **Done when:** the walkthrough is attached, every launched review dispatch is settled, and round-one claims are ready for Step 8.

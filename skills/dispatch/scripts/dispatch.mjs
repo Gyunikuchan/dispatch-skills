@@ -19,6 +19,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   formatCliError,
@@ -136,6 +137,261 @@ const PROVIDER_DISPLAY_NAMES = {
 
 const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
 const MAX_RESPONSE_SCHEMA_BYTES = 64 * 1024;
+const MAX_BATCH_FILE_BYTES = 64 * 1024;
+const BATCH_ENTRY_FIELDS = new Set([
+  'roundId',
+  'candidateId',
+  'platform',
+  'candidateIndex',
+  'model',
+  'effort',
+  'metricsFile',
+]);
+
+function sourceKeyFor(entry) {
+  const candidateIndex = entry.candidateIndex ?? Number(entry.candidateId.split(':').at(-1));
+  return `${entry.roundId}:${entry.platform}:${candidateIndex}`;
+}
+
+function validateBatchEntry(entry, where, config, sourceKeys, tuples, metricsFiles, runDirs) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error(`${where} must be an object.`);
+  }
+  for (const key of Object.keys(entry)) {
+    if (!BATCH_ENTRY_FIELDS.has(key)) throw new Error(`${where} contains unsupported field "${key}".`);
+  }
+  for (const key of ['roundId', 'candidateId', 'platform', 'metricsFile']) {
+    if (typeof entry[key] !== 'string' || entry[key].length === 0) {
+      throw new Error(`${where}.${key} must be a non-empty string.`);
+    }
+  }
+  if (!/^[a-z][a-z0-9-]*:R[1-9]\d*$/.test(entry.roundId)) {
+    throw new Error(`${where}.roundId must match <phase>:R<n>.`);
+  }
+  if (!/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:(0|[1-9]\d*)$/.test(entry.candidateId)) {
+    throw new Error(`${where}.candidateId must match <phase>:<platform>:<candidate-index>.`);
+  }
+  const [candidatePhase, candidatePlatform, candidateIndexText] = entry.candidateId.split(':');
+  if (
+    candidatePhase !== entry.roundId.split(':')[0] ||
+    candidatePlatform !== entry.platform
+  ) {
+    throw new Error(`${where}.candidateId must match roundId and platform.`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(config.platforms, entry.platform)) {
+    throw new Error(`${where}.platform "${entry.platform}" is not configured.`);
+  }
+  const hasCandidateIndex = entry.candidateIndex !== undefined;
+  const hasExplicitHints = entry.model !== undefined || entry.effort !== undefined;
+  if (hasCandidateIndex === hasExplicitHints) {
+    throw new Error(`${where} must use either candidateIndex or model/effort, never both.`);
+  }
+  if (hasCandidateIndex && (!Number.isSafeInteger(entry.candidateIndex) || entry.candidateIndex < 0)) {
+    throw new Error(`${where}.candidateIndex must be a non-negative safe integer.`);
+  }
+  if (hasCandidateIndex && entry.candidateIndex !== Number(candidateIndexText)) {
+    throw new Error(`${where}.candidateIndex must match candidateId.`);
+  }
+  if (hasCandidateIndex) {
+    const configured = config.platforms[entry.platform];
+    const candidates = Array.isArray(configured) ? configured : [configured];
+    if (entry.candidateIndex >= candidates.length) {
+      throw new Error(
+        `${where}.candidateIndex ${entry.candidateIndex} is out of range for platform "${entry.platform}".`,
+      );
+    }
+  }
+  for (const key of ['model', 'effort']) {
+    if (entry[key] !== undefined && (typeof entry[key] !== 'string' || entry[key].length === 0)) {
+      throw new Error(`${where}.${key} must be a non-empty string when provided.`);
+    }
+  }
+
+  const sourceKey = sourceKeyFor(entry);
+  if (sourceKeys.has(sourceKey)) throw new Error(`${where} duplicates source key "${sourceKey}".`);
+  sourceKeys.add(sourceKey);
+  const tuple = JSON.stringify([
+    entry.platform,
+    entry.candidateIndex ?? null,
+    entry.model ?? null,
+    entry.effort ?? null,
+  ]);
+  if (tuples.has(tuple)) throw new Error(`${where} duplicates a target tuple.`);
+  tuples.add(tuple);
+
+  const destination = prepareMetricsDestination(entry.metricsFile);
+  if (metricsFiles.has(destination.target)) {
+    throw new Error(`${where}.metricsFile duplicates another batch metrics destination.`);
+  }
+  metricsFiles.add(destination.target);
+  runDirs.add(destination.runDir);
+  return { ...entry, sourceKey };
+}
+
+export function loadBatchFile(file, config) {
+  if (!path.isAbsolute(file)) throw new Error('--batch-file must be an absolute path.');
+  const resolved = path.resolve(file);
+  const inputStat = fs.lstatSync(resolved);
+  if (inputStat.isSymbolicLink()) throw new Error('--batch-file must not be a symbolic link.');
+  const tempRoot = fs.realpathSync(os.tmpdir());
+  const realFile = fs.realpathSync(resolved);
+  if (realFile !== tempRoot && !realFile.startsWith(`${tempRoot}${path.sep}`)) {
+    throw new Error('--batch-file must be located under the OS temp directory.');
+  }
+  const stat = fs.lstatSync(realFile);
+  if (!stat.isFile()) throw new Error('--batch-file must be a regular file.');
+  if (stat.size > MAX_BATCH_FILE_BYTES) throw new Error('--batch-file exceeds 64 KiB.');
+
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(realFile, 'utf8'));
+  } catch (err) {
+    throw new Error(`--batch-file contains invalid JSON: ${err.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('--batch-file must contain one JSON object.');
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key !== 'targets' && key !== 'reserves') {
+      throw new Error(`--batch-file contains unsupported field "${key}".`);
+    }
+  }
+  if (!Array.isArray(parsed.targets) || parsed.targets.length === 0) {
+    throw new Error('--batch-file.targets must contain at least one target.');
+  }
+  if (parsed.reserves !== undefined && !Array.isArray(parsed.reserves)) {
+    throw new Error('--batch-file.reserves must be an array.');
+  }
+
+  const sourceKeys = new Set();
+  const tuples = new Set();
+  const metricsFiles = new Set();
+  const runDirs = new Set();
+  const targets = parsed.targets.map((entry, index) =>
+    validateBatchEntry(entry, `targets[${index}]`, config, sourceKeys, tuples, metricsFiles, runDirs));
+  const reserves = (parsed.reserves ?? []).map((entry, index) =>
+    validateBatchEntry(entry, `reserves[${index}]`, config, sourceKeys, tuples, metricsFiles, runDirs));
+  if (runDirs.size !== 1) {
+    throw new Error('Every batch metricsFile must belong to the same initialized run directory.');
+  }
+  return { targets, reserves, path: realFile };
+}
+
+function batchRecord(entry, status, result = null, error = null, substitutesFor = null) {
+  return {
+    roundId: entry.roundId,
+    candidateId: entry.candidateId,
+    sourceKey: entry.sourceKey,
+    platform: entry.platform,
+    candidateIndex: entry.candidateIndex ?? Number(entry.candidateId.split(':').at(-1)),
+    status,
+    session: result?.session ?? null,
+    report: result?.stdout ?? null,
+    failureKind:
+      result?.failureKind ??
+      error?.failureKind ??
+      error?.code ??
+      (result && result.exitCode !== 0 ? 'non-zero-exit' : null),
+    substitutesFor,
+    truncated: result?.truncated ?? null,
+    logFile: result?.logFile ?? null,
+    metricsError: null,
+  };
+}
+
+async function runBatchEntry(entry, options, config, substitutesFor = null) {
+  let result;
+  let error;
+  try {
+    result = await dispatchTask({
+      ...options,
+      prompt: options.prompt,
+      provider: entry.platform,
+      candidateIndex: entry.candidateIndex ?? null,
+      model: entry.model ?? null,
+      effort: entry.effort ?? null,
+      metricsFile: null,
+      config,
+      configPath: options.configPath,
+    });
+  } catch (err) {
+    error = err;
+  }
+  const record = batchRecord(entry, 'failed', result, error, substitutesFor);
+  try {
+    recordDispatchMetrics(entry.metricsFile, result, error);
+  } catch (metricsError) {
+    record.metricsError = metricsError.message;
+  }
+  if (error) return { ok: false, terminal: error.code === 'INTEGRITY_VIOLATION', record };
+  const ok = result.exitCode === 0 && !isEmptyResult(result);
+  return {
+    ok,
+    terminal: false,
+    record: { ...record, status: ok ? 'ok' : 'failed' },
+  };
+}
+
+export async function dispatchBatch(batch, options, config) {
+  const reserves = [...batch.reserves];
+  const orchestrator = normalizeOrchestrator(options.orchestrator || detectOrchestrator());
+  const outcomes = await Promise.all(batch.targets.map(entry => runBatchEntry(entry, options, config)));
+  const records = [];
+  const failures = [];
+  let unresolved = 0;
+  for (const outcome of outcomes) {
+    if (outcome.ok) {
+      records.push(outcome.record);
+      continue;
+    }
+    if (outcome.terminal) throw Object.assign(new Error('Batch dispatch stopped on an integrity failure.'), { code: 'INTEGRITY_VIOLATION' });
+    failures.push(outcome.record);
+    if (outcome.record.platform === orchestrator) {
+      unresolved++;
+      continue;
+    }
+    let replacement = outcome;
+    while (!replacement.ok && reserves.length > 0) {
+      const reserve = reserves.shift();
+      replacement = await runBatchEntry(reserve, options, config, outcome.record.sourceKey);
+      if (replacement.terminal) {
+        throw Object.assign(new Error('Batch dispatch stopped on an integrity failure.'), { code: 'INTEGRITY_VIOLATION' });
+      }
+      if (!replacement.ok) failures.push(replacement.record);
+    }
+    if (replacement.ok) records.push(replacement.record);
+    else unresolved++;
+  }
+  const logFile = [...records, ...failures].find(record => record.logFile)?.logFile;
+  return {
+    targets: records,
+    failures,
+    logDir: logFile ? path.dirname(logFile) : null,
+    complete: unresolved === 0,
+  };
+}
+
+const PROVIDER_CORRECTIVE_COMMANDS = {
+  claude: 'claude auth login',
+  agy: 'agy --help',
+  copilot: 'gh auth login',
+  opencode: 'opencode auth login',
+};
+
+export async function buildDoctorReport(config, configPath) {
+  const targets = resolveConfiguredTargets(config);
+  const health = await Promise.all(Object.keys(config.platforms).map(async platform => {
+    const reachable = await isProviderAvailable(platform);
+    return {
+      platform,
+      reachable,
+      sandboxSupported: SANDBOX_SUPPORTED_PROVIDERS.includes(platform),
+      authentication: 'not safely detectable without a provider request',
+      correctiveCommand: reachable ? null : PROVIDER_CORRECTIVE_COMMANDS[platform],
+    };
+  }));
+  return { configPath, targets, health };
+}
 
 export function normalizeResponseSchema(value, source = 'response schema') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -532,37 +788,41 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 
 export async function main() {
   const options = parseCommonArgs(process.argv, {
-    booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets'],
-    valueFlags: ['--response-schema-file'],
+    booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
+    valueFlags: ['--response-schema-file', '--batch-file'],
   });
-  const { noConfig, validateOnly, listPlatforms, listTargets } = parseDispatchFlags(process.argv);
+  const { noConfig, validateOnly, listPlatforms, listTargets, doctor } = parseDispatchFlags(process.argv);
   const { values: dispatchValues } = parseRunnerModeArgs(process.argv.slice(2), {
-    valueFlags: ['--response-schema-file'],
-    aliases: { '--response-schema-file': 'responseSchemaFile' },
+    valueFlags: ['--response-schema-file', '--batch-file'],
+    aliases: { '--response-schema-file': 'responseSchemaFile', '--batch-file': 'batchFile' },
   });
   const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
+  const batchFile = dispatchValues.batchFile ?? null;
 
   if (options.help) {
     printHelp();
     process.exit(0);
   }
 
-  if ([validateOnly, listPlatforms, listTargets].filter(Boolean).length > 1) {
-    console.error('Error: --validate-only, --list-platforms, and --list-targets are separate inspection modes; run one at a time.');
+  if ([validateOnly, listPlatforms, listTargets, doctor].filter(Boolean).length > 1) {
+    console.error('Error: --validate-only, --list-platforms, --list-targets, and --doctor are separate inspection modes; run one at a time.');
     process.exit(1);
   }
 
-  if (validateOnly || listPlatforms || listTargets) {
-    const mode = validateOnly ? '--validate-only' : listPlatforms ? '--list-platforms' : '--list-targets';
+  if (validateOnly || listPlatforms || listTargets || doctor) {
+    const mode = validateOnly ? '--validate-only' : listPlatforms ? '--list-platforms' : listTargets ? '--list-targets' : '--doctor';
     const purpose = validateOnly
       ? 'checks the dispatch config schema alone'
       : listPlatforms
         ? 'prints the effective config\'s platform keys alone'
-        : 'prints the effective config\'s ordered targets';
+        : listTargets
+          ? 'prints the effective config\'s ordered targets'
+          : 'reports the effective config, candidates, and provider health';
     // Refuse the combination rather than silently ignoring flags the user believes were
     // honored: both inspection modes read the config and nothing else.
     let ignored = collectRunFlags(options, noConfig);
     if (responseSchemaFile) ignored.push('--response-schema-file');
+    if (batchFile) ignored.push('--batch-file');
     if (listTargets) {
       ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
     }
@@ -599,6 +859,20 @@ export async function main() {
       console.log(JSON.stringify(resolveConfiguredTargets(loaded.config, orchestrator, orchestratorModel), null, 2));
       return;
     }
+    if (doctor) {
+      const report = await buildDoctorReport(loaded.config, loaded.path);
+      console.log(`Effective config: ${report.configPath}`);
+      console.log('Configured candidates:');
+      for (const [index, target] of report.targets.entries()) {
+        console.log(`  ${index + 1}. ${target.platform}[${target.candidateIndex}] model=${target.model ?? 'provider default'} effort=${target.effort ?? 'provider default'}`);
+      }
+      console.log('Provider health:');
+      for (const item of report.health) {
+        console.log(`  ${item.platform}: ${item.reachable ? 'reachable' : 'unreachable'}; sandbox=${item.sandboxSupported ? 'supported' : 'unsupported'}; auth/quota=${item.authentication}`);
+        if (item.correctiveCommand) console.log(`    Corrective command: ${item.correctiveCommand}`);
+      }
+      return;
+    }
     console.log('Config is valid.');
     return;
   }
@@ -617,6 +891,38 @@ export async function main() {
   let metricsReady = false;
   let result;
   try {
+    if (batchFile) {
+      const conflicts = [];
+      if (options.provider !== null) conflicts.push('--provider');
+      if (options.candidateIndex !== null) conflicts.push('--candidate-index');
+      if (options.model !== null) conflicts.push('--model');
+      if (options.effort !== null) conflicts.push('--effort');
+      if (options.metricsFile !== null) conflicts.push('--metrics-file');
+      if (noConfig) conflicts.push('--no-config');
+      if (conflicts.length > 0) {
+        throw new Error(`--batch-file cannot be combined with: ${conflicts.join(', ')}`);
+      }
+      const loaded = loadDispatchConfig();
+      const problems = validateDispatchConfig(loaded.config);
+      if (problems.length > 0) {
+        throw new Error(`Invalid dispatch config (${loaded.path}):\n- ${problems.join('\n- ')}`);
+      }
+      const batch = loadBatchFile(batchFile, loaded.config);
+      let envelope;
+      try {
+        envelope = await dispatchBatch(batch, {
+          ...options,
+          prompt: finalPrompt,
+          responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
+          configPath: loaded.path,
+        }, loaded.config);
+      } finally {
+        fs.rmSync(batch.path, { force: true });
+      }
+      process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+      process.exit(envelope.complete ? 0 : 1);
+      return;
+    }
     if (options.metricsFile) {
       prepareMetricsDestination(options.metricsFile);
       metricsReady = true;
@@ -695,6 +1001,7 @@ Options:
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --metrics-file <path>       Write one content-free terminal slot record (absolute initialized path)
+  --batch-file <path>         Execute caller-resolved targets/reserves from a temporary JSON file
   --response-schema-file <path>
                               Require provider-native structured output matching this JSON Schema
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
@@ -705,6 +1012,7 @@ Options:
   --validate-only             Validate the dispatch config schema and exit (rejects every other run flag)
   --list-platforms            Print the effective config's platform keys in config order, one per line, and exit
   --list-targets              Print configured targets in count/all selection order as JSON and exit
+  --doctor                    Validate config and report effective candidates and provider health
   --json                      Request structured JSON output (opencode provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
@@ -717,14 +1025,16 @@ function parseDispatchFlags(argv) {
   let validateOnly = false;
   let listPlatforms = false;
   let listTargets = false;
+  let doctor = false;
   for (const arg of argv.slice(2)) {
     if (arg === '--') break;
     if (arg === '--no-config') noConfig = true;
     else if (arg === '--validate-only') validateOnly = true;
     else if (arg === '--list-platforms') listPlatforms = true;
     else if (arg === '--list-targets') listTargets = true;
+    else if (arg === '--doctor') doctor = true;
   }
-  return { noConfig, validateOnly, listPlatforms, listTargets };
+  return { noConfig, validateOnly, listPlatforms, listTargets, doctor };
 }
 
 /** Names the run flags set on `options`, for an inspection mode to reject as unhonored. */

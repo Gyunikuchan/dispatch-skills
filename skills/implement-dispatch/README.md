@@ -117,6 +117,18 @@ implementation subagent, create `config.local.jsonc` or `config.jsonc` beside th
 [`config.default.jsonc`](config.default.jsonc) as the schema reference. Provider credentials,
 models, fallback, and shared runner settings remain in `dispatch`.
 
+Inspect the resolved policy before a run with:
+
+```bash
+node scripts/resolve-flow.mjs --show-effective --platform copilot --level high
+```
+
+The workflow matrix intentionally differs from `dispatch`'s standalone defaults: this skill
+chooses phase- and level-specific reviewers plus a native implementation model; `dispatch` owns
+general cascade membership and provider defaults. A level key resolves by exact match, otherwise
+the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: B }`, `low` uses
+`medium`, `high` uses `medium`, and `max` uses `max`.
+
 > [!NOTE]
 > Configuration files replace one another rather than merge. Copy the complete default
 > configuration before editing it, and keep every review provider enabled in `dispatch` as well.
