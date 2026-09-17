@@ -119,13 +119,14 @@ Use this disclosed rubric for focused or high-risk reviews.
 
 ## What to Expect
 
-1. The skill resolves or authors a walkthrough and attaches any supplied plan or context.
+1. The owner preparation script resolves or deterministically authors a walkthrough, fingerprints
+   the selected diff, and attaches any supplied plan or context.
 2. It inspects the relevant diff and checks the repository's verification guidance.
 3. It sends the review to read-only delegates through `dispatch`.
 4. It verifies each actionable finding against the cited code before accepting it.
 5. When run directly, it applies accepted fixes that are safe to make automatically, reruns
    verification, and records unresolved items as follow-ups.
-6. It records the review round in the walkthrough and reports the result.
+6. It records the review round, checkpoints settled freshness metadata, and reports the result.
 
 > [!NOTE]
 > A delegate's report is a claim, not a verdict. The skill checks the cited lines and surrounding
@@ -148,6 +149,8 @@ When using an orchestrating workflow, configure review breadth and rounds in its
 
 - **A walkthrough does not match the current diff:** the skill pauses and asks whether to reuse it,
   overwrite it, or create a fresh one.
+- **Preparation fails:** `scripts/prepare-review.mjs --request <json-file|->` validates both skill
+  manifests, explicit ranges, artifact freshness, and temporary dispatch inputs before launch.
 - **You want a narrower review:** add a concrete focus area to the command, such as
   `Focus on authorization and tenant isolation`.
 - **You want another perspective:** pin multiple providers with `(claude,copilot)` or use `(all)`.

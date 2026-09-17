@@ -1,0 +1,139 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, it } from 'node:test';
+
+import {
+  advanceInvocationState,
+  buildReviewView,
+  completeInvocationState,
+  createInvocationState,
+  readArtifact,
+  readJsonRequest,
+  requireNode22,
+  sha256,
+  writeArtifactMetadata,
+} from '../../../skills/dispatch/scripts/review-preparation.mjs';
+
+const tempDirs = [];
+const makeDir = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-preparation-test-'));
+  tempDirs.push(dir);
+  return dir;
+};
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+describe('review preparation primitives', () => {
+  it('requires Node 22 and hashes normalized text deterministically', () => {
+    assert.doesNotThrow(() => requireNode22('22.0.0'));
+    assert.throws(() => requireNode22('21.9.0'), /Node\.js 22\+/);
+    assert.equal(sha256('e\u0301\r\n'), sha256('\u00e9\n'));
+  });
+
+  it('loads bounded request files and rejects non-objects', () => {
+    const dir = makeDir();
+    const request = path.join(dir, 'request.json');
+    fs.writeFileSync(request, '{"mode":"standalone"}');
+    assert.deepEqual(readJsonRequest(request), { mode: 'standalone' });
+    fs.writeFileSync(request, '[]');
+    assert.throws(() => readJsonRequest(request), /one JSON object/);
+    fs.writeFileSync(request, 'x'.repeat(64 * 1024 + 1));
+    assert.throws(() => readJsonRequest(request), /exceeds 64 KiB/);
+  });
+
+  it('round-trips metadata without changing the artifact body', () => {
+    const dir = makeDir();
+    const artifact = path.join(dir, 'plan.md');
+    const body = '# Plan\r\n\r\n## Proposed Changes\r\n\r\nText.\r\n';
+    fs.writeFileSync(artifact, body);
+    const before = readArtifact(artifact);
+    writeArtifactMetadata(artifact, {
+      schemaVersion: 1,
+      kind: 'plan',
+      slug: 'sample',
+      invocationId: 'invocation-1',
+      contentHash: sha256('body'),
+      sectionHashes: { 'Proposed Changes': sha256('section') },
+      reviewedAt: '2026-09-17T00:00:00.000Z',
+    }, { expectedDocumentHash: before.documentHash });
+    const after = readArtifact(artifact, { kind: 'plan', slug: 'sample' });
+    assert.equal(after.body, body);
+    assert.equal(after.metadata.kind, 'plan');
+    assert.throws(
+      () => writeArtifactMetadata(artifact, after.metadata, { expectedDocumentHash: before.documentHash }),
+      /changed before metadata checkpoint/,
+    );
+  });
+
+  it('rejects malformed and incompatible metadata', () => {
+    const dir = makeDir();
+    const artifact = path.join(dir, 'plan.md');
+    fs.writeFileSync(artifact, '---\n{"dispatch":{"schemaVersion":2,"kind":"plan","slug":"sample"}}\n---\n# Plan\n');
+    assert.throws(() => readArtifact(artifact, { kind: 'plan' }), /Unsupported.*schemaVersion/);
+    fs.writeFileSync(artifact, '---\n{bad}\n---\n# Plan\n');
+    assert.throws(() => readArtifact(artifact), /malformed JSON/);
+    fs.writeFileSync(artifact, [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"plan","slug":"sample","invocationId":"invocation-1","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sectionHashes":{},"reviewedAt":"2026-02-30T00:00:00Z"}}',
+      '---',
+      '# Plan',
+    ].join('\n'));
+    assert.throws(() => readArtifact(artifact), /canonical UTC|must not be empty/);
+  });
+
+  it('builds metadata-free bounded views', () => {
+    const artifact = [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"plan","slug":"sample","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}',
+      '---',
+      '# Plan',
+      '',
+      '## Proposed Changes',
+      'Text.',
+      '',
+      '## Review Findings & Resolutions',
+      '### Round 1',
+      '- *No actionable findings.*',
+    ].join('\n');
+    const view = buildReviewView(artifact, { canonicalPath: 'plan.md', nextRound: 2 });
+    assert.match(view.contents, /# Plan/);
+    assert.doesNotMatch(view.contents, /schemaVersion|dispatch/);
+  });
+
+  it('consumes invocation generations exactly once', () => {
+    const dir = makeDir();
+    const artifact = path.join(dir, 'plan.md');
+    fs.writeFileSync(artifact, '# Plan\n');
+    const created = createInvocationState({
+      kind: 'plan',
+      artifactPath: artifact,
+      snapshot: { contentHash: sha256('one') },
+      expectedSourceKeys: ['plan-review:R1:claude:0'],
+    });
+
+    tempDirs.push(created.cleanupPath);
+    const advanced = advanceInvocationState(created.context, { round: 1 });
+    assert.equal(advanced.context.generation, 1);
+    assert.throws(() => advanceInvocationState(created.context), /stale, replayed, forked/);
+    completeInvocationState(advanced.context);
+    assert.throws(() => advanceInvocationState(advanced.context), /already completed/);
+  });
+
+  it('validates an invocation path before creating its lock', () => {
+    const dir = makeDir();
+    const outside = path.join(dir, 'forged.json');
+    const lock = `${outside}.lock`;
+    assert.throws(() => advanceInvocationState({
+      schemaVersion: 1,
+      invocationId: 'forged-invocation',
+      statePath: outside,
+      generation: 0,
+      token: 'x',
+    }), /statePath must be beneath OS temp|statePath is invalid/);
+    assert.equal(fs.existsSync(lock), false);
+  });
+});

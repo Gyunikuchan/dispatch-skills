@@ -58,6 +58,32 @@ const document = [
 ].join('\n');
 
 describe('resolution log scanner', () => {
+  it('keeps semantic and log state identical with dispatch metadata', () => {
+    const base = [
+      '# Plan',
+      '',
+      '## Proposed Changes',
+      'Text.',
+      '',
+      '## Review Findings & Resolutions',
+      '### Round 1',
+      '- **[Accepted]** § A — test: issue → fixed',
+    ].join('\n');
+    const metadata = [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"plan","slug":"sample","invocationId":"invocation-1","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sectionHashes":{"Proposed Changes":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"reviewedAt":"2026-09-17T00:00:00Z"}}',
+      '---',
+      base,
+    ].join('\n');
+    const plain = scanResolutionLog(base);
+    const enriched = scanResolutionLog(metadata);
+    assert.equal(enriched.semanticBody, plain.semanticBody);
+    assert.equal(enriched.canonicalLogHash, plain.canonicalLogHash);
+    assert.deepEqual(enriched.rounds, plain.rounds);
+    assert.throws(() => scanResolutionLog('---\n{bad}\n---\n# Plan'), /malformed JSON/);
+    assert.throws(() => scanResolutionLog('---\n{"dispatch":{} }\n# Plan'), /unterminated frontmatter/);
+  });
+
   it('extracts semantic body, rounds, statuses, and unsettled lines', () => {
     const scan = scanResolutionLog(document);
     assert.equal(scan.rounds.length, 3);

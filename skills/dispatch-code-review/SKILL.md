@@ -1,140 +1,78 @@
 ---
 name: dispatch-code-review
-description: Get a cross-agent review of working-tree code changes, verifying every returned claim against the cited lines. Use on /dispatch-code-review, or when a diff needs a second opinion from another agent CLI.
+description: Review a selected diff, verify every claim, and apply safe accepted fixes in standalone mode.
 ---
 
 # dispatch-code-review
 
-The delegate's report is a **claim, not a verdict**. The orchestrator adjudicates every finding against the active codebase before updating the walkthrough or reporting to the user.
+The selected diff is authoritative. Verify every delegate claim against a changed line or direct
+contract locus. Shared finality and logging rules are in
+[`alignment.md`](../dispatch/references/alignment.md).
 
 ## Invocation
 
-`dispatch`'s `references/alignment.md` § Invocation is the base grammar (`/dispatch-code-review (<pins>) [<artifact path>] [<focus>]`); the artifact path here is the walkthrough (plan, if any, attaches alongside it).
-
-**Reading the trailing arguments.** The base grammar's trailing slot maps to prompt variables by shape:
-
-| Trailing text | Fills |
-|---|---|
-| Token naming an existing file or `.md` path | `<artifact path>` — identified as walkthrough or plan (by `-walkthrough.md` suffix, title, or headings); resolves the other kind in Step 1 |
-| Anything steering review focus (e.g. "focus on auth leaks") | `<User Focus Areas>` |
-| Task description or ask (e.g. "refactored session store") | `<Task Summary>` |
-
-When a walkthrough already exists, `<Task Summary>` is derived from its summary and `## Changes Made`. Set `<User Focus Areas>` to `General review` when unspecified.
-
-**Stale-walkthrough guard**: `scratch-existing` matches the branch slug at *any* date. Compare `## Changes Made` against the diff under review (working tree if dirty/untracked, otherwise merge-base-to-`HEAD` branch diff; see [references/prompt-template.md](references/prompt-template.md) § Inspect Changes). When the walkthrough does not describe that diff, stop and ask whether to overwrite it, review it as-is, or author a new one under a fresh `--slug`.
-
-## Process
-
-### 1. Assemble context and dispatch
-
-Determine the invocation mode first, per `dispatch`'s `references/alignment.md` § Invocation Modes:
-**orchestrated** when an orchestrator hands over a canonical walkthrough path plus a **targets** list,
-`roundId`, `Review Mode`, `Review Scope`, `Tool Turn Budget`, `consensus`, and optional
-`Review View Path`/ordered **reserves**. Standalone resolves context files below.
-
-Before resolving or authoring artifacts, run:
-
-```bash
-node <skills-dir>/dispatch-code-review/scripts/resolve-review-range.mjs [--range "<explicit commit/range>"]
+```text
+/dispatch-code-review (<pins>) [<plan-or-walkthrough.md>] [<summary or focus>]
 ```
 
-Use `--range` only when the user explicitly names one. Exit without authoring or dispatching when
-the result says `reviewable: false`; report its exact `No reviewable changes` message. Begin
-`<Review Scope>` with `reviewScope` unchanged. In orchestrated mode, append the handed-over scope
-after it; the deterministic Git range remains authoritative while the handover narrows review focus.
+Pins use `dispatch` grammar. Pass request text to preparation; it resolves the shared artifact
+slug and classifies unambiguous fields. For `decision-required`, ask the returned focused question
+and rerun with the decision. Legacy walkthrough mismatch keeps the overwrite / review-as-is /
+fresh-slug choice.
 
-Attach `Review View Path` when handed over, otherwise the canonical walkthrough, plus user-specified
-files, with `-f "<path>"` (forward slashes throughout). Attach `Plan Review View Path` when handed
-over; attach a canonical plan only when it has no review rounds or source map. Views are delegate
-input only; edit and append resolutions only at the canonical walkthrough path.
+## Prepare and launch
 
-Resolve context files in order (plan and walkthrough share one slug and one resolver invocation):
+1. Run:
 
-1. **User- or orchestrator-supplied plan/walkthrough** when an explicit path is passed or handed over — skip the resolver for that kind. When only *one* kind is supplied, resolve the other:
-   - **(a) Canonical scratch path** (`.scratch/plan/<yyyy-mm-dd>-<slug>.md` for a plan, `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md` for a walkthrough): resolve the other kind using the supplied slug:
-     ```bash
-     node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs --kind <other kind> --slug <slug from the supplied filename>
-     ```
-   - **(b) Non-canonical path**: resolve the other kind without `--slug`.
-   - **(c) Tier handling**: apply branch 2's tier handling to the resolved kind. Pass `<Plan Path>: None` when no plan exists; author a missing walkthrough at the resolved path per [references/walkthrough-template.md](references/walkthrough-template.md) before dispatching.
-2. **Otherwise**, run the resolver once for both kinds per `dispatch`'s `references/alignment.md` § Plan/Walkthrough Artifact Resolution (derives the slug; add `--slug <kebab-slug>` only when the user names one or derivation fails):
    ```bash
-   node <skills-dir>/dispatch/scripts/resolve-artifact-paths.mjs
+   node <skill-path>/scripts/prepare-review.mjs --request <json-file|->
    ```
-   - For `plan`: `tier: native` or `scratch-existing` — attach the existing plan; `tier: scratch-new` (`exists: false`) — omit `-f` for the plan (pass `<Plan Path>: None`).
-   - For `walkthrough`: `tier: native` or `scratch-existing` — attach as-is, subject to the stale-walkthrough guard above; `tier: scratch-new` — author at the returned path following [references/walkthrough-template.md](references/walkthrough-template.md) before dispatching.
 
-**Authoring a walkthrough** (whenever this skill writes one):
-- Run the host verify command (from `AGENTS.md` / `CLAUDE.md`) and record the command and output under `## Verification & Validation` (write `None — no host verify command` when none is named).
-- Record the result regardless of exit status — a failing suite informs the review rather than gating it; the prompt informs the delegate test results are provided so it concentrates turns on the diff.
+   Standalone requests carry selector/text and an explicit `range` only when the user named one.
+   Orchestrated requests carry `mode`, `reviewMode`, `roundId`, `consensus`, caller-resolved
+   `targets`/`reserves`, unique metrics paths, and optional finding packet/context.
+2. Preparation validates the explicit commit/range or current staged, unstaged, untracked, or
+   merge-base diff; excludes `.scratch/`, generated, vendored, and binary paths; and returns
+   `No reviewable changes; name a commit or range to review.` without substituting `HEAD~1`.
+3. The manifest pairs the plan and walkthrough
+   (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), compares freshness, derives scope, creates
+   bounded views/prompts, and returns attachments, response schema, argv, invocation context, and
+   cleanup paths. A missing walkthrough is generated from the canonical template when summary and
+   verification inputs are complete.
+4. On `decision-required`, standalone asks the user. An orchestrator answers only from artifacts
+   it authored in-run; otherwise it stops with the corrective diagnostic.
+5. On `ready`, execute only `dispatch.argv` in the background and yield. Await all terminal
+   target/reserve/fallback outcomes before continuing.
 
-**Re-review round** (standalone): derive `<Review Scope>` from the resolved walkthrough. No `### Round` headings under `## Review Findings & Resolutions` means `Full review`; `n` such headings mean `Re-review round <n+1>`, naming the code changed since that last round. Count the headings, not the finding bullets — see `dispatch`'s `references/alignment.md` § Resolutions Log.
+**Done when:** preparation is ready, the exact manifest argv is launched, and every outcome is
+terminal.
 
-**Prompt**: for full review fill [references/prompt-template.md](references/prompt-template.md). For
-`Review Mode: rebuttal`, fill [references/rebuttal-template.md](references/rebuttal-template.md)
-with the handed-over source-specific `Finding Packet Path`. Use `dispatch`'s canonical
-stdin/temp-output protocol (`--vars - --temp-out`) and remove all returned cleanup paths after
-dispatch settles.
+## Adjudicate and fix
 
-Supply only the selected template's declared variables. Full review uses:
-- `<Task Summary>`: from user ask (standalone) or walkthrough summary and `## Changes Made` (orchestrated).
-- `<Walkthrough Path>`: `Review View Path` when handed over, otherwise the resolved or authored walkthrough.
-- `<Plan Path>`: path to the attached plan, or `None`.
-- `<User Focus Areas>`: from user arguments (standalone) or caller focus (orchestrated), defaulting to `General review`.
-- `<Review Scope>`: from handover (orchestrated) or derived round scope above (standalone).
-- `<Tool Turn Budget>`: from handover (orchestrated) or `Unspecified` (standalone).
+1. Save each report to owner-only OS temp. Normalize with
+   `scripts/parse-report.mjs --file <path>`; add `--rebuttal-packet <packet>` for rebuttals. Exit
+   `1` is invalid report/fallback; exit `2` is terminal. Never repair guessed JSON.
+2. Verify every finding against its cited changed line and surrounding contract. Reject uncited,
+   contradicted, or unverifiable claims. Apply alignment finality and sanitize every artifact write.
+3. Standalone mode applies accepted `MUST` and safe `SHOULD` fixes; records deferred
+   `SHOULD`/`CONSIDER` items under `## Follow-ups`; reruns the host verify command until green or
+   two identical failures; and updates `## Changes Made`, `## Verification & Validation`, and the
+   enriched resolution log. Orchestrated mode records adjudications but leaves fixes to its caller.
+4. Re-review only changed paths/live findings within the cap. Rebuttal response keys must exactly
+   match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE` becomes disputed.
 
-Rebuttal uses `<Walkthrough Path>` (the bounded view), `<Plan Path>` (a separately generated bounded
-plan view when plan evidence is required, otherwise `None`), `<Finding Packet Path>`,
-`<Review Scope>` (packet keys only), and `<Tool Turn Budget>`; omit full-review-only variables and
-never attach the canonical plan.
+## Settle and report
 
-**Dispatch**: follow `dispatch`'s `references/alignment.md` § Invocation Modes. Add
-`--response-schema-file "<skills-dir>/dispatch-code-review/references/report-schema.json"` for full
-review or the sibling `rebuttal-schema.json` for rebuttal mode.
-Launch all invocations in the background and yield. In rebuttal mode, dispatch only the source
-assigned to each packet; use fresh same-candidate dispatch when no resumable handle exists.
+After every expected source is terminal and consensus exits `0`, call preparation with
+`action: "checkpoint"`, terminal source keys, consensus result, and exact
+`settledWrites.paths`/`walkthroughSections`. It compares the declared post-adjudication state and
+atomically records range, path, worktree, and walkthrough-content freshness metadata. Failed,
+incomplete, or unsettled runs keep the previous checkpoint.
 
-**Done when:** the walkthrough and plan (if present) are resolved (or walkthrough authored), attached with `-f`, prompt variables populated into a prompt file, and dispatch launched backgrounded with the turn yielded.
+Remove no-longer-needed `cleanupPaths` in finally-style handling on every outcome; retain invocation
+state only until checkpoint/abort and report cleanup failures. Standalone reports a concise
+provider-attributed result and applied fixes. Orchestrated mode returns adjudications without
+editing code or issuing another user report.
 
----
-
-### 2. Normalize and adjudicate each actionable claim
-
-After every launch settles, handle terminal errors and empty outputs per `dispatch`'s
-`references/alignment.md`
-§ Adjudication. Save each report verbatim to an owner-only OS-temp file, run
-`node <skills-dir>/dispatch-code-review/scripts/parse-report.mjs --file "<path>"`, adding
-`--rebuttal-packet "<packet>"` in rebuttal mode, then delete it.
-Adjudicate only normalized `findings`, mapping severity per `dispatch`'s
-`references/alignment.md` § Finality. Exit `1` is
-`invalid-report` and follows the empty-report fallback without log entries; exit `2` halts.
-Never repair guessed JSON.
-
-Verify every finding against its `<file>:L<line>` and surrounding code; reject uncited,
-contradicted, or unverifiable claims.
-
-**Done when:** every full-review finding carries a verdict, or every rebuttal packet has an exact
-validated response key set. Rebuttal `CONFIRM` settles that source, `REBUT` keeps the finding live,
-and `INTENT-DISPUTE` changes it to `[Disputed]`.
-
----
-
-### 3. Fold findings into walkthrough and report
-
-Sanitize every delegate-derived artifact write per `dispatch`'s `references/alignment.md`
-§ Delegate Text Sanitization.
-
-1. **Apply fixes** (standalone mode only): apply accepted `MUST-FIX` and small safe `SHOULD-FIX` findings to the codebase. Record unapplied accepted `SHOULD-FIX` / `CONSIDER` items under `## Follow-ups` in the walkthrough with a one-line reason (create `## Follow-ups` at the end of the walkthrough when absent, keeping `## Review Findings & Resolutions` ahead of it per template order). Update `## Changes Made` and `## Verification & Validation` when fixes change code or results.
-2. **Re-verify** (standalone mode only):
-   - Re-run the host verify command (from `AGENTS.md` / `CLAUDE.md`) until green, or until two consecutive runs fail on identical failures.
-   - Record the command and result under `## Verification & Validation`.
-   - Record unrelated or pre-existing failures under `## Follow-ups` and surface in the user report.
-3. **Record review outcomes**: append this round's log under `## Review Findings & Resolutions` in the walkthrough file per `dispatch`'s `references/alignment.md` § Resolutions Log (create the heading ahead of `## Follow-ups` when absent).
-
-**Standalone mode**: deliver the user report per `dispatch`'s `references/alignment.md` § User Report. **Orchestrated mode**: skip fix application, re-verification, and the user report (the orchestrator owns fixes, verification, and handoff reporting).
-
-**Done when:**
-- **Standalone**: accepted fixes are applied to code, unapplied items logged under `## Follow-ups`, host verify command green (or stable across two runs with failures noted in follow-ups), `## Review Findings & Resolutions` updated with round adjudications, and user report delivered with provider prefix.
-- **Orchestrated**: walkthrough `## Review Findings & Resolutions` has an enriched round/source log;
-  unconfirmed `MUST`/`SHOULD` rejections stay `[Rejected — pending confirmation]`.
+**Done when:** every finding is ruled, permitted fixes are verified, the walkthrough is current,
+settled metadata is checkpointed, and temporary paths are handled.

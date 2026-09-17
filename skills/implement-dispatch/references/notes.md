@@ -17,7 +17,7 @@ implement-dispatch
 
 ### Execution Pipeline
 
-1. **Setup**: Success criteria formulation and artifact path derivation (`resolve-artifact-paths.mjs`).
+1. **Setup**: Success criteria formulation, review-owned preparation, and run initialization.
 2. **Author Plan**: Initial plan creation from `dispatch-plan-review` template.
 3. **Initial Change Scope & Flow**: Change-scope gating (`trivial` → `low`, `focused` → `medium`, `cross-cutting` → `high`) from the initial draft, then flow resolution (`resolve-flow.mjs`).
 4. **Plan Review Loop**: Multi-agent review waves via `dispatch-plan-review` (orchestrated mode) until consensus or wave cap (`maxRounds`).
@@ -25,8 +25,8 @@ implement-dispatch
 6. **Implement**: Single user approval gate, native write subagent dispatch (test-first), boundary verification.
 7. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
 8. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
-9. **Re-Review Loop**: Build source-grouped rebuttal packets and re-dispatch only live claims to
-   their citing candidates (or recorded replacements) until consensus or the wave cap.
+9. **Re-Review Loop**: Review-owned preparation builds bounded views; source-grouped rebuttal
+   packets return live claims to their citing candidates or replacements until consensus/cap.
 10. **Handoff & Cleanup**: Await all review dispatches, record run diagnostics, relocate scratch artifacts to OS temp, deliver user summary.
 
 ---
@@ -78,11 +78,13 @@ stale incomplete runs, and atomically replaces or clears `<phase>:<corpus>` base
 Standalone review commands are untelemetered; an implement-dispatch slot is one launched dispatch,
 including reserves and excluding native in-process fallbacks.
 
-### Bounded Review Views (`scripts/build-review-view.mjs`)
+### Review Preparation
 
-Uses `dispatch/scripts/resolution-log.mjs` to preserve the semantic artifact body, immediately
-preceding round, every older live finding, and fixed summaries of older settled rounds in a
-private OS-temp projection. The canonical artifact remains the only adjudication/edit target.
+Each review skill owns `scripts/prepare-review.mjs`. It validates a closed JSON request, resolves
+artifacts and freshness, builds bounded views/prompts/batch manifests, and returns argv plus
+cleanup paths. The caller launches and awaits dispatch, adjudicates untrusted reports, checkpoints
+only settled writes, and performs finally-style cleanup. Generic frontmatter, hashing, invocation
+state, and view projection live in `dispatch/scripts/review-preparation.mjs`.
 
 ### Rebuttal Packets (`scripts/build-rebuttal-packets.mjs`)
 

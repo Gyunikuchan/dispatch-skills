@@ -150,7 +150,8 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'implement-dispatch', 'scripts', 'check-consensus.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'run-record.mjs'],
     ['skills', 'dispatch-code-review', 'scripts', 'resolve-review-range.mjs'],
-    ['skills', 'implement-dispatch', 'scripts', 'build-review-view.mjs'],
+    ['skills', 'dispatch-plan-review', 'scripts', 'prepare-review.mjs'],
+    ['skills', 'dispatch-code-review', 'scripts', 'prepare-review.mjs'],
   ]) {
     const name = script[script.length - 1];
     it(`${name} --help exits 0 and prints usage`, () => {

@@ -4,7 +4,7 @@
  * skill's own `references/prompt-template.md` — so orchestrators stop hand-rolling an
  * extraction/substitution script per dispatch and stop piping a multi-line, backtick-heavy prompt
  * through shell quoting. The template stays in the skill that owns it; this script reads it, and
- * never relocates it (see `references/alignment.md` § Prompt Template Filling).
+ * never relocates it; review preparation owns the returned path's lifecycle.
  *
  * NOTE: the flag is spelled `--skill` for callers' sake, but its value is the template file's
  * path, not a SKILL.md.

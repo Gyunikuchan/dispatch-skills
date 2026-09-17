@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +41,7 @@ export function isReviewablePath(file, repoRoot) {
   return true;
 }
 
-function currentPaths(repoRoot) {
+export function currentPaths(repoRoot) {
   const commands = [
     ['diff', '--name-only', '--'],
     ['diff', '--cached', '--name-only', '--'],
@@ -50,6 +51,96 @@ function currentPaths(repoRoot) {
     const result = git(repoRoot, args);
     return result.stdout.split(/\r?\n/).filter(Boolean);
   }))].filter((file) => isReviewablePath(file, repoRoot)).sort();
+}
+
+function digest(chunks) {
+  const hash = crypto.createHash('sha256');
+  for (const chunk of chunks) hash.update(chunk);
+  return `sha256:${hash.digest('hex')}`;
+}
+
+function rangePaths(repoRoot, range) {
+  const binary = new Set(git(repoRoot, ['diff', '--numstat', range, '--']).stdout
+    .split(/\r?\n/)
+    .filter((line) => /^-\s+-\s+/.test(line))
+    .map((line) => line.split('\t').at(-1)));
+  return git(repoRoot, ['diff', '--name-only', range, '--']).stdout
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter((file) => !binary.has(file))
+    .filter((file) => isReviewablePath(file, repoRoot))
+    .sort();
+}
+
+function resolveRangeShas(repoRoot, range) {
+  const separator = range.includes('...') ? '...' : '..';
+  const [left, right] = range.split(separator);
+  const headSha = verifyCommit(repoRoot, right);
+  if (separator === '...') {
+    const mergeBase = git(repoRoot, ['merge-base', left, right]);
+    return { baseSha: mergeBase.stdout.trim(), headSha };
+  }
+  const leftCommit = git(repoRoot, ['rev-parse', '--verify', '--end-of-options', `${left}^{commit}`], { allowFailure: true });
+  if (leftCommit.status === 0) return { baseSha: leftCommit.stdout.trim(), headSha };
+  const leftTree = git(repoRoot, ['rev-parse', '--verify', '--end-of-options', `${left}^{tree}`], { allowFailure: true });
+  if (leftTree.status === 0) return { baseSha: leftTree.stdout.trim(), headSha };
+  throw new Error(`Range base "${left}" is neither a commit nor a tree.`);
+}
+
+export function captureReviewSnapshot({ repoRoot = process.cwd(), scope, includeWorkingTree = [] }) {
+  repoRoot = path.resolve(repoRoot);
+  if (!scope?.reviewable) throw new Error('A reviewable scope is required to capture a snapshot.');
+  let paths;
+  let baseSha = null;
+  let headSha = null;
+  if (scope.kind === 'working-tree') {
+    paths = currentPaths(repoRoot);
+    const head = git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
+    headSha = head.status === 0 ? head.stdout.trim() : null;
+    baseSha = headSha;
+  } else {
+    paths = rangePaths(repoRoot, scope.range);
+    ({ baseSha, headSha } = resolveRangeShas(repoRoot, scope.range));
+    const working = new Set(currentPaths(repoRoot));
+    for (const file of includeWorkingTree) {
+      const normalized = file.replace(/\\/g, '/');
+      if (
+        normalized !== file ||
+        path.isAbsolute(file) ||
+        normalized.split('/').includes('..') ||
+        !working.has(normalized) ||
+        !isReviewablePath(normalized, repoRoot)
+      ) {
+        throw new Error(`Declared settled path "${file}" is not an eligible working-tree change.`);
+      }
+    }
+    paths = [...new Set([...paths, ...includeWorkingTree])].sort();
+  }
+  const pathHashes = {};
+  for (const file of paths) {
+    if (scope.kind === 'working-tree') {
+      const tracked = git(repoRoot, ['ls-files', '--error-unmatch', '--', file], { allowFailure: true });
+      pathHashes[file] = tracked.status === 0 && headSha
+        ? digest([git(repoRoot, ['diff', '--binary', 'HEAD', '--', file]).stdout])
+        : digest([fs.readFileSync(path.join(repoRoot, file))]);
+    } else {
+      const chunks = [git(repoRoot, ['diff', '--binary', scope.range, '--', file]).stdout];
+      if (includeWorkingTree.includes(file)) {
+        const tracked = git(repoRoot, ['ls-files', '--error-unmatch', '--', file], { allowFailure: true });
+        chunks.push(tracked.status === 0
+          ? git(repoRoot, ['diff', '--binary', 'HEAD', '--', file]).stdout
+          : fs.readFileSync(path.join(repoRoot, file)));
+      }
+      pathHashes[file] = digest(chunks);
+    }
+  }
+  return {
+    baseSha,
+    headSha,
+    paths,
+    pathHashes,
+    worktreeHash: digest(paths.flatMap((file) => [`${file}\0`, `${pathHashes[file]}\n`])),
+  };
 }
 
 function verifyCommit(repoRoot, revision) {
@@ -109,7 +200,12 @@ export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = n
   repoRoot = path.resolve(repoRoot);
   if (explicitRange) {
     const range = resolveExplicitRange(repoRoot, explicitRange);
-    return { reviewable: true, kind: 'explicit-range', range, paths: [], reviewScope: `Explicit Git range: ${range}` };
+    const paths = rangePaths(repoRoot, range);
+    if (paths.length === 0) {
+      return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
+    }
+    const shas = resolveRangeShas(repoRoot, range);
+    return { reviewable: true, kind: 'explicit-range', range, paths, ...shas, reviewScope: `Explicit Git range: ${range}` };
   }
   const paths = currentPaths(repoRoot);
   if (paths.length > 0) {
@@ -137,7 +233,19 @@ export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = n
     return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
   }
   const range = `${mergeBase.stdout.trim()}..HEAD`;
-  return { reviewable: true, kind: 'branch', range, paths: [], reviewScope: `Branch range: ${range}` };
+  const rangeFiles = rangePaths(repoRoot, range);
+  if (rangeFiles.length === 0) {
+    return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
+  }
+  return {
+    reviewable: true,
+    kind: 'branch',
+    range,
+    paths: rangeFiles,
+    baseSha: mergeBase.stdout.trim(),
+    headSha: head.stdout.trim(),
+    reviewScope: `Branch range: ${range}`,
+  };
 }
 
 function parseArgs(argv) {

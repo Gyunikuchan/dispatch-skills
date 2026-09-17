@@ -109,7 +109,9 @@ review round and narrow the review to changed sections.
 3. The skill verifies each claim against the requirement, cited code, and repository rules.
 4. Accepted findings are folded into the plan, and every review round is recorded in
    `## Review Findings & Resolutions`.
-5. The standalone run returns a concise report; another workflow can receive the reviewed plan.
+5. A settled review checkpoints compact JSON frontmatter so later runs can identify changed plan
+   sections without inferring freshness from prose.
+6. The standalone run returns a concise report; another workflow can receive the reviewed plan.
 
 > [!NOTE]
 > This skill may update the target plan, but delegates never edit files, create commits, or push
@@ -145,5 +147,7 @@ accepted, rejected, downgraded, or disputed, then records the rationale in the p
 
 - **The plan is stale:** If a new requirement does not match the plan resolved for its branch slug,
   choose whether to reuse it, overwrite it, or review under a fresh slug.
+- **Preparation fails:** `scripts/prepare-review.mjs --request <json-file|->` validates both skill
+  manifests, request fields, artifact freshness, and temporary dispatch inputs before launch.
 - **No automatic plan path:** On a protected branch or detached `HEAD`, pass an explicit plan path.
 - **Provider or authentication issue:** Follow [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).

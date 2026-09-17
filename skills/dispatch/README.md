@@ -173,6 +173,9 @@ effective file, candidate order, binary/mode reachability, sandbox support, and 
 commands. Standalone defaults may intentionally differ from a workflow's phase-and-level model
 policy.
 
+Plan/code review skills prepare their own artifacts, freshness metadata, prompts, and temporary
+batch manifests. `dispatch` remains the generic read-only execution and fallback boundary.
+
 The first existing file wins:
 
 1. `config.local.jsonc`

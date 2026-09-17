@@ -596,7 +596,7 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
   }
 
   if (options.promptFile) {
-    // Additive flag (see fill-template.mjs / references/alignment.md § Prompt Template Filling):
+    // Additive flag used by fill-template.mjs and review preparation:
     // it removes shell quoting of a filled review prompt, so a `-p`/positional prompt given
     // alongside it is an ambiguous combination we refuse rather than silently concatenate.
     if (options.prompt || positional.length > 0) {

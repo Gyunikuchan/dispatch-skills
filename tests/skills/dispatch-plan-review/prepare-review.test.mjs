@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, it } from 'node:test';
+
+import {
+  planSnapshot,
+  preparePlanReview,
+} from '../../../skills/dispatch-plan-review/scripts/prepare-review.mjs';
+
+const tempDirs = [];
+const makeRepo = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-prepare-test-'));
+  tempDirs.push(dir);
+  fs.mkdirSync(path.join(dir, '.scratch', 'plan'), { recursive: true });
+  return dir;
+};
+const cleanManifest = (manifest) => {
+  for (const cleanup of [...(manifest.cleanupPaths ?? []), manifest.invocationContext?.statePath && path.dirname(manifest.invocationContext.statePath)].filter(Boolean)) {
+    fs.rmSync(cleanup, { recursive: true, force: true });
+  }
+};
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const planBody = '# Plan\n\n## Proposed Changes\n\n- First.\n\n## Review Findings & Resolutions\n\n*No reviews conducted yet.*\n';
+
+describe('plan review preparation', () => {
+  it('prepares an orchestrated full review and emits argv rather than shell text', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const manifest = preparePlanReview({
+      mode: 'orchestrated',
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      requirement: 'Implement sample',
+      roundId: 'plan-review:R1',
+      targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium', metricsFile: path.join(repo, 'slot.json') }],
+      reserves: [],
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.freshness.status, 'legacy');
+      assert.ok(Array.isArray(manifest.dispatch.argv));
+      assert.ok(manifest.dispatch.argv.includes('--batch-file'));
+      assert.equal(manifest.roundId, 'plan-review:R1');
+    } finally {
+      cleanManifest(manifest);
+    }
+  });
+
+  it('returns authoring-required for a missing plan', () => {
+    const repo = makeRepo();
+    const manifest = preparePlanReview({
+      artifactPath: '.scratch/plan/2026-09-17-sample.md',
+      slug: 'sample',
+      requirement: 'Implement sample',
+    }, { repoRoot: repo });
+    assert.equal(manifest.status, 'authoring-required');
+    assert.equal(manifest.requirement, 'Implement sample');
+  });
+
+  it('returns a legacy coverage decision for a resolved existing plan', () => {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, '.scratch/plan/2026-09-17-feature.md'), planBody);
+    execFileSync('git', ['init', '-q', '-b', 'feature'], { cwd: repo });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'README.md'), '# Test\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repo });
+    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repo });
+    const manifest = preparePlanReview({ requirement: 'Different requirement' }, { repoRoot: repo });
+    assert.equal(manifest.status, 'decision-required');
+    assert.equal(manifest.decision, 'legacy-plan-coverage');
+  });
+
+  it('checkpoints declared body edits and treats resolution-only edits as semantic no-ops', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const prepared = preparePlanReview({
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    fs.writeFileSync(plan, planBody
+      .replace('- First.', '- First.\n- Second.')
+      .replace('*No reviews conducted yet.*', '### Round 1\n- *No actionable findings.*'));
+    const checkpoint = preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: ['Proposed Changes'] },
+    }, { repoRoot: repo, now: new Date('2026-09-17T00:00:00Z') });
+    try {
+      assert.equal(checkpoint.status, 'checkpointed');
+      assert.equal(checkpoint.metadata.contentHash, planSnapshot(fs.readFileSync(plan, 'utf8')).contentHash);
+      assert.match(fs.readFileSync(plan, 'utf8'), /^---\n\{/);
+    } finally {
+      cleanManifest(prepared);
+    }
+  });
+
+  it('rejects undeclared edits, replayed contexts, and unknown request fields', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    assert.throws(() => preparePlanReview({ surprise: true }, { repoRoot: repo }), /unsupported field/);
+    const prepared = preparePlanReview({
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    fs.writeFileSync(plan, planBody.replace('- First.', '- Changed.'));
+    assert.throws(() => preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: [] },
+    }, { repoRoot: repo }), /do not match observed/);
+    const next = preparePlanReview({
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      invocationContext: prepared.invocationContext,
+    }, { repoRoot: repo });
+    assert.throws(() => preparePlanReview({
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      invocationContext: prepared.invocationContext,
+    }, { repoRoot: repo }), /stale, replayed, forked/);
+    cleanManifest(next);
+  });
+});

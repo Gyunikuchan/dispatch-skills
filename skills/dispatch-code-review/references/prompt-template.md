@@ -1,6 +1,7 @@
 # dispatch-code-review delegate prompt
 
-Filled by `dispatch`'s `fill-template.mjs` (see `dispatch`'s `references/alignment.md` § Prompt Template Filling). The variable bullets below are the declared variables; `--list` reads them off this file.
+Filled by the owner preparation script through `dispatch`'s `fill-template.mjs`. The variable
+bullets below are the declared variables; `--list` reads them off this file.
 
 ## Prompt template
 

@@ -142,7 +142,9 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 5. It implements the approved plan and runs the repository's verification command.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.
-7. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
+7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;
+   settled reviews checkpoint metadata for the next invocation.
+8. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
 
 Each workflow also writes content-free measurements beneath the repository's Git common directory.
 Records contain counts and outcome metadata, never prompts, reports, environment values, or

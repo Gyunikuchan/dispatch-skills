@@ -29,6 +29,50 @@ function digest(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+export function splitDispatchFrontmatter(markdown) {
+  const rawSource = String(markdown ?? '');
+  const opener = /^(---)\r?\n/.exec(rawSource);
+  if (!opener) {
+    return { metadata: null, body: rawSource, frontmatter: null };
+  }
+  const close = /\r?\n---\r?\n/g;
+  close.lastIndex = opener[0].length;
+  const match = close.exec(rawSource);
+  if (!match) {
+    throw new Error('Artifact contains unterminated frontmatter.');
+  }
+  const raw = rawSource.slice(opener[0].length, match.index).trim();
+  if (!raw.startsWith('{')) {
+    return { metadata: null, body: rawSource, frontmatter: null };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`Artifact dispatch frontmatter is malformed JSON: ${err.message}`);
+  }
+  if (
+    !parsed ||
+    Array.isArray(parsed) ||
+    typeof parsed !== 'object' ||
+    !parsed.dispatch ||
+    Array.isArray(parsed.dispatch) ||
+    typeof parsed.dispatch !== 'object'
+  ) {
+    throw new Error('Artifact JSON frontmatter must contain one dispatch object.');
+  }
+  return {
+    metadata: parsed.dispatch,
+    body: rawSource.slice(match.index + match[0].length),
+    frontmatter: rawSource.slice(0, match.index + match[0].length),
+  };
+}
+
+export function withDispatchFrontmatter(markdown, metadata) {
+  const { body } = splitDispatchFrontmatter(markdown);
+  return `---\n${JSON.stringify({ dispatch: metadata }, null, 2)}\n---\n${body}`;
+}
+
 function legacySourceKeys(round) {
   if (round.sourceMap && Object.keys(round.sourceMap).length > 0) {
     return Object.keys(round.sourceMap);
@@ -247,7 +291,8 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
 }
 
 export function scanResolutionLog(markdown, { strict = true } = {}) {
-  const normalized = normalize(markdown);
+  const document = splitDispatchFrontmatter(markdown);
+  const normalized = normalize(document.body);
   const lines = normalized.split('\n');
   let { sections, unterminated } = findSections(lines, true);
   if (unterminated) {
@@ -283,6 +328,7 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
   }
   return {
     normalized,
+    metadata: document.metadata,
     semanticBody,
     sectionText,
     canonicalLogHash: digest(sectionText),

@@ -12,7 +12,7 @@ describe('Phase 0 workflow contracts', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
     assert.match(skill, /Resolved flow: level <level>/);
     assert.match(skill, /plan review <on\|off>/);
-    assert.match(skill, /provider default/);
+    assert.match(skill, /provider\s+default/);
     assert.match(skill, /native fallback/);
     assert.match(skill, /off — companion unavailable/);
     assert.match(skill, /Resolved flow unchanged after final scope check/);
@@ -22,18 +22,20 @@ describe('Phase 0 workflow contracts', () => {
   it('removes the implicit HEAD~1 fallback and names the corrective action', () => {
     const prompt = read('skills/dispatch-code-review/references/prompt-template.md');
     const skill = read('skills/dispatch-code-review/SKILL.md');
+    const prepare = read('skills/dispatch-code-review/scripts/prepare-review.mjs');
     assert.doesNotMatch(prompt, /git diff HEAD~1/);
     assert.match(prompt, /Never substitute `HEAD~1`/);
     assert.match(skill, /No reviewable changes/);
-    assert.match(skill, /--range/);
+    assert.match(skill, /explicit `range`/);
+    assert.match(prepare, /resolveReviewScope\(\{ repoRoot, explicitRange: request\.range/);
   });
 
   it('warns before OS-temp relocation and preserves exact destination reporting', () => {
     const implement = read('skills/implement-dispatch/SKILL.md');
     const alignment = read('skills/dispatch/references/alignment.md');
-    for (const text of [implement, alignment]) {
-      assert.match(text, /may be deleted by the OS/);
-      assert.match(text, /destination/);
-    }
+    assert.match(implement, /may be\s+deleted by the OS/);
+    assert.match(implement, /destination/);
+    assert.match(alignment, /may be deleted by the OS/);
+    assert.match(alignment, /destination/);
   });
 });

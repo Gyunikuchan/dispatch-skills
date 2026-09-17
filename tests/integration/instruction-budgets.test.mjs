@@ -37,6 +37,14 @@ describe('instruction character ratchet', () => {
     });
   }
 
+  for (const [file, ceiling] of Object.entries(budgets.phase5)) {
+    it(`${file} meets the Phase 5 final ceiling`, () => {
+      const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
+      assert.ok(measured.characters <= ceiling, `${file}: ${measured.characters} > ${ceiling}`);
+      assert.ok(ceiling <= budgets.phase4[file], `${file}: Phase 5 ceiling exceeds Phase 4`);
+    });
+  }
+
   for (const [file, ceiling] of Object.entries(budgets.phase1)) {
     it(`${file} meets the Phase 1 compact-prompt target`, () => {
       const measured = measureText(fs.readFileSync(path.join(root, file), 'utf8'));
@@ -50,7 +58,7 @@ describe('instruction character ratchet', () => {
   }
 
   it('gates the complete entry-point and normal implementation paths', () => {
-    assert.deepEqual(Object.keys(budgets.phase4).sort(), [...normalPath].sort());
+    assert.deepEqual(Object.keys(budgets.phase5).sort(), [...normalPath].sort());
     const countPath = (files) => files.reduce(
       (sum, file) => sum + measureText(fs.readFileSync(path.join(root, file), 'utf8')).characters,
       0,
@@ -58,20 +66,20 @@ describe('instruction character ratchet', () => {
     const entryCharacters = countPath(entryPoints);
     const normalCharacters = countPath(normalPath);
     assert.ok(
-      entryCharacters <= budgets.aggregateBaselines.phase4.entryPointCharacters,
-      `entry-point total: ${entryCharacters} > ${budgets.aggregateBaselines.phase4.entryPointCharacters}`,
+      entryCharacters <= budgets.aggregateBaselines.phase5.entryPointCeiling,
+      `entry-point total: ${entryCharacters} > ${budgets.aggregateBaselines.phase5.entryPointCeiling}`,
     );
     assert.ok(
-      normalCharacters <= budgets.aggregateBaselines.phase4.normalPathCharacters,
-      `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase4.normalPathCharacters}`,
+      normalCharacters <= budgets.aggregateBaselines.phase5.normalPathCeiling,
+      `normal-path total: ${normalCharacters} > ${budgets.aggregateBaselines.phase5.normalPathCeiling}`,
     );
     assert.ok(
-      Math.ceil(entryCharacters / 4) <= budgets.aggregateBaselines.phase4.entryPointEstimate,
-      `entry-point estimate: ${Math.ceil(entryCharacters / 4)} > ${budgets.aggregateBaselines.phase4.entryPointEstimate}`,
+      Math.ceil(entryCharacters / 4) <= Math.ceil(budgets.aggregateBaselines.phase5.entryPointCeiling / 4),
+      `entry-point estimate exceeds ceiling`,
     );
     assert.ok(
-      Math.ceil(normalCharacters / 4) <= budgets.aggregateBaselines.phase4.normalPathEstimate,
-      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > ${budgets.aggregateBaselines.phase4.normalPathEstimate}`,
+      Math.ceil(normalCharacters / 4) <= 8000,
+      `normal-path estimate: ${Math.ceil(normalCharacters / 4)} > 8000`,
     );
     assert.deepEqual(
       {
@@ -81,10 +89,10 @@ describe('instruction character ratchet', () => {
         normalPathEstimate: Math.ceil(normalCharacters / 4),
       },
       {
-        entryPointCharacters: budgets.aggregateBaselines.phase4.entryPointCharacters,
-        entryPointEstimate: budgets.aggregateBaselines.phase4.entryPointEstimate,
-        normalPathCharacters: budgets.aggregateBaselines.phase4.normalPathCharacters,
-        normalPathEstimate: budgets.aggregateBaselines.phase4.normalPathEstimate,
+        entryPointCharacters: budgets.aggregateBaselines.phase5.entryPointCharacters,
+        entryPointEstimate: budgets.aggregateBaselines.phase5.entryPointEstimate,
+        normalPathCharacters: budgets.aggregateBaselines.phase5.normalPathCharacters,
+        normalPathEstimate: budgets.aggregateBaselines.phase5.normalPathEstimate,
       },
     );
     for (const key of [
@@ -94,8 +102,8 @@ describe('instruction character ratchet', () => {
       'normalPathEstimate',
     ]) {
       assert.ok(
-        budgets.aggregateBaselines.phase4[key] <= budgets.aggregateBaselines.phase3[key],
-        `${key}: Phase 4 aggregate exceeds Phase 3`,
+        budgets.aggregateBaselines.phase5[key] <= budgets.aggregateBaselines.phase4[key],
+        `${key}: Phase 5 aggregate exceeds Phase 4`,
       );
     }
   });
@@ -120,10 +128,10 @@ describe('instruction character ratchet', () => {
       'skills/dispatch-code-review/SKILL.md',
       'skills/dispatch-code-review/references/rebuttal-template.md',
     ]);
-    assert.equal(plan, budgets.aggregateBaselines.phase4.planRebuttalPathCharacters);
-    assert.equal(Math.ceil(plan / 4), budgets.aggregateBaselines.phase4.planRebuttalPathEstimate);
-    assert.equal(code, budgets.aggregateBaselines.phase4.codeRebuttalPathCharacters);
-    assert.equal(Math.ceil(code / 4), budgets.aggregateBaselines.phase4.codeRebuttalPathEstimate);
+    assert.equal(plan, budgets.aggregateBaselines.phase5.planRebuttalPathCharacters);
+    assert.equal(Math.ceil(plan / 4), budgets.aggregateBaselines.phase5.planRebuttalPathEstimate);
+    assert.equal(code, budgets.aggregateBaselines.phase5.codeRebuttalPathCharacters);
+    assert.equal(Math.ceil(code / 4), budgets.aggregateBaselines.phase5.codeRebuttalPathEstimate);
     for (const key of [
       'planRebuttalPathCharacters',
       'planRebuttalPathEstimate',
@@ -131,8 +139,8 @@ describe('instruction character ratchet', () => {
       'codeRebuttalPathEstimate',
     ]) {
       assert.ok(
-        budgets.aggregateBaselines.phase4[key] <= budgets.aggregateBaselines.phase3[key],
-        `${key}: Phase 4 aggregate exceeds Phase 3`,
+        budgets.aggregateBaselines.phase5[key] <= budgets.aggregateBaselines.phase4[key],
+        `${key}: Phase 5 aggregate exceeds Phase 4`,
       );
     }
   });
@@ -142,8 +150,8 @@ describe('instruction character ratchet', () => {
     for (const term of ['Candidate', 'Target', 'Reserve', 'Pin', 'Level', 'Round', 'Wave', 'Slot', 'Affinity']) {
       assert.match(alignment, new RegExp(`- \\*\\*${term}\\*\\*:`));
     }
-    for (const meaning of ['Change scope', 'Review Scope', 'Installation scope']) {
-      assert.match(alignment, new RegExp(`- \\*\\*${meaning}\\*\\*:`));
+    for (const meaning of ['Change scope', 'Review Scope', 'Installation']) {
+      assert.match(alignment, new RegExp(`\\*\\*${meaning}`));
     }
   });
 

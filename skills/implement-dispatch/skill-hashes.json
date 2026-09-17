@@ -1,8 +1,7 @@
 {
-  "SKILL.md": "98bfb63218fdb936702abcc62c88aa5a654d860ed0ab47dc9705c2a216a8cd25",
-  "references/notes.md": "93a6a8f782cee4d8387d25a11545a8911176f7e7f14049b121cba0514178c135",
+  "SKILL.md": "2b2a630fc8cfb906e11d77f2e579fc0727befd1827bb1debae8562db4262da95",
+  "references/notes.md": "4d32eacb73ad41671db4284f3d85420d580355882e49a9f95feecb938f6369c3",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
-  "scripts/build-review-view.mjs": "1352ce2f3020379d8e6ca17df716344eed99b76635efba3bb543af939aec825c",
   "scripts/check-consensus.mjs": "7c2a58ee79e2d97c0b1763332936b4ad7ca1cb60cb293bf6147af74239a8081f",
   "scripts/resolve-flow.mjs": "6c5953bfffb5dc82711b0629d043f30976cbaae55bb94214dd9267a83ddb2f38",
   "scripts/run-record.mjs": "b0d559e689fb1085e583484fd2187c5696d09145d15d1cec254c72a5dcc60f9c"

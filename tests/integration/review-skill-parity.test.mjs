@@ -163,7 +163,7 @@ describe('review skill templates live in references/', () => {
       const text = readSkill(skillPath);
       assert.ok(!text.includes('````'), `${skillPath} still contains a 4-backtick template fence`);
       assert.throws(() => extractTemplate(text), /not found/);
-      assert.ok(text.includes('references/prompt-template.md'), `${skillPath} does not point at references/prompt-template.md`);
+      assert.ok(text.includes('scripts/prepare-review.mjs'), `${skillPath} does not point at owner preparation`);
     });
   }
 
@@ -216,22 +216,22 @@ describe('review skill templates live in references/', () => {
     });
   }
 
-  it('review skills use the canonical shell-safe fill-template transport', () => {
+  it('review skills use the JSON request preparation transport', () => {
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const skill = readSkill(skillPath);
-      assert.match(skill, /canonical\s+stdin\/temp-output protocol/);
-      assert.match(skill, /--vars - --temp-out/);
-      assert.doesNotMatch(skill, /--vars <json file>.*--out <path>/s);
+      assert.match(skill, /prepare-review\.mjs --request <json-file\|->/);
+      assert.match(skill, /execute only `dispatch\.argv`/i);
     }
   });
 
-  it('review skills require their native response schema', () => {
-    for (const [skillPath, schemaPath] of [
-      [PLAN_REVIEW_PATH, PLAN_SCHEMA_PATH],
-      [CODE_REVIEW_PATH, CODE_SCHEMA_PATH],
+  it('owner preparation requires the native response schema', () => {
+    for (const [scriptPath, schemaPath] of [
+      ['skills/dispatch-plan-review/scripts/prepare-review.mjs', PLAN_SCHEMA_PATH],
+      ['skills/dispatch-code-review/scripts/prepare-review.mjs', CODE_SCHEMA_PATH],
     ]) {
-      const skill = readSkill(skillPath);
-      assert.match(skill, new RegExp(`--response-schema-file \"<skills-dir>/${schemaPath.slice('skills/'.length)}\"`));
+      const script = readSkill(scriptPath);
+      assert.match(script, /report-schema\.json/);
+      assert.ok(readSkill(schemaPath));
     }
   });
 });
@@ -264,69 +264,42 @@ describe('review response schemas', () => {
 });
 
 describe('orchestrated handover contract', () => {
-  it('alignment detection names targets; review skills and implement-dispatch use "targets"; implement-dispatch no longer fills templates', () => {
-    const alignment = readSkill(ALIGNMENT_PATH);
-    const modes = alignment.slice(alignment.indexOf('## Invocation Modes'), alignment.indexOf('## Prompt Template Filling'));
-    assert.match(modes, /Detection:[^\n]*\*\*targets\*\*/, `${ALIGNMENT_PATH} § Invocation Modes detection does not name targets`);
-    assert.match(modes, /`Review Mode: full\|rebuttal`/);
-    assert.match(modes, /candidateId/);
-
-    for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
-      assert.match(readSkill(skillPath), /\*\*targets\*\* list/, `${skillPath} mode detection does not name the targets list`);
+  it('preparation owns targets and modes; implement-dispatch no longer fills templates', () => {
+    for (const scriptPath of [
+      'skills/dispatch-plan-review/scripts/prepare-review.mjs',
+      'skills/dispatch-code-review/scripts/prepare-review.mjs',
+    ]) {
+      const script = readSkill(scriptPath);
+      assert.match(script, /mode === 'orchestrated' && targets\.length === 0/);
+      assert.match(script, /\['full', 'rebuttal'\]/);
+      assert.match(script, /candidateId\.split\(':'\)\[1\] !== entry\.platform/);
     }
-
     const implement = readSkill(IMPLEMENT_PATH);
-    assert.ok(implement.includes('`targets`'), `${IMPLEMENT_PATH} does not hand over targets`);
+    assert.ok(implement.includes('targets/reserves'), `${IMPLEMENT_PATH} does not hand over targets`);
     assert.ok(!implement.includes('fill-template'), `${IMPLEMENT_PATH} still instructs fill-template`);
     assert.ok(!implement.includes('--prompt-file'), `${IMPLEMENT_PATH} still instructs --prompt-file`);
   });
 
   it('the handover carries consensus, and pending rebuttals are a logged form in every consumer', () => {
     const alignment = readSkill(ALIGNMENT_PATH);
-    const modes = alignment.slice(alignment.indexOf('## Invocation Modes'), alignment.indexOf('## Prompt Template Filling'));
-    assert.match(modes, /Detection:[^\n]*`consensus: true\|false`/, `${ALIGNMENT_PATH} detection does not hand over consensus`);
-    assert.ok(!modes.includes('not already in the wave'), `${ALIGNMENT_PATH} still prefers platform diversity at substitution`);
-
-    const adjudication = alignment.slice(alignment.indexOf('## Adjudication'), alignment.indexOf('## Resolutions Log'));
-    assert.ok(
-      adjudication.includes('normalized `MUST` /') &&
-        adjudication.includes('`SHOULD` findings (legacy MUST-FIX / SHOULD-FIX)'),
-      `${ALIGNMENT_PATH} § Finality does not map normalized severity to legacy finality`
-    );
-    assert.ok(
-      adjudication.includes('Normalized and legacy `CONSIDER` findings are advisory and final'),
-      `${ALIGNMENT_PATH} § Finality does not state CONSIDER finality`
-    );
-
-    const log = alignment.slice(alignment.indexOf('## Resolutions Log'));
-    assert.ok(log.includes('**[Rejected — pending confirmation]**'), `${ALIGNMENT_PATH} Resolutions Log lacks the pending form`);
+    assert.match(alignment, /rejecting or\s+downgrading `MUST`\/`SHOULD`/);
+    assert.match(alignment, /`CONSIDER`\s+is advisory and final/);
+    const log = alignment.slice(alignment.indexOf('## Resolution log'));
+    assert.ok(alignment.includes('[Rejected — pending confirmation]'), `${ALIGNMENT_PATH} lacks the pending form`);
     assert.ok(log.includes('[MUST|SHOULD|CONSIDER]'), `${ALIGNMENT_PATH} Resolutions Log lacks structured severity`);
     assert.ok(log.includes('Legacy lines remain readable'), `${ALIGNMENT_PATH} lacks legacy log compatibility`);
-    assert.ok(log.includes('`<tag> (CONSIDER)`'), `${ALIGNMENT_PATH} lacks legacy CONSIDER compatibility`);
     assert.ok(log.includes('`ACTIONABLE`'), `${ALIGNMENT_PATH} lacks ACTIONABLE compatibility`);
 
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const content = readSkill(skillPath);
-      assert.ok(content.includes('[Rejected — pending confirmation]'), `${skillPath} does not name the pending form`);
-      assert.ok(
-        content.includes('`MUST`/`SHOULD`'),
-        `${skillPath} does not scope pending form to MUST/SHOULD`
-      );
+      assert.match(content, /\[`alignment\.md`\]\(\.\.\/dispatch\/references\/alignment\.md\)/);
+      assert.match(content, /sanitize/i);
     }
 
     const implement = readSkill(IMPLEMENT_PATH);
-    assert.ok(implement.includes('consensus: true|false'), `${IMPLEMENT_PATH} does not hand over consensus`);
+    assert.match(implement, /targets\/reserves, metrics paths, round, consensus/);
     assert.ok(implement.includes('check-consensus.mjs'), `${IMPLEMENT_PATH} does not gate on check-consensus.mjs`);
     assert.ok(implement.includes('--exclude'), `${IMPLEMENT_PATH} does not re-resolve with --exclude`);
-    assert.ok(
-      implement.includes('rejection/downgrade of `MUST` or `SHOULD`'),
-      `${IMPLEMENT_PATH} does not scope pending rejections to MUST/SHOULD`
-    );
-    assert.match(
-      implement,
-      /`CONSIDER`\s+follows `dispatch`'s `references\/alignment\.md` § Finality/,
-      `${IMPLEMENT_PATH} does not reference alignment.md § Finality for CONSIDER findings`,
-    );
   });
 });
 
@@ -401,21 +374,16 @@ function extractTemplateHeadings(rel) {
 describe('cross-skill prose contracts', () => {
   it('applies the shared delegate-text sanitization contract to both fold steps', () => {
     const alignment = readSkill(ALIGNMENT_PATH);
-    assert.match(alignment, /^## Delegate Text Sanitization$/m);
+    assert.match(alignment, /Sanitize delegate text/);
     for (const rel of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const skill = readSkill(rel);
-      const at = skill.indexOf('### 3. Fold findings');
-      assert.ok(at !== -1, `${rel} Step 3 heading not found`);
-      assert.match(skill.slice(at), /§ Delegate Text Sanitization/);
+      assert.match(skill, /sanitiz/i);
     }
   });
 
-  it('every plan section dispatch-plan-review Step 3 names is a plan-template heading', () => {
+  it('every plan section dispatch-plan-review names is a plan-template heading', () => {
     const headings = extractTemplateHeadings(PLAN_TEMPLATE_PATH);
-    const step3 = readSkill(PLAN_REVIEW_PATH);
-    const at = step3.indexOf('### 3. Fold findings into the plan');
-    assert.ok(at !== -1, 'plan-review Step 3 heading not found');
-    const section = step3.slice(at);
+    const section = readSkill(PLAN_REVIEW_PATH);
 
     // Step 3 folds accepted findings into named sections; a name the template lacks folds nowhere.
     for (const named of ['Proposed Changes', 'Verification Plan', 'Rollback & Blast Radius', 'Out of Scope', 'Review Findings & Resolutions']) {
