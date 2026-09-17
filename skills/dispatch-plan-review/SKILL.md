@@ -1,6 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Get a cross-agent review of an implementation plan before any code is written, verifying every returned claim.
+description: Review an implementation plan across independent agent CLIs before code is written, verifying every returned claim.
 ---
 
 # dispatch-plan-review
@@ -37,7 +37,7 @@ coverage keeps the overwrite / review-as-is / fresh-slug choice.
 3. On `decision-required`, standalone mode asks the user. An orchestrator may answer only from an
    artifact it authored in the same run; otherwise it stops with the manifest diagnostic.
 4. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
-   target/reserve/fallback outcome before continuing. Remove no path still needed by the active
+   target/reserve/fallback outcome before continuing. Retain every path still needed by the active
    invocation.
 
 **Done when:** preparation is ready, the exact manifest argv is launched, and all outcomes are
@@ -57,6 +57,9 @@ terminal.
    under `## Review Findings & Resolutions`; sanitize delegate text first.
 4. Continue only while code/plan changed or consensus remains live within the round cap.
 
+**Done when:** every returned finding is verified at its cited locus, rulings are recorded, and
+consensus is evaluated.
+
 ## Settle and report
 
 After every expected source is terminal and `check-consensus.mjs` exits `0`, standalone mode lists
@@ -67,12 +70,12 @@ way. Unchosen ones stay under `## Out of Scope`. Orchestrated mode returns them 
 unasked.
 
 Then call the same preparation CLI with `action: "checkpoint"`, terminal source keys, consensus
-result, and exact `settledWrites.sections`. It atomically records freshness metadata. A failed,
-incomplete, or unsettled run does not checkpoint.
+result, and exact `settledWrites.sections`. It atomically records freshness metadata. Checkpoint
+only settled runs; leave failed, incomplete, or unsettled runs uncheckpointed.
 
-Remove no-longer-needed `cleanupPaths` on success, failure, checkpoint rejection, or abort; report
-cleanup failures. Standalone reports a concise provider-attributed result. Orchestrated returns
-adjudications without another user report.
+Prune finished `cleanupPaths` on success, failure, checkpoint rejection, or abort; report cleanup
+failures. Standalone reports a concise provider-attributed result. Orchestrated returns adjudications
+without another user report.
 
 **Done when:** the canonical plan reflects every ruling, consensus is settled or explicitly
 escalated, metadata is checkpointed only for a settled invocation, and temporary paths are handled.

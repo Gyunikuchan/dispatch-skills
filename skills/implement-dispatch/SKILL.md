@@ -55,7 +55,7 @@ While the artifact changed or findings remain live below the cap, prepare bounde
 waves for affected sources. At the cap, obtain user rulings and run one final verification wave.
 
 After consensus exit `0`, checkpoint with terminal source keys and exact settled plan-section
-writes. Clean no-longer-needed manifest paths on every success/failure path; report cleanup errors.
+writes. Prune finished manifest paths on every success/failure path; report cleanup errors.
 
 Reclassify the reviewed plan. Preserve explicit level; otherwise re-resolve changed scope. State
 the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`
@@ -106,7 +106,7 @@ has a logged status, and settled freshness is checkpointed.
    and checkpoint; offer its own `adjacent` findings the same way, then repeat step 1. Unchosen
    ones stay where review recorded them: the walkthrough's `## Follow-ups` (code) or the plan's
    `## Out of Scope` (plan). With code review disabled, list the findings as deferred and skip the
-   follow-up cycle. No code or artifact write follows the last checkpoint.
+   follow-up cycle. Leave code and artifacts untouched after the final checkpoint.
 3. Append run diagnostics: initial/final/effective level, scope shift, slug/source, rounds used,
    active/failed/substituted/dropped/excluded/unavailable/clamped candidates and source keys,
    finding totals, `adjacent` findings offered and chosen, and verification status.

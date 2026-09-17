@@ -1,6 +1,6 @@
 ---
 name: dispatch-code-review
-description: Review a selected diff, verify every claim, and apply safe accepted fixes in standalone mode.
+description: Review a selected diff across independent agent CLIs, verify every claim against code, and apply safe accepted fixes in standalone mode.
 ---
 
 # dispatch-code-review
@@ -65,6 +65,9 @@ terminal.
 4. Re-review only changed paths/live findings within the cap. Rebuttal response keys must exactly
    match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE` becomes disputed.
 
+**Done when:** all findings are verified against code, permitted fixes pass host verification,
+resolutions are logged, and consensus is evaluated.
+
 ## Settle and report
 
 After every expected source is terminal and consensus exits `0`, standalone mode lists accepted
@@ -79,8 +82,8 @@ exact `settledWrites.paths`/`walkthroughSections`. It compares the declared post
 and atomically records range, path, worktree, and walkthrough-content freshness metadata, so the
 checkpoint is the last write. Failed, incomplete, or unsettled runs keep the previous checkpoint.
 
-Remove no-longer-needed `cleanupPaths` in finally-style handling on every outcome; retain invocation
-state only until checkpoint/abort and report cleanup failures. Standalone reports a concise
+Prune finished `cleanupPaths` in finally-style handling on every outcome; retain invocation state
+only until checkpoint/abort and report cleanup failures. Standalone reports a concise
 provider-attributed result and applied fixes. Orchestrated mode returns adjudications without
 editing code or issuing another user report.
 
