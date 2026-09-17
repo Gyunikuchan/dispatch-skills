@@ -46,6 +46,8 @@ import {
   resolveRunnerExitCode,
   runDelegateCapture,
   spawnCli,
+  validateEffortSpec,
+  validateModelSpec,
 } from './common.mjs';
 
 // ============================================================================
@@ -157,6 +159,9 @@ export async function runAgy(options = {}) {
     getBinary = getAgyBinary,
     createLogger = createSessionLogger,
   } = options;
+
+  validateModelSpec(model, 'model');
+  validateEffortSpec(effort, 'effort');
 
   const bin = getBinary();
   if (!bin) {

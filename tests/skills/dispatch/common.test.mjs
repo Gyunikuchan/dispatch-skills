@@ -49,6 +49,9 @@ import {
   detectOrchestratorModel,
   normalizeModelId,
   isSameModel,
+  validateEffortSpec,
+  validateModelSpec,
+  validateProviderSpec,
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 // ---------------------------------------------------------------------------
@@ -1182,5 +1185,55 @@ describe('common: formatCliError', () => {
     const revocable = Proxy.revocable({}, {});
     revocable.revoke();
     assert.equal(safeExitCode(revocable.proxy), 1);
+  });
+
+  describe('validateModelSpec, validateEffortSpec, validateProviderSpec', () => {
+    it('accepts valid model specs and null/undefined', () => {
+      assert.doesNotThrow(() => validateModelSpec(null));
+      assert.doesNotThrow(() => validateModelSpec(undefined));
+      assert.doesNotThrow(() => validateModelSpec('claude-opus-5'));
+      assert.doesNotThrow(() => validateModelSpec(['claude-opus-5', 'claude-sonnet-5']));
+    });
+
+    it('rejects empty, whitespace-only, and colon-suffixed models', () => {
+      assert.throws(() => validateModelSpec(''), /cannot be empty/);
+      assert.throws(() => validateModelSpec('   '), /cannot be empty/);
+      assert.throws(() => validateModelSpec('claude:'), /end with a colon/);
+      assert.throws(() => validateModelSpec([]), /cannot be empty/);
+      assert.throws(() => validateModelSpec(['   ']), /cannot be empty/);
+      assert.throws(() => validateModelSpec(['valid', 'claude:']), /end with a colon/);
+      assert.throws(() => validateModelSpec('valid, claude:'), /colon/);
+      assert.throws(() => validateModelSpec('sonnet,,'), /empty or colon-suffixed/);
+      assert.throws(() => validateModelSpec(','), /empty or colon-suffixed/);
+      assert.throws(() => validateModelSpec(123), /must be a string/);
+    });
+
+    it('accepts valid effort specs and null/undefined', () => {
+      assert.doesNotThrow(() => validateEffortSpec(null));
+      assert.doesNotThrow(() => validateEffortSpec(undefined));
+      assert.doesNotThrow(() => validateEffortSpec('medium'));
+    });
+
+    it('rejects empty, whitespace-only, or non-string effort', () => {
+      assert.throws(() => validateEffortSpec(''), /cannot be empty/);
+      assert.throws(() => validateEffortSpec('   '), /cannot be empty/);
+      assert.throws(() => validateEffortSpec(123), /cannot be empty/);
+    });
+
+    it('accepts valid provider specs and normalizes aliases', () => {
+      assert.equal(validateProviderSpec(null), null);
+      assert.equal(validateProviderSpec(undefined), null);
+      assert.equal(validateProviderSpec('claude'), 'claude');
+      assert.equal(validateProviderSpec('claudecode'), 'claude');
+      assert.equal(validateProviderSpec('antigravity'), 'agy');
+      assert.equal(validateProviderSpec('github-copilot'), 'copilot');
+    });
+
+    it('rejects empty, whitespace-only, colon-suffixed, or unknown providers', () => {
+      assert.throws(() => validateProviderSpec(''), /cannot be empty/);
+      assert.throws(() => validateProviderSpec('   '), /cannot be empty/);
+      assert.throws(() => validateProviderSpec('claude:'), /end with a colon/);
+      assert.throws(() => validateProviderSpec('unknown-provider'), /Unknown provider specified/);
+    });
   });
 });

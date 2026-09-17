@@ -51,6 +51,8 @@ import {
   runDelegateCapture,
   scanVersionDirs,
   spawnCli,
+  validateEffortSpec,
+  validateModelSpec,
 } from './common.mjs';
 
 // ============================================================================
@@ -200,6 +202,9 @@ export async function runClaude(options = {}) {
     discoverTargets = findViableTargets,
     createLogger = createSessionLogger,
   } = options;
+
+  validateModelSpec(model, 'model');
+  validateEffortSpec(effort, 'effort');
 
   const viableTargets = discoverTargets(claudeMode);
   if (viableTargets.length === 0) {

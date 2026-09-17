@@ -126,6 +126,87 @@ export const MAX_ATTACHMENT_BYTES_TOTAL = 512 * 1024;
 /** Canonical provider keys a dispatch config's `platforms` map may key on. */
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
 
+/** Accepted `--provider` aliases, normalized to their canonical Provider name. */
+export const PROVIDER_ALIASES = {
+  opencode: 'opencode',
+  agy: 'agy',
+  antigravity: 'agy',
+  claude: 'claude',
+  claudecode: 'claude',
+  copilot: 'copilot',
+  'github-copilot': 'copilot',
+};
+
+/**
+ * Validates a model override or configured candidate model before invocation.
+ * Rejects empty strings, whitespace-only strings, strings with trailing colons (e.g. 'claude:'),
+ * and empty or invalid arrays.
+ *
+ * @param {unknown} model
+ * @param {string} [where='model']
+ */
+export function validateModelSpec(model, where = 'model') {
+  if (model === null || model === undefined) return;
+  if (typeof model === 'string') {
+    const trimmed = model.trim();
+    if (!trimmed || trimmed.endsWith(':')) {
+      throw new Error(`Invalid ${where}: "${model}". Model cannot be empty, whitespace-only, or end with a colon.`);
+    }
+    if (model.includes(',')) {
+      const parts = model.split(',').map((m) => m.trim());
+      if (parts.length === 0 || parts.some((p) => !p || p.endsWith(':'))) {
+        throw new Error(`Invalid ${where}: "${model}". Comma-separated models cannot contain empty or colon-suffixed entries.`);
+      }
+    }
+    return;
+  }
+  if (Array.isArray(model)) {
+    if (model.length === 0) {
+      throw new Error(`Invalid ${where}: model list cannot be empty.`);
+    }
+    for (const item of model) {
+      if (typeof item !== 'string' || !item.trim() || item.trim().endsWith(':')) {
+        throw new Error(`Invalid ${where}: entry "${item}" cannot be empty, whitespace-only, or end with a colon.`);
+      }
+    }
+    return;
+  }
+  throw new Error(`Invalid ${where}: must be a string or non-empty array of strings.`);
+}
+
+/**
+ * Validates an effort override or configured candidate effort before invocation.
+ *
+ * @param {unknown} effort
+ * @param {string} [where='effort']
+ */
+export function validateEffortSpec(effort, where = 'effort') {
+  if (effort === null || effort === undefined) return;
+  if (typeof effort !== 'string' || !effort.trim()) {
+    throw new Error(`Invalid ${where}: "${effort}". Effort cannot be empty or whitespace-only.`);
+  }
+}
+
+/**
+ * Validates an explicit provider selection before invocation.
+ *
+ * @param {unknown} provider
+ * @param {string} [where='provider']
+ * @returns {string|null} canonical provider name
+ */
+export function validateProviderSpec(provider, where = 'provider') {
+  if (provider === null || provider === undefined) return null;
+  if (typeof provider !== 'string' || !provider.trim() || provider.trim().endsWith(':')) {
+    throw new Error(`Invalid ${where}: "${provider}". Provider cannot be empty, whitespace-only, or end with a colon.`);
+  }
+  const normalized = provider.trim().toLowerCase();
+  const canonical = PROVIDER_ALIASES[normalized];
+  if (!canonical) {
+    throw new Error(`Unknown provider specified: ${provider}`);
+  }
+  return canonical;
+}
+
 /** Providers whose `platforms.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
 export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot'];
 
@@ -2121,14 +2202,24 @@ export function validateDispatchConfig(config) {
     const validKeys = supportsSandbox ? 'model, effort, sandbox' : 'model, effort';
     for (const [field, value] of Object.entries(candidate)) {
       if (field === 'model') {
-        const isString = typeof value === 'string';
-        const isStringArray = Array.isArray(value) && value.length > 0 && value.every((m) => typeof m === 'string');
-        if (!isString && !isStringArray) {
+        if (value === null || value === undefined) {
           problems.push(`${where}.model must be a string or non-empty array of strings (${hint}).`);
+        } else {
+          try {
+            validateModelSpec(value, `${where}.model`);
+          } catch {
+            problems.push(`${where}.model must be a string or non-empty array of strings (${hint}).`);
+          }
         }
       } else if (field === 'effort') {
-        if (typeof value !== 'string') {
+        if (value === null || value === undefined) {
           problems.push(`${where}.effort must be a string (${hint}).`);
+        } else {
+          try {
+            validateEffortSpec(value, `${where}.effort`);
+          } catch {
+            problems.push(`${where}.effort must be a string (${hint}).`);
+          }
         }
       } else if (field === 'sandbox' && supportsSandbox) {
         if (typeof value !== 'boolean') {

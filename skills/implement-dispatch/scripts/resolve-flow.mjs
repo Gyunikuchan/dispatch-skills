@@ -27,6 +27,8 @@ import {
   getConfigCandidates,
   loadSkillConfig,
   validateDispatchConfig,
+  validateModelSpec,
+  validateEffortSpec,
   detectOrchestratorModel,
   verifySkillIntegrity,
 } from '../../dispatch/scripts/common.mjs';
@@ -378,6 +380,16 @@ function validateCandidateObject(where, value, problems) {
       );
     } else if (typeof innerValue !== 'string') {
       problems.push(`${where}.${inner} must be a string (${DIFF_HINT}).`);
+    } else {
+      try {
+        if (inner === 'model') {
+          validateModelSpec(innerValue, `${where}.model`);
+        } else {
+          validateEffortSpec(innerValue, `${where}.effort`);
+        }
+      } catch {
+        problems.push(`${where}.${inner} must be a non-empty string without a trailing colon (${DIFF_HINT}).`);
+      }
     }
   }
 }
@@ -391,6 +403,16 @@ function validateSinglePlatformEntry(where, entry, problems, allowArrays = true)
     if (field === 'model' || field === 'effort') {
       if (typeof value !== 'string') {
         problems.push(`${where}.${field} must be a string (${DIFF_HINT}).`);
+      } else {
+        try {
+          if (field === 'model') {
+            validateModelSpec(value, `${where}.model`);
+          } else {
+            validateEffortSpec(value, `${where}.effort`);
+          }
+        } catch {
+          problems.push(`${where}.${field} must be a non-empty string without a trailing colon (${DIFF_HINT}).`);
+        }
       }
       continue;
     }

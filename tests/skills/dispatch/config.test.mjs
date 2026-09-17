@@ -210,6 +210,22 @@ describe('validateDispatchConfig', () => {
     assert.match(problems.join('\n'), /platforms\.opencode\[0\] has unrecognized key "timeout"/);
   });
 
+  it('rejects whitespace-only and colon-suffixed model values', () => {
+    const whitespaceProblems = validateDispatchConfig({ platforms: { claude: { model: '   ' } } });
+    assert.match(whitespaceProblems.join('\n'), /platforms\.claude\.model must be a string or non-empty array of strings/);
+
+    const colonProblems = validateDispatchConfig({ platforms: { claude: { model: 'claude:' } } });
+    assert.match(colonProblems.join('\n'), /platforms\.claude\.model must be a string or non-empty array of strings/);
+
+    const arrayProblems = validateDispatchConfig({ platforms: { claude: { model: ['valid', '   '] } } });
+    assert.match(arrayProblems.join('\n'), /platforms\.claude\.model must be a string or non-empty array of strings/);
+  });
+
+  it('rejects whitespace-only effort values', () => {
+    const problems = validateDispatchConfig({ platforms: { claude: { effort: '   ' } } });
+    assert.match(problems.join('\n'), /platforms\.claude\.effort must be a string/);
+  });
+
   it('reports every problem in one pass', () => {
     const problems = validateDispatchConfig({
       extra: 1,

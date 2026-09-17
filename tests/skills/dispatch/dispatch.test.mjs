@@ -535,6 +535,35 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(result.exitCode, 1);
       assert.equal(copilotRunner.mock.calls.length, 0);
     });
+
+    it('rejects malformed provider specs before invocation', async () => {
+      await assert.rejects(
+        () => dispatchTask({ prompt: 'Review', provider: 'claude:' }),
+        /Invalid --provider.*end with a colon/,
+      );
+      await assert.rejects(
+        () => dispatchTask({ prompt: 'Review', provider: '   ' }),
+        /Invalid --provider.*cannot be empty/,
+      );
+    });
+
+    it('rejects whitespace-only and colon-suffixed model overrides before invocation', async () => {
+      await assert.rejects(
+        () => dispatchTask({ prompt: 'Review', provider: 'claude', model: '   ' }),
+        /Invalid --model.*cannot be empty/,
+      );
+      await assert.rejects(
+        () => dispatchTask({ prompt: 'Review', provider: 'claude', model: 'claude:' }),
+        /Invalid --model.*end with a colon/,
+      );
+    });
+
+    it('rejects whitespace-only effort overrides before invocation', async () => {
+      await assert.rejects(
+        () => dispatchTask({ prompt: 'Review', provider: 'claude', effort: '   ' }),
+        /Invalid --effort.*cannot be empty/,
+      );
+    });
   });
 
   describe('config-driven cascade', () => {

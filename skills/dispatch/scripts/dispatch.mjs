@@ -37,16 +37,20 @@ import {
   KNOWN_PROVIDERS,
   loadSkillConfig,
   parseCommonArgs,
+  PROVIDER_ALIASES,
   readStdin,
   parseRunnerModeArgs,
   SANDBOX_SUPPORTED_PROVIDERS,
   validateDispatchConfig,
+  validateEffortSpec,
+  validateModelSpec,
+  validateProviderSpec,
   verifySkillIntegrity,
 } from './common.mjs';
 
 // Re-exported: they live in common.mjs so other modules can detect host/model
 // without importing this module (and, through it, every provider runner).
-export { detectOrchestrator, detectOrchestratorModel, isSameModel };
+export { detectOrchestrator, detectOrchestratorModel, isSameModel, PROVIDER_ALIASES };
 import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
@@ -102,17 +106,6 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 // ============================================================================
 // SECTION: Constants (tweak these)
 // ============================================================================
-
-/** Accepted `--provider` aliases, normalized to their canonical {@link Provider} name. */
-export const PROVIDER_ALIASES = {
-  opencode: 'opencode',
-  agy: 'agy',
-  antigravity: 'agy',
-  claude: 'claude',
-  claudecode: 'claude',
-  copilot: 'copilot',
-  'github-copilot': 'copilot',
-};
 
 /** Probes reachability for each provider, indirected so tests can mock individual entries. */
 export const providerProbes = {
@@ -201,10 +194,11 @@ function validateBatchEntry(entry, where, config, sourceKeys, tuples, metricsFil
       );
     }
   }
-  for (const key of ['model', 'effort']) {
-    if (entry[key] !== undefined && (typeof entry[key] !== 'string' || entry[key].length === 0)) {
-      throw new Error(`${where}.${key} must be a non-empty string when provided.`);
-    }
+  if (entry.model !== undefined) {
+    validateModelSpec(entry.model, `${where}.model`);
+  }
+  if (entry.effort !== undefined) {
+    validateEffortSpec(entry.effort, `${where}.effort`);
   }
 
   const sourceKey = sourceKeyFor(entry);
@@ -457,6 +451,16 @@ export async function dispatchTask(options = {}) {
   const responseSchema = rawResponseSchema === null
     ? null
     : normalizeResponseSchema(rawResponseSchema);
+
+  if (provider !== null && provider !== undefined) {
+    validateProviderSpec(provider, '--provider');
+  }
+  if (model !== null && model !== undefined) {
+    validateModelSpec(model, '--model');
+  }
+  if (effort !== null && effort !== undefined) {
+    validateEffortSpec(effort, '--effort');
+  }
 
   if (noConfig && !provider) {
     const err = new Error('--no-config ignores cascade membership entirely and requires --provider.');
@@ -1176,9 +1180,7 @@ function normalizeOrchestrator(name) {
 
 /** Normalizes a user-supplied `--provider` value to a canonical {@link Provider} name. */
 function resolveExplicitProvider(explicitProvider) {
-  const resolved = PROVIDER_ALIASES[explicitProvider.toLowerCase()];
-  if (!resolved) throw new Error(`Unknown provider specified: ${explicitProvider}`);
-  return resolved;
+  return validateProviderSpec(explicitProvider, '--provider');
 }
 
 /** Checks reachability of one provider via {@link providerProbes}. */

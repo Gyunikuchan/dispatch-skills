@@ -50,6 +50,8 @@ import {
   scanVersionDirs,
   spawnCli,
   spawnCliSync,
+  validateEffortSpec,
+  validateModelSpec,
 } from './common.mjs';
 
 // ============================================================================
@@ -150,6 +152,9 @@ export async function runCopilot(options = {}) {
     discoverTargets = findViableTargets,
     createLogger = createSessionLogger,
   } = options;
+
+  validateModelSpec(model, 'model');
+  validateEffortSpec(effort, 'effort');
 
   const viableTargets = discoverTargets(copilotMode);
   if (viableTargets.length === 0) {

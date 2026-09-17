@@ -88,6 +88,8 @@ import {
   scanVersionDirs,
   SENSITIVE_ENV_KEY_PATTERN,
   SENSITIVE_FILE_PATTERNS,
+  validateEffortSpec,
+  validateModelSpec,
 } from './common.mjs';
 
 // ============================================================================
@@ -277,6 +279,9 @@ export async function runOpencode(options = {}) {
   if (!prompt.trim()) {
     throw new Error('No prompt provided for opencode agent execution.');
   }
+
+  validateModelSpec(model, 'model');
+  validateEffortSpec(options.effort, 'effort');
 
   const metricsAttempts = [];
   return cascadeModels(
