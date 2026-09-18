@@ -328,7 +328,6 @@ describe('orchestrated handover contract', () => {
     }
     const implement = readSkill(IMPLEMENT_PATH);
     assert.match(implement, /`adjacent`/, `${IMPLEMENT_PATH} does not offer adjacent follow-ups`);
-    assert.match(implement, /--expected-slots/, `${IMPLEMENT_PATH} lost the slot count`);
   });
 
   it('the handover carries consensus, and pending rebuttals are a logged form in every consumer', () => {
@@ -348,7 +347,7 @@ describe('orchestrated handover contract', () => {
     }
 
     const implement = readSkill(IMPLEMENT_PATH);
-    assert.match(implement, /targets\/reserves, metrics paths, round, consensus/);
+    assert.match(implement, /targets\/reserves, round, consensus/);
     assert.ok(implement.includes('check-consensus.mjs'), `${IMPLEMENT_PATH} does not gate on check-consensus.mjs`);
     assert.ok(implement.includes('--exclude'), `${IMPLEMENT_PATH} does not re-resolve with --exclude`);
   });

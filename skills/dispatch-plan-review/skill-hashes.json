@@ -1,10 +1,10 @@
 {
-  "SKILL.md": "56dbc38dddadaf9d657d4ae8c866641eead2d236d8ca2894b8e296485834ee56",
+  "SKILL.md": "20d97a33a5c23165182c4c69229ba705dbcb5de6a5d03c6b28741332f328c34e",
   "references/plan-template.md": "dd4568ee75d0a1dcebc1f7dd6ff9a062126ddefad6d99d269cea6a3ff0a1a7c2",
   "references/prompt-template.md": "f69934229ae8c82e8518643fe9adad42b0fbe6f7bf66a218116fa5c5c49568f7",
   "references/rebuttal-schema.json": "fdb63f9eb61276a9d431680c1071350a95c2ab7e95dff3a5a232b641451fad27",
   "references/rebuttal-template.md": "edca4fa112c7909fbc5537b6a8c33099293eba51ceffe6e6808009f9c8ac198f",
   "references/report-schema.json": "38615c646079b5ffbd65edd486e210e12b94195199dab106c5d670f39aac08ce",
   "scripts/parse-report.mjs": "74b94d6031208b5c35d9dd25e051db42fbbbd66ee81ac84b707c119e26687f84",
-  "scripts/prepare-review.mjs": "5a372378c68a7bb73554b28f43e797f2f5a072a8c968a1b5daff8ad1af5d52c6"
+  "scripts/prepare-review.mjs": "117e0327bb827ac5be4eb9d66b2f56c0a7e2c9c0ea293c632188966fd6b912f8"
 }

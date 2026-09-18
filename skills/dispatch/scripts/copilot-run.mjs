@@ -221,8 +221,7 @@ export async function runCopilot(options = {}) {
         const step = nextCopilotStep({ result, error: null, canCascade });
         if (step === 'next-target') {
           process.stderr.write(
-            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (quota/rate limit).\n` +
-              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
+            `[dispatch] fallback ${target.name} -> ${viableTargets[i + 1].name}: ${result.failureKind} (quota/rate limit)\n`,
           );
           lastResult = result;
           continue;
@@ -242,7 +241,7 @@ export async function runCopilot(options = {}) {
         const step = nextCopilotStep({ result: null, error: err, canCascade });
         if (step === 'next-target') {
           process.stderr.write(
-            `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
+            `[dispatch] fallback ${target.name} -> ${viableTargets[i + 1]?.name ?? 'next mode'}: ${err.message}\n`,
           );
           continue;
         }
@@ -365,15 +364,12 @@ function executeOnTarget({
   });
   const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort, sandbox });
 
-  const modeLabel = { desktop: 'copilot desktop', vscode: 'copilot vscode', cli: 'copilot cli' }[target.mode];
-  const providerLabel = `GitHub Copilot [${target.mode}] (${modeLabel})`;
-
   emitInitBanner({
-    provider: providerLabel,
+    platform: 'copilot',
+    mode: target.mode,
     model,
     effort,
     logFile: sessionLogger.logFile,
-    mode: 'READ-ONLY',
   });
 
   const trace = createTraceWriter(verbose);
@@ -411,10 +407,11 @@ function executeOnTarget({
       const effectiveExitCode = failureKind === 'sandbox-unsupported' ? 1 : exitCode;
 
       emitCompletionBanner({
-        provider: providerLabel,
-        sessionLink,
+        platform: 'copilot',
         exitCode: effectiveExitCode,
         truncated: outcome.truncated,
+        sessionId,
+        resumeCommand: sessionLink,
       });
 
       return {

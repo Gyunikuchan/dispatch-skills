@@ -128,12 +128,10 @@ function validateRequest(request) {
 
   function validateCombinedEntries(targets, reserves) {
     const sources = new Set();
-    const metrics = new Set();
     for (const entry of [...targets, ...reserves]) {
       const source = `${entry.roundId}:${entry.platform}:${entry.candidateId.split(':')[2]}`;
-      if (sources.has(source) || metrics.has(entry.metricsFile)) throw new Error('targets and reserves must have unique sources and metrics files.');
+      if (sources.has(source)) throw new Error('targets and reserves must have unique sources.');
       sources.add(source);
-      metrics.add(entry.metricsFile);
     }
   }
   return action;
@@ -152,13 +150,11 @@ function validateSelector(selector) {
 function validateTargets(entries, roundId, label) {
   if (!Array.isArray(entries)) throw new Error(`${label} must be an array.`);
   const sources = new Set();
-  const metrics = new Set();
   for (const [index, entry] of entries.entries()) {
-    assertObjectKeys(entry, ['roundId', 'candidateId', 'platform', 'candidateIndex', 'model', 'effort', 'metricsFile'], `${label}[${index}]`);
+    assertObjectKeys(entry, ['roundId', 'candidateId', 'platform', 'candidateIndex', 'model', 'effort'], `${label}[${index}]`);
     if (entry.roundId !== roundId || !/^plan-review:R[1-9]\d*$/.test(entry.roundId ?? '')) throw new Error(`${label}[${index}].roundId is invalid.`);
     if (!/^plan-review:[a-z][a-z0-9-]*:\d+$/.test(entry.candidateId ?? '')) throw new Error(`${label}[${index}].candidateId is invalid.`);
     if (entry.candidateId.split(':')[1] !== entry.platform) throw new Error(`${label}[${index}] platform does not match candidateId.`);
-    if (!path.isAbsolute(entry.metricsFile ?? '')) throw new Error(`${label}[${index}].metricsFile must be absolute.`);
     const candidateIndex = Number(entry.candidateId.split(':')[2]);
     const byIndex = Number.isSafeInteger(entry.candidateIndex) && entry.candidateIndex >= 0;
     if (byIndex && entry.candidateIndex !== candidateIndex) throw new Error(`${label}[${index}].candidateIndex does not match candidateId.`);
@@ -167,9 +163,7 @@ function validateTargets(entries, roundId, label) {
     if (byIndex === byOverride) throw new Error(`${label}[${index}] requires candidateIndex or model/effort.`);
     const source = `${entry.roundId}:${entry.platform}:${candidateIndex}`;
     if (sources.has(source)) throw new Error(`${label} contains duplicate source ${source}.`);
-    if (metrics.has(entry.metricsFile)) throw new Error(`${label} contains duplicate metricsFile.`);
     sources.add(source);
-    metrics.add(entry.metricsFile);
   }
 }
 

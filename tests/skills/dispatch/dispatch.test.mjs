@@ -1464,6 +1464,7 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: PROJECT_ROOT, // hermetic: never inherit the caller's cwd
+      env: { ...process.env, DISPATCH_TELEMETRY: '0' }, // keep test runs out of real telemetry
     });
     assert.equal(run.error, undefined, `spawn failed outright: ${run.error?.message}`);
     const stderr = run.stderr || '';
@@ -1483,6 +1484,7 @@ describe('dispatch --validate-only CLI', () => {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: PROJECT_ROOT, // hermetic: never inherit the caller's cwd
+      env: { ...process.env, DISPATCH_TELEMETRY: '0' }, // keep test runs out of real telemetry
     });
 
   it('validates the shipped config and exits 0', () => {

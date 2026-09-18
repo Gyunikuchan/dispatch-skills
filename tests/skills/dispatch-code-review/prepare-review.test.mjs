@@ -59,7 +59,7 @@ describe('code review preparation', () => {
       summary: 'Update the exported value',
       verification: { command: 'npm test', result: 'Passed' },
       roundId: 'code-review:R1',
-      targets: [{ roundId: 'code-review:R1', candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium', metricsFile: path.join(repo, 'slot.json') }],
+      targets: [{ roundId: 'code-review:R1', candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
       artifactOwned: true,
     }, { repoRoot: repo });
     try {
@@ -161,7 +161,7 @@ describe('code review preparation', () => {
 
   it('rejects standalone targets/reserves and orchestrated selectors', () => {
     const repo = makeRepo();
-    const entry = { roundId: 'code-review:R1', candidateId: 'code-review:claude:0', platform: 'claude', candidateIndex: 0, metricsFile: path.join(repo, 'slot.json') };
+    const entry = { roundId: 'code-review:R1', candidateId: 'code-review:claude:0', platform: 'claude', candidateIndex: 0 };
     assert.throws(() => prepareCodeReview({ roundId: 'code-review:R1', targets: [entry] }, { repoRoot: repo }), /standalone requests cannot carry targets/);
     assert.throws(() => prepareCodeReview({ roundId: 'code-review:R1', reserves: [entry] }, { repoRoot: repo }), /standalone requests cannot carry targets/);
     // Malformed --list-targets entries still get the standalone diagnostic first.

@@ -31,7 +31,7 @@ mismatch keeps the overwrite / as-is / fresh-slug choice.
    count/`all` pins, prepare once per `dispatch.mjs --list-targets` entry with
    `selector: {provider: <platform>, candidateIndex}`.
    Orchestrated requests carry `mode`, `reviewMode`, `roundId`, `consensus`, caller-resolved
-   `targets`/`reserves`, unique metrics paths, and optional finding packet/context.
+   `targets`/`reserves`, and optional finding packet/context.
 2. Preparation validates the explicit commit/range or current staged, unstaged, untracked, or
    merge-base diff, excludes `.scratch/`, generated, vendored, and binary paths, and returns
    `No reviewable changes; name a commit or range to review.` without substituting `HEAD~1`.

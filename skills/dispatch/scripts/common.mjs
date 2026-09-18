@@ -33,7 +33,6 @@ import { fileURLToPath } from 'node:url';
  * @property {string|null} orchestrator
  * @property {string|null} orchestratorModel
  * @property {string|null} provider
- * @property {string|null} metricsFile
  * @property {boolean} help
  * @property {string|null} promptFile
  */
@@ -509,7 +508,6 @@ export const COMMON_VALUE_FLAGS = new Set([
   '-p', '--prompt', '--prompt-file', '-f', '--file', '--artifact', '-m', '--model',
   '-e', '--effort', '--reasoning-effort', '-a', '--agent', '-t', '--timeout',
   '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
-  '--metrics-file',
 ]);
 
 // Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
@@ -532,7 +530,6 @@ export const DOCUMENTED_COMMON_FLAGS = [
 /** Common flags deliberately absent from every runner's help — see DOCUMENTED_COMMON_FLAGS. */
 export const RUNNER_IRRELEVANT_COMMON_FLAGS = [
   '-a', '--agent', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
-  '--metrics-file',
 ];
 
 /**
@@ -564,7 +561,6 @@ export const FLAG_ALIASES = new Map([
   ['--orchestrator-model', 'orchestratorModel'],
   ['--provider', 'provider'],
   ['--candidate-index', 'candidateIndex'],
-  ['--metrics-file', 'metricsFile'],
 ]);
 
 /** Option fields whose value is a positive integer, with silent-default on a bad value. */
@@ -618,7 +614,6 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
     orchestrator: null,
     orchestratorModel: null,
     provider: null,
-    metricsFile: null,
     candidateIndex: null,
     help: false,
     promptFile: null,
@@ -1448,43 +1443,31 @@ export function safeExitCode(err) {
 }
 
 /**
- * Emits a single concise initialization banner to stderr to prevent orchestrator context pollution.
+ * Emits a single concise start banner to stderr to prevent orchestrator context pollution.
  *
  * Must be emitted BEFORE spawning the delegate: the log path it names is the orchestrator's
- * only handle for monitoring a run in flight.
+ * only handle for monitoring a run in flight. Keys keep a stable order so callers can parse them.
  */
-export function emitInitBanner({ provider, model, effort, sessionLink, logFile, mode }) {
-  const parts = [`[dispatch] Provider: ${provider}`];
-  if (model) {
-    parts.push(`Model: ${Array.isArray(model) ? model.join(', ') : model}`);
-  }
-  if (effort) {
-    parts.push(`Effort: ${effort}`);
-  }
-  if (sessionLink) {
-    parts.push(`Session: ${sessionLink}`);
-  }
-  if (mode) {
-    parts.push(`Mode: ${mode}`);
-  }
-  if (logFile) {
-    parts.push(`Log: ${logFile}`);
-  }
-  process.stderr.write(`${parts.join(' | ')}\n`);
+export function emitInitBanner({ platform, mode, model, effort, logFile, host }) {
+  const parts = ['[dispatch] start', `platform=${platform}`];
+  if (mode) parts.push(`mode=${mode}`);
+  parts.push(`model=${(Array.isArray(model) ? model.filter(Boolean).join(',') : model) || 'default'}`);
+  parts.push(`effort=${effort || 'default'}`);
+  // Quote paths with whitespace so key=value parsing survives e.g. "C:\Users\First Last".
+  if (logFile) parts.push(/\s/.test(logFile) ? `log="${logFile}"` : `log=${logFile}`);
+  if (host) parts.push(`host=${host}`);
+  process.stderr.write(`${parts.join(' ')}\n`);
 }
 
 /**
  * Emits the post-run footer carrying details only known after the delegate exits.
  */
-export function emitCompletionBanner({ provider, sessionLink, exitCode, truncated }) {
-  const parts = [`[dispatch] Done: ${provider}`, `Exit: ${exitCode}`];
-  if (sessionLink) {
-    parts.push(`Resume: ${sessionLink}`);
-  }
-  if (truncated) {
-    parts.push(`Truncated: ${truncated}`);
-  }
-  process.stderr.write(`${parts.join(' | ')}\n`);
+export function emitCompletionBanner({ platform, exitCode, truncated, sessionId, resumeCommand }) {
+  const parts = ['[dispatch] done', `platform=${platform}`, `exit=${exitCode}`];
+  if (truncated) parts.push(`truncated=${truncated}`);
+  if (sessionId) parts.push(`session=${sessionId}`);
+  if (resumeCommand) parts.push(`resume="${resumeCommand}"`);
+  process.stderr.write(`${parts.join(' ')}\n`);
 }
 
 /**
@@ -2365,14 +2348,12 @@ export async function cascadeModels(models, attempt, { label }) {
       result = await attempt(current);
     } catch (err) {
       if (isLast) throw err;
-      process.stderr.write(
-        `[dispatch] Warning: Model '${current}' execution failed on ${label} (${err?.message ?? err}). Trying fallback model '${next}'...\n`,
-      );
+      process.stderr.write(`[dispatch] fallback ${label}:${current} -> ${label}:${next}: ${err?.message ?? err}\n`);
       continue;
     }
     if (isLast || result?.exitCode === 0) return result;
     process.stderr.write(
-      `[dispatch] Notice: Model '${current}' failed on ${label} (exit ${result?.exitCode}${result?.failureKind ? `, failure: ${result.failureKind}` : ''}). Trying fallback model '${next}'...\n`,
+      `[dispatch] fallback ${label}:${current} -> ${label}:${next}: exit ${result?.exitCode}${result?.failureKind ? ` [${result.failureKind}]` : ''}\n`,
     );
   }
   // Unreachable: the last model always returns or throws above.

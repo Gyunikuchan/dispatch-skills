@@ -52,7 +52,8 @@ describe('common: session logging & banners', () => {
     fs.unlinkSync(logger.logFile);
   });
 
-  it('emitInitBanner formats standard banner with provider, model, effort, session, mode, and log', () => {
+  /** Runs `fn` with process.stderr captured and returns what it wrote. */
+  function captureBanner(fn) {
     let captured = '';
     const origWrite = process.stderr.write;
     process.stderr.write = (chunk) => {
@@ -60,68 +61,79 @@ describe('common: session logging & banners', () => {
       return true;
     };
     try {
-      emitInitBanner({
-        provider: 'Claude Code [desktop] (claude)',
-        model: 'claude-3-7-sonnet',
-        effort: 'high',
-        sessionLink: 'https://example.com/session',
-        mode: 'READ-ONLY',
-        logFile: '/tmp/test.log',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Provider: Claude Code [desktop] (claude) | Model: claude-3-7-sonnet | Effort: high | Session: https://example.com/session | Mode: READ-ONLY | Log: /tmp/test.log\n',
-      );
+      fn();
     } finally {
       process.stderr.write = origWrite;
     }
+    return captured;
+  }
+
+  it('emitInitBanner prints one line with stable key order', () => {
+    const captured = captureBanner(() => emitInitBanner({
+      platform: 'claude',
+      mode: 'desktop',
+      model: 'claude-3-7-sonnet',
+      effort: 'high',
+      logFile: '/tmp/test.log',
+    }));
+    assert.equal(
+      captured,
+      '[dispatch] start platform=claude mode=desktop model=claude-3-7-sonnet effort=high log=/tmp/test.log\n',
+    );
   });
 
-  it('emitInitBanner formats array model and omits null/undefined fields', () => {
-    let captured = '';
-    const origWrite = process.stderr.write;
-    process.stderr.write = (chunk) => {
-      captured += chunk;
-      return true;
-    };
-    try {
-      emitInitBanner({
-        provider: 'Antigravity 2.0 (agy)',
+  it('emitInitBanner quotes a log path containing whitespace', () => {
+    assert.equal(
+      captureBanner(() => emitInitBanner({
+        platform: 'claude',
+        mode: 'cli',
+        model: null,
+        effort: null,
+        logFile: 'C:\\Users\\First Last\\run.log',
+      })),
+      '[dispatch] start platform=claude mode=cli model=default effort=default log="C:\\Users\\First Last\\run.log"\n',
+    );
+  });
+
+  it('emitInitBanner joins array models, prints default for unset model/effort, and appends host', () => {
+    assert.equal(
+      captureBanner(() => emitInitBanner({
+        platform: 'agy',
+        mode: 'cli',
         model: ['gemini-3.8-flash', 'gemini-3.7-flash'],
         effort: null,
         logFile: '/tmp/test.log',
-        mode: 'READ-ONLY',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Provider: Antigravity 2.0 (agy) | Model: gemini-3.8-flash, gemini-3.7-flash | Mode: READ-ONLY | Log: /tmp/test.log\n',
-      );
-    } finally {
-      process.stderr.write = origWrite;
-    }
+      })),
+      '[dispatch] start platform=agy mode=cli model=gemini-3.8-flash,gemini-3.7-flash effort=default log=/tmp/test.log\n',
+    );
+    assert.equal(
+      captureBanner(() => emitInitBanner({
+        platform: 'opencode',
+        mode: null,
+        model: null,
+        effort: undefined,
+        logFile: '/tmp/test.log',
+        host: 'http://127.0.0.1:1234/v1',
+      })),
+      '[dispatch] start platform=opencode model=default effort=default log=/tmp/test.log host=http://127.0.0.1:1234/v1\n',
+    );
   });
 
-  it('emitCompletionBanner formats completion banner with provider, resume, exitCode, and truncated', () => {
-    let captured = '';
-    const origWrite = process.stderr.write;
-    process.stderr.write = (chunk) => {
-      captured += chunk;
-      return true;
-    };
-    try {
-      emitCompletionBanner({
-        provider: 'OpenCode (LM Studio)',
-        sessionLink: 'http://127.0.0.1:1234/v1',
+  it('emitCompletionBanner prints exit, truncation, session, and quoted resume in order', () => {
+    assert.equal(
+      captureBanner(() => emitCompletionBanner({
+        platform: 'claude',
         exitCode: 0,
         truncated: 'timeout',
-      });
-      assert.equal(
-        captured,
-        '[dispatch] Done: OpenCode (LM Studio) | Exit: 0 | Resume: http://127.0.0.1:1234/v1 | Truncated: timeout\n',
-      );
-    } finally {
-      process.stderr.write = origWrite;
-    }
+        sessionId: 'abc-123',
+        resumeCommand: 'claude --resume abc-123',
+      })),
+      '[dispatch] done platform=claude exit=0 truncated=timeout session=abc-123 resume="claude --resume abc-123"\n',
+    );
+    assert.equal(
+      captureBanner(() => emitCompletionBanner({ platform: 'opencode', exitCode: 1, truncated: null })),
+      '[dispatch] done platform=opencode exit=1\n',
+    );
   });
 
   describe('createTraceWriter', () => {

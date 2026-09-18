@@ -58,7 +58,6 @@ sanitized, provider-attributed report with available session handles.
 | `-a`, `--agent` | Agent override (opencode provider only). |
 | `-t`, `--timeout` | Timeout seconds; default `1800`. |
 | `--max-buffer` | Output cap MB; default `10`. |
-| `--metrics-file` | Content-free terminal slot record. |
 | `--batch-file` | Temporary caller-resolved target/reserve manifest. |
 | `--response-schema-file` | Native JSON Schema output (Claude only). |
 | `--provider` | Provider pin; canonical key or alias. |
@@ -72,6 +71,9 @@ sanitized, provider-attributed report with available session handles.
 | `--candidate-index` | Zero-based configured candidate; requires provider. |
 | `--json` | Structured output (opencode provider only). |
 | `-v`, `--verbose` | Interactive stderr trace. |
+
+Each terminal dispatch appends one content-free line to
+`<tmp>/dispatch-telemetry-<username>/telemetry.jsonl`; `DISPATCH_TELEMETRY=0` disables it.
 
 Inspect any CLI with `--help`; inspect an in-flight log with `tail -n 30 "<logFile>"` (PowerShell:
 `Get-Content -Tail 30 "<logFile>"`).

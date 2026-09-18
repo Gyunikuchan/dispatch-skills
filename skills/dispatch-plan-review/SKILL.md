@@ -29,7 +29,7 @@ unclear coverage keeps the overwrite / as-is / fresh-slug choice.
    `requirement`/`focus`); for count/`all` pins, prepare once per `dispatch.mjs --list-targets`
    entry with `selector: {provider: <platform>, candidateIndex}`. Orchestrated
    requests carry `mode`, `reviewMode`, `roundId`, `consensus`, caller-resolved
-   `targets`/`reserves`, unique metrics paths, and optional packet/context. The manifest returns
+   `targets`/`reserves`, and optional packet/context. The manifest returns
    the canonical plan (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), freshness, scope, prompt/views,
    argv, invocation context, and cleanup paths.
 2. On `authoring-required`, write the plan from [plan-template.md](references/plan-template.md),

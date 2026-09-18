@@ -71,14 +71,6 @@ Validates whether an artifact's `## Review Findings & Resolutions` section has c
   - Unclosed fence detection triggers fail-closed scan across the entire file.
   - Regex accepts em-dash, en-dash, and hyphens in `[Rejected — pending confirmation]`.
 
-### Run Records (`scripts/run-record.mjs`)
-
-Initializes marked owner-only directories beneath the absolute Git common directory, aggregates
-closed-schema `dispatch --metrics-file` slot records, rotates unpinned finalized runs, removes
-stale incomplete runs, and atomically replaces or clears `<phase>:<corpus>` baseline labels.
-Standalone review commands are untelemetered; an implement-dispatch slot is one launched dispatch,
-including reserves and excluding native in-process fallbacks.
-
 ### Review Preparation
 
 Each review skill owns `scripts/prepare-review.mjs`. It validates a closed JSON request, resolves

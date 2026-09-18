@@ -59,7 +59,7 @@ describe('plan review preparation', () => {
       artifactOwned: true,
       requirement: 'Implement sample',
       roundId: 'plan-review:R1',
-      targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium', metricsFile: path.join(repo, 'slot.json') }],
+      targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
       reserves: [],
     }, { repoRoot: repo });
     try {
@@ -77,7 +77,7 @@ describe('plan review preparation', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
-    const target = { roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', candidateIndex: 0, metricsFile: path.join(repo, 'slot.json') };
+    const target = { roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', candidateIndex: 0 };
     assert.throws(() => preparePlanReview({
       artifactPath: plan, slug: 'sample', artifactOwned: true, roundId: 'plan-review:R1', targets: [target],
     }, { repoRoot: repo }), /standalone requests cannot carry targets/);

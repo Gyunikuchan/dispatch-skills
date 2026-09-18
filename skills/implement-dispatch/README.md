@@ -146,10 +146,8 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
    settled reviews checkpoint metadata for the next invocation.
 8. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
 
-Each workflow also writes content-free measurements beneath the repository's Git common directory.
-Records contain counts and outcome metadata, never prompts, reports, environment values, or
-credentials. The newest 100 unpinned finalized runs are retained; explicitly pinned benchmark
-baselines remain until replaced or cleared.
+`dispatch` appends content-free telemetry to `<tmp>/dispatch-telemetry-<username>/telemetry.jsonl`;
+disable it with `DISPATCH_TELEMETRY=0`.
 
 > [!NOTE]
 > Plan approval is the workflow's only approval gate. The skill does not write code before you

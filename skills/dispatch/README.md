@@ -152,7 +152,6 @@ diagnostics.
 | `--json` | Request structured output from the OpenCode provider only. |
 | `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run. |
 | `--max-buffer <MB>` | Raise the output buffer if a provider result is truncated. |
-| `--metrics-file <path>` | Write one content-free terminal slot record to an initialized absolute path. |
 | `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
 | `--orchestrator <name>` | Override automatic host-platform detection. |
 | `--orchestrator-model <model>` | Override automatic host-model detection. |

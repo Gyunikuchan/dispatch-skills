@@ -230,7 +230,7 @@ describe('common: cascadeModels', () => {
     assert.equal(value.model, 'b');
     assert.equal(
       stderr,
-      "[dispatch] Notice: Model 'a' failed on X (exit 1, failure: quota). Trying fallback model 'b'...\n",
+      '[dispatch] fallback X:a -> X:b: exit 1 [quota]\n',
     );
   });
 
@@ -249,7 +249,7 @@ describe('common: cascadeModels', () => {
     );
     assert.deepEqual(calls, ['a', 'b']);
     assert.equal(value.model, 'b');
-    assert.equal(stderr, "[dispatch] Warning: Model 'a' execution failed on X (boom). Trying fallback model 'b'...\n");
+    assert.equal(stderr, '[dispatch] fallback X:a -> X:b: boom\n');
   });
 
   it('returns / throws the last model outcome unchanged', async () => {

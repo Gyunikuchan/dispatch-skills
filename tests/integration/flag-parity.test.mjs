@@ -148,7 +148,6 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],
     ['skills', 'implement-dispatch', 'scripts', 'check-consensus.mjs'],
-    ['skills', 'implement-dispatch', 'scripts', 'run-record.mjs'],
     ['skills', 'dispatch-code-review', 'scripts', 'resolve-review-range.mjs'],
     ['skills', 'dispatch-plan-review', 'scripts', 'prepare-review.mjs'],
     ['skills', 'dispatch-code-review', 'scripts', 'prepare-review.mjs'],

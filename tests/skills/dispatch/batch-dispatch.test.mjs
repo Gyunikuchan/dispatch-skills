@@ -20,21 +20,19 @@ const CONFIG = {
 };
 
 let root;
-let runDir;
+let savedTelemetry;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-batch-'));
-  runDir = path.join(root, 'run');
-  fs.mkdirSync(runDir);
-  fs.writeFileSync(path.join(runDir, '.dispatch-run.json'), JSON.stringify({
-    schemaVersion: 1,
-    runId: 'batch-test',
-    runDir,
-  }));
+  // Keep batch runs out of the user's real telemetry file.
+  savedTelemetry = process.env.DISPATCH_TELEMETRY;
+  process.env.DISPATCH_TELEMETRY = '0';
 });
 
 afterEach(() => {
   mock.restoreAll();
+  if (savedTelemetry === undefined) delete process.env.DISPATCH_TELEMETRY;
+  else process.env.DISPATCH_TELEMETRY = savedTelemetry;
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -48,7 +46,6 @@ function entry({
   roundId = 'code-review:R1',
   candidateId = 'code-review:claude:0',
   platform = 'claude',
-  metrics = 'target.json',
   ...rest
 } = {}) {
   return {
@@ -56,7 +53,6 @@ function entry({
     candidateId,
     platform,
     model: 'test-model',
-    metricsFile: path.join(runDir, metrics),
     ...rest,
   };
 }
@@ -95,18 +91,18 @@ describe('dispatch batch manifest', () => {
   it('rejects duplicate tuples', () => {
     assert.throws(
       () => loadBatchFile(writeBatch({
-        targets: [entry(), entry({ candidateId: 'code-review:claude:1', metrics: 'second.json' })],
+        targets: [entry(), entry({ candidateId: 'code-review:claude:1' })],
       }), CONFIG),
       /duplicates a target tuple/,
     );
   });
 
-  it('rejects duplicate source keys and metrics destinations', () => {
+  it('rejects duplicate source keys and legacy metricsFile fields', () => {
     assert.throws(
       () => loadBatchFile(writeBatch({
         targets: [
           entry(),
-          entry({ candidateId: 'code-review:claude:0', model: 'other-model', metrics: 'second.json' }),
+          entry({ candidateId: 'code-review:claude:0', model: 'other-model' }),
         ],
       }), CONFIG),
       /duplicates source key/,
@@ -118,33 +114,15 @@ describe('dispatch batch manifest', () => {
           entry({
             platform: 'agy',
             candidateId: 'code-review:agy:0',
-            metricsFile: path.join(runDir, 'target.json'),
+            metricsFile: path.join(root, 'target.json'),
           }),
         ],
       }), CONFIG),
-      /duplicates another batch metrics destination/,
+      /unsupported field "metricsFile"/,
     );
   });
 
-  it('rejects cross-run metrics and unsafe batch-file paths', () => {
-    const otherRun = path.join(root, 'other-run');
-    fs.mkdirSync(otherRun);
-    fs.writeFileSync(path.join(otherRun, '.dispatch-run.json'), JSON.stringify({
-      schemaVersion: 1,
-      runId: 'other-test',
-      runDir: otherRun,
-    }));
-    assert.throws(
-      () => loadBatchFile(writeBatch({
-        targets: [entry()],
-        reserves: [entry({
-          candidateId: 'code-review:agy:0',
-          platform: 'agy',
-          metricsFile: path.join(otherRun, 'reserve.json'),
-        })],
-      }), CONFIG),
-      /same initialized run directory/,
-    );
+  it('rejects unsafe batch-file paths', () => {
     assert.throws(() => loadBatchFile('relative.json', CONFIG), /absolute path/);
     assert.throws(
       () => loadBatchFile(path.resolve('package.json'), CONFIG),
@@ -181,7 +159,6 @@ describe('dispatch batch manifest', () => {
       reserves: [entry({
         candidateId: 'code-review:agy:0',
         platform: 'agy',
-        metrics: 'reserve.json',
       })],
     }), CONFIG);
 
@@ -201,33 +178,6 @@ describe('dispatch batch manifest', () => {
     assert.equal(envelope.complete, true);
     assert.equal(envelope.targets[0].truncated, null);
     assert.equal(envelope.targets[0].logFile, path.join(root, 'agy.log'));
-    assert.equal(fs.existsSync(path.join(runDir, 'target.json')), true);
-    assert.equal(fs.existsSync(path.join(runDir, 'reserve.json')), true);
-  });
-
-  it('preserves a successful report when metrics publication fails', async () => {
-    mock.method(providerRunners, 'claude', async () => ({
-      provider: 'claude',
-      stdout: 'review',
-      stderr: '',
-      exitCode: 0,
-      failureKind: null,
-      logFile: path.join(root, 'claude.log'),
-      truncated: null,
-      metricsAttempts: [],
-    }));
-    const batch = loadBatchFile(writeBatch({ targets: [entry()] }), CONFIG);
-    fs.writeFileSync(path.join(runDir, 'target.json'), '{}');
-
-    const envelope = await dispatchBatch(batch, {
-      prompt: 'Review',
-      files: [],
-      configPath: 'test-config',
-    }, CONFIG);
-
-    assert.equal(envelope.complete, true);
-    assert.equal(envelope.targets[0].report, 'review');
-    assert.match(envelope.targets[0].metricsError, /already exists/);
   });
 
   it('leaves an orchestrator-platform failure unresolved for native fallback', async () => {
@@ -260,7 +210,6 @@ describe('dispatch batch manifest', () => {
       reserves: [entry({
         candidateId: 'code-review:agy:0',
         platform: 'agy',
-        metrics: 'reserve.json',
       })],
     }), CONFIG);
 
@@ -306,8 +255,8 @@ describe('dispatch batch manifest', () => {
 
     const batch = loadBatchFile(writeBatch({
       targets: [
-        entry({ candidateId: 'code-review:claude:0', platform: 'claude', metrics: 'claude.json' }),
-        entry({ candidateId: 'code-review:agy:0', platform: 'agy', metrics: 'agy.json' }),
+        entry({ candidateId: 'code-review:claude:0', platform: 'claude' }),
+        entry({ candidateId: 'code-review:agy:0', platform: 'agy' }),
       ],
       reserves: [],
     }), CONFIG);
@@ -333,7 +282,7 @@ describe('dispatch batch manifest', () => {
     });
 
     const batch = loadBatchFile(writeBatch({
-      targets: [entry({ candidateId: 'code-review:claude:0', platform: 'claude', metrics: 'claude.json' })],
+      targets: [entry({ candidateId: 'code-review:claude:0', platform: 'claude' })],
       reserves: [],
     }), CONFIG);
 

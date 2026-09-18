@@ -55,7 +55,7 @@ import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
 import { isAgyAvailable, runAgy } from './agy-run.mjs';
 import { isClaudeAvailable, runClaude } from './claude-run.mjs';
 import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
-import { prepareMetricsDestination, recordDispatchMetrics } from './slot-metrics.mjs';
+import { appendTelemetry } from './telemetry.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -138,7 +138,6 @@ const BATCH_ENTRY_FIELDS = new Set([
   'candidateIndex',
   'model',
   'effort',
-  'metricsFile',
 ]);
 
 function sourceKeyFor(entry) {
@@ -146,14 +145,14 @@ function sourceKeyFor(entry) {
   return `${entry.roundId}:${entry.platform}:${candidateIndex}`;
 }
 
-function validateBatchEntry(entry, where, config, sourceKeys, tuples, metricsFiles, runDirs) {
+function validateBatchEntry(entry, where, config, sourceKeys, tuples) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${where} must be an object.`);
   }
   for (const key of Object.keys(entry)) {
     if (!BATCH_ENTRY_FIELDS.has(key)) throw new Error(`${where} contains unsupported field "${key}".`);
   }
-  for (const key of ['roundId', 'candidateId', 'platform', 'metricsFile']) {
+  for (const key of ['roundId', 'candidateId', 'platform']) {
     if (typeof entry[key] !== 'string' || entry[key].length === 0) {
       throw new Error(`${where}.${key} must be a non-empty string.`);
     }
@@ -212,13 +211,6 @@ function validateBatchEntry(entry, where, config, sourceKeys, tuples, metricsFil
   ]);
   if (tuples.has(tuple)) throw new Error(`${where} duplicates a target tuple.`);
   tuples.add(tuple);
-
-  const destination = prepareMetricsDestination(entry.metricsFile);
-  if (metricsFiles.has(destination.target)) {
-    throw new Error(`${where}.metricsFile duplicates another batch metrics destination.`);
-  }
-  metricsFiles.add(destination.target);
-  runDirs.add(destination.runDir);
   return { ...entry, sourceKey };
 }
 
@@ -259,15 +251,10 @@ export function loadBatchFile(file, config) {
 
   const sourceKeys = new Set();
   const tuples = new Set();
-  const metricsFiles = new Set();
-  const runDirs = new Set();
   const targets = parsed.targets.map((entry, index) =>
-    validateBatchEntry(entry, `targets[${index}]`, config, sourceKeys, tuples, metricsFiles, runDirs));
+    validateBatchEntry(entry, `targets[${index}]`, config, sourceKeys, tuples));
   const reserves = (parsed.reserves ?? []).map((entry, index) =>
-    validateBatchEntry(entry, `reserves[${index}]`, config, sourceKeys, tuples, metricsFiles, runDirs));
-  if (runDirs.size !== 1) {
-    throw new Error('Every batch metricsFile must belong to the same initialized run directory.');
-  }
+    validateBatchEntry(entry, `reserves[${index}]`, config, sourceKeys, tuples));
   return { targets, reserves, path: realFile };
 }
 
@@ -289,13 +276,13 @@ function batchRecord(entry, status, result = null, error = null, substitutesFor 
     substitutesFor,
     truncated: result?.truncated ?? null,
     logFile: result?.logFile ?? null,
-    metricsError: null,
   };
 }
 
 async function runBatchEntry(entry, options, config, substitutesFor = null) {
   let result;
   let error;
+  const startedAt = Date.now();
   const targetSupportsSchema = RESPONSE_SCHEMA_PROVIDERS.has(entry.platform);
   try {
     result = await dispatchTask({
@@ -306,7 +293,6 @@ async function runBatchEntry(entry, options, config, substitutesFor = null) {
       model: entry.model ?? null,
       effort: entry.effort ?? null,
       responseSchema: targetSupportsSchema ? options.responseSchema : null,
-      metricsFile: null,
       config,
       configPath: options.configPath,
     });
@@ -314,11 +300,7 @@ async function runBatchEntry(entry, options, config, substitutesFor = null) {
     error = err;
   }
   const record = batchRecord(entry, 'failed', result, error, substitutesFor);
-  try {
-    recordDispatchMetrics(entry.metricsFile, result, error);
-  } catch (metricsError) {
-    record.metricsError = metricsError.message;
-  }
+  appendTelemetry({ result, error, startedAt });
   if (error) return { ok: false, terminal: error.code === 'INTEGRITY_VIOLATION', record };
   const ok = result.exitCode === 0 && !isEmptyResult(result);
   return {
@@ -710,7 +692,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
       if (pinned) {
         if (isSameProviderNext) {
           process.stderr.write(
-            `[dispatch] Provider '${currentLabel}' ${reason}${kind ? ` [${kind}]` : ''}. Cascading to '${nextLabel}'...\n`,
+            `[dispatch] fallback ${currentLabel} -> ${nextLabel}: ${reason}${kind ? ` [${kind}]` : ''}\n`,
           );
           return true;
         }
@@ -723,7 +705,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 
       if (next) {
         process.stderr.write(
-          `[dispatch] Provider '${currentLabel}' ${reason}${kind ? ` [${kind}]` : ''}. Cascading to '${nextLabel}'...\n`,
+          `[dispatch] fallback ${currentLabel} -> ${nextLabel}: ${reason}${kind ? ` [${kind}]` : ''}\n`,
         );
       }
       return true;
@@ -891,7 +873,7 @@ export async function main() {
     process.exit(1);
   }
 
-  let metricsReady = false;
+  const startedAt = Date.now();
   let result;
   try {
     if (batchFile) {
@@ -900,7 +882,6 @@ export async function main() {
       if (options.candidateIndex !== null) conflicts.push('--candidate-index');
       if (options.model !== null) conflicts.push('--model');
       if (options.effort !== null) conflicts.push('--effort');
-      if (options.metricsFile !== null) conflicts.push('--metrics-file');
       if (noConfig) conflicts.push('--no-config');
       if (conflicts.length > 0) {
         throw new Error(`--batch-file cannot be combined with: ${conflicts.join(', ')}`);
@@ -926,10 +907,6 @@ export async function main() {
       process.exit(envelope.complete ? 0 : 1);
       return;
     }
-    if (options.metricsFile) {
-      prepareMetricsDestination(options.metricsFile);
-      metricsReady = true;
-    }
     result = await dispatchTask({
       ...options,
       prompt: finalPrompt,
@@ -938,13 +915,7 @@ export async function main() {
       orchestratorModel: options.orchestratorModel ?? undefined,
     });
   } catch (err) {
-    if (options.metricsFile) {
-      try {
-        if (!fs.existsSync(options.metricsFile)) recordDispatchMetrics(options.metricsFile, null, err);
-      } catch (metricsError) {
-        console.error(`[dispatch] Failed to write metrics: ${metricsError.message}`);
-      }
-    }
+    appendTelemetry({ error: err, startedAt });
     console.error(formatCliError(err));
     const exitCode = safeExitCode(err);
     process.exit(exitCode);
@@ -969,15 +940,7 @@ export async function main() {
     );
   }
 
-  if (metricsReady) {
-    try {
-      recordDispatchMetrics(options.metricsFile, result, null);
-    } catch (metricsError) {
-      console.error(`[dispatch] Failed to write metrics: ${metricsError.message}`);
-      process.exit(safeExitCode(metricsError));
-      return;
-    }
-  }
+  appendTelemetry({ result, startedAt });
   process.exit(result.exitCode ?? 0);
 }
 
@@ -1003,7 +966,6 @@ Options:
   -a, --agent <name>          Override agent name (opencode provider only)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
-  --metrics-file <path>       Write one content-free terminal slot record (absolute initialized path)
   --batch-file <path>         Execute caller-resolved targets/reserves from a temporary JSON file
   --response-schema-file <path>
                               Require provider-native structured output matching this JSON Schema
@@ -1056,7 +1018,6 @@ function collectRunFlags(options, noConfig) {
   if (options.orchestratorModel !== null) ignored.push('--orchestrator-model');
   if (options.provider !== null) ignored.push('--provider');
   if (options.candidateIndex !== null) ignored.push('--candidate-index');
-  if (options.metricsFile !== null) ignored.push('--metrics-file');
   if (noConfig) ignored.push('--no-config');
   return ignored;
 }

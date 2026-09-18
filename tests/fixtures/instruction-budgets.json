@@ -134,17 +134,17 @@
       "codeRebuttalPathEstimate": 4892
     },
     "recall": {
-      "entryPointCeiling": 21400,
-      "normalPathCeiling": 37200,
-      "normalPathEstimateCeiling": 9300,
-      "entryPointCharacters": 21391,
-      "entryPointEstimate": 5348,
-      "normalPathCharacters": 37184,
-      "normalPathEstimate": 9296,
-      "planRebuttalPathCharacters": 21706,
-      "planRebuttalPathEstimate": 5427,
-      "codeRebuttalPathCharacters": 22800,
-      "codeRebuttalPathEstimate": 5700
+      "entryPointCeiling": 20600,
+      "normalPathCeiling": 36400,
+      "normalPathEstimateCeiling": 9100,
+      "entryPointCharacters": 20549,
+      "entryPointEstimate": 5138,
+      "normalPathCharacters": 36342,
+      "normalPathEstimate": 9086,
+      "planRebuttalPathCharacters": 20886,
+      "planRebuttalPathEstimate": 5222,
+      "codeRebuttalPathCharacters": 21980,
+      "codeRebuttalPathEstimate": 5495
     }
   },
   "intentionalPhase0bDelta": {
@@ -160,11 +160,11 @@
     "files": {
       "skills/dispatch-plan-review/SKILL.md": 850,
       "skills/dispatch-code-review/SKILL.md": 1000,
-      "skills/implement-dispatch/SKILL.md": 950,
+      "skills/implement-dispatch/SKILL.md": 50,
       "skills/dispatch/references/alignment.md": 1100,
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
       "skills/dispatch-code-review/references/prompt-template.md": 1300
     },
-    "normalPathCharacters": 6700
+    "normalPathCharacters": 5900
   }
 }

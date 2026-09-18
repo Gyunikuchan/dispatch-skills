@@ -264,16 +264,14 @@ export async function runClaude(options = {}) {
         if (step === 'next-model') {
           const nextModel = modelsToTry[m + 1];
           process.stderr.write(
-            `[dispatch] Notice: Model '${currentModel}' failed or not available on ${target.name} (exit ${result.exitCode}${result.failureKind ? `, failure: ${result.failureKind}` : ''}).\n` +
-              `[dispatch] Trying fallback model '${nextModel}'...\n`,
+            `[dispatch] fallback ${target.name}:${currentModel} -> ${target.name}:${nextModel}: exit ${result.exitCode}${result.failureKind ? ` [${result.failureKind}]` : ''}\n`,
           );
           continue;
         }
 
         if (step === 'next-target') {
           process.stderr.write(
-            `[dispatch] Notice: ${target.name} exited with '${result.failureKind}' (not subscribed or token depleted).\n` +
-              `[dispatch] Cascading to next available mode (${viableTargets[i + 1].name})...\n`,
+            `[dispatch] fallback ${target.name} -> ${viableTargets[i + 1].name}: ${result.failureKind} (not subscribed or token depleted)\n`,
           );
           break;
         }
@@ -294,13 +292,13 @@ export async function runClaude(options = {}) {
 
         if (step === 'next-model') {
           process.stderr.write(
-            `[dispatch] Warning: Model '${currentModel}' execution failed on ${target.name} (${err.message}). Trying fallback model '${modelsToTry[m + 1]}'...\n`,
+            `[dispatch] fallback ${target.name}:${currentModel} -> ${target.name}:${modelsToTry[m + 1]}: ${err.message}\n`,
           );
           continue;
         }
         if (step === 'next-target') {
           process.stderr.write(
-            `[dispatch] Warning: ${target.name} execution failed (${err.message}). Cascading to next mode...\n`,
+            `[dispatch] fallback ${target.name} -> ${viableTargets[i + 1]?.name ?? 'next mode'}: ${err.message}\n`,
           );
           break;
         }
@@ -446,13 +444,12 @@ function executeOnTarget({
   });
   const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox, responseSchema });
 
-  const providerLabel = `Claude Code [${target.mode}] (claude)`;
   emitInitBanner({
-    provider: providerLabel,
+    platform: 'claude',
+    mode: target.mode,
     model,
     effort,
     logFile: sessionLogger.logFile,
-    mode: 'READ-ONLY',
   });
 
   const trace = createTraceWriter(verbose);
@@ -496,10 +493,11 @@ function executeOnTarget({
       });
 
       emitCompletionBanner({
-        provider: providerLabel,
-        sessionLink,
+        platform: 'claude',
         exitCode: effectiveExitCode,
         truncated: outcome.truncated,
+        sessionId,
+        resumeCommand: sessionLink,
       });
 
       return {

@@ -441,7 +441,7 @@ describe('opencode-run', () => {
       return child;
     }
 
-    it('skips preflight and the GPU lock, and uses a non-URL sessionLink, for a remote -m override', async () => {
+    it('skips preflight and the GPU lock, and reports no sessionLink, for a remote -m override', async () => {
       const httpGet = mock.method(http, 'get', () => {
         throw new Error('preflight must not run for a remote endpoint');
       });
@@ -459,7 +459,7 @@ describe('opencode-run', () => {
         !fs.existsSync(lockFile) || fs.readFileSync(lockFile, 'utf8').trim() !== String(process.pid),
         'GPU lock must not be held for a remote endpoint',
       );
-      assert.equal(result.sessionLink, 'opencode:anthropic/claude-opus-5');
+      assert.equal(result.sessionLink, null, 'a model label is not a session');
     });
 
     it('still throws SERVER_OFFLINE with the existing exact message for the default local endpoint', async () => {

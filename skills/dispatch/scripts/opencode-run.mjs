@@ -172,8 +172,8 @@ import {
  * @property {string} logFile
  * @property {string|null} briefFile Temp file the prompt was spilled to when over the argv byte
  *   limit; null when the prompt was passed directly.
- * @property {string} sessionLink Endpoint URL of whatever backend resolved, or an
- *   `opencode:<provider>/<model>` descriptor when no host is known.
+ * @property {string|null} sessionLink Endpoint URL of the resolved backend, or null when no host
+ *   is known.
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
  */
@@ -202,24 +202,6 @@ export const OPENCODE_MODE_DEFINITIONS = [
   { mode: 'desktop', name: 'OpenCode Desktop', fn: () => getOpencodeDesktopBinary() },
   { mode: 'vscode', name: 'OpenCode VS Code Extension', fn: () => getOpencodeVscodeBinary() },
 ];
-
-/**
- * Human-readable name used in init and completion banners. Says "LM Studio" only when the
- * resolved settings actually target it — a remote provider gets its own name instead, so logs
- * stop claiming "LM Studio" for a dispatch that never touched it. `mode` adds the binary
- * provenance segment (`OpenCode [cli] (LM Studio)`); omitted when no mode resolved.
- * @param {OpencodeSettings} settings
- * @param {OpencodeMode|null} [mode]
- * @returns {string}
- */
-function describeProvider(settings, mode = null) {
-  const suffix = settings.isLocal
-    ? '(LM Studio)'
-    : settings.providerName
-      ? `(${settings.providerName})`
-      : '(default)';
-  return mode ? `OpenCode [${mode}] ${suffix}` : `OpenCode ${suffix}`;
-}
 
 /**
  * OpenCode-specific environment variables layered on top of the shared
@@ -356,26 +338,24 @@ async function runOpencodeSingle(options = {}) {
   // A resolved host (local, or an explicit remote baseURL) still gets a real URL, built with its
   // actual scheme/port so an HTTPS remote endpoint doesn't get relabeled as plain http://; a
   // remote provider relying on opencode's own built-in endpoint registry has no host this script
-  // knows, so it gets a non-URL descriptor instead of a fabricated URL.
+  // knows, so it gets null rather than a model label posing as a session.
   const isDefaultPort =
     (settings.protocol === 'http:' && settings.port === 80) ||
     (settings.protocol === 'https:' && settings.port === 443);
   const sessionLink = settings.host
     ? `${settings.protocol}//${settings.host}${isDefaultPort ? '' : `:${settings.port}`}${settings.pathname}`
-    : settings.providerName
-      ? `opencode:${settings.providerName}/${settings.modelId}`
-      : 'opencode:default';
+    : null;
 
   // Step 2: create logger + emit init banner before any preflight that could fail,
   // so offline runs still produce a session log.
   const sessionLogger = createSessionLogger('opencode');
   emitInitBanner({
-    provider: describeProvider(settings, target?.mode ?? null),
+    platform: 'opencode',
+    mode: target?.mode ?? null,
     model: settings.rawModel || null,
     effort: settings.reasoningEffort || null,
-    sessionLink,
     logFile: sessionLogger.logFile,
-    mode: 'READ-ONLY',
+    host: sessionLink,
   });
 
   // Step 3: preflight — only meaningful for a local backend (fast, free, safe unauthenticated
@@ -542,7 +522,6 @@ function spawnOpencode({
   mode,
   releaseOnce,
 }) {
-  const providerLabel = describeProvider(settings, mode);
   // Arrival-ordered tail of both streams, mirroring the session log's end for diagnostics.
   let logTail = '';
 
@@ -617,8 +596,8 @@ function spawnOpencode({
       }
 
       emitCompletionBanner({
-        provider: providerLabel,
-        sessionLink,
+        // NOTE: no opencode session id is captured, so session=/resume= are omitted.
+        platform: 'opencode',
         exitCode,
         truncated,
       });

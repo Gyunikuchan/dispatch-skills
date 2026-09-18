@@ -230,8 +230,7 @@ export async function runAgy(options = {}) {
 
         if (step === 'next-mode') {
           process.stderr.write(
-            `[dispatch] Antigravity mode '${currentMode}' reached but lacked tokens/subscription (${result.failureKind || 'quota/auth'}).\n` +
-              `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
+            `[dispatch] fallback agy:${currentMode} -> agy:${modesToTry[i + 1]}: ${result.failureKind || 'quota/auth'} (lacked tokens/subscription)\n`,
           );
           continue;
         }
@@ -252,8 +251,7 @@ export async function runAgy(options = {}) {
         const hasNextMode = i < modesToTry.length - 1 && !pinnedMode;
         if (hasNextMode) {
           process.stderr.write(
-            `[dispatch] Antigravity mode '${currentMode}' failed execution: ${err.message}.\n` +
-              `[dispatch] Cascading to next preferred mode '${modesToTry[i + 1]}'...\n`,
+            `[dispatch] fallback agy:${currentMode} -> agy:${modesToTry[i + 1]}: ${err.message}\n`,
           );
           continue;
         }
@@ -436,7 +434,6 @@ function executeAgyInMode(mode, options) {
   const effectiveModel = model || null;
   const effectiveEffort = effort || null;
   const dataDir = AGY_MODE_DATA_DIRS[mode] || 'antigravity';
-  const providerLabel = AGY_MODE_LABELS[mode] || 'Antigravity 2.0 (agy)';
 
   const modeEnv = {
     ...getSanitizedEnv(),
@@ -448,11 +445,11 @@ function executeAgyInMode(mode, options) {
   const agyArgs = buildAgyArgs(argvPrompt, briefFile, { model: effectiveModel, effort: effectiveEffort, timeout });
 
   emitInitBanner({
-    provider: providerLabel,
+    platform: 'agy',
+    mode,
     model: effectiveModel,
     effort: effectiveEffort,
     logFile: sessionLogger.logFile,
-    mode: 'READ-ONLY',
   });
 
   const trace = createTraceWriter(verbose);
@@ -487,10 +484,11 @@ function executeAgyInMode(mode, options) {
         classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || outcome.truncated;
 
       emitCompletionBanner({
-        provider: providerLabel,
-        sessionLink,
+        platform: 'agy',
         exitCode,
         truncated: outcome.truncated,
+        // agy has no resume command; the conversation id is the only handle.
+        sessionId: conversationId,
       });
 
       return {
