@@ -119,18 +119,19 @@ review round and narrow the review to changed sections.
 
 ## Detailed review rubric
 
-Use this disclosed rubric for focused or high-risk reviews. Every plan is checked across seven
+Use this disclosed rubric for focused or high-risk reviews. Every plan is checked across eight
 areas, and reviewers also report adjacent defects they meet in existing code:
 
 | Area | Focus tags | Questions it answers |
 |---|---|---|
-| **Requirement & Intent Fidelity** | `intent`, `traceability`, `user-gap`, `scope`, `scope-creep` | Bidirectional requirement mapping; flawed premises, conflicts, and missing prerequisites; unrequested work or gold-plating. |
+| **Requirement & Intent Fidelity** | `intent`, `user-gap`, `scope-creep` | Bidirectional requirement mapping; flawed premises, conflicts, and missing prerequisites; unrequested work or gold-plating. |
 | **Domain & Business Logic** | `correctness`, `domain-logic`, `invariant`, `state-machine` | Project and domain rules; state consistency across multi-step mutations; valid lifecycle transitions and reachable states. |
 | **Plan Coherence & Architecture** | `architecture`, `coherence`, `approach`, `standards` | Producer-consumer contract alignment, sequencing, module boundaries, codebase idioms, and authoritative specifications. |
 | **Security & Permissions** | `security`, `auth`, `validation` | Trust boundaries, credential exposure, isolation, authorization, input validation, injection, and traversal risks. |
-| **Blast Radius & Reversibility** | `compatibility`, `blast-radius`, `migration`, `compat`, `rollback` | Adjacent callers, persisted schemas, multi-version compatibility, graceful degradation, and rollback. |
+| **Blast Radius & Reversibility** | `compatibility`, `blast-radius`, `migration`, `rollback` | Adjacent callers, persisted schemas, multi-version compatibility, graceful degradation, and rollback. |
+| **Robustness & Failure Modes** | `edge-case`, `partial-failure`, `race`, `perf` | Empty, zero, and boundary inputs; partial failure and fallbacks; races and ordering; unbounded or quadratic designs. |
 | **Testability & Success Criteria** | `verification`, `testability`, `spec-gap` | Checkable outcomes, named automated or concrete verification, edge expectations, and pass/fail definitions. |
-| **Simplicity & Failure Modes** | `simplicity`, `yagni`, `edge-case` | Delete/reuse/stdlib before new abstraction; empty, zero, boundary, partial-failure, race, and fallback behavior. |
+| **Simplicity** | `simplicity`, `yagni` | Delete/reuse/stdlib before new abstraction. |
 | **Adjacent Defects** | `adjacent` | Concrete bugs in existing code outside the plan's scope. They are verified and recorded under `## Out of Scope`; once the review settles, a direct run asks which ones to add to the plan. |
 
 ## Findings and resolutions

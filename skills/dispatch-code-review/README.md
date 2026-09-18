@@ -110,12 +110,14 @@ Use this disclosed rubric for focused or high-risk reviews.
 
 | Area | Focus tags | What is evaluated |
 |---|---|---|
-| **Architecture & Module Design** | `shallow`, `seam`, `adapter`, `coupling` | Deep interfaces, real rather than speculative seams, private internal boundaries, dependency tiers, and unnecessary indirection. |
-| **Domain & Business Logic** | `correctness`, `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` | Project rules, valid state, units and signs, formula and boundary accuracy, promise handling, indexing, and exhaustive branches. |
-| **Security & Resource Safety** | `security`, `vuln`, `auth`, `leak`, `perf` | Injection, traversal, escaping, secrets, permissions, lifecycle cleanup, bounded concurrency/memory, event-loop blocking, and hot-path cost. |
-| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `stdlib`, `root-cause` | Delete/reuse/stdlib before new code, shortest working diff, and fixes at the shared source rather than scattered call sites. |
-| **Blast Radius & Compatibility** | `compatibility`, `breaking`, `compat`, `migration`, `scope-creep` | Caller and client compatibility, persisted and serialized formats, migrations, and changes outside the requested boundary. |
-| **Test Quality & UI/UX** | `tests`, `test-gap`, `test-leak`, `ui`, `a11y` | Observable interface and failure coverage, coupling to private internals, CLI/API ergonomics, responsive behavior, and accessibility. |
+| **Requirement & Intent Fidelity** | `intent`, `scope-creep` | Whether the diff meets, misreads, or exceeds the ask, and changes outside the requested boundary. |
+| **Architecture & Module Design** | `shallow`, `seam`, `coupling` | Deep interfaces, real rather than speculative seams, private internal boundaries, dependency tiers, and unnecessary indirection. |
+| **Domain & Business Logic** | `correctness`, `domain-logic`, `invariant`, `runtime`, `type` | Project rules, valid state, domain-valid formulas and algorithms, units, signs, and scale, and off-by-one accuracy. |
+| **Robustness & Failure Modes** | `edge-case`, `partial-failure`, `race` | Empty, zero, and boundary inputs; exhaustive branches and guarded indexing; partial updates and fallbacks; promise handling; races and ordering. |
+| **Security & Resource Safety** | `security`, `auth`, `resource-leak`, `perf` | Injection, traversal, escaping, secrets, permissions, lifecycle cleanup, bounded concurrency/memory, event-loop blocking, and hot-path cost. |
+| **Simplicity & Anti-Bloat** | `yagni`, `reuse`, `root-cause` | Delete/reuse/stdlib before new code, shortest working diff, and fixes at the shared source rather than scattered call sites. |
+| **Blast Radius & Compatibility** | `compatibility`, `breaking`, `migration` | Caller and client compatibility, persisted and serialized formats, and migrations. |
+| **Test Quality & UI/UX** | `test-gap`, `test-leak`, `ui`, `a11y` | Observable interface and failure coverage, coupling to private internals, CLI/API ergonomics, responsive behavior, and accessibility. |
 | **Host Standards** | `standards` | Violations of the repository's `AGENTS.md` / `CLAUDE.md` rules, including nested rule files on reviewed paths. |
 | **Adjacent Defects** | `adjacent` | Concrete bugs a reviewer meets outside the reviewed diff. They are verified and deferred to `## Follow-ups`; once the review settles, a direct run asks which ones to fix. |
 

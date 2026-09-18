@@ -91,7 +91,7 @@ describe('plan review report parser', () => {
   it('normalizes multiple findings', () => {
     const parsed = parseReport(report('FINDINGS', [
       finding(),
-      finding({ severity: 'SHOULD', locus: '§ Rollback & Blast Radius', tag: 'compat' }),
+      finding({ severity: 'SHOULD', locus: '§ Rollback & Blast Radius', tag: 'rollback' }),
     ]));
     assert.equal(parsed.findings.length, 2);
   });

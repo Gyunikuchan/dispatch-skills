@@ -30,13 +30,14 @@ earlier settled sections as closed. When Scope names changed sections, raise new
 only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 
 Check these tags:
-- intent: `intent`, `traceability`, `user-gap`, `scope`, `scope-creep` — requirement-to-change traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
+- intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
 - trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal
-- compatibility: `compatibility`, `blast-radius`, `migration`, `compat`, `rollback` — affected callers; persisted schemas; multi-version compatibility; graceful degradation; rollback paths
+- compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback
+- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs
 - verification: `verification`, `testability`, `spec-gap` — a named test or concrete step per criterion; pass/fail definitions; edge expectations
-- simpler path: `simplicity`, `yagni`, `edge-case` — delete, reuse, stdlib, then new code; empty, zero, and boundary inputs; partial failure; races; fallbacks
+- simpler path: `simplicity`, `yagni` — delete, reuse, stdlib, then new code
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
 Treat the tool-turn value as one advisory target. Stop early when grounded. Exceed it only for a

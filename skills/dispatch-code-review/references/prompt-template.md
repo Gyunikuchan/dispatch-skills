@@ -38,11 +38,13 @@ settled lines as closed. When Scope names changed paths, raise new in-scope find
 `adjacent` findings may cite any locus. Stop at that blast radius.
 
 Check these tags:
-- correctness: `correctness`, `domain-logic`, `invariant`, `unit`, `math`, `runtime`, `type` — domain rules and invariants across mutations; type-valid but domain-invalid states; partial updates; sign and unit alignment (inflow/outflow, monthly/annual, fraction/percent); off-by-one; unhandled branches; unguarded indexing; floating promises
-- security/resources: `security`, `vuln`, `auth`, `leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unclosed handles; unbounded memory or concurrency; blocked event loops; hot-path quadratics
-- compatibility: `compatibility`, `breaking`, `compat`, `migration`, `scope-creep` — callers and serialized formats; migration safety; unrequested changes
-- simplicity: `shallow`, `seam`, `adapter`, `coupling`, `yagni`, `reuse`, `stdlib`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); delete, reuse, stdlib, then new code; fix at the shared root cause
-- tests/UX: `tests`, `test-gap`, `test-leak`, `ui`, `a11y` — observable outcomes at seams; missing failure-mode tests; tests coupled to internals; UI, a11y, and CLI/API ergonomics when touched
+- intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
+- correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
+- robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races
+- security/resources: `security`, `auth`, `resource-leak`, `perf` — injection, traversal, escaping, secrets, auth bypass; unclosed handles; unbounded memory/concurrency; blocked event loops; hot-path quadratics
+- compatibility: `compatibility`, `breaking`, `migration` — callers and serialized formats; migrations
+- simplicity: `shallow`, `seam`, `coupling`, `yagni`, `reuse`, `root-cause` — pass-through modules; speculative seams (one adapter is hypothetical); delete, reuse, stdlib, then new code; shared root-cause fixes
+- tests/UX: `test-gap`, `test-leak`, `ui`, `a11y` — observable outcomes at seams; missing failure-mode tests; tests coupled to internals; touched UI, a11y, CLI/API ergonomics
 - standards: `standards` — violations of the host rule files above on changed lines; elsewhere, report as `adjacent`
 - out of scope: `adjacent` — a concrete defect you meet outside Scope while inspecting; cite its real locus; spend no extra turns hunting
 
