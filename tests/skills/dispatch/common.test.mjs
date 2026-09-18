@@ -798,7 +798,7 @@ describe('common: attachments, brief files & spill', () => {
     const huge = 'y'.repeat(getArgvByteLimit() + 1);
     const { prompt, briefFile } = preparePromptForArgv(huge, 'claude');
     assert.ok(briefFile !== null);
-    created.push(briefFile);
+    created.push(path.dirname(briefFile));
 
     assert.ok(Buffer.byteLength(prompt, 'utf8') < getArgvByteLimit());
     assert.equal(fs.readFileSync(briefFile, 'utf8'), huge);
@@ -806,7 +806,7 @@ describe('common: attachments, brief files & spill', () => {
 
   it('writes brief paths with forward slashes on every platform', () => {
     const { pointerPrompt, briefFile } = createBriefFile('brief body', 'agy');
-    created.push(briefFile);
+    created.push(path.dirname(briefFile));
 
     const quotedPath = pointerPrompt.split('Brief file: ')[1].trim();
     assert.ok(!quotedPath.includes('\\'));
@@ -815,7 +815,7 @@ describe('common: attachments, brief files & spill', () => {
 
   it('pointer prompt is single-line', () => {
     const { pointerPrompt, briefFile } = createBriefFile('line one\nline two', 'claude');
-    created.push(briefFile);
+    created.push(path.dirname(briefFile));
     assert.ok(!/[\r\n]/.test(pointerPrompt), 'pointer must survive a batch launcher argv');
     assert.ok(!pointerPrompt.slice(0, pointerPrompt.indexOf('Brief file: ')).includes('%'));
   });
@@ -824,16 +824,16 @@ describe('common: attachments, brief files & spill', () => {
     assert.equal(isBatchLauncher('C:\\npm\\claude.cmd'), true);
     const multi = preparePromptForArgv('line one\nline two', 'claude', { binary: 'C:\\npm\\claude.cmd' });
     assert.ok(multi.briefFile !== null);
-    created.push(multi.briefFile);
+    created.push(path.dirname(multi.briefFile));
     assert.equal(fs.readFileSync(multi.briefFile, 'utf8'), 'line one\nline two');
 
     const percent = preparePromptForArgv('uses %PATH% literally', 'claude', { binary: 'x.bat' });
     assert.ok(percent.briefFile !== null);
-    created.push(percent.briefFile);
+    created.push(path.dirname(percent.briefFile));
 
     const big = preparePromptForArgv('z'.repeat(8001), 'claude', { binary: 'x.cmd' });
     assert.ok(big.briefFile !== null);
-    created.push(big.briefFile);
+    created.push(path.dirname(big.briefFile));
 
     const exe = preparePromptForArgv('line one\nline two', 'claude', { binary: 'C:\\bin\\claude.exe' });
     assert.equal(exe.briefFile, null);
@@ -848,7 +848,7 @@ describe('common: attachments, brief files & spill', () => {
     // measures. Without reservedBytes this passed the check and was then truncated.
     const reserved = preparePromptForArgv(nearLimit, 'claude', { binary: 'x.cmd', reservedBytes: 1200 });
     assert.ok(reserved.briefFile !== null, 'fixed args must consume the same budget as the prompt');
-    created.push(reserved.briefFile);
+    created.push(path.dirname(reserved.briefFile));
   });
 
   it('readAttachment rejects a symlink targeting a denylisted file', (t) => {

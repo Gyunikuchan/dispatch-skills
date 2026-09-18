@@ -52,7 +52,7 @@ Append under the first unfenced `## Review Findings & Resolutions`:
 
 ```text
 ### Round <n> — <date>
-- **Sources:** {<source-key>:<source-record>,...}
+- **Sources:** {"<source-key>":<source-record>,...}
 - **[<status>]** [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
 ```
 

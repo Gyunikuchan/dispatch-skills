@@ -105,6 +105,12 @@ describe('code review preparation', () => {
       '## Key Deviations\nNone.',
       '## Key Deviations\nChanged the constant again.',
     ));
+    assert.throws(() => prepareCodeReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 1, terminalSourceKeys: [] },
+      settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
+    }, { repoRoot: repo }), /run check-consensus.mjs until it exits 0/);
     const checkpoint = prepareCodeReview({
       action: 'checkpoint',
       invocationContext: prepared.invocationContext,

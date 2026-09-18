@@ -6,5 +6,5 @@
   "references/rebuttal-template.md": "edca4fa112c7909fbc5537b6a8c33099293eba51ceffe6e6808009f9c8ac198f",
   "references/report-schema.json": "38615c646079b5ffbd65edd486e210e12b94195199dab106c5d670f39aac08ce",
   "scripts/parse-report.mjs": "74b94d6031208b5c35d9dd25e051db42fbbbd66ee81ac84b707c119e26687f84",
-  "scripts/prepare-review.mjs": "117e0327bb827ac5be4eb9d66b2f56c0a7e2c9c0ea293c632188966fd6b912f8"
+  "scripts/prepare-review.mjs": "7c71aed61da0a4a45339ae5e3d9ef8fcb5308e9138859b03997ac3928ed07bfa"
 }

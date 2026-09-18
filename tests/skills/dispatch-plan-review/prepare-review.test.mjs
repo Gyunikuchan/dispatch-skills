@@ -197,6 +197,12 @@ describe('plan review preparation', () => {
       slug: 'sample',
       artifactOwned: true,
     }, { repoRoot: repo });
+    assert.throws(() => preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 1, terminalSourceKeys: [] },
+      settledWrites: { sections: [] },
+    }, { repoRoot: repo }), /run check-consensus.mjs until it exits 0/);
     fs.writeFileSync(plan, planBody.replace('- First.', '- Changed.'));
     assert.throws(() => preparePlanReview({
       action: 'checkpoint',
@@ -223,6 +229,7 @@ describe('plan review preparation', () => {
       artifactOwned: true,
       invocationContext: prepared.invocationContext,
     }, { repoRoot: repo }), /stale, replayed, forked/);
+    cleanManifest(prepared);
     cleanManifest(next);
   });
 });

@@ -139,12 +139,12 @@
       "normalPathEstimateCeiling": 9100,
       "entryPointCharacters": 20549,
       "entryPointEstimate": 5138,
-      "normalPathCharacters": 36342,
+      "normalPathCharacters": 36344,
       "normalPathEstimate": 9086,
-      "planRebuttalPathCharacters": 20886,
+      "planRebuttalPathCharacters": 20888,
       "planRebuttalPathEstimate": 5222,
-      "codeRebuttalPathCharacters": 21980,
-      "codeRebuttalPathEstimate": 5495
+      "codeRebuttalPathCharacters": 21982,
+      "codeRebuttalPathEstimate": 5496
     }
   },
   "intentionalPhase0bDelta": {

@@ -217,7 +217,7 @@ function planMetadata({ slug, invocationId, snapshot, now }) {
 function validateSettlement(state, request) {
   const settlement = request.settlement;
   assertObjectKeys(settlement, ['consensusExit', 'terminalSourceKeys'], 'settlement');
-  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0.');
+  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0; run check-consensus.mjs until it exits 0, then checkpoint.');
   if (!Array.isArray(settlement.terminalSourceKeys) || settlement.terminalSourceKeys.some((value) => typeof value !== 'string')) {
     throw new Error('settlement.terminalSourceKeys must be an array of strings.');
   }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -35,9 +35,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // SECTION: Fixtures
 // ============================================================================
 
+const tempDirs = [];
+after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 /** Writes `body` to a fresh temp dir and returns its path. Never touches `.scratch/`. */
 function fixture(body) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-fixture-'));
+  tempDirs.push(dir);
   const file = path.join(dir, 'report.md');
   fs.writeFileSync(file, body, 'utf8');
   return file;
@@ -182,6 +188,7 @@ describe('status.mjs helpers', () => {
 
   it('reports true for isMain when reached through a symlinked path', function () {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-link-'));
+    tempDirs.push(dir);
     const target = path.join(dir, 'real.mjs');
     const link = path.join(dir, 'linked.mjs');
     fs.writeFileSync(target, '', 'utf8');

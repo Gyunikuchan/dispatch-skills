@@ -204,6 +204,8 @@ describe('relocate-scratch', () => {
       assert.match(res.stdout, /first(\.md|-[^/\\\n]+\.md)/);
       assert.match(res.stderr, /outside the \.scratch/);
       assert.equal(fs.existsSync(first), false);
+      // The moved file lands in OS temp by design; remove it so the suite leaves nothing behind.
+      fs.rmSync(res.stdout.trim().split(/\r?\n/)[0], { force: true });
     });
   });
 });
