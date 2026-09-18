@@ -22,11 +22,11 @@ Canonical scratch artifacts are `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and
 
 ## Evidence and finality
 
-Reports arrive as schema JSON or prose. Read a report the parser flags as prose: restate each
-finding as severity, locus, tag, defect, and required change; restate a rebuttal as one verdict
-per packet key, keeping unanswered keys live. Prose is clean only when it shows the scope was
-reviewed and reports no findings. Refusal, truncation, empty output, inability to review, or
-schema-invalid JSON is an invalid report: take the fallback. Never repair guessed JSON.
+Reports arrive as schema JSON or prose. Restate a report the parser flags as prose (including
+schema-mismatched JSON): each finding as severity, locus, tag, defect, and required change;
+restate a rebuttal as one verdict per packet key, keeping unanswered keys live. Prose is clean only
+when it shows the scope was reviewed and reports no findings. Refusal, truncation, empty output,
+or inability to review (unfinished work included) is an invalid report: take the fallback.
 
 Delegate reports are claims. Deduplicate, then verify against requirements, repository rules, and
 cited loci. Accept verified defects regardless of votes; reject contradicted, missing, uncited, or
@@ -56,9 +56,8 @@ Append under the first unfenced `## Review Findings & Resolutions`:
 - **[<status>]** [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
 ```
 
-Source keys are `<phase>:R<n>:<platform>:<candidate-index>`. Records are JSON with exactly
-`provider`, `candidateIndex`, `model`, `effort`, `status` (`target`/`reserve`/`fallback`/`replacement`),
-`session`, `substitutesFor` (null or a same-round key). Entry statuses: `Accepted`, `Resolved dispute`,
+Print the Sources line with `dispatch/scripts/source-map.mjs`; `--extra` adds `fallback`/`replacement`
+records (fields: `--help`). Entry statuses: `Accepted`, `Resolved dispute`,
 `Rejected / Downgraded`, `Disputed`, `Rejected — Pending Confirmation`. `<nnn>` is zero-padded to at
 least three digits. Cite only reporting sources. IDs survive status rewrites.
 Legacy lines remain readable; `ACTIONABLE` is legacy-only. Unknown bullets never settle.

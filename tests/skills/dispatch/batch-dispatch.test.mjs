@@ -178,6 +178,14 @@ describe('dispatch batch manifest', () => {
     assert.equal(envelope.complete, true);
     assert.equal(envelope.targets[0].truncated, null);
     assert.equal(envelope.targets[0].logFile, path.join(root, 'agy.log'));
+    assert.deepEqual(
+      [envelope.targets[0].role, envelope.targets[0].model, envelope.targets[0].effort],
+      ['reserve', 'test-model', 'medium'],
+    );
+    assert.deepEqual(
+      [envelope.failures[0].role, envelope.failures[0].model, envelope.failures[0].effort],
+      ['target', 'test-model', 'low'],
+    );
   });
 
   it('leaves an orchestrator-platform failure unresolved for native fallback', async () => {

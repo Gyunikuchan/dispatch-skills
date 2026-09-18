@@ -30,28 +30,110 @@ function diagnostic(index, field, message) {
   return { index, field, message };
 }
 
+// Evidence is prose cited as written, so it accepts the same variants normalizeLocus rewrites; a
+// bare `:<line>` needs a path-like token (a `/` or a file extension) so times and ratios never count;
+// backslash paths are excluded as the finding-locus pattern excludes them.
 function hasEvidenceLocus(kind, evidence) {
   if (!nonEmptyString(evidence)) return false;
-  const codeLocus = /(?:^|\s)(?!\/)(?![A-Za-z]:)(?!\.\.\/)[^:\s]+:L[1-9]\d*\b/;
-  return kind === 'code' ? codeLocus.test(evidence) : /§\s+\S/.test(evidence) || codeLocus.test(evidence);
+  const codeLocus = /(?:^|\s)(?!\/)(?![A-Za-z]:)(?!\.\.\/)(?:[^:\s\\]+(?::L|#L)|[^:\s\\]*(?:\/|\.[A-Za-z])[^:\s\\]*:)[1-9]\d*\b/;
+  return kind === 'code' ? codeLocus.test(evidence) : /§\s*\S/.test(evidence) || codeLocus.test(evidence);
 }
 
+// Rewrites only the line prefix; ranges and columns keep their extent and fail validation, so
+// the orchestrator restates them instead of the parser truncating the cited span.
+export function normalizeLocus(kind, locus) {
+  const trimmed = locus.trim();
+  // A bare colon needs a path-like token so times and ratios (`10:30`, `2.5:1`) never become loci.
+  if (kind === 'code') {
+    return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]*(?:\/|\.[A-Za-z])[^:#]*):([1-9]\d*)$/, '$1:L$2');
+  }
+  return trimmed.replace(/^§(?=\S)/, '§ ');
+}
+
+// Schema-mismatched JSON that still carries items is a prose report the orchestrator restates;
+// only a content-free report is invalid, so an empty array never reads as a clean review.
+function hasRestatableItems(value) {
+  return Array.isArray(value) && value.some((item) =>
+    nonEmptyString(item) ||
+    (item && typeof item === 'object' && Object.values(item).some(nonEmptyString)));
+}
+
+// An explicit CLEAN verdict with an empty list is review content even when a field mismatches.
+function hasReviewContent(value) {
+  return hasRestatableItems(value.findings) ||
+    (value.status === 'CLEAN' && Array.isArray(value.findings) && value.findings.length === 0);
+}
+
+function parsesToContainer(text) {
+  try {
+    const value = JSON.parse(text);
+    return Boolean(value) && typeof value === 'object';
+  } catch {
+    return false;
+  }
+}
+
+function isContainerText(text) {
+  return (text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'));
+}
+
+// String-aware so brackets inside JSON strings never close the container early.
+function balancedContainerEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (inString) {
+      if (char === '\\') index++;
+      else if (char === '"') inString = false;
+    } else if (char === '"') inString = true;
+    else if (char === '{' || char === '[') depth++;
+    else if ((char === '}' || char === ']') && --depth === 0) return index + 1;
+  }
+  return -1;
+}
+
+// Non-schema providers wrap the report in banners, fences, or trailing notes; the report is the
+// last candidate, so earlier cited snippets and fenced examples never win. Nothing is repaired.
 export function extractJsonText(raw) {
   const str = String(raw ?? '').trim();
-  if (str.startsWith('{') && str.endsWith('}')) {
+  if (isContainerText(str)) {
     return str;
   }
-  const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(str);
-  if (fenceMatch) {
-    const candidate = fenceMatch[1].trim();
-    if (candidate.startsWith('{') && candidate.endsWith('}')) {
-      return candidate;
-    }
+  // Fenced and bare candidates compete by position; the last one that parses is the report.
+  const candidates = [];
+  const fences = [...str.matchAll(/```(?:json)?\s*([\s\S]*?)\s*```/gi)];
+  for (const match of fences) {
+    const candidate = match[1].trim();
+    if (isContainerText(candidate)) candidates.push({ at: match.index, text: candidate });
   }
-  return str;
+  const insideFence = (offset) => fences.some((match) => offset > match.index && offset < match.index + match[0].length);
+  let resumeAt = 0;
+  for (const match of str.matchAll(/^[ \t]*[{[]/gm)) {
+    const start = match.index + match[0].length - 1;
+    if (start < resumeAt || insideFence(start)) continue;
+    const end = balancedContainerEnd(str, start);
+    if (end === -1) continue;
+    const candidate = str.slice(start, end);
+    // A malformed container still owns its span and competes by position, so neither its elements
+    // nor an earlier snippet stand in for it; its text then fails to parse and reads as prose.
+    resumeAt = end;
+    candidates.push({ at: start, text: candidate });
+  }
+  candidates.sort((left, right) => left.at - right.at);
+  // A trailing report that fails to parse, fenced or bare, surfaces as malformed JSON; an earlier
+  // snippet never stands in for it.
+  return candidates.at(-1)?.text ?? str;
 }
 
 function parseJsonReport(text) {
+  // A whole-text parse first keeps a pretty-printed bare array intact; extraction would split it
+  // into its line-initial element objects.
+  try {
+    return JSON.parse(String(text ?? ''));
+  } catch {
+    // Fall through to extraction from banners, fences, and trailing notes.
+  }
   const json = extractJsonText(text);
   if (json.length === 0) {
     throw new InvalidReviewReportError([diagnostic(null, '$', 'report is empty')]);
@@ -71,9 +153,10 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
   const value = parseJsonReport(text);
 
   if (!value || Array.isArray(value) || typeof value !== 'object') {
-    throw new InvalidReviewReportError([
-      diagnostic(null, '$', 'report must be a JSON object'),
-    ]);
+    throw new InvalidReviewReportError(
+      [diagnostic(null, '$', 'report must be a JSON object')],
+      { prose: hasRestatableItems(value) },
+    );
   }
   if (!exactFields(value, REPORT_FIELDS)) {
     diagnostics.push(diagnostic(null, '$', 'report fields must be exactly: status, findings'));
@@ -113,10 +196,8 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
       if (typeof findingValue.tag === 'string' && !tags.has(findingValue.tag)) {
         diagnostics.push(diagnostic(index, 'tag', `is not an allowed ${kind} review tag`));
       }
-      if (
-        typeof findingValue.locus === 'string' &&
-        !locusPattern.test(findingValue.locus.trim())
-      ) {
+      const locus = typeof findingValue.locus === 'string' ? normalizeLocus(kind, findingValue.locus) : null;
+      if (locus !== null && !locusPattern.test(locus)) {
         diagnostics.push(diagnostic(index, 'locus', `must match ${locusDescription}`));
       }
 
@@ -125,12 +206,12 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
         ['locus', 'tag', 'defect', 'requiredChange'].every((field) =>
           nonEmptyString(findingValue[field])) &&
         tags.has(findingValue.tag) &&
-        locusPattern.test(findingValue.locus.trim())
+        locusPattern.test(locus)
       ) {
         const finding = {
           type: 'finding',
           severity: findingValue.severity,
-          locus: findingValue.locus.trim(),
+          locus,
           tag: findingValue.tag.trim(),
           defect: findingValue.defect.trim(),
           requiredChange: findingValue.requiredChange.trim(),
@@ -153,7 +234,9 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
     diagnostics.push(diagnostic(null, 'status', 'FINDINGS requires at least one valid finding'));
   }
 
-  if (diagnostics.length > 0) throw new InvalidReviewReportError(diagnostics);
+  if (diagnostics.length > 0) {
+    throw new InvalidReviewReportError(diagnostics, { prose: hasReviewContent(value) });
+  }
   return {
     schemaVersion: 1,
     reportKind: kind,
@@ -166,9 +249,10 @@ export function parseRebuttalReport(text, { kind, expectedKeys }) {
   const diagnostics = [];
   const value = parseJsonReport(text);
   if (!value || Array.isArray(value) || typeof value !== 'object') {
-    throw new InvalidReviewReportError([
-      diagnostic(null, '$', 'rebuttal report must be a JSON object'),
-    ]);
+    throw new InvalidReviewReportError(
+      [diagnostic(null, '$', 'rebuttal report must be a JSON object')],
+      { prose: hasRestatableItems(value) },
+    );
   }
   if (!exactFields(value, REBUTTAL_FIELDS)) {
     diagnostics.push(diagnostic(null, '$', 'rebuttal report fields must be exactly: responses'));
@@ -236,7 +320,9 @@ export function parseRebuttalReport(text, { kind, expectedKeys }) {
   for (const key of requiredKeys) {
     if (!seen.has(key)) diagnostics.push(diagnostic(null, 'responses', `missing response for ${key}`));
   }
-  if (diagnostics.length > 0) throw new InvalidReviewReportError(diagnostics);
+  if (diagnostics.length > 0) {
+    throw new InvalidReviewReportError(diagnostics, { prose: hasRestatableItems(value.responses) });
+  }
   return {
     schemaVersion: 1,
     reportKind: kind,

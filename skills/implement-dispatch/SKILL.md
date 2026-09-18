@@ -54,7 +54,7 @@ While the artifact changed or findings remain live below the cap, prepare bounde
 waves for affected sources. At the cap, obtain user rulings and run one final verification wave.
 
 After consensus exit `0`, checkpoint with terminal source keys and exact settled plan-section
-writes. Prune finished manifest paths on every success/failure path; report cleanup errors.
+writes. Always prune manifest paths (invocation state after checkpoint/abort); report errors.
 
 Reclassify the reviewed plan. Preserve explicit level; otherwise re-resolve changed scope. State
 the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`

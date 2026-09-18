@@ -96,12 +96,13 @@ describe('code review report parser', () => {
     assert.equal(parsed.findings.length, 2);
   });
 
-  it('rejects malformed JSON and provider chrome', () => {
+  it('rejects malformed JSON and extracts reports behind provider chrome', () => {
     assert.throws(
       () => parseReport('{broken'),
       (err) => err.diagnostics.some(({ message }) => /malformed JSON/.test(message)),
     );
-    assert.throws(() => parseReport(`provider banner\n${report('CLEAN')}`), /Invalid delegate report/);
+    assert.equal(parseReport(`provider banner\n${report('CLEAN')}\nThanks!`).summary.status, 'CLEAN');
+    assert.throws(() => parseReport('banner\n{broken'), (err) => err.prose === true);
   });
 
   it('rejects invalid tags and severities', () => {
@@ -135,16 +136,26 @@ describe('code review report parser', () => {
       '../src/value.mjs:L2',
       String.raw`C:\src\value.mjs:L2`,
       'src/value.mjs:L1:L2',
-      'src/value.mjs:2',
+      'src/value.mjs:L2-L4',
+      'src/value.mjs:2-4',
+      'src/value.mjs:2:5',
+      'src/value.mjs',
     ]) {
       assert.throws(
         () => parseReport(report('FINDINGS', [finding({ locus })])),
-        (err) => err.diagnostics.some(({ field }) => field === 'locus'),
+        (err) => err.prose === true && err.diagnostics.some(({ field }) => field === 'locus'),
+        locus,
       );
     }
   });
 
-  it('uses exit 3 for prose reports and exit 1 for empty or schema-invalid JSON', () => {
+  it('normalizes colon-line and anchor loci to the :L form', () => {
+    for (const locus of ['src/value.mjs:2', 'src/value.mjs#L2', ' src/value.mjs:L2 ']) {
+      assert.equal(parseReport(report('FINDINGS', [finding({ locus })])).findings[0].locus, 'src/value.mjs:L2', locus);
+    }
+  });
+
+  it('uses exit 3 for prose or schema-mismatched reports and exit 1 for empty ones', () => {
     const run = (input, extra = []) => spawnSync(process.execPath, [cli, ...extra], {
       cwd: root,
       encoding: 'utf8',
@@ -160,6 +171,32 @@ describe('code review report parser', () => {
     const empty = run('  \n');
     assert.equal(empty.status, 1, empty.stderr);
     assert.match(empty.stderr, /"error": "invalid-report"/);
+
+    const mismatched = run(report('FINDINGS', [finding({ tag: 'verification' })]));
+    assert.equal(mismatched.status, 3, mismatched.stderr);
+    assert.match(mismatched.stderr, /"field": "tag"/);
+    for (const input of [
+      report('CLEAN', [finding()]),
+      JSON.stringify({ status: 'FINDINGS', findings: [{ ...finding(), extra: true }] }),
+      JSON.stringify([finding()]),
+      JSON.stringify([finding(), finding({ locus: 'src/value.mjs:L3' })], null, 2),
+    ]) {
+      assert.equal(run(input).status, 3, input);
+    }
+    for (const input of [
+      JSON.stringify({ status: 'CLEAN', findings: [], note: 'typo' }),
+      `Review follows.\n${JSON.stringify([finding(), finding({ locus: 'src/value.mjs:L3' })], null, 2)}`,
+      `\`\`\`json\n${JSON.stringify([finding()], null, 2)}\n\`\`\``,
+      `Report:\n[\n  ${JSON.stringify(finding())},\n  ${JSON.stringify(finding({ locus: 'src/value.mjs:L3' }))},\n]\nThanks!`,
+      report('FINDINGS', [finding({ locus: '10:30' })]),
+      report('FINDINGS', [finding({ locus: '2.5:1' })]),
+      `Example:\n{"cited": true}\nReport:\n[\n  ${JSON.stringify(finding())},\n]`,
+    ]) {
+      assert.equal(run(input).status, 3, input);
+    }
+    for (const input of ['{}', '[]', 'null', '42', report('FINDINGS'), '[null]', '[{}]', report('FINDINGS', [{}])]) {
+      assert.equal(run(input).status, 1, input);
+    }
 
     const packetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parse-report-prose-'));
     try {
@@ -211,7 +248,7 @@ describe('code review report parser', () => {
           extra: true,
         }],
       }), ['R2-F004']),
-      /Invalid delegate report/,
+      (err) => err.prose === true,
     );
   });
 
@@ -227,5 +264,20 @@ describe('code review report parser', () => {
       }), ['R2-F004']),
       (err) => err.diagnostics.some(({ field }) => field === 'evidence'),
     );
+    const rebuttal = (evidence) => JSON.stringify({
+      responses: [{ type: 'rebuttal', key: 'R2-F004', verdict: 'CONFIRM', evidence }],
+    });
+    for (const evidence of ['See src/value.mjs:2.', 'See src/value.mjs#L2.']) {
+      assert.equal(parseRebuttal(rebuttal(evidence), ['R2-F004']).responses[0].evidence, evidence);
+    }
+    for (const evidence of [
+      'See /src/value.mjs:2.',
+      'See ../src/value.mjs#L2.',
+      String.raw`See ..\src\value.mjs:2.`,
+      'Ships at 10:30 in 16:9.',
+      'Ratio 3.5:1 holds.',
+    ]) {
+      assert.throws(() => parseRebuttal(rebuttal(evidence), ['R2-F004']), (err) => err.prose === true, evidence);
+    }
   });
 });

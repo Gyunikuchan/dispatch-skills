@@ -324,7 +324,7 @@ describe('code review preparation', () => {
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 0, terminalSourceKeys: [] },
       settledWrites: { paths: ['other.js'], walkthroughSections: [] },
-    }, { repoRoot: repo }), /do not match observed code changes.*missing: other\.js.*unexpected: app\.js.*observed list: app\.js.*rerun preparation/s);
+    }, { repoRoot: repo }), /do not match observed code changes.*declared but unchanged: other\.js.*changed but undeclared: app\.js.*set to \["app\.js"\].*rerun preparation/s);
     cleanupManifest(prepared);
   });
 });

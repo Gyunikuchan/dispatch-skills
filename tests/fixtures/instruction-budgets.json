@@ -137,14 +137,14 @@
       "entryPointCeiling": 20600,
       "normalPathCeiling": 36400,
       "normalPathEstimateCeiling": 9100,
-      "entryPointCharacters": 20549,
-      "entryPointEstimate": 5138,
-      "normalPathCharacters": 36344,
-      "normalPathEstimate": 9086,
-      "planRebuttalPathCharacters": 20888,
-      "planRebuttalPathEstimate": 5222,
-      "codeRebuttalPathCharacters": 21982,
-      "codeRebuttalPathEstimate": 5496
+      "entryPointCharacters": 20513,
+      "entryPointEstimate": 5129,
+      "normalPathCharacters": 36268,
+      "normalPathEstimate": 9067,
+      "planRebuttalPathCharacters": 20759,
+      "planRebuttalPathEstimate": 5190,
+      "codeRebuttalPathCharacters": 21853,
+      "codeRebuttalPathEstimate": 5464
     }
   },
   "intentionalPhase0bDelta": {
@@ -156,14 +156,14 @@
     "normalPathCharacters": 3803
   },
   "intentionalRecallDelta": {
-    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit; later: run-dir, pin, resolution-log format guidance, and the verify-before-next-code-wave gate.",
+    "reason": "Restored review-prompt recall: tag glosses, host-standards checks, adjacent-finding routing and follow-up offers, and JSON-or-prose report handling with a distinct prose exit; later: run-dir, pin, resolution-log format guidance, and the verify-before-next-code-wave gate; foreground-command guidance so delegates return a finished review.",
     "files": {
       "skills/dispatch-plan-review/SKILL.md": 850,
       "skills/dispatch-code-review/SKILL.md": 1000,
       "skills/implement-dispatch/SKILL.md": 50,
       "skills/dispatch/references/alignment.md": 1100,
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
-      "skills/dispatch-code-review/references/prompt-template.md": 1300
+      "skills/dispatch-code-review/references/prompt-template.md": 1400
     },
     "normalPathCharacters": 5900
   }

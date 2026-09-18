@@ -53,8 +53,7 @@ terminal.
 
 1. Save each report to owner-only OS temp. Normalize with
    `scripts/parse-report.mjs --file <path>`, adding `--rebuttal-packet <packet>` for rebuttals.
-   Exit `3`: read the prose report per alignment; exit `1` is an invalid report; exit `2` is
-   terminal.
+   Exit `3`: read the prose report per alignment; exit `1` is an empty report; `2` is terminal.
 2. Verify each in-scope finding against its cited changed line and surrounding contract, and each
    `adjacent` finding at its cited locus. Reject uncited, contradicted, or unverifiable claims.
    Apply alignment finality and sanitize every artifact write.
@@ -84,7 +83,7 @@ exact `settledWrites.paths`/`walkthroughSections`. It compares the declared post
 and atomically records range, path, worktree, and walkthrough-content freshness, so the checkpoint
 is the last write. Failed, incomplete, or unsettled runs keep the previous checkpoint.
 Standalone passes `terminalSourceKeys: []`; only orchestrated runs record expected keys. A
-rejection names its missing and unexpected entries: declare the observed list and retry once.
+rejection prints the observed list as JSON: resend exactly that list and retry once.
 Drift means rerun preparation, never force the write.
 
 Prune finished `cleanupPaths` finally-style on every outcome; keep invocation state until

@@ -308,12 +308,12 @@ describe('orchestrated handover contract', () => {
     assert.match(alignment, /Reports\s+arrive\s+as\s+schema\s+JSON\s+or\s+prose\./, `${ALIGNMENT_PATH} lacks the prose-report rule`);
     assert.match(alignment, /restate\s+a\s+rebuttal\s+as\s+one\s+verdict\s+per\s+packet\s+key/, `${ALIGNMENT_PATH} lacks the prose-rebuttal rule`);
     assert.match(alignment, /Refusal,\s+truncation,\s+empty\s+output/, `${ALIGNMENT_PATH} lets failed prose count as clean`);
-    assert.match(alignment, /schema-invalid\s+JSON/, `${ALIGNMENT_PATH} lets schema-invalid JSON pass as prose`);
+    assert.match(alignment, /schema-mismatched\s+JSON\)/, `${ALIGNMENT_PATH} discards schema-mismatched JSON instead of restating it`);
     assert.doesNotMatch(alignment, /RESPONSE_SCHEMA_PROVIDERS/, `${ALIGNMENT_PATH} still depends on script internals`);
     for (const skillPath of [PLAN_REVIEW_PATH, CODE_REVIEW_PATH]) {
       const content = readSkill(skillPath);
       assert.match(content, /Exit\s+`3`:\s+read\s+the\s+prose\s+report\s+per\s+alignment/, `${skillPath} does not route prose reports`);
-      assert.match(content, /exit\s+`1`\s+is\s+an\s+invalid\s+report/, `${skillPath} does not route schema-invalid reports`);
+      assert.match(content, /exit\s+`1`\s+is\s+an\s+empty\s+report/, `${skillPath} does not route empty reports`);
     }
   });
 

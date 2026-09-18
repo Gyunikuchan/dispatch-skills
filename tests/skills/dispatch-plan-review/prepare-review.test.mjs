@@ -305,7 +305,7 @@ describe('plan review preparation', () => {
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 0, terminalSourceKeys: [] },
       settledWrites: { sections: ['Verification Plan'] },
-    }, { repoRoot: repo }), /missing: Verification Plan.*unexpected: Proposed Changes.*observed list: Proposed Changes.*rerun preparation/s);
+    }, { repoRoot: repo }), /declared but unchanged: Verification Plan.*changed but undeclared: Proposed Changes.*set to \["Proposed Changes"\].*rerun preparation/s);
     const next = preparePlanReview({
       artifactPath: plan,
       slug: 'sample',

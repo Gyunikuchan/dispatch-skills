@@ -258,13 +258,24 @@ export function loadBatchFile(file, config) {
   return { targets, reserves, path: realFile };
 }
 
-function batchRecord(entry, status, result = null, error = null, substitutesFor = null) {
+// Source-map records need a single model/effort string; a cascade list has none, so it records null.
+function singleSpec(value) {
+  return typeof value === 'string' ? value : null;
+}
+
+function batchRecord(entry, status, result = null, error = null, substitutesFor = null, config = null) {
+  const candidateIndex = entry.candidateIndex ?? Number(entry.candidateId.split(':').at(-1));
+  const configured = config?.platforms?.[entry.platform];
+  const candidate = Array.isArray(configured) ? configured[candidateIndex] : configured;
   return {
     roundId: entry.roundId,
     candidateId: entry.candidateId,
     sourceKey: entry.sourceKey,
     platform: entry.platform,
-    candidateIndex: entry.candidateIndex ?? Number(entry.candidateId.split(':').at(-1)),
+    candidateIndex,
+    role: substitutesFor ? 'reserve' : 'target',
+    model: singleSpec(entry.model ?? candidate?.model),
+    effort: singleSpec(entry.effort ?? candidate?.effort),
     status,
     session: result?.session ?? null,
     report: result?.stdout ?? null,
@@ -299,7 +310,7 @@ async function runBatchEntry(entry, options, config, substitutesFor = null) {
   } catch (err) {
     error = err;
   }
-  const record = batchRecord(entry, 'failed', result, error, substitutesFor);
+  const record = batchRecord(entry, 'failed', result, error, substitutesFor, config);
   appendTelemetry({ result, error, startedAt });
   if (error) return { ok: false, terminal: error.code === 'INTEGRITY_VIOLATION', record };
   const ok = result.exitCode === 0 && !isEmptyResult(result);

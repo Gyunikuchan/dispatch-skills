@@ -99,42 +99,48 @@ function parseSourceMap(line, { strict, roundNumber }) {
     if (strict) throw new Error(`Round ${roundNumber} source map is malformed JSON: ${err.message}`);
     return null;
   }
-  if (!value || Array.isArray(value) || typeof value !== 'object' || Object.keys(value).length === 0) {
-    if (strict) throw new Error(`Round ${roundNumber} source map must be a non-empty object.`);
+  try {
+    return validateSourceMap(value, roundNumber);
+  } catch (err) {
+    if (strict) throw err;
     return null;
   }
-  for (const [key, source] of Object.entries(value)) {
-    const keyMatch = /^(plan-review|code-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/.exec(key);
-    const substituteMatch = source?.substitutesFor === null
-      ? null
-      : /^(plan-review|code-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/
-          .exec(source?.substitutesFor ?? '');
-    const valid =
-      keyMatch &&
-      Number(keyMatch[2]) === roundNumber &&
-      source &&
-      !Array.isArray(source) &&
-      typeof source === 'object' &&
-      Object.keys(source).sort().join('\0') ===
-        ['candidateIndex', 'effort', 'model', 'provider', 'session', 'status', 'substitutesFor'].join('\0') &&
-      typeof source.provider === 'string' &&
-      /^[a-z][a-z0-9-]*$/.test(source.provider) &&
-      source.provider === keyMatch[3] &&
-      Number.isSafeInteger(source.candidateIndex) &&
-      source.candidateIndex >= 0 &&
-      source.candidateIndex === Number(keyMatch[4]) &&
-      (source.model === null || typeof source.model === 'string') &&
-      (source.effort === null || typeof source.effort === 'string') &&
-      SOURCE_STATUSES.has(source.status) &&
-      (source.session === null || typeof source.session === 'string') &&
-      (source.substitutesFor === null ||
-        substituteMatch &&
-        substituteMatch[1] === keyMatch[1] &&
-        Number(substituteMatch[2]) === roundNumber);
-    if (!valid) {
-      if (strict) throw new Error(`Round ${roundNumber} source map entry "${key}" is invalid.`);
-      return null;
+}
+
+const SOURCE_RECORD_FIELDS = ['candidateIndex', 'effort', 'model', 'provider', 'session', 'status', 'substitutesFor'];
+const SOURCE_KEY_PARTS = /^(plan-review|code-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
+
+// Names the first failing field so a hand-edited or generated record is fixable in one pass.
+function sourceRecordProblem(key, source, roundNumber) {
+  const keyMatch = SOURCE_KEY_PARTS.exec(key);
+  if (!keyMatch) return 'key must be <plan-review|code-review>:R<n>:<provider>:<candidate-index>';
+  if (Number(keyMatch[2]) !== roundNumber) return `key round must be R${roundNumber}`;
+  if (!source || Array.isArray(source) || typeof source !== 'object') return 'record must be an object';
+  if (Object.keys(source).sort().join('\0') !== SOURCE_RECORD_FIELDS.join('\0')) {
+    return `record fields must be exactly: ${SOURCE_RECORD_FIELDS.join(', ')}`;
+  }
+  if (source.provider !== keyMatch[3]) return `provider must be "${keyMatch[3]}"`;
+  if (source.candidateIndex !== Number(keyMatch[4])) return `candidateIndex must be ${Number(keyMatch[4])}`;
+  if (source.model !== null && typeof source.model !== 'string') return 'model must be a string or null';
+  if (source.effort !== null && typeof source.effort !== 'string') return 'effort must be a string or null';
+  if (!SOURCE_STATUSES.has(source.status)) return `status must be one of: ${[...SOURCE_STATUSES].join(', ')}`;
+  if (source.session !== null && typeof source.session !== 'string') return 'session must be a string or null';
+  if (source.substitutesFor !== null) {
+    const substitute = SOURCE_KEY_PARTS.exec(source.substitutesFor ?? '');
+    if (!substitute || substitute[1] !== keyMatch[1] || Number(substitute[2]) !== roundNumber) {
+      return `substitutesFor must be null or a ${keyMatch[1]}:R${roundNumber} source key`;
     }
+  }
+  return null;
+}
+
+export function validateSourceMap(value, roundNumber) {
+  if (!value || Array.isArray(value) || typeof value !== 'object' || Object.keys(value).length === 0) {
+    throw new Error(`Round ${roundNumber} source map must be a non-empty object.`);
+  }
+  for (const [key, source] of Object.entries(value)) {
+    const problem = sourceRecordProblem(key, source, roundNumber);
+    if (problem) throw new Error(`Round ${roundNumber} source map entry "${key}" is invalid: ${problem}.`);
   }
   return value;
 }

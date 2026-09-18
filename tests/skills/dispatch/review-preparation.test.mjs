@@ -12,6 +12,7 @@ import {
   createDispatchFiles,
   createInvocationState,
   readArtifact,
+  readInvocationState,
   readJsonRequest,
   requireNode22,
   semanticSectionHashes,
@@ -141,6 +142,45 @@ describe('review preparation primitives', () => {
     assert.equal(fs.existsSync(lock), false);
   });
 
+  it('explains invocation state removed before checkpoint', () => {
+    const artifactPath = path.join(makeDir(), 'plan.md');
+    fs.writeFileSync(artifactPath, '# Plan\n');
+    const created = createInvocationState({
+      kind: 'plan',
+      artifactPath,
+      snapshot: { contentHash: sha256('x'), sectionHashes: {} },
+    });
+    fs.rmSync(created.cleanupPath, { recursive: true, force: true });
+    assert.throws(
+      () => readInvocationState(created.context),
+      /no longer exists; it was removed before checkpoint.*prior checkpoint is retained.*invocationCleanupPath only after checkpoint or abort.*rerun preparation/s,
+    );
+  });
+
+  it('explains a removed state file inside a surviving invocation dir', () => {
+    const artifactPath = path.join(makeDir(), 'plan.md');
+    fs.writeFileSync(artifactPath, '# Plan\n');
+    const created = createInvocationState({
+      kind: 'code',
+      artifactPath,
+      snapshot: { contentHash: sha256('x'), sectionHashes: {} },
+    });
+    tempDirs.push(created.cleanupPath);
+    fs.rmSync(created.context.statePath);
+    assert.throws(() => readInvocationState(created.context), /no longer exists; it was removed before checkpoint/);
+  });
+
+  it('keeps containment errors for missing paths outside invocation dirs', () => {
+    const dir = makeDir();
+    assert.throws(() => readInvocationState({
+      schemaVersion: 1,
+      invocationId: 'forged-invocation',
+      statePath: path.join(dir, 'gone', 'state.json'),
+      generation: 0,
+      token: 'x',
+    }), /statePath is invalid|statePath must be beneath OS temp/);
+  });
+
   it('disambiguates duplicate H2 headings in sectionHashes', () => {
     const doc = [
       '# Plan',
@@ -217,24 +257,36 @@ describe('settledWritesMismatch', () => {
       ['src/kept.ts', 'src/missing.ts'],
     );
     assert.match(message, /settledWrites\.paths do not match observed code changes/);
-    assert.match(message, /missing: src\/missing\.ts/);
-    assert.match(message, /unexpected: src\/unexpected\.ts/);
-    assert.match(message, /set to the observed list: src\/kept\.ts, src\/unexpected\.ts/);
+    assert.match(message, /declared but unchanged: src\/missing\.ts/);
+    assert.match(message, /changed but undeclared: src\/unexpected\.ts/);
+    assert.match(message, /set to \["src\/kept\.ts","src\/unexpected\.ts"\]/);
     assert.match(message, /rerun preparation/);
   });
 
-  it('reports "none" for an empty observed set', () => {
+  it('renders an empty observed set as []', () => {
     const message = settledWritesMismatch('settledWrites.sections', 'plan changes', [], ['Proposed Changes']);
-    assert.match(message, /missing: Proposed Changes/);
-    assert.match(message, /unexpected: none/);
-    assert.match(message, /set to the observed list: none/);
+    assert.match(message, /declared but unchanged: Proposed Changes/);
+    assert.match(message, /changed but undeclared: none/);
+    assert.match(message, /set to \[\]/);
   });
 
   it('reports "none" for an empty declared set', () => {
     const message = settledWritesMismatch('settledWrites.sections', 'plan changes', ['Verification Plan'], []);
-    assert.match(message, /missing: none/);
-    assert.match(message, /unexpected: Verification Plan/);
-    assert.match(message, /set to the observed list: Verification Plan/);
+    assert.match(message, /declared but unchanged: none/);
+    assert.match(message, /changed but undeclared: Verification Plan/);
+    assert.match(message, /set to \["Verification Plan"\]/);
+  });
+
+  it('explains that the resolution-log section is never a settled write', () => {
+    const message = settledWritesMismatch('settledWrites.sections', 'plan changes', [], ['Review Findings & Resolutions']);
+    assert.match(message, /set to \[\]/);
+    assert.match(message, /resolution-log section is excluded from settled writes/);
+  });
+
+  it('keeps missing/unexpected wording for invocation targets', () => {
+    const message = settledWritesMismatch('settlement.terminalSourceKeys', 'invocation targets', ['a'], ['b']);
+    assert.match(message, /missing: b; unexpected: a/);
+    assert.match(message, /set to \["a"\]/);
   });
 });
 

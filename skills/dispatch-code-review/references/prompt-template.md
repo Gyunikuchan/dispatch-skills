@@ -52,6 +52,7 @@ named in-scope risk supported by evidence.
 If unspecified, target `8 + 2 × changed files`; on re-review count files changed since the prior
 round only.
 
+Run commands in the foreground; reply only once the review is complete.
 Return only the schema-constrained JSON object. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}

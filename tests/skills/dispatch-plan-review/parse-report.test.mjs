@@ -96,12 +96,13 @@ describe('plan review report parser', () => {
     assert.equal(parsed.findings.length, 2);
   });
 
-  it('rejects malformed JSON and provider chrome', () => {
+  it('rejects malformed JSON and extracts reports behind provider chrome', () => {
     assert.throws(
       () => parseReport('{broken'),
       (err) => err.diagnostics.some(({ message }) => /malformed JSON/.test(message)),
     );
-    assert.throws(() => parseReport(`provider banner\n${report('CLEAN')}`), /Invalid delegate report/);
+    assert.equal(parseReport(`provider banner\n${report('CLEAN')}\nThanks!`).summary.status, 'CLEAN');
+    assert.throws(() => parseReport('banner\n{broken'), (err) => err.prose === true);
   });
 
   it('rejects invalid tags and severities', () => {
@@ -131,11 +132,15 @@ describe('plan review report parser', () => {
     );
     assert.throws(
       () => parseReport(report('FINDINGS', [finding({ locus: 'src/file.mjs:L2' })])),
-      (err) => err.diagnostics.some(({ field }) => field === 'locus'),
+      (err) => err.prose === true && err.diagnostics.some(({ field }) => field === 'locus'),
+    );
+    assert.equal(
+      parseReport(report('FINDINGS', [finding({ locus: '§Verification Plan' })])).findings[0].locus,
+      '§ Verification Plan',
     );
   });
 
-  it('uses exit 3 for prose reports and exit 1 for empty or schema-invalid JSON', () => {
+  it('uses exit 3 for prose or schema-mismatched reports and exit 1 for empty ones', () => {
     const run = (input, extra = []) => spawnSync(process.execPath, [cli, ...extra], {
       cwd: root,
       encoding: 'utf8',
@@ -151,6 +156,11 @@ describe('plan review report parser', () => {
     const empty = run('  \n');
     assert.equal(empty.status, 1, empty.stderr);
     assert.match(empty.stderr, /"error": "invalid-report"/);
+
+    const mismatched = run(report('FINDINGS', [finding({ tag: 'test-gap' })]));
+    assert.equal(mismatched.status, 3, mismatched.stderr);
+    assert.match(mismatched.stderr, /"field": "tag"/);
+    assert.equal(run('{}').status, 1);
 
     const packetDir = fs.mkdtempSync(path.join(os.tmpdir(), 'parse-report-prose-'));
     try {
@@ -219,5 +229,9 @@ describe('plan review report parser', () => {
       }), ['R1-F001']),
       (err) => err.diagnostics.some(({ field }) => field === 'evidence'),
     );
+    const parsed = parseRebuttal(JSON.stringify({
+      responses: [{ type: 'rebuttal', key: 'R1-F001', verdict: 'CONFIRM', evidence: '§Verification Plan covers it.' }],
+    }), ['R1-F001']);
+    assert.equal(parsed.responses[0].verdict, 'CONFIRM');
   });
 });

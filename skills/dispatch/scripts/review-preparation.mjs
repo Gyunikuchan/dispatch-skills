@@ -111,13 +111,21 @@ export function rawSha256(value) {
 // repository. The `do not match observed` head is load-bearing for existing callers and tests.
 
 const orNone = (entries) => (entries.length > 0 ? entries.join(', ') : 'none');
+const RESOLUTION_LOG_SECTION = 'Review Findings & Resolutions';
 
+// Write subjects phrase the delta as change state; bare "missing" read as "you forgot this" when the
+// fix was to drop the entry. Source keys are not changes, so they keep missing/unexpected.
 export function settledWritesMismatch(label, subject, observed, declared) {
   const missing = declared.filter((entry) => !observed.includes(entry));
   const unexpected = observed.filter((entry) => !declared.includes(entry));
-  return `${label} do not match observed ${subject} — missing: ${orNone(missing)}; ` +
-    `unexpected: ${orNone(unexpected)}. Resend checkpoint with ${label} set to the observed list: ` +
-    `${orNone(observed)}; rerun preparation instead if the workspace changed after adjudication.`;
+  const delta = subject === 'invocation targets'
+    ? `missing: ${orNone(missing)}; unexpected: ${orNone(unexpected)}`
+    : `declared but unchanged: ${orNone(missing)}; changed but undeclared: ${orNone(unexpected)}`;
+  const hint = missing.includes(RESOLUTION_LOG_SECTION)
+    ? ' The resolution-log section is excluded from settled writes.'
+    : '';
+  return `${label} do not match observed ${subject} — ${delta}. Resend checkpoint with ${label} set to ` +
+    `${JSON.stringify(observed)}; rerun preparation instead if the workspace changed after adjudication.${hint}`;
 }
 
 export function checkpointDriftRemedy(detail) {
@@ -367,11 +375,40 @@ export function createInvocationState({ kind, artifactPath, snapshot, expectedSo
   return { context: contextFor(state), cleanupPath: dir };
 }
 
+// Containment is checked lexically first so a forged missing path never earns the recovery hint.
+function missingInvocationState(resolved, tempRoot) {
+  const dir = path.dirname(resolved);
+  let container;
+  try {
+    container = fs.realpathSync(path.dirname(dir));
+  } catch {
+    return new Error('invocationContext statePath is invalid.');
+  }
+  if (
+    container !== tempRoot ||
+    path.basename(resolved) !== 'state.json' ||
+    !/^dispatch-(?:plan|code)-invocation-/.test(path.basename(dir))
+  ) return new Error('invocationContext statePath is invalid.');
+  return new Error(
+    `Invocation state ${dir} no longer exists; it was removed before checkpoint. The prior checkpoint ` +
+    'is retained. Remove invocationCleanupPath only after checkpoint or abort; rerun preparation to ' +
+    'start a fresh invocation.',
+  );
+}
+
 export function readInvocationState(context) {
   assertObjectKeys(context, ['schemaVersion', 'invocationId', 'statePath', 'generation', 'token'], 'invocationContext');
   if (context.schemaVersion !== 1) throw new Error('Unsupported invocationContext schemaVersion.');
   const resolved = path.resolve(context.statePath);
   const tempRoot = fs.realpathSync(os.tmpdir());
+  // NOTE: lstat-based so a dangling symlink still reaches the symlink rejection below.
+  let present = true;
+  try {
+    fs.lstatSync(resolved);
+  } catch {
+    present = false;
+  }
+  if (!present) throw missingInvocationState(resolved, tempRoot);
   const parent = fs.realpathSync(path.dirname(resolved));
   if (parent !== tempRoot && !parent.startsWith(`${tempRoot}${path.sep}`)) {
     throw new Error('invocationContext statePath must be beneath OS temp.');

@@ -77,7 +77,7 @@ const USAGE = `Usage:
   node scripts/parse-report.mjs [--file <path|->] [--rebuttal-packet <path>]
 
 Reads a schema-constrained delegate JSON report from stdin by default and writes normalized JSON.
-Exit 0 parsed, 1 invalid or empty report, 2 invocation failure, 3 prose (non-JSON) report.
+Exit 0 parsed, 1 empty or content-free report, 2 invocation failure, 3 prose or schema-mismatched report.
 `;
 
 function main() {

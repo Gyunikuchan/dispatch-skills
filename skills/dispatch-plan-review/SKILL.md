@@ -48,8 +48,7 @@ terminal.
 
 1. Save each report to an owner-only OS-temp file. Normalize it with
    `scripts/parse-report.mjs --file <path>`, adding `--rebuttal-packet <packet>` for rebuttals.
-   Exit `3`: read the prose report per alignment; exit `1` is an invalid report; exit `2` is
-   terminal.
+   Exit `3`: read the prose report per alignment; exit `1` is an empty report; `2` is terminal.
 2. Verify each finding at its `§ <Section>` and any cited code, and an `adjacent` finding at its
    cited code. Accept, reject, downgrade, or dispute under alignment finality; rebuttal keys must
    match the packet exactly.
@@ -71,7 +70,7 @@ them unasked.
 Then call the same preparation CLI with `action: "checkpoint"`, terminal source keys, consensus
 result, and exact `settledWrites.sections`; it atomically records freshness metadata for settled
 runs only. Standalone passes `terminalSourceKeys: []`; only orchestrated runs record expected keys.
-A rejection names its missing and unexpected entries: declare the observed list and retry once.
+A rejection prints the observed list as JSON: resend exactly that list and retry once.
 Drift means rerun preparation, never force the write.
 
 Prune finished `cleanupPaths` finally-style on every outcome and report failures. Keep invocation
