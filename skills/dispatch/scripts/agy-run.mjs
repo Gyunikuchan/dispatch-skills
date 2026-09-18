@@ -43,6 +43,7 @@ import {
   probeCliReachability,
   PROJECT_ROOT,
   readStdin,
+  removeBriefFile,
   resolveRunnerExitCode,
   runDelegateCapture,
   spawnCli,
@@ -411,7 +412,7 @@ export function parseAgyEnvelope(stdout) {
  * throw before the child is spawned.
  * @returns {Promise<RunAgyResult>}
  */
-function executeAgyInMode(mode, options) {
+async function executeAgyInMode(mode, options) {
   const {
     model = null,
     effort = null,
@@ -442,71 +443,76 @@ function executeAgyInMode(mode, options) {
 
   // Headless execution (interactive mode removed — delegates are always headless)
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'agy', { binary: bin });
-  const agyArgs = buildAgyArgs(argvPrompt, briefFile, { model: effectiveModel, effort: effectiveEffort, timeout });
+  try {
+    const agyArgs = buildAgyArgs(argvPrompt, briefFile, { model: effectiveModel, effort: effectiveEffort, timeout });
 
-  emitInitBanner({
-    platform: 'agy',
-    mode,
-    model: effectiveModel,
-    effort: effectiveEffort,
-    logFile: sessionLogger.logFile,
-  });
+    emitInitBanner({
+      platform: 'agy',
+      mode,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      logFile: sessionLogger.logFile,
+    });
 
-  const trace = createTraceWriter(verbose);
+    const trace = createTraceWriter(verbose);
 
-  return runDelegateCapture({
-    spawnChild: () =>
-      spawnCli(bin, agyArgs, {
-        cwd: PROJECT_ROOT,
-        env: modeEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      }),
-    timeoutSeconds: timeout,
-    maxBufferMb,
-    sessionLogger,
-    trace,
-    onClose: (outcome) => {
-      // The envelope names its own conversation; the mtime scan is the fallback for an older agy
-      // that ignored --output-format, and it cannot tell two concurrent dispatches apart.
-      const envelope = parseAgyEnvelope(outcome.stdoutBuffer);
-      const conversationId = envelope.conversationId ?? getNewestBrainConversationId(startTime, mode);
-      const sessionLink = conversationId ? `conversation://${conversationId}` : null;
+    return await runDelegateCapture({
+      spawnChild: () =>
+        spawnCli(bin, agyArgs, {
+          cwd: PROJECT_ROOT,
+          env: modeEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        }),
+      timeoutSeconds: timeout,
+      maxBufferMb,
+      sessionLogger,
+      trace,
+      onClose: (outcome) => {
+        // The envelope names its own conversation; the mtime scan is the fallback for an older agy
+        // that ignored --output-format, and it cannot tell two concurrent dispatches apart.
+        const envelope = parseAgyEnvelope(outcome.stdoutBuffer);
+        const conversationId = envelope.conversationId ?? getNewestBrainConversationId(startTime, mode);
+        const sessionLink = conversationId ? `conversation://${conversationId}` : null;
 
-      const cleanStdout = envelope.text ?? extractCleanResponse(outcome.stdoutBuffer);
-      const exitCode = resolveRunnerExitCode({
-        code: outcome.code,
-        signal: outcome.signal,
-        truncated: outcome.truncated,
-        cleanStdout,
-      });
-      const failureKind =
-        classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || outcome.truncated;
+        const cleanStdout = envelope.text ?? extractCleanResponse(outcome.stdoutBuffer);
+        const exitCode = resolveRunnerExitCode({
+          code: outcome.code,
+          signal: outcome.signal,
+          truncated: outcome.truncated,
+          cleanStdout,
+        });
+        const failureKind =
+          classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || outcome.truncated;
 
-      emitCompletionBanner({
-        platform: 'agy',
-        exitCode,
-        truncated: outcome.truncated,
-        // agy has no resume command; the conversation id is the only handle.
-        sessionId: conversationId,
-      });
+        emitCompletionBanner({
+          platform: 'agy',
+          exitCode,
+          truncated: outcome.truncated,
+          // agy has no resume command; the conversation id is the only handle.
+          sessionId: conversationId,
+        });
 
-      return {
-        provider: 'agy',
-        mode,
-        stdout: cleanStdout,
-        rawStdout: outcome.stdoutBuffer,
-        stderr: outcome.stderrBuffer,
-        exitCode,
-        logFile: sessionLogger.logFile,
-        briefFile,
-        conversationId,
-        sessionLink,
-        truncated: outcome.truncated,
-        failureKind,
-      };
-    },
-  });
+        return {
+          provider: 'agy',
+          mode,
+          stdout: cleanStdout,
+          rawStdout: outcome.stdoutBuffer,
+          stderr: outcome.stderrBuffer,
+          exitCode,
+          logFile: sessionLogger.logFile,
+          briefFile,
+          conversationId,
+          sessionLink,
+          truncated: outcome.truncated,
+          failureKind,
+        };
+      },
+    });
+  } finally {
+    // Also covers a synchronous throw between the spill and the spawn.
+    removeBriefFile(briefFile);
+  }
 }
 
 // ============================================================================

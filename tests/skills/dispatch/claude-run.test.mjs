@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -544,5 +546,23 @@ describe('runClaude cascade loop', () => {
       return true;
     });
     assert.deepEqual(h.calls, []);
+  });
+});
+
+describe('runClaude brief cleanup', () => {
+  // Real subprocess (node itself as the "claude" binary) so the default executor and its
+  // `.finally(removeBriefFile)` chain run; any exit code is fine — only the leftover dir matters.
+  it('leaves no brief dir behind after a spilled-prompt run', async () => {
+    const result = await runClaude({
+      prompt: 'x'.repeat(200000),
+      model: 'model-a',
+      timeout: 30,
+      discoverTargets: () => [{ name: 'node', mode: 'node', bin: process.execPath }],
+      createLogger: () => ({ logFile: null, write() {}, close() {} }),
+    }).catch((err) => err);
+    // Pins the spill premise, and checks this run's own dir (not a shared-tmpdir diff that
+    // races parallel test files).
+    assert.ok(typeof result.briefFile === 'string' && path.isAbsolute(result.briefFile), 'prompt must spill');
+    assert.equal(fs.existsSync(path.dirname(result.briefFile)), false, 'the spilled brief directory must be removed');
   });
 });

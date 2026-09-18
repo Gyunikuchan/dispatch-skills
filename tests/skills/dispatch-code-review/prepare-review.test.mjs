@@ -6,6 +6,13 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { prepareCodeReview } from '../../../skills/dispatch-code-review/scripts/prepare-review.mjs';
+import { loadBatchFile } from '../../../skills/dispatch/scripts/dispatch.mjs';
+
+const BATCH_CONFIG = {
+  platforms: {
+    claude: { model: 'opus', effort: 'medium' },
+  },
+};
 
 const tempDirs = [];
 const CONVERSATION_ENV_KEYS = [
@@ -68,6 +75,80 @@ describe('code review preparation', () => {
       assert.match(fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8'), /Update the exported value/);
       assert.ok(manifest.dispatch.argv.includes('--batch-file'));
       assert.deepEqual(manifest.reviewRange.paths, ['app.js']);
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('accepts targets/reserves without a per-entry roundId, defaulting to the resolved round', () => {
+    const repo = makeRepo();
+    const manifest = prepareCodeReview({
+      mode: 'orchestrated',
+      slug: 'feature',
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      reserves: [{ candidateId: 'code-review:agy:1', platform: 'agy', model: 'gemini', effort: 'medium' }],
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.roundId, 'code-review:R1');
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('accepts a request with no top-level roundId and no per-entry roundId', () => {
+    const repo = makeRepo();
+    const manifest = prepareCodeReview({
+      mode: 'orchestrated',
+      slug: 'feature',
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.roundId, 'code-review:R1');
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('rejects a per-entry roundId that mismatches the resolved round', () => {
+    const repo = makeRepo();
+    assert.throws(() => prepareCodeReview({
+      mode: 'orchestrated',
+      slug: 'feature',
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ roundId: 'code-review:R2', candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      artifactOwned: true,
+    }, { repoRoot: repo }), /roundId/);
+  });
+
+  it('writes a batch file whose every entry carries the resolved roundId and loads via loadBatchFile', () => {
+    const repo = makeRepo();
+    const manifest = prepareCodeReview({
+      mode: 'orchestrated',
+      slug: 'feature',
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      reserves: [{ candidateId: 'code-review:claude:1', platform: 'claude', model: 'sonnet', effort: 'medium' }],
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    try {
+      const batchIndex = manifest.dispatch.argv.indexOf('--batch-file');
+      assert.ok(batchIndex !== -1);
+      const batchFilePath = manifest.dispatch.argv[batchIndex + 1];
+      const batch = loadBatchFile(batchFilePath, BATCH_CONFIG);
+      assert.ok(batch.targets.length > 0);
+      for (const entry of [...batch.targets, ...batch.reserves]) {
+        assert.equal(entry.roundId, manifest.roundId);
+      }
     } finally {
       cleanupManifest(manifest);
     }

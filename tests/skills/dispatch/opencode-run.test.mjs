@@ -516,6 +516,37 @@ describe('opencode-run', () => {
       assert.ok(argLines[0].includes('anthropic/model-a') && !argLines[0].includes('model-b'));
       assert.ok(argLines[1].includes('anthropic/model-b') && !argLines[1].includes('model-a'));
     });
+
+    // NOTE: `before`/`after` compare with subset, not equality — `createBriefFile`'s stale sweep
+    // may also remove unrelated leftover brief dirs older than 24h during this run, which is
+    // correct behavior, not a leak. What matters is that `after` introduces no new directory.
+    it('leaves no brief dir behind after a spilled-prompt run completes', async () => {
+      mock.method(cp, 'spawn', () => createImmediateChild());
+      const before = new Set(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dispatch-brief-opencode-')));
+
+      await runOpencode({
+        prompt: 'x'.repeat(200000),
+        model: 'anthropic/claude-opus-5',
+      });
+
+      const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dispatch-brief-opencode-'));
+      assert.ok(after.every((n) => before.has(n)), 'the brief directory spilled for this run must be cleaned up');
+    });
+
+    it('leaves no brief dir behind after a spawn error between build and spawn', async () => {
+      mock.method(cp, 'spawn', () => {
+        throw new Error('boom: spawn failed synchronously');
+      });
+      const before = new Set(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dispatch-brief-opencode-')));
+
+      await assert.rejects(runOpencode({
+        prompt: 'x'.repeat(200000),
+        model: 'anthropic/claude-opus-5',
+      }));
+
+      const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('dispatch-brief-opencode-'));
+      assert.ok(after.every((n) => before.has(n)), 'the brief directory spilled before the failed spawn must be cleaned up');
+    });
   });
 
   describe('runOpencode — json:true returns the raw stdout stream', () => {

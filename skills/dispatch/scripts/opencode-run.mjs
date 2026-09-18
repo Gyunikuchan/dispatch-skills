@@ -81,6 +81,7 @@ import {
   preparePromptForArgv,
   PROJECT_ROOT,
   readStdin,
+  removeBriefFile,
   resolveCliInvocation,
   resolveRunnerExitCode,
   runDelegateCapture,
@@ -396,6 +397,9 @@ async function runOpencodeSingle(options = {}) {
     releaseLock();
   };
 
+  // Hoisted so the outer `finally` can clean it up even when a step between `buildCommand`
+  // and the spawn itself throws (e.g. a synchronous spawn resolution failure).
+  let briefFile = null;
   try {
     // Step 5: format prompt with attachments (inlines context files with nonce delimiters and byte caps).
     const formattedPrompt = buildFormattedPrompt(prompt, files);
@@ -419,7 +423,7 @@ async function runOpencodeSingle(options = {}) {
     // binary discovered above (target.bin) instead of re-resolving inside.
     const effectiveModel = model || resolveDefaultModel(rawConfig);
     const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
-    const { command, args, engineType, briefFile } = buildCommand({
+    const built = buildCommand({
       prompt: formattedPrompt,
       model: effectiveModel,
       agent: effectiveAgent,
@@ -428,6 +432,8 @@ async function runOpencodeSingle(options = {}) {
       config: rawConfig,
       binary: target?.bin ?? null,
     });
+    const { command, args, engineType } = built;
+    briefFile = built.briefFile;
 
     if (verbose) {
       process.stderr.write(
@@ -464,6 +470,8 @@ async function runOpencodeSingle(options = {}) {
     failLogger(sessionLogger, err?.message ?? String(err));
     if (typeof formattedPrompt !== 'undefined') err.formattedPromptForMetrics = formattedPrompt;
     throw err;
+  } finally {
+    removeBriefFile(briefFile);
   }
 }
 

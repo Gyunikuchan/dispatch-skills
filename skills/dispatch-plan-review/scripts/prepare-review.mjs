@@ -129,7 +129,7 @@ function validateRequest(request) {
   function validateCombinedEntries(targets, reserves) {
     const sources = new Set();
     for (const entry of [...targets, ...reserves]) {
-      const source = `${entry.roundId}:${entry.platform}:${entry.candidateId.split(':')[2]}`;
+      const source = `${entry.platform}:${entry.candidateId.split(':')[2]}`;
       if (sources.has(source)) throw new Error('targets and reserves must have unique sources.');
       sources.add(source);
     }
@@ -152,7 +152,12 @@ function validateTargets(entries, roundId, label) {
   const sources = new Set();
   for (const [index, entry] of entries.entries()) {
     assertObjectKeys(entry, ['roundId', 'candidateId', 'platform', 'candidateIndex', 'model', 'effort'], `${label}[${index}]`);
-    if (entry.roundId !== roundId || !/^plan-review:R[1-9]\d*$/.test(entry.roundId ?? '')) throw new Error(`${label}[${index}].roundId is invalid.`);
+    // roundId is optional per entry — it is implied by the request's (resolved) round; when
+    // present it must still look right and, if the request pins a roundId, agree with it.
+    if (entry.roundId !== undefined) {
+      if (!/^plan-review:R[1-9]\d*$/.test(entry.roundId)) throw new Error(`${label}[${index}].roundId is invalid.`);
+      if (roundId !== undefined && entry.roundId !== roundId) throw new Error(`${label}[${index}].roundId is invalid.`);
+    }
     if (!/^plan-review:[a-z][a-z0-9-]*:\d+$/.test(entry.candidateId ?? '')) throw new Error(`${label}[${index}].candidateId is invalid.`);
     if (entry.candidateId.split(':')[1] !== entry.platform) throw new Error(`${label}[${index}] platform does not match candidateId.`);
     const candidateIndex = Number(entry.candidateId.split(':')[2]);
@@ -161,7 +166,9 @@ function validateTargets(entries, roundId, label) {
     const byOverride = (typeof entry.model === 'string' && entry.model.length > 0) ||
       (typeof entry.effort === 'string' && entry.effort.length > 0);
     if (byIndex === byOverride) throw new Error(`${label}[${index}] requires candidateIndex or model/effort.`);
-    const source = `${entry.roundId}:${entry.platform}:${candidateIndex}`;
+    // Keyed on platform:candidateIndex, not roundId — the round is fixed per request, so a
+    // per-entry roundId (present or not) carries no extra information for duplicate detection.
+    const source = `${entry.platform}:${candidateIndex}`;
     if (sources.has(source)) throw new Error(`${label} contains duplicate source ${source}.`);
     sources.add(source);
   }
@@ -377,7 +384,16 @@ export function preparePlanReview(request, {
       });
     })();
 
-  const targets = request.targets ?? [];
+  // A present entry roundId must agree with the resolved round; then every entry (whether it
+  // carried one or not) is normalized to the resolved roundId — `loadBatchFile` in dispatch.mjs
+  // requires roundId on every batch entry.
+  for (const entry of [...(request.targets ?? []), ...(request.reserves ?? [])]) {
+    if (entry.roundId !== undefined && entry.roundId !== roundId) {
+      throw new Error(`Entry roundId "${entry.roundId}" does not match resolved round ${roundId}.`);
+    }
+  }
+  const targets = (request.targets ?? []).map((entry) => ({ ...entry, roundId }));
+  const reserves = (request.reserves ?? []).map((entry) => ({ ...entry, roundId }));
   if (mode === 'orchestrated' && targets.length === 0) throw new Error('orchestrated mode requires targets.');
   const keys = mode === 'orchestrated' ? sourceKeys(roundId, targets) : [];
   let invocation;
@@ -396,7 +412,7 @@ export function preparePlanReview(request, {
     });
     invocation = advanceInvocationState(created.context, { repoRoot, slug: resolved.slug, round });
   }
-  const batch = mode === 'orchestrated' ? { targets, reserves: request.reserves ?? [] } : null;
+  const batch = mode === 'orchestrated' ? { targets, reserves } : null;
   const files = createDispatchFiles({
     prompt,
     batch,

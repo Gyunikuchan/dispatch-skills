@@ -9,6 +9,13 @@ import {
   planSnapshot,
   preparePlanReview,
 } from '../../../skills/dispatch-plan-review/scripts/prepare-review.mjs';
+import { loadBatchFile } from '../../../skills/dispatch/scripts/dispatch.mjs';
+
+const BATCH_CONFIG = {
+  platforms: {
+    claude: { model: 'opus', effort: 'medium' },
+  },
+};
 
 const tempDirs = [];
 const CONVERSATION_ENV_KEYS = [
@@ -68,6 +75,88 @@ describe('plan review preparation', () => {
       assert.ok(Array.isArray(manifest.dispatch.argv));
       assert.ok(manifest.dispatch.argv.includes('--batch-file'));
       assert.equal(manifest.roundId, 'plan-review:R1');
+    } finally {
+      cleanManifest(manifest);
+    }
+  });
+
+  it('accepts targets/reserves without a per-entry roundId, defaulting to the resolved round', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const manifest = preparePlanReview({
+      mode: 'orchestrated',
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      requirement: 'Implement sample',
+      targets: [{ candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      reserves: [{ candidateId: 'plan-review:agy:1', platform: 'agy', model: 'gemini', effort: 'medium' }],
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.roundId, 'plan-review:R1');
+    } finally {
+      cleanManifest(manifest);
+    }
+  });
+
+  it('accepts a request with no top-level roundId and no per-entry roundId', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const manifest = preparePlanReview({
+      mode: 'orchestrated',
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      requirement: 'Implement sample',
+      targets: [{ candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.roundId, 'plan-review:R1');
+    } finally {
+      cleanManifest(manifest);
+    }
+  });
+
+  it('rejects a per-entry roundId that mismatches the resolved round', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    assert.throws(() => preparePlanReview({
+      mode: 'orchestrated',
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      requirement: 'Implement sample',
+      targets: [{ roundId: 'plan-review:R2', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+    }, { repoRoot: repo }), /roundId/);
+  });
+
+  it('writes a batch file whose every entry carries the resolved roundId and loads via loadBatchFile', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const manifest = preparePlanReview({
+      mode: 'orchestrated',
+      artifactPath: plan,
+      slug: 'sample',
+      artifactOwned: true,
+      requirement: 'Implement sample',
+      targets: [{ candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      reserves: [{ candidateId: 'plan-review:claude:1', platform: 'claude', model: 'sonnet', effort: 'medium' }],
+    }, { repoRoot: repo });
+    try {
+      const batchIndex = manifest.dispatch.argv.indexOf('--batch-file');
+      assert.ok(batchIndex !== -1);
+      const batchFilePath = manifest.dispatch.argv[batchIndex + 1];
+      const batch = loadBatchFile(batchFilePath, BATCH_CONFIG);
+      assert.ok(batch.targets.length > 0);
+      for (const entry of [...batch.targets, ...batch.reserves]) {
+        assert.equal(entry.roundId, manifest.roundId);
+      }
     } finally {
       cleanManifest(manifest);
     }

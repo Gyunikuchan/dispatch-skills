@@ -47,6 +47,7 @@ import {
   probeCliReachability,
   PROJECT_ROOT,
   readStdin,
+  removeBriefFile,
   resolveRunnerExitCode,
   runDelegateCapture,
   scanVersionDirs,
@@ -422,7 +423,7 @@ function createNoTargetsError() {
  * `runClaude` owns it for the whole cascade.
  * @returns {Promise<RunClaudeResult>}
  */
-function executeOnTarget({
+async function executeOnTarget({
   target,
   model,
   formattedPrompt,
@@ -442,82 +443,87 @@ function executeOnTarget({
     // batch-launcher check budgets the whole command line rather than the prompt alone.
     reservedBytes: claudeFixedArgBytes({ model, effort, sandbox, responseSchema }),
   });
-  const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox, responseSchema });
+  try {
+    const claudeArgs = buildClaudeArgs(argvPrompt, { model, effort, sandbox, responseSchema });
 
-  emitInitBanner({
-    platform: 'claude',
-    mode: target.mode,
-    model,
-    effort,
-    logFile: sessionLogger.logFile,
-  });
+    emitInitBanner({
+      platform: 'claude',
+      mode: target.mode,
+      model,
+      effort,
+      logFile: sessionLogger.logFile,
+    });
 
-  const trace = createTraceWriter(verbose);
+    const trace = createTraceWriter(verbose);
 
-  return runDelegateCapture({
-    spawnChild: () =>
-      spawnCli(target.bin, claudeArgs, {
-        cwd: PROJECT_ROOT,
-        env: getSanitizedEnv(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-      }),
-    timeoutSeconds: timeout,
-    maxBufferMb,
-    sessionLogger,
-    trace,
-    onClose: (outcome) => {
-      const envelope = parseClaudeEnvelope(outcome.stdoutBuffer);
-      const sessionId = envelope.sessionId || extractClaudeSessionId(outcome.stderrBuffer);
-      const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
+    return await runDelegateCapture({
+      spawnChild: () =>
+        spawnCli(target.bin, claudeArgs, {
+          cwd: PROJECT_ROOT,
+          env: getSanitizedEnv(),
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: false,
+        }),
+      timeoutSeconds: timeout,
+      maxBufferMb,
+      sessionLogger,
+      trace,
+      onClose: (outcome) => {
+        const envelope = parseClaudeEnvelope(outcome.stdoutBuffer);
+        const sessionId = envelope.sessionId || extractClaudeSessionId(outcome.stderrBuffer);
+        const sessionLink = sessionId ? `claude --resume ${sessionId}` : null;
 
-      const exitCode = resolveRunnerExitCode({
-        code: outcome.code,
-        signal: outcome.signal,
-        truncated: outcome.truncated,
-        cleanStdout: envelope.text,
-        isError: envelope.isError,
-      });
+        const exitCode = resolveRunnerExitCode({
+          code: outcome.code,
+          signal: outcome.signal,
+          truncated: outcome.truncated,
+          cleanStdout: envelope.text,
+          isError: envelope.isError,
+        });
 
-      // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
-      const classifiedFailure = classifyClaudeResult({
-        exitCode,
-        stderr: outcome.stderrBuffer,
-        stdout: envelope.text,
-      });
-      const { failureKind, effectiveExitCode } = resolveClaudeOutcome({
-        envelope,
-        classifiedFailure,
-        exitCode,
-        truncated: outcome.truncated,
-      });
+        // A success envelope carries subtype 'success'; only an error envelope's subtype is a failure.
+        const classifiedFailure = classifyClaudeResult({
+          exitCode,
+          stderr: outcome.stderrBuffer,
+          stdout: envelope.text,
+        });
+        const { failureKind, effectiveExitCode } = resolveClaudeOutcome({
+          envelope,
+          classifiedFailure,
+          exitCode,
+          truncated: outcome.truncated,
+        });
 
-      emitCompletionBanner({
-        platform: 'claude',
-        exitCode: effectiveExitCode,
-        truncated: outcome.truncated,
-        sessionId,
-        resumeCommand: sessionLink,
-      });
+        emitCompletionBanner({
+          platform: 'claude',
+          exitCode: effectiveExitCode,
+          truncated: outcome.truncated,
+          sessionId,
+          resumeCommand: sessionLink,
+        });
 
-      return {
-        provider: 'claude',
-        claudeMode: target.mode,
-        bin: target.bin,
-        model,
-        stdout: envelope.text,
-        rawStdout: outcome.stdoutBuffer,
-        stderr: outcome.stderrBuffer,
-        exitCode: effectiveExitCode,
-        logFile: sessionLogger.logFile,
-        briefFile,
-        sessionId,
-        sessionLink,
-        truncated: outcome.truncated,
-        failureKind,
-      };
-    },
-  });
+        return {
+          provider: 'claude',
+          claudeMode: target.mode,
+          bin: target.bin,
+          model,
+          stdout: envelope.text,
+          rawStdout: outcome.stdoutBuffer,
+          stderr: outcome.stderrBuffer,
+          exitCode: effectiveExitCode,
+          logFile: sessionLogger.logFile,
+          briefFile,
+          sessionId,
+          sessionLink,
+          truncated: outcome.truncated,
+          failureKind,
+        };
+      },
+    });
+  } finally {
+    // Also covers a synchronous throw between the spill and the spawn.
+    removeBriefFile(briefFile);
+  }
 }
 
 // ============================================================================

@@ -1304,6 +1304,8 @@ export function getArgvByteLimit() {
  * preventing TOCTOU races on shared systems.
  */
 export function createBriefFile(prompt, providerName) {
+  sweepStaleBriefDirs();
+
   const prefix = path.join(os.tmpdir(), `dispatch-brief-${providerName}-`);
   const briefDir = fs.mkdtempSync(prefix);
   try { fs.chmodSync(briefDir, 0o700); } catch {}
@@ -1318,6 +1320,69 @@ export function createBriefFile(prompt, providerName) {
     `Brief file: ${briefFile.split(path.sep).join('/')}`;
 
   return { briefFile, pointerPrompt };
+}
+
+/**
+ * Deletes the brief directory a spilled prompt was written to. Owned by the runner that
+ * created it, called in a `finally` after the delegate settles.
+ *
+ * Security: refuses anything that isn't demonstrably one of our own brief directories —
+ * absolute path, `dispatch-brief-` basename, a real (non-symlink) directory whose realpath's
+ * parent is the OS temp dir's own realpath — so a crafted or symlinked path can never cause
+ * deletion outside temp. Best-effort: errors are swallowed because on Windows a lingering
+ * delegate process may still hold the file open.
+ *
+ * @param {string|null|undefined} briefFile Absolute path to `.../dispatch-brief-<provider>-XXXX/brief.md`.
+ */
+export function removeBriefFile(briefFile) {
+  if (!briefFile) return;
+  try {
+    if (!path.isAbsolute(briefFile)) return;
+    const dir = path.dirname(briefFile);
+    if (!path.basename(dir).startsWith('dispatch-brief-')) return;
+
+    const stat = fs.lstatSync(dir);
+    if (!stat.isDirectory()) return;
+
+    const realDir = fs.realpathSync(dir);
+    const realParent = fs.realpathSync(path.dirname(realDir));
+    const realTmp = fs.realpathSync(os.tmpdir());
+    if (realParent !== realTmp) return;
+
+    // NOTE: retries ride out transient Windows AV/indexer locks (EBUSY/EPERM) on the fresh brief.
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  } catch {
+    // Best-effort: a held file handle (Windows) or already-removed directory is not an error.
+  }
+}
+
+/**
+ * Stale-sweep backstop: removes `dispatch-brief-*` directories older than `maxAgeMs`, covering
+ * crashed/killed runners whose `finally` never ran. Called from `createBriefFile` before each
+ * new brief is written. Age-gated so directories from concurrent in-flight runs are never touched.
+ *
+ * @param {{ maxAgeMs?: number, now?: number }} [opts]
+ */
+export function sweepStaleBriefDirs({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
+  let entries;
+  try {
+    entries = fs.readdirSync(os.tmpdir());
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.startsWith('dispatch-brief-')) continue;
+    const dir = path.join(os.tmpdir(), entry);
+    try {
+      const stat = fs.lstatSync(dir);
+      if (!stat.isDirectory()) continue;
+      if (now - stat.mtimeMs < maxAgeMs) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // Per-entry errors (permission, already removed, race) are swallowed and skipped.
+    }
+  }
 }
 
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
