@@ -164,6 +164,29 @@ describe('plan review preparation', () => {
     }
   });
 
+  it('carries the rerun remedy on checkpoint drift', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const first = preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo });
+    const second = preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo });
+    // The second invocation writes metadata, superseding what the first one recorded.
+    preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: second.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: [] },
+    }, { repoRoot: repo });
+    assert.throws(() => preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: first.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: [] },
+    }, { repoRoot: repo }), /superseded by another invocation\. Rerun preparation; the prior checkpoint is retained\./);
+    cleanManifest(first);
+    cleanManifest(second);
+  });
+
   it('rejects undeclared edits, replayed contexts, and unknown request fields', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
@@ -181,6 +204,13 @@ describe('plan review preparation', () => {
       settlement: { consensusExit: 0, terminalSourceKeys: [] },
       settledWrites: { sections: [] },
     }, { repoRoot: repo }), /do not match observed/);
+    // The rejection names both sides of the delta and the one legal recovery.
+    assert.throws(() => preparePlanReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: ['Verification Plan'] },
+    }, { repoRoot: repo }), /missing: Verification Plan.*unexpected: Proposed Changes.*observed list: Proposed Changes.*rerun preparation/s);
     const next = preparePlanReview({
       artifactPath: plan,
       slug: 'sample',

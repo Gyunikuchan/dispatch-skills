@@ -20,6 +20,7 @@ import {
   advanceInvocationState,
   assertObjectKeys,
   assertPreparationIntegrity,
+  checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
   createInvocationState,
@@ -30,6 +31,7 @@ import {
   requireNode22,
   rawSha256,
   semanticSectionHashes,
+  settledWritesMismatch,
   writeArtifactMetadata,
 } from '../../dispatch/scripts/review-preparation.mjs';
 import {
@@ -301,7 +303,13 @@ function validateSettlement(state, request) {
   }
   const actual = [...(settlement.terminalSourceKeys ?? [])].sort();
   if (JSON.stringify(actual) !== JSON.stringify(state.expectedSourceKeys)) {
-    throw new Error('checkpoint terminalSourceKeys do not match the invocation targets.');
+    // Standalone preparation records no expected keys, so a standalone checkpoint supplies [].
+    throw new Error(settledWritesMismatch(
+      'settlement.terminalSourceKeys',
+      'invocation targets',
+      state.expectedSourceKeys,
+      actual,
+    ));
   }
 }
 
@@ -323,7 +331,7 @@ function checkpoint(request, { repoRoot, now }) {
   const overlaySnapshot = captureReviewSnapshot({ repoRoot, scope: workingScope() });
   const artifact = readArtifact(state.artifactPath, { kind: 'code' });
   if (JSON.stringify(artifact.metadata) !== JSON.stringify(state.initialMetadata ?? null)) {
-    throw new Error('Artifact checkpoint metadata was superseded by another invocation.');
+    throw new Error(checkpointDriftRemedy('Artifact checkpoint metadata was superseded by another invocation.'));
   }
   const artifactSnapshot = semanticSectionHashes(artifact.source);
   if (
@@ -331,7 +339,7 @@ function checkpoint(request, { repoRoot, now }) {
     state.snapshot.artifact.contentHash === artifactSnapshot.contentHash &&
     state.snapshot.rawSemanticHash !== rawSemanticHash(artifact.source)
   ) {
-    throw new Error('Walkthrough raw body changed without a declared semantic edit.');
+    throw new Error(checkpointDriftRemedy('Walkthrough raw body changed without a declared semantic edit.'));
   }
   const observedPaths = changedKeys(
     (state.snapshot.overlay ?? state.snapshot.git).pathHashes,
@@ -341,16 +349,16 @@ function checkpoint(request, { repoRoot, now }) {
   const declaredPaths = [...(request.settledWrites?.paths ?? [])].sort();
   const declaredSections = [...(request.settledWrites?.walkthroughSections ?? [])].sort();
   if (gitSnapshot.baseSha !== state.snapshot.git.baseSha || gitSnapshot.headSha !== state.snapshot.git.headSha) {
-    throw new Error('The selected review range changed during the invocation.');
+    throw new Error(checkpointDriftRemedy('The selected review range changed during the invocation.'));
   }
   if (gitSnapshot.worktreeHash !== state.snapshot.git.worktreeHash && observedPaths.length === 0) {
-    throw new Error('The eligible worktree fingerprint changed without declared paths.');
+    throw new Error(checkpointDriftRemedy('The eligible worktree fingerprint changed without declared paths.'));
   }
   if (JSON.stringify(observedPaths) !== JSON.stringify(declaredPaths)) {
-    throw new Error(`settledWrites.paths do not match observed code changes: ${observedPaths.join(', ') || 'none'}.`);
+    throw new Error(settledWritesMismatch('settledWrites.paths', 'code changes', observedPaths, declaredPaths));
   }
   if (JSON.stringify(observedSections) !== JSON.stringify(declaredSections)) {
-    throw new Error(`settledWrites.walkthroughSections do not match observed changes: ${observedSections.join(', ') || 'none'}.`);
+    throw new Error(settledWritesMismatch('settledWrites.walkthroughSections', 'walkthrough changes', observedSections, declaredSections));
   }
   const metadata = metadataFor({
     slug: state.slug,

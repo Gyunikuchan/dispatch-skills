@@ -137,14 +137,14 @@
       "entryPointCeiling": 21400,
       "normalPathCeiling": 37200,
       "normalPathEstimateCeiling": 9300,
-      "entryPointCharacters": 21344,
-      "entryPointEstimate": 5336,
-      "normalPathCharacters": 37137,
-      "normalPathEstimate": 9285,
-      "planRebuttalPathCharacters": 21666,
-      "planRebuttalPathEstimate": 5417,
-      "codeRebuttalPathCharacters": 22793,
-      "codeRebuttalPathEstimate": 5699
+      "entryPointCharacters": 21391,
+      "entryPointEstimate": 5348,
+      "normalPathCharacters": 37184,
+      "normalPathEstimate": 9296,
+      "planRebuttalPathCharacters": 21706,
+      "planRebuttalPathEstimate": 5427,
+      "codeRebuttalPathCharacters": 22800,
+      "codeRebuttalPathEstimate": 5700
     }
   },
   "intentionalPhase0bDelta": {

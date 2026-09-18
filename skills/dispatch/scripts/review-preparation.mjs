@@ -105,6 +105,25 @@ export function rawSha256(value) {
   return `sha256:${crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex')}`;
 }
 
+// SECTION: checkpoint diagnostics
+// Checkpoint is the last write of a settled run, so a rejection must name the delta and the one
+// legal recovery. Observed state is authoritative: the caller corrects its declaration, never the
+// repository. The `do not match observed` head is load-bearing for existing callers and tests.
+
+const orNone = (entries) => (entries.length > 0 ? entries.join(', ') : 'none');
+
+export function settledWritesMismatch(label, subject, observed, declared) {
+  const missing = declared.filter((entry) => !observed.includes(entry));
+  const unexpected = observed.filter((entry) => !declared.includes(entry));
+  return `${label} do not match observed ${subject} — missing: ${orNone(missing)}; ` +
+    `unexpected: ${orNone(unexpected)}. Resend checkpoint with ${label} set to the observed list: ` +
+    `${orNone(observed)}; rerun preparation instead if the workspace changed after adjudication.`;
+}
+
+export function checkpointDriftRemedy(detail) {
+  return `${detail} Rerun preparation; the prior checkpoint is retained.`;
+}
+
 export function validateDispatchMetadata(metadata, { kind = null, slug = null } = {}) {
   if (metadata === null) return null;
   assertObjectKeys(metadata, [...METADATA_KEYS], 'dispatch metadata');

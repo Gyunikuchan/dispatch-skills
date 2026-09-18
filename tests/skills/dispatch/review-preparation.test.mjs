@@ -7,6 +7,7 @@ import { afterEach, describe, it } from 'node:test';
 import {
   advanceInvocationState,
   buildReviewView,
+  checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
   createInvocationState,
@@ -14,6 +15,7 @@ import {
   readJsonRequest,
   requireNode22,
   semanticSectionHashes,
+  settledWritesMismatch,
   sha256,
   writeArtifactMetadata,
 } from '../../../skills/dispatch/scripts/review-preparation.mjs';
@@ -203,5 +205,43 @@ describe('review preparation primitives', () => {
     });
     tempDirs.push(...opencodeRes.cleanupPaths);
     assert.equal(opencodeRes.dispatch.argv.includes('--response-schema-file'), false);
+  });
+});
+
+describe('settledWritesMismatch', () => {
+  it('names both sides of the delta and the resend remedy', () => {
+    const message = settledWritesMismatch(
+      'settledWrites.paths',
+      'code changes',
+      ['src/kept.ts', 'src/unexpected.ts'],
+      ['src/kept.ts', 'src/missing.ts'],
+    );
+    assert.match(message, /settledWrites\.paths do not match observed code changes/);
+    assert.match(message, /missing: src\/missing\.ts/);
+    assert.match(message, /unexpected: src\/unexpected\.ts/);
+    assert.match(message, /set to the observed list: src\/kept\.ts, src\/unexpected\.ts/);
+    assert.match(message, /rerun preparation/);
+  });
+
+  it('reports "none" for an empty observed set', () => {
+    const message = settledWritesMismatch('settledWrites.sections', 'plan changes', [], ['Proposed Changes']);
+    assert.match(message, /missing: Proposed Changes/);
+    assert.match(message, /unexpected: none/);
+    assert.match(message, /set to the observed list: none/);
+  });
+
+  it('reports "none" for an empty declared set', () => {
+    const message = settledWritesMismatch('settledWrites.sections', 'plan changes', ['Verification Plan'], []);
+    assert.match(message, /missing: none/);
+    assert.match(message, /unexpected: Verification Plan/);
+    assert.match(message, /set to the observed list: Verification Plan/);
+  });
+});
+
+describe('checkpointDriftRemedy', () => {
+  it('appends the rerun remedy to a drift diagnostic', () => {
+    const message = checkpointDriftRemedy('The selected review range changed during the invocation.');
+    assert.match(message, /^The selected review range changed during the invocation\. /);
+    assert.match(message, /Rerun preparation; the prior checkpoint is retained\.$/);
   });
 });

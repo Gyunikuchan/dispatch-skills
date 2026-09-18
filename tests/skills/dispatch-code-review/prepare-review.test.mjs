@@ -192,4 +192,52 @@ describe('code review preparation', () => {
     }, { repoRoot: repo }), /not an eligible working-tree change|do not match observed/);
     cleanupManifest(prepared);
   });
+
+  it('carries the rerun remedy on checkpoint drift', () => {
+    const repo = makeRepo();
+    const first = prepareCodeReview({
+      slug: 'feature',
+      summary: 'Update value',
+      verification: { command: 'npm test', result: 'Passed' },
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    const second = prepareCodeReview({
+      walkthroughPath: path.join(repo, first.artifact.canonicalPath),
+      slug: 'feature',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    // The second invocation writes metadata, superseding what the first one recorded.
+    prepareCodeReview({
+      action: 'checkpoint',
+      invocationContext: second.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { paths: [], walkthroughSections: [] },
+    }, { repoRoot: repo });
+    assert.throws(() => prepareCodeReview({
+      action: 'checkpoint',
+      invocationContext: first.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { paths: [], walkthroughSections: [] },
+    }, { repoRoot: repo }), /superseded by another invocation\. Rerun preparation; the prior checkpoint is retained\./);
+    cleanupManifest(first);
+    cleanupManifest(second);
+  });
+
+  it('names both sides of a settled-path delta and the recovery', () => {
+    const repo = makeRepo();
+    const prepared = prepareCodeReview({
+      slug: 'feature',
+      summary: 'Update value',
+      verification: { command: 'npm test', result: 'Passed' },
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
+    assert.throws(() => prepareCodeReview({
+      action: 'checkpoint',
+      invocationContext: prepared.invocationContext,
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { paths: ['other.js'], walkthroughSections: [] },
+    }, { repoRoot: repo }), /do not match observed code changes.*missing: other\.js.*unexpected: app\.js.*observed list: app\.js.*rerun preparation/s);
+    cleanupManifest(prepared);
+  });
 });

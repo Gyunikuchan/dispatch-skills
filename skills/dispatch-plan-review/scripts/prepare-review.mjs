@@ -16,6 +16,7 @@ import {
   advanceInvocationState,
   assertObjectKeys,
   assertPreparationIntegrity,
+  checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
   createInvocationState,
@@ -25,6 +26,7 @@ import {
   readJsonRequest,
   requireNode22,
   semanticSectionHashes,
+  settledWritesMismatch,
   writeArtifactMetadata,
 } from '../../dispatch/scripts/review-preparation.mjs';
 
@@ -227,7 +229,13 @@ function validateSettlement(state, request) {
   }
   const actual = [...(settlement.terminalSourceKeys ?? [])].sort();
   if (JSON.stringify(actual) !== JSON.stringify(state.expectedSourceKeys)) {
-    throw new Error('checkpoint terminalSourceKeys do not match the invocation targets.');
+    // Standalone preparation records no expected keys, so a standalone checkpoint supplies [].
+    throw new Error(settledWritesMismatch(
+      'settlement.terminalSourceKeys',
+      'invocation targets',
+      state.expectedSourceKeys,
+      actual,
+    ));
   }
 }
 
@@ -238,13 +246,13 @@ function checkpoint(request, { now }) {
   validateSettlement(state, request);
   const artifact = readArtifact(state.artifactPath, { kind: 'plan' });
   if (JSON.stringify(artifact.metadata) !== JSON.stringify(state.initialMetadata ?? null)) {
-    throw new Error('Artifact checkpoint metadata was superseded by another invocation.');
+    throw new Error(checkpointDriftRemedy('Artifact checkpoint metadata was superseded by another invocation.'));
   }
   const snapshot = planSnapshot(artifact.source);
   const observed = changedKeys(state.snapshot.sectionHashes, snapshot.sectionHashes);
   const declared = [...(request.settledWrites?.sections ?? [])].sort();
   if (JSON.stringify(observed) !== JSON.stringify(declared)) {
-    throw new Error(`settledWrites.sections do not match observed plan changes: ${observed.join(', ') || 'none'}.`);
+    throw new Error(settledWritesMismatch('settledWrites.sections', 'plan changes', observed, declared));
   }
   const metadata = planMetadata({
     slug: state.slug,
