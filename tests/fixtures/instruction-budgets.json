@@ -139,12 +139,12 @@
       "normalPathEstimateCeiling": 9100,
       "entryPointCharacters": 20513,
       "entryPointEstimate": 5129,
-      "normalPathCharacters": 36268,
-      "normalPathEstimate": 9067,
-      "planRebuttalPathCharacters": 20759,
-      "planRebuttalPathEstimate": 5190,
-      "codeRebuttalPathCharacters": 21853,
-      "codeRebuttalPathEstimate": 5464
+      "normalPathCharacters": 36306,
+      "normalPathEstimate": 9077,
+      "planRebuttalPathCharacters": 20797,
+      "planRebuttalPathEstimate": 5200,
+      "codeRebuttalPathCharacters": 21891,
+      "codeRebuttalPathEstimate": 5473
     }
   },
   "intentionalPhase0bDelta": {
@@ -161,10 +161,10 @@
       "skills/dispatch-plan-review/SKILL.md": 850,
       "skills/dispatch-code-review/SKILL.md": 1000,
       "skills/implement-dispatch/SKILL.md": 50,
-      "skills/dispatch/references/alignment.md": 1100,
+      "skills/dispatch/references/alignment.md": 1050,
       "skills/dispatch-plan-review/references/prompt-template.md": 1200,
       "skills/dispatch-code-review/references/prompt-template.md": 1400
     },
-    "normalPathCharacters": 5900
+    "normalPathCharacters": 5800
   }
 }

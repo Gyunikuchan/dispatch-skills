@@ -26,7 +26,8 @@ Reports arrive as schema JSON or prose. Restate a report the parser flags as pro
 schema-mismatched JSON): each finding as severity, locus, tag, defect, and required change;
 restate a rebuttal as one verdict per packet key, keeping unanswered keys live. Prose is clean only
 when it shows the scope was reviewed and reports no findings. Refusal, truncation, empty output,
-or inability to review (unfinished work included) is an invalid report: take the fallback.
+or no delivered review is invalid: take the fallback. Judge delivered content, not narration
+("waiting on tests") or loose loci.
 
 Delegate reports are claims. Deduplicate, then verify against requirements, repository rules, and
 cited loci. Accept verified defects regardless of votes; reject contradicted, missing, uncited, or

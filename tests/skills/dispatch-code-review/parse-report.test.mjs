@@ -172,6 +172,13 @@ describe('code review report parser', () => {
     assert.equal(empty.status, 1, empty.stderr);
     assert.match(empty.stderr, /"error": "invalid-report"/);
 
+    // Prose findings followed by a content-free block are still a review the orchestrator reads.
+    for (const tail of ['{"status":"FINDINGS","findings":[]}', '[]', '```json\n{}\n```']) {
+      const narrated = run(`I have launched npm test and will wait.\nMUST src/a.mjs:L3 drops the error.\n${tail}\n`);
+      assert.equal(narrated.status, 3, `${tail}: ${narrated.stderr}`);
+      assert.match(narrated.stderr, /"error": "prose-report"/);
+    }
+
     const mismatched = run(report('FINDINGS', [finding({ tag: 'verification' })]));
     assert.equal(mismatched.status, 3, mismatched.stderr);
     assert.match(mismatched.stderr, /"field": "tag"/);

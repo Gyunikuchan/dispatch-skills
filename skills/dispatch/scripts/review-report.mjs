@@ -126,11 +126,19 @@ export function extractJsonText(raw) {
   return candidates.at(-1)?.text ?? str;
 }
 
+// Prose outside the extracted report (not just fences or whitespace) may carry the review itself;
+// a content-free trailing block must not discard it, so the orchestrator reads the whole text.
+function hasSurroundingProse(raw, json) {
+  const at = raw.lastIndexOf(json);
+  const outside = at === -1 ? '' : raw.slice(0, at) + raw.slice(at + json.length);
+  return /[A-Za-z]{3}/.test(outside.replace(/```(?:json)?/gi, ''));
+}
+
 function parseJsonReport(text) {
   // A whole-text parse first keeps a pretty-printed bare array intact; extraction would split it
   // into its line-initial element objects.
   try {
-    return JSON.parse(String(text ?? ''));
+    return { value: JSON.parse(String(text ?? '')), surrounded: false };
   } catch {
     // Fall through to extraction from banners, fences, and trailing notes.
   }
@@ -139,7 +147,7 @@ function parseJsonReport(text) {
     throw new InvalidReviewReportError([diagnostic(null, '$', 'report is empty')]);
   }
   try {
-    return JSON.parse(json);
+    return { value: JSON.parse(json), surrounded: hasSurroundingProse(String(text ?? ''), json) };
   } catch (err) {
     throw new InvalidReviewReportError(
       [diagnostic(null, '$', `malformed JSON: ${err.message}`)],
@@ -150,12 +158,12 @@ function parseJsonReport(text) {
 
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
   const diagnostics = [];
-  const value = parseJsonReport(text);
+  const { value, surrounded } = parseJsonReport(text);
 
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new InvalidReviewReportError(
       [diagnostic(null, '$', 'report must be a JSON object')],
-      { prose: hasRestatableItems(value) },
+      { prose: surrounded || hasRestatableItems(value) },
     );
   }
   if (!exactFields(value, REPORT_FIELDS)) {
@@ -235,7 +243,7 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
   }
 
   if (diagnostics.length > 0) {
-    throw new InvalidReviewReportError(diagnostics, { prose: hasReviewContent(value) });
+    throw new InvalidReviewReportError(diagnostics, { prose: surrounded || hasReviewContent(value) });
   }
   return {
     schemaVersion: 1,
@@ -247,11 +255,11 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
 
 export function parseRebuttalReport(text, { kind, expectedKeys }) {
   const diagnostics = [];
-  const value = parseJsonReport(text);
+  const { value, surrounded } = parseJsonReport(text);
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new InvalidReviewReportError(
       [diagnostic(null, '$', 'rebuttal report must be a JSON object')],
-      { prose: hasRestatableItems(value) },
+      { prose: surrounded || hasRestatableItems(value) },
     );
   }
   if (!exactFields(value, REBUTTAL_FIELDS)) {
@@ -321,7 +329,7 @@ export function parseRebuttalReport(text, { kind, expectedKeys }) {
     if (!seen.has(key)) diagnostics.push(diagnostic(null, 'responses', `missing response for ${key}`));
   }
   if (diagnostics.length > 0) {
-    throw new InvalidReviewReportError(diagnostics, { prose: hasRestatableItems(value.responses) });
+    throw new InvalidReviewReportError(diagnostics, { prose: surrounded || hasRestatableItems(value.responses) });
   }
   return {
     schemaVersion: 1,
