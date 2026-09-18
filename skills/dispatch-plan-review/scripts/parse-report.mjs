@@ -76,7 +76,7 @@ export function assertParserIntegrity(skillDir = SKILL_DIR, dispatchDir = DISPAT
 const USAGE = `Usage:
   node scripts/parse-report.mjs [--file <path|->] [--rebuttal-packet <path>]
 
-Reads a schema-constrained delegate JSON report from stdin by default and writes normalized JSON.
+Reads a delegate JSON report from stdin by default and writes normalized JSON.
 Exit 0 parsed, 1 empty or content-free report, 2 invocation failure, 3 prose or schema-mismatched report.
 `;
 

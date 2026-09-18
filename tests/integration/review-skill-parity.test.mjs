@@ -148,12 +148,25 @@ describe('review skill prompt template parity', () => {
     );
   });
 
-  it('requires one schema-constrained object and findings only when status is FINDINGS', () => {
+  it('requires one closing JSON object and findings only when status is FINDINGS', () => {
     for (const [rel, text] of [[PLAN_PROMPT_PATH, planText], [CODE_PROMPT_PATH, codeText]]) {
-      assert.match(text, /Return only the schema-constrained JSON object/);
+      assert.match(text, /Run commands in the foreground; reply once the review is complete\./);
+      assert.match(text, /End your reply with one JSON object holding every finding\./);
       assert.match(text, /Otherwise use status `FINDINGS` and one or more findings with every field/);
       assert.doesNotMatch(text, /Axis Coverage|## Verdict|Actionable Next Steps|## Shorter Path/);
       assert.equal(extractJsonExamples(text).length, 2, `${rel} must declare clean and finding examples`);
+    }
+  });
+
+  // Only claude receives the schema natively, so every template states one positive, provider-neutral
+  // output target; a prose or schema-only branch is one the delegate cannot evaluate.
+  it('state one provider-neutral output target in every review and rebuttal template', () => {
+    for (const rel of [PLAN_PROMPT_PATH, CODE_PROMPT_PATH, PLAN_REBUTTAL_PATH, CODE_REBUTTAL_PATH]) {
+      const text = readSkill(rel);
+      assert.doesNotMatch(text, /schema-constrained|Without JSON|cannot emit/, rel);
+    }
+    for (const rel of [PLAN_REBUTTAL_PATH, CODE_REBUTTAL_PATH]) {
+      assert.match(readSkill(rel), /End your reply with one JSON object holding every response:/, rel);
     }
   });
 

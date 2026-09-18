@@ -1,7 +1,6 @@
 # dispatch-code-review delegate prompt
 
-Filled by the owner preparation script through `dispatch`'s `fill-template.mjs`. The variable
-bullets below are the declared variables; `--list` reads them off this file.
+Filled by preparation via `fill-template.mjs`; `--list` reads the variable bullets below.
 
 ## Prompt template
 
@@ -52,8 +51,8 @@ named in-scope risk supported by evidence.
 If unspecified, target `8 + 2 × changed files`; on re-review count files changed since the prior
 round only.
 
-Run commands in the foreground; reply only once the review is complete.
-Return only the schema-constrained JSON object. For a clean review use:
+Run commands in the foreground; reply once the review is complete.
+End your reply with one JSON object holding every finding. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -64,5 +63,5 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 ```
 
 Every finding needs a verifiable claim: in scope, a changed-line locus; `adjacent`, its real locus.
-Use only the tags above. Omit praise, clean-axis summaries, verdicts, and repeated next steps.
+Use only the tags above. Omit praise, summaries, and next steps.
 ````

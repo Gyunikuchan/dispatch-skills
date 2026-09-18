@@ -105,6 +105,17 @@ describe('code review report parser', () => {
     assert.throws(() => parseReport('banner\n{broken'), (err) => err.prose === true);
   });
 
+  it('reads locus-citing prose before a CLEAN block as prose, not a clean review', () => {
+    for (const text of [
+      `MUST src/a.mjs:L3 drops the error.\n${report('CLEAN')}`,
+      `SHOULD src/a.mjs:12 leaks a handle.\n\`\`\`json\n${report('CLEAN')}\n\`\`\``,
+    ]) {
+      assert.throws(() => parseReport(text), (err) => err.prose === true, text);
+    }
+    const findings = parseReport(`Checked src/a.mjs:L3 first.\n${report('FINDINGS', [finding()])}`);
+    assert.equal(findings.findings.length, 1);
+  });
+
   it('rejects invalid tags and severities', () => {
     assert.throws(
       () => parseReport(report('FINDINGS', [finding({ severity: 'BLOCKER', tag: 'verification' })])),

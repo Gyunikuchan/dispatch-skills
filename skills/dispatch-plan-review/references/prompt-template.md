@@ -1,7 +1,6 @@
 # dispatch-plan-review delegate prompt
 
-Filled by the owner preparation script through `dispatch`'s `fill-template.mjs`. The variable
-bullets below are the declared variables; `--list` reads them off this file.
+Filled by preparation via `fill-template.mjs`; `--list` reads the variable bullets below.
 
 ## Prompt template
 
@@ -44,7 +43,8 @@ Treat the tool-turn value as one advisory target. Stop early when grounded. Exce
 named in-scope risk supported by evidence.
 If unspecified, target `8 + 2 × proposed-change entries`; on re-review count changed entries only.
 
-Return only the schema-constrained JSON object. For a clean review use:
+Run commands in the foreground; reply once the review is complete.
+End your reply with one JSON object holding every finding. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -55,6 +55,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 ```
 
 Every finding needs a verifiable claim and a `§ <Plan heading>` locus. Cite existing code as
-`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, clean-axis summaries,
-verdicts, and repeated next steps.
+`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, summaries,
+and next steps.
 ````

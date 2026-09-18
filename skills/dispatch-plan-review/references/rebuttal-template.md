@@ -21,7 +21,7 @@ one response for every supplied key and no others. Use `CONFIRM` when the orches
 counter-evidence settles the finding, `REBUT` when cited evidence refutes that counter-reading, or
 `INTENT-DISPUTE` when evidence cannot settle intent or a deliberate trade-off.
 
-Return only one schema-constrained JSON object:
+End your reply with one JSON object holding every response:
 ```json
 {"responses":[{"type":"rebuttal","key":"R1-F001","verdict":"CONFIRM|REBUT|INTENT-DISPUTE","evidence":"<cited explanation>"}]}
 ```

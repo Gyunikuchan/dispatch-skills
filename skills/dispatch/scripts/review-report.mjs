@@ -36,7 +36,8 @@ function diagnostic(index, field, message) {
 function hasEvidenceLocus(kind, evidence) {
   if (!nonEmptyString(evidence)) return false;
   const codeLocus = /(?:^|\s)(?!\/)(?![A-Za-z]:)(?!\.\.\/)(?:[^:\s\\]+(?::L|#L)|[^:\s\\]*(?:\/|\.[A-Za-z])[^:\s\\]*:)[1-9]\d*\b/;
-  return kind === 'code' ? codeLocus.test(evidence) : /§\s*\S/.test(evidence) || codeLocus.test(evidence);
+  // `§ <Plan heading>` is the template placeholder, echoed by delegates, never a citation.
+  return kind === 'code' ? codeLocus.test(evidence) : /§\s*[^\s<]/.test(evidence) || codeLocus.test(evidence);
 }
 
 // Rewrites only the line prefix; ranges and columns keep their extent and fail validation, so
@@ -128,17 +129,16 @@ export function extractJsonText(raw) {
 
 // Prose outside the extracted report (not just fences or whitespace) may carry the review itself;
 // a content-free trailing block must not discard it, so the orchestrator reads the whole text.
-function hasSurroundingProse(raw, json) {
+function outsideText(raw, json) {
   const at = raw.lastIndexOf(json);
-  const outside = at === -1 ? '' : raw.slice(0, at) + raw.slice(at + json.length);
-  return /[A-Za-z]{3}/.test(outside.replace(/```(?:json)?/gi, ''));
+  return at === -1 ? '' : (raw.slice(0, at) + raw.slice(at + json.length)).replace(/```(?:json)?/gi, '');
 }
 
 function parseJsonReport(text) {
   // A whole-text parse first keeps a pretty-printed bare array intact; extraction would split it
   // into its line-initial element objects.
   try {
-    return { value: JSON.parse(String(text ?? '')), surrounded: false };
+    return { value: JSON.parse(String(text ?? '')), surrounded: false, outside: '' };
   } catch {
     // Fall through to extraction from banners, fences, and trailing notes.
   }
@@ -147,7 +147,8 @@ function parseJsonReport(text) {
     throw new InvalidReviewReportError([diagnostic(null, '$', 'report is empty')]);
   }
   try {
-    return { value: JSON.parse(json), surrounded: hasSurroundingProse(String(text ?? ''), json) };
+    const outside = outsideText(String(text ?? ''), json);
+    return { value: JSON.parse(json), surrounded: /[A-Za-z]{3}/.test(outside), outside };
   } catch (err) {
     throw new InvalidReviewReportError(
       [diagnostic(null, '$', `malformed JSON: ${err.message}`)],
@@ -158,7 +159,7 @@ function parseJsonReport(text) {
 
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
   const diagnostics = [];
-  const { value, surrounded } = parseJsonReport(text);
+  const { value, surrounded, outside } = parseJsonReport(text);
 
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new InvalidReviewReportError(
@@ -242,6 +243,10 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
     diagnostics.push(diagnostic(null, 'status', 'FINDINGS requires at least one valid finding'));
   }
 
+  // A locus cited outside a trailing CLEAN block is a prose finding; trusting the block drops it.
+  if (value.status === 'CLEAN' && diagnostics.length === 0 && hasEvidenceLocus(kind, outside)) {
+    diagnostics.push(diagnostic(null, '$', 'CLEAN report is surrounded by prose'));
+  }
   if (diagnostics.length > 0) {
     throw new InvalidReviewReportError(diagnostics, { prose: surrounded || hasReviewContent(value) });
   }

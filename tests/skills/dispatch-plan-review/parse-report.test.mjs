@@ -105,6 +105,13 @@ describe('plan review report parser', () => {
     assert.throws(() => parseReport('banner\n{broken'), (err) => err.prose === true);
   });
 
+  it('reads locus-citing prose before a CLEAN block as prose, not a clean review', () => {
+    const text = `MUST § Proposed Changes omits the migration.\n${report('CLEAN')}`;
+    assert.throws(() => parseReport(text), (err) => err.prose === true);
+    const echoed = `Example: {"locus":"§ <Plan heading>"}\n${report('CLEAN')}`;
+    assert.equal(parseReport(echoed).summary.status, 'CLEAN');
+  });
+
   it('rejects invalid tags and severities', () => {
     assert.throws(
       () => parseReport(report('FINDINGS', [finding({ severity: 'BLOCKER', tag: 'runtime' })])),
