@@ -1,6 +1,6 @@
 {
   "name": "dispatch-skills",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-agent CLI delegation, review, and autonomous consensus engine for Claude Code, Antigravity, GitHub Copilot, and OpenCode.",
   "license": "MIT",
   "type": "module",
