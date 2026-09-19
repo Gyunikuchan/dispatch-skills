@@ -171,11 +171,15 @@ branches, or opens pull requests.
 
 ## Review coverage
 
-`dispatch-plan-review` evaluates seven axes: requirement fidelity, domain logic, architecture,
-security, blast radius, testability, and simplicity/failure modes.
+`dispatch-plan-review` evaluates eight axes: requirement and intent fidelity, domain logic, plan
+coherence and architecture, security and permissions, blast radius and reversibility, robustness
+and failure modes, testability and success criteria, and simplicity. Reviewers also report
+adjacent defects they meet in existing code.
 
-`dispatch-code-review` evaluates six axes: architecture, domain logic, security/resource safety,
-simplicity, compatibility/blast radius, and test quality/UI/UX.
+`dispatch-code-review` evaluates nine axes: requirement and intent fidelity, architecture and
+module design, domain logic, robustness and failure modes, security and resource safety,
+simplicity and anti-bloat, blast radius and compatibility, test quality and UI/UX, and host
+standards, plus adjacent defects outside the diff.
 
 Both review skills require evidence for actionable findings and classify claims as accepted,
 rejected, downgraded, or disputed. See the individual manuals for their finding grammar,
@@ -197,9 +201,10 @@ adjudication rules, and artifact lifecycle.
 | `opencode` | OpenCode (`opencode`) |
 
 Provider availability is environment and configuration dependent. No default configuration ships,
-so from a fresh checkout nothing is enabled until you create a config — copy each skill's
-`config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside that skill. Then inspect
-the effective dispatch keys with:
+so from a fresh checkout nothing is enabled until you create a config — copy the skill's
+`config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it (`dispatch` owns
+provider routing; `implement-dispatch` ships a sample for its review policy; the two review
+skills have no configuration file). Then inspect the effective dispatch keys with:
 
 ```bash
 node skills/dispatch/scripts/dispatch.mjs --list-platforms

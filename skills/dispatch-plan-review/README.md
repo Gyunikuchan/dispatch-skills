@@ -24,7 +24,7 @@ Install both skills in the same installation scope:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
 ```
 
-Use `-g` for a global installation, or `--all` to install the complete suite.
+Add `-g` to install globally, or `-s '*'` to install the complete suite:
 
 > [!NOTE]
 > `dispatch-plan-review` has no separate provider configuration. It uses the effective

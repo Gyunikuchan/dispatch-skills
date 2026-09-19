@@ -29,7 +29,7 @@ Install both skills together:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review
 ```
 
-Add `-g` to install globally, or use `--all` to install the complete suite:
+Add `-g` to install globally, or `-s '*'` to install the complete suite:
 
 ```bash
 npx skills add -g Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review

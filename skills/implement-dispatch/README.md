@@ -38,11 +38,7 @@ Install the workflow with its required dependency:
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill implement-dispatch
 ```
 
-Install the complete suite to enable both optional review phases:
-
-```bash
-npx skills add Gyunikuchan/dispatch-skills -s '*'
-```
+Add `-g` to install globally, or `-s '*'` to install the complete suite:
 
 > [!NOTE]
 > Install companion skills in the same installation scope: keep them all project-local or all global so sibling
