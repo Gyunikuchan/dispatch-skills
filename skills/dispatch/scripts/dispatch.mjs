@@ -788,15 +788,25 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 export async function main() {
   const options = parseCommonArgs(process.argv, {
     booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
-    valueFlags: ['--response-schema-file', '--batch-file'],
+    valueFlags: ['--response-schema-file', '--batch-file', '--output-file'],
   });
   const { noConfig, validateOnly, listPlatforms, listTargets, doctor } = parseDispatchFlags(process.argv);
   const { values: dispatchValues } = parseRunnerModeArgs(process.argv.slice(2), {
-    valueFlags: ['--response-schema-file', '--batch-file'],
-    aliases: { '--response-schema-file': 'responseSchemaFile', '--batch-file': 'batchFile' },
+    valueFlags: ['--response-schema-file', '--batch-file', '--output-file'],
+    aliases: { '--response-schema-file': 'responseSchemaFile', '--batch-file': 'batchFile', '--output-file': 'outputFile' },
   });
   const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
   const batchFile = dispatchValues.batchFile ?? null;
+  const outputFile = dispatchValues.outputFile ?? null;
+  // NOTE: --output-file keeps the report off stdout so a background task's output shows only banners.
+  const writeOutput = (text) => {
+    if (!outputFile) {
+      process.stdout.write(text);
+      return;
+    }
+    fs.writeFileSync(outputFile, text, { encoding: 'utf8', mode: 0o600 });
+    process.stderr.write(`[dispatch] Output: ${outputFile}\n`);
+  };
 
   if (options.help) {
     printHelp();
@@ -822,6 +832,7 @@ export async function main() {
     let ignored = collectRunFlags(options, noConfig);
     if (responseSchemaFile) ignored.push('--response-schema-file');
     if (batchFile) ignored.push('--batch-file');
+    if (outputFile) ignored.push('--output-file');
     if (listTargets) {
       ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
     }
@@ -914,7 +925,7 @@ export async function main() {
       } finally {
         fs.rmSync(batch.path, { force: true });
       }
-      process.stdout.write(`${JSON.stringify(envelope, null, 2)}\n`);
+      writeOutput(`${JSON.stringify(envelope, null, 2)}\n`);
       process.exit(envelope.complete ? 0 : 1);
       return;
     }
@@ -934,7 +945,7 @@ export async function main() {
   }
 
   if (result.stdout) {
-    process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
+    writeOutput(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
   }
 
   if (result.truncated) {
@@ -978,6 +989,7 @@ Options:
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --batch-file <path>         Execute caller-resolved targets/reserves from a temporary JSON file
+  --output-file <path>        Write the report (or batch envelope) to this file instead of stdout
   --response-schema-file <path>
                               Require provider-native structured output matching this JSON Schema
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})

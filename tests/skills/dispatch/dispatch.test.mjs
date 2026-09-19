@@ -1620,6 +1620,12 @@ describe('dispatch --validate-only CLI', () => {
     assert.match(res.stderr || '', /--batch-file cannot be combined with: --no-config/);
   });
 
+  it('rejects --output-file in inspection modes', () => {
+    const res = run(['--validate-only', '--output-file', path.join(os.tmpdir(), 'unused-output.txt')]);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /cannot be combined with: --output-file/);
+  });
+
   it('does not treat inspection flags after -- as dispatch flags', () => {
     const res = run(['--validate-only', '--', '--list-platforms']);
     assert.equal(res.status, 1);

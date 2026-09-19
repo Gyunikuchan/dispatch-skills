@@ -536,9 +536,12 @@ export function createDispatchFiles({
   for (const attachment of attachments) argv.push('-f', attachment);
   if (orchestrator) argv.push('--orchestrator', orchestrator);
   if (orchestratorModel) argv.push('--orchestrator-model', orchestratorModel);
+  const outputFile = createTempFile('dispatch-review-output-', 'output.txt', '');
+  cleanupPaths.push(outputFile.cleanupPath);
+  argv.push('--output-file', outputFile.path);
   return {
     promptPath: promptFile.path,
-    dispatch: { argv },
+    dispatch: { argv, outputPath: outputFile.path },
     cleanupPaths,
   };
 }

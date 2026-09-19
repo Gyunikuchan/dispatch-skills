@@ -246,6 +246,21 @@ describe('review preparation primitives', () => {
     tempDirs.push(...opencodeRes.cleanupPaths);
     assert.equal(opencodeRes.dispatch.argv.includes('--response-schema-file'), false);
   });
+
+  it('routes dispatch output to a cleaned-up temp file named in the manifest', () => {
+    const res = createDispatchFiles({
+      prompt: 'Test prompt',
+      attachments: [],
+      responseSchemaPath: 'schema.json',
+      dispatchScriptPath: 'dispatch.mjs',
+      batch: { targets: [], reserves: [] },
+    });
+    tempDirs.push(...res.cleanupPaths);
+    const index = res.dispatch.argv.indexOf('--output-file');
+    assert.ok(index > 0);
+    assert.equal(res.dispatch.argv[index + 1], res.dispatch.outputPath);
+    assert.ok(res.cleanupPaths.includes(path.dirname(res.dispatch.outputPath)));
+  });
 });
 
 describe('settledWritesMismatch', () => {

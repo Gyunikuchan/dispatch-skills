@@ -68,10 +68,11 @@ the artifact/code or live disputed/pending findings remain below the cap.
 
 ## Wave and lifecycle
 
-Execute only preparation-manifest argv, background it, yield, and await every launched target or
-reserve before adjudication. Same-platform runner failure uses native read-only fallback; other
-targets consume ordered reserves first. Configuration, membership, and integrity failures are
-terminal. Preserve candidate IDs; record effective sources and failed attempts separately.
+Execute only preparation-manifest argv, as-is, in the background; yield and await every launched
+target or reserve, then read results from `dispatch.outputPath` before adjudication. Same-platform
+runner failure uses native read-only fallback; other targets consume ordered reserves first.
+Configuration, membership, and integrity failures are terminal. Preserve candidate IDs; record
+effective sources and failed attempts separately.
 
 Preparation context is invocation-bound. Checkpoint only after terminal outcomes, adjudication,
 verification, and consensus exit `0`; then remove returned cleanup paths in finally-style success

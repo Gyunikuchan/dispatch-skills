@@ -59,6 +59,7 @@ sanitized, provider-attributed report with available session handles.
 | `-t`, `--timeout` | Timeout seconds; default `1800`. |
 | `--max-buffer` | Output cap MB; default `10`. |
 | `--batch-file` | Temporary caller-resolved target/reserve manifest. |
+| `--output-file` | Write the report or batch envelope to a file instead of stdout. |
 | `--response-schema-file` | Native JSON Schema output (Claude only). |
 | `--provider` | Provider pin; canonical key or alias. |
 | `--orchestrator` | Host platform for ordering. |

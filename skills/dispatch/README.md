@@ -153,6 +153,7 @@ diagnostics.
 | `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run. |
 | `--max-buffer <MB>` | Raise the output buffer if a provider result is truncated. |
 | `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
+| `--output-file <path>` | Write the report (or batch envelope) to a file instead of stdout, so background output shows only run banners. |
 | `--orchestrator <name>` | Override automatic host-platform detection. |
 | `--orchestrator-model <model>` | Override automatic host-model detection. |
 | `--no-config` | Skip configuration; requires `--provider`. |
