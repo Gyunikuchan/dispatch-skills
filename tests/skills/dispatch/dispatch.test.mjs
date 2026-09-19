@@ -17,6 +17,7 @@ import {
   providerRunners,
   PROVIDER_ALIASES,
   resolveConfiguredTargets,
+  writeDispatchOutput,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import {
   KNOWN_PROVIDERS,
@@ -1618,6 +1619,26 @@ describe('dispatch --validate-only CLI', () => {
     const res = run(['--batch-file', path.join(os.tmpdir(), 'missing-batch.json'), '--no-config', 'Review']);
     assert.equal(res.status, 1);
     assert.match(res.stderr || '', /--batch-file cannot be combined with: --no-config/);
+  });
+
+  it('writes --output-file reports to the file, banner to stderr, and falls back to stdout', () => {
+    const sink = () => { const chunks = []; return { chunks, write: (c) => chunks.push(c) }; };
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-output-test-'));
+    try {
+      const file = path.join(dir, 'output.txt');
+      let stdout = sink(), stderr = sink();
+      writeDispatchOutput('{"complete":true}\n', file, { stdout, stderr });
+      assert.equal(fs.readFileSync(file, 'utf8'), '{"complete":true}\n');
+      assert.deepEqual(stdout.chunks, []);
+      assert.match(stderr.chunks.join(''), /\[dispatch\] Output: /);
+
+      stdout = sink(); stderr = sink();
+      writeDispatchOutput('report\n', path.join(dir, 'missing', 'output.txt'), { stdout, stderr });
+      assert.deepEqual(stdout.chunks, ['report\n']);
+      assert.match(stderr.chunks.join(''), /could not write --output-file/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('rejects --output-file in inspection modes', () => {

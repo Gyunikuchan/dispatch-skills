@@ -51,7 +51,7 @@ terminal.
 
 ## Adjudicate and fix
 
-1. Save each report to owner-only OS temp. Normalize with
+1. Read each report from `dispatch.outputPath`. Normalize with
    `scripts/parse-report.mjs --file <path>`, adding `--rebuttal-packet <packet>` for rebuttals.
    Exit `3`: read the prose report per alignment; exit `1` is an empty report; `2` is terminal.
 2. Verify each in-scope finding against its cited changed line and surrounding contract, and each

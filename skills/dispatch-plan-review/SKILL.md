@@ -46,7 +46,7 @@ terminal.
 
 ## Adjudicate
 
-1. Save each report to an owner-only OS-temp file. Normalize it with
+1. Read each report from `dispatch.outputPath`. Normalize it with
    `scripts/parse-report.mjs --file <path>`, adding `--rebuttal-packet <packet>` for rebuttals.
    Exit `3`: read the prose report per alignment; exit `1` is an empty report; `2` is terminal.
 2. Verify each finding at its `§ <Section>` and any cited code, and an `adjacent` finding at its

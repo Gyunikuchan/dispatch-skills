@@ -785,6 +785,27 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
 // SECTION: CLI Entry Point
 // ============================================================================
 
+/**
+ * Writes the report to `outputFile` (keeping a background task's output to banners) or stdout.
+ */
+export function writeDispatchOutput(text, outputFile, { stdout = process.stdout, stderr = process.stderr } = {}) {
+  if (outputFile) {
+    let written = false;
+    try {
+      fs.writeFileSync(outputFile, text, { encoding: 'utf8', mode: 0o600 });
+      written = true;
+    } catch (err) {
+      // NOTE: a completed provider run is costly; fall back to stdout rather than lose the report.
+      stderr.write(`[dispatch] WARNING: could not write --output-file (${err.message}); report follows on stdout\n`);
+    }
+    if (written) {
+      stderr.write(`[dispatch] Output: ${outputFile}\n`);
+      return;
+    }
+  }
+  stdout.write(text);
+}
+
 export async function main() {
   const options = parseCommonArgs(process.argv, {
     booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
@@ -798,15 +819,7 @@ export async function main() {
   const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
   const batchFile = dispatchValues.batchFile ?? null;
   const outputFile = dispatchValues.outputFile ?? null;
-  // NOTE: --output-file keeps the report off stdout so a background task's output shows only banners.
-  const writeOutput = (text) => {
-    if (!outputFile) {
-      process.stdout.write(text);
-      return;
-    }
-    fs.writeFileSync(outputFile, text, { encoding: 'utf8', mode: 0o600 });
-    process.stderr.write(`[dispatch] Output: ${outputFile}\n`);
-  };
+  const writeOutput = (text) => writeDispatchOutput(text, outputFile);
 
   if (options.help) {
     printHelp();
