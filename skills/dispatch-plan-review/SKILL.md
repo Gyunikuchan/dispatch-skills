@@ -61,15 +61,15 @@ is evaluated under the alignment cap.
 
 ## Settle and report
 
-After every source is terminal and `check-consensus.mjs` exits `0`, standalone lists accepted
+After every source is terminal and `dispatch/scripts/check-consensus.mjs` exits `0`, standalone lists accepted
 `adjacent` findings and asks which to fold into `## Proposed Changes` before the checkpoint. Each
 folded one re-reviews that section in a new loop with a fresh cap until consensus exits `0`,
 offering that loop's findings the same way. Unchosen ones stay under `## Out of Scope`; orchestrated returns
 them unasked.
 
-Then call the same preparation CLI with `action: "checkpoint"`, terminal source keys, consensus
-result, and exact `settledWrites.sections`; it atomically records freshness metadata for settled
-runs only. Standalone passes `terminalSourceKeys: []`; only orchestrated runs record expected keys.
+Then send the same preparation CLI `action: "checkpoint-preview"` and resend its `settlement` and
+`settledWrites` as `action: "checkpoint"`; it atomically records freshness metadata for settled
+runs only.
 A rejection prints the observed list as JSON: resend exactly that list and retry once.
 Drift means rerun preparation, never force the write.
 

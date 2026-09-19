@@ -82,13 +82,46 @@ export function readJsonRequest(source, { stdin = process.stdin } = {}) {
   return parsed;
 }
 
-export function assertObjectKeys(value, allowed, label) {
+// Guessed request fields seen in practice; a hint is offered only when the receiver accepts it.
+export const FIELD_HINTS = Object.freeze({
+  plan: 'artifactPath',
+  planFile: 'artifactPath',
+  walkthrough: 'walkthroughPath',
+  round: 'roundId',
+  context: 'invocationContext',
+});
+
+function editDistance(a, b) {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
+function fieldHint(key, allowed, hints) {
+  if (Object.hasOwn(hints, key) && allowed.includes(hints[key])) return hints[key];
+  let best = null;
+  let bestDistance = 3;
+  for (const candidate of allowed) {
+    const distance = editDistance(key.toLowerCase(), candidate.toLowerCase());
+    if (distance < bestDistance) [best, bestDistance] = [candidate, distance];
+  }
+  return best;
+}
+
+export function assertObjectKeys(value, allowed, label, hints = {}) {
   if (!value || Array.isArray(value) || typeof value !== 'object') {
     throw new Error(`${label} must be an object.`);
   }
   for (const key of Object.keys(value)) {
     if (!allowed.includes(key)) {
-      throw new Error(`${label} contains unsupported field "${key}"; allowed: ${allowed.join(', ')}.`);
+      const hint = fieldHint(key, allowed, hints);
+      throw new Error(`${label} contains unsupported field "${key}"${hint ? `; did you mean "${hint}"?` : ''}; allowed: ${allowed.join(', ')}.`);
     }
   }
 }

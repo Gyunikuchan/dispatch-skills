@@ -191,7 +191,7 @@ describe('code review preparation', () => {
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 1, terminalSourceKeys: [] },
       settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
-    }, { repoRoot: repo }), /run check-consensus.mjs until it exits 0/);
+    }, { repoRoot: repo }), /run dispatch\/scripts\/check-consensus\.mjs until it exits 0/);
     const checkpoint = prepareCodeReview({
       action: 'checkpoint',
       invocationContext: prepared.invocationContext,
@@ -326,5 +326,56 @@ describe('code review preparation', () => {
       settledWrites: { paths: ['other.js'], walkthroughSections: [] },
     }, { repoRoot: repo }), /do not match observed code changes.*declared but unchanged: other\.js.*changed but undeclared: app\.js.*set to \["app\.js"\].*rerun preparation/s);
     cleanupManifest(prepared);
+  });
+  it('hints the intended field for a guessed request key', () => {
+    const repo = makeRepo();
+    assert.throws(() => prepareCodeReview({ walkthrough: 'x.md' }, { repoRoot: repo }), /did you mean "walkthroughPath"\?/);
+    assert.throws(() => prepareCodeReview({ context: {} }, { repoRoot: repo }), /did you mean "invocationContext"\?/);
+  });
+
+  it('previews exactly the checkpoint that succeeds, and a live log that it rejects', () => {
+    const repo = makeRepo();
+    const prepared = prepareCodeReview({
+      slug: 'feature',
+      summary: 'Update value',
+      verification: { command: 'npm test', result: 'Passed' },
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    const walkthrough = path.join(repo, prepared.artifact.canonicalPath);
+    fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
+    fs.writeFileSync(walkthrough, fs.readFileSync(walkthrough, 'utf8').replace(
+      '## Key Deviations\nNone.',
+      '## Key Deviations\nChanged the constant again.',
+    ));
+    try {
+      assert.throws(() => prepareCodeReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext, settlement: {} }, { repoRoot: repo }), /inapplicable field "settlement"/);
+      const reviewed = fs.readFileSync(walkthrough, 'utf8');
+      const live = reviewed.replace(/## Review Findings & Resolutions[^\n]*\n/, (head) => `${head}\n### Round 1 — agy\n- **[Disputed]** app.js — tag: x → y\n`);
+      fs.writeFileSync(walkthrough, live);
+      const unsettled = prepareCodeReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext }, { repoRoot: repo });
+      assert.equal(unsettled.settlement.consensusExit, 1);
+      assert.deepEqual(unsettled.settledWrites, { paths: [], walkthroughSections: [] });
+      fs.writeFileSync(walkthrough, reviewed);
+      const preview = prepareCodeReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext }, { repoRoot: repo });
+      assert.deepEqual(preview, {
+        schemaVersion: 1,
+        kind: 'code',
+        action: 'checkpoint-preview',
+        status: 'preview',
+        settlement: { consensusExit: 0, terminalSourceKeys: [] },
+        settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
+        unsettled: [],
+      });
+      assert.equal(fs.readFileSync(walkthrough, 'utf8'), reviewed);
+      const done = prepareCodeReview({
+        action: 'checkpoint',
+        invocationContext: prepared.invocationContext,
+        settlement: preview.settlement,
+        settledWrites: preview.settledWrites,
+      }, { repoRoot: repo });
+      assert.equal(done.status, 'checkpointed');
+    } finally {
+      cleanupManifest(prepared);
+    }
   });
 });

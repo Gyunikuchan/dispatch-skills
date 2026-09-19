@@ -24,7 +24,8 @@ configured cascade. Membership comes only from `--list-platforms`. Orchestrated 
 
 1. Write a bounded prompt naming the objective, evidence boundary, stop condition, and output
    shape. Attach only essential external artifacts; delegates read workspace files directly.
-2. Launch `node <skill-path>/scripts/dispatch.mjs [flags] "<task>"` in the background and yield.
+2. Launch `node <skill-path>/scripts/dispatch.mjs [flags] "<task>"` directly as the background
+   command, so `[dispatch]` banners stream live, and yield.
 3. Map the terminal outcome:
    - useful exit-0 output: relay it;
    - sufficient partial output: relay it; otherwise narrow and retry;

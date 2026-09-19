@@ -57,18 +57,20 @@ Append under the first unfenced `## Review Findings & Resolutions`:
 - **[<status>]** [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
 ```
 
-Print the Sources line with `dispatch/scripts/source-map.mjs`; `--extra` adds `fallback`/`replacement`
-records (fields: `--help`). Entry statuses: `Accepted`, `Resolved dispute`,
+Print the Sources line with `dispatch/scripts/source-map.mjs`: `--batch` for orchestrated waves,
+`--kind` with `--source` per standalone target; `--extra` adds `fallback`/`replacement` or
+overridden records (fields: `--help`). Entry statuses: `Accepted`, `Resolved dispute`,
 `Rejected / Downgraded`, `Disputed`, `Rejected — Pending Confirmation`. `<nnn>` is zero-padded to at
 least three digits. Cite only reporting sources. IDs survive status rewrites.
 Legacy lines remain readable; `ACTIONABLE` is legacy-only. Unknown bullets never settle.
 
-`check-consensus.mjs` exits `0` settled, `1` live, `2` invalid. Continue while the prior wave changed
+`dispatch/scripts/check-consensus.mjs` exits `0` settled, `1` live, `2` invalid. Continue while the prior wave changed
 the artifact/code or live disputed/pending findings remain below the cap.
 
 ## Wave and lifecycle
 
-Execute only preparation-manifest argv, as-is, in the background; yield and await every launched
+Launch only preparation-manifest argv directly as the background command, as-is, so `[dispatch]`
+banners stream live (a buffering wrapper such as `spawnSync` in `node -e` hides them); yield and await every launched
 target or reserve, then read results from `dispatch.outputPath` (or the task output when the
 runner warns it fell back to stdout) before adjudication. Same-platform runner failure uses native
 read-only fallback; other targets consume ordered reserves first. Configuration, membership, and
@@ -76,7 +78,8 @@ integrity failures are terminal. Preserve candidate IDs; record effective source
 attempts separately.
 
 Preparation context is invocation-bound. Checkpoint only after terminal outcomes, adjudication,
-verification, and consensus exit `0`; then remove returned cleanup paths in finally-style success
+verification, and consensus exit `0`: send `action: "checkpoint-preview"`, verify its observed
+settlement and writes, and resend them as `checkpoint`; then remove returned cleanup paths in finally-style success
 or failure handling. Canonical artifacts are the only write targets; views and packets are
 read-only OS-temp inputs and must not expose source-map session handles.
 

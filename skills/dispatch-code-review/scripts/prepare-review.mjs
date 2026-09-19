@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { evaluateConsensus } from '../../dispatch/scripts/check-consensus.mjs';
 import { isMainModule } from '../../dispatch/scripts/common.mjs';
 import { extractTemplate, fillTemplate } from '../../dispatch/scripts/fill-template.mjs';
 import {
@@ -25,6 +26,7 @@ import {
   createDispatchFiles,
   createInvocationState,
   createReviewView,
+  FIELD_HINTS,
   readArtifact,
   readInvocationState,
   readJsonRequest,
@@ -43,6 +45,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(__dirname, '..');
 const DISPATCH_DIR = path.resolve(__dirname, '../../dispatch');
 const CHECKPOINT_KEYS = ['action', 'invocationContext', 'settlement', 'settledWrites'];
+const PREVIEW_KEYS = ['action', 'invocationContext'];
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'walkthroughPath', 'planPath',
   'slug', 'date', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
@@ -101,9 +104,20 @@ function sourceKeys(roundId, targets = []) {
 }
 
 function validateRequest(request) {
-  assertObjectKeys(request, REQUEST_KEYS, 'code review request');
+  assertObjectKeys(request, REQUEST_KEYS, 'code review request', FIELD_HINTS);
   const action = request.action ?? 'prepare';
-  if (!['prepare', 'checkpoint'].includes(action)) throw new Error('action must be "prepare" or "checkpoint".');
+  if (!['prepare', 'checkpoint', 'checkpoint-preview'].includes(action)) {
+    throw new Error('action must be "prepare", "checkpoint", or "checkpoint-preview".');
+  }
+  if (action === 'checkpoint-preview') {
+    for (const key of Object.keys(request)) {
+      if (!PREVIEW_KEYS.includes(key)) {
+        throw new Error(`checkpoint-preview request contains inapplicable field "${key}"; allowed: ${PREVIEW_KEYS.join(', ')}.`);
+      }
+    }
+    if (!request.invocationContext) throw new Error('checkpoint-preview requires invocationContext.');
+    return action;
+  }
   if (request.mode !== undefined && !['standalone', 'orchestrated'].includes(request.mode)) {
     throw new Error('mode must be "standalone" or "orchestrated".');
   }
@@ -298,7 +312,7 @@ function metadataFor({ slug, invocationId, artifactSnapshot, gitSnapshot, now })
 function validateSettlement(state, request) {
   const settlement = request.settlement;
   assertObjectKeys(settlement, ['consensusExit', 'terminalSourceKeys'], 'settlement');
-  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0; run check-consensus.mjs until it exits 0, then checkpoint.');
+  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0; run dispatch/scripts/check-consensus.mjs until it exits 0, then checkpoint.');
   if (!Array.isArray(settlement.terminalSourceKeys) || settlement.terminalSourceKeys.some((value) => typeof value !== 'string')) {
     throw new Error('settlement.terminalSourceKeys must be an array of strings.');
   }
@@ -314,22 +328,33 @@ function validateSettlement(state, request) {
   }
 }
 
-function checkpoint(request, { repoRoot, now }) {
-  if (!request.invocationContext) throw new Error('checkpoint requires invocationContext.');
+function readCheckpointState(request) {
   const state = readInvocationState(request.invocationContext);
   if (state.kind !== 'code') throw new Error('Invocation context kind is not code.');
   if (!state.repoRoot) throw new Error('Invocation context is missing repoRoot.');
-  repoRoot = state.repoRoot;
-  validateSettlement(state, request);
+  return state;
+}
+
+/**
+ * Shared by checkpoint and preview so the preview reports exactly what checkpoint verifies.
+ * `includePaths` picks the worktree paths a range scope folds in: checkpoint passes the declared
+ * paths (keeping its diagnostics unchanged), preview the observed ones.
+ */
+function observeSettledWrites(state, includePaths) {
+  const repoRoot = state.repoRoot;
   const scope = state.selectedScope ??
     (!state.explicitRange ? workingScope() : null);
   if (!scope?.reviewable) throw new Error('Invocation context is missing the selected review scope.');
+  const overlaySnapshot = captureReviewSnapshot({ repoRoot, scope: workingScope() });
+  const observedPaths = changedKeys(
+    (state.snapshot.overlay ?? state.snapshot.git).pathHashes,
+    overlaySnapshot.pathHashes,
+  );
   const gitSnapshot = captureReviewSnapshot({
     repoRoot,
     scope,
-    includeWorkingTree: scope.kind === 'working-tree' ? [] : request.settledWrites?.paths ?? [],
+    includeWorkingTree: scope.kind === 'working-tree' ? [] : includePaths(observedPaths),
   });
-  const overlaySnapshot = captureReviewSnapshot({ repoRoot, scope: workingScope() });
   const artifact = readArtifact(state.artifactPath, { kind: 'code' });
   if (JSON.stringify(artifact.metadata) !== JSON.stringify(state.initialMetadata ?? null)) {
     throw new Error(checkpointDriftRemedy('Artifact checkpoint metadata was superseded by another invocation.'));
@@ -342,19 +367,44 @@ function checkpoint(request, { repoRoot, now }) {
   ) {
     throw new Error(checkpointDriftRemedy('Walkthrough raw body changed without a declared semantic edit.'));
   }
-  const observedPaths = changedKeys(
-    (state.snapshot.overlay ?? state.snapshot.git).pathHashes,
-    overlaySnapshot.pathHashes,
-  );
-  const observedSections = changedKeys(state.snapshot.artifact.sectionHashes, artifactSnapshot.sectionHashes);
-  const declaredPaths = [...(request.settledWrites?.paths ?? [])].sort();
-  const declaredSections = [...(request.settledWrites?.walkthroughSections ?? [])].sort();
   if (gitSnapshot.baseSha !== state.snapshot.git.baseSha || gitSnapshot.headSha !== state.snapshot.git.headSha) {
     throw new Error(checkpointDriftRemedy('The selected review range changed during the invocation.'));
   }
   if (gitSnapshot.worktreeHash !== state.snapshot.git.worktreeHash && observedPaths.length === 0) {
     throw new Error(checkpointDriftRemedy('The eligible worktree fingerprint changed without declared paths.'));
   }
+  const observedSections = changedKeys(state.snapshot.artifact.sectionHashes, artifactSnapshot.sectionHashes);
+  return { artifact, artifactSnapshot, gitSnapshot, observedPaths, observedSections };
+}
+
+function checkpointPreview(request) {
+  const state = readCheckpointState(request);
+  const consensus = evaluateConsensus(readArtifact(state.artifactPath, { kind: 'code' }).source);
+  // NOTE: an unsettled or strict-invalid log stops before snapshotting, which parses strictly and would throw.
+  const observed = consensus.exit === 0
+    ? observeSettledWrites(state, (paths) => paths)
+    : { observedPaths: [], observedSections: [] };
+  return {
+    schemaVersion: 1,
+    kind: 'code',
+    action: 'checkpoint-preview',
+    status: 'preview',
+    settlement: { consensusExit: consensus.exit, terminalSourceKeys: state.expectedSourceKeys },
+    settledWrites: { paths: observed.observedPaths, walkthroughSections: observed.observedSections },
+    unsettled: consensus.unsettled,
+    ...(consensus.error ? { error: consensus.error } : {}),
+  };
+}
+
+function checkpoint(request, { now }) {
+  if (!request.invocationContext) throw new Error('checkpoint requires invocationContext.');
+  const state = readCheckpointState(request);
+  const repoRoot = state.repoRoot;
+  validateSettlement(state, request);
+  const declaredPaths = [...(request.settledWrites?.paths ?? [])].sort();
+  const declaredSections = [...(request.settledWrites?.walkthroughSections ?? [])].sort();
+  const { artifact, artifactSnapshot, gitSnapshot, observedPaths, observedSections } =
+    observeSettledWrites(state, () => request.settledWrites?.paths ?? []);
   if (JSON.stringify(observedPaths) !== JSON.stringify(declaredPaths)) {
     throw new Error(settledWritesMismatch('settledWrites.paths', 'code changes', observedPaths, declaredPaths));
   }
@@ -389,7 +439,8 @@ export function prepareCodeReview(request, {
 } = {}) {
   repoRoot = path.resolve(repoRoot);
   const action = validateRequest(request);
-  if (action === 'checkpoint') return checkpoint(request, { repoRoot, now });
+  if (action === 'checkpoint') return checkpoint(request, { now });
+  if (action === 'checkpoint-preview') return checkpointPreview(request);
 
   const priorState = request.invocationContext ? readInvocationState(request.invocationContext) : null;
   if (priorState && request.range !== undefined && request.range !== priorState.explicitRange) {

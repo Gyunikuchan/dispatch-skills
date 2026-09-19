@@ -11,6 +11,7 @@ import {
   resolveArtifacts,
   resolveSlug,
 } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
+import { evaluateConsensus } from '../../dispatch/scripts/check-consensus.mjs';
 import { scanResolutionLog } from '../../dispatch/scripts/resolution-log.mjs';
 import {
   advanceInvocationState,
@@ -21,6 +22,7 @@ import {
   createDispatchFiles,
   createInvocationState,
   createReviewView,
+  FIELD_HINTS,
   readArtifact,
   readInvocationState,
   readJsonRequest,
@@ -34,6 +36,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(__dirname, '..');
 const DISPATCH_DIR = path.resolve(__dirname, '../../dispatch');
 const CHECKPOINT_KEYS = ['action', 'invocationContext', 'settlement', 'settledWrites'];
+const PREVIEW_KEYS = ['action', 'invocationContext'];
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'date', 'orchestrator',
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
@@ -83,9 +86,20 @@ function sourceKeys(roundId, targets = []) {
 }
 
 function validateRequest(request) {
-  assertObjectKeys(request, REQUEST_KEYS, 'plan review request');
+  assertObjectKeys(request, REQUEST_KEYS, 'plan review request', FIELD_HINTS);
   const action = request.action ?? 'prepare';
-  if (!['prepare', 'checkpoint'].includes(action)) throw new Error('action must be "prepare" or "checkpoint".');
+  if (!['prepare', 'checkpoint', 'checkpoint-preview'].includes(action)) {
+    throw new Error('action must be "prepare", "checkpoint", or "checkpoint-preview".');
+  }
+  if (action === 'checkpoint-preview') {
+    for (const key of Object.keys(request)) {
+      if (!PREVIEW_KEYS.includes(key)) {
+        throw new Error(`checkpoint-preview request contains inapplicable field "${key}"; allowed: ${PREVIEW_KEYS.join(', ')}.`);
+      }
+    }
+    if (!request.invocationContext) throw new Error('checkpoint-preview requires invocationContext.');
+    return action;
+  }
   if (request.mode !== undefined && !['standalone', 'orchestrated'].includes(request.mode)) {
     throw new Error('mode must be "standalone" or "orchestrated".');
   }
@@ -224,7 +238,7 @@ function planMetadata({ slug, invocationId, snapshot, now }) {
 function validateSettlement(state, request) {
   const settlement = request.settlement;
   assertObjectKeys(settlement, ['consensusExit', 'terminalSourceKeys'], 'settlement');
-  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0; run check-consensus.mjs until it exits 0, then checkpoint.');
+  if (settlement.consensusExit !== 0) throw new Error('checkpoint requires consensusExit 0; run dispatch/scripts/check-consensus.mjs until it exits 0, then checkpoint.');
   if (!Array.isArray(settlement.terminalSourceKeys) || settlement.terminalSourceKeys.some((value) => typeof value !== 'string')) {
     throw new Error('settlement.terminalSourceKeys must be an array of strings.');
   }
@@ -240,17 +254,44 @@ function validateSettlement(state, request) {
   }
 }
 
-function checkpoint(request, { now }) {
-  if (!request.invocationContext) throw new Error('checkpoint requires invocationContext.');
+function readCheckpointState(request) {
   const state = readInvocationState(request.invocationContext);
   if (state.kind !== 'plan') throw new Error('Invocation context kind is not plan.');
-  validateSettlement(state, request);
+  return state;
+}
+
+// Shared by checkpoint and preview so the preview reports exactly what checkpoint verifies.
+function observeSettledWrites(state) {
   const artifact = readArtifact(state.artifactPath, { kind: 'plan' });
   if (JSON.stringify(artifact.metadata) !== JSON.stringify(state.initialMetadata ?? null)) {
     throw new Error(checkpointDriftRemedy('Artifact checkpoint metadata was superseded by another invocation.'));
   }
   const snapshot = planSnapshot(artifact.source);
-  const observed = changedKeys(state.snapshot.sectionHashes, snapshot.sectionHashes);
+  return { artifact, snapshot, sections: changedKeys(state.snapshot.sectionHashes, snapshot.sectionHashes) };
+}
+
+function checkpointPreview(request) {
+  const state = readCheckpointState(request);
+  const consensus = evaluateConsensus(readArtifact(state.artifactPath, { kind: 'plan' }).source);
+  // NOTE: an unsettled or strict-invalid log stops before snapshotting, which parses strictly and would throw.
+  const sections = consensus.exit === 0 ? observeSettledWrites(state).sections : [];
+  return {
+    schemaVersion: 1,
+    kind: 'plan',
+    action: 'checkpoint-preview',
+    status: 'preview',
+    settlement: { consensusExit: consensus.exit, terminalSourceKeys: state.expectedSourceKeys },
+    settledWrites: { sections },
+    unsettled: consensus.unsettled,
+    ...(consensus.error ? { error: consensus.error } : {}),
+  };
+}
+
+function checkpoint(request, { now }) {
+  if (!request.invocationContext) throw new Error('checkpoint requires invocationContext.');
+  const state = readCheckpointState(request);
+  validateSettlement(state, request);
+  const { artifact, snapshot, sections: observed } = observeSettledWrites(state);
   const declared = [...(request.settledWrites?.sections ?? [])].sort();
   if (JSON.stringify(observed) !== JSON.stringify(declared)) {
     throw new Error(settledWritesMismatch('settledWrites.sections', 'plan changes', observed, declared));
@@ -283,6 +324,7 @@ export function preparePlanReview(request, {
   repoRoot = path.resolve(repoRoot);
   const action = validateRequest(request);
   if (action === 'checkpoint') return checkpoint(request, { now });
+  if (action === 'checkpoint-preview') return checkpointPreview(request);
 
   const resolved = resolvePlan(request, repoRoot);
   const manifestPath = toManifestPath(resolved.path, repoRoot);

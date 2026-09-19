@@ -291,7 +291,7 @@ describe('plan review preparation', () => {
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 1, terminalSourceKeys: [] },
       settledWrites: { sections: [] },
-    }, { repoRoot: repo }), /run check-consensus.mjs until it exits 0/);
+    }, { repoRoot: repo }), /run dispatch\/scripts\/check-consensus\.mjs until it exits 0/);
     fs.writeFileSync(plan, planBody.replace('- First.', '- Changed.'));
     assert.throws(() => preparePlanReview({
       action: 'checkpoint',
@@ -320,5 +320,60 @@ describe('plan review preparation', () => {
     }, { repoRoot: repo }), /stale, replayed, forked/);
     cleanManifest(prepared);
     cleanManifest(next);
+  });
+  it('hints the intended field for a guessed request key', () => {
+    const repo = makeRepo();
+    assert.throws(() => preparePlanReview({ plan: 'x.md' }, { repoRoot: repo }), /unsupported field "plan".*did you mean "artifactPath"\?/s);
+    assert.throws(() => preparePlanReview({ roundid: 'plan-review:R1' }, { repoRoot: repo }), /did you mean "roundId"\?/);
+    // walkthroughPath is a code-review field, so plan review must not suggest it.
+    assert.throws(() => preparePlanReview({ walkthrough: 'x.md' }, { repoRoot: repo }), (err) => !/did you mean/.test(err.message));
+  });
+
+  it('previews exactly the checkpoint that succeeds, without writing', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const prepared = preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo });
+    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- First.', '- Changed.'));
+    const before = fs.readFileSync(plan, 'utf8');
+    assert.throws(() => preparePlanReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext, settledWrites: { sections: [] } }, { repoRoot: repo }), /inapplicable field "settledWrites"; allowed: action, invocationContext/);
+    assert.throws(() => preparePlanReview({ action: 'checkpoint-preview' }, { repoRoot: repo }), /requires invocationContext/);
+    const preview = preparePlanReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext }, { repoRoot: repo });
+    assert.deepEqual(preview, {
+      schemaVersion: 1,
+      kind: 'plan',
+      action: 'checkpoint-preview',
+      status: 'preview',
+      settlement: { consensusExit: 0, terminalSourceKeys: [] },
+      settledWrites: { sections: ['Proposed Changes'] },
+      unsettled: [],
+    });
+    assert.equal(fs.readFileSync(plan, 'utf8'), before);
+    const done = preparePlanReview({ action: 'checkpoint', invocationContext: prepared.invocationContext, settlement: preview.settlement, settledWrites: preview.settledWrites }, { repoRoot: repo });
+    assert.equal(done.status, 'checkpointed');
+    cleanManifest(prepared);
+  });
+
+  it('previews a nonzero consensus exit that the echoed checkpoint rejects', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    fs.writeFileSync(plan, planBody);
+    const prepared = preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo });
+    const log = (line) => fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace(
+      /## Review Findings & Resolutions[\s\S]*$/,
+      `## Review Findings & Resolutions\n\n### Round 1 — agy\n${line}\n`,
+    ));
+    log('- **[Disputed]** § Proposed Changes — tag: x → y');
+    const live = preparePlanReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext }, { repoRoot: repo });
+    assert.equal(live.settlement.consensusExit, 1);
+    assert.deepEqual(live.settledWrites, { sections: [] });
+    assert.deepEqual(live.unsettled, ['- **[Disputed]** § Proposed Changes — tag: x → y']);
+    assert.throws(() => preparePlanReview({ action: 'checkpoint', invocationContext: prepared.invocationContext, settlement: live.settlement, settledWrites: live.settledWrites }, { repoRoot: repo }), /requires consensusExit 0/);
+    // Leniently settled, strictly invalid: the unpadded ID must not preview as settled.
+    log('- **[Accepted]** [R1-F1] [MUST] [sources=plan-review:R1:agy:0] § Proposed Changes — tag: x → y');
+    const invalid = preparePlanReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext }, { repoRoot: repo });
+    assert.equal(invalid.settlement.consensusExit, 2);
+    assert.match(invalid.error, /malformed enriched finding prefix/);
+    cleanManifest(prepared);
   });
 });

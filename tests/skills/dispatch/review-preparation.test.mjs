@@ -6,11 +6,13 @@ import { afterEach, describe, it } from 'node:test';
 
 import {
   advanceInvocationState,
+  assertObjectKeys,
   buildReviewView,
   checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
   createInvocationState,
+  FIELD_HINTS,
   readArtifact,
   readInvocationState,
   readJsonRequest,
@@ -260,6 +262,23 @@ describe('review preparation primitives', () => {
     assert.ok(index > 0);
     assert.equal(res.dispatch.argv[index + 1], res.dispatch.outputPath);
     assert.ok(res.cleanupPaths.includes(path.dirname(res.dispatch.outputPath)));
+  });
+});
+
+describe('assertObjectKeys', () => {
+  const allowed = ['artifactPath', 'roundId', 'invocationContext'];
+
+  it('suggests a mapped hint only when the receiver accepts it', () => {
+    assert.throws(() => assertObjectKeys({ plan: 'x' }, allowed, 'request', FIELD_HINTS),
+      /unsupported field "plan"; did you mean "artifactPath"\?; allowed: artifactPath, roundId, invocationContext\./);
+    assert.throws(() => assertObjectKeys({ walkthrough: 'x' }, allowed, 'request', FIELD_HINTS),
+      (err) => !/did you mean/.test(err.message) && /allowed:/.test(err.message));
+  });
+
+  it('falls back to the nearest allowed name within edit distance 2', () => {
+    assert.throws(() => assertObjectKeys({ roundid: 'x' }, allowed, 'request'), /did you mean "roundId"\?/);
+    assert.throws(() => assertObjectKeys({ roundIx: 'x' }, allowed, 'request'), /did you mean "roundId"\?/);
+    assert.throws(() => assertObjectKeys({ surprise: true }, allowed, 'request'), (err) => !/did you mean/.test(err.message));
   });
 });
 

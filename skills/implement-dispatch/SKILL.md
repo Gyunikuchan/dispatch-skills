@@ -49,12 +49,11 @@ flow targets/reserves, round, consensus, focus, and budget. Resolve
 
 Execute only manifest argv in the background, yield, and await every terminal outcome. Apply
 native fallback for runner failures; configuration/integrity failures are terminal. Verify claims,
-edit accepted findings into the plan, append source map/rulings, and run `check-consensus.mjs`.
+edit accepted findings into the plan, append source map/rulings, and run `dispatch/scripts/check-consensus.mjs`.
 While the artifact changed or findings remain live below the cap, prepare bounded full/rebuttal
 waves for affected sources. At the cap, obtain user rulings and run one final verification wave.
 
-After consensus exit `0`, checkpoint with terminal source keys and exact settled plan-section
-writes. Always prune manifest paths (invocation state after checkpoint/abort); report errors.
+After consensus exit `0`, checkpoint from `checkpoint-preview`. Always prune manifest paths (invocation state after checkpoint/abort); report errors.
 
 Reclassify the reviewed plan. Preserve explicit level; otherwise re-resolve changed scope. State
 the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`
@@ -88,8 +87,8 @@ full/rebuttal waves while code changed or findings stay live. Preserve affinity/
 auth/quota exclusion re-resolves without renumbering. At the cap, obtain rulings and run one final
 verification wave.
 
-After every expected source is terminal and consensus exits `0`, checkpoint exact settled code
-paths and walkthrough sections. Cleanup is finally-style; an unsettled/stable-failure run retains
+After every expected source is terminal and consensus exits `0`, checkpoint from
+`checkpoint-preview`. Cleanup is finally-style; an unsettled/stable-failure run retains
 the prior checkpoint.
 
 **Done when:** accepted fixes are applied, verification is green or stably recorded, every finding

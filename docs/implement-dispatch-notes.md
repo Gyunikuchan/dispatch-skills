@@ -51,25 +51,9 @@ Resolves reviewer candidate targets, reserve lists, level knobs, and platform hi
   - Named pins dispatch every listed configured platform; count and `all` pins select from the ordered candidate pool.
   - Candidates beyond `targetCount` populate `reserves` in order for dynamic substitution during `[auth]` / `[quota]` failures.
 
-### Consensus Gate (`scripts/check-consensus.mjs`)
+### Consensus Gate
 
-Validates whether an artifact's `## Review Findings & Resolutions` section has converged on clean consensus.
-
-- **CLI Usage**:
-  ```bash
-  node check-consensus.mjs [--json] <artifact path>
-  ```
-- **Exit Codes**:
-  - `0`: Settled (`Consensus: settled`) — no unsettled lines found, or `## Review Findings & Resolutions` section absent.
-  - `1`: Unsettled (`Consensus: <n> unsettled line(s)`) — lists active `[Disputed]` or `[Rejected — pending confirmation]` lines.
-  - `2`: Usage error, missing arguments, unreadable artifact file, or invalid resolution log
-    (strict parse failure in both output modes).
-- **JSON Mode**: Returns `{ settled, unsettled }`; each unsettled record has a durable or
-  invocation-local key, nullable ID, severity, source keys, status, line number, and original line.
-- **Parsing Invariants**:
-  - CommonMark-compliant fenced code block skipping (prevents example templates from triggering false positives).
-  - Unclosed fence detection triggers fail-closed scan across the entire file.
-  - Regex accepts em-dash, en-dash, and hyphens in `[Rejected — pending confirmation]`.
+Owned by `dispatch`; see [dispatch-notes.md](dispatch-notes.md#consensus-gate).
 
 ### Review Preparation
 
@@ -102,8 +86,6 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
   stable candidate IDs, host/model demotion, level-knob fallback, pin normalization, candidate
   array expansion, and platform exclusions.
 - `tests/skills/implement-dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
-- `tests/skills/implement-dispatch/check-consensus.test.mjs`: Legacy/enriched consensus parsing,
-  structured output, fenced markdown handling, and exit codes.
 - `tests/skills/implement-dispatch/build-rebuttal-packets.test.mjs`: Source grouping, legacy
   affinity, context validation, and private temp-file output.
 - `tests/skills/implement-dispatch/config.test.mjs`: Schema validation and level-policy snapshot of `config.sample.jsonc`.

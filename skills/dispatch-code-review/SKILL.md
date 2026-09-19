@@ -78,12 +78,10 @@ them from
 fresh round cap until consensus exits `0`, offering that loop's findings the same way. Unchosen
 ones stay under `## Follow-ups`. Orchestrated returns them to its caller unasked.
 
-Then call preparation with `action: "checkpoint"`, terminal source keys, consensus result, and
-exact `settledWrites.paths`/`walkthroughSections`. It compares the declared post-adjudication state
+Then send preparation `action: "checkpoint-preview"` and resend its `settlement` and
+`settledWrites` as `action: "checkpoint"`. It compares the declared post-adjudication state
 and atomically records range, path, worktree, and walkthrough-content freshness, so the checkpoint
 is the last write. Failed, incomplete, or unsettled runs keep the previous checkpoint.
-Standalone passes `terminalSourceKeys: []`; only orchestrated runs record expected keys. A
-rejection prints the observed list as JSON: resend exactly that list and retry once.
 Drift means rerun preparation, never force the write.
 
 Prune finished `cleanupPaths` finally-style on every outcome; keep invocation state until

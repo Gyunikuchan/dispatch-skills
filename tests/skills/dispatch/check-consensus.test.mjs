@@ -6,10 +6,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { findUnsettled } from '../../../skills/implement-dispatch/scripts/check-consensus.mjs';
+import { evaluateConsensus, findUnsettled } from '../../../skills/dispatch/scripts/check-consensus.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-const SCRIPT = path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs');
+const SCRIPT = path.join(REPO_ROOT, 'skills/dispatch/scripts/check-consensus.mjs');
 
 const doc = (...resolutionLines) =>
   ['# Plan', '', '## Proposed Changes', '- stuff', '', '## Review Findings & Resolutions', '### Round 1 — agy, 2026-09-14', ...resolutionLines].join('\n');
@@ -224,5 +224,24 @@ describe('check-consensus CLI', () => {
       assert.equal(result.status, 2);
       assert.match(result.stderr, /malformed enriched finding prefix/);
     }
+  });
+});
+
+describe('evaluateConsensus', () => {
+  it('reports settled, live, and strict-invalid logs with the gate exit codes', () => {
+    assert.deepEqual(evaluateConsensus(doc('- **[Accepted]** § A — tag: x → y')), {
+      exit: 0, unsettled: [], unsettledItems: [],
+    });
+
+    const live = evaluateConsensus(doc('- **[Disputed]** § A — tag: x → y'));
+    assert.equal(live.exit, 1);
+    assert.deepEqual(live.unsettled, ['- **[Disputed]** § A — tag: x → y']);
+    assert.equal(live.unsettledItems[0].status, 'disputed');
+
+    // Settled under the lenient scan, but the strict gate rejects the unpadded ID.
+    const invalid = evaluateConsensus(doc('- **[Accepted]** [R1-F1] [MUST] [sources=plan-review:R1:claude:0] § A — tag: x → y'));
+    assert.equal(invalid.exit, 2);
+    assert.deepEqual([invalid.unsettled, invalid.unsettledItems], [[], []]);
+    assert.match(invalid.error, /malformed enriched finding prefix/);
   });
 });

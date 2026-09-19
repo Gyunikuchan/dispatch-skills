@@ -78,10 +78,6 @@ function buildFixture({ prefix = 'resolve-flow-', config = null, dispatchConfig 
   }
   if (hashable) {
     fs.copyFileSync(path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'), path.join(skillDir, 'SKILL.md'));
-    fs.copyFileSync(
-      path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs'),
-      path.join(skillDir, 'scripts', 'check-consensus.mjs'),
-    );
   }
   const dispatchDir = path.join(dir, 'dispatch');
   copyDispatchSkill(dispatchDir);
@@ -471,10 +467,6 @@ describe('resolve-flow CLI: integrity manifest', () => {
       path.join(skillDir, 'SKILL.md'),
     );
     fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
-    fs.copyFileSync(
-      path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs'),
-      path.join(skillDir, 'scripts', 'check-consensus.mjs'),
-    );
     fs.writeFileSync(
       path.join(skillDir, 'config.jsonc'),
       fs.readFileSync(IMPLEMENT_DISPATCH_SAMPLE, 'utf8'),

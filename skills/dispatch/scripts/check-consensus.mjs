@@ -12,11 +12,11 @@
 
 import fs from 'node:fs';
 
-import { isMainModule } from '../../dispatch/scripts/common.mjs';
+import { isMainModule } from './common.mjs';
 import {
   findUnsettledResolutionLines,
   scanResolutionLog,
-} from '../../dispatch/scripts/resolution-log.mjs';
+} from './resolution-log.mjs';
 
 const USAGE = `Usage:
   node check-consensus.mjs [--json] <artifact path>
@@ -30,6 +30,27 @@ const USAGE = `Usage:
  */
 export function findUnsettled(markdown) {
   return findUnsettledResolutionLines(markdown);
+}
+
+/**
+ * Runs the gate's strict scan; preparation's checkpoint-preview shares it so both agree.
+ *
+ * @param {string} markdown
+ * @returns {{ exit: 0|1|2, unsettled: string[], unsettledItems: object[], error?: string }}
+ */
+export function evaluateConsensus(markdown) {
+  let scan;
+  try {
+    // NOTE: strict so the gate never settles a log that preparation rejects.
+    scan = scanResolutionLog(markdown, { strict: true });
+  } catch (err) {
+    return { exit: 2, unsettled: [], unsettledItems: [], error: err.message };
+  }
+  return {
+    exit: scan.unsettled.length === 0 ? 0 : 1,
+    unsettled: scan.unsettled,
+    unsettledItems: scan.unsettledItems,
+  };
 }
 
 function main(args) {
@@ -50,15 +71,12 @@ function main(args) {
     process.stderr.write(`Error: cannot read ${paths[0]}: ${err.message}\n`);
     return 2;
   }
-  let unsettled;
-  try {
-    // NOTE: both modes parse strictly so the gate never settles a log that preparation rejects.
-    const scan = scanResolutionLog(markdown, { strict: true });
-    unsettled = json ? scan.unsettledItems : scan.unsettled;
-  } catch (err) {
-    process.stderr.write(`Error: invalid resolution log: ${err.message}\n`);
+  const result = evaluateConsensus(markdown);
+  if (result.exit === 2) {
+    process.stderr.write(`Error: invalid resolution log: ${result.error}\n`);
     return 2;
   }
+  const unsettled = json ? result.unsettledItems : result.unsettled;
   if (json) {
     process.stdout.write(`${JSON.stringify({
       settled: unsettled.length === 0,

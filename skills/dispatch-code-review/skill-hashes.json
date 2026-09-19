@@ -1,11 +1,11 @@
 {
-  "SKILL.md": "c98a6a9cd493ea3fe597e5fa42223f3f00acd72ebf28f2664ee9a6ad1d2a2662",
+  "SKILL.md": "754ef6e87d61675aee3ab6d0ad27e2728d87aa166771dd694fda12cd627420e1",
   "references/prompt-template.md": "5453c1ccd248a56bc95012f7620f3c223fe829a9731d1e8abddd54504604ad90",
   "references/rebuttal-schema.json": "fdb63f9eb61276a9d431680c1071350a95c2ab7e95dff3a5a232b641451fad27",
   "references/rebuttal-template.md": "7df4ad89eb0d238065f0d68828150b0157509ae9723cbf40cd5a000cee3dc956",
   "references/report-schema.json": "007b7c42d78682301a56e1e41f2da3d1f056a14f0149b4608883b892e9f0ee40",
   "references/walkthrough-template.md": "d38510dbdff8ce862f1e5c64656fd19babc05bec1fb37e4e9a3f8fc1d30e51df",
   "scripts/parse-report.mjs": "4a7223273b684086705a271014e8ea604cad956fa845d5f469e9f7e3542f268f",
-  "scripts/prepare-review.mjs": "362f55c1f1ad166d42ddbe6404e14ea1dd592fa3e062b476994a70777c939bfc",
+  "scripts/prepare-review.mjs": "bf7c1c855a39cfcdbeb24e6dc77fb88357dcc28ddf10f04cfd0cc95f7812f197",
   "scripts/resolve-review-range.mjs": "c4421e39686f6a4951f097d2cc134d410a2d94cd53ffb4fe636847b3665a086c"
 }

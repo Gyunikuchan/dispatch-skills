@@ -1,6 +1,5 @@
 {
-  "SKILL.md": "2c98e29568208901f765f655d2c0e6d38f2361b6f184c621cd714fd9748c025b",
+  "SKILL.md": "dc1199a36f81ee73449209d00b1e7c7253f63ac9922fd01694df0b813d03f5a2",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
-  "scripts/check-consensus.mjs": "040fcf4ac4d21e69e2af9fe2c27854a75b1fbaac744d88074dc6b5ca3cc9f365",
   "scripts/resolve-flow.mjs": "59ee33e017230116ba53b06628cff85d7d5fc7f980980222b89adb8bf158bbdc"
 }
