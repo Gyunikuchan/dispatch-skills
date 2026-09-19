@@ -986,8 +986,8 @@ describe('resolveFlow', () => {
       assert.match(validateConfig(config)[0], /code-review/);
     });
 
-    it('names config.default.jsonc as the file to diff against', () => {
-      assert.match(validateConfig({})[0], /config\.default\.jsonc/);
+    it('names config.sample.jsonc as the file to diff against', () => {
+      assert.match(validateConfig({})[0], /config\.sample\.jsonc/);
     });
 
     it('requires all three sections to be present', () => {

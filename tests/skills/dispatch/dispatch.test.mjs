@@ -3,7 +3,7 @@ import cp from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, afterEach, mock } from 'node:test';
+import { describe, it, before, after, afterEach, mock } from 'node:test';
 
 import {
   detectOrchestrator,
@@ -21,6 +21,7 @@ import {
 import {
   KNOWN_PROVIDERS,
   PROJECT_ROOT,
+  parseJsonc,
   validateDispatchConfig,
   verifySkillIntegrity,
 } from '../../../skills/dispatch/scripts/common.mjs';
@@ -39,7 +40,7 @@ const TEST_DISPATCH_CONFIG = {
 };
 const TEST_DISPATCH_CONFIG_ARGS = {
   config: TEST_DISPATCH_CONFIG,
-  configPath: 'config.default.jsonc',
+  configPath: 'config.jsonc',
 };
 
 const resolveProvider = (options = {}) => resolveProviderImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
@@ -569,7 +570,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
   describe('config-driven cascade', () => {
     const CONFIG = {
       config: { platforms: { agy: { model: 'gemini-3.8-flash', effort: 'medium' }, claude: {} } },
-      configPath: '/fake/config.default.jsonc',
+      configPath: '/fake/config.jsonc',
     };
 
     it('excludes a platform absent from the loaded config, even if live', async () => {
@@ -593,7 +594,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       const candidates = await getCandidateProviders({
         config: { platforms: { agy: {}, claude: {} } },
-        configPath: '/fake/config.default.jsonc',
+        configPath: '/fake/config.jsonc',
       });
       assert.deepEqual(candidates, ['agy', 'claude']);
     });
@@ -601,7 +602,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('errors when a pinned provider is absent from the loaded config', async () => {
       await assert.rejects(
         getCandidateProviders({ explicitProvider: 'copilot', ...CONFIG }),
-        /platform "copilot" is not configured in \/fake\/config\.default\.jsonc/,
+        /platform "copilot" is not configured in \/fake\/config\.jsonc/,
       );
     });
 
@@ -637,7 +638,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const result = await dispatchTask({ prompt: 'Test' });
       assert.equal(agyRunner.mock.calls.length, 1);
       const passedOpts = agyRunner.mock.calls[0].arguments[0];
-      // Real config.default.jsonc supplies agy's model/effort since no CLI override was given.
+      // The inline TEST_DISPATCH_CONFIG fixture supplies agy's model/effort since no CLI override was given.
       assert.equal(passedOpts.model, 'gemini-3.8-flash');
       assert.equal(passedOpts.effort, 'medium');
       assert.equal(result.provider, 'agy');
@@ -1479,15 +1480,39 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
 
 describe('dispatch --validate-only CLI', () => {
   // main() calls process.exit on every path, so it is only drivable as a spawned child.
+  let fixtureRoot;
+  let dispatchScript;
+
+  before(() => {
+    // The spawn targets a fixture copy of the skill whose `config.jsonc` comes from the shipped
+    // sample: the workspace's `config.local.jsonc` is git-ignored and absent on fresh checkouts
+    // and CI, where the repo script would fail on config load before argument parsing.
+    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cli-'));
+    const dispatchDir = path.join(fixtureRoot, 'dispatch');
+    fs.cpSync(path.join(PROJECT_ROOT, 'skills', 'dispatch'), dispatchDir, { recursive: true });
+    for (const override of ['config.jsonc', 'config.local.jsonc']) {
+      fs.rmSync(path.join(dispatchDir, override), { force: true });
+    }
+    fs.writeFileSync(
+      path.join(dispatchDir, 'config.jsonc'),
+      fs.readFileSync(path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.sample.jsonc'), 'utf8'),
+    );
+    dispatchScript = path.join(dispatchDir, 'scripts', 'dispatch.mjs');
+  });
+
+  after(() => {
+    if (fixtureRoot) fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  });
+
   const run = (args) =>
-    cp.spawnSync(process.execPath, [path.join(PROJECT_ROOT, 'skills', 'dispatch', 'scripts', 'dispatch.mjs'), ...args], {
+    cp.spawnSync(process.execPath, [dispatchScript, ...args], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       cwd: PROJECT_ROOT, // hermetic: never inherit the caller's cwd
       env: { ...process.env, DISPATCH_TELEMETRY: '0' }, // keep test runs out of real telemetry
     });
 
-  it('validates the shipped config and exits 0', () => {
+  it('validates the fixture config and exits 0', () => {
     const res = run(['--validate-only']);
     assert.equal(res.status, 0, res.stderr);
     assert.match(res.stdout || '', /Config is valid\./);
@@ -1502,8 +1527,8 @@ describe('dispatch --validate-only CLI', () => {
     );
   });
 
-  // config.jsonc / config.local.jsonc are git-ignored, so the CLI still asserts the effective
-  // membership shape rather than a specific platform set.
+  // The fixture's config.jsonc is the shipped sample (all four platforms), so the CLI asserts the
+  // effective membership shape rather than a specific platform set.
   it('--list-platforms prints the effective config platform keys, one per line', () => {
     const res = run(['--list-platforms']);
     assert.equal(res.status, 0, res.stderr);
@@ -1517,8 +1542,14 @@ describe('dispatch --validate-only CLI', () => {
     const res = run(['--list-platforms']);
     const listed = (res.stdout || '').trim().split('\n').filter(Boolean);
     // Availability is probed by getCandidateProviders but never by --list-platforms, so the
-    // candidates are a subset of the listed keys, never a superset.
-    const candidates = await getCandidateProvidersImpl({ orchestrator: 'claude' });
+    // candidates are a subset of the listed keys, never a superset. Both sides read the same
+    // fixture config, so the assertion holds on machines with no local config at all.
+    const configPath = path.join(fixtureRoot, 'dispatch', 'config.jsonc');
+    const candidates = await getCandidateProvidersImpl({
+      orchestrator: 'claude',
+      config: parseJsonc(fs.readFileSync(configPath, 'utf8')),
+      configPath,
+    });
     for (const c of candidates) assert.ok(listed.includes(c), `candidate "${c}" absent from --list-platforms`);
   });
 

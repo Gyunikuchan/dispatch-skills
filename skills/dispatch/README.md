@@ -163,9 +163,9 @@ diagnostics.
 
 ## Configuration
 
-The shipped defaults work without configuration. To customize provider membership, models, or
-reasoning effort, create `config.local.jsonc` or `config.jsonc` next to the installed skill. Use
-[`config.default.jsonc`](config.default.jsonc) as the schema reference.
+A config file is required — there is no shipped runtime default. Create `config.local.jsonc` or
+`config.jsonc` next to the installed skill, copying [`config.sample.jsonc`](config.sample.jsonc)
+as the schema reference, and customize provider membership, models, or reasoning effort there.
 
 Run `node scripts/dispatch.mjs --doctor` from the installed skill directory to inspect the
 effective file, candidate order, binary/mode reachability, sandbox support, and corrective
@@ -179,7 +179,6 @@ The first existing file wins:
 
 1. `config.local.jsonc`
 2. `config.jsonc`
-3. `config.default.jsonc`
 
 > [!NOTE]
 > Configuration files replace one another rather than merge. If you create an override, include

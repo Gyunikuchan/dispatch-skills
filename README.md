@@ -196,17 +196,18 @@ adjudication rules, and artifact lifecycle.
 | `copilot` | GitHub Copilot (`copilot`) |
 | `opencode` | OpenCode (`opencode`) |
 
-Provider availability is environment and configuration dependent. The shipped defaults do not
-mean every platform is enabled for every installation. From a checkout, inspect the effective
-dispatch keys with:
+Provider availability is environment and configuration dependent. No default configuration ships,
+so from a fresh checkout nothing is enabled until you create a config — copy each skill's
+`config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside that skill. Then inspect
+the effective dispatch keys with:
 
 ```bash
 node skills/dispatch/scripts/dispatch.mjs --list-platforms
 ```
 
 Configuration is loaded per skill with first-match
-precedence: `config.local.jsonc`, then `config.jsonc`, then `config.default.jsonc`; the selected
-file replaces the lower-priority file rather than merging with it.
+precedence: `config.local.jsonc`, then `config.jsonc`; the selected file replaces the
+lower-priority file rather than merging with it.
 
 ---
 

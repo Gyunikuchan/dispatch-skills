@@ -1,5 +1,6 @@
 /**
- * Standalone cascade policy. Run `node scripts/dispatch.mjs --doctor` to inspect the selected
+ * Sample — copy to config.jsonc or config.local.jsonc beside this skill; there is no shipped
+ * runtime default. Run `node scripts/dispatch.mjs --doctor` to inspect the selected
  * whole-file config, ordered candidates, and provider health.
  *
  * Each platform maps to one candidate or an ordered candidate array:
@@ -7,7 +8,7 @@
  *
  * CLI model/effort overrides win; omitted values use provider defaults. `sandbox` is supported by
  * Claude and Copilot. Overrides are selected whole in this order: config.local.jsonc,
- * config.jsonc, then this file. Missing platforms are not cascade members.
+ * config.jsonc. Missing platforms are not cascade members.
  */
 {
   "platforms": {

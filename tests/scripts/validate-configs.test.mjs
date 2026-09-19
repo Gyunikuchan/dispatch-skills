@@ -15,8 +15,8 @@ import {
 describe('validate-configs', () => {
   it('validates shipped repository configs cleanly', () => {
     const shippedFiles = [
-      'skills/dispatch/config.default.jsonc',
-      'skills/implement-dispatch/config.default.jsonc',
+      'skills/dispatch/config.sample.jsonc',
+      'skills/implement-dispatch/config.sample.jsonc',
       '.opencode/opencode.jsonc',
       'skills/dispatch/skill-hashes.json',
       'skills-lock.json',
@@ -47,8 +47,8 @@ describe('validate-configs', () => {
       mkdirSync(dispatchDir, { recursive: true });
 
       copyFileSync(
-        path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'config.default.jsonc'),
-        path.join(implDir, 'config.default.jsonc')
+        path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'config.sample.jsonc'),
+        path.join(implDir, 'config.jsonc')
       );
       copyFileSync(
         path.join(PROJECT_ROOT, '.opencode', 'opencode.jsonc'),
@@ -59,8 +59,8 @@ describe('validate-configs', () => {
         path.join(dispatchDir, 'skill-hashes.json')
       );
       copyFileSync(
-        path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.default.jsonc'),
-        path.join(dispatchDir, 'config.default.jsonc')
+        path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.sample.jsonc'),
+        path.join(dispatchDir, 'config.jsonc')
       );
       copyFileSync(
         path.join(PROJECT_ROOT, 'skills-lock.json'),
@@ -123,13 +123,23 @@ describe('validate-configs', () => {
       }
     });
 
-    it('discovers the shipped skills/dispatch/config.default.jsonc, typed "dispatch"', () => {
+    it('discovers the shipped config samples and no retired config.default.jsonc', () => {
       const found = findConfigFiles(PROJECT_ROOT);
       const match = found.find(
-        f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/dispatch/config.default.jsonc'
+        f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/dispatch/config.sample.jsonc'
       );
-      assert.ok(match, 'expected skills/dispatch/config.default.jsonc to be discovered');
+      assert.ok(match, 'expected skills/dispatch/config.sample.jsonc to be discovered');
       assert.equal(match.type, 'dispatch');
+      const implMatch = found.find(
+        f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/implement-dispatch/config.sample.jsonc'
+      );
+      assert.ok(implMatch, 'expected skills/implement-dispatch/config.sample.jsonc to be discovered');
+      assert.equal(implMatch.type, 'implement-dispatch');
+      assert.equal(
+        found.some(f => f.path.replace(/\\/g, '/').endsWith('config.default.jsonc')),
+        false,
+        'the retired config.default.jsonc name must not be discovered',
+      );
     });
   });
 
@@ -167,8 +177,8 @@ describe('validate-configs', () => {
         }
       });
 
-      it('accepts the shipped dispatch default config', () => {
-        const validPath = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.default.jsonc');
+      it('accepts the shipped dispatch sample config', () => {
+        const validPath = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'config.sample.jsonc');
         const res = validateConfigFile(validPath, 'dispatch');
         assert.equal(res.valid, true);
         assert.deepEqual(res.problems, []);
@@ -189,8 +199,8 @@ describe('validate-configs', () => {
         }
       });
 
-      it('accepts a valid implement-dispatch config', () => {
-        const validPath = path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'config.default.jsonc');
+      it('accepts a valid implement-dispatch shipped sample', () => {
+        const validPath = path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'config.sample.jsonc');
         const res = validateConfigFile(validPath, 'implement-dispatch');
         assert.equal(res.valid, true);
         assert.deepEqual(res.problems, []);

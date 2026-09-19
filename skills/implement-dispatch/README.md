@@ -87,7 +87,7 @@ The level is optional. If omitted, the skill selects `low`, `medium`, or `high` 
 `medium` is the usual choice. Request `xhigh` or `max` explicitly when the change warrants it.
 
 > [!NOTE]
-> With the shipped defaults, `low` skips plan review but still runs one code-review round. An
+> In `config.sample.jsonc`, `low` skips plan review but still runs one code-review round. An
 > uninstalled optional companion skips its phase entirely.
 
 ### Choose providers or reviewer count
@@ -112,9 +112,8 @@ current platform/model match to the end.
 
 ## Configuration
 
-Most users can use the shipped defaults. To customize review depth, reviewer breadth, or the
-implementation subagent, create `config.local.jsonc` or `config.jsonc` beside this skill and use
-[`config.default.jsonc`](config.default.jsonc) as the schema reference. Provider credentials,
+Create `config.local.jsonc` or `config.jsonc` beside this skill and use
+[`config.sample.jsonc`](config.sample.jsonc) as the schema reference. Provider credentials,
 models, fallback, and shared runner settings remain in `dispatch`.
 
 Inspect the resolved policy before a run with:
@@ -130,8 +129,9 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 `medium`, `high` uses `medium`, and `max` uses `max`.
 
 > [!NOTE]
-> Configuration files replace one another rather than merge. Copy the complete default
-> configuration before editing it, and keep every review provider enabled in `dispatch` as well.
+> Configuration files replace one another rather than merge. Copy `config.sample.jsonc` to
+> `config.jsonc` (or `config.local.jsonc`) and keep every review provider enabled in `dispatch` as
+> well.
 
 ## What to expect
 

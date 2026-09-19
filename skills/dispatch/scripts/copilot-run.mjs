@@ -550,9 +550,9 @@ Usage:
 Options:
   -p, --prompt <string>         The prompt message to send
   -f, --file, --artifact        Attach context file or artifact (repeatable)
-  -m, --model <name>            Override Copilot model (no default here — see dispatch's config.default.jsonc)
+  -m, --model <name>            Override Copilot model (no default here — see dispatch's config.sample.jsonc)
   -e, --effort, --reasoning-effort <level>
-                                Override reasoning effort (no default here — see dispatch's config.default.jsonc)
+                                Override reasoning effort (no default here — see dispatch's config.sample.jsonc)
   -t, --timeout <seconds>       Override timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --prompt-file <path>          Read the prompt from a file instead of an argument
   --max-buffer <MB>             Raise the subprocess output cap (default: ${DEFAULT_MAX_BUFFER_MB})

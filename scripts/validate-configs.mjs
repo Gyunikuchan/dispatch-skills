@@ -66,6 +66,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
     for (const candidate of getConfigCandidates({ skillRoot })) {
       addIfFound(candidate, 'dispatch');
     }
+    addIfFound(path.join(skillRoot, 'config.sample.jsonc'), 'dispatch');
   }
 
   // 1b. implement-dispatch configs across standard skill locations
@@ -79,6 +80,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
     for (const candidate of getImplementDispatchConfigCandidates(scriptDir)) {
       addIfFound(candidate, 'implement-dispatch');
     }
+    addIfFound(path.join(path.dirname(scriptDir), 'config.sample.jsonc'), 'implement-dispatch');
   }
 
   // 2. OpenCode configs

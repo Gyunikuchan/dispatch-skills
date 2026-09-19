@@ -1,7 +1,8 @@
 /**
- * Phase/level workflow policy. Run `node scripts/resolve-flow.mjs --show-effective --platform
+ * Sample — copy to config.jsonc or config.local.jsonc beside this skill; there is no shipped
+ * runtime default. Run `node scripts/resolve-flow.mjs --show-effective --platform
  * <key> --level <level>` to inspect inheritance, candidate order, reserves, and membership.
- * Overrides are whole-file replacements: config.local.jsonc, config.jsonc, then this file.
+ * Overrides are whole-file replacements: config.local.jsonc, config.jsonc.
  *
  * A platform can define a base candidate plus level overrides:
  *   "claude": { "model": "claude-sonnet-5", "high": { "model": "claude-opus-5" } }

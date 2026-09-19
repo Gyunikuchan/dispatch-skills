@@ -15,8 +15,8 @@ membership and effective model/effort; this file defines provider mechanics and 
   candidate order.
 - **Overrides:** `-m` or `-e` collapses each resolved platform to one target. An omitted value is
   left to the provider CLI.
-- **Membership:** `--list-platforms` is authoritative. When an override config exists, do not
-  infer dispatchable platforms from `config.default.jsonc`.
+- **Membership:** `--list-platforms` is authoritative: dispatchable platforms are defined solely
+  by the active user configuration and are never inferred from `config.sample.jsonc`.
 
 ### Shared runner boundary
 

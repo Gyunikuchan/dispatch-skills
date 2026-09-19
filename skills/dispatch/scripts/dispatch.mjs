@@ -963,7 +963,7 @@ Routes a task through the delegate cascade. The authoritative description of the
 monitoring, and fallback lives in the dispatch skill: SKILL.md
 
 Cascade order, membership, and per-platform model/effort come from the dispatch config
-(config.default.jsonc, overridable — see the Configuration section of SKILL.md).
+(config.jsonc, overridable — see the Configuration section of the dispatch README).
 
 Usage:
   node ${process.argv[1]} [options] [prompt]

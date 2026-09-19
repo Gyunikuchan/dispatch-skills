@@ -2164,8 +2164,8 @@ export function parseJsonc(text) {
 // ============================================================================
 
 /**
- * Builds the 3-path config precedence list:
- * skill-root override (local, then shared) beats the skill's own shipped default.
+ * Builds the 2-path config precedence list:
+ * skill-root override (local, then shared).
  *
  * @param {object|string} params
  * @param {string} [params.skillRoot]
@@ -2176,7 +2176,6 @@ export function getConfigCandidates(params) {
   return [
     path.join(skillRoot, 'config.local.jsonc'),
     path.join(skillRoot, 'config.jsonc'),
-    path.join(skillRoot, 'config.default.jsonc'),
   ];
 }
 
@@ -2186,27 +2185,20 @@ export function getConfigCandidates(params) {
  *
  * @param {object} params
  * @param {string} params.skillRoot
- * @param {boolean} [params.defaultOnly] Load only `config.default.jsonc`, skipping overrides.
  * @returns {{ config: object, path: string }}
  */
-export function loadSkillConfig({ skillRoot, defaultOnly = false } = {}) {
-  if (defaultOnly) {
-    const defaultPath = path.join(skillRoot, 'config.default.jsonc');
-    if (!fs.existsSync(defaultPath)) {
-      throw new Error(`Config file not found: tried ${defaultPath}`);
-    }
-    return { config: parseJsonc(fs.readFileSync(defaultPath, 'utf8')), path: defaultPath };
-  }
-
+export function loadSkillConfig({ skillRoot } = {}) {
   const candidates = getConfigCandidates({ skillRoot });
   const configPath = candidates.find((p) => fs.existsSync(p));
   if (!configPath) {
-    throw new Error(`Config file not found: tried ${candidates.join(', ')}`);
+    throw new Error(
+      `Config file not found: tried ${candidates.join(', ')}. Create config.local.jsonc or config.jsonc — copy config.sample.jsonc in this skill directory as a starting point.`,
+    );
   }
   return { config: parseJsonc(fs.readFileSync(configPath, 'utf8')), path: configPath };
 }
 
-const DISPATCH_CONFIG_DIFF_HINT = 'diff against config.default.jsonc';
+const DISPATCH_CONFIG_DIFF_HINT = 'diff against config.sample.jsonc';
 
 /**
  * Validates a parsed dispatch config against the `{ platforms: { <key>: { model?, effort? } | Array<{ model?, effort? }> } }`

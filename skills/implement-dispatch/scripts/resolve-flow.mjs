@@ -239,18 +239,16 @@ export function getImplementDispatchConfigCandidates(scriptDir = __dirname) {
   });
 }
 
-export function loadConfig(scriptDir = __dirname, { defaultOnly = false } = {}) {
+export function loadConfig(scriptDir = __dirname) {
   const { config } = loadSkillConfig({
     skillRoot: path.resolve(scriptDir, '..'),
-    defaultOnly,
   });
   return config;
 }
 
-export function loadConfigDetails(scriptDir = __dirname, { defaultOnly = false } = {}) {
+export function loadConfigDetails(scriptDir = __dirname) {
   return loadSkillConfig({
     skillRoot: path.resolve(scriptDir, '..'),
-    defaultOnly,
   });
 }
 
@@ -355,7 +353,7 @@ export function loadDispatchPlatformKeys(dispatchScripts = DISPATCH_SCRIPTS) {
 // SECTION: Config validation
 // ============================================================================
 
-const DIFF_HINT = 'diff against config.default.jsonc';
+const DIFF_HINT = 'diff against config.sample.jsonc';
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);

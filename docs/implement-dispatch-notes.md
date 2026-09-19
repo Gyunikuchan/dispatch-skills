@@ -106,7 +106,7 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
   structured output, fenced markdown handling, and exit codes.
 - `tests/skills/implement-dispatch/build-rebuttal-packets.test.mjs`: Source grouping, legacy
   affinity, context validation, and private temp-file output.
-- `tests/skills/implement-dispatch/config-default.test.mjs`: Schema validation of `config.default.jsonc`.
+- `tests/skills/implement-dispatch/config.test.mjs`: Schema validation and level-policy snapshot of `config.sample.jsonc`.
 
 ---
 

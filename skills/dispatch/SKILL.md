@@ -43,8 +43,8 @@ sanitized, provider-attributed report with available session handles.
 - Delegates stay structurally read-only; edits and commits belong to the host.
 - Logs and prompt spills stay in OS temp. `-v` streams only to interactive stderr.
 - Attachments allow 128 KB each and 512 KB total; the runner delimiter-wraps and bounds them.
-- The first existing `config.local.jsonc`, `config.jsonc`, or `config.default.jsonc` is the whole
-  effective config. Use `--doctor` for config/provider diagnosis.
+- The first existing `config.local.jsonc` or `config.jsonc` is the whole effective config; copy
+  `config.sample.jsonc` to create one. Use `--doctor` for config/provider diagnosis.
 
 ## Runner flags
 

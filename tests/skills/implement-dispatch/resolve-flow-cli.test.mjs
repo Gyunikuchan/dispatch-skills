@@ -10,6 +10,8 @@ import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const SCRIPT = path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/resolve-flow.mjs');
+const DISPATCH_SAMPLE = path.join(REPO_ROOT, 'skills/dispatch/config.sample.jsonc');
+const IMPLEMENT_DISPATCH_SAMPLE = path.join(REPO_ROOT, 'skills/implement-dispatch/config.sample.jsonc');
 
 /**
  * Every provider reported reachable, so a run's outcome depends on the arguments under test
@@ -20,40 +22,24 @@ const ALL_LIVE = JSON.stringify({ claude: true, agy: true, copilot: true, openco
 /**
  * Runs the resolver CLI and returns `{ status, stdout, stderr }`.
  *
- * Liveness is stubbed through the script's env seam: a real run shells out to each provider CLI,
- * costing seconds per case and making assertions depend on the host's installed agents. Pass
- * `{ liveness }` to vary what is reachable, or `{ realProbes: true }` to exercise the real path.
- * The spawn stays bounded so a wedged probe fails loudly instead of hanging the suite.
+ * The spawn always lands on the shared defaults fixture: the repo script's effective config is the
+ * developer's git-ignored config, which does not exist on a fresh checkout, so spawning
+ * `skills/implement-dispatch/scripts/resolve-flow.mjs` directly would fail on config load before
+ * argument parsing. Liveness is stubbed through the script's env seam — a real run shells out to
+ * each provider CLI, costing seconds per case and making assertions depend on the host's installed
+ * agents. Pass `{ liveness }` to vary what is reachable, or `{ realProbes: true }` to exercise the
+ * real path. The spawn stays bounded so a wedged probe fails loudly instead of hanging the suite.
  */
 function run(...args) {
   const opts = typeof args.at(-1) === 'object' ? args.pop() : {};
-  const env = { ...process.env };
-  if (opts.realProbes) {
-    // The seam is gated on the test-mode variable, so both halves must go for a real probe.
-    delete env.IMPLEMENT_DISPATCH_LIVENESS_JSON;
-    delete env.IMPLEMENT_DISPATCH_TEST_MODE;
-  } else {
-    env.IMPLEMENT_DISPATCH_LIVENESS_JSON = opts.liveness ?? ALL_LIVE;
-    env.IMPLEMENT_DISPATCH_TEST_MODE = '1';
-  }
-
-  const result = spawnSync(process.execPath, [SCRIPT, ...args], {
-    encoding: 'utf8',
-    timeout: 60_000,
-    killSignal: 'SIGKILL',
-    env,
-  });
-  assert.equal(
-    result.status !== null,
-    true,
-    `CLI did not exit on its own (signal ${result.signal}): ${result.stderr}`
-  );
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  defaultsFixture ??= buildFixture({ prefix: 'resolve-flow-defaults-' });
+  return runFixtureScript(defaultsFixture.skillDir, args, opts);
 }
 
 /**
  * Copies the dispatch skill beside a fixture so resolve-flow.mjs's sibling imports resolve, then
- * drops the git-ignored config overrides. Without that, the fixture would inherit whichever
+ * drops the git-ignored config overrides and writes the shipped `config.sample.jsonc` as the
+ * fixture's `config.jsonc`. Without that, the fixture would inherit whichever
  * platforms the developer's own `config.jsonc` happens to configure, and the platform cross-check
  * against implement-dispatch's 4-platform default would pass or fail per machine.
  */
@@ -62,15 +48,16 @@ function copyDispatchSkill(destination) {
   for (const override of ['config.jsonc', 'config.local.jsonc']) {
     fs.rmSync(path.join(destination, override), { force: true });
   }
+  fs.writeFileSync(path.join(destination, 'config.jsonc'), fs.readFileSync(DISPATCH_SAMPLE, 'utf8'));
 }
 
 /**
  * Builds a throwaway implement-dispatch skill dir with dispatch copied beside it, so the script's
  * sibling imports and config lookups both resolve inside the fixture.
  *
- * Both skills fall back to their shipped `config.default.jsonc` (all four platforms) unless a
- * caller overrides one, which is what makes a fixture run independent of the developer's own
- * git-ignored configs.
+ * Both skills get the shipped `config.sample.jsonc` written as their `config.jsonc` (all four
+ * platforms) unless a caller overrides one, which is what makes a fixture run independent of the
+ * developer's own git-ignored configs.
  *
  * @param {object} [options]
  * @param {string} [options.prefix] mkdtemp prefix, for readable temp paths on failure.
@@ -84,11 +71,11 @@ function buildFixture({ prefix = 'resolve-flow-', config = null, dispatchConfig 
   const skillDir = path.join(dir, 'implement-dispatch');
   fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
-  fs.copyFileSync(
-    path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
-    path.join(skillDir, 'config.default.jsonc'),
-  );
-  if (config !== null) fs.writeFileSync(path.join(skillDir, 'config.jsonc'), config);
+  if (config === null) {
+    fs.writeFileSync(path.join(skillDir, 'config.jsonc'), fs.readFileSync(IMPLEMENT_DISPATCH_SAMPLE, 'utf8'));
+  } else {
+    fs.writeFileSync(path.join(skillDir, 'config.jsonc'), config);
+  }
   if (hashable) {
     fs.copyFileSync(path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'), path.join(skillDir, 'SKILL.md'));
     fs.copyFileSync(
@@ -103,22 +90,33 @@ function buildFixture({ prefix = 'resolve-flow-', config = null, dispatchConfig 
 }
 
 /** Runs a fixture's copy of the script under the same liveness seam {@link run} uses. */
-function runFixtureScript(skillDir, args = [], { liveness = ALL_LIVE } = {}) {
+function runFixtureScript(skillDir, args = [], { liveness = ALL_LIVE, realProbes = false } = {}) {
+  const env = { ...process.env };
+  if (realProbes) {
+    // The seam is gated on the test-mode variable, so both halves must go for a real probe.
+    delete env.IMPLEMENT_DISPATCH_LIVENESS_JSON;
+    delete env.IMPLEMENT_DISPATCH_TEST_MODE;
+  } else {
+    env.IMPLEMENT_DISPATCH_LIVENESS_JSON = liveness;
+    env.IMPLEMENT_DISPATCH_TEST_MODE = '1';
+  }
   const result = spawnSync(process.execPath, [path.join(skillDir, 'scripts', 'resolve-flow.mjs'), ...args], {
     encoding: 'utf8',
     timeout: 60_000,
     killSignal: 'SIGKILL',
-    env: { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: liveness, IMPLEMENT_DISPATCH_TEST_MODE: '1' },
+    env,
   });
+  assert.equal(
+    result.status !== null,
+    true,
+    `CLI did not exit on its own (signal ${result.signal}): ${result.stderr}`
+  );
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
 /**
- * One fixture on the shipped defaults, shared by every test that names a specific platform.
- *
- * Those cases cannot use {@link run}: it executes the real script, whose effective config is the
- * developer's git-ignored `config.jsonc`, so pinning a platform that config omits fails as an
- * unrecognized pin instead of exercising the behaviour under test.
+ * Named entry onto the shared defaults fixture, for tests that document dependence on the shipped
+ * sample's four-platform policy rather than generic CLI behaviour ({@link run} uses the same fixture).
  */
 let defaultsFixture;
 function runOnDefaults(args, opts) {
@@ -132,7 +130,7 @@ after(() => {
 
 describe('resolve-flow CLI', () => {
   it('validates the shipped config without any other flag', () => {
-    const { status, stdout } = run('--validate-only');
+    const { status, stdout } = runOnDefaults(['--validate-only']);
     assert.equal(status, 0);
     assert.match(stdout, /Config is valid\./);
   });
@@ -230,7 +228,7 @@ describe('resolve-flow CLI', () => {
     ]);
     assert.equal(status, 0, stderr);
     const report = JSON.parse(stdout);
-    assert.match(report.configPath, /config\.default\.jsonc$/);
+    assert.match(report.configPath, /config\.jsonc$/);
     assert.equal(report.requestedLevel, 'high');
     assert.equal(report.effectiveLevel, 'high');
     assert.ok(report.inheritance['plan-review'].maxRounds.inheritedLevelKey);
@@ -425,10 +423,6 @@ describe('resolve-flow CLI: invalid config', () => {
     fs.writeFileSync(path.join(skillDir, 'config.jsonc'), contents);
     // The script resolves its config relative to its own location, so it has to run from a copy.
     fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
-    fs.cpSync(
-      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
-      path.join(skillDir, 'config.default.jsonc'),
-    );
     copyDispatchSkill(path.join(dir, 'dispatch'));
 
     try {
@@ -481,9 +475,9 @@ describe('resolve-flow CLI: integrity manifest', () => {
       path.join(REPO_ROOT, 'skills/implement-dispatch/scripts/check-consensus.mjs'),
       path.join(skillDir, 'scripts', 'check-consensus.mjs'),
     );
-    fs.cpSync(
-      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
-      path.join(skillDir, 'config.default.jsonc'),
+    fs.writeFileSync(
+      path.join(skillDir, 'config.jsonc'),
+      fs.readFileSync(IMPLEMENT_DISPATCH_SAMPLE, 'utf8'),
     );
     copyDispatchSkill(path.join(dir, 'dispatch'));
     return { dir, skillDir };
@@ -561,16 +555,16 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
    * subset check can be exercised end-to-end without touching either shipped config.
    *
    * @param {string|null} dispatchConfig Contents for dispatch's `config.jsonc`; `null` leaves the
-   *   shipped default (all four platforms) in place, and `''` writes an unparsable file.
+   *   shipped sample (all four platforms) in place, and `''` writes an unparsable file.
    */
   const setup = (dispatchConfig) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-crosscheck-'));
     const skillDir = path.join(dir, 'implement-dispatch');
     fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
     fs.copyFileSync(SCRIPT, path.join(skillDir, 'scripts', 'resolve-flow.mjs'));
-    fs.cpSync(
-      path.join(REPO_ROOT, 'skills/implement-dispatch/config.default.jsonc'),
-      path.join(skillDir, 'config.default.jsonc'),
+    fs.writeFileSync(
+      path.join(skillDir, 'config.jsonc'),
+      fs.readFileSync(IMPLEMENT_DISPATCH_SAMPLE, 'utf8'),
     );
     const dispatchDir = path.join(dir, 'dispatch');
     copyDispatchSkill(dispatchDir);
@@ -676,7 +670,7 @@ describe('resolve-flow CLI: dispatch platform cross-check', () => {
     try {
       // Remove dispatch config entirely: membership cannot be established, so neither validation
       // nor a normal resolve run may proceed.
-      fs.rmSync(path.join(dir, 'dispatch', 'config.default.jsonc'), { force: true });
+      fs.rmSync(path.join(dir, 'dispatch', 'config.jsonc'), { force: true });
       const validation = runInFixture(skillDir);
       assert.equal(validation.status, 1);
       assert.equal(validation.stdout, '');

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
+import { parseJsonc } from '../../../skills/dispatch/scripts/common.mjs';
 import {
   getImplementDispatchConfigCandidates,
   loadConfig,
@@ -11,11 +13,13 @@ import {
   validateConfig,
 } from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
 
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+
 // Liveness stub: claude is the orchestrator, copilot dead.
 const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 
 /**
- * Snapshot of the shipped per-level flow policy, so a change to config.default.jsonc
+ * Snapshot of the shipped per-level flow policy, so a change to config.sample.jsonc
  * is a deliberate, checked-in assertion update. `targets` is the resulting target
  * count under LIVE_ALL (agy + opencode live, copilot dead, claude the orchestrator);
  * `reserves` is the count of leftover live candidates kept as substitutes.
@@ -43,15 +47,19 @@ const LEVEL_PARITY = {
   },
 };
 
+const SAMPLE_CONFIG = parseJsonc(
+  readFileSync(path.join(REPO_ROOT, 'skills', 'implement-dispatch', 'config.sample.jsonc'), 'utf8'),
+);
+
 describe('shipped config', () => {
   it('validates with no problems', () => {
-    assert.deepEqual(validateConfig(loadConfig(undefined, { defaultOnly: true })), []);
+    assert.deepEqual(validateConfig(SAMPLE_CONFIG), []);
   });
 
   describe('shipped level policy snapshot', () => {
     for (const [level, sections] of Object.entries(LEVEL_PARITY)) {
       it(`reproduces ${level}`, () => {
-        const config = loadConfig(undefined, { defaultOnly: true });
+        const config = SAMPLE_CONFIG;
         const flow = resolveFlow({ platform: 'claude', level }, LIVE_ALL, config);
         for (const [section, expected] of Object.entries(sections)) {
           assert.equal(flow[section].maxRounds, expected.maxRounds, `${section} maxRounds`);
@@ -89,19 +97,17 @@ describe('loadConfig', () => {
     return loadFromFiles({ 'config.jsonc': source });
   }
 
-  it('prefers config.local.jsonc over config.jsonc and config.default.jsonc', () => {
+  it('prefers config.local.jsonc over config.jsonc', () => {
     const loaded = loadFromFiles({
       'config.local.jsonc': '{ "marker": "local-jsonc" }',
       'config.jsonc': '{ "marker": "jsonc", "extra": "not-merged" }',
-      'config.default.jsonc': '{ "marker": "default", "defaultOnly": "not-merged" }',
     });
     assert.deepEqual(loaded, { marker: 'local-jsonc' });
   });
 
-  it('prefers config.jsonc over config.default.jsonc when config.local.jsonc is absent', () => {
+  it('loads config.jsonc when config.local.jsonc is absent', () => {
     const loaded = loadFromFiles({
       'config.jsonc': '{ "marker": "jsonc" }',
-      'config.default.jsonc': '{ "marker": "default", "extra": "not-merged" }',
     });
     assert.deepEqual(loaded, { marker: 'jsonc' });
   });
@@ -110,11 +116,9 @@ describe('loadConfig', () => {
     const loaded = loadFromFiles({
       'config.local.jsonc': '{ "onlyLocal": 123 }',
       'config.jsonc': '{ "onlyJsonc": 456 }',
-      'config.default.jsonc': '{ "onlyDefault": 789 }',
     });
     assert.deepEqual(loaded, { onlyLocal: 123 });
     assert.equal(loaded.onlyJsonc, undefined);
-    assert.equal(loaded.onlyDefault, undefined);
   });
 
   it('strips line comments', () => {
@@ -147,21 +151,13 @@ describe('loadConfig', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'resolve-flow-'));
     try {
       mkdirSync(path.join(root, 'scripts'));
-      assert.throws(() => loadConfig(path.join(root, 'scripts')), /Config file not found/);
+      assert.throws(
+        () => loadConfig(path.join(root, 'scripts')),
+        (err) => /Config file not found/.test(err.message) && /config\.sample\.jsonc/.test(err.message),
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
-
-  it('loads config.default.jsonc when defaultOnly is true even if local overrides exist', () => {
-    const loaded = loadFromFiles(
-      {
-        'config.default.jsonc': '{ "marker": "default" }',
-        'config.local.jsonc': '{ "marker": "local" }',
-      },
-      { defaultOnly: true },
-    );
-    assert.deepEqual(loaded, { marker: 'default' });
   });
 });
 
@@ -174,7 +170,6 @@ describe('getImplementDispatchConfigCandidates', () => {
       [
         path.join(expectedRoot, 'config.local.jsonc'),
         path.join(expectedRoot, 'config.jsonc'),
-        path.join(expectedRoot, 'config.default.jsonc'),
       ],
     );
   });

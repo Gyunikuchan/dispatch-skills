@@ -12,7 +12,7 @@ import {
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 describe('getConfigCandidates', () => {
-  it('returns the 3-path precedence list in order', () => {
+  it('returns the 2-path precedence list in order', () => {
     const candidates = getConfigCandidates({
       skillRoot: '/skill',
     });
@@ -21,7 +21,6 @@ describe('getConfigCandidates', () => {
       [
         '/skill/config.local.jsonc',
         '/skill/config.jsonc',
-        '/skill/config.default.jsonc',
       ],
     );
   });
@@ -41,46 +40,38 @@ describe('loadSkillConfig', () => {
   it('throws listing every tried path when none exist', () => {
     assert.throws(
       () => loadSkillConfig({ skillRoot }),
-      /Config file not found: tried .*config\.local\.jsonc.*config\.default\.jsonc/s,
+      /Config file not found: tried .*config\.local\.jsonc.*config\.jsonc/s,
     );
   });
 
-  it('loads config.default.jsonc when nothing else exists', () => {
-    writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
-    const { config, path: usedPath } = loadSkillConfig({ skillRoot });
-    assert.deepEqual(config, { platforms: { claude: {} } });
-    assert.equal(usedPath, path.join(skillRoot, 'config.default.jsonc'));
+  it('names config.sample.jsonc as the remediation when no config exists', () => {
+    assert.throws(
+      () => loadSkillConfig({ skillRoot }),
+      (err) => /Config file not found/.test(err.message) && /config\.sample\.jsonc/.test(err.message),
+    );
   });
 
-  it('loads wholly (no merge): a higher-precedence file replaces, not merges with, the default', () => {
-    writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {}, "agy": {} } }');
-    writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "copilot": {} } }');
+  it('loads wholly (no merge): a higher-precedence file replaces, not merges with, the shared one', () => {
+    writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "claude": {}, "agy": {} } }');
+    writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{ "platforms": { "copilot": {} } }');
     const { config } = loadSkillConfig({ skillRoot });
     assert.deepEqual(config, { platforms: { copilot: {} } });
   });
 
-  it('prefers config.local.jsonc over config.jsonc and default', () => {
-    writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
+  it('loads config.jsonc when config.local.jsonc is absent', () => {
+    writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "copilot": {} } }');
+    const { config, path: usedPath } = loadSkillConfig({ skillRoot });
+    assert.deepEqual(config, { platforms: { copilot: {} } });
+    assert.equal(usedPath, path.join(skillRoot, 'config.jsonc'));
+  });
+
+  it('prefers config.local.jsonc over config.jsonc', () => {
     writeFileSync(path.join(skillRoot, 'config.jsonc'), '{ "platforms": { "copilot": {} } }');
     writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{ "platforms": { "agy": {} } }');
 
     const { config, path: usedPath } = loadSkillConfig({ skillRoot });
     assert.deepEqual(config, { platforms: { agy: {} } });
     assert.equal(usedPath, path.join(skillRoot, 'config.local.jsonc'));
-  });
-
-  it('defaultOnly loads config.default.jsonc even when overrides exist', () => {
-    writeFileSync(path.join(skillRoot, 'config.default.jsonc'), '{ "platforms": { "claude": {} } }');
-    writeFileSync(path.join(skillRoot, 'config.local.jsonc'), '{ "platforms": { "agy": {} } }');
-    const { config } = loadSkillConfig({ skillRoot, defaultOnly: true });
-    assert.deepEqual(config, { platforms: { claude: {} } });
-  });
-
-  it('defaultOnly throws when config.default.jsonc is missing', () => {
-    assert.throws(
-      () => loadSkillConfig({ skillRoot, defaultOnly: true }),
-      /Config file not found: tried/,
-    );
   });
 });
 
@@ -97,17 +88,6 @@ describe('validateDispatchConfig', () => {
       }),
       [],
     );
-  });
-
-  describe('shipped dispatch defaults', () => {
-    it('enables Claude and Copilot sandboxing when the shipped config is loaded', () => {
-      const { config } = loadSkillConfig({
-        skillRoot: path.resolve(process.cwd(), 'skills', 'dispatch'),
-        defaultOnly: true,
-      });
-      assert.equal(config.platforms.claude.sandbox, true);
-      assert.equal(config.platforms.copilot.sandbox, true);
-    });
   });
 
   it('rejects a non-object config', () => {
