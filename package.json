@@ -37,7 +37,6 @@
   ],
   "scripts": {
     "prepare": "husky",
-    "budgets": "node scripts/refresh-budgets.mjs",
     "hashes": "node scripts/generate-hashes.mjs",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "validate:configs": "node scripts/validate-configs.mjs"

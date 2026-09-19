@@ -64,7 +64,7 @@ Differentiate human documentation, agent execution contracts, and maintainer not
 - **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human users (*Is this something the user needs to know?*).
   - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
   - **Skill Manuals (`skills/*/README.md`)**: Purpose, concepts, prerequisites, realistic invocation examples, configuration, and troubleshooting.
-- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus strictly on operational context, decision paths, and checkable execution bounds. Maintainer notes belong in `docs/<skill>-notes.md` (not shipped).
+- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus strictly on operational context, decision paths, and checkable execution bounds. Hold word count net-neutral or lower; grow it only when the task requires it, reaching first for rewording, leading words, or disclosure. Maintainer notes belong in `docs/<skill>-notes.md` (not shipped).
 
 ## Authoring & Cross-Platform Standards
 
