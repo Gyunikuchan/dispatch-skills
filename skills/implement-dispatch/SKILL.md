@@ -133,8 +133,11 @@ has a logged status, and settled freshness is checkpointed.
    deleted by the OS.` Relocate existing `.scratch/` artifacts with
    `dispatch/scripts/relocate-scratch.mjs`; report each exact destination. Retain unresolved/native
    artifacts and state why. Never relocate the ledger.
-4. Report diagnostics (level, rounds, finding totals, verification), destinations, canonical
-   resume command, ledger path, one `Rulings made` list, and a suggested commit message. Git/PR
+4. Report on the host's handoff structure when workspace rules define one; otherwise use plain
+   sections. Add only what this flow contributes: diagnostics (level, rounds, finding totals,
+   verification), destinations, canonical resume command, ledger path, and one `Rulings made` list.
+   Satisfy host-required sections with run evidence and never duplicate a section the host already
+   defines; include a suggested commit message unless the host prescribes its own. Git/PR
    publication remains caller-owned.
 
 **Done when:** all review work is terminal and settled, every accepted `adjacent` finding was
