@@ -19,12 +19,13 @@
  * Effort values are provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and
  * OpenCode receives the value as `--variant`.
  *
- * Implementation entries are objects, never review-style candidate arrays. Delegated Claude and
- * OpenCode entries must resolve an explicit model. Defined levels follow low -> medium -> high ->
+ * Implementation entries are objects, never review-style candidate arrays. Every implementation
+ * platform entry must resolve an explicit model (a string or an array of fallback model strings,
+ * e.g. ["gpt-5.6-luna", "bedrock.gpt-5.6-luna"]). Defined levels follow low -> medium -> high ->
  * xhigh -> max for native-only escalation; flat entries and `max` have no escalation tier.
  * Configured fields unsupported by the host's native write launcher are disclosed and ignored
- * when comparing tiers. AGY and Copilot currently map to `self` (their default native subagent, which
- * takes no configured fields), so their values are compatibility metadata rather than escalation tiers.
+ * when comparing tiers. When multiple models are listed in an array, launchers try them in order
+ * upon quota or availability failure.
  */
 {
   "plan-review": {
@@ -121,7 +122,10 @@
         },
       },
       "copilot": {
-        "model": "gpt-5.6-luna",
+        "model": [
+          "gpt-5.6-luna",
+          "bedrock.gpt-5.6-luna"
+        ],
         "effort": "max",
       },
       "opencode": {

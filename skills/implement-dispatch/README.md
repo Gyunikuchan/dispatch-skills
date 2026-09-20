@@ -142,12 +142,12 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 > `config.jsonc` (or `config.local.jsonc`) and keep every review provider enabled in `dispatch` as
 > well.
 
-Delegated Claude and OpenCode implementation entries must resolve an explicit `model`; a missing
-model stops flow resolution with the exact configuration key to update. Implementation entries are
-objects, not review candidate arrays. Higher level keys provide native-only escalation tiers when
-their launcher-supported model or effort differs; flat entries and `max` cannot escalate.
-AGY/Copilot currently execute as `self` — their platform's default native subagent, which accepts no
-configured fields — so their configured implementation values are compatibility metadata.
+Every implementation platform entry must resolve an explicit `model` (a string or fallback model
+array like `["gpt-5.6-luna", "bedrock.gpt-5.6-luna"]`); a missing model stops flow resolution with
+the exact configuration key to update. Implementation entries are objects, not review candidate
+arrays. Higher level keys provide native-only escalation tiers when their launcher-supported model
+or effort differs; flat entries and `max` cannot escalate. Launchers try array models in order upon
+quota or availability failure.
 
 ## What to expect
 

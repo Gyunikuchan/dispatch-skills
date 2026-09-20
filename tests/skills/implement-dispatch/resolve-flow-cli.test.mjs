@@ -445,9 +445,10 @@ describe('resolve-flow CLI', () => {
 
   it('rejects the liveness payload when the test-mode variable is absent', () => {
     // Spawned directly: `run` always pairs the two variables, which is the behaviour under test.
+    defaultsFixture ??= buildFixture({ prefix: 'resolve-flow-defaults-' });
     const env = { ...process.env, IMPLEMENT_DISPATCH_LIVENESS_JSON: ALL_LIVE };
     delete env.IMPLEMENT_DISPATCH_TEST_MODE;
-    const result = spawnSync(process.execPath, [SCRIPT, '--platform', 'claude', '--level', 'low'], {
+    const result = spawnSync(process.execPath, [path.join(defaultsFixture.skillDir, 'scripts', 'resolve-flow.mjs'), '--platform', 'claude', '--level', 'low'], {
       encoding: 'utf8',
       timeout: 60_000,
       killSignal: 'SIGKILL',

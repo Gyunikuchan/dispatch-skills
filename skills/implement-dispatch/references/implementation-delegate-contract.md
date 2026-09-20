@@ -1,9 +1,11 @@
 # Implementation delegate contract
 
 Every implementation launch receives the settled scope, attempt number, prior failure evidence,
-and an explicit resolved model. Attempt 2 receives the instruction to identify root cause before
-modifying code. A native launcher receives only fields its host tool schema supports; flow
-resolution reports applied and ignored configured fields.
+and an explicit resolved model. When the configured model resolves to an array of model names,
+the launcher attempts the first model; on availability, authentication, or quota failure, it
+tries the subsequent model in the array before concluding the launch failed. Attempt 2 receives the
+instruction to identify root cause before modifying code. A native launcher receives only fields its
+host tool schema supports; flow resolution reports applied and ignored configured fields.
 
 The final message contains exactly one raw or fenced JSON envelope:
 

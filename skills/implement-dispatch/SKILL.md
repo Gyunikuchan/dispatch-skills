@@ -81,12 +81,14 @@ After approval, initialize and append the durable events in the
 [ledger contract](references/ledger-contract.md). On resume, reconcile its fold before dispatch.
 
 Implement through a native subagent of `flow.implementation.platform`, never inline: `claude` ->
-`general-purpose`, `opencode` -> `general`; `agy` and `copilot` define no named agent types, so
-launch their default subagent. Derive `--implementation-fields` from that native launch tool's
-schema; default to model only. Pass resolved fields explicitly and disclose ignored fields; missing
-delegated Claude/OpenCode models stop preflight, while host-platform settings are compatibility
-metadata. Preserve the index/unrelated changes and inspect Git read-only. Trivial work alone may
-start on the host platform.
+`general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose` (`task` tool with
+`model` and `reasoning_effort`); `agy` defines no named agent types, so launch its default
+subagent. All platforms follow configured `model` and `effort` supported by their native launcher.
+When the resolved `model` is an array of model names, try the first model, falling back to
+subsequent models in the list on quota or availability failure. Derive `--implementation-fields`
+from that native launch tool's schema; default to model only. Pass resolved fields explicitly and
+disclose ignored fields; missing models stop preflight. Preserve the index/unrelated changes and
+inspect Git read-only. Trivial work alone may start on the host platform.
 
 Follow the [implementation delegate contract](references/implementation-delegate-contract.md):
 parse one typed envelope and obey its transition. Native launches are non-resumable unless the

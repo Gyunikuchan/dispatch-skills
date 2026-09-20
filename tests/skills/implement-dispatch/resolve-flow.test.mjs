@@ -756,12 +756,77 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.effort, undefined);
     });
 
-    it('marks self-target implementation escalation exhausted', () => {
-      const out = resolveFlow({ platform: 'copilot' }, LIVE_ALL, BASE_CONFIG);
-      assert.deepEqual(out.implementation.applicableFields, []);
+    it('resolves copilot implementation platform with model array and effort', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            copilot: {
+              model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'],
+              effort: 'max',
+            },
+          },
+        },
+      });
+      const out = resolveFlow(
+        { platform: 'copilot', implementationFields: 'model,effort' },
+        LIVE_ALL,
+        config,
+      );
+      assert.deepEqual(out.implementation.applicableFields, ['model', 'effort']);
+      assert.deepEqual(out.implementation.ignoredConfiguredFields, []);
+      assert.deepEqual(out.implementation.model, ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna']);
+      assert.equal(out.implementation.effort, 'max');
       assert.deepEqual(out.implementation.escalation, {
         status: 'exhausted',
-        reason: 'self-target',
+        reason: 'flat-entry',
+      });
+    });
+
+    it('requires a model for implementation platforms when missing', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            copilot: { effort: 'high' },
+            agy: { effort: 'medium' },
+          },
+        },
+      });
+      assert.throws(
+        () => resolveFlow({ platform: 'copilot' }, LIVE_ALL, config),
+        /implementation\.platforms\.copilot\.model must resolve an explicit model/,
+      );
+      assert.throws(
+        () => resolveFlow({ platform: 'agy' }, LIVE_ALL, config),
+        /implementation\.platforms\.agy\.model must resolve an explicit model/,
+      );
+      const shown = resolveFlow(
+        { platform: 'copilot', tolerateMissingImplementationModel: true },
+        LIVE_ALL,
+        config,
+      );
+      assert.equal(shown.implementation.diagnostic.code, 'IMPLEMENTATION_MODEL_REQUIRED');
+      assert.equal(shown.implementation.diagnostic.key, 'implementation.platforms.copilot.model');
+    });
+
+    it('resolves agy implementation platform when configured with model and effort', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            agy: { model: 'gemini-3.8-flash', effort: 'high' },
+          },
+        },
+      });
+      const out = resolveFlow(
+        { platform: 'agy', implementationFields: 'model,effort' },
+        LIVE_ALL,
+        config,
+      );
+      assert.deepEqual(out.implementation.applicableFields, ['model', 'effort']);
+      assert.equal(out.implementation.model, 'gemini-3.8-flash');
+      assert.equal(out.implementation.effort, 'high');
+      assert.deepEqual(out.implementation.escalation, {
+        status: 'exhausted',
+        reason: 'flat-entry',
       });
     });
   });
@@ -812,6 +877,29 @@ describe('resolveFlow', () => {
       });
     });
 
+    it('handles escalation with array models and normalized single-element arrays', () => {
+      const entry = {
+        low: { model: ['model-a', 'model-b'] },
+        medium: { model: ['model-a', 'model-b'] },
+        high: { model: ['model-c', 'model-d'] },
+      };
+      assert.deepEqual(resolveImplementationEscalation(entry, 'low', ['model']), {
+        status: 'available',
+        level: 'high',
+        model: ['model-c', 'model-d'],
+      });
+
+      // Single string vs single element array should normalize to same model
+      const singleEntry = {
+        low: { model: 'same-model' },
+        high: { model: ['same-model'] },
+      };
+      assert.deepEqual(resolveImplementationEscalation(singleEntry, 'low', ['model']), {
+        status: 'exhausted',
+        reason: 'no-distinct-higher-level',
+      });
+    });
+
     it('returns explicit exhaustion for flat and top-level entries', () => {
       assert.deepEqual(
         resolveImplementationEscalation({ model: 'flat' }, 'low', ['model']),
@@ -828,10 +916,11 @@ describe('resolveFlow', () => {
     it('defaults to model and accepts model plus effort', () => {
       assert.deepEqual(parseImplementationFields(), ['model']);
       assert.deepEqual(parseImplementationFields('effort,model'), ['model', 'effort']);
+      assert.deepEqual(parseImplementationFields('none'), []);
+      assert.deepEqual(parseImplementationFields(''), []);
     });
 
-    it('rejects empty, unknown, and effort-only field sets', () => {
-      assert.throws(() => parseImplementationFields(''), /implementation-fields/);
+    it('rejects unknown and effort-only field sets', () => {
       assert.throws(() => parseImplementationFields('model,temperature'), /implementation-fields/);
       assert.throws(() => parseImplementationFields('effort'), /implementation-fields/);
     });
@@ -1063,6 +1152,42 @@ describe('resolveFlow', () => {
       const problems = validateConfig(config);
       assert.equal(problems.length, 1);
       assert.match(problems[0], /code-review\.platforms\.agy\.low must set at least one of model, effort/);
+    });
+
+    it('accepts array models in implementation and review sections and rejects invalid entries', () => {
+      const valid = withSections({
+        implementation: {
+          platforms: {
+            copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' },
+          },
+        },
+        'code-review': {
+          platforms: {
+            copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'] },
+          },
+        },
+      });
+      assert.deepEqual(validateConfig(valid), []);
+
+      const emptyArray = withSections({
+        implementation: { platforms: { copilot: { model: [] } } },
+      });
+      assert.match(validateConfig(emptyArray)[0], /implementation\.platforms\.copilot\.model must be a string or array of strings/);
+
+      const nonStringArray = withSections({
+        implementation: { platforms: { copilot: { model: [5] } } },
+      });
+      assert.match(validateConfig(nonStringArray)[0], /implementation\.platforms\.copilot\.model must be a string or array of strings/);
+
+      const emptyStringArray = withSections({
+        implementation: { platforms: { copilot: { model: [''] } } },
+      });
+      assert.match(validateConfig(emptyStringArray)[0], /implementation\.platforms\.copilot\.model must be a string or array of strings/);
+
+      const colonSuffixedArray = withSections({
+        implementation: { platforms: { copilot: { model: ['claude:'] } } },
+      });
+      assert.match(validateConfig(colonSuffixedArray)[0], /implementation\.platforms\.copilot\.model must be a string or array of strings/);
     });
 
     it('rejects a non-string model inside a level override', () => {

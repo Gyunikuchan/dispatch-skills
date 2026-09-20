@@ -141,7 +141,7 @@ report the exact diagnostic instead.
    |---|---|
    | `claude` | `Explore` |
    | `agy` | `research` |
-   | `copilot` | the default subagent (Copilot defines no named agent types) |
+   | `copilot` | `explore` |
    | `opencode` | `explore` |
 
    Reuse the identical prompt and attachments. Preserve the target's effective model and effort

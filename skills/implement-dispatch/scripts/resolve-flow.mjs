@@ -46,7 +46,6 @@ const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
 const IMPLEMENTATION_FIELDS = ['model', 'effort'];
-const SELF_IMPLEMENTATION_PLATFORMS = new Set(['agy', 'copilot']);
 
 const USAGE = `Usage:
   node resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>]
@@ -75,11 +74,12 @@ export function normalizePin(rawPin) {
 
 export function parseImplementationFields(raw) {
   if (raw === undefined) return ['model'];
+  if (raw === 'none' || raw === '') return [];
   const fields = [...new Set(String(raw).split(',').map(value => value.trim()).filter(Boolean))];
   const unknown = fields.filter(field => !IMPLEMENTATION_FIELDS.includes(field));
-  if (fields.length === 0 || unknown.length > 0 || !fields.includes('model')) {
+  if (unknown.length > 0 || !fields.includes('model')) {
     throw new Error(
-      `--implementation-fields must be "model" or "model,effort" (received "${raw}")`
+      `--implementation-fields must be "model" or "model,effort" (or "none") (received "${raw}")`
     );
   }
   return IMPLEMENTATION_FIELDS.filter(field => fields.includes(field));
@@ -101,9 +101,16 @@ function applicableImplementationEntry(entry, fields) {
   );
 }
 
+function normalizeFieldValue(value) {
+  if (Array.isArray(value)) {
+    return value.length === 1 ? value[0] : value;
+  }
+  return value;
+}
+
 function hasDistinctApplicableField(current, candidate, fields) {
   return fields.some(
-    field => candidate[field] !== undefined && candidate[field] !== current[field]
+    field => candidate[field] !== undefined && JSON.stringify(normalizeFieldValue(candidate[field])) !== JSON.stringify(normalizeFieldValue(current[field]))
   );
 }
 
@@ -437,17 +444,21 @@ function validateCandidateObject(where, value, problems) {
       problems.push(
         `${where} has unrecognized key "${inner}". Valid keys: model, effort (${DIFF_HINT}).`
       );
-    } else if (typeof innerValue !== 'string') {
-      problems.push(`${where}.${inner} must be a string (${DIFF_HINT}).`);
-    } else {
+    } else if (inner === 'model') {
       try {
-        if (inner === 'model') {
-          validateModelSpec(innerValue, `${where}.model`);
-        } else {
-          validateEffortSpec(innerValue, `${where}.effort`);
-        }
+        validateModelSpec(innerValue, `${where}.model`);
       } catch {
-        problems.push(`${where}.${inner} must be a non-empty string without a trailing colon (${DIFF_HINT}).`);
+        problems.push(`${where}.model must be a string or array of strings (${DIFF_HINT}).`);
+      }
+    } else if (inner === 'effort') {
+      if (typeof innerValue !== 'string') {
+        problems.push(`${where}.effort must be a string (${DIFF_HINT}).`);
+      } else {
+        try {
+          validateEffortSpec(innerValue, `${where}.effort`);
+        } catch {
+          problems.push(`${where}.effort must be a non-empty string (${DIFF_HINT}).`);
+        }
       }
     }
   }
@@ -459,18 +470,22 @@ function validateSinglePlatformEntry(where, entry, problems, allowArrays = true)
     return;
   }
   for (const [field, value] of Object.entries(entry)) {
-    if (field === 'model' || field === 'effort') {
+    if (field === 'model') {
+      try {
+        validateModelSpec(value, `${where}.model`);
+      } catch {
+        problems.push(`${where}.model must be a string or array of strings (${DIFF_HINT}).`);
+      }
+      continue;
+    }
+    if (field === 'effort') {
       if (typeof value !== 'string') {
         problems.push(`${where}.${field} must be a string (${DIFF_HINT}).`);
       } else {
         try {
-          if (field === 'model') {
-            validateModelSpec(value, `${where}.model`);
-          } else {
-            validateEffortSpec(value, `${where}.effort`);
-          }
+          validateEffortSpec(value, `${where}.effort`);
         } catch {
-          problems.push(`${where}.${field} must be a non-empty string without a trailing colon (${DIFF_HINT}).`);
+          problems.push(`${where}.${field} must be a non-empty string (${DIFF_HINT}).`);
         }
       }
       continue;
@@ -1005,8 +1020,7 @@ export function resolveFlow(options, liveness, config) {
   const implEntry = platformsOf('implementation')[platform] ?? {};
   const implHints = resolveLevelEntry(implEntry, level);
   const implementation = { platform };
-  const selfTarget = SELF_IMPLEMENTATION_PLATFORMS.has(platform);
-  const applicableFields = selfTarget || !platform
+  const applicableFields = !platform
     ? []
     : parseImplementationFields(options.implementationFields);
   implementation.applicableFields = applicableFields;
@@ -1016,17 +1030,17 @@ export function resolveFlow(options, liveness, config) {
   for (const field of applicableFields) {
     if (implHints[field] !== undefined) implementation[field] = implHints[field];
   }
-  if (selfTarget || !platform) {
+  if (!platform || applicableFields.length === 0) {
     implementation.escalation = {
       status: 'exhausted',
-      reason: selfTarget ? 'self-target' : 'no-platform',
+      reason: !platform ? 'no-platform' : 'fieldless-launcher',
     };
   } else {
-    const missingModelKey = implHints.model === undefined
+    const missingModelKey = (applicableFields.includes('model') && implHints.model === undefined)
       ? implementationModelKey(platform, implEntry, level)
       : null;
     if (missingModelKey) {
-      const message = `${missingModelKey} must resolve an explicit model for delegated implementation`;
+      const message = `${missingModelKey} must resolve an explicit model for implementation`;
       if (!options.tolerateMissingImplementationModel) throw new Error(message);
       implementation.diagnostic = { code: 'IMPLEMENTATION_MODEL_REQUIRED', message, key: missingModelKey };
     }
