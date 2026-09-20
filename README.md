@@ -83,6 +83,7 @@ The design emphasizes:
 | Skill | Use it for | Dependencies |
 |---|---|---|
 | [`dispatch`](skills/dispatch/README.md) | Delegate a bounded investigation, code trace, or architecture question to another agent CLI. | None |
+| [`dispatch-design-review`](skills/dispatch-design-review/README.md) | Author and review technical designs and increment dependency graphs before implementation. | `dispatch` required |
 | [`dispatch-plan-review`](skills/dispatch-plan-review/README.md) | Review or author a plan before implementation, then fold verified findings back into the plan. | `dispatch` required |
 | [`dispatch-code-review`](skills/dispatch-code-review/README.md) | Review staged, unstaged, untracked, or branch changes, then apply verified fixes. | `dispatch` required |
 | [`implement-dispatch`](skills/implement-dispatch/README.md) | Run scope evaluation, plan review, one approval gate, implementation, code review, and consensus. | `dispatch` required; review skills optional |
@@ -108,6 +109,9 @@ npx skills add Gyunikuchan/dispatch-skills --skill dispatch
 
 # Plan review
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-plan-review
+
+# Design review
+npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-design-review
 
 # Code review
 npx skills add Gyunikuchan/dispatch-skills --skill dispatch --skill dispatch-code-review

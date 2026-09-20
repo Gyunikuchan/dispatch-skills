@@ -191,3 +191,7 @@ resume command are reported because OS temp cleanup, including Windows Storage S
   [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
 - **You need a different review depth:** Pass a level such as `low` or `high`, or adjust the
   level-specific settings in `config.local.jsonc`.
+
+### Technical-design foundation
+
+Large phased work may be captured in a governed technical design and reviewed with `dispatch-design-review`. Approval records the next ready increment and stops before implementation; increment execution is not available in this phase. Ordinary plan runs are unchanged.

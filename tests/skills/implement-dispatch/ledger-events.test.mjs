@@ -6,6 +6,7 @@ import {
   foldEvents,
   parseEventLine,
   selectOrdinarySegment,
+  selectDesignSegment,
   serializeEvent,
 } from '../../../skills/implement-dispatch/scripts/ledger-events.mjs';
 
@@ -39,6 +40,14 @@ describe('canonical ledger events', () => {
     assert.match(line, /^- event: \{"at":/);
     assert.ok(line.endsWith('\n'));
     assert.deepEqual(parseEventLine(line.trimEnd()), start());
+  });
+
+  it('round-trips v2 design repair markers and rejects invalid second events', () => {
+    const designStart = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: '.scratch/plan/2026-09-20-example-design.md', repair: true } };
+    assert.deepEqual(parseEventLine(serializeEvent(designStart).trimEnd()), designStart);
+    assert.throws(() => foldEvents([designStart, { ...approval(2), v: 2, data: { ...approval(2).data, decision: 'approved' } }]), /reconciliation/);
+    const ruling = event(2, 'ruling', { key: 'reconciliation', decision: 'accept-repair', reason: 'reviewed', costIfWrong: 'n/a', state: 'resolved' });
+    assert.equal(foldEvents([designStart, { ...ruling, v: 2 }]).version, 2);
   });
 
   it('rejects unknown properties, versions, types, and non-integer numbers', () => {
@@ -110,6 +119,26 @@ describe('v1 fold', () => {
       event(3, 'task-start', { taskId: 't1', attemptBudget: 1, paths: ['a'], preState: state }),
       event(4, 'task-complete', { taskId: 't1', paths: ['a'], head: oid, preState: state, resultState: state, diffHash: hash }),
     ]), /complete verification/);
+  });
+
+  it('selects newest matching design segment and skips only resolved repair', () => {
+    const design = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: '.scratch/plan/2026-09-20-example-design.md' } };
+    const approval2 = { ...approval(2), v: 2 };
+    const newerId = '22222222-2222-4222-8222-222222222222';
+    const newer = [{ ...design, seq: 3, runId: newerId }, { ...approval2, seq: 4, runId: newerId }];
+    assert.equal(selectDesignSegment([design, approval2, ...newer], hash).runId, newerId);
+
+    const repairId = '33333333-3333-4333-8333-333333333333';
+    const repair = state => [
+      { ...design, seq: 5, runId: repairId, data: { ...design.data, repair: true } },
+      { v: 2, seq: 6, type: 'ruling', runId: repairId, at, data: { key: 'reconciliation', decision: 'repair', reason: 'tail', costIfWrong: 'drift', state } },
+    ];
+    assert.equal(selectDesignSegment([design, approval2, ...newer, ...repair('resolved')], hash).runId, newerId);
+    for (const stateName of ['open', 'superseded']) {
+      const selected = selectDesignSegment([design, approval2, ...newer, ...repair(stateName)], hash);
+      assert.equal(selected.runId, repairId);
+      assert.equal(selected.needsReconciliation, true);
+    }
   });
 
   it('selects only the latest matching unterminated segment', () => {

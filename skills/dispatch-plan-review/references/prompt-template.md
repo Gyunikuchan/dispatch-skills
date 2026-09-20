@@ -1,5 +1,7 @@
 # dispatch-plan-review delegate prompt
 
+This is an implementation-plan review, not a technical-design review: require concrete files, symbols, sequence, error behavior, prerequisite evidence, exact verification, and bounded blast radius.
+
 Filled by preparation via `fill-template.mjs`; `--list` reads the variable bullets below.
 
 ## Prompt template

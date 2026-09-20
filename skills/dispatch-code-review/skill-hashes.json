@@ -7,5 +7,5 @@
   "references/walkthrough-template.md": "5dd4645582183c048601bca6918a6e3113f71461ba0fb496536ee353129ef345",
   "scripts/parse-report.mjs": "4a7223273b684086705a271014e8ea604cad956fa845d5f469e9f7e3542f268f",
   "scripts/prepare-review.mjs": "59ca069b8f19e49f6ccbfedb3af3a7a0857eebd10a73ffa8484a26fa37ac80bf",
-  "scripts/resolve-review-range.mjs": "41dded9b42f4bceeb8a1c0e9ff043408c9782f1229fc50437496f291e380f3bf"
+  "scripts/resolve-review-range.mjs": "147ce16e519a037b0ef94b02ea446b58a8a02b6de72bdf734d8ef6d2ed42047f"
 }

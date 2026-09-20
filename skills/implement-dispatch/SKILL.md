@@ -172,3 +172,7 @@ artifact.
 - `check-consensus.mjs`: exit `0` settles, `1` loops, `2` halts.
 - Budget: `8 + 2 × units`; plan units are proposed-change entries, code units are changed files.
 - Rebuttals use `build-rebuttal-packets.mjs` and only the finding's effective sources/replacements.
+
+## Technical designs
+
+When explicit direction or qualifying architectural evidence calls for phased work, author and settle a technical design through `dispatch-design-review`. Record approval and the next ready increment in the v2 design ledger, then stop at the durable `design-approved-stop` boundary. Increment execution, amendments, and integration remain unavailable until a later capability is delivered. Ordinary plans retain the v1 flow.

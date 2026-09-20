@@ -24,6 +24,8 @@ const METADATA_KEYS = new Set([
   'sectionHashes',
   'pathHashes',
   'reviewedAt',
+  'approvedContentHash',
+  'approvedAt',
 ]);
 
 export function requireNode22(version = process.versions.node) {
@@ -175,7 +177,7 @@ export function validateDispatchMetadata(metadata, { kind = null, slug = null } 
   if (metadata === null) return null;
   assertObjectKeys(metadata, [...METADATA_KEYS], 'dispatch metadata');
   if (metadata.schemaVersion !== 1) throw new Error(`Unsupported dispatch metadata schemaVersion "${metadata.schemaVersion}".`);
-  if (!['plan', 'code'].includes(metadata.kind)) throw new Error('Dispatch metadata kind must be "plan" or "code".');
+  if (!['plan', 'code', 'design'].includes(metadata.kind)) throw new Error('Dispatch metadata kind must be "plan", "code", or "design".');
   if (kind && metadata.kind !== kind) throw new Error(`Dispatch metadata kind "${metadata.kind}" does not match "${kind}".`);
   if (typeof metadata.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(metadata.slug)) {
     throw new Error('Dispatch metadata slug must be kebab-case.');
@@ -200,8 +202,23 @@ export function validateDispatchMetadata(metadata, { kind = null, slug = null } 
   if (!/^sha256:[a-f0-9]{64}$/.test(metadata.contentHash ?? '')) {
     throw new Error('Dispatch metadata contentHash is required.');
   }
+  if (metadata.kind === 'design' && !metadata.sectionHashes) {
+    throw new Error('Design dispatch metadata requires sectionHashes.');
+  }
   if (metadata.kind === 'plan' && !metadata.sectionHashes) {
     throw new Error('Plan dispatch metadata requires sectionHashes.');
+  }
+  if (metadata.kind === 'design') {
+    if (metadata.approvedContentHash !== undefined && metadata.approvedContentHash !== null && !/^sha256:[a-f0-9]{64}$/.test(metadata.approvedContentHash)) {
+      throw new Error('Design approvedContentHash must be a SHA-256 digest or null.');
+    }
+    if (metadata.approvedAt !== undefined && metadata.approvedAt !== null) {
+      if (typeof metadata.approvedAt !== 'string' || new Date(metadata.approvedAt).toISOString() !== metadata.approvedAt) {
+        throw new Error('Design approvedAt must be a canonical UTC timestamp or null.');
+      }
+    }
+  } else if ('approvedContentHash' in metadata || 'approvedAt' in metadata) {
+    throw new Error('Only design dispatch metadata may contain approval fields.');
   }
   if (metadata.kind === 'code') {
     if (!metadata.pathHashes) throw new Error('Code dispatch metadata requires pathHashes.');
@@ -238,6 +255,9 @@ export function validateDispatchMetadata(metadata, { kind = null, slug = null } 
   }
   if (metadata.kind === 'code' && 'sectionHashes' in metadata) {
     throw new Error('Code dispatch metadata contains plan-only fields.');
+  }
+  if (metadata.kind === 'design' && ('pathHashes' in metadata || 'worktreeHash' in metadata || 'baseSha' in metadata || 'headSha' in metadata)) {
+    throw new Error('Design dispatch metadata contains code-only fields.');
   }
   return metadata;
 }
@@ -426,7 +446,7 @@ function missingInvocationState(resolved, tempRoot) {
   if (
     container !== tempRoot ||
     path.basename(resolved) !== 'state.json' ||
-    !/^dispatch-(?:plan|code)-invocation-/.test(path.basename(dir))
+    !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(dir))
   ) return new Error('invocationContext statePath is invalid.');
   return new Error(
     `Invocation state ${dir} no longer exists; it was removed before checkpoint. The prior checkpoint ` +
@@ -463,7 +483,7 @@ export function readInvocationState(context) {
   if (
     stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 ||
     parentStat.isSymbolicLink() || !parentStat.isDirectory() ||
-    !/^dispatch-(?:plan|code)-invocation-/.test(path.basename(parent))
+    !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(parent))
   ) throw new Error('invocationContext statePath is invalid.');
   if (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || (parentStat.mode & 0o077) !== 0)) {
     throw new Error('invocationContext state must be owner-only.');
@@ -513,8 +533,15 @@ export function completeInvocationState(context) {
   return { state: advanced.state, cleanupPath: advanced.cleanupPath };
 }
 
-export function semanticSectionHashes(source) {
-  const body = scanResolutionLog(source, { strict: true }).semanticBody;
+export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
+  let body = scanResolutionLog(source, { strict: true }).semanticBody;
+  for (const section of excludedSections) {
+    const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    body = body.replace(new RegExp(`^##\\s+${escaped}\\s*$[\\s\\S]*?(?=^##\\s+|(?![\\s\\S]))`, 'gm'), '');
+  }
+  if (excludedSections.length > 0) {
+    body = body.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\s+$/, '');
+  }
   const sections = {};
   const headingCounts = new Map();
   let fence = null;

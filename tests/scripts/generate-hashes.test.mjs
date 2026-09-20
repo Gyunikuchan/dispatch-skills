@@ -39,7 +39,7 @@ describe('generate-hashes script', () => {
   });
 
   it('the committed manifests cover dispatch, both review skills, and implement-dispatch, including their templates', () => {
-    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'implement-dispatch']) {
+    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review', 'implement-dispatch']) {
       const manifestPath = path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json');
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       assert.ok('SKILL.md' in manifest, `${skill} manifest omits SKILL.md`);

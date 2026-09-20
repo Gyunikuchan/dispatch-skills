@@ -89,11 +89,12 @@ function validateData(event) {
   object(data, `${type}.data`);
   switch (type) {
     case 'run-start':
-      exact(data, ['governingPath', 'governingHash', 'rootSlug', 'action', 'baseline'], [], 'run-start.data');
+      exact(data, ['governingPath', 'governingHash', 'rootSlug', 'action', 'baseline'], ['repair'], 'run-start.data');
       repositoryPath(data.governingPath, 'run-start.data.governingPath', { allowScratch: true });
       if (!SHA256.test(data.governingHash)) throw new Error('run-start.data.governingHash must be sha256');
       string(data.rootSlug, 'run-start.data.rootSlug');
-      enumeration(data.action, ['ordinary'], 'run-start.data.action');
+      enumeration(data.action, ['ordinary', 'design'], 'run-start.data.action');
+      if (data.repair !== undefined && typeof data.repair !== 'boolean') throw new Error('run-start.data.repair must be boolean');
       exact(data.baseline, ['commit', 'repositoryState', 'dirtyPaths'], [], 'run-start.data.baseline');
       if (!OBJECT_ID.test(data.baseline.commit)) throw new Error('run-start baseline commit must be an object id');
       if (!SHA256.test(data.baseline.repositoryState)) throw new Error('run-start repositoryState must be sha256');
@@ -102,7 +103,7 @@ function validateData(event) {
       break;
     case 'run-complete':
       exact(data, ['result', 'evidenceRefs'], [], 'run-complete.data');
-      enumeration(data.result, ['complete', 'stable-failure', 'aborted'], 'run-complete.data.result');
+      enumeration(data.result, ['complete', 'stable-failure', 'aborted', 'design-approved-stop'], 'run-complete.data.result');
       strings(data.evidenceRefs, 'run-complete.data.evidenceRefs');
       break;
     case 'task-start':
@@ -151,7 +152,7 @@ function validateData(event) {
       break;
     case 'review':
       exact(data, ['kind', 'round', 'counts', 'checkpointRef'], [], 'review.data');
-      enumeration(data.kind, ['plan', 'code'], 'review.data.kind');
+      enumeration(data.kind, ['plan', 'code', 'design'], 'review.data.kind');
       if (!Number.isSafeInteger(data.round) || data.round < 1) throw new Error('review round must be positive');
       exact(data.counts, ['accepted', 'rejected', 'resolvedDispute', 'disputed', 'pendingConfirmation', 'unknown'], [], 'review.data.counts');
       for (const count of Object.values(data.counts)) if (!Number.isSafeInteger(count) || count < 0) throw new Error('review counts must be non-negative integers');
@@ -168,12 +169,15 @@ function validateData(event) {
 
 export function validateEvent(event) {
   exact(event, ['v', 'seq', 'type', 'runId', 'at', 'data'], [], 'event');
-  if (event.v !== 1) throw new Error(`Unknown ledger version ${event.v}`);
+  if (![1, 2].includes(event.v)) throw new Error(`Unknown ledger version ${event.v}`);
+  if (event.type === 'run-start' && event.v === 2 && event.data?.action !== 'design') throw new Error('Unknown ledger version 2 for non-design segment');
+  if (event.type === 'run-start' && event.data?.action === 'design' && event.v !== 2) throw new Error('Design segments require ledger version 2');
   if (!Number.isSafeInteger(event.seq) || event.seq < 1) throw new Error('event.seq must be a positive integer');
   if (!EVENT_TYPES.has(event.type)) throw new Error(`Unknown event type ${event.type}`);
   if (!UUID.test(event.runId)) throw new Error('event.runId must be a UUID');
   if (!UTC_MILLIS.test(event.at) || Number.isNaN(Date.parse(event.at))) throw new Error('event.at must be UTC RFC 3339 with milliseconds');
   validateData(event);
+  if (event.v === 2 && event.type === 'task-start') throw new Error('v2 design segments cannot contain implementation tasks');
   return event;
 }
 
@@ -197,7 +201,7 @@ function taskFor(state, taskId) {
 
 export function foldEvents(events) {
   const state = {
-    runId: null, terminal: false, needsReconciliation: false, completedTasks: new Map(),
+    runId: null, version: undefined, terminal: false, needsReconciliation: false, completedTasks: new Map(),
     tasks: new Map(), rulings: new Map(), reviews: [], latestSeq: 0, governingHash: null,
     approved: false,
   };
@@ -214,10 +218,15 @@ export function foldEvents(events) {
     } else if (event.runId !== state.runId) {
       throw new Error('Segment runId changed without run-start');
     }
-    if (eventIndex === 1 && event.type !== 'approval' &&
+    if (eventIndex === 1 && state.runStart?.action === 'ordinary' && event.type !== 'approval' &&
         !(event.type === 'ruling' && event.data.key === 'reconciliation')) {
-      throw new Error('approval must immediately follow run-start');
+      throw new Error('approval must immediately follow ordinary run-start');
     }
+    if (eventIndex === 1 && state.runStart?.repair && !(event.type === 'ruling' && event.data.key === 'reconciliation')) {
+      throw new Error('repair run-start must be followed by reconciliation ruling');
+    }
+    if (event.v !== state.version && state.version !== undefined) throw new Error('Ledger version cannot change within a segment');
+    if (eventIndex === 0) state.version = event.v;
     state.latestSeq = event.seq;
     switch (event.type) {
       case 'task-start': {
@@ -281,6 +290,7 @@ export function foldEvents(events) {
         break;
       case 'approval':
         state.approved = event.data.decision === 'approved';
+        state.approval = event.data;
         break;
       case 'review':
         state.reviews.push(event.data);
@@ -312,7 +322,18 @@ export function selectOrdinarySegment(events, governingHash) {
   const segments = foldSegments(events);
   for (let index = segments.length - 1; index >= 0; index--) {
     const segment = segments[index];
-    if (!segment.terminal && segment.governingHash === governingHash) return segment;
+    if (!segment.terminal && segment.runStart?.action === 'ordinary' && segment.governingHash === governingHash) return segment;
+  }
+  return null;
+}
+
+export function selectDesignSegment(events, governingHash) {
+  const segments = foldSegments(events);
+  for (let index = segments.length - 1; index >= 0; index--) {
+    const segment = segments[index];
+    if (segment.runStart?.action !== 'design' || segment.governingHash !== governingHash) continue;
+    if (segment.runStart.repair && segment.rulings?.get('reconciliation')?.state === 'resolved') continue;
+    return segment;
   }
   return null;
 }

@@ -77,7 +77,7 @@ export function buildStandaloneSourceMap({ round, kind, sources, extra = {} }) {
   return mergeExtra(map, extra, round, '--source');
 }
 
-const KINDS = ['plan-review', 'code-review'];
+const KINDS = ['plan-review', 'code-review', 'design-review'];
 const SOURCE_PATTERN = /^([a-z][a-z0-9-]*):(0|[1-9][0-9]*)$/;
 
 function assertRound(round) {

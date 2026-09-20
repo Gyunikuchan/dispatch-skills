@@ -13,6 +13,8 @@ import {
   readLedger,
   repairTornTail,
   resumeOrdinary,
+  resumeDesign,
+  designRootSlug,
   slugFromPlanPath,
 } from '../../../skills/implement-dispatch/scripts/ledger.mjs';
 import { materializedFingerprint } from '../../../skills/implement-dispatch/scripts/git-state.mjs';
@@ -204,6 +206,42 @@ describe('ledger I/O and resume', () => {
     assert.equal(slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2.md'), 'v0-4-phase2');
     assert.throws(() => slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2-walkthrough.md'), /must match/);
     assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /must match/);
+  });
+
+  it('normalizes Windows design paths and rejects reserved roots', () => {
+    assert.equal(designRootSlug('.scratch\\plan\\2026-09-20-platform-design.md'), 'platform');
+    assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-i01-one-design.md'), null);
+    assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-integration-design.md'), null);
+  });
+
+  it('requires artifact and ledger approval revisions for design resume', () => {
+    const designPath = '.scratch/plan/2026-09-20-example-design.md';
+    const source = '# Design\n\n## Architecture\nA\n\n## Execution Status\nReady\n';
+    const hash = governingHash(source, { kind: 'design' }).hash;
+    const designRunId = '22222222-2222-4222-8222-222222222222';
+    const events = [
+      { ...runStart(hash, designPath), v: 2, runId: designRunId, data: { ...runStart(hash, designPath).data, action: 'design' } },
+      { v: 2, type: 'approval', runId: designRunId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
+      { v: 2, type: 'run-complete', runId: designRunId, at, data: { result: 'design-approved-stop', evidenceRefs: ['design'] } },
+    ];
+    for (const event of events) appendEvent(ledgerPath, event);
+    const metadata = { approvedContentHash: hash };
+    assert.equal(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata }, repoRoot: repo }).status, 'resumable');
+    assert.equal(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata: { approvedContentHash: state } }, repoRoot: repo }).status, 'needs-reconciliation');
+  });
+
+  it('rejects increment-shaped plans as ordinary resume artifacts', () => {
+    assert.throws(() => slugFromPlanPath('.scratch/plan/2026-09-20-root-i01-model-plan.md'), /reserved for phased artifacts/);
+  });
+
+  it('blocks approval-less and aborted design segments', () => {
+    const designPath = '.scratch/plan/2026-09-20-example-design.md';
+    const source = '# Design\n\nBody\n';
+    const hash = governingHash(source, { kind: 'design' }).hash;
+    const metadata = { approvedContentHash: hash };
+    const designRunId = '22222222-2222-4222-8222-222222222222';
+    appendEvent(ledgerPath, { ...runStart(hash, designPath), v: 2, runId: designRunId, data: { ...runStart(hash, designPath).data, action: 'design' } });
+    assert.match(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata }, repoRoot: repo }).diagnostic, /not an approved durable stop/);
   });
 
   it('maps strict governing-plan scan failures to reconciliation', () => {

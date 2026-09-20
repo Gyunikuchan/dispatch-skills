@@ -35,6 +35,7 @@ Skills live in `skills/` with `SKILL.md` (agent contract) and `README.md` (human
 
 ```
 skills/dispatch/                 runner + provider cascade; scripts/ and references/
+skills/dispatch-design-review/   technical-design review criteria and adjudication
 skills/dispatch-plan-review/     plan review criteria and adjudication
 skills/dispatch-code-review/     code review criteria and adjudication
 skills/implement-dispatch/       control flow: plan → review → implement → review → consensus
@@ -48,8 +49,8 @@ tests/                           mirrors the tree under test: tests/skills/<skil
 ### Unidirectional Dependency Flow
 
 ```
-implement-dispatch → dispatch-plan-review, dispatch-code-review, dispatch
-dispatch-plan-review, dispatch-code-review → dispatch
+implement-dispatch → dispatch-design-review, dispatch-plan-review, dispatch-code-review, dispatch
+dispatch-design-review, dispatch-plan-review, dispatch-code-review → dispatch
 dispatch → (nothing)
 ```
 

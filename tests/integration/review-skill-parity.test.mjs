@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import { extractTemplate } from '../../skills/dispatch/scripts/fill-template.mjs';
+import { parseReport as parseDesignReport } from '../../skills/dispatch-design-review/scripts/parse-report.mjs';
 import {
   CODE_LOCUS_PATTERN,
   CODE_TAGS,
@@ -19,8 +20,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const PLAN_REVIEW_PATH = 'skills/dispatch-plan-review/SKILL.md';
 const CODE_REVIEW_PATH = 'skills/dispatch-code-review/SKILL.md';
+const DESIGN_REVIEW_PATH = 'skills/dispatch-design-review/SKILL.md';
 const PLAN_PROMPT_PATH = 'skills/dispatch-plan-review/references/prompt-template.md';
 const CODE_PROMPT_PATH = 'skills/dispatch-code-review/references/prompt-template.md';
+const DESIGN_PROMPT_PATH = 'skills/dispatch-design-review/references/prompt-template.md';
 const PLAN_REVIEW_README_PATH = 'skills/dispatch-plan-review/README.md';
 const CODE_REVIEW_README_PATH = 'skills/dispatch-code-review/README.md';
 const PLAN_SCHEMA_PATH = 'skills/dispatch-plan-review/references/report-schema.json';
@@ -101,6 +104,11 @@ function extractReadmeAxes(text) {
 }
 
 describe('review skill prompt template parity', () => {
+  it('design review exposes architecture-specific prompt material', () => {
+    const text = readFileSync(path.join(REPO_ROOT, DESIGN_PROMPT_PATH), 'utf8');
+    assert.match(text, /architecture|dependency graph|boundaries/i);
+    assert.equal(parseDesignReport(JSON.stringify({ status: 'CLEAN', findings: [] })).reportKind, 'design');
+  });
   const planText = readSkill(PLAN_PROMPT_PATH);
   const codeText = readSkill(CODE_PROMPT_PATH);
 

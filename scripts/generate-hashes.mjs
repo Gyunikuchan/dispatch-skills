@@ -28,7 +28,7 @@ const skillsRoot = path.resolve(currentDir, '..', 'skills');
 // A skill is listed here only when something verifies its manifest: `dispatch` checks its own via
 // `assertSkillIntegrity`, the review skills' templates are checked by `fill-template.mjs`, and
 // `implement-dispatch`'s own resolver checks its manifest at the top of `resolve-flow.mjs`'s `main()`.
-const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'implement-dispatch'];
+const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review', 'implement-dispatch'];
 
 const argv = process.argv.slice(2);
 let check = false;

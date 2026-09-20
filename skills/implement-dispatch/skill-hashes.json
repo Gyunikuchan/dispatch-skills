@@ -1,13 +1,14 @@
 {
-  "SKILL.md": "7b56e21dc45bd97c92faab424010cfff950a2a331735500788392163c0ea74bf",
+  "SKILL.md": "217d8460574a4e7e0c9641cab6270681280a6bdbe6eca73c6f8e2ced90e93490",
+  "references/design-contract.md": "da3bd0f77f3b610e5e88ba154a7107921532cc149a43b31d72bea4a8fcb227d4",
   "references/implementation-delegate-contract.md": "cd7d1b9b3e0e342ea1f7ec48125bec47078088ba5f05f663d976aa292da0fd63",
   "references/ledger-contract.md": "86cfcceadd292838a471d5e7e207917ea074663aa165e5544ce0d5b733496dac",
   "references/verification-contract.md": "7e03a6cb78053f17e4d4e7fe4365f45664f00a4c3db600ccfd2ccd23f47194d7",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
   "scripts/git-state.mjs": "14b5802369477662564cad57768d15eb73252628b83560f5c8b9875f410fa74a",
   "scripts/implementation-outcome.mjs": "11adb91fb3cf4848a3e47631c26a2bd5c437c799b14ae66355fa183a8437476a",
-  "scripts/ledger-events.mjs": "55a9263766c738fdd67705a7ab7fe37fc3ff71f23ab6ccb45b0ab420f6574cc4",
-  "scripts/ledger.mjs": "f15e01613a5b3397d92f238b0dd75d4fb72dccfff166146db9d1deacc933600c",
+  "scripts/ledger-events.mjs": "ad899b5bd5de0653a69b80819a1813522f0eaaa36e05b8cc2eff993055ef316f",
+  "scripts/ledger.mjs": "2338c9a9a4eee27997d7bf879399ba2ed034f0fc2535da48e06d89803b2d47de",
   "scripts/resolve-flow.mjs": "ca2fe8cabed37cd8ce9e89c69cd264abe5e6242cf6e85ad747098c2a4c9cffb6",
   "scripts/verification-evidence.mjs": "2c3baf800b9892d905f1193144e51c395c62db8cbb2e992a639bedee5186ebcd"
 }

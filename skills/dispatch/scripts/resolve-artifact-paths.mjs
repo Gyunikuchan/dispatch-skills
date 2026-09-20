@@ -47,6 +47,11 @@ export const SCRATCH_DIR = '.scratch/plan';
 
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const PHASED_KINDS = Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']);
+export const RESERVED_SLUG_PATTERN = /(?:-design|-integration(?:-walkthrough)?|-i\d{2}-.+)$/;
+export function isReservedOrdinarySlug(slug) {
+  return typeof slug === 'string' && RESERVED_SLUG_PATTERN.test(slug);
+}
 
 /** Antigravity conversation ids are opaque tokens; this rejects anything that could
  *  traverse out of the brain dir (e.g. `../`) when interpolated into a path.join. */
@@ -81,11 +86,17 @@ export function isValidDate(value) {
  * @param {string} slug - kebab-case
  * @returns {{ plan: string, walkthrough: string }}
  */
-export function buildScratchPaths(date, slug) {
-  return {
+export function buildScratchPaths(date, slug, kind = 'plan') {
+  const paths = {
     plan: path.posix.join(SCRATCH_DIR, `${date}-${slug}.md`),
     walkthrough: path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
+    design: path.posix.join(SCRATCH_DIR, `${date}-${slug}-design.md`),
+    'increment-plan': path.posix.join(SCRATCH_DIR, `${date}-${slug}-plan.md`),
+    'increment-walkthrough': path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
+    'integration-walkthrough': path.posix.join(SCRATCH_DIR, `${date}-${slug}-integration-walkthrough.md`),
   };
+  if (!Object.hasOwn(paths, kind)) throw new Error(`Unknown artifact kind "${kind}"`);
+  return kind === 'plan' || kind === 'walkthrough' ? paths : paths[kind];
 }
 
 export function canonicalRepositoryRoot(
@@ -278,7 +289,7 @@ export function defaultNativeCandidateRoots({ platform = process.platform, env =
   return roots;
 }
 
-const NATIVE_FILENAME = { plan: 'implementation_plan.md', walkthrough: 'walkthrough.md' };
+const NATIVE_FILENAME = { plan: 'implementation_plan.md', walkthrough: 'walkthrough.md', design: 'technical_design.md' };
 
 export function isNativeArtifactPath(file, kind = 'plan', { roots = defaultNativeCandidateRoots() } = {}) {
   const absolute = path.resolve(file);
@@ -491,6 +502,23 @@ export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir()) {
  * @returns {{ tier: 'native'|'scratch-existing'|'temp-existing'|'scratch-new', path: string, exists: boolean }}
  */
 export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), native: nativeOptions = {} } = {}) {
+  if (PHASED_KINDS.includes(kind)) {
+    const resolvedDate = date ?? localDate();
+    const canonical = buildScratchPaths(resolvedDate, slug, kind);
+    const absolute = path.resolve(projectRoot, canonical);
+    if (existsSync(absolute)) {
+      const source = fs.readFileSync(absolute, 'utf8');
+      const metadataKind = /^---\n\{\s*"dispatch"\s*:\s*\{[\s\S]*?"kind"\s*:\s*"([^"]+)"/m.exec(source)?.[1] ?? null;
+      if (!metadataKind) {
+        throw new Error(`Canonical ${kind} path is occupied by a metadata-less legacy artifact; relocate it or choose a non-colliding slug.`);
+      }
+      if (metadataKind !== kind) {
+        throw new Error(`Canonical ${kind} path is occupied by metadata kind "${metadataKind}"; choose a non-colliding slug.`);
+      }
+      return { tier: 'scratch-existing', path: canonical, exists: true, scratchOnly: true };
+    }
+    return { tier: 'scratch-new', path: canonical, exists: false, scratchOnly: true };
+  }
   const native = findNativeArtifact(kind, nativeOptions);
   if (native) return { tier: 'native', path: native, exists: true };
 
@@ -523,6 +551,12 @@ export function resolveArtifacts({
   // See findExistingScratchArtifact for why `typeof` is checked before SLUG_PATTERN.
   if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
+  }
+  if (['plan', 'walkthrough'].some(kind => kinds.includes(kind)) && isReservedOrdinarySlug(slug)) {
+    throw new Error(`Slug "${slug}" is reserved for phased artifacts; choose a non-reserved ordinary slug.`);
+  }
+  if (kinds.some(kind => ['design', 'integration-walkthrough'].includes(kind)) && isReservedOrdinarySlug(slug)) {
+    throw new Error(`Design root slug "${slug}" contains a reserved phased suffix; choose an unambiguous root slug.`);
   }
   const resolvedDate = date ?? localDate();
   if (!isValidDate(resolvedDate)) {

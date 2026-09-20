@@ -19,7 +19,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * `implement-dispatch` (their sibling, not their dependency).
  */
 
-const DOWNSTREAM_NAMES = ['implement-dispatch', 'dispatch-plan-review', 'dispatch-code-review'];
+const DOWNSTREAM_NAMES = ['implement-dispatch', 'dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review'];
 const DOWNSTREAM_PATTERN = new RegExp(`\\b(${DOWNSTREAM_NAMES.join('|')})\\b`, 'g');
 
 const DISPATCH_DIR = path.join(REPO_ROOT, 'skills', 'dispatch');
@@ -103,7 +103,7 @@ describe('dependency direction guard', () => {
   });
 
   it('dispatch-plan-review/ and dispatch-code-review/ never name implement-dispatch', () => {
-    const reviewSkillDirs = ['dispatch-plan-review', 'dispatch-code-review'].map((name) =>
+    const reviewSkillDirs = ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review'].map((name) =>
       path.join(REPO_ROOT, 'skills', name),
     );
     const offenders = reviewSkillDirs.flatMap((dir) =>

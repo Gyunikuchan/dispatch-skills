@@ -92,6 +92,8 @@ describe('dispatch flag parity (--help vs SKILL.md vs README.md)', () => {
 // SKILL.md Troubleshooting points an agent at `<runner>-run.mjs --help` as the diagnostic surface,
 // so a spelling the runner accepts but never prints is a dead end mid-incident. Each runner exports
 // its own CLI_FLAGS rather than having this test scrape source for `arg === '--x'` comparisons.
+const DESIGN_PREPARE = path.join(REPO_ROOT, 'skills', 'dispatch-design-review', 'scripts', 'prepare-review.mjs');
+
 const RUNNERS = [
   ['claude-run.mjs', claudeFlags],
   ['agy-run.mjs', agyFlags],
@@ -107,6 +109,14 @@ function runnerHelpSpellings(script) {
   assert.equal(res.status, 0, res.stderr);
   return new Set([...res.stdout.matchAll(/--?[a-z][a-z-]*/g)].map(([f]) => f));
 }
+
+describe('design preparation adapter parity', () => {
+  it('supports --help', () => {
+    const result = spawnSync(process.execPath, [DESIGN_PREPARE, '--help'], { encoding: 'utf8' });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Usage|prepare/i);
+  });
+});
 
 describe('runner flag parity (--help vs the flags each runner accepts)', () => {
   for (const [script, flags] of RUNNERS) {

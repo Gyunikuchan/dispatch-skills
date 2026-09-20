@@ -23,6 +23,7 @@ import {
   getCurrentBranch,
   defaultNativeCandidateRoots,
   isNativeArtifactPath,
+  isReservedOrdinarySlug,
   findExistingScratchArtifact,
   findExistingTempArtifact,
   resolveArtifactPath,
@@ -47,6 +48,19 @@ describe('buildScratchPaths', () => {
     const paths = buildScratchPaths('2026-09-11', 'auth-v2');
     assert.equal(paths.plan, '.scratch/plan/2026-09-11-auth-v2.md');
     assert.equal(paths.walkthrough, '.scratch/plan/2026-09-11-auth-v2-walkthrough.md');
+    assert.equal(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-plan'), '.scratch/plan/2026-09-11-auth-i01-model-plan.md');
+    assert.equal(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-walkthrough'), '.scratch/plan/2026-09-11-auth-i01-model-walkthrough.md');
+    assert.equal(resolveArtifacts({
+      slug: 'auth-i01-model', slugSource: 'explicit', date: '2026-09-11',
+      kinds: ['increment-plan'], repositoryRoot: null,
+    })['increment-plan'].path, '.scratch/plan/2026-09-11-auth-i01-model-plan.md');
+  });
+
+  it('reserves phased identities from ordinary and design root slugs', () => {
+    for (const slug of ['root-design', 'root-integration', 'root-integration-walkthrough', 'root-i01-model']) {
+      assert.equal(isReservedOrdinarySlug(slug), true, slug);
+      assert.throws(() => resolveArtifacts({ slug, slugSource: 'branch', kinds: ['plan'] }), /reserved/);
+    }
   });
 
   describe('ledger path resolution', () => {
@@ -421,6 +435,27 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
         rmSync(tempDir, { recursive: true, force: true });
       }
     });
+  });
+
+  it('resolveArtifactPath reuses an existing canonical design', () => {
+    const design = path.join(projectRoot, '.scratch', 'plan', '2026-09-11-platform-design.md');
+    writeFileSync(design, '---\n{"dispatch":{"kind":"design"}}\n---\n# design');
+    assert.deepEqual(resolveArtifactPath('design', {
+      slug: 'platform', date: '2026-09-11', projectRoot,
+    }), {
+      tier: 'scratch-existing',
+      path: '.scratch/plan/2026-09-11-platform-design.md',
+      exists: true,
+      scratchOnly: true,
+    });
+  });
+
+  it('rejects a metadata-less canonical design occupant', () => {
+    const design = path.join(projectRoot, '.scratch', 'plan', '2026-09-11-platform-design.md');
+    writeFileSync(design, '# legacy ordinary plan');
+    assert.throws(() => resolveArtifactPath('design', {
+      slug: 'platform', date: '2026-09-11', projectRoot,
+    }), /metadata-less legacy artifact/);
   });
 
   it('resolveArtifactPath falls back to scratch-new when nothing exists', () => {

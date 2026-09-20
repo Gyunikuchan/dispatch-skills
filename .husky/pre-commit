@@ -3,17 +3,17 @@ set -e
 
 # Re-generate skill-hashes.json when skill files change.
 
-# Hashed skills: dispatch, the two review skills, and implement-dispatch — all four ship a
+# Hashed skills: dispatch, all review skills, and implement-dispatch — each ships a
 # skill-hashes.json manifest. Keep in sync with HASHED_SKILLS in scripts/generate-hashes.mjs.
 # ERE (grep -E): `\|` and `\?` in a basic-regex pattern are GNU extensions that degrade to
 # literals on BSD/BusyBox grep, silently skipping regeneration.
-SKILL_PATTERN='skills/(implement-)?dispatch(-code-review|-plan-review)?/(SKILL\.md|references/|scripts/)'
+SKILL_PATTERN='skills/(implement-)?dispatch(-code-review|-plan-review|-design-review)?/(SKILL\.md|references/|scripts/)'
 
 if git diff --cached --name-only | grep -qE "$SKILL_PATTERN"; then
   node scripts/generate-hashes.mjs
 
   # Stage the updated manifest so it's included in the commit.
-  git add skills/dispatch/skill-hashes.json skills/dispatch-code-review/skill-hashes.json skills/dispatch-plan-review/skill-hashes.json skills/implement-dispatch/skill-hashes.json
+  git add skills/dispatch/skill-hashes.json skills/dispatch-code-review/skill-hashes.json skills/dispatch-plan-review/skill-hashes.json skills/dispatch-design-review/skill-hashes.json skills/implement-dispatch/skill-hashes.json
 fi
 
 # Validate all found dispatch config files.

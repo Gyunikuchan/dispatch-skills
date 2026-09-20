@@ -121,20 +121,26 @@ export function captureReviewSnapshot({ repoRoot = process.cwd(), scope, include
     }
     paths = [...new Set([...paths, ...includeWorkingTree])].sort();
   }
+  const readWorkingPath = (file) => {
+    const absolute = path.join(repoRoot, file);
+    return fs.lstatSync(absolute).isSymbolicLink()
+      ? Buffer.from(`symlink\0${fs.readlinkSync(absolute)}`)
+      : fs.readFileSync(absolute);
+  };
   const pathHashes = {};
   for (const file of paths) {
     if (scope.kind === 'working-tree') {
       const tracked = git(repoRoot, ['ls-files', '--error-unmatch', '--', file], { allowFailure: true });
       pathHashes[file] = tracked.status === 0 && headSha
         ? digest([git(repoRoot, ['diff', '--binary', 'HEAD', '--', file]).stdout])
-        : digest([fs.readFileSync(path.join(repoRoot, file))]);
+        : digest([readWorkingPath(file)]);
     } else {
       const chunks = [git(repoRoot, ['diff', '--binary', scope.range, '--', file]).stdout];
       if (includeWorkingTree.includes(file)) {
         const tracked = git(repoRoot, ['ls-files', '--error-unmatch', '--', file], { allowFailure: true });
         chunks.push(tracked.status === 0
           ? git(repoRoot, ['diff', '--binary', 'HEAD', '--', file]).stdout
-          : fs.readFileSync(path.join(repoRoot, file)));
+          : readWorkingPath(file));
       }
       pathHashes[file] = digest(chunks);
     }

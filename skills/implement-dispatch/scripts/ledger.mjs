@@ -7,22 +7,31 @@ import path from 'node:path';
 
 import { isMainModule } from '../../dispatch/scripts/common.mjs';
 import { semanticSectionHashes } from '../../dispatch/scripts/review-preparation.mjs';
-import { ledgerNamespacePath } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
+import { isReservedOrdinarySlug, ledgerNamespacePath } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
 import { materializedFingerprint } from './git-state.mjs';
 import {
   foldSegments,
   parseEventLine,
   selectOrdinarySegment,
+  selectDesignSegment,
   serializeEvent,
 } from './ledger-events.mjs';
 
 export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
+export const CANONICAL_DESIGN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
+export function designRootSlug(planPath) {
+  const match = CANONICAL_DESIGN.exec(String(planPath).replaceAll('\\', '/').replace(/^\.\//, ''));
+  return match && !isReservedOrdinarySlug(match[1]) ? match[1] : null;
+}
 
 export function slugFromPlanPath(planPath) {
   const normalized = planPath.replaceAll('\\', '/').replace(/^\.\//, '');
   const match = CANONICAL_PLAN.exec(normalized);
   if (!match) {
     throw new Error('Resume plan path must match .scratch/plan/<yyyy-mm-dd>-<slug>.md');
+  }
+  if (isReservedOrdinarySlug(match[1])) {
+    throw new Error(`Resume plan slug "${match[1]}" is reserved for phased artifacts; use the explicit design-run artifact path.`);
   }
   return match[1];
 }
@@ -202,16 +211,16 @@ export function repairTornTail(ledgerPath) {
     const repairEvents = [];
     if (segment.terminal) {
       repairEvents.push({
-        v: 1,
+        v: segment.version ?? 1,
         seq: nextSeq,
         type: 'run-start',
         runId: reconciliationRunId,
         at: new Date().toISOString(),
-        data: segment.runStart,
+        data: { ...segment.runStart, repair: true },
       });
     }
     repairEvents.push({
-      v: 1,
+      v: segment.version ?? 1,
       seq: nextSeq + repairEvents.length,
       type: 'ruling',
       runId: reconciliationRunId,
@@ -279,15 +288,22 @@ export function appendEvent(ledgerPath, event) {
   }
 }
 
-export function governingHash(planSource) {
+export function governingHash(planSource, { kind = 'plan' } = {}) {
   try {
-    return { status: 'ok', hash: semanticSectionHashes(planSource).contentHash };
+    return {
+      status: 'ok',
+      hash: semanticSectionHashes(planSource, {
+        excludedSections: kind === 'design' ? ['Execution Status'] : [],
+      }).contentHash,
+    };
   } catch (error) {
     return { status: 'needs-reconciliation', hash: null, diagnostic: `Governing plan cannot be normalized: ${error.message}` };
   }
 }
 
 export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
+  const designMatch = CANONICAL_DESIGN.exec(planPath.replaceAll('\\', '/').replace(/^\.\//, ''));
+  if (designMatch) return resumeDesign({ ledgerPath, planPath, planSource, repoRoot });
   const slug = slugFromPlanPath(planPath);
   const hash = governingHash(planSource);
   if (hash.status !== 'ok') return { ...hash, slug, requiresFlowConfirmation: true };
@@ -332,6 +348,28 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
     nextAction,
     requiresFlowConfirmation: true,
   };
+}
+
+export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
+  const artifact = typeof planSource === 'string'
+    ? { source: planSource, metadata: null }
+    : planSource;
+  const hash = governingHash(artifact.source, { kind: 'design' });
+  if (hash.status !== 'ok') return { ...hash, status: 'needs-reconciliation', requiresFlowConfirmation: true };
+  const read = readLedger(ledgerPath);
+  if (read.status !== 'ok') return { ...read, governingHash: hash.hash, requiresFlowConfirmation: true };
+  const segment = selectDesignSegment(read.events, hash.hash);
+  if (!segment) return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'No matching design segment.', requiresFlowConfirmation: true };
+  if (segment.needsReconciliation || !segment.approved || (segment.terminal && segment.result !== 'design-approved-stop')) {
+    return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'Latest design segment is not an approved durable stop.', requiresFlowConfirmation: true };
+  }
+  const approvedHash = artifact.metadata?.approvedContentHash;
+  const ledgerApproval = segment.approval?.governingHash;
+  if (approvedHash !== hash.hash || ledgerApproval !== hash.hash) {
+    return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'Design approval revision is stale or missing.', requiresFlowConfirmation: true };
+  }
+  const result = segment.result === 'design-approved-stop' ? 'design-approved-stop' : 'design-review';
+  return { status: 'resumable', kind: 'design', planPath, governingHash: hash.hash, segment, nextAction: result === 'design-approved-stop' ? 'author-next-increment' : 'design-review', requiresFlowConfirmation: true };
 }
 
 function help() {

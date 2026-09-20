@@ -44,6 +44,8 @@ const GUARDED = [
   'skills/dispatch-plan-review/README.md',
   'skills/dispatch-code-review/SKILL.md',
   'skills/dispatch-code-review/README.md',
+  'skills/dispatch-design-review/SKILL.md',
+  'skills/dispatch-design-review/README.md',
   'skills/implement-dispatch/SKILL.md',
   'skills/implement-dispatch/README.md',
 ];
@@ -53,7 +55,7 @@ const GUARDED = [
  * doc) rather than restating the naming convention inline, so there is exactly one
  * place — `skills/dispatch/references/alignment.md` — that can drift.
  */
-const MUST_REFERENCE_RESOLVER = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md'];
+const MUST_REFERENCE_RESOLVER = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md', 'skills/dispatch-design-review/SKILL.md'];
 const RESOLVER_MENTIONS = ['resolve-artifact-paths.mjs', 'alignment.md'];
 
 /**

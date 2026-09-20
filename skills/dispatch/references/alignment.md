@@ -96,3 +96,7 @@ read-only OS-temp inputs and must not expose source-map session handles.
 
 Successful `implement-dispatch` runs warn before moving scratch artifacts: `The resolved plan and
 walkthrough are moving to OS temp and may be deleted by the OS.` Report every destination.
+
+## Technical-design review
+
+`design-review` uses the shared preparation, dispatch, parsing, rebuttal, consensus, and checkpoint machinery with a distinct architectural rubric. Technical designs remain scratch-only and are retained at the durable approval stop; ordinary successful relocation is unchanged.

@@ -9,7 +9,7 @@ const ENRICHED_PREFIX =
   /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER|ACTIONABLE)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
 const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
 const APPLICATION_LINE = /^\s+[-*]\s+application:\s*(.*)$/;
-const SOURCE_KEY = /^(plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
+const SOURCE_KEY = /^(plan-review|code-review|design-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const SOURCE_STATUSES = new Set(['target', 'reserve', 'fallback', 'replacement']);
 const APPLICATION_STATES = new Set(['unapplied', 'materialized', 'applied', 'superseded']);
 const APPLICATION_SCOPES = new Set(['in-scope', 'adjacent']);
@@ -113,7 +113,7 @@ function parseSourceMap(line, { strict, roundNumber }) {
 }
 
 const SOURCE_RECORD_FIELDS = ['candidateIndex', 'effort', 'model', 'provider', 'session', 'status', 'substitutesFor'];
-const SOURCE_KEY_PARTS = /^(plan-review|code-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
+const SOURCE_KEY_PARTS = /^(plan-review|code-review|design-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
 
 // Names the first failing field so a hand-edited or generated record is fixable in one pass.
 function sourceRecordProblem(key, source, roundNumber) {

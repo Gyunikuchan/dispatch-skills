@@ -1,0 +1,11 @@
+{
+  "SKILL.md": "f34749ef899dcf7aa177659d4915a6bd62d574d85d9f369f4b80a3fc217b52ef",
+  "references/design-template.md": "6e28aef30153528d300f6dc70f9912c563346118d0993f9aa4bb3f79e571003a",
+  "references/prompt-template.md": "12bd6cd107711bed8330d2e411f7e8eed40919c4c08c5d69fab4aced6a08165e",
+  "references/rebuttal-schema.json": "2baf7714de607a20acd925b9f734789ef09b342a2eef831a5397f00b8ebcaf0a",
+  "references/rebuttal-template.md": "fe225055ce4fb4527d8c4e13c66b3bbf3b1393b30a9a740c6abd4ca1d2d38baa",
+  "references/report-schema.json": "12bfe4dc888b5ae9711c81cf540a3e5391d34b92378a8f9f0ce9d8482a5ae117",
+  "scripts/design-lint.mjs": "422fb34e9e3b1e0a2d75e4135a6376809540efbebc6ad9cbd2194bc396ef81f7",
+  "scripts/parse-report.mjs": "106b37bf47f2193e95e53fa3da3260248c6deeef08d3ade40ca71a183da9fb7d",
+  "scripts/prepare-review.mjs": "f272e80154732a4a2f6a91211a572460c30005ce1cb4b458477666e8e3b88ca4"
+}
