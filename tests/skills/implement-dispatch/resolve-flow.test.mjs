@@ -9,6 +9,7 @@ import { KNOWN_PROVIDERS } from '../../../skills/dispatch/scripts/common.mjs';
 
 import {
   resolveFlow,
+  resolveImplementationEscalation,
   resolveLevelEntry,
   resolveLevelScalar,
   resolvePlatformCandidates,
@@ -17,6 +18,7 @@ import {
   selectLevel,
   normalizePin,
   parsePins,
+  parseImplementationFields,
   probeCandidates,
   RUNNER_FILES,
 } from '../../../skills/implement-dispatch/scripts/resolve-flow.mjs';
@@ -75,7 +77,11 @@ function withSections(overrides) {
 describe('resolveFlow', () => {
   describe('level: low', () => {
     it('skips plan-review (maxRounds=0, empty targets)', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, BASE_CONFIG);
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', implementationFields: 'model,effort' },
+        LIVE_ALL,
+        BASE_CONFIG,
+      );
       assert.equal(out['plan-review'].maxRounds, 0);
       assert.deepEqual(out['plan-review'].targets, []);
       assert.equal(out['plan-review'].consensus, false);
@@ -90,7 +96,11 @@ describe('resolveFlow', () => {
     });
 
     it('implementation matches orchestrator config', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, BASE_CONFIG);
+      const out = resolveFlow(
+        { platform: 'claude', level: 'low', implementationFields: 'model,effort' },
+        LIVE_ALL,
+        BASE_CONFIG,
+      );
       assert.equal(out.implementation.platform, 'claude');
       assert.equal(out.implementation.model, 'claude-opus-5');
       assert.equal(out.implementation.effort, 'medium');
@@ -696,11 +706,11 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.platform, 'agy');
     });
 
-    it('omits model/effort when orchestrator not in implementation config', () => {
-      const out = resolveFlow({ platform: 'opencode', level: 'low' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out.implementation.platform, 'opencode');
-      assert.equal(out.implementation.model, undefined);
-      assert.equal(out.implementation.effort, undefined);
+    it('rejects a missing delegated implementation entry with its resolved key', () => {
+      assert.throws(
+        () => resolveFlow({ platform: 'opencode', level: 'low' }, LIVE_ALL, BASE_CONFIG),
+        /implementation\.platforms\.opencode\.model must resolve an explicit model/,
+      );
     });
 
     it('resolves level-keyed implementation config through resolveFlow', () => {
@@ -716,6 +726,114 @@ describe('resolveFlow', () => {
       });
       const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, config);
       assert.equal(out.implementation.model, 'claude-opus-5');
+    });
+
+    it('requires a model only for the selected delegated implementation platform', () => {
+      const config = withSections({
+        implementation: {
+          platforms: {
+            claude: { effort: 'high' },
+            opencode: { model: 'write-model' },
+          },
+        },
+      });
+      assert.doesNotThrow(() => resolveFlow({ platform: 'opencode' }, LIVE_ALL, config));
+      assert.throws(
+        () => resolveFlow({ platform: 'claude' }, LIVE_ALL, config),
+        /implementation\.platforms\.claude\.model/,
+      );
+    });
+
+    it('reports applicable and ignored configured fields', () => {
+      const out = resolveFlow(
+        { platform: 'claude', implementationFields: 'model' },
+        LIVE_ALL,
+        BASE_CONFIG,
+      );
+      assert.deepEqual(out.implementation.applicableFields, ['model']);
+      assert.deepEqual(out.implementation.ignoredConfiguredFields, ['effort']);
+      assert.equal(out.implementation.model, 'claude-opus-5');
+      assert.equal(out.implementation.effort, undefined);
+    });
+
+    it('marks self-target implementation escalation exhausted', () => {
+      const out = resolveFlow({ platform: 'copilot' }, LIVE_ALL, BASE_CONFIG);
+      assert.deepEqual(out.implementation.applicableFields, []);
+      assert.deepEqual(out.implementation.escalation, {
+        status: 'exhausted',
+        reason: 'self-target',
+      });
+    });
+  });
+
+  describe('implementation escalation', () => {
+    it('steps above the requested level, not the nearest-lower resolved key', () => {
+      const entry = {
+        low: { model: 'low-model' },
+        medium: { model: 'medium-model' },
+        max: { model: 'max-model', effort: 'high' },
+      };
+      assert.deepEqual(resolveImplementationEscalation(entry, 'high', ['model', 'effort']), {
+        status: 'available',
+        level: 'max',
+        model: 'max-model',
+        effort: 'high',
+      });
+    });
+
+    it('skips higher levels equivalent over applicable fields', () => {
+      const entry = {
+        low: { model: 'same', effort: 'low' },
+        high: { model: 'same', effort: 'high' },
+        max: { model: 'different', effort: 'high' },
+      };
+      assert.deepEqual(resolveImplementationEscalation(entry, 'low', ['model']), {
+        status: 'available',
+        level: 'max',
+        model: 'different',
+      });
+    });
+
+    it('skips a model-less higher tier and effort-only differences the launcher cannot apply', () => {
+      const entry = {
+        low: { model: 'same', effort: 'low' },
+        high: { effort: 'high' },
+        max: { model: 'same', effort: 'max' },
+      };
+      assert.deepEqual(resolveImplementationEscalation(entry, 'low', ['model']), {
+        status: 'exhausted',
+        reason: 'no-distinct-higher-level',
+      });
+      assert.deepEqual(resolveImplementationEscalation(entry, 'low', ['model', 'effort']), {
+        status: 'available',
+        level: 'max',
+        model: 'same',
+        effort: 'max',
+      });
+    });
+
+    it('returns explicit exhaustion for flat and top-level entries', () => {
+      assert.deepEqual(
+        resolveImplementationEscalation({ model: 'flat' }, 'low', ['model']),
+        { status: 'exhausted', reason: 'flat-entry' },
+      );
+      assert.deepEqual(
+        resolveImplementationEscalation({ max: { model: 'top' } }, 'max', ['model']),
+        { status: 'exhausted', reason: 'no-distinct-higher-level' },
+      );
+    });
+  });
+
+  describe('parseImplementationFields', () => {
+    it('defaults to model and accepts model plus effort', () => {
+      assert.deepEqual(parseImplementationFields(), ['model']);
+      assert.deepEqual(parseImplementationFields('effort,model'), ['model', 'effort']);
+    });
+
+    it('rejects empty, unknown, and effort-only field sets', () => {
+      assert.throws(() => parseImplementationFields(''), /implementation-fields/);
+      assert.throws(() => parseImplementationFields('model,temperature'), /implementation-fields/);
+      assert.throws(() => parseImplementationFields('effort'), /implementation-fields/);
     });
   });
 
@@ -1038,6 +1156,12 @@ describe('resolveFlow', () => {
 
     it('type-checks knob values', () => {
       const config = withSections({
+        implementation: {
+          platforms: {
+            ...BASE_CONFIG.implementation.platforms,
+            opencode: { model: 'opencode-write-model' },
+          },
+        },
         'code-review': {
           maxRounds: { low: -1 },
           targetCount: { low: 'two' },
@@ -1381,6 +1505,12 @@ describe('resolveFlow — configured-order candidates', () => {
   const label = (t) => (t.platform === 'opencode' ? t.model : t.platform);
   const multi = (agy = { model: 'gemini-3.8-flash' }) =>
     withSections({
+      implementation: {
+        platforms: {
+          ...BASE_CONFIG.implementation.platforms,
+          opencode: { model: 'opencode-write-model' },
+        },
+      },
       'code-review': {
         targetCount: { low: 3 },
         platforms: {
@@ -1430,6 +1560,12 @@ describe('resolveFlow — configured-order candidates', () => {
 
   it('preserves orchestrator candidate order after every external', () => {
     const config = withSections({
+      implementation: {
+        platforms: {
+          ...BASE_CONFIG.implementation.platforms,
+          opencode: { model: 'opencode-write-model' },
+        },
+      },
       'code-review': {
         targetCount: { low: 'all' },
         platforms: { opencode: OPENCODE_MULTI.slice(0, 2), agy: { model: 'g' } },

@@ -2,8 +2,7 @@
 
 /**
  * Generates skill-hashes.json for every skill that ships one — `dispatch`, the two review
- * skills, and `implement-dispatch` — covering SKILL.md, scripts/*.mjs, and references/*.md
- * (implement-dispatch has no references/, so its manifest omits that key entirely). Config
+ * skills, and `implement-dispatch` — covering SKILL.md, scripts/*.mjs, and references/*.md. Config
  * files (config*.jsonc) are excluded — user-edited/dynamic by design. The review skills'
  * manifests cover their prompt and walkthrough templates, which `fill-template.mjs` checks
  * before filling.

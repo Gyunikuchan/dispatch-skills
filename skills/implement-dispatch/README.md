@@ -130,6 +130,13 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 > `config.jsonc` (or `config.local.jsonc`) and keep every review provider enabled in `dispatch` as
 > well.
 
+Delegated Claude and OpenCode implementation entries must resolve an explicit `model`; a missing
+model stops flow resolution with the exact configuration key to update. Implementation entries are
+objects, not review candidate arrays. Higher level keys provide native-only escalation tiers when
+their launcher-supported model or effort differs; flat entries and `max` cannot escalate.
+AGY/Copilot currently execute as `self`, so their configured implementation values are
+compatibility metadata.
+
 ## What to expect
 
 1. The skill prepares an initial draft plan.
@@ -137,7 +144,8 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 3. It reviews the plan when `dispatch-plan-review` is installed and enabled.
 4. It creates the walkthrough and runs the plan's automated verification commands as a baseline.
 5. It asks for implementation approval after baseline reconciliation, then implements test-first
-   and reruns fresh verification.
+   and reruns fresh verification. Implementation launches return typed outcomes; delegated work
+   has at most three native-platform attempts and self execution has at most two.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.
 7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;

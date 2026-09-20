@@ -35,10 +35,13 @@ verification.
 ## RED boundary
 
 When new or corrected behavior is required, allow at most one tests-only launch in addition to the
-run's implementation failure budget. It changes only test/test-support paths and stops; the host
-runs the mapped command and production work begins only after failure for the expected reason.
+run's implementation attempt budget. It changes only test/test-support paths and returns the
+typed `RED_READY` stage defined in
+[implementation-delegate-contract.md](implementation-delegate-contract.md); the host runs the
+mapped command and production work begins only after failure for the expected reason.
 Characterization, test-only repair, and generated/snapshot exceptions require evidence and a
 recorded ruling. A late test is a missed gate requiring user acceptance.
 
-An unrelated failure or production-path mutation is invalid RED and consumes an implementation
-failure. Stop after two identical implementation failures, including invalid RED and regressions.
+An unrelated failure or production-path mutation is invalid RED and consumes the current bounded
+implementation attempt. A regression after implementation consumes its current attempt under the
+same transition contract.

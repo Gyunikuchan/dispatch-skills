@@ -5,6 +5,7 @@
  * Usage:
  *   node resolve-flow.mjs --platform <key>
  *                         [--level <low|medium|high|xhigh|max>]
+ *                         [--implementation-fields <model[,effort]>]
  *                         [--pins <key,key,...|all|n>] [--exclude <key,key,...>]
  *   node resolve-flow.mjs --validate-only
  *   node resolve-flow.mjs --show-effective --platform <key> [flow options]
@@ -44,14 +45,18 @@ const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const REVIEW_SECTIONS = ['plan-review', 'code-review'];
 const SECTIONS = ['plan-review', 'implementation', 'code-review'];
 const REVIEW_KNOBS = ['maxRounds', 'targetCount', 'consensus'];
+const IMPLEMENTATION_FIELDS = ['model', 'effort'];
+const SELF_IMPLEMENTATION_PLATFORMS = new Set(['agy', 'copilot']);
 
 const USAGE = `Usage:
   node resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>]
+                        [--implementation-fields <model[,effort]>]
                         [--pins <list>] [--exclude <list>] [--validate-only]
 
   --platform <key>            orchestrator's own provider key (${KNOWN_PROVIDERS.join(', ')})
   --orchestrator-model <name> orchestrator's active model (sorts same platform+model last)
   --level <level>             ${LEVELS.join(' | ')} (default: medium)
+  --implementation-fields    native write-launch fields: model or model,effort (default: model)
   --pins <list>               comma-separated provider keys, "all", or a single reviewer count
   --exclude <list>            comma-separated provider keys removed from every phase (e.g. after [auth]/[quota])
   --show-effective            report selected config, inheritance, candidate order, and membership
@@ -66,6 +71,62 @@ const USAGE = `Usage:
 export function normalizePin(rawPin) {
   const lower = rawPin.toLowerCase();
   return PROVIDER_ALIASES[lower] ?? (lower === 'all' ? 'all' : rawPin);
+}
+
+export function parseImplementationFields(raw) {
+  if (raw === undefined) return ['model'];
+  const fields = [...new Set(String(raw).split(',').map(value => value.trim()).filter(Boolean))];
+  const unknown = fields.filter(field => !IMPLEMENTATION_FIELDS.includes(field));
+  if (fields.length === 0 || unknown.length > 0 || !fields.includes('model')) {
+    throw new Error(
+      `--implementation-fields must be "model" or "model,effort" (received "${raw}")`
+    );
+  }
+  return IMPLEMENTATION_FIELDS.filter(field => fields.includes(field));
+}
+
+function implementationModelKey(platform, entry, level) {
+  const selected = selectedLevelKey(entry, level);
+  if (selected && entry?.[selected]?.model === undefined && entry?.model === undefined) {
+    return `implementation.platforms.${platform}.${selected}.model`;
+  }
+  return `implementation.platforms.${platform}.model`;
+}
+
+function applicableImplementationEntry(entry, fields) {
+  return Object.fromEntries(
+    fields
+      .filter(field => entry[field] !== undefined)
+      .map(field => [field, entry[field]])
+  );
+}
+
+function hasDistinctApplicableField(current, candidate, fields) {
+  return fields.some(
+    field => candidate[field] !== undefined && candidate[field] !== current[field]
+  );
+}
+
+export function resolveImplementationEscalation(entry, requestedLevel, applicableFields) {
+  const levelKeys = isPlainObject(entry)
+    ? LEVELS.filter(level => isPlainObject(entry[level]))
+    : [];
+  if (levelKeys.length === 0) return { status: 'exhausted', reason: 'flat-entry' };
+
+  const current = resolveLevelEntry(entry, requestedLevel);
+  const requestedIndex = LEVELS.indexOf(requestedLevel);
+  for (const level of LEVELS.slice(requestedIndex + 1)) {
+    if (!levelKeys.includes(level)) continue;
+    const resolved = resolveLevelEntry(entry, level);
+    if (resolved.model === undefined) continue;
+    if (!hasDistinctApplicableField(current, resolved, applicableFields)) continue;
+    return {
+      status: 'available',
+      level,
+      ...applicableImplementationEntry(resolved, applicableFields),
+    };
+  }
+  return { status: 'exhausted', reason: 'no-distinct-higher-level' };
 }
 
 /**
@@ -944,8 +1005,37 @@ export function resolveFlow(options, liveness, config) {
   const implEntry = platformsOf('implementation')[platform] ?? {};
   const implHints = resolveLevelEntry(implEntry, level);
   const implementation = { platform };
-  if (implHints.model !== undefined) implementation.model = implHints.model;
-  if (implHints.effort !== undefined) implementation.effort = implHints.effort;
+  const selfTarget = SELF_IMPLEMENTATION_PLATFORMS.has(platform);
+  const applicableFields = selfTarget || !platform
+    ? []
+    : parseImplementationFields(options.implementationFields);
+  implementation.applicableFields = applicableFields;
+  implementation.ignoredConfiguredFields = IMPLEMENTATION_FIELDS.filter(
+    field => implHints[field] !== undefined && !applicableFields.includes(field)
+  );
+  for (const field of applicableFields) {
+    if (implHints[field] !== undefined) implementation[field] = implHints[field];
+  }
+  if (selfTarget || !platform) {
+    implementation.escalation = {
+      status: 'exhausted',
+      reason: selfTarget ? 'self-target' : 'no-platform',
+    };
+  } else {
+    const missingModelKey = implHints.model === undefined
+      ? implementationModelKey(platform, implEntry, level)
+      : null;
+    if (missingModelKey) {
+      const message = `${missingModelKey} must resolve an explicit model for delegated implementation`;
+      if (!options.tolerateMissingImplementationModel) throw new Error(message);
+      implementation.diagnostic = { code: 'IMPLEMENTATION_MODEL_REQUIRED', message, key: missingModelKey };
+    }
+    implementation.escalation = resolveImplementationEscalation(
+      implEntry,
+      level,
+      applicableFields
+    );
+  }
 
   const codeReview = buildReviewSection('code-review');
 
@@ -1003,6 +1093,7 @@ function parseArgs(args) {
         case '--platform': opts.platform = val; continue;
         case '--orchestrator-model': opts.orchestratorModel = val; continue;
         case '--level':    opts.level = val; continue;
+        case '--implementation-fields': opts.implementationFields = val; continue;
         case '--pins':     setPins(val); continue;
         case '--exclude':  setExclude(val); continue;
         default:
@@ -1013,6 +1104,7 @@ function parseArgs(args) {
       case '--platform': opts.platform = value(i); i++; break;
       case '--orchestrator-model': opts.orchestratorModel = value(i); i++; break;
       case '--level':    opts.level = value(i); i++; break;
+      case '--implementation-fields': opts.implementationFields = value(i); i++; break;
       case '--pins':
         setPins(value(i));
         i++;
@@ -1090,11 +1182,27 @@ async function main() {
   if (opts.validateOnly) {
     // Refuse the combination rather than silently ignoring flags the user believes
     // were checked: --validate-only inspects the config schema and nothing else.
-    const ignored = ['platform', 'orchestratorModel', 'level', 'pins', 'exclude', 'showEffective'].filter(k => opts[k] !== undefined);
+    const ignored = [
+      'platform',
+      'orchestratorModel',
+      'level',
+      'implementationFields',
+      'pins',
+      'exclude',
+      'showEffective',
+    ].filter(k => opts[k] !== undefined);
     if (ignored.length > 0) {
       process.stderr.write(
         `Error: --validate-only checks the config schema alone and cannot be combined with: ${ignored
-          .map(k => (k === 'orchestratorModel' ? '--orchestrator-model' : k === 'showEffective' ? '--show-effective' : `--${k}`))
+          .map(k => (
+            k === 'orchestratorModel'
+              ? '--orchestrator-model'
+              : k === 'implementationFields'
+                ? '--implementation-fields'
+                : k === 'showEffective'
+                  ? '--show-effective'
+                  : `--${k}`
+          ))
           .join(', ')}\n`
       );
       process.exit(1);
@@ -1128,6 +1236,12 @@ async function main() {
     process.stderr.write(
       `Error: Unknown platform "${opts.platform}". Valid platforms: ${KNOWN_PROVIDERS.join(', ')}\n`
     );
+    process.exit(1);
+  }
+  try {
+    parseImplementationFields(opts.implementationFields);
+  } catch (err) {
+    process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);
   }
   const schemaProblems = validateConfig(config);
@@ -1195,6 +1309,7 @@ async function main() {
       orchestratorModel,
       livenessSource,
       dispatchPlatforms: opts.showEffective ? null : dispatchPlatforms,
+      tolerateMissingImplementationModel: opts.showEffective,
     }, liveness, config);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);

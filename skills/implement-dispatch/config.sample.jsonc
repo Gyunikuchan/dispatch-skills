@@ -18,6 +18,13 @@
  * `targetCount` accepts a non-negative integer or "all"; selected targets precede ordered reserves.
  * Effort values are provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and
  * OpenCode receives the value as `--variant`.
+ *
+ * Implementation entries are objects, never review-style candidate arrays. Delegated Claude and
+ * OpenCode entries must resolve an explicit model. Defined levels follow low -> medium -> high ->
+ * xhigh -> max for native-only escalation; flat entries and `max` have no escalation tier.
+ * Configured fields unsupported by the host's native write launcher are disclosed and ignored
+ * when comparing tiers. AGY and Copilot currently map to `self`, so their values are compatibility
+ * metadata rather than escalation tiers.
  */
 {
   "plan-review": {
@@ -98,6 +105,10 @@
           "model": "claude-opus-5",
           "effort": "low",
         },
+        "max": {
+          "model": "claude-fable-5.1",
+          "effort": "low",
+        },
       },
       "agy": {
         "low": {
@@ -111,6 +122,10 @@
       },
       "copilot": {
         "model": "gpt-5.6-luna",
+        "effort": "max",
+      },
+      "opencode": {
+        "model": "opencode-go/glm-5.3-flash",
         "effort": "max",
       },
     },

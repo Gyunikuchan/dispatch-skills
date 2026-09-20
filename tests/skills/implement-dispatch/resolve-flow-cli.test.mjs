@@ -193,6 +193,36 @@ describe('resolve-flow CLI', () => {
     assert.deepEqual(JSON.parse(spaced.stdout), JSON.parse(equals.stdout));
   });
 
+  it('accepts implementation fields and rejects them with --validate-only', () => {
+    const runResult = run(
+      '--platform',
+      'claude',
+      '--implementation-fields',
+      'model,effort',
+    );
+    assert.equal(runResult.status, 0, runResult.stderr);
+    assert.deepEqual(
+      JSON.parse(runResult.stdout).implementation.applicableFields,
+      ['model', 'effort'],
+    );
+
+    const validation = run('--validate-only', '--implementation-fields', 'model');
+    assert.equal(validation.status, 1);
+    assert.match(validation.stderr, /cannot be combined with: --implementation-fields/);
+  });
+
+  it('rejects invalid implementation field sets before probing', () => {
+    const { status, stderr } = run(
+      '--platform',
+      'claude',
+      '--implementation-fields',
+      'effort',
+      { liveness: '{not json' },
+    );
+    assert.equal(status, 1);
+    assert.match(stderr, /must be "model" or "model,effort"/);
+  });
+
   it('rejects an unknown level', () => {
     const { status, stderr } = run('--platform', 'claude', '--level', 'ultra');
     assert.equal(status, 1);
@@ -232,6 +262,38 @@ describe('resolve-flow CLI', () => {
     assert.ok(Array.isArray(report.reserves['code-review']));
     assert.equal(report.crossConfigMembership.valid, true);
     assert.deepEqual(report.exclusions, []);
+  });
+
+  it('--show-effective reports a selected missing implementation model without aborting', () => {
+    const config = JSON.stringify({
+      'plan-review': {
+        maxRounds: { low: 0 },
+        targetCount: { low: 0 },
+        consensus: { low: false },
+        platforms: { claude: { model: 'review-model' } },
+      },
+      implementation: { platforms: { claude: { effort: 'high' } } },
+      'code-review': {
+        maxRounds: { low: 0 },
+        targetCount: { low: 0 },
+        consensus: { low: false },
+        platforms: { claude: { model: 'review-model' } },
+      },
+    });
+    const fixture = buildFixture({ config });
+    try {
+      const shown = runFixtureScript(fixture.skillDir, ['--show-effective', '--platform', 'claude']);
+      assert.equal(shown.status, 0, shown.stderr);
+      assert.equal(
+        JSON.parse(shown.stdout).implementation.diagnostic.key,
+        'implementation.platforms.claude.model',
+      );
+      const ordinary = runFixtureScript(fixture.skillDir, ['--platform', 'claude']);
+      assert.equal(ordinary.status, 1);
+      assert.match(ordinary.stderr, /implementation\.platforms\.claude\.model/);
+    } finally {
+      fs.rmSync(fixture.dir, { recursive: true, force: true });
+    }
   });
 
   it('refuses --show-effective with --validate-only', () => {
