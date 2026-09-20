@@ -39,7 +39,8 @@ unclear coverage keeps the overwrite / as-is / fresh-slug choice.
    re-authors and `fresh-slug` throws. An orchestrator may answer only from an artifact it
    authored in-run; otherwise it stops with the manifest diagnostic.
 4. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
-   target/reserve/fallback outcome, retaining paths still needed.
+   target/reserve/fallback outcome, retaining paths still needed. Classify missing runner results
+   through [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
 
 **Done when:** preparation is ready, the exact manifest argv is launched, and outcomes are
 terminal.

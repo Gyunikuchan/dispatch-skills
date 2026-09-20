@@ -29,9 +29,11 @@ when it shows the scope was reviewed and reports no findings. Refusal, truncatio
 or no delivered review is invalid: take the fallback. Judge delivered content, not narration
 ("waiting on tests") or loose loci.
 
-Delegate reports are claims. Deduplicate, then verify against requirements, repository rules, and
-cited loci. Accept verified defects regardless of votes; reject contradicted, missing, uncited, or
-unverifiable claims; downgrade only real but non-actionable advice.
+Delegate success reports are claims, not verification. Deduplicate, then verify against
+requirements, repository rules, and cited loci. Accept verified defects regardless of votes;
+reject contradicted, missing, uncited, or unverifiable claims, proposed unused capability, and
+changes that contradict a user-approved decision. Related unclear findings are clarified together
+before any is applied; downgrade only real but non-actionable advice.
 
 In standalone mode, host rulings are final. In orchestrated consensus mode, rejecting or
 downgrading `MUST`/`SHOULD` records `[Rejected — pending confirmation]`; every reachable citing

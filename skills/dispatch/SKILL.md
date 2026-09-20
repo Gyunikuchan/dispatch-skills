@@ -29,6 +29,8 @@ configured cascade. Membership comes only from `--list-platforms`. Orchestrated 
 3. Map the terminal outcome:
    - useful exit-0 output: relay it;
    - sufficient partial output: relay it; otherwise narrow and retry;
+   - a completion notification without a parseable runner result (banner, report, or
+     `--output-file`) is runner failure;
    - runner failure or `RESPONSE_SCHEMA_UNSUPPORTED`: apply
      [native fallback](references/providers.md#native-fallback);
    - configuration, membership, `--no-config`, or integrity errors: stop with the exact diagnostic.

@@ -28,7 +28,7 @@ const makeRepo = () => {
   execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
   fs.writeFileSync(path.join(dir, 'app.js'), 'export const value = 1;\n');
   execFileSync('git', ['add', 'app.js'], { cwd: dir });
-  execFileSync('git', ['commit', '-qm', 'initial'], { cwd: dir });
+  execFileSync('git', ['commit', '--no-gpg-sign', '-qm', 'initial'], { cwd: dir });
   fs.writeFileSync(path.join(dir, 'app.js'), 'export const value = 2;\n');
   return dir;
 };
@@ -72,7 +72,9 @@ describe('code review preparation', () => {
     try {
       assert.equal(manifest.status, 'ready');
       assert.equal(manifest.artifact.generated, true);
-      assert.match(fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8'), /Update the exported value/);
+      const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
+      assert.match(walkthrough, /Update the exported value/);
+      assert.match(walkthrough, /Command: `npm test` — exit unknown; Passed/);
       assert.ok(manifest.dispatch.argv.includes('--batch-file'));
       assert.deepEqual(manifest.reviewRange.paths, ['app.js']);
     } finally {
@@ -170,6 +172,37 @@ describe('code review preparation', () => {
     const manifest = prepareCodeReview({ summary: 'New work' }, { repoRoot: repo });
     assert.equal(manifest.status, 'decision-required');
     assert.equal(manifest.decision, 'legacy-walkthrough-coverage');
+  });
+
+  it('accepts an owned minimum-contract baseline walkthrough without rewriting it', () => {
+    const repo = makeRepo();
+    const dir = path.join(repo, '.scratch', 'plan');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '2026-09-17-feature-walkthrough.md'), [
+      '# Walkthrough — Feature',
+      '## Changes Made',
+      'No implementation changes yet.',
+      '## Verification & Validation',
+      '- Command: `npm test` — exit 0; 1 test passed.',
+      '## Key Deviations',
+      'None.',
+      '## Review Findings & Resolutions',
+      '*No reviews conducted yet.*',
+      '## Follow-ups',
+      'None.',
+    ].join('\n'));
+    const manifest = prepareCodeReview({
+      slug: 'feature',
+      walkthroughPath: '.scratch/plan/2026-09-17-feature-walkthrough.md',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.artifact.generated, false);
+      assert.match(fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8'), /exit 0; 1 test passed/);
+    } finally {
+      cleanupManifest(manifest);
+    }
   });
 
   it('checkpoints declared code and walkthrough edits', () => {

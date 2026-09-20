@@ -11,7 +11,8 @@ flowchart TD
     Scope --> PlanReview["⚡ Plan Review"]
     PlanReview --> FinalScope["⚙️ Final Change Scope & Level Check"]
     Scope -.->|review skipped| FinalScope
-    FinalScope --> Gate{"🛑 Single Approval Gate"}
+    FinalScope --> Baseline["🧪 Baseline Verification"]
+    Baseline --> Gate{"🛑 Implementation Approval"}
     Gate --> Implementation["💻 Test-First Implementation"]
     Implementation --> CodeReview["⚡ Code Review"]
     CodeReview --> Fix["🔧 Apply Fixes & Verify"]
@@ -134,8 +135,9 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 1. The skill prepares an initial draft plan.
 2. It scopes the draft and resolves the execution flow.
 3. It reviews the plan when `dispatch-plan-review` is installed and enabled.
-4. It asks for approval once, after the final change-scope check and before changing code.
-5. It implements the approved plan and runs the repository's verification command.
+4. It creates the walkthrough and runs the plan's automated verification commands as a baseline.
+5. It asks for implementation approval after baseline reconciliation, then implements test-first
+   and reruns fresh verification.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.
 7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;
@@ -146,8 +148,9 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 disable it with `DISPATCH_TELEMETRY=0`.
 
 > [!NOTE]
-> Plan approval is the workflow's only approval gate. The skill does not write code before you
-> approve the reviewed plan.
+> The workflow writes no production code before implementation approval. Before that approval it
+> may ask whether to proceed with a known-red baseline, reconcile a baseline command's file side
+> effects, or proceed when Git side-effect capture is unavailable.
 
 The skill changes the working tree but does not commit, push, create branches, or open pull
 requests.

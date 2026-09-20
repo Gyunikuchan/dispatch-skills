@@ -60,20 +60,35 @@ the exact phase/target/round/consensus delta or `Resolved flow unchanged after f
 
 **Done when:** plan consensus/checkpoint settle and flow matches scope.
 
-## 3. Approval and implementation
+## 3. Baseline, approval, and implementation
 
-Present the final plan exactly once; approval is required before writes. If it has a resolution log,
-only consensus exit `0` permits approval.
+Create the walkthrough before baseline verification using the shared
+[minimum contract](../dispatch/references/walkthrough-contract.md), whether code review is enabled
+or unavailable. Follow the [verification evidence contract](references/verification-contract.md)
+for command/path extraction, baseline records, path classification, side-effect reconciliation,
+red-baseline rulings, result identity, freshness, and the tests-only stage.
 
-Implement test-first using `flow.implementation.platform`: `claude` -> `general-purpose`, `agy` or
-`copilot` -> `self`, `opencode` -> `general`. Trivial or failed delegated work stays with the
-orchestrator. Preserve the index/unrelated changes and inspect Git read-only.
+Run the baseline and reconcile its evidence before presenting approval. A red or unavailable
+baseline is never green; record the user's proceed-or-fix ruling. Side-effect reconciliation
+preserves caller-owned changes and production writes remain approval-gated.
 
-Run the host verify command until green. After two identical failures, stop and record the stable
-failure. Ensure the baseline walkthrough exists when code review is enabled.
+Present the settled plan exactly once after baseline reconciliation; approval is required before
+production writes. If it has a resolution log, only consensus exit `0` permits approval.
 
-**Done when:** approved scope is implemented, verification is green/unavailable/stably recorded,
-and the walkthrough describes the active diff.
+Implement using `flow.implementation.platform`: `claude` -> `general-purpose`, `agy` or `copilot`
+-> `self`, `opencode` -> `general`. Preserve the index/unrelated changes and inspect Git
+read-only. Trivial or failed delegated work stays with the orchestrator. New or corrected behavior
+uses the bounded tests-only stage; production work starts only after host-observed RED or a
+recorded exception.
+
+After any scope growth, classify the new paths and re-run flow resolution: preserve explicit
+levels and never downgrade an automatically resolved level. A final completion claim requires
+fresh host output after the last mapped mutation and accepted fix. Stop after two identical
+implementation failures and record the stable failure.
+
+**Done when:** approved scope is implemented, RED evidence or its allowed exception is recorded,
+verification is passing, unavailable, or `known red — unchanged`, and the walkthrough describes
+the active diff with fresh evidence.
 
 ## 4. Review and settle code
 

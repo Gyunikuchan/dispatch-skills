@@ -1,6 +1,8 @@
 # Walkthrough template
 
-Structure for authoring a walkthrough. External delegates read attached files as their primary task context.
+Strict rendering of the shared
+[minimum walkthrough contract](../../dispatch/references/walkthrough-contract.md). External
+delegates read attached files as their primary task context.
 
 ````markdown
 # Walkthrough — <Goal Description>
@@ -16,7 +18,7 @@ Summary of changes made, context, and what was accomplished.
 
 ## Verification & Validation
 ### Automated Tests
-- Command: `<test command>` — Output/results (e.g. `X tests passed`).
+- Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).
 ### Manual Verification
 - Concrete manual verification performed and observed results.
 

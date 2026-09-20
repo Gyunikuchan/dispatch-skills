@@ -253,11 +253,14 @@ function renderWalkthrough({ summary, paths, verification }) {
   const changes = paths.length > 0
     ? paths.map((file) => `- **[MODIFY]** \`${file}\` — Included in the selected review scope.`).join('\n')
     : '- No changed paths.';
+  const verificationResult = /^exit\s+\S+\s*;/i.test(verification.result)
+    ? verification.result
+    : `exit unknown; ${verification.result}`;
   return `${template
     .replaceAll('<Goal Description>', summary)
     .replace('Summary of changes made, context, and what was accomplished.', summary)
     .replace(/### <Component Name>[\s\S]*?(?=\n## Verification & Validation)/, `### Selected review scope\n${changes}\n`)
-    .replace('- Command: `<test command>` — Output/results (e.g. `X tests passed`).', `- Command: \`${verification.command}\` — ${verification.result}`)
+    .replace('- Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).', `- Command: \`${verification.command}\` — ${verificationResult}`)
     .replace('- Concrete manual verification performed and observed results.', '- None recorded.')
     .replace('Deviations from original plan or design intent, with rationale (or "None").', 'None.')
     .replace('Accepted SHOULD-FIX / CONSIDER items not applied in this pass, each with a one-line reason (or "None").', 'None.')

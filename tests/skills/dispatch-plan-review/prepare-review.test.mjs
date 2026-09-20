@@ -217,7 +217,7 @@ describe('plan review preparation', () => {
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
     fs.writeFileSync(path.join(repo, 'README.md'), '# Test\n');
     execFileSync('git', ['add', 'README.md'], { cwd: repo });
-    execFileSync('git', ['commit', '-qm', 'initial'], { cwd: repo });
+    execFileSync('git', ['commit', '--no-gpg-sign', '-qm', 'initial'], { cwd: repo });
     const manifest = preparePlanReview({
       requirement: 'Different requirement',
       orchestrator: 'opencode',

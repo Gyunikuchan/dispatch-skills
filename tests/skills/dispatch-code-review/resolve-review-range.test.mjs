@@ -21,7 +21,7 @@ function git(...args) {
 function commit(name, contents) {
   fs.writeFileSync(path.join(repo, name), contents);
   git('add', name);
-  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--quiet', '-m', name);
+  git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--no-gpg-sign', '--quiet', '-m', name);
   return git('rev-parse', 'HEAD');
 }
 

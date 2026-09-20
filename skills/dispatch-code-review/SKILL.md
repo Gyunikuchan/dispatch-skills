@@ -44,7 +44,8 @@ mismatch keeps the overwrite / as-is / fresh-slug choice.
    regenerates the walkthrough and `fresh-slug` throws. An orchestrator answers only from artifacts
    it authored in-run; otherwise it stops with the corrective diagnostic.
 5. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
-   target/reserve/fallback outcome.
+   target/reserve/fallback outcome. Classify missing runner results through
+   [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
 
 **Done when:** preparation is ready, the exact manifest argv is launched, and outcomes are
 terminal.

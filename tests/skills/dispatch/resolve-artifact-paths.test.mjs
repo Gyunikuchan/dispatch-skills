@@ -218,7 +218,7 @@ describe('getCurrentBranch', () => {
     git('config', 'user.name', 'Test');
     writeFileSync(path.join(repoDir, 'file.txt'), 'content');
     git('add', 'file.txt');
-    git('commit', '--quiet', '-m', 'initial commit');
+    git('commit', '--no-gpg-sign', '--quiet', '-m', 'initial commit');
   });
 
   afterEach(() => {
