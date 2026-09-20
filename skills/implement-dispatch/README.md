@@ -146,8 +146,8 @@ Delegated Claude and OpenCode implementation entries must resolve an explicit `m
 model stops flow resolution with the exact configuration key to update. Implementation entries are
 objects, not review candidate arrays. Higher level keys provide native-only escalation tiers when
 their launcher-supported model or effort differs; flat entries and `max` cannot escalate.
-AGY/Copilot currently execute as `self`, so their configured implementation values are
-compatibility metadata.
+AGY/Copilot currently execute as `self` — their platform's default native subagent, which accepts no
+configured fields — so their configured implementation values are compatibility metadata.
 
 ## What to expect
 
@@ -157,7 +157,8 @@ compatibility metadata.
 4. It creates the walkthrough and runs the plan's automated verification commands as a baseline.
 5. It asks for implementation approval after baseline reconciliation, then implements test-first
    and reruns fresh verification. Implementation launches return typed outcomes; delegated work
-   has at most three native-platform attempts and self execution has at most two.
+   has at most three native-platform attempts and `self` execution (a subagent on the host platform)
+   has at most two.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
    repeating the review until findings are settled or the configured limit is reached.
 7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;

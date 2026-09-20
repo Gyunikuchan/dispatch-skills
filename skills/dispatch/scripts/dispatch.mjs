@@ -438,6 +438,9 @@ export async function dispatchTask(options = {}) {
     noConfig = false,
     config: injectedConfig = undefined,
     configPath: injectedConfigPath = undefined,
+    // Message-only: the CLI already folded this file into `prompt`, but the native-fallback
+    // guidance cites the path so the subagent reuses the identical brief.
+    promptFile = null,
   } = options;
 
   assertSkillIntegrity();
@@ -504,7 +507,10 @@ export async function dispatchTask(options = {}) {
 
   // Resolved once so cascade membership and the orchestrator-last grouping below agree; a pin never
   // groups by orchestrator, so detection is skipped there.
-  const effectiveOrchestrator = provider ? null : normalizeOrchestrator(orchestrator || detectOrchestrator());
+  // A pin suppresses orchestrator ordering, but the native-fallback guidance still needs the host
+  // platform to tell a same-platform failure from a cross-platform one.
+  const hostPlatform = normalizeOrchestrator(orchestrator || detectOrchestrator());
+  const effectiveOrchestrator = provider ? null : hostPlatform;
   const effectiveOrchestratorModel =
     !effectiveOrchestrator || provider
       ? null
@@ -536,7 +542,7 @@ export async function dispatchTask(options = {}) {
     const err = new Error(
       'No alternative dispatch agent available.\n' +
         '- Neither alternative platforms nor the orchestrator platform were found and ready.\n' +
-        'Proceeding to orchestrator subagent fallback.',
+        nativeFallbackGuidance({ hostPlatform, failedPlatforms: [], promptFile, files }),
     );
     err.code = 'NO_DISPATCH_AVAILABLE';
     throw err;
@@ -636,7 +642,55 @@ export async function dispatchTask(options = {}) {
     orderedCandidates = diversitySort(targetCandidates, (c) => c.provider);
   }
 
-  return await runCascade(orderedCandidates, runnerOptionsFor, { pinned: Boolean(provider) });
+  return await runCascade(orderedCandidates, runnerOptionsFor, {
+    pinned: Boolean(provider),
+    hostPlatform,
+    promptFile,
+    files,
+  });
+}
+
+/**
+ * Builds the native-fallback instructions carried by `NO_DISPATCH_AVAILABLE`. The orchestrator often
+ * sees only this message, so it has to name the actor and the brief: hosts that expose no named
+ * read-only agent type otherwise read "subagent fallback" as permission to answer inline from a
+ * paraphrased prompt. Mirrors `references/providers.md` § Native fallback.
+ */
+function nativeFallbackGuidance({ hostPlatform = null, failedPlatforms = [], promptFile = null, files = [] } = {}) {
+  const hostSubagent = `${hostPlatform ? `${hostPlatform}'s` : "the host platform's"} own native subagent` +
+    ' — its named read-only agent type, or its default subagent when the platform defines no named types';
+  const crossPlatform = failedPlatforms.filter((platform) => platform !== hostPlatform);
+  let actor;
+  if (hostPlatform && failedPlatforms.includes(hostPlatform)) {
+    actor = `Same-platform failure (${hostPlatform}): launch ${hostSubagent}.`;
+  } else if (crossPlatform.length > 0) {
+    // providers.md routes a cross-platform failure to the failed platform's own subagent, so the map
+    // stays in that table rather than being duplicated here.
+    actor = `Cross-platform failure (${crossPlatform.join(', ')} failed` +
+      `${hostPlatform ? `, host is ${hostPlatform}` : ''}): launch each failed platform's in-process` +
+      ' native subagent named in references/providers.md § Native fallback.';
+  } else {
+    actor = `Launch ${hostSubagent}.`;
+  }
+  const lines = [
+    'Proceeding to orchestrator subagent fallback. Do not answer inline and do not re-enter dispatch.',
+    `- ${actor}`,
+    '- Instruct the subagent to stay read-only: claims and evidence only, no file edits.',
+  ];
+  if (promptFile) {
+    lines.push(
+      `- Reuse these exact inputs unchanged — prompt file: ${promptFile}` +
+        `${files.length > 0 ? `; attachments: ${files.join(', ')}` : ''}.`,
+      // Only stated alongside the paths themselves: the cleanup bound is unactionable otherwise.
+      '- Those inputs are unfinished cleanup paths: prune them once this fallback consumes them or' +
+        ' reaches a terminal outcome.',
+    );
+  } else {
+    lines.push(
+      '- Reuse the exact prompt and attachments prepared for this dispatch, unchanged; never paraphrase them.',
+    );
+  }
+  return lines.join('\n');
 }
 
 /** Loads the dispatch cascade config via the shared skill-config loader. */
@@ -666,11 +720,12 @@ function assertSkillIntegrity() {
  * analysis that timed out one step short was discarded outright.
  * @param {Array<{ provider: Provider, model: string|null, effort: string|null, label: string }>} targetCandidates
  * @param {(candidate: { provider: Provider, model: string|null, effort: string|null, label: string }) => object} runnerOptionsFor
- * @param {{ pinned: boolean }} cascadeOptions
+ * @param {{ pinned: boolean, hostPlatform?: Provider|null, promptFile?: string|null, files?: string[] }} cascadeOptions
  * @returns {Promise<DispatchTaskResult>}
  */
-async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
+async function runCascade(targetCandidates, runnerOptionsFor, { pinned, hostPlatform = null, promptFile = null, files = [] }) {
   const attemptFailures = [];
+  const failedPlatforms = new Set();
   const metricsAttempts = [];
   let bestPartial = null;
 
@@ -699,6 +754,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
     /** Records the failure and reports whether the cascade should continue. */
     const shouldCascade = (reason, kind) => {
       attemptFailures.push(`${currentLabel}: ${reason}${kind ? ` [${kind}]` : ''}`);
+      failedPlatforms.add(currentProvider);
 
       if (pinned) {
         if (isSameProviderNext) {
@@ -773,7 +829,8 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned }) {
   const err = new Error(
     'All candidate dispatch agents failed execution:\n' +
       attemptFailures.map((f) => `  - ${f}`).join('\n') +
-      '\nProceeding to orchestrator subagent fallback.',
+      '\n' +
+      nativeFallbackGuidance({ hostPlatform, failedPlatforms: [...failedPlatforms], promptFile, files }),
   );
   err.code = 'NO_DISPATCH_AVAILABLE';
   err.failures = attemptFailures;
@@ -934,6 +991,7 @@ export async function main() {
           prompt: finalPrompt,
           responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
           configPath: loaded.path,
+          promptFile: pipedStdin ? null : options.promptFile,
         }, loaded.config);
       } finally {
         fs.rmSync(batch.path, { force: true });
@@ -948,6 +1006,9 @@ export async function main() {
       responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
       noConfig,
       orchestratorModel: options.orchestratorModel ?? undefined,
+      // Piped input was appended above, so the file alone no longer reproduces the attempt's brief;
+      // the fallback guidance then cites the prompt generically instead of a partial file.
+      promptFile: pipedStdin ? null : options.promptFile,
     });
   } catch (err) {
     appendTelemetry({ error: err, startedAt });

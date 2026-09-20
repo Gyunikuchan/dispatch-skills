@@ -74,8 +74,10 @@ runs only.
 A rejection prints the observed list as JSON: resend exactly that list and retry once.
 Drift means rerun preparation, never force the write.
 
-Prune finished `cleanupPaths` finally-style on every outcome and report failures. Keep invocation
-state (`invocationCleanupPath`, never inside `cleanupPaths`) until checkpoint or abort, so
+Prune finished `cleanupPaths` finally-style on every outcome and report failures. A pending native
+fallback leaves the prompt path unfinished: prune it once that fallback has consumed it or reached a
+terminal outcome. Keep
+invocation state (`invocationCleanupPath`, never inside `cleanupPaths`) until checkpoint or abort, so
 rejections stay retriable. Standalone reports a concise provider-attributed result;
 orchestrated returns adjudications without another user report.
 

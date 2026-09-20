@@ -23,8 +23,8 @@
  * OpenCode entries must resolve an explicit model. Defined levels follow low -> medium -> high ->
  * xhigh -> max for native-only escalation; flat entries and `max` have no escalation tier.
  * Configured fields unsupported by the host's native write launcher are disclosed and ignored
- * when comparing tiers. AGY and Copilot currently map to `self`, so their values are compatibility
- * metadata rather than escalation tiers.
+ * when comparing tiers. AGY and Copilot currently map to `self` (their default native subagent, which
+ * takes no configured fields), so their values are compatibility metadata rather than escalation tiers.
  */
 {
   "plan-review": {

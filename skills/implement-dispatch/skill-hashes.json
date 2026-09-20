@@ -1,6 +1,6 @@
 {
-  "SKILL.md": "0f07bd35b28f87f653ee3c87a6b371a1026fd962358f074dc6374899e67771c0",
-  "references/implementation-delegate-contract.md": "489426b42b1c2d0a000b8a03da48265682c1f3ff029fb5512aeb18cffcdd6e44",
+  "SKILL.md": "f12a370d6a5adac220a7b473edb9e985d313d7220c9609f96e174b7263f63c63",
+  "references/implementation-delegate-contract.md": "7922971d6ad77b2500403dd7e9dabcd328df4f2633cbbebeae9bbab76fafcdff",
   "references/ledger-contract.md": "b2202ea493d755aac200bfb011376609ee9f78f6e55646b0138ffb75b1753942",
   "references/verification-contract.md": "a75a245fe4f034ac97fbf1e264071b1552002b8d9df62326e5166db7fbc36271",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",

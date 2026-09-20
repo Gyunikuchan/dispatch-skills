@@ -40,12 +40,14 @@ At most one context-only continuation is legal in a resumable attempt.
 
 Delegated failures use at most three attempts: primary, same-platform/same-model root-cause-first
 replacement, then the next distinct configured native tier when available. No higher distinct tier
-stops after Attempt 2; any Attempt 3 failure stops for user ruling. Self execution allows two
-attempts and no model escalation. `BLOCKED` requires changing the blocking condition; it never
-authorizes an identical retry. Failed delegated work never transfers silently to self.
+stops after Attempt 2; any Attempt 3 failure stops for user ruling. Host-platform execution allows
+two attempts and no model escalation. `BLOCKED` requires changing the blocking condition; it never
+authorizes an identical retry. Failed delegated work never transfers silently to the host platform.
 
 Validate a captured final message with
 `node scripts/implementation-outcome.mjs --parse <file|->`. Compute the next action with
 `node scripts/implementation-outcome.mjs --transition <json-file|->`; its input is the validated
 envelope plus launch kind, attempt, target kind, resumability, context-continuation state,
-escalation result, continuation origin, and any host verification result.
+escalation result, continuation origin, and any host verification result. Target kind is `delegate`
+for a separate CLI process or `self` for a native subagent on the host platform; `self` never means
+the orchestrator implementing inline.

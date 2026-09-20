@@ -404,6 +404,48 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       );
     });
 
+    it('names the host subagent and the prompt file in the native-fallback guidance', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isClaudeAvailable', async () => false);
+      mock.method(providerProbes, 'isOpencodeAvailable', async () => false);
+      mock.method(providerProbes, 'isCopilotAvailable', async () => false);
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      mock.method(providerRunners, 'agy', async () => {
+        throw new Error('agy crashed');
+      });
+
+      // Cross-platform: providers.md routes this to the FAILED platform's subagent, not the host's.
+      await assert.rejects(
+        dispatchTask({
+          prompt: 'Test task',
+          orchestrator: 'copilot',
+          promptFile: 'tmp/brief.md',
+          files: ['tmp/walkthrough.md'],
+        }),
+        (error) => {
+          assert.match(error.message, /Do not answer inline and do not re-enter dispatch/);
+          assert.match(error.message, /Cross-platform failure \(agy failed, host is copilot\)/);
+          assert.match(error.message, /each failed platform's in-process native subagent/);
+          assert.doesNotMatch(error.message, /copilot's own native subagent/);
+          assert.match(error.message, /Reuse these exact inputs unchanged — prompt file: tmp\/brief\.md/);
+          assert.match(error.message, /attachments: tmp\/walkthrough\.md/);
+          assert.match(error.message, /prune them once this fallback consumes them or reaches a terminal outcome/);
+          return true;
+        },
+      );
+
+      // Same-platform: the failed target is the host, which must take the native branch immediately.
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test task', orchestrator: 'agy' }),
+        (error) => {
+          assert.match(error.message, /Same-platform failure \(agy\): launch agy's own native subagent/);
+          assert.match(error.message, /default subagent when the platform defines no named types/);
+          assert.match(error.message, /Reuse the exact prompt and attachments prepared for this dispatch/);
+          return true;
+        },
+      );
+    });
+
     it('aborts before probing when the pinned provider is absent from config', async () => {
       clearOrchestratorEnv();
       process.env.CLAUDE_CODE = '1';

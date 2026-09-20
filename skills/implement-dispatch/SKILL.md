@@ -78,17 +78,19 @@ production writes. If it has a resolution log, only consensus exit `0` permits a
 After approval, initialize and append the durable events in the
 [ledger contract](references/ledger-contract.md). On resume, reconcile its fold before dispatch.
 
-Implement using `flow.implementation.platform`: `claude` -> `general-purpose`, `agy` or `copilot`
--> `self`, `opencode` -> `general`. Derive `--implementation-fields` from that native launch tool's
+Implement through a native subagent of `flow.implementation.platform`, never inline: `claude` ->
+`general-purpose`, `opencode` -> `general`; `agy` and `copilot` define no named agent types, so
+launch their default subagent. Derive `--implementation-fields` from that native launch tool's
 schema; default to model only. Pass resolved fields explicitly and disclose ignored fields; missing
-delegated Claude/OpenCode models stop preflight, while self settings are compatibility metadata.
-Preserve the index/unrelated changes and inspect Git read-only. Trivial work alone may start as self.
+delegated Claude/OpenCode models stop preflight, while host-platform settings are compatibility
+metadata. Preserve the index/unrelated changes and inspect Git read-only. Trivial work alone may
+start on the host platform.
 
 Follow the [implementation delegate contract](references/implementation-delegate-contract.md):
 parse one typed envelope and obey its transition. Native launches are non-resumable unless the
 provider contract proves continuation. Delegates get at most three attempts (replacement, then one
-distinct native tier); self gets two. Never cross providers or transfer failed delegated work to
-self. New/corrected behavior requires `RED_READY` and host-observed RED.
+distinct native tier); host-platform launches get two. Never cross providers or transfer failed
+delegated work to the host platform. New/corrected behavior requires `RED_READY` and host-observed RED.
 
 Run `node <skill-path>/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
 with `--transition <json-file|->`. A nonzero parse is a consumed malformed outcome; a nonzero

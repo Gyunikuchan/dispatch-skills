@@ -131,22 +131,27 @@ runner failure. Configuration, integrity, membership, and `--no-config` errors a
 report the exact diagnostic instead.
 
 1. Identify the failed target platform and the declared or detected orchestrator platform.
-2. When they match, invoke the host platform's native read-only subagent directly. Reuse the
-   exact prompt and attachments plus the failed invocation's effective model and effort; resolve
-   omitted flags from the same dispatch configuration. Do not re-enter `dispatch` or retry another
-   candidate on that platform.
-3. When they differ, use the failed platform's in-process read-only fallback:
+2. When they match, launch the host platform's own native subagent directly — never answer inline.
+   Reuse the exact prompt and attachments plus the failed invocation's effective model and effort;
+   resolve omitted flags from the same dispatch configuration. Do not re-enter `dispatch` or retry
+   another candidate on that platform.
+3. When they differ, launch the failed platform's in-process native subagent:
 
-   | Failed platform | Native fallback |
+   | Failed platform | Native subagent |
    |---|---|
    | `claude` | `Explore` |
    | `agy` | `research` |
-   | `copilot` | `self` |
+   | `copilot` | the default subagent (Copilot defines no named agent types) |
    | `opencode` | `explore` |
 
    Reuse the identical prompt and attachments. Preserve the target's effective model and effort
-   when the native fallback accepts them.
+   when the subagent accepts them.
 4. Record the native fallback, its result, and any reserve substitution as the target's outcome.
+
+A named agent type above is read-only by construction. A default subagent is write-capable, so its
+read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to make
+no file edits. A generated prompt file and its attachments are inputs to this path, not finished
+artifacts: prune them only after this fallback consumes them or reaches a terminal outcome.
 
 **Done when:** the matching fallback has produced a report or terminal failure, and the outcome is
 recorded with its reason.

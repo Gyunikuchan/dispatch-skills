@@ -86,7 +86,8 @@ is the last write. Failed, incomplete, or unsettled runs keep the previous check
 Drift means rerun preparation, never force the write.
 
 Prune finished `cleanupPaths` finally-style on every outcome; keep invocation state until
-checkpoint/abort; report cleanup failures. Standalone reports a concise provider-attributed
+checkpoint/abort; report cleanup failures. A pending native fallback leaves the prompt path
+unfinished: prune it once that fallback has consumed it or reached a terminal outcome. Standalone reports a concise provider-attributed
 result and applied fixes; orchestrated returns adjudications without editing code or reporting
 again.
 
