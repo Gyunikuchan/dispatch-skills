@@ -8,7 +8,7 @@ Populate the template variables:
 - `<Plan Path>` — path to the attached plan.
 - `<Requirement>` — original user ask, verbatim.
 - `<User Focus Areas>` — trailing user arguments, or `General review`.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed sections: <changed sections>`.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is reviewer context.
 - `<Tool Turn Budget>` — orchestrator-supplied advisory target, or `Unspecified`.
 
 ````markdown

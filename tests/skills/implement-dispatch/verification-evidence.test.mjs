@@ -12,6 +12,7 @@ import {
   diffRepositoryState,
   extractApprovedPathSet,
   failureIdentity,
+  mapVerificationCommandsToPaths,
   normalizeDiagnostic,
   parsePorcelainZ,
 } from '../../../skills/implement-dispatch/scripts/verification-evidence.mjs';
@@ -67,6 +68,93 @@ describe('verification evidence', () => {
     assert.deepEqual(extractApprovedPathSet('# Native plan'), []);
   });
 
+  it('maps a command to criterion paths only when every referencing criterion has Changes', () => {
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Source.',
+      '  - Changes: src/a.js',
+      '  - Verify: `npm test`',
+      '- [SC2] Test.',
+      '  - Changes: tests/a.test.js',
+      '  - Verify: `npm test`',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+      '#### [NEW] tests/a.test.js',
+      '#### [MODIFY] docs/readme.md',
+    ].join('\n');
+    assert.deepEqual(
+      mapVerificationCommandsToPaths(plan, ['npm test'], extractApprovedPathSet(plan)),
+      { 'npm test': ['src/a.js', 'tests/a.test.js'] },
+    );
+  });
+
+  it('falls back to the full approved set for unmapped or incompletely mapped commands', () => {
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Mapped.',
+      '  - Changes: src/a.js',
+      '  - Verify: `npm test`',
+      '- [SC2] Missing paths.',
+      '  - Verify: `npm test`',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+      '#### [NEW] tests/a.test.js',
+    ].join('\n');
+    const approved = extractApprovedPathSet(plan);
+    assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test', 'npm run lint'], approved), {
+      'npm test': approved,
+      'npm run lint': approved,
+    });
+  });
+
+  it('falls back when any referenced Changes path is invalid or outside approved paths', () => {
+    const approved = ['src/a.js', 'tests/a.test.js'];
+    for (const changedPath of ['../native-warning.js', 'native/unapproved.js']) {
+      const plan = [
+        '## Success Criteria',
+        '- [SC1] Native-compatible warning-only mapping.',
+        `  - Changes: ${changedPath}`,
+        '  - Verify: `npm test`',
+      ].join('\n');
+      assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test'], approved), {
+        'npm test': approved,
+      });
+    }
+  });
+
+  it('matches Verify commands by exact trimmed string and deduplicates mapped paths', () => {
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Exact.',
+      '  - Changes: ./src/a.js, src/a.js',
+      '  - Verify: ` npm test `',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+      '#### [NEW] tests/a.test.js',
+    ].join('\n');
+    const approved = extractApprovedPathSet(plan);
+    assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test', 'npm test --'], approved), {
+      'npm test': ['src/a.js'],
+      'npm test --': approved,
+    });
+  });
+
+  it('maps backticked Changes paths containing spaces', () => {
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Spaced path.',
+      '  - Changes: `src/file with spaces.js`, tests/a.test.js',
+      '  - Verify: `npm test`',
+      '## Proposed Changes',
+      '#### [MODIFY] `src/file with spaces.js`',
+      '#### [NEW] tests/a.test.js',
+    ].join('\n');
+    const approved = extractApprovedPathSet(plan);
+    assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test'], approved), {
+      'npm test': ['src/file with spaces.js', 'tests/a.test.js'],
+    });
+  });
+
   it('parses both paths in rename and copy porcelain records', () => {
     const records = parsePorcelainZ(' M src/a.js\0R  src/new.js\0src/old.js\0C  copy.js\0source.js\0?? new.txt\0');
     assert.deepEqual(records.map(({ status, paths }) => ({ status, paths })), [
@@ -112,14 +200,29 @@ describe('verification evidence', () => {
     assert.equal(captureRepositoryState(os.tmpdir()).available, false);
   });
 
-  it('exposes approved-path and capture CLI commands and rejects invalid usage', () => {
+  it('exposes approved-path, command-mapping, and capture CLI commands and rejects invalid usage', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verification-cli-'));
     tempDirs.push(repo);
     execFileSync('git', ['init', '-q'], { cwd: repo });
     const plan = path.join(repo, 'plan.md');
-    fs.writeFileSync(plan, '## Proposed Changes\n#### [NEW] src/a.js\n');
+    fs.writeFileSync(plan, [
+      '## Success Criteria',
+      '- [SC1] Covered.',
+      '  - Changes: src/a.js',
+      '  - Verify: `npm test`',
+      '## Proposed Changes',
+      '#### [NEW] src/a.js',
+      '#### [NEW] docs/readme.md',
+    ].join('\n'));
     const paths = execFileSync(process.execPath, [script, '--approved-paths', plan], { encoding: 'utf8' });
-    assert.deepEqual(JSON.parse(paths), ['src/a.js']);
+    assert.deepEqual(JSON.parse(paths), ['docs/readme.md', 'src/a.js']);
+    const mappings = execFileSync(process.execPath, [
+      script, '--map-commands', plan, JSON.stringify(['npm test', 'npm run lint']),
+    ], { encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(mappings), {
+      'npm test': ['src/a.js'],
+      'npm run lint': ['docs/readme.md', 'src/a.js'],
+    });
     const capture = execFileSync(process.execPath, [script, '--capture', repo], { encoding: 'utf8' });
     assert.equal(JSON.parse(capture).available, true);
     const invalid = spawnSync(process.execPath, [script], { encoding: 'utf8' });

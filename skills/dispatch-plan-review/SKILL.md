@@ -34,7 +34,9 @@ unclear coverage keeps the overwrite / as-is / fresh-slug choice.
    argv, invocation context, and cleanup paths.
 2. On `authoring-required`, write the plan from [plan-template.md](references/plan-template.md),
    settling decision-changing ambiguities one focused question at a time, then prepare again.
-3. On `decision-required`, standalone asks once per invocation. Later per-target requests carry
+3. On `decision-required`, ask only when non-empty `choices` are present. Report `plan-lint`
+   diagnostics and stop; never ask or replay that decision. Standalone asks other decisions once per
+   invocation. Later per-target requests carry
    the supplied fields plus `artifactOwned: true`, never a replayed `decision`: `overwrite`
    re-authors and `fresh-slug` throws. An orchestrator may answer only from an artifact it
    authored in-run; otherwise it stops with the manifest diagnostic.

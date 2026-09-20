@@ -16,6 +16,11 @@ Breaking changes, critical design decisions, or trade-offs requiring user attent
 ## Open Questions & Assumptions
 Clarifying questions, settling assumptions, or explicit defaults (or "None").
 
+## Success Criteria
+- [SC#] Checkable outcome.
+  - Changes: <relative-path>[, <relative-path>...]
+  - Verify: `<command>`
+
 ## Proposed Changes
 
 ### <Component Name>
@@ -36,7 +41,8 @@ Downstream caller impacts, data/schema migrations, and fallback/rollback paths (
 
 ## Verification Plan
 ### Automated Tests
-- Concrete test commands (`npm test`, targeted test files/suites).
+- `<one executable command>`
+- None: <reason>
 ### Manual Verification
 - Concrete manual verification steps, edge cases, and failure scenarios.
 

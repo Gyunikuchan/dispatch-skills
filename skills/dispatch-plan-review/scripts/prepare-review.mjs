@@ -8,6 +8,7 @@ import { isMainModule } from '../../dispatch/scripts/common.mjs';
 import { extractTemplate, fillTemplate } from '../../dispatch/scripts/fill-template.mjs';
 import {
   getCurrentBranch,
+  isNativeArtifactPath,
   resolveArtifacts,
   resolveSlug,
 } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
@@ -31,6 +32,7 @@ import {
   settledWritesMismatch,
   writeArtifactMetadata,
 } from '../../dispatch/scripts/review-preparation.mjs';
+import { lintPlan } from './plan-lint.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(__dirname, '..');
@@ -321,6 +323,7 @@ function checkpoint(request, { now }) {
 export function preparePlanReview(request, {
   repoRoot = process.cwd(),
   now = new Date(),
+  nativeRoots,
 } = {}) {
   repoRoot = path.resolve(repoRoot);
   const action = validateRequest(request);
@@ -356,8 +359,42 @@ export function preparePlanReview(request, {
     throw new Error('fresh-slug requires a new request.slug that resolves to a missing artifact.');
   }
   const artifact = readArtifact(resolved.path, { kind: 'plan', slug: resolved.slug });
-  const snapshot = planSnapshot(artifact.source);
+  const lint = lintPlan(artifact.source);
   const persisted = artifact.metadata;
+  const native = resolved.tier === 'native' ||
+    isNativeArtifactPath(resolved.path, 'plan', nativeRoots ? { roots: nativeRoots } : undefined);
+  const legacyCoverage = !persisted &&
+    resolved.tier === 'scratch-existing' &&
+    !request.artifactOwned &&
+    !request.decision;
+  if (legacyCoverage) {
+    return {
+      schemaVersion: 1,
+      kind: 'plan',
+      action,
+      status: 'decision-required',
+      decision: 'legacy-plan-coverage',
+      choices: ['overwrite', 'as-is', 'fresh-slug'],
+      artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
+      freshness: { status: 'legacy', changedSections: [] },
+      defects: [...lint.defects, ...lint.warnings].map(defect => ({ ...defect, severity: 'warning' })),
+      cleanupPaths: [],
+    };
+  }
+  if (lint.defects.length && !native) {
+    return {
+      schemaVersion: 1,
+      kind: 'plan',
+      action,
+      status: 'decision-required',
+      decision: 'plan-lint',
+      artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
+      freshness: { status: persisted ? 'changed' : 'legacy', changedSections: [] },
+      defects: lint.defects,
+      cleanupPaths: [],
+    };
+  }
+  const snapshot = planSnapshot(artifact.source);
   const changedSections = persisted ? changedKeys(persisted.sectionHashes, snapshot.sectionHashes) : [];
   // Checkpoints land only at settlement, so later waves diff against the prior wave's snapshot.
   const priorSnapshot = request.invocationContext ? readInvocationState(request.invocationContext).snapshot : null;
@@ -368,26 +405,6 @@ export function preparePlanReview(request, {
     status: !persisted ? 'legacy' : changedSections.length || persisted.contentHash !== snapshot.contentHash ? 'changed' : 'current',
     changedSections,
   };
-  if (
-    !persisted &&
-    resolved.tier === 'scratch-existing' &&
-    request.requirement &&
-    !request.artifactOwned &&
-    !request.decision
-  ) {
-    return {
-      schemaVersion: 1,
-      kind: 'plan',
-      action,
-      status: 'decision-required',
-      decision: 'legacy-plan-coverage',
-      choices: ['overwrite', 'as-is', 'fresh-slug'],
-      artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
-      freshness,
-      cleanupPaths: [],
-    };
-  }
-
   const scan = scanResolutionLog(artifact.source, { strict: true });
   const { roundId, round } = parseRound(request.roundId, scan);
   const mode = request.mode ?? 'standalone';
@@ -407,7 +424,14 @@ export function preparePlanReview(request, {
     : round === 1
       ? 'Full review'
       : `Re-review round ${round} — changed sections: ${reReviewSections.join(', ') || 'review resolutions only'}`;
-  const scope = request.reviewScope ? `${derivedScope}; ${request.reviewScope}` : derivedScope;
+  const lintWarnings = [
+    ...lint.warnings,
+    ...(native ? lint.defects.map(defect => ({ ...defect, severity: 'warning' })) : []),
+  ];
+  const warningScope = lintWarnings.length
+    ? `Plan lint warnings: ${lintWarnings.map(({ rule, locus, message }) => `${rule} (${locus}): ${message}`).join(' | ')}`
+    : '';
+  const scope = [derivedScope, request.reviewScope, warningScope].filter(Boolean).join('; ');
   const prompt = reviewMode === 'full'
     ? loadPrompt({
       'Plan Path': toManifestPath(reviewPath, repoRoot),

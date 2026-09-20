@@ -52,9 +52,185 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const planBody = '# Plan\n\n## Proposed Changes\n\n- First.\n\n## Review Findings & Resolutions\n\n*No reviews conducted yet.*\n';
+const planBody = [
+  '# Plan',
+  '',
+  '## Success Criteria',
+  '',
+  '- [SC1] Implement and verify the sample.',
+  '  - Changes: `src/sample.js`',
+  '  - Verify: `node --test tests/sample.test.mjs`',
+  '',
+  '## Proposed Changes',
+  '',
+  '#### [MODIFY] src/sample.js',
+  '',
+  '- First.',
+  '',
+  '## Verification Plan',
+  '',
+  '### Automated Tests',
+  '',
+  '- `node --test tests/sample.test.mjs`',
+  '',
+  '## Review Findings & Resolutions',
+  '',
+  '*No reviews conducted yet.*',
+  '',
+].join('\n');
 
 describe('plan review preparation', () => {
+  it('stops owned invalid plans before creating any review artifacts', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-invalid.md');
+    fs.writeFileSync(plan, '# Invalid\n\nTODO implement later\n');
+    const manifest = preparePlanReview({
+      artifactPath: plan,
+      slug: 'invalid',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+
+    assert.deepEqual(Object.keys(manifest).sort(), [
+      'action', 'artifact', 'cleanupPaths', 'decision', 'defects', 'freshness', 'kind', 'schemaVersion', 'status',
+    ]);
+    assert.equal(manifest.status, 'decision-required');
+    assert.equal(manifest.decision, 'plan-lint');
+    assert.equal('choices' in manifest, false);
+    assert.deepEqual(manifest.cleanupPaths, []);
+    assert.equal('promptPath' in manifest, false);
+    assert.equal('dispatch' in manifest, false);
+    assert.equal(manifest.freshness.status, 'legacy');
+    assert.ok(manifest.defects.some(({ rule }) => rule === 'proposed-changes'));
+  });
+
+  it('returns lint before strict resolution-log parsing', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-invalid.md');
+    fs.writeFileSync(plan, '# Invalid\n\n## Review Findings & Resolutions\n\nmalformed');
+    const manifest = preparePlanReview({
+      artifactPath: plan,
+      slug: 'invalid',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    assert.equal(manifest.decision, 'plan-lint');
+  });
+
+  it('reports persisted-plan lint loci against canonical source lines', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-persisted.md');
+    const metadata = {
+      schemaVersion: 1,
+      kind: 'plan',
+      slug: 'persisted',
+      invocationId: 'invocation-1',
+      reviewedAt: '2026-09-17T00:00:00Z',
+      contentHash: `sha256:${'0'.repeat(64)}`,
+      sectionHashes: { 'Proposed Changes': `sha256:${'0'.repeat(64)}` },
+    };
+    const body = planBody.replace('#### [MODIFY] src/sample.js', '#### [MODIFY] ../escape.js');
+    const source = `---\n${JSON.stringify({ dispatch: metadata }, null, 2)}\n---\n${body}`;
+    fs.writeFileSync(plan, source);
+    const manifest = preparePlanReview({
+      artifactPath: plan,
+      slug: 'persisted',
+      artifactOwned: true,
+    }, { repoRoot: repo });
+    const expectedLine = source.split('\n').findIndex(line => line.includes('../escape.js')) + 1;
+    assert.equal(
+      manifest.defects.find(({ rule }) => rule === 'invalid-change-path').locus,
+      `line ${expectedLine}`,
+    );
+  });
+
+  it('keeps explicit native plan lint defects warning-only', () => {
+    const repo = makeRepo();
+    const nativeRoot = path.join(repo, 'native');
+    const plan = path.join(nativeRoot, 'conversation', 'implementation_plan.md');
+    fs.mkdirSync(path.dirname(plan), { recursive: true });
+    fs.writeFileSync(plan, planBody.replace('## Proposed Changes', '## Changes'));
+    const manifest = preparePlanReview({
+      artifactPath: plan,
+      slug: 'native',
+      artifactOwned: true,
+    }, { repoRoot: repo, nativeRoots: [nativeRoot] });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.match(manifest.scope, /proposed-changes/);
+      assert.doesNotMatch(manifest.scope, /severity/);
+    } finally {
+      cleanManifest(manifest);
+    }
+  });
+
+  it('keeps legacy coverage precedence and promotes defects after as-is', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-legacy.md');
+    fs.writeFileSync(plan, '# Legacy\n');
+    const first = preparePlanReview({
+      slug: 'legacy',
+      requirement: 'Use the existing plan',
+    }, { repoRoot: repo });
+    assert.equal(first.decision, 'legacy-plan-coverage');
+    assert.deepEqual(first.choices, ['overwrite', 'as-is', 'fresh-slug']);
+    assert.ok(first.defects.length > 0);
+    assert.ok(first.defects.every(({ severity }) => severity === 'warning'));
+
+    const promoted = preparePlanReview({
+      slug: 'legacy',
+      requirement: 'Use the existing plan',
+      decision: 'as-is',
+    }, { repoRoot: repo });
+    assert.equal(promoted.decision, 'plan-lint');
+    assert.equal('choices' in promoted, false);
+  });
+
+  it('returns legacy coverage for a non-owned scratch plan without requirement text', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-legacy.md');
+    fs.writeFileSync(plan, '# Legacy\n');
+
+    const manifest = preparePlanReview({ slug: 'legacy' }, { repoRoot: repo });
+
+    assert.equal(manifest.status, 'decision-required');
+    assert.equal(manifest.decision, 'legacy-plan-coverage');
+  });
+
+  it('includes every lint warning in full and rebuttal prompt scope', () => {
+    const repo = makeRepo();
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-warning.md');
+    const legacy = planBody
+      .replace(/## Success Criteria[\s\S]*?(?=## Proposed Changes)/, '')
+      .replace('- `node --test tests/sample.test.mjs`', '- None: no compatible runner')
+      .replace('- First.', '- First. TBD');
+    fs.writeFileSync(plan, legacy);
+    const packet = path.join(repo, 'findings.json');
+    fs.writeFileSync(packet, '{}');
+
+    for (const request of [
+      { reviewMode: 'full' },
+      { reviewMode: 'rebuttal', findingPacketPath: packet, findingKeys: ['R1-F001'] },
+    ]) {
+      const manifest = preparePlanReview({
+        ...request,
+        artifactPath: plan,
+        slug: 'warning',
+        artifactOwned: true,
+      }, { repoRoot: repo });
+      try {
+        assert.equal(manifest.status, 'ready');
+        assert.match(manifest.scope, /missing-success-criteria/);
+        assert.match(manifest.scope, /automated-tests-unavailable/);
+        assert.match(manifest.scope, /placeholder/);
+        const prompt = fs.readFileSync(manifest.promptPath, 'utf8');
+        for (const rule of ['missing-success-criteria', 'automated-tests-unavailable', 'placeholder']) {
+          assert.match(prompt, new RegExp(rule));
+        }
+      } finally {
+        cleanManifest(manifest);
+      }
+    }
+  });
+
   it('prepares an orchestrated full review and emits argv rather than shell text', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');

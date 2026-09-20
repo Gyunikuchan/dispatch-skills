@@ -176,6 +176,16 @@ describe('review skill prompt template parity', () => {
     assert.equal(planTemplate, codeTemplate);
   });
 
+  it('documents lint warnings as an optional Review Scope suffix without adding variables', () => {
+    const { variables: promptVariables } = extractTemplate(planText);
+    const { variables: rebuttalVariables, template: rebuttal } = extractTemplate(readSkill(PLAN_REBUTTAL_PATH));
+    assert.deepEqual(promptVariables, ['Plan Path', 'Requirement', 'User Focus Areas', 'Review Scope', 'Tool Turn Budget']);
+    assert.deepEqual(rebuttalVariables, ['Plan Path', 'Finding Packet Path', 'Review Scope', 'Tool Turn Budget']);
+    assert.match(planText, /lint warnings.*Review Scope|Review Scope.*lint warnings/is);
+    assert.match(rebuttal, /lint warnings|plan-lint warnings/i);
+    assert.match(rebuttal, /Finding keys only|supplied finding keys/i);
+  });
+
   it('carries one advisory Tool Turn Budget target', () => {
     for (const text of [planText, codeText]) {
       const { template } = extractTemplate(text);

@@ -5,7 +5,7 @@
 Populate every variable:
 - `<Plan Path>` — bounded review view path.
 - `<Finding Packet Path>` — source-specific OS-temp packet.
-- `<Review Scope>` — supplied finding keys only.
+- `<Review Scope>` — supplied finding keys, optionally followed by non-actionable `Plan lint warnings:` context; respond only to supplied keys.
 - `<Tool Turn Budget>` — advisory target.
 
 ````markdown
@@ -20,6 +20,7 @@ Read the packet and verify each claim against the plan view and cited repository
 one response for every supplied key and no others. Use `CONFIRM` when the orchestrator's
 counter-evidence settles the finding, `REBUT` when cited evidence refutes that counter-reading, or
 `INTENT-DISPUTE` when evidence cannot settle intent or a deliberate trade-off.
+Plan-lint warnings in Scope are context only; respond to supplied finding keys and no others.
 
 End your reply with one JSON object holding every response:
 ```json

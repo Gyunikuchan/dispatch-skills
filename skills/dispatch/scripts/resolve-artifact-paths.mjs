@@ -279,6 +279,15 @@ export function defaultNativeCandidateRoots({ platform = process.platform, env =
 
 const NATIVE_FILENAME = { plan: 'implementation_plan.md', walkthrough: 'walkthrough.md' };
 
+export function isNativeArtifactPath(file, kind = 'plan', { roots = defaultNativeCandidateRoots() } = {}) {
+  const absolute = path.resolve(file);
+  if (path.basename(absolute) !== NATIVE_FILENAME[kind]) return false;
+  return roots.some((root) => {
+    const relative = path.relative(path.resolve(root), absolute);
+    return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+}
+
 /** Platforms with a known, discoverable native artifact. */
 const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
 

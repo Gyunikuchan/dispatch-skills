@@ -6,8 +6,11 @@ Extract every command from the settled plan's `Verification Plan / Automated Tes
 <reason>` is unavailable, not passing. Extract approved paths from `[NEW]`, `[MODIFY]`, and
 `[DELETE]` H4 headings under `## Proposed Changes` with
 `scripts/verification-evidence.mjs --approved-paths <plan>`. If none parse, use every tracked and
-non-ignored untracked path outside `.scratch/` and record the fallback. Before structured
-criterion mappings exist, every selected command maps to the entire approved path set.
+non-ignored untracked path outside `.scratch/` and record the fallback. Map selected commands with
+`scripts/verification-evidence.mjs --map-commands <plan> '<commands-json-array>'`. Its deterministic
+JSON object maps each command, using an exact trimmed-string match to `Verify:`, to the sorted union of
+referenced `Changes:` paths only when every criterion referencing that command has `Changes:`;
+otherwise it maps to the full approved path set.
 
 At baseline, classify approved paths as test/test support or production using host conventions and
 record the split under walkthrough `## Verification & Validation`; classify later-created paths

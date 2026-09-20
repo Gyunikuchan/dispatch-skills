@@ -5,65 +5,48 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const CHANGE_HEADING = /^####\s+\[(NEW|MODIFY|DELETE)\]\s+(.+?)\s*$/;
+import {
+  extractApprovedPathSet,
+  normalizePlanPath,
+  structuralLines,
+} from '../../dispatch/scripts/plan-structure.mjs';
 
-function normalizePlanPath(raw) {
-  const trimmed = raw.trim();
-  const quoted = /^`([^`]+)`(?:\s+.*)?$/.exec(trimmed);
-  const value = (quoted?.[1] ?? trimmed.split(/\s+/)[0]).replace(/^\.\/+/, '');
-  if (value.includes('\\') || value.split('/').includes('..') || path.posix.isAbsolute(value)) return null;
-  const normalized = path.posix.normalize(value);
-  return normalized === '.' ? null : normalized;
-}
+export { extractApprovedPathSet };
 
-function structuralLines(source) {
-  const lines = source.split(/\r?\n/);
-  let fence = null;
-  let inComment = false;
-  return lines.map((line) => {
-    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fenceMatch) {
-      if (!fence) fence = fenceMatch[1];
-      else if (fenceMatch[1][0] === fence[0] && fenceMatch[1].length >= fence.length) fence = null;
-      return '';
-    }
-    if (fence) return '';
-    let visible = '';
-    let cursor = 0;
-    while (cursor < line.length) {
-      if (inComment) {
-        const close = line.indexOf('-->', cursor);
-        if (close === -1) return visible;
-        inComment = false;
-        cursor = close + 3;
-        continue;
-      }
-      const open = line.indexOf('<!--', cursor);
-      if (open === -1) {
-        visible += line.slice(cursor);
-        break;
-      }
-      visible += line.slice(cursor, open);
-      inComment = true;
-      cursor = open + 4;
-    }
-    return /^\s*>/.test(visible) ? '' : visible;
-  });
-}
-
-export function extractApprovedPathSet(source) {
+export function mapVerificationCommandsToPaths(source, commands, approvedPaths = extractApprovedPathSet(source)) {
   const lines = structuralLines(source);
-  const start = lines.findIndex((line) => /^## Proposed Changes\s*$/.test(line));
-  if (start === -1) return [];
-  const paths = [];
-  for (const line of lines.slice(start + 1)) {
-    if (/^##\s+/.test(line)) break;
-    const match = CHANGE_HEADING.exec(line);
-    if (!match) continue;
-    const normalized = normalizePlanPath(match[2]);
-    if (normalized) paths.push(normalized);
+  const mappings = [];
+  let inCriteria = false;
+  let current = null;
+  for (const { text } of lines) {
+    if (/^##\s+/.test(text)) {
+      inCriteria = /^## Success Criteria\s*$/.test(text);
+      current = null;
+      continue;
+    }
+    if (!inCriteria) continue;
+    if (/^-\s+\[SC[1-9]\d*\]/.test(text)) {
+      current = { paths: null, commands: [] };
+      mappings.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const changes = /^ {2,}- Changes:\s*(.+)$/.exec(text);
+    if (changes) {
+      current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
+    }
+    const verify = /^ {2,}- Verify:\s*`([^`]+)`\s*$/.exec(text);
+    if (verify) current.commands.push(verify[1].trim());
   }
-  return [...new Set(paths)].sort();
+  return Object.fromEntries(commands.map((command) => {
+    const references = mappings.filter(entry => entry.commands.includes(command));
+    const approved = new Set(approvedPaths);
+    const narrowed = references.length > 0 &&
+      references.every(entry => entry.paths?.length && entry.paths.every(value => value && approved.has(value)))
+      ? [...new Set(references.flatMap(entry => entry.paths))].sort()
+      : approvedPaths;
+    return [command, narrowed];
+  }));
 }
 
 export function parsePorcelainZ(source) {
@@ -175,7 +158,16 @@ function main(argv) {
     process.stdout.write(`${JSON.stringify(captureRepositoryState(argv[1]))}\n`);
     return;
   }
-  throw new Error('Usage: verification-evidence.mjs --approved-paths <plan> | --capture <repo-root>');
+  if (argv[0] === '--map-commands' && argv.length === 3) {
+    const commands = JSON.parse(argv[2]);
+    if (!Array.isArray(commands) || commands.some(command => typeof command !== 'string')) {
+      throw new Error('--map-commands requires a JSON array of command strings.');
+    }
+    const source = fs.readFileSync(argv[1], 'utf8');
+    process.stdout.write(`${JSON.stringify(mapVerificationCommandsToPaths(source, commands))}\n`);
+    return;
+  }
+  throw new Error('Usage: verification-evidence.mjs --approved-paths <plan> | --map-commands <plan> <commands-json> | --capture <repo-root>');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

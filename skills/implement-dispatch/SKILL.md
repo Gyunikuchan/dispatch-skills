@@ -31,8 +31,8 @@ The level-less plan-path form resumes only a canonical scratch plan. Follow the
 2. Resolve paths with `dispatch/scripts/resolve-artifact-paths.mjs`; host convention wins.
    Requests/reports go in OS temp. Establish an explicit slug matching the canonical plan filename
    when branch/conversation identity differs.
-3. Author from the plan-review template. Group files by `[NEW]`/`[MODIFY]`/`[DELETE]`; map every
-   criterion to changes or verification.
+3. Author from the plan-review template. Group files by `[NEW]`/`[MODIFY]`/`[DELETE]`; write
+   stable `[SC#]` criteria with indented `Changes:` and/or `Verify:` mappings.
 4. Run:
 
    ```bash
@@ -51,6 +51,8 @@ Skip when disabled. Prepare an orchestrated full review with flow targets/reserv
 and budget.
 Resolve `decision-required` only for in-run artifacts. Execute only manifest argv; await terminal
 outcomes, use runner fallback, verify claims, apply findings, log rulings, and check consensus.
+Prepare plans authored in-run with `artifactOwned: true`. On `plan-lint`, repair every defect and
+re-prepare without a user ask; this consumes neither a review round nor budget.
 Re-review changed sections or live findings below the cap; at the cap obtain rulings and run one
 final verification wave.
 

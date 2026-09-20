@@ -22,6 +22,7 @@ import {
   resolveSlug,
   getCurrentBranch,
   defaultNativeCandidateRoots,
+  isNativeArtifactPath,
   findExistingScratchArtifact,
   resolveArtifactPath,
   resolveArtifacts,
@@ -237,6 +238,17 @@ describe('defaultNativeCandidateRoots', () => {
         `expected a root ending in .gemini/${dataDir}, got: ${roots.join(', ')}`
       );
     }
+  });
+
+  describe('isNativeArtifactPath', () => {
+    it('requires the exact native filename within a configured root', () => {
+      const root = path.resolve('test-native-root');
+      assert.equal(isNativeArtifactPath(path.join(root, 'conversation', 'implementation_plan.md'), 'plan', { roots: [root] }), true);
+      assert.equal(isNativeArtifactPath(path.join(root, 'conversation', 'walkthrough.md'), 'walkthrough', { roots: [root] }), true);
+      assert.equal(isNativeArtifactPath(path.join(root, 'implementation_plan.md'), 'plan', { roots: [root] }), true);
+      assert.equal(isNativeArtifactPath(path.join(root, 'conversation', 'other.md'), 'plan', { roots: [root] }), false);
+      assert.equal(isNativeArtifactPath(path.join(`${root}-sibling`, 'implementation_plan.md'), 'plan', { roots: [root] }), false);
+    });
   });
 
   it('includes APPDATA/LOCALAPPDATA roots on win32', () => {
