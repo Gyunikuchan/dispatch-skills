@@ -4,11 +4,30 @@ This contract governs delegated implementation tasks (initial approved scope imp
 task clusters), whereas accepted post-review fixes in § 4 are applied directly by the orchestrator.
 
 Every implementation launch receives the settled scope, attempt number, prior failure evidence,
-and an explicit resolved model. When the configured model resolves to an array of model names,
-the launcher attempts the first model; on availability, authentication, or quota failure, it
-tries the subsequent model in the array before concluding the launch failed. Attempt 2 receives the
-instruction to identify root cause before modifying code. A native launcher receives only fields its
-host tool schema supports; flow resolution reports applied and ignored configured fields.
+and an explicit resolved model.
+
+## Launch cascade
+
+A resolved model array is one ordered **launch cascade** inside one implementation attempt:
+
+1. Invoke the native subagent with the first model and the resolved effort.
+2. If the native tool rejects that launch because the model is unavailable, authentication fails,
+   or quota is exhausted, invoke the next model with the identical brief, attachments, attempt
+   number, and effort. Continue until one starts or the array is exhausted.
+3. Once a subagent starts, stop the cascade. Any later timeout, malformed envelope, `BLOCKED`, test
+   failure, or defective implementation is an implementation outcome handled by attempt recovery;
+   it does not authorize another array model.
+4. Record each invocation before outcome handling as
+   `model <index>/<count> <name>; effort <value>; <launch-rejected: reason|started>`.
+
+The cascade is complete only when one entry is recorded as `started` or every configured model has
+a recorded eligible launch rejection. Thus `model: ["gpt-5.6-luna", "bedrock.gpt-5.6-luna"]` with
+`effort: "max"` means a rejected first native call is followed immediately by a second native call
+using `bedrock.gpt-5.6-luna` and `max`; it does not mean the orchestrator may implement inline.
+
+Attempt 2 receives the instruction to identify root cause before modifying code. A native launcher
+receives only fields its host tool schema supports; flow resolution reports applied and ignored
+configured fields.
 
 The final message contains exactly one raw or fenced JSON envelope:
 

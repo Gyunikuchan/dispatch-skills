@@ -146,8 +146,10 @@ Every implementation platform entry must resolve an explicit `model` (a string o
 array like `["gpt-5.6-luna", "bedrock.gpt-5.6-luna"]`); a missing model stops flow resolution with
 the exact configuration key to update. Implementation entries are objects, not review candidate
 arrays. Higher level keys provide native-only escalation tiers when their launcher-supported model
-or effort differs; flat entries and `max` cannot escalate. Launchers try array models in order upon
-quota or availability failure.
+or effort differs; flat entries and `max` cannot escalate. A model array is an ordered native-launch
+cascade within one implementation attempt: a launch rejected for unavailability, authentication,
+or quota immediately advances to the next model with the same effort. Once a subagent starts, later
+implementation failures use attempt recovery rather than the next array model.
 
 ## What to expect
 

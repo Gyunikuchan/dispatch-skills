@@ -146,15 +146,24 @@ report the exact diagnostic instead.
 
    Reuse the identical prompt and attachments. Preserve the target's effective model and effort
    when the subagent accepts them.
-4. Record the native fallback, its result, and any reserve substitution as the target's outcome.
+4. Treat fallback as a transport replacement, not a reduced review. Capture its complete final
+   response into the failed slot's `dispatch.outputPath` (or the same stdout-result channel named by
+   the runner warning), preserving the original candidate/source identity and adding fallback
+   metadata through `source-map.mjs --extra`. Then run the caller's unchanged parsing,
+   sanitization, verification, adjudication, finding IDs/rulings, consensus, artifact update, and
+   checkpoint steps. A clean fallback report participates in consensus exactly like a clean direct
+   report; an invalid fallback report remains a failed target.
+5. Record the native fallback reason/result and any reserve substitution as the target's outcome.
+   Do not summarize or relay it as a side channel in place of the caller's report pipeline.
 
 A named agent type above is read-only by construction. A default subagent is write-capable, so its
 read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to make
 no file edits. A generated prompt file and its attachments are inputs to this path, not finished
 artifacts: prune them only after this fallback consumes them or reaches a terminal outcome.
 
-**Done when:** the matching fallback has produced a report or terminal failure, and the outcome is
-recorded with its reason.
+**Done when:** the matching fallback has a terminal result in the failed slot's normal report
+channel, the caller has processed it through the same pipeline as a direct result, and its fallback
+source metadata and reason are recorded.
 
 For an orchestrated review wave, a same-platform failure takes the native branch immediately.
 Other targets may use ordered reserves before step 3; use each reserve at most once per wave and

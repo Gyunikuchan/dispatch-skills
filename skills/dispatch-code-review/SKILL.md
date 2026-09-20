@@ -52,9 +52,12 @@ terminal.
 
 ## Adjudicate and fix
 
-1. Read each report from `dispatch.outputPath`. Normalize with
-   `scripts/parse-report.mjs --file <path>`, adding `--rebuttal-packet <packet>` for rebuttals.
-   Exit `3`: read the prose report per alignment; exit `1` is an empty report; `2` is terminal.
+1. Read every direct, reserve, or native-fallback report from its slot's
+   `dispatch.outputPath` (or documented stdout-result channel). A fallback must first be captured
+   there under the original candidate/source identity with fallback metadata; it receives no
+   alternate adjudication path. Normalize with `scripts/parse-report.mjs --file <path>`, adding
+   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per alignment; exit
+   `1` is an empty report; `2` is terminal.
 2. Verify each in-scope finding against its cited changed line and surrounding contract, and each
    `adjacent` finding at its cited locus. Reject uncited, contradicted, or unverifiable claims.
    Apply alignment finality and sanitize every artifact write.

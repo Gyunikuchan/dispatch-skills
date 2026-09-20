@@ -66,4 +66,33 @@ describe('v0.4 core correctness contracts', () => {
     assert.match(skill, /apply accepted fixes directly as orchestrator/i);
     assert.match(delegateContract, /post-review fixes in § 4 are applied directly by the orchestrator/i);
   });
+
+  it('makes native implementation model fallback an observable launch cascade', () => {
+    const skill = read('skills/implement-dispatch/SKILL.md');
+    const delegateContract = read('skills/implement-dispatch/references/implementation-delegate-contract.md');
+
+    assert.match(skill, /launch cascade/i);
+    assert.match(skill, /same effort/i);
+    assert.match(skill, /model <index>\/<count> <name>/);
+    assert.match(delegateContract, /Once a subagent starts, stop the cascade/);
+    assert.match(delegateContract, /bedrock\.gpt-5\.6-luna/);
+    assert.match(delegateContract, /every configured model has\s+a recorded eligible launch rejection/);
+  });
+
+  it('routes native review fallback through the direct-result pipeline', () => {
+    const providers = read('skills/dispatch/references/providers.md');
+    const alignment = read('skills/dispatch/references/alignment.md');
+    const planReview = read('skills/dispatch-plan-review/SKILL.md');
+    const codeReview = read('skills/dispatch-code-review/SKILL.md');
+
+    assert.match(providers, /transport replacement, not a reduced review/i);
+    assert.match(providers, /dispatch\.outputPath/);
+    assert.match(providers, /unchanged parsing[\s\S]*consensus[\s\S]*artifact update[\s\S]*checkpoint/);
+    assert.match(alignment, /direct, reserve, or native fallback/i);
+    for (const review of [planReview, codeReview]) {
+      assert.match(review, /direct, reserve, or native-fallback report/i);
+      assert.match(review, /original candidate\/source identity/);
+      assert.match(review, /no\s+alternate adjudication path/);
+    }
+  });
 });

@@ -89,10 +89,15 @@ Implement approved plan scope through a native subagent of `flow.implementation.
 never inline: `claude` -> `general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose`
 (`task` tool with `model` and `reasoning_effort`); `agy` defines no named agent types, so launch
 its default subagent. All platforms follow configured `model` and `effort` supported by their
-native launcher. When the resolved `model` is an array of model names, try the first model, falling
-back to subsequent models in the list on quota or availability failure. Derive
-`--implementation-fields` from that native launch tool's schema; default to model only. Pass
-resolved fields explicitly and disclose ignored fields; missing models stop preflight. Preserve the
+native launcher. Treat a resolved model array as a **launch cascade**, not an implementation-attempt
+sequence: call the native subagent with model 1 and the resolved effort; if the tool rejects the
+launch for model unavailability, authentication, or quota, immediately call it with model 2 and the
+same effort, continuing in order. A subagent that starts has consumed the cascade: its malformed
+envelope, `BLOCKED`, test failure, timeout, or implementation defect follows attempt recovery and
+never selects the next fallback model. Derive `--implementation-fields` from that native launch
+tool's schema; default to model only. Pass resolved fields explicitly and disclose ignored fields;
+missing models stop preflight. Before interpreting the outcome, record every cascade entry as
+`model <index>/<count> <name>; effort <value>; <launch-rejected: reason|started>`. Preserve the
 index/unrelated changes and inspect Git read-only. Trivial work alone may start on the host
 platform.
 

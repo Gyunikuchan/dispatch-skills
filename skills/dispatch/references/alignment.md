@@ -25,12 +25,15 @@ Canonical scratch artifacts are `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and
 
 ## Evidence and finality
 
-Reports arrive as schema JSON or prose. Restate a report the parser flags as prose (including
-schema-mismatched JSON): each finding as severity, locus, tag, defect, and required change;
-restate a rebuttal as one verdict per packet key, keeping unanswered keys live. Prose is clean only
-when it shows the scope was reviewed and reports no findings. Refusal, truncation, empty output,
-or no delivered review is invalid: take the fallback. Judge delivered content, not narration
-("waiting on tests") or loose loci.
+Reports arrive as schema JSON or prose, whether direct, reserve, or native fallback. Fallback is a
+transport replacement only: capture its final response in the failed slot's normal report channel,
+preserve the candidate/source identity with fallback metadata, and perform the same parse,
+verification, adjudication, consensus, resolution-log, and checkpoint sequence. Restate a report
+the parser flags as prose (including schema-mismatched JSON): each finding as severity, locus, tag,
+defect, and required change; restate a rebuttal as one verdict per packet key, keeping unanswered
+keys live. Prose is clean only when it shows the scope was reviewed and reports no findings.
+Refusal, truncation, empty output, or no delivered review is invalid: take the fallback. Judge
+delivered content, not narration ("waiting on tests") or loose loci.
 
 Delegate success reports are claims, not verification. Deduplicate, then verify against
 requirements, repository rules, and cited loci. Accept verified defects regardless of votes;
