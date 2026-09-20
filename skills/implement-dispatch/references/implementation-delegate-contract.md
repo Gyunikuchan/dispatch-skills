@@ -1,5 +1,8 @@
 # Implementation delegate contract
 
+This contract governs delegated implementation tasks (initial approved scope implementation and
+task clusters), whereas accepted post-review fixes in § 4 are applied directly by the orchestrator.
+
 Every implementation launch receives the settled scope, attempt number, prior failure evidence,
 and an explicit resolved model. When the configured model resolves to an array of model names,
 the launcher attempts the first model; on availability, authentication, or quota failure, it

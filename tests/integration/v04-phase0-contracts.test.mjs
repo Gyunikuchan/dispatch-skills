@@ -58,4 +58,12 @@ describe('v0.4 core correctness contracts', () => {
     for (const heading of headings) assert.match(template, new RegExp(`^${heading}$`, 'm'));
     assert.match(template, /Command: `<test command>` — exit <status>/);
   });
+
+  it('orchestrator applies review fixes directly without implementation subagents', () => {
+    const skill = read('skills/implement-dispatch/SKILL.md');
+    const delegateContract = read('skills/implement-dispatch/references/implementation-delegate-contract.md');
+
+    assert.match(skill, /apply accepted fixes directly as orchestrator/i);
+    assert.match(delegateContract, /post-review fixes in § 4 are applied directly by the orchestrator/i);
+  });
 });

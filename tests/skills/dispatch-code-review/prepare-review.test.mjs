@@ -82,6 +82,28 @@ describe('code review preparation', () => {
     }
   });
 
+  it('reuses an existing relocated walkthrough in OS temp rather than generating a new one', () => {
+    const repo = makeRepo();
+    const tempWalkthrough = path.join(os.tmpdir(), `2026-09-20-feature-walkthrough-${Date.now()}.md`);
+    fs.writeFileSync(tempWalkthrough, '# Walkthrough — Existing in Temp\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
+    try {
+      const manifest = prepareCodeReview({
+        mode: 'orchestrated',
+        slug: 'feature',
+        summary: 'Update the exported value',
+        verification: { command: 'npm test', result: 'Passed' },
+        targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+        artifactOwned: true,
+      }, { repoRoot: repo });
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.artifact.generated, false);
+      assert.equal(manifest.artifact.canonicalPath, tempWalkthrough.split(path.sep).join('/'));
+      cleanupManifest(manifest);
+    } finally {
+      fs.rmSync(tempWalkthrough, { force: true });
+    }
+  });
+
   it('accepts targets/reserves without a per-entry roundId, defaulting to the resolved round', () => {
     const repo = makeRepo();
     const manifest = prepareCodeReview({

@@ -1,7 +1,7 @@
 {
-  "SKILL.md": "2a6321d11a3eb74ef0ef178a98d54f38694f18b5c9a8d31f2bd76b54b879bc38",
-  "references/implementation-delegate-contract.md": "804b98a7dfaad98178a023a360f641a0648135085b27e084ce7bbd59cde72ef3",
-  "references/ledger-contract.md": "b2202ea493d755aac200bfb011376609ee9f78f6e55646b0138ffb75b1753942",
+  "SKILL.md": "9491f0588999a39207d0401bf14fa9e46b3fa8f645b82af9465e7ab579f0be9a",
+  "references/implementation-delegate-contract.md": "cd7d1b9b3e0e342ea1f7ec48125bec47078088ba5f05f663d976aa292da0fd63",
+  "references/ledger-contract.md": "86cfcceadd292838a471d5e7e207917ea074663aa165e5544ce0d5b733496dac",
   "references/verification-contract.md": "7e03a6cb78053f17e4d4e7fe4365f45664f00a4c3db600ccfd2ccd23f47194d7",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
   "scripts/git-state.mjs": "14b5802369477662564cad57768d15eb73252628b83560f5c8b9875f410fa74a",

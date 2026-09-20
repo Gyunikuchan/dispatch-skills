@@ -27,7 +27,8 @@ Immediately after approval, append `run-start`, then `approval`, then any pre-ap
 `review` records. Before each task or cluster dispatch append `task-start`. Append every
 `implementation-attempt` and its host `verification`; append `task-complete` only after a
 non-regression verification transitions to `complete`. Append later rulings and reviews as they
-settle. Append `run-complete` last for complete, stable-failure, or aborted outcomes.
+settle (settled § 4 review fixes are checkpointed with the review record). Append `run-complete`
+last for complete, stable-failure, or aborted outcomes.
 
 Use the exact v1 event grammar enforced by `scripts/ledger-events.mjs`. Sequence numbers are
 ledger-global. The writer holds one exclusive lock across tail read, sequence assignment, append,

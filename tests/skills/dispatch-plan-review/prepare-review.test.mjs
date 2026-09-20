@@ -256,6 +256,26 @@ describe('plan review preparation', () => {
     }
   });
 
+  it('reuses an existing relocated plan in OS temp rather than requiring authoring', () => {
+    const repo = makeRepo();
+    const tempPlan = path.join(os.tmpdir(), `2026-09-20-sample-${Date.now()}.md`);
+    fs.writeFileSync(tempPlan, planBody);
+    try {
+      const manifest = preparePlanReview({
+        mode: 'orchestrated',
+        slug: 'sample',
+        artifactOwned: true,
+        requirement: 'Implement sample',
+        targets: [{ candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+      }, { repoRoot: repo });
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.artifact.canonicalPath, tempPlan.split(path.sep).join('/'));
+      cleanManifest(manifest);
+    } finally {
+      fs.rmSync(tempPlan, { force: true });
+    }
+  });
+
   it('accepts targets/reserves without a per-entry roundId, defaulting to the resolved round', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');

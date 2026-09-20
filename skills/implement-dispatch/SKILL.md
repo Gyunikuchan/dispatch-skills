@@ -80,15 +80,16 @@ production writes. If it has a resolution log, only consensus exit `0` permits a
 After approval, initialize and append the durable events in the
 [ledger contract](references/ledger-contract.md). On resume, reconcile its fold before dispatch.
 
-Implement through a native subagent of `flow.implementation.platform`, never inline: `claude` ->
-`general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose` (`task` tool with
-`model` and `reasoning_effort`); `agy` defines no named agent types, so launch its default
-subagent. All platforms follow configured `model` and `effort` supported by their native launcher.
-When the resolved `model` is an array of model names, try the first model, falling back to
-subsequent models in the list on quota or availability failure. Derive `--implementation-fields`
-from that native launch tool's schema; default to model only. Pass resolved fields explicitly and
-disclose ignored fields; missing models stop preflight. Preserve the index/unrelated changes and
-inspect Git read-only. Trivial work alone may start on the host platform.
+Implement approved plan scope through a native subagent of `flow.implementation.platform`,
+never inline: `claude` -> `general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose`
+(`task` tool with `model` and `reasoning_effort`); `agy` defines no named agent types, so launch
+its default subagent. All platforms follow configured `model` and `effort` supported by their
+native launcher. When the resolved `model` is an array of model names, try the first model, falling
+back to subsequent models in the list on quota or availability failure. Derive
+`--implementation-fields` from that native launch tool's schema; default to model only. Pass
+resolved fields explicitly and disclose ignored fields; missing models stop preflight. Preserve the
+index/unrelated changes and inspect Git read-only. Trivial work alone may start on the host
+platform.
 
 Follow the [implementation delegate contract](references/implementation-delegate-contract.md):
 parse one typed envelope and obey its transition. Native launches are non-resumable unless the
@@ -113,7 +114,8 @@ the active diff with fresh evidence.
 
 Skip when disabled. Prepare `code-review:R1` with walkthrough, bounded plan evidence, resolved flow,
 and budget; only in-run deterministic decisions may proceed. Launch as for plan review. Verify
-claims, apply fixes, log rulings, update the walkthrough, and reverify before consensus or another
+claims, apply accepted fixes directly as orchestrator (inline without dispatching implementation
+native subagents), log rulings, update the walkthrough, and reverify before consensus or another
 bounded wave. Preserve source affinity; auth/quota exclusion re-resolves without renumbering. At
 the cap, obtain rulings and run one final verification wave.
 

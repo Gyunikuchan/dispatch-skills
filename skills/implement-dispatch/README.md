@@ -160,7 +160,9 @@ quota or availability failure.
    has at most three native-platform attempts and `self` execution (a subagent on the host platform)
    has at most two.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
-   repeating the review until findings are settled or the configured limit is reached.
+   repeating the review until findings are settled or the configured limit is reached. The
+   orchestrator applies accepted fixes directly inline, updates the walkthrough, and reverifies
+   without launching implementation native subagents.
 7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;
    settled reviews checkpoint metadata for the next invocation.
 8. It reports unresolved disagreements or configuration problems instead of silently ignoring them.

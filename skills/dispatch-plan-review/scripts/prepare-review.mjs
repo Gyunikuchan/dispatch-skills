@@ -359,7 +359,7 @@ export function preparePlanReview(request, {
   const native = resolved.tier === 'native' ||
     isNativeArtifactPath(resolved.path, 'plan', nativeRoots ? { roots: nativeRoots } : undefined);
   const legacyCoverage = !persisted &&
-    resolved.tier === 'scratch-existing' &&
+    ['scratch-existing', 'temp-existing'].includes(resolved.tier) &&
     !request.artifactOwned &&
     !request.decision;
   if (legacyCoverage) {

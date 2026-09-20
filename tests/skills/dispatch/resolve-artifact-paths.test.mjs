@@ -24,6 +24,7 @@ import {
   defaultNativeCandidateRoots,
   isNativeArtifactPath,
   findExistingScratchArtifact,
+  findExistingTempArtifact,
   resolveArtifactPath,
   resolveArtifacts,
 } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
@@ -388,6 +389,40 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
     );
   });
 
+  describe('findExistingTempArtifact', () => {
+    it('finds relocated plan and walkthrough in OS temp', () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
+      try {
+        writeFileSync(path.join(tempDir, '2026-09-10-auth-v2.md'), '# plan');
+        writeFileSync(path.join(tempDir, '2026-09-10-auth-v2-walkthrough.md'), '# walkthrough');
+
+        assert.equal(
+          findExistingTempArtifact('plan', 'auth-v2', tempDir),
+          path.join(tempDir, '2026-09-10-auth-v2.md').split(path.sep).join('/')
+        );
+        assert.equal(
+          findExistingTempArtifact('walkthrough', 'auth-v2', tempDir),
+          path.join(tempDir, '2026-09-10-auth-v2-walkthrough.md').split(path.sep).join('/')
+        );
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('matches collision-renamed temp artifacts with timestamps or counters', () => {
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
+      try {
+        writeFileSync(path.join(tempDir, '2026-09-10-auth-v2-walkthrough-1789912000000-1.md'), '# walkthrough');
+        assert.equal(
+          findExistingTempArtifact('walkthrough', 'auth-v2', tempDir),
+          path.join(tempDir, '2026-09-10-auth-v2-walkthrough-1789912000000-1.md').split(path.sep).join('/')
+        );
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it('resolveArtifactPath falls back to scratch-new when nothing exists', () => {
     const resolved = resolveArtifactPath('plan', {
       slug: 'auth-v2',
@@ -402,21 +437,52 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
     });
   });
 
-  it('resolveArtifactPath reuses an existing scratch artifact over scratch-new', () => {
+  it('resolveArtifactPath reuses an existing temp artifact over scratch-new', () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
+    try {
+      const tempWalkthrough = path.join(tempDir, '2026-09-05-auth-v2-walkthrough.md');
+      writeFileSync(tempWalkthrough, '# walkthrough');
+
+      const resolved = resolveArtifactPath('walkthrough', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        tempRoot: tempDir,
+        native: { orchestrator: null },
+      });
+      assert.deepEqual(resolved, {
+        tier: 'temp-existing',
+        path: tempWalkthrough.split(path.sep).join('/'),
+        exists: true,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('resolveArtifactPath reuses an existing scratch artifact over temp and scratch-new', () => {
     const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
     writeFileSync(path.join(dir, '2026-09-05-auth-v2.md'), '# plan');
 
-    const resolved = resolveArtifactPath('plan', {
-      slug: 'auth-v2',
-      date: '2026-09-11',
-      projectRoot,
-      native: { orchestrator: null },
-    });
-    assert.deepEqual(resolved, {
-      tier: 'scratch-existing',
-      path: '.scratch/plan/2026-09-05-auth-v2.md',
-      exists: true,
-    });
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
+    try {
+      writeFileSync(path.join(tempDir, '2026-09-04-auth-v2.md'), '# temp plan');
+
+      const resolved = resolveArtifactPath('plan', {
+        slug: 'auth-v2',
+        date: '2026-09-11',
+        projectRoot,
+        tempRoot: tempDir,
+        native: { orchestrator: null },
+      });
+      assert.deepEqual(resolved, {
+        tier: 'scratch-existing',
+        path: '.scratch/plan/2026-09-05-auth-v2.md',
+        exists: true,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('resolveArtifactPath defaults date to today when omitted', () => {

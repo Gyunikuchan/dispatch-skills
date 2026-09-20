@@ -24,7 +24,7 @@ implement-dispatch
 5. **Final Change Scope & Flow**: Reassess change scope and level against the reviewed plan before the approval gate, then refresh `flow` if the level changed.
 6. **Implement**: Single user approval gate, native write subagent dispatch (test-first), boundary verification.
 7. **Code Review**: Baseline walkthrough verification, multi-agent code review wave via `dispatch-code-review` (orchestrated mode).
-8. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes, updates walkthrough, verifies tests pass green, records adjudications.
+8. **Apply Fixes & Settle Disputes**: Orchestrator applies accepted fixes directly inline (without dispatching implementation native subagents), updates walkthrough, verifies tests pass green, records adjudications.
 9. **Re-Review Loop**: Review-owned preparation builds bounded views; source-grouped rebuttal
    packets return live claims to their citing candidates or replacements until consensus/cap.
 10. **Handoff & Cleanup**: Await all review dispatches, record run diagnostics, relocate scratch artifacts to OS temp, deliver user summary.

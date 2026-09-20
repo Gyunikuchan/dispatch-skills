@@ -520,7 +520,7 @@ export function prepareCodeReview(request, {
   if (
     !generated &&
     !persisted &&
-    pair.walkthrough.tier === 'scratch-existing' &&
+    ['scratch-existing', 'temp-existing'].includes(pair.walkthrough.tier) &&
     !request.artifactOwned &&
     !request.decision
   ) {

@@ -9,7 +9,8 @@
  *      when the orchestrator actually is that platform; scoped to the exact active
  *      conversation when its id is known, else a same-platform recency guess.
  *   2. Existing scratch artifact matching the slug (any date) — reuse, don't re-author.
- *   3. Scratch-new: the deterministic `.scratch/plan/<date>-<slug>[-walkthrough].md` path.
+ *   3. Existing relocated artifact in OS temp matching the slug (any date) — reuse, don't re-author.
+ *   4. Scratch-new: the deterministic `.scratch/plan/<date>-<slug>[-walkthrough].md` path.
  *
  * Usage:
  *   node resolve-artifact-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>]
@@ -28,7 +29,7 @@
  * the platform consulted for conversation-id slug derivation.
  *
  * Outputs JSON: `{ slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
- * `tier` is `native`, `scratch-existing`, or `scratch-new`. `slugSource` is
+ * `tier` is `native`, `scratch-existing`, `temp-existing`, or `scratch-new`. `slugSource` is
  * `explicit`, `branch`, or `conversation`.
  */
 
@@ -427,23 +428,77 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
 }
 
 // ============================================================================
+// SECTION: Discovery: existing temp tier (relocated scratch artifacts)
+// ============================================================================
+
+/**
+ * Finds an existing artifact in OS temp matching the slug regardless of date
+ * (e.g. relocated from .scratch/plan/ during a prior run or step in this session),
+ * newest-file-wins if more than one date matches. Returns an absolute posix path, or null.
+ *
+ * @param {'plan'|'walkthrough'} kind
+ * @param {string} slug
+ * @param {string} [tempRoot]
+ * @returns {string|null}
+ */
+export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir()) {
+  if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
+    throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
+  }
+  if (!existsSync(tempRoot)) return null;
+
+  const pattern = kind === 'walkthrough'
+    ? new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}-walkthrough(?:-\\d+)*\\.md$`)
+    : new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}(?:-\\d+)*\\.md$`);
+
+  let entries;
+  try {
+    entries = readdirSync(tempRoot, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  let newest = null;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (kind === 'plan' && entry.name.includes('-walkthrough')) continue;
+    if (!pattern.test(entry.name)) continue;
+    const abs = path.join(tempRoot, entry.name);
+    let stat;
+    try {
+      stat = statSync(abs);
+    } catch {
+      continue;
+    }
+    if (!newest || stat.mtimeMs > newest.mtimeMs) {
+      newest = { path: abs.split(path.sep).join('/'), mtimeMs: stat.mtimeMs };
+    }
+  }
+
+  return newest ? newest.path : null;
+}
+
+// ============================================================================
 // SECTION: Core resolution
 // ============================================================================
 
 /**
- * Resolves one artifact kind: native tier, then existing scratch, then the
- * deterministic scratch-new path.
+ * Resolves one artifact kind: native tier, then existing scratch, then existing
+ * temp artifact (relocated scratch), then the deterministic scratch-new path.
  *
  * @param {'plan'|'walkthrough'} kind
- * @param {{ slug: string, date: string, projectRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
- * @returns {{ tier: 'native'|'scratch-existing'|'scratch-new', path: string, exists: boolean }}
+ * @param {{ slug: string, date: string, projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
+ * @returns {{ tier: 'native'|'scratch-existing'|'temp-existing'|'scratch-new', path: string, exists: boolean }}
  */
-export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, native: nativeOptions = {} } = {}) {
+export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), native: nativeOptions = {} } = {}) {
   const native = findNativeArtifact(kind, nativeOptions);
   if (native) return { tier: 'native', path: native, exists: true };
 
   const existing = findExistingScratchArtifact(kind, slug, projectRoot);
   if (existing) return { tier: 'scratch-existing', path: existing, exists: true };
+
+  const existingTemp = findExistingTempArtifact(kind, slug, tempRoot);
+  if (existingTemp) return { tier: 'temp-existing', path: existingTemp, exists: true };
 
   return { tier: 'scratch-new', path: buildScratchPaths(date ?? localDate(), slug)[kind], exists: false };
 }
@@ -451,7 +506,7 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
 /**
  * Resolves plan and/or walkthrough artifact paths together.
  *
- * @param {{ slug: string, date?: string, kinds?: ('plan'|'walkthrough')[], projectRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
+ * @param {{ slug: string, date?: string, kinds?: ('plan'|'walkthrough')[], projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
  * @returns {{ slug: string, date: string, plan?: object, walkthrough?: object }}
  */
 export function resolveArtifacts({
@@ -460,6 +515,7 @@ export function resolveArtifacts({
   date,
   kinds = ['plan', 'walkthrough'],
   projectRoot = PROJECT_ROOT,
+  tempRoot = os.tmpdir(),
   repositoryRoot,
   ledger = {},
   native,
@@ -488,7 +544,7 @@ export function resolveArtifacts({
     }),
   };
   for (const kind of kinds) {
-    result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, native });
+    result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, tempRoot, native });
   }
   return result;
 }
@@ -556,7 +612,8 @@ Options:
 
 Outputs JSON: { slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { ... } }.
 Resolution order per kind: platform-native artifact, then an existing scratch artifact
-matching the slug at any date, then the deterministic scratch-new path.
+matching the slug at any date, then an existing relocated artifact in OS temp, then
+the deterministic scratch-new path.
 ledgerPath is non-null only for explicit/branch slugs inside a Git work tree.
 `);
 }
