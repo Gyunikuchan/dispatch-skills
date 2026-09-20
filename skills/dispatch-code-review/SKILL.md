@@ -94,3 +94,14 @@ again.
 **Done when:** every finding is ruled, every accepted `adjacent` finding is offered or returned,
 permitted fixes verify, the walkthrough is current, metadata is checkpointed, and temp paths are
 handled.
+
+## Verify walkthrough freshness
+
+Statelessly verify a checkpointed walkthrough artifact against current git and working-tree state without ephemeral invocation state:
+
+```bash
+node <skill-path>/scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
+```
+
+Exits 0 (fresh), 1 (stale/drifted), or 2 (error). Details and output schema in [README.md](README.md#verify-walkthrough-freshness).
+

@@ -21,6 +21,7 @@ import {
   advanceInvocationState,
   assertObjectKeys,
   assertPreparationIntegrity,
+  changedKeys,
   checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
@@ -66,12 +67,6 @@ function toManifestPath(file, repoRoot) {
 function slugFromPath(file) {
   const match = /(?:^|\/)\d{4}-\d{2}-\d{2}-(.+?)(?:-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
   return match?.[1] ?? null;
-}
-
-function changedKeys(previous = {}, current = {}) {
-  return [...new Set([...Object.keys(previous), ...Object.keys(current)])]
-    .filter((key) => previous[key] !== current[key])
-    .sort();
 }
 
 function workingScope() {

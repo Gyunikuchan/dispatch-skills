@@ -7,5 +7,5 @@
   "references/report-schema.json": "905f9591ed764866bff83bb923dd8453c14c1181ffa26b160d4a18f2c46dda1b",
   "scripts/parse-report.mjs": "f79f7a86adc644c974a33cb543d9d6b2894dc78b452dfff4464448c2c550eba1",
   "scripts/plan-lint.mjs": "84b3ce0e6a9347e67fa227d2430cd497466fdad6163914b3085eb51dbe9b6356",
-  "scripts/prepare-review.mjs": "65ffd09e1ace086132207f1d5119df6d33a58388038b9b875c17288b79fe2b85"
+  "scripts/prepare-review.mjs": "76dc4d189e59f80455bd3fede18be8ae5ca4efed781c653874421ee1279d6ae0"
 }

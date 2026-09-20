@@ -15,7 +15,7 @@
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
   "scripts/resolution-log.mjs": "ab2ff1d3ad20c5b7d7b6d429e341430ff3a41bd532692052403d42175268d902",
   "scripts/resolve-artifact-paths.mjs": "400518dcdcfd8291073a45a229448c79a377033826c1cb58b7918f60635a3cbc",
-  "scripts/review-preparation.mjs": "98321c425dd8a6373380194c3d00dc1d60f34158dac9d68fd972f995ab8453f8",
+  "scripts/review-preparation.mjs": "c953814d3f82d7a762646f87c7cc0ed2029077956f04e19844b6c592d39cfa99",
   "scripts/review-report.mjs": "ee1857c1d525c893ab97094a631e014b5c3773cd644024c7eb0ba29009885f30",
   "scripts/source-map.mjs": "70a019430a998acb8fb8995e929be21bb5792eec7531eecd050fc36e5a1ce3e6",
   "scripts/telemetry.mjs": "c8900ab70508f054cd29cb9f5f7ae3ad5c8acdf29f771dc9958756d01e2f6159"

@@ -18,6 +18,7 @@ import {
   advanceInvocationState,
   assertObjectKeys,
   assertPreparationIntegrity,
+  changedKeys,
   checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
@@ -61,12 +62,6 @@ function slugFromPath(file) {
 
 export function planSnapshot(source) {
   return semanticSectionHashes(source);
-}
-
-function changedKeys(previous = {}, current = {}) {
-  return [...new Set([...Object.keys(previous), ...Object.keys(current)])]
-    .filter((key) => previous[key] !== current[key])
-    .sort();
 }
 
 function parseRound(roundId, scan) {

@@ -7,6 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { isMainModule, verifySkillIntegrity } from '../../dispatch/scripts/common.mjs';
+import {
+  changedKeys,
+  readArtifact,
+  semanticSectionHashes,
+} from '../../dispatch/scripts/review-preparation.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXCLUDED_SEGMENTS = new Set([
@@ -248,12 +253,54 @@ export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = n
   };
 }
 
+export function verifyFreshness({ walkthroughPath, repoRoot = process.cwd() }) {
+  repoRoot = path.resolve(repoRoot);
+  const resolvedPath = path.isAbsolute(walkthroughPath)
+    ? walkthroughPath
+    : path.resolve(repoRoot, walkthroughPath);
+
+  const artifact = readArtifact(resolvedPath, { kind: 'code' });
+  const { metadata } = artifact;
+  if (!metadata) {
+    throw new Error(`Walkthrough "${walkthroughPath}" is not checkpointed (missing dispatch metadata).`);
+  }
+
+  if (metadata.baseSha !== metadata.headSha) {
+    throw new Error('Range checkpoints are not statelessly verifiable without invocation state.');
+  }
+
+  const contentFresh = semanticSectionHashes(artifact.source).contentHash === metadata.contentHash;
+  const snapshot = captureReviewSnapshot({
+    repoRoot,
+    scope: {
+      reviewable: true,
+      kind: 'working-tree',
+      range: null,
+      paths: [],
+      reviewScope: 'Current staged, unstaged, and untracked changes',
+    },
+  });
+
+  const worktreeFresh = snapshot.worktreeHash === metadata.worktreeHash;
+  const headFresh = (snapshot.headSha ?? null) === (metadata.headSha ?? null);
+  const changedPaths = changedKeys(metadata.pathHashes ?? {}, snapshot.pathHashes ?? {});
+
+  return {
+    fresh: contentFresh && worktreeFresh && headFresh,
+    contentFresh,
+    worktreeFresh,
+    headFresh,
+    changedPaths,
+  };
+}
+
 function parseArgs(argv) {
-  const out = { repoRoot: process.cwd(), explicitRange: null, help: false };
+  const out = { repoRoot: process.cwd(), explicitRange: null, verifyFreshness: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--repo-root') out.repoRoot = path.resolve(argv[++i] ?? '');
     else if (arg === '--range') out.explicitRange = argv[++i] ?? '';
+    else if (arg === '--verify-freshness') out.verifyFreshness = argv[++i] ?? '';
     else if (arg === '-h' || arg === '--help') out.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -262,6 +309,7 @@ function parseArgs(argv) {
 
 const USAGE = `Usage:
   node resolve-review-range.mjs [--repo-root <path>] [--range <commit|a..b|a...b>]
+  node resolve-review-range.mjs [--repo-root <path>] --verify-freshness <walkthrough>
 `;
 
 function main() {
@@ -269,6 +317,18 @@ function main() {
   if (!integrity.valid && !integrity.missing) throw new Error(`Skill integrity failure: ${integrity.violations.join(', ')}`);
   const args = parseArgs(process.argv.slice(2));
   if (args.help) return process.stdout.write(USAGE);
+  if (args.verifyFreshness !== null) {
+    try {
+      const result = verifyFreshness({ walkthroughPath: args.verifyFreshness, repoRoot: args.repoRoot });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      process.exitCode = result.fresh ? 0 : 1;
+      return;
+    } catch (err) {
+      process.stderr.write(`[resolve-review-range] ${err.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
   process.stdout.write(`${JSON.stringify(resolveReviewScope(args), null, 2)}\n`);
 }
 

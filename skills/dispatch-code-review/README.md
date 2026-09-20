@@ -160,3 +160,22 @@ When using an orchestrating workflow, configure review breadth and rounds in its
 - **You want another perspective:** pin multiple providers with `(claude,copilot)` or use `(all)`.
 - **A provider is unavailable:** configure or authenticate it through `dispatch`; see its
   [troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
+- **Verify walkthrough freshness without preparation:** run
+  `scripts/resolve-review-range.mjs --verify-freshness <walkthrough>` to verify whether a
+  checkpointed walkthrough's recorded hashes match current git/worktree state (exit 0 = fresh,
+  1 = stale/drifted, 2 = error).
+
+### Verify walkthrough freshness
+
+Callers can statelessly verify a checkpointed walkthrough artifact against current git and
+working-tree state without re-running preparation:
+
+```bash
+node scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
+```
+
+Exit codes:
+- `0`: Fresh (walkthrough content hash and underlying git/worktree hashes match recorded metadata).
+- `1`: Stale / drifted (checkpoint metadata is valid, but files or walkthrough body have drifted).
+- `2`: Error (walkthrough not found, missing metadata/uncheckpointed, unsupported range checkpoint, or invalid input).
+

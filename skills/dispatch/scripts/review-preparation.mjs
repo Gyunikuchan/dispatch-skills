@@ -138,6 +138,12 @@ export function rawSha256(value) {
   return `sha256:${crypto.createHash('sha256').update(String(value ?? ''), 'utf8').digest('hex')}`;
 }
 
+export function changedKeys(previous = {}, current = {}) {
+  return [...new Set([...Object.keys(previous), ...Object.keys(current)])]
+    .filter((key) => previous[key] !== current[key])
+    .sort();
+}
+
 // SECTION: checkpoint diagnostics
 // Checkpoint is the last write of a settled run, so a rejection must name the delta and the one
 // legal recovery. Observed state is authoritative: the caller corrects its declaration, never the

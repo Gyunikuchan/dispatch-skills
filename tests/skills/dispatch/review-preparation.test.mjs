@@ -8,6 +8,7 @@ import {
   advanceInvocationState,
   assertObjectKeys,
   buildReviewView,
+  changedKeys,
   checkpointDriftRemedy,
   completeInvocationState,
   createDispatchFiles,
@@ -262,6 +263,13 @@ describe('review preparation primitives', () => {
     assert.ok(index > 0);
     assert.equal(res.dispatch.argv[index + 1], res.dispatch.outputPath);
     assert.ok(res.cleanupPaths.includes(path.dirname(res.dispatch.outputPath)));
+  });
+
+  it('computes sorted changed keys across previous and current records', () => {
+    assert.deepEqual(changedKeys({ a: 1, b: 2 }, { a: 1, b: 3 }), ['b']);
+    assert.deepEqual(changedKeys({ a: 1 }, { a: 1, b: 2 }), ['b']);
+    assert.deepEqual(changedKeys({ b: 2, a: 1 }, {}), ['a', 'b']);
+    assert.deepEqual(changedKeys({}, {}), []);
   });
 });
 
