@@ -1,0 +1,362 @@
+#!/usr/bin/env node
+
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import os from 'node:os';
+import path from 'node:path';
+
+import { isMainModule } from '../../dispatch/scripts/common.mjs';
+import { semanticSectionHashes } from '../../dispatch/scripts/review-preparation.mjs';
+import { ledgerNamespacePath } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
+import { materializedFingerprint } from './git-state.mjs';
+import {
+  foldSegments,
+  parseEventLine,
+  selectOrdinarySegment,
+  serializeEvent,
+} from './ledger-events.mjs';
+
+export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
+
+export function slugFromPlanPath(planPath) {
+  const normalized = planPath.replaceAll('\\', '/').replace(/^\.\//, '');
+  const match = CANONICAL_PLAN.exec(normalized);
+  if (!match) {
+    throw new Error('Resume plan path must match .scratch/plan/<yyyy-mm-dd>-<slug>.md');
+  }
+  return match[1];
+}
+
+function inspectDirectory(directory, { platform = process.platform, uid = process.getuid?.() } = {}) {
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe ledger directory: ${directory}`);
+  if (platform !== 'win32') {
+    if (uid !== undefined && stat.uid !== uid) throw new Error(`Ledger directory is owned by another user: ${directory}`);
+    if ((stat.mode & 0o022) !== 0) throw new Error(`Ledger directory is group/other writable: ${directory}`);
+  }
+}
+
+function ensurePrivateChild(parent, name, options) {
+  inspectDirectory(parent, options);
+  const child = path.join(parent, name);
+  try {
+    fs.mkdirSync(child, { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+  }
+  inspectDirectory(child, options);
+  if ((options?.platform ?? process.platform) !== 'win32') fs.chmodSync(child, 0o700);
+  return child;
+}
+
+export function ensureLedgerNamespace({
+  tempRoot = os.tmpdir(),
+  repoHash,
+  env = process.env,
+  platform = process.platform,
+  uid = process.getuid?.(),
+} = {}) {
+  if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
+  const options = { platform, uid };
+  inspectDirectory(tempRoot, { platform: 'win32', uid });
+  const target = ledgerNamespacePath({ tempRoot, repoHash, env });
+  const relative = path.relative(tempRoot, target);
+  let current = tempRoot;
+  for (const component of relative.split(path.sep)) current = ensurePrivateChild(current, component, options);
+  return current;
+}
+
+function validateLedgerParents(ledgerPath, options = {}) {
+  const tempRoot = path.resolve(options.tempRoot ?? os.tmpdir());
+  const parent = path.resolve(path.dirname(ledgerPath));
+  const relative = path.relative(tempRoot, parent);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`Ledger path must be below the OS temp directory: ${ledgerPath}`);
+  }
+  let current = tempRoot;
+  for (const component of relative.split(path.sep)) {
+    current = path.join(current, component);
+    inspectDirectory(current, options);
+  }
+}
+
+function inspectLedgerFile(ledgerPath, { platform = process.platform, uid = process.getuid?.() } = {}) {
+  let stat;
+  try { stat = fs.lstatSync(ledgerPath); } catch (error) {
+    if (error.code === 'ENOENT') return;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Unsafe ledger file: ${ledgerPath}`);
+  if (platform !== 'win32') {
+    if (uid !== undefined && stat.uid !== uid) throw new Error(`Ledger file is owned by another user: ${ledgerPath}`);
+    if ((stat.mode & 0o077) !== 0) throw new Error(`Ledger file permissions are too broad: ${ledgerPath}`);
+  }
+}
+
+export function readLedger(ledgerPath) {
+  let bytes;
+  try { bytes = fs.readFileSync(ledgerPath); } catch (error) {
+    if (error.code === 'ENOENT')     return { status: 'missing', issue: 'missing', events: [], diagnostic: 'Ledger is missing; reconstruct state from governing artifacts and working tree.' };
+    throw error;
+  }
+  const finalNewline = bytes.length === 0 || bytes.at(-1) === 0x0a;
+  const completeEnd = finalNewline ? bytes.length : bytes.lastIndexOf(0x0a) + 1;
+  const validBytes = bytes.subarray(0, completeEnd);
+  const tornBytes = finalNewline ? Buffer.alloc(0) : bytes.subarray(completeEnd);
+  const lines = validBytes.toString('utf8').split('\n').filter(Boolean);
+  const events = [];
+  let segments;
+  try {
+    for (const line of lines) events.push(parseEventLine(line));
+    segments = foldSegments(events);
+  } catch (error) {
+    return { status: 'needs-reconciliation', issue: 'invalid', events, diagnostic: error.message, tornBytes };
+  }
+  if (tornBytes.length > 0) {
+    return {
+      status: 'needs-reconciliation',
+      issue: 'torn-tail',
+      events,
+      diagnostic: `Interrupted append; explicit repair required. Torn bytes (base64): ${tornBytes.toString('base64')}`,
+      tornBytes,
+      truncateOffset: completeEnd,
+    };
+  }
+  if (segments.at(-1)?.needsReconciliation) {
+    return {
+      status: 'needs-reconciliation',
+      issue: 'reconciliation',
+      events,
+      tornBytes,
+      diagnostic: 'Ledger has an unresolved reconciliation ruling.',
+    };
+  }
+  return { status: 'ok', events, tornBytes };
+}
+
+function lockPath(ledgerPath) {
+  return `${ledgerPath}.lock`;
+}
+
+function acquireLock(ledgerPath) {
+  const target = lockPath(ledgerPath);
+  const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW = 0 } = fs.constants;
+  let fd;
+  try {
+    fd = fs.openSync(target, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600);
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error(`Ledger lock is held: ${target}`);
+    throw error;
+  }
+  try {
+    const record = JSON.stringify({
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+      nonce: crypto.randomUUID(),
+    });
+    fs.writeSync(fd, `${record}\n`);
+    fs.fsyncSync(fd);
+  } catch (error) {
+    try { fs.unlinkSync(target); } catch {}
+    throw error;
+  } finally {
+    fs.closeSync(fd);
+  }
+  return target;
+}
+
+function releaseLock(target) {
+  fs.unlinkSync(target);
+}
+
+export function breakStaleLock(ledgerPath, { kill = process.kill } = {}) {
+  validateLedgerParents(ledgerPath);
+  const target = lockPath(ledgerPath);
+  let record;
+  try { record = JSON.parse(fs.readFileSync(target, 'utf8')); } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw new Error(`Ledger lock requires user ruling before removal: ${target}`);
+  }
+  if (!Number.isSafeInteger(record.pid) || record.pid < 1) throw new Error('Ledger lock has no valid holder PID');
+  try {
+    kill(record.pid, 0);
+    throw new Error(`Ledger lock holder ${record.pid} is still alive`);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
+  fs.unlinkSync(target);
+  return true;
+}
+
+export function repairTornTail(ledgerPath) {
+  validateLedgerParents(ledgerPath);
+  inspectLedgerFile(ledgerPath);
+  const held = acquireLock(ledgerPath);
+  try {
+    const read = readLedger(ledgerPath);
+    if (!read.tornBytes?.length || read.truncateOffset === undefined) return { repaired: false, diagnostic: read.diagnostic ?? 'No torn tail.' };
+    const segment = foldSegments(read.events).at(-1);
+    if (!segment?.runId) throw new Error('Torn ledger has no valid run-start segment');
+    const nextSeq = (read.events.at(-1)?.seq ?? 0) + 1;
+    const reconciliationRunId = segment.terminal ? crypto.randomUUID() : segment.runId;
+    const repairEvents = [];
+    if (segment.terminal) {
+      repairEvents.push({
+        v: 1,
+        seq: nextSeq,
+        type: 'run-start',
+        runId: reconciliationRunId,
+        at: new Date().toISOString(),
+        data: segment.runStart,
+      });
+    }
+    repairEvents.push({
+      v: 1,
+      seq: nextSeq + repairEvents.length,
+      type: 'ruling',
+      runId: reconciliationRunId,
+      at: new Date().toISOString(),
+      data: {
+        key: 'reconciliation',
+        decision: 'repair-tail',
+        reason: read.diagnostic,
+        costIfWrong: 'Further dispatch may duplicate or misattribute work.',
+        state: 'open',
+      },
+    });
+    const repairLines = repairEvents.map(serializeEvent).join('');
+    const noFollow = fs.constants.O_NOFOLLOW ?? 0;
+    const fd = fs.openSync(ledgerPath, fs.constants.O_WRONLY | noFollow);
+    try {
+      fs.ftruncateSync(fd, read.truncateOffset);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const appendFd = fs.openSync(ledgerPath, fs.constants.O_WRONLY | fs.constants.O_APPEND | noFollow);
+    try {
+      fs.writeSync(appendFd, repairLines, null, 'utf8');
+      fs.fsyncSync(appendFd);
+    } finally {
+      fs.closeSync(appendFd);
+    }
+    return { repaired: true, diagnostic: read.diagnostic, tornBytes: read.tornBytes, events: repairEvents };
+  } finally {
+    releaseLock(held);
+  }
+}
+
+export function appendEvent(ledgerPath, event) {
+  validateLedgerParents(ledgerPath);
+  inspectLedgerFile(ledgerPath);
+  const held = acquireLock(ledgerPath);
+  try {
+    const read = readLedger(ledgerPath);
+    const resolvesReconciliation =
+      event.type === 'ruling' && event.data?.key === 'reconciliation' && event.data?.state === 'resolved';
+    if (read.status === 'needs-reconciliation' &&
+        !(read.issue === 'reconciliation' && resolvesReconciliation)) {
+      throw new Error(`Ledger append refused: ${read.diagnostic}`);
+    }
+    const latestSeq = read.events.at(-1)?.seq ?? 0;
+    const next = { ...event, seq: event.seq ?? latestSeq + 1 };
+    if (next.seq !== latestSeq + 1) throw new Error(`Ledger seq must be ${latestSeq + 1}`);
+    const line = serializeEvent(next);
+    const { O_WRONLY, O_APPEND, O_CREAT, O_NOFOLLOW = 0 } = fs.constants;
+    const fd = fs.openSync(ledgerPath, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW, 0o600);
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) throw new Error('Ledger target is not a regular file');
+      fs.writeSync(fd, line, null, 'utf8');
+      fs.fsyncSync(fd);
+      if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    } finally {
+      fs.closeSync(fd);
+    }
+    return next;
+  } finally {
+    releaseLock(held);
+  }
+}
+
+export function governingHash(planSource) {
+  try {
+    return { status: 'ok', hash: semanticSectionHashes(planSource).contentHash };
+  } catch (error) {
+    return { status: 'needs-reconciliation', hash: null, diagnostic: `Governing plan cannot be normalized: ${error.message}` };
+  }
+}
+
+export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
+  const slug = slugFromPlanPath(planPath);
+  const hash = governingHash(planSource);
+  if (hash.status !== 'ok') return { ...hash, slug, requiresFlowConfirmation: true };
+  const read = readLedger(ledgerPath);
+  if (read.status !== 'ok') return { ...read, slug, governingHash: hash.hash, requiresFlowConfirmation: true };
+  const segment = selectOrdinarySegment(read.events, hash.hash);
+  if (!segment) {
+    return {
+      status: 'needs-reconciliation', slug, governingHash: hash.hash,
+      diagnostic: 'No matching unterminated ordinary run segment.',
+      requiresFlowConfirmation: true,
+    };
+  }
+  const completions = [...segment.completedTasks.entries()];
+  const laterOwners = new Map();
+  for (const [taskId, complete] of completions) for (const owned of complete.paths) laterOwners.set(owned, taskId);
+  const drift = [];
+  for (const [taskId, complete] of completions) {
+    const authoritative = complete.paths.filter(owned => laterOwners.get(owned) === taskId);
+    if (authoritative.length === 0) continue;
+    if (authoritative.length !== complete.paths.length) {
+      drift.push({ taskId, paths: authoritative, reason: 'partial-overlap-cannot-prove-subset' });
+      continue;
+    }
+    const current = materializedFingerprint(repoRoot, complete.paths);
+    if (current.digest !== complete.resultState) drift.push({ taskId, paths: complete.paths });
+  }
+  if (drift.length) {
+    return {
+      status: 'needs-reconciliation', slug, governingHash: hash.hash, segment, drift,
+      diagnostic: 'Completed task result state drifted; attribute the live diff before dispatch.',
+      requiresFlowConfirmation: true,
+    };
+  }
+  const activeTask = [...segment.tasks.entries()].find(([, task]) => !task.complete);
+  let nextAction = 'dispatch';
+  if (activeTask?.[1].lastVerification?.data.result === 'red') nextAction = 'continuation';
+  return {
+    status: 'resumable', slug, governingHash: hash.hash, segment,
+    completedTaskIds: [...segment.completedTasks.keys()],
+    activeTaskId: activeTask?.[0] ?? null,
+    nextAction,
+    requiresFlowConfirmation: true,
+  };
+}
+
+function help() {
+  console.log(`Usage:
+  node ledger.mjs inspect <ledger-path>
+  node ledger.mjs repair-tail <ledger-path>
+  node ledger.mjs break-stale-lock <ledger-path>`);
+}
+
+if (isMainModule(import.meta.url)) {
+  const [action, ledgerPath] = process.argv.slice(2);
+  try {
+    if (!action || action === '--help' || action === '-h') {
+      help();
+    } else if (action === 'inspect' && ledgerPath) {
+      console.log(JSON.stringify(readLedger(ledgerPath), (_, value) => Buffer.isBuffer(value) ? value.toString('base64') : value, 2));
+    } else if (action === 'repair-tail' && ledgerPath) {
+      console.log(JSON.stringify(repairTornTail(ledgerPath), (_, value) => Buffer.isBuffer(value) ? value.toString('base64') : value, 2));
+    } else if (action === 'break-stale-lock' && ledgerPath) {
+      console.log(JSON.stringify({ broken: breakStaleLock(ledgerPath) }));
+    } else {
+      throw new Error('Invalid ledger command');
+    }
+  } catch (error) {
+    process.stderr.write(`Error: ${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

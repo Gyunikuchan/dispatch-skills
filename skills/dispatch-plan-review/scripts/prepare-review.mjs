@@ -209,6 +209,7 @@ function resolvePlan(request, repoRoot) {
   if (!resolvedSlug.slug) throw new Error('Could not derive an artifact slug; set request.slug.');
   const result = resolveArtifacts({
     slug: resolvedSlug.slug,
+    slugSource: resolvedSlug.slugSource,
     date: request.date,
     kinds: ['plan'],
     projectRoot: repoRoot,

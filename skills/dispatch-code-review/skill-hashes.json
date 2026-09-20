@@ -6,6 +6,6 @@
   "references/report-schema.json": "007b7c42d78682301a56e1e41f2da3d1f056a14f0149b4608883b892e9f0ee40",
   "references/walkthrough-template.md": "5dd4645582183c048601bca6918a6e3113f71461ba0fb496536ee353129ef345",
   "scripts/parse-report.mjs": "4a7223273b684086705a271014e8ea604cad956fa845d5f469e9f7e3542f268f",
-  "scripts/prepare-review.mjs": "b1235f0834540b5ba0e2a7ad165acf8608d1a39edb13344a6f3d2469e6b9bd9a",
+  "scripts/prepare-review.mjs": "8610f29237e3284ee9982e0fd78d9c937260cf584c2ed3dc0778ac37ada73cf3",
   "scripts/resolve-review-range.mjs": "c4421e39686f6a4951f097d2cc134d410a2d94cd53ffb4fe636847b3665a086c"
 }

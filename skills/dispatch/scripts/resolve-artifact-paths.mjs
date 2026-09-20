@@ -27,17 +27,20 @@
  * applies to platforms with a known native artifact (currently `agy`), and is also
  * the platform consulted for conversation-id slug derivation.
  *
- * Outputs JSON: `{ slug, slugSource, date, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
+ * Outputs JSON: `{ slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
  * `tier` is `native`, `scratch-existing`, or `scratch-new`. `slugSource` is
  * `explicit`, `branch`, or `conversation`.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
 import { PROJECT_ROOT, detectOrchestrator, isMainModule, spawnCliSync } from './common.mjs';
 import { AGY_MODE_DATA_DIRS } from './agy-run.mjs';
+import { userSlug } from './telemetry.mjs';
 
 export const SCRATCH_DIR = '.scratch/plan';
 
@@ -82,6 +85,49 @@ export function buildScratchPaths(date, slug) {
     plan: path.posix.join(SCRATCH_DIR, `${date}-${slug}.md`),
     walkthrough: path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
   };
+}
+
+export function canonicalRepositoryRoot(
+  root,
+  { platform = process.platform, realpath = fs.realpathSync.native } = {},
+) {
+  let canonical = realpath(root).normalize('NFC').replaceAll('\\', '/');
+  if (platform === 'win32') canonical = canonical.toLowerCase();
+  return canonical;
+}
+
+export function repositoryRootHash(root, options) {
+  return crypto.createHash('sha256').update(canonicalRepositoryRoot(root, options)).digest('hex').slice(0, 12);
+}
+
+export function getRepositoryRoot(cwd = PROJECT_ROOT) {
+  const result = spawnCliSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd,
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  if (result.status !== 0) return null;
+  const root = (result.stdout ?? '').trim();
+  return root || null;
+}
+
+export function resolveLedgerPath({
+  slug,
+  slugSource,
+  repositoryRoot,
+  platform = process.platform,
+  tempRoot = os.tmpdir(),
+  env = process.env,
+  realpath,
+} = {}) {
+  if (!repositoryRoot || !['explicit', 'branch'].includes(slugSource)) return null;
+  const repoHash = repositoryRootHash(repositoryRoot, { platform, realpath });
+  return path.join(ledgerNamespacePath({ tempRoot, repoHash, env }), `${slug}-ledger.md`);
+}
+
+export function ledgerNamespacePath({ tempRoot = os.tmpdir(), repoHash, env = process.env } = {}) {
+  if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
+  return path.join(tempRoot, `dispatch-skills-${userSlug({ env })}`, repoHash);
 }
 
 // ============================================================================
@@ -399,7 +445,16 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
  * @param {{ slug: string, date?: string, kinds?: ('plan'|'walkthrough')[], projectRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
  * @returns {{ slug: string, date: string, plan?: object, walkthrough?: object }}
  */
-export function resolveArtifacts({ slug, date, kinds = ['plan', 'walkthrough'], projectRoot = PROJECT_ROOT, native }) {
+export function resolveArtifacts({
+  slug,
+  slugSource = null,
+  date,
+  kinds = ['plan', 'walkthrough'],
+  projectRoot = PROJECT_ROOT,
+  repositoryRoot,
+  ledger = {},
+  native,
+}) {
   // See findExistingScratchArtifact for why `typeof` is checked before SLUG_PATTERN.
   if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
@@ -409,7 +464,20 @@ export function resolveArtifacts({ slug, date, kinds = ['plan', 'walkthrough'], 
     throw new Error(`Date "${resolvedDate}" must be a valid calendar date as yyyy-mm-dd`);
   }
 
-  const result = { slug, date: resolvedDate };
+  const resolvedRepositoryRoot =
+    repositoryRoot === undefined && ['explicit', 'branch'].includes(slugSource)
+      ? getRepositoryRoot(projectRoot)
+      : repositoryRoot ?? null;
+  const result = {
+    slug,
+    date: resolvedDate,
+    ledgerPath: resolveLedgerPath({
+      slug,
+      slugSource,
+      repositoryRoot: resolvedRepositoryRoot,
+      ...ledger,
+    }),
+  };
   for (const kind of kinds) {
     result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, native });
   }
@@ -477,9 +545,10 @@ Options:
   --orchestrator <name>     Override orchestrator detection; gates native-tier scanning.
   -h, --help                Show this help.
 
-Outputs JSON: { slug, slugSource, date, plan?: { tier, path, exists }, walkthrough?: { ... } }.
+Outputs JSON: { slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { ... } }.
 Resolution order per kind: platform-native artifact, then an existing scratch artifact
 matching the slug at any date, then the deterministic scratch-new path.
+ledgerPath is non-null only for explicit/branch slugs inside a Git work tree.
 `);
 }
 
@@ -533,6 +602,7 @@ function main() {
   try {
     result = resolveArtifacts({
       slug,
+      slugSource,
       date: opts.date,
       kinds,
       native: opts.orchestrator !== undefined ? { orchestrator: opts.orchestrator } : undefined,

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { appendTelemetry, telemetryPath } from '../../../skills/dispatch/scripts/telemetry.mjs';
+import { appendTelemetry, telemetryPath, userSlug } from '../../../skills/dispatch/scripts/telemetry.mjs';
 
 const DISPATCH = fileURLToPath(new URL('../../../skills/dispatch/scripts/dispatch.mjs', import.meta.url));
 
@@ -40,6 +40,11 @@ function readLines(file) {
 }
 
 describe('telemetry', () => {
+  it('exports the shared sanitized per-user namespace', () => {
+    assert.equal(userSlug({ env: { USER: 'a/b c' } }), 'a_b_c');
+    assert.equal(userSlug({ env: {}, userInfo: () => ({ username: '..' }) }), 'unknown');
+  });
+
   it('appends one content-free line per call', () => {
     const startedAt = Date.now() - 50;
     const result = { metricsAttempts: [ATTEMPT], output: 'SECRET RESPONSE', prompt: 'SECRET PROMPT' };

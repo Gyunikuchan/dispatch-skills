@@ -12,6 +12,10 @@ import {
   localDate,
   isValidDate,
   buildScratchPaths,
+  canonicalRepositoryRoot,
+  repositoryRootHash,
+  getRepositoryRoot,
+  resolveLedgerPath,
   sanitizeSlug,
   deriveSlugFromBranch,
   deriveConversationKey,
@@ -41,6 +45,56 @@ describe('buildScratchPaths', () => {
     const paths = buildScratchPaths('2026-09-11', 'auth-v2');
     assert.equal(paths.plan, '.scratch/plan/2026-09-11-auth-v2.md');
     assert.equal(paths.walkthrough, '.scratch/plan/2026-09-11-auth-v2-walkthrough.md');
+  });
+
+  describe('ledger path resolution', () => {
+    it('canonicalizes roots and emits a stable lowercase 12-hex repository hash', () => {
+      const realpath = value => value;
+      assert.equal(canonicalRepositoryRoot('C:\\Work\\Repo', { platform: 'win32', realpath }), 'c:/work/repo');
+      assert.match(repositoryRootHash(process.cwd(), { realpath }), /^[a-f0-9]{12}$/);
+      assert.equal(repositoryRootHash(process.cwd(), { realpath }), repositoryRootHash(process.cwd(), { realpath }));
+    });
+
+    it('isolates different worktree roots and sanitizes the username', () => {
+      const first = resolveLedgerPath({
+        slug: 'phase-two', slugSource: 'explicit', repositoryRoot: '/repo/a',
+        tempRoot: '/tmp', env: { USER: 'a/b' }, realpath: value => value,
+      });
+      const second = resolveLedgerPath({
+        slug: 'phase-two', slugSource: 'explicit', repositoryRoot: '/repo/b',
+        tempRoot: '/tmp', env: { USER: 'a/b' }, realpath: value => value,
+      });
+      assert.notEqual(first, second);
+      assert.match(first, /dispatch-skills-a_b[/\\][a-f0-9]{12}[/\\]phase-two-ledger\.md$/);
+    });
+
+    it('returns null for conversation slugs and outside a Git work tree', () => {
+      assert.equal(resolveLedgerPath({
+        slug: 'conversation-abcd', slugSource: 'conversation', repositoryRoot: process.cwd(),
+      }), null);
+      assert.equal(resolveLedgerPath({
+        slug: 'phase-two', slugSource: 'explicit', repositoryRoot: null,
+      }), null);
+      const outside = mkdtempSync(path.join(os.tmpdir(), 'ledger-not-git-'));
+      try {
+        assert.equal(getRepositoryRoot(outside), null);
+      } finally {
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps resolveArtifacts ledger-null when slug provenance is omitted or conversational', () => {
+      const omitted = resolveArtifacts({
+        slug: 'conversation-abcd', kinds: ['plan'], projectRoot: process.cwd(),
+        native: { orchestrator: null },
+      });
+      assert.equal(omitted.ledgerPath, null);
+      const conversation = resolveArtifacts({
+        slug: 'conversation-abcd', slugSource: 'conversation', kinds: ['plan'],
+        projectRoot: process.cwd(), native: { orchestrator: null },
+      });
+      assert.equal(conversation.ledgerPath, null);
+    });
   });
 });
 

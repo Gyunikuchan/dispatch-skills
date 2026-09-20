@@ -222,13 +222,16 @@ function resolvePair(request, repoRoot) {
     else planPath = request.artifactPath;
   }
   const supplied = walkthroughPath ?? planPath;
-  const resolvedSlug = request.slug ?? (supplied && slugFromPath(supplied)) ?? resolveSlug({
+  const derived = resolveSlug({
+    explicit: request.slug ?? (supplied && slugFromPath(supplied)) ?? undefined,
     branch: getCurrentBranch(repoRoot),
     orchestrator: request.orchestrator,
-  }).slug;
+  });
+  const resolvedSlug = derived.slug;
   if (!resolvedSlug) throw new Error('Could not derive an artifact slug; set request.slug.');
   const resolved = resolveArtifacts({
     slug: resolvedSlug,
+    slugSource: derived.slugSource,
     date: request.date,
     kinds: ['plan', 'walkthrough'],
     projectRoot: repoRoot,

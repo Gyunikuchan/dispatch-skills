@@ -15,18 +15,22 @@ Orchestrate `criteria → plan → review → approval → implementation → ve
 
 ```text
 /implement-dispatch <level> (<pins>): <ask>
+/implement-dispatch <plan-path>
 ```
 
 Explicit `low|medium|high|xhigh|max` is preserved; otherwise classify mechanical edits `low`,
 bounded changes `medium`, and cross-cutting/public-contract changes `high`. `xhigh`/`max` are
 explicit only. Pass pins unchanged to `resolve-flow.mjs`.
+The level-less plan-path form resumes only a canonical scratch plan. Follow the
+[ledger contract](references/ledger-contract.md) before any dispatch.
 
 ## 1. Criteria, plan, and flow
 
 1. Convert the ask into checkable success criteria and assumptions. Ask one focused question for
    each decision-changing ambiguity.
 2. Resolve paths with `dispatch/scripts/resolve-artifact-paths.mjs`; host convention wins.
-   Requests/reports go in OS temp.
+   Requests/reports go in OS temp. Establish an explicit slug matching the canonical plan filename
+   when branch/conversation identity differs.
 3. Author from the plan-review template. Group files by `[NEW]`/`[MODIFY]`/`[DELETE]`; map every
    criterion to changes or verification.
 4. Run:
@@ -71,6 +75,8 @@ preserves caller-owned changes and production writes remain approval-gated.
 
 Present the settled plan exactly once after baseline reconciliation; approval is required before
 production writes. If it has a resolution log, only consensus exit `0` permits approval.
+After approval, initialize and append the durable events in the
+[ledger contract](references/ledger-contract.md). On resume, reconcile its fold before dispatch.
 
 Implement using `flow.implementation.platform`: `claude` -> `general-purpose`, `agy` or `copilot`
 -> `self`, `opencode` -> `general`. Derive `--implementation-fields` from that native launch tool's
@@ -124,9 +130,10 @@ has a logged status, and settled freshness is checkpointed.
 3. Warn before relocation: `The resolved plan and walkthrough are moving to OS temp and may be
    deleted by the OS.` Relocate existing `.scratch/` artifacts with
    `dispatch/scripts/relocate-scratch.mjs`; report each exact destination. Retain unresolved/native
-   artifacts and state why.
-4. Report diagnostics (level, rounds, finding totals, verification), destinations, and a
-   suggested commit message. Git/PR publication remains caller-owned.
+   artifacts and state why. Never relocate the ledger.
+4. Report diagnostics (level, rounds, finding totals, verification), destinations, canonical
+   resume command, ledger path, one `Rulings made` list, and a suggested commit message. Git/PR
+   publication remains caller-owned.
 
 **Done when:** all review work is terminal and settled, every accepted `adjacent` finding was
 offered, cleanup/relocation is explicit, and the handoff identifies every retained or moved

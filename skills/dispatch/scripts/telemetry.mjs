@@ -8,11 +8,11 @@ const MAX_BYTES = 1024 * 1024;
 const FILE_NAME = 'telemetry.jsonl';
 const ROTATED_NAME = 'telemetry.1.jsonl';
 
-function userSlug() {
-  let name = process.env.USER || process.env.USERNAME || '';
+export function userSlug({ env = process.env, userInfo = () => os.userInfo() } = {}) {
+  let name = env.USER || env.USERNAME || '';
   if (!name) {
     // NOTE: os.userInfo() throws when the uid has no passwd entry (some containers).
-    try { name = os.userInfo().username || ''; } catch { name = ''; }
+    try { name = userInfo().username || ''; } catch { name = ''; }
   }
   const safe = name.replace(/[^A-Za-z0-9._-]/g, '_');
   return safe === '' || safe === '.' || safe === '..' ? 'unknown' : safe;

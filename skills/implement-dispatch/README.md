@@ -49,6 +49,18 @@ Add `-g` to install globally, or `-s '*'` to install the complete suite:
 
 Run `/implement-dispatch` and describe the feature or fix.
 
+Resume an interrupted ordinary run from its canonical plan:
+
+```text
+/implement-dispatch .scratch/plan/2026-09-20-auth-v2.md
+```
+
+Resume reads the durable per-user ledger in OS temp, verifies completed task state against the
+working tree, re-resolves the current flow, and asks before dispatching. A missing ledger triggers
+explicit best-effort reconstruction; malformed events, hash drift, or an invalid plan path require
+reconciliation rather than automatic redispatch. Native plan paths must first be represented by a
+canonical scratch plan and explicit slug.
+
 ### Basic examples
 
 Use automatic change-scope selection for a typical feature:
@@ -151,6 +163,8 @@ compatibility metadata.
 7. Review-owned preparation manifests carry artifact freshness, bounded views, and dispatch argv;
    settled reviews checkpoint metadata for the next invocation.
 8. It reports unresolved disagreements or configuration problems instead of silently ignoring them.
+9. Approved runs append fsynced execution events to a private, repository-isolated ledger so a
+   fresh session can avoid redispatching work already proven complete.
 
 `dispatch` appends content-free telemetry to `<tmp>/dispatch-telemetry-<username>/telemetry.jsonl`;
 disable it with `DISPATCH_TELEMETRY=0`.
@@ -162,6 +176,9 @@ disable it with `DISPATCH_TELEMETRY=0`.
 
 The skill changes the working tree but does not commit, push, create branches, or open pull
 requests.
+
+The ledger is not a review artifact and is not moved during handoff. Its exact path and canonical
+resume command are reported because OS temp cleanup, including Windows Storage Sense, can remove it.
 
 ## Nuances, Quirks & Troubleshooting
 

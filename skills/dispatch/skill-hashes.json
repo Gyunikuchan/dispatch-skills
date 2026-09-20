@@ -13,9 +13,9 @@
   "scripts/opencode-run.mjs": "b45da7c88926902b699704a1da1f35eb651981eff143b85121c2404ad3997c11",
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
   "scripts/resolution-log.mjs": "ab2ff1d3ad20c5b7d7b6d429e341430ff3a41bd532692052403d42175268d902",
-  "scripts/resolve-artifact-paths.mjs": "01cdde57cfdae582b21b40355900b242d4f06a4d2ef0209d80881acfd8512581",
+  "scripts/resolve-artifact-paths.mjs": "530bba7c4ab297998688ac86afb85d993baf4834618fb2f084cb5f2d8026cb5e",
   "scripts/review-preparation.mjs": "98321c425dd8a6373380194c3d00dc1d60f34158dac9d68fd972f995ab8453f8",
   "scripts/review-report.mjs": "ee1857c1d525c893ab97094a631e014b5c3773cd644024c7eb0ba29009885f30",
   "scripts/source-map.mjs": "70a019430a998acb8fb8995e929be21bb5792eec7531eecd050fc36e5a1ce3e6",
-  "scripts/telemetry.mjs": "5d8a46a52e42ac4ba915b39266ca242890d18d846c190cf482d20078f20315bc"
+  "scripts/telemetry.mjs": "c8900ab70508f054cd29cb9f5f7ae3ad5c8acdf29f771dc9958756d01e2f6159"
 }
