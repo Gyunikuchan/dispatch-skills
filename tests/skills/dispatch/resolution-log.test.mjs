@@ -3,8 +3,10 @@ import { describe, it } from 'node:test';
 
 import {
   findUnsettledResolutionLines,
+  formatApplicationRecord,
   nextFindingId,
   scanResolutionLog,
+  validateApplicationRecord,
 } from '../../../skills/dispatch/scripts/resolution-log.mjs';
 
 const sourceMap = JSON.stringify({
@@ -253,6 +255,124 @@ describe('resolution log scanner', () => {
         'code-review:R2:agy:0',
       )),
       /source map entry/,
+    );
+  });
+
+  it('parses valid application continuation records and validates them', () => {
+    const appRecord = {
+      v: 1,
+      findingId: 'R2-F001',
+      state: 'unapplied',
+      scope: 'in-scope',
+      affectedPaths: ['src/bar.ts', 'src/foo.ts'],
+      dependsOn: [],
+      verification: ['npm test -- foo'],
+      reason: 'default recommendation',
+    };
+    const log = [
+      '# Plan',
+      '## Proposed Changes',
+      'Content',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+      formatApplicationRecord(appRecord),
+    ].join('\n');
+
+    const scan = scanResolutionLog(log);
+    assert.equal(scan.rounds.length, 1);
+    assert.equal(scan.rounds[0].entries.length, 1);
+    assert.deepEqual(scan.rounds[0].entries[0].application, appRecord);
+    assert.match(scan.semanticBody, /## Proposed Changes/);
+    assert.doesNotMatch(scan.semanticBody, /application:/);
+  });
+
+  it('rejects invalid or misplaced application records in strict mode', () => {
+    const validEntry = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+    ].join('\n');
+
+    // Mismatched findingId
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F002","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /findingId "R2-F002" does not match entry ID "R2-F001"/,
+    );
+
+    // Unsorted affectedPaths
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/z.ts","src/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /affectedPaths must be sorted/,
+    );
+
+    // Invalid path format
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["../foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /normalized repository-relative slash path/,
+    );
+
+    // Invalid version
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":2,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /v must be 1/,
+    );
+
+    // Duplicate application record
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /duplicate application records/,
+    );
+
+    // Attached to non-accepted finding
+    const rejectedEntry = validEntry.replace('[Accepted]', '[Rejected / Downgraded]');
+    assert.throws(
+      () => scanResolutionLog(`${rejectedEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /application record cannot be attached to finding with status "rejected"/,
+    );
+
+    // Application before any entry
+    const beforeEntry = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+      '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(beforeEntry), /Application record appears before any resolution entry/);
+
+    // Non-adjacent application record (intervening text)
+    const nonAdjacentEntry = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+      'Intervening comment text',
+      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(nonAdjacentEntry), /application record must immediately follow its resolution entry/);
+
+    // Non-adjacent application record (intervening blank line)
+    const blankLineEntry = [
+      '# Plan',
+      '## Review Findings & Resolutions',
+      '### Round 2',
+      `- **Sources:** ${sourceMap}`,
+      '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
+      '',
+      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(blankLineEntry), /application record must immediately follow its resolution entry/);
+
+    // Windows drive-letter absolute path rejected
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /normalized repository-relative slash path/,
     );
   });
 });

@@ -16,6 +16,9 @@ Shared plan/code review contract. Preparation lives in each review skill's
 - **Affinity**: routing a rebuttal to its effective source.
 - **Change scope**: implementation size. **Review Scope**: evidence boundary. **Installation
   scope**: where skills are installed.
+- **Interaction aliases**: `[R#]` aliases accepted-but-unapplied in-scope recommendations (default
+  included). `[O#]` aliases verified adjacent or explicitly deferred out-of-scope items (default
+  excluded). Finding IDs (`R<n>-F<nnn>`) remain authoritative; aliases are stable presentation handles.
 
 Canonical scratch artifacts are `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and
 `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`.
@@ -57,6 +60,7 @@ Append under the first unfenced `## Review Findings & Resolutions`:
 ### Round <n> — <date>
 - **Sources:** {"<source-key>":<source-record>,...}
 - **[<status>]** [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=<keys>] <locus> — <tag>: <defect> → <resolution>
+  - application: {"v":1,"findingId":"R<n>-F<nnn>","state":"<unapplied|materialized|applied|superseded>","scope":"<in-scope|adjacent>","affectedPaths":["<path>",...],"dependsOn":["<finding-id>",...],"verification":["<cmd>",...],"reason":"<text>"}
 ```
 
 Print the Sources line with `dispatch/scripts/source-map.mjs`: `--batch` for orchestrated waves,
@@ -65,6 +69,11 @@ overridden records (fields: `--help`). Entry statuses: `Accepted`, `Resolved dis
 `Rejected / Downgraded`, `Disputed`, `Rejected — Pending Confirmation`. `<nnn>` is zero-padded to at
 least three digits. Cite only reporting sources. IDs survive status rewrites.
 Legacy lines remain readable; `ACTIONABLE` is legacy-only. Unknown bullets never settle.
+Accepted `MUST` findings are required immediate fixes. Accepted `SHOULD` and `CONSIDER` findings
+that survive settlement unapplied gain an `application:` continuation record with sorted unique
+`affectedPaths`, `dependsOn`, `verification` commands, and `reason`. Materializing updates state to
+`materialized` and completed verification to `applied`. Rejected, disputed, pending, or superseded
+findings cannot have a live application record.
 
 `dispatch/scripts/check-consensus.mjs` exits `0` settled, `1` live, `2` invalid. Continue while the prior wave changed
 the artifact/code or live disputed/pending findings remain below the cap.

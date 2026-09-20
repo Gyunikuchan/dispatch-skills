@@ -59,10 +59,12 @@ terminal.
    `adjacent` finding at its cited locus. Reject uncited, contradicted, or unverifiable claims.
    Apply alignment finality and sanitize every artifact write.
 3. Both modes record accepted `adjacent` findings under `## Follow-ups`. Standalone also applies
-   accepted in-scope `MUST` and safe `SHOULD` fixes, defers the rest there, reruns host verify
-   until green or two identical failures, and updates `## Changes Made`,
-   `## Verification & Validation`, and the enriched resolution log. Orchestrated records
-   adjudications but leaves fixes to its caller.
+   accepted in-scope `MUST` and safe `SHOULD` fixes as independence clusters via
+   `node <skills-dir>/dispatch/scripts/fix-clustering.mjs --cluster` (pairwise disjoint paths,
+   same-file findings separate, union verification), defers unapplied items to `## Follow-ups` with
+   application records, reruns host verify until green or two identical failures per cluster, and
+   updates `## Changes Made`, `## Verification & Validation`, and the enriched resolution log.
+   Orchestrated records adjudications but leaves fixes to its caller.
 4. Once verify is green, re-review only changed paths/live findings within the cap. Rebuttal keys
    must exactly match the packet: `CONFIRM` settles, `REBUT` remains live, `INTENT-DISPUTE`
    becomes disputed.

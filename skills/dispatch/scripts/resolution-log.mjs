@@ -8,8 +8,13 @@ const ENTRY = /^\s*[-*]\s+\*\*\[([^\]]+)\]\*\*(.*)$/;
 const ENRICHED_PREFIX =
   /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER|ACTIONABLE)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
 const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
+const APPLICATION_LINE = /^\s+[-*]\s+application:\s*(.*)$/;
 const SOURCE_KEY = /^(plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const SOURCE_STATUSES = new Set(['target', 'reserve', 'fallback', 'replacement']);
+const APPLICATION_STATES = new Set(['unapplied', 'materialized', 'applied', 'superseded']);
+const APPLICATION_SCOPES = new Set(['in-scope', 'adjacent']);
+const APPLICATION_FIELDS = ['affectedPaths', 'dependsOn', 'findingId', 'reason', 'scope', 'state', 'v', 'verification'];
+const PATH_PATTERN = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
 
 function normalize(markdown) {
   return String(markdown ?? '').normalize('NFC').replace(/\r\n?/g, '\n');
@@ -145,6 +150,86 @@ export function validateSourceMap(value, roundNumber) {
   return value;
 }
 
+function isSortedUnique(arr) {
+  return arr.every((item, i) => i === 0 || item > arr[i - 1]);
+}
+
+function applicationRecordProblem(record, entry, roundNumber) {
+  if (!record || Array.isArray(record) || typeof record !== 'object') return 'record must be an object';
+  if (Object.keys(record).sort().join('\0') !== APPLICATION_FIELDS.join('\0')) {
+    return `record fields must be exactly: ${APPLICATION_FIELDS.join(', ')}`;
+  }
+  if (record.v !== 1) return 'v must be 1';
+  if (typeof record.findingId !== 'string' || record.findingId.length === 0) return 'findingId must be a non-empty string';
+  if (entry && entry.id && record.findingId !== entry.id) {
+    return `findingId "${record.findingId}" does not match entry ID "${entry.id}"`;
+  }
+  if (!APPLICATION_STATES.has(record.state)) {
+    return `state must be one of: ${[...APPLICATION_STATES].join(', ')}`;
+  }
+  if (!APPLICATION_SCOPES.has(record.scope)) {
+    return `scope must be one of: ${[...APPLICATION_SCOPES].join(', ')}`;
+  }
+  if (!Array.isArray(record.affectedPaths) || record.affectedPaths.length === 0) {
+    return 'affectedPaths must be a non-empty array of strings';
+  }
+  for (let i = 0; i < record.affectedPaths.length; i++) {
+    const p = record.affectedPaths[i];
+    if (typeof p !== 'string' || !PATH_PATTERN.test(p) || p.startsWith('./') || p.includes('//')) {
+      return `affectedPaths[${i}] must be a normalized repository-relative slash path`;
+    }
+  }
+  if (!isSortedUnique(record.affectedPaths)) {
+    return 'affectedPaths must be sorted and contain unique paths';
+  }
+  if (!Array.isArray(record.dependsOn) || record.dependsOn.some((dep) => typeof dep !== 'string')) {
+    return 'dependsOn must be an array of strings';
+  }
+  if (!isSortedUnique(record.dependsOn)) {
+    return 'dependsOn must be sorted and contain unique finding IDs';
+  }
+  if (!Array.isArray(record.verification) || record.verification.some((v) => typeof v !== 'string' || v.length === 0)) {
+    return 'verification must be an array of non-empty command strings';
+  }
+  if (new Set(record.verification).size !== record.verification.length) {
+    return 'verification commands must be unique';
+  }
+  if (typeof record.reason !== 'string' || record.reason.trim().length === 0) {
+    return 'reason must be a non-empty string';
+  }
+  if (entry && entry.status !== 'accepted' && entry.status !== 'resolvedDispute') {
+    return `application record cannot be attached to finding with status "${entry.status}"`;
+  }
+  return null;
+}
+
+export function validateApplicationRecord(value, entry, roundNumber) {
+  const problem = applicationRecordProblem(value, entry, roundNumber);
+  if (problem) {
+    const locus = entry?.id ? ` for finding ${entry.id}` : '';
+    throw new Error(`Round ${roundNumber} application record${locus} is invalid: ${problem}.`);
+  }
+  return value;
+}
+
+export function formatApplicationRecord(record) {
+  const problem = applicationRecordProblem(record, { id: record?.findingId, status: 'accepted' }, 1);
+  if (problem) {
+    throw new Error(`Application record is invalid: ${problem}.`);
+  }
+  const canonical = {
+    v: 1,
+    findingId: record.findingId,
+    state: record.state,
+    scope: record.scope,
+    affectedPaths: [...record.affectedPaths],
+    dependsOn: [...record.dependsOn],
+    verification: [...record.verification],
+    reason: record.reason,
+  };
+  return `  - application: ${JSON.stringify(canonical)}`;
+}
+
 function fenceTransition(line, fence) {
   const match = FENCE.exec(line);
   if (!match) return fence;
@@ -186,12 +271,14 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   let current = null;
   let fence = null;
   let previous = 0;
+  let lastLineWasEntry = false;
   for (let index = 1; index < sectionLines.length; index++) {
     const line = sectionLines[index];
     const nextFence = fenceTransition(line, fence);
     if (nextFence !== fence) {
       fence = nextFence;
       if (current) current.lines.push(line);
+      lastLineWasEntry = false;
       continue;
     }
     if (!fence) {
@@ -202,6 +289,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         previous = number;
         current = { number, heading: line, lines: [line], entries: [], sourceMap: null };
         rounds.push(current);
+        lastLineWasEntry = false;
         continue;
       }
       const sourceMap = current && parseSourceMap(line, { strict, roundNumber: current.number });
@@ -209,6 +297,32 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         if (current.sourceMap && strict) throw new Error(`Round ${current.number} contains duplicate source maps.`);
         current.sourceMap = sourceMap;
         current.lines.push(line);
+        lastLineWasEntry = false;
+        continue;
+      }
+      const appMatch = APPLICATION_LINE.exec(line);
+      if (appMatch) {
+        const lastEntry = current?.entries[current.entries.length - 1];
+        if (!lastEntry) {
+          if (strict) throw new Error('Application record appears before any resolution entry.');
+        } else if (lastEntry.application && strict) {
+          throw new Error(`Round ${current.number} finding ${lastEntry.id || lastEntry.key} contains duplicate application records.`);
+        } else if (strict && !lastLineWasEntry) {
+          throw new Error(`Round ${current.number} application record must immediately follow its resolution entry.`);
+        } else {
+          let value;
+          try {
+            value = JSON.parse(appMatch[1].trim());
+          } catch (err) {
+            if (strict) throw new Error(`Round ${current.number} application record is malformed JSON: ${err.message}`);
+          }
+          if (value) {
+            if (strict) validateApplicationRecord(value, lastEntry, current.number);
+            lastEntry.application = value;
+          }
+        }
+        if (current) current.lines.push(line);
+        lastLineWasEntry = false;
         continue;
       }
       const entryMatch = ENTRY.exec(line);
@@ -250,15 +364,18 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
           severity,
           sourceKeys,
           status,
+          application: null,
           line: line.trim(),
           originalLine: line.trim(),
           lineNumber: lineOffset + index + 1,
         };
         current.entries.push(entry);
         current.lines.push(line);
+        lastLineWasEntry = true;
         continue;
       }
     }
+    lastLineWasEntry = false;
     if (current) current.lines.push(line);
   }
   if (strict && fence) throw new Error('Resolution log contains an unterminated fence.');

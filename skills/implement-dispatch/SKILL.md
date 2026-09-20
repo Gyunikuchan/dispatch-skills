@@ -58,10 +58,15 @@ final verification wave.
 
 After consensus exit `0`, checkpoint from `checkpoint-preview`. Always prune manifest paths (invocation state after checkpoint/abort); report errors.
 
+If decision-changing items exist, render the keyed opt-in sections before approval:
+`### Recommended Follow-ups (Default: Included)` with `[R#] [x]` for unapplied accepted `SHOULD`/`CONSIDER` findings (carrying `application:` records), and `### Out-of-Scope / Adjacent Items (Default: Excluded)` with `[O#] [ ]` for verified adjacent/deferred items (or `none` when empty).
+Parse user response with `node <skills-dir>/dispatch/scripts/fix-clustering.mjs --parse-opt-in`; on ambiguous or empty input, re-prompt before applying defaults.
+Apply user response, materialize included recommendations into proposed changes, criteria, and verification mappings, and rerun plan-lint, flow resolution, and any required plan review before approval.
+
 Reclassify the reviewed plan. Preserve explicit level; otherwise re-resolve changed scope. State
 the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`
 
-**Done when:** plan consensus/checkpoint settle and flow matches scope.
+**Done when:** plan consensus/checkpoint settle, opt-ins materialize, and flow matches scope.
 
 ## 3. Baseline, approval, and implementation
 
@@ -97,6 +102,14 @@ provider contract proves continuation. Delegates get at most three attempts (rep
 distinct native tier); host-platform launches get two. Never cross providers or transfer failed
 delegated work to the host platform. New/corrected behavior requires `RED_READY` and host-observed RED.
 
+For multi-finding follow-ups or accepted fix groups, form independence clusters with
+`node <skills-dir>/dispatch/scripts/fix-clustering.mjs --cluster` (pairwise disjoint paths, same-file
+separate, union verification). Each cluster executes as a v1 ledger task (`task-start` with
+deterministic cluster ID `C-<sha256[:12]>`, member path union, and attempt budget).
+If a cluster fails, split recovery via `--split` retains completed clusters, sets `parentTaskId` on
+descendants, and shares the remaining budget; total attempts across parent and descendants cannot
+exceed three.
+
 Run `node <skill-path>/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
 with `--transition <json-file|->`. A nonzero parse is a consumed malformed outcome; a nonzero
 transition is orchestrator input error to fix without consuming an attempt.
@@ -130,11 +143,13 @@ has a logged status, and settled freshness is checkpointed.
 
 1. Run final consensus on the walkthrough, or plan when code review was skipped. Exit `1` returns
    to its review loop; exit `2` halts.
-2. List accepted `adjacent` findings from plan and code rounds, if any, and ask the user which to
-   address. Implement chosen items test-first, verify, move them to `## Changes Made`, then run § 4
-   as a fresh scoped invocation through consensus/checkpoint and repeat step 1. Keep unchosen items
-   in `## Follow-ups` (code) or `## Out of Scope` (plan). Without code review, defer them. Leave
-   code and artifacts untouched after the final checkpoint.
+2. List accepted `adjacent` findings from plan and code rounds, if any, rendered as keyed opt-ins
+   (`[O#] [ ] <summary> — <reason>`) and ask the user which to address. Selected items trigger the
+   one-way scope rule: re-resolve flow and implement them test-first as an adjacent-fix cluster with
+   a fresh budget, verify, move them to `## Changes Made`, then run § 4 as a fresh scoped invocation
+   through consensus/checkpoint and repeat step 1. Keep unchosen items in `## Follow-ups` (code) or
+   `## Out of Scope` (plan). Without code review, defer them. Leave code and artifacts untouched
+   after the final checkpoint.
 3. Warn before relocation: `The resolved plan and walkthrough are moving to OS temp and may be
    deleted by the OS.` Relocate existing `.scratch/` artifacts with
    `dispatch/scripts/relocate-scratch.mjs`; report each exact destination. Retain unresolved/native
