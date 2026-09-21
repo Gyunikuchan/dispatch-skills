@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { parseIncrementGraph } from '../../dispatch/scripts/design-graph.mjs';
+import { isMainModule } from '../../dispatch/scripts/common.mjs';
 const REQUIRED = ['Context & Intent','Goals & Requirements','Architecture & Boundaries','Alternatives & Decisions','Risks, Security & Operations','Increment Dependency Graph','Increment Details','Final Integration'];
 const INCREMENT_FIELDS = ['Outcome','Scope','Non-scope','Observable behavior','Affected contracts','Validation','Rollback boundary','Parallel safety'];
 // Per-increment detail blocks: `### I<nn>` under `## Increment Details`, each carrying every field label.
@@ -36,4 +37,5 @@ export function lintDesign(source) {
   return { valid: merged.length === 0, diagnostics: merged, increments };
 }
 export function lintDesignFile(file) { return lintDesign(fs.readFileSync(file,'utf8')); }
-if (import.meta.url === `file://${process.argv[1]}`) { const result=lintDesignFile(process.argv[2]); console.log(JSON.stringify(result,null,2)); process.exitCode=result.valid?0:1; }
+// NOTE: isMainModule compares resolved paths; a raw `file://${argv[1]}` never matches on Windows.
+if (isMainModule(import.meta.url)) { const result=lintDesignFile(process.argv[2]); console.log(JSON.stringify(result,null,2)); process.exitCode=result.valid?0:1; }
