@@ -6,6 +6,7 @@ import path from 'node:path';
 import { isMainModule } from '../../dispatch/scripts/common.mjs';
 import { parseIncrementGraph } from '../../dispatch/scripts/design-graph.mjs';
 import { governingHash } from './ledger.mjs';
+import { fsyncDir } from './design-amendment.mjs';
 
 /** Highest-priority increment that is ready to implement: its state is 'ready' or 'pending'
  *  (never started), every prerequisite is complete, and it is not blocked/invalidated/complete. */
@@ -134,8 +135,10 @@ export function updateExecutionStatus({ designPath, states, nextAction = null })
     throw new Error('Status update would change the governed design hash; refusing to write.');
   }
   const staging = path.join(path.dirname(designPath), `.${path.basename(designPath)}.status.tmp`);
-  fs.writeFileSync(staging, updated);
+  const fd = fs.openSync(staging, 'w');
+  try { fs.writeFileSync(fd, updated); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   fs.renameSync(staging, designPath);
+  fsyncDir(path.dirname(designPath));
   return { designPath, nextAction: action };
 }
 

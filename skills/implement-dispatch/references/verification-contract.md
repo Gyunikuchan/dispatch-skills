@@ -21,12 +21,14 @@ Capture Git porcelain plus dirty-path object IDs before and after every baseline
 tracked mutation or new non-ignored file inside approved scope enters side-effect reconciliation:
 stop for caller removal or an amended, re-reviewed plan. Prove outside-scope files irrelevant or
 reconcile them. Preserve caller-owned changes. Outside Git, record `side-effect capture
-unavailable` and obtain a ruling to proceed or abort.
+unavailable` and obtain a ruling before approval: `proceed without side-effect capture`
+(recorded under `## Verification & Validation`) or `abort`.
 
 ## Result identity and freshness
 
 A red or unavailable baseline is never green. Ask whether to proceed with the known-red baseline
-or fix first; fixing amends and re-reviews the plan but remains approval-gated. Record the ruling.
+or fix first; fixing amends and re-reviews the plan but remains approval-gated. Record the ruling
+as the keyed `baseline-red` ledger ruling.
 A later nonzero result is `known red — unchanged` only when exit status and stable identifiers
 match the accepted baseline, or exact normalized diagnostics match when identifiers are absent.
 Anything else is a regression.

@@ -43,9 +43,9 @@ The final message contains exactly one raw or fenced JSON envelope:
 
 No additional fields are permitted. A fenced envelope must use the `json` language tag.
 `DONE_WITH_CONCERNS` also requires non-empty `concerns`; `NEEDS_CONTEXT` requires
-`missingContext`; `BLOCKED` requires `blockers`. Other status-specific arrays are omitted or empty.
+`missingContext`; a second request, or one materially identical to context already supplied, consumes the attempt; `BLOCKED` requires `blockers`. Other status-specific arrays are omitted or empty.
 Evidence is non-empty for both `DONE` statuses and may be empty otherwise. `RED_READY` is legal
-only with a `DONE` status from a tests-only launch or its context continuation. A full launch and
+only with `DONE` or `DONE_WITH_CONCERNS` from a tests-only launch or its context continuation. A full launch and
 its continuation use `COMPLETE`; a tests-only launch unable to reach RED returns `COMPLETE` with
 `NEEDS_CONTEXT` or `BLOCKED`.
 

@@ -65,6 +65,15 @@ describe('parseImplementationOutcome', () => {
       /exactly one/i,
     );
     assert.throws(
+      () => parseImplementationOutcome(`\`\`\`json\n${JSON.stringify(done)}\n\`\`\`\n\`\`\`\n${JSON.stringify(done)}\n\`\`\``),
+      /exactly one/i,
+    );
+    assert.throws(() => parseImplementationOutcome(`\`\`\`jsonc\n${JSON.stringify(done)}\n\`\`\``), /json language tag/);
+    assert.throws(
+      () => parseImplementationOutcome(JSON.stringify(done).replace('{', '{"status":"BLOCKED",')),
+      /duplicate keys/,
+    );
+    assert.throws(
       () => parseImplementationOutcome(JSON.stringify({ ...done, schemaVersion: 2 })),
       /schemaVersion/i,
     );

@@ -73,8 +73,8 @@ the exact phase/target/round/consensus delta or `Resolved flow unchanged after f
 ## 3. Baseline, approval, and implementation
 
 Create the walkthrough before baseline verification using the shared
-[minimum contract](../dispatch/references/walkthrough-contract.md), whether code review is enabled
-or unavailable. Follow the [verification evidence contract](references/verification-contract.md)
+[minimum contract](../dispatch/references/walkthrough-contract.md), whether code review is enabled,
+disabled, or unavailable. Follow the [verification evidence contract](references/verification-contract.md)
 for command/path extraction, baseline records, path classification, side-effect reconciliation,
 red-baseline rulings, result identity, freshness, and the tests-only stage.
 
@@ -111,11 +111,10 @@ delegated work to the host platform. New/corrected behavior requires `RED_READY`
 
 For multi-finding follow-ups or accepted fix groups, form independence clusters with
 `node <skills-dir>/dispatch/scripts/fix-clustering.mjs --cluster` (pairwise disjoint paths, same-file
-separate, union verification). Each cluster executes as a v1 ledger task (`task-start` with
+separate, union verification); run clusters in emitted order, after their `dependsOnClusters`. Each cluster executes as a v1 ledger task (`task-start` with
 deterministic cluster ID `C-<sha256[:12]>`, member path union, and attempt budget).
 If a cluster fails, split recovery via `--split` retains completed clusters, sets `parentTaskId` on
-descendants, and shares the remaining budget; total attempts across parent and descendants cannot
-exceed three.
+descendants, and continues the parent's attempt numbering; no descendant attempt number exceeds three.
 
 Run `node <skill-path>/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
 with `--transition <json-file|->`. A nonzero parse is a consumed malformed outcome; a nonzero
@@ -150,8 +149,9 @@ has a logged status, and settled freshness is checkpointed.
 
 1. Run final consensus on the walkthrough, or plan when code review was skipped. Exit `1` returns
    to its review loop; exit `2` halts.
-2. List accepted `adjacent` findings from plan and code rounds, if any, rendered as keyed opt-ins
-   (`[O#] [ ] <summary> — <reason>`) and ask the user which to address. Selected items trigger the
+2. Render both keyed opt-in sections: unapplied accepted `SHOULD`/`CONSIDER` findings as
+   `[R#] [x]`, and accepted `adjacent` findings from plan and code rounds as
+   `[O#] [ ] <summary> — <reason>`; state `none` without asking when both are empty, else ask which to address. Selected items trigger the
    one-way scope rule: re-resolve flow and implement them test-first as an adjacent-fix cluster with
    a fresh budget, verify, move them to `## Changes Made`, then run § 4 as a fresh scoped invocation
    through consensus/checkpoint and repeat step 1. Keep unchosen items in `## Follow-ups` (code) or

@@ -86,7 +86,7 @@ export function lintPlan(source) {
       if (current && !current.hasMapping) defects.push(diagnostic('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
     };
     for (const entry of lines.slice(start + 1, end)) {
-      const item = /^-\s+(.+)$/.exec(entry.text);
+      const item = /^(?:[-*+]|\d+[.)])\s+(.+)$/.exec(entry.text);
       if (item) {
         finish();
         const id = /^\[SC([1-9]\d*)\]\s+/.exec(item[1]);
@@ -101,7 +101,7 @@ export function lintPlan(source) {
         continue;
       }
       if (!current) continue;
-      const changes = /^ {2,}- Changes:\s*(.+)$/.exec(entry.text);
+      const changes = /^ {2,}[-*+] Changes:\s*(.+)$/.exec(entry.text);
       if (changes) {
         current.hasMapping = true;
         for (const value of changes[1].split(',')) {
@@ -111,7 +111,7 @@ export function lintPlan(source) {
           }
         }
       }
-      const verify = /^ {2,}- Verify:\s*(.+)$/.exec(entry.text);
+      const verify = /^ {2,}[-*+] Verify:\s*(.+)$/.exec(entry.text);
       if (verify) {
         current.hasMapping = true;
         if (!/^`[^`]+`\s*$/.test(verify[1])) defects.push(diagnostic('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
@@ -122,7 +122,7 @@ export function lintPlan(source) {
 
   for (const entry of lines) {
     const prose = entry.text.replace(/`[^`]*`/g, '');
-    if (/\b(?:TODO|TBD)\b|implement later|fill in/i.test(prose)) {
+    if (/\b(?:TODO|TBD|implement later|fill in)\b/i.test(prose)) {
       warnings.push(diagnostic('placeholder', entry.line, 'Plan contains a prose placeholder.', 'warning'));
     }
   }

@@ -16,11 +16,6 @@ Breaking changes, critical design decisions, or trade-offs requiring user attent
 ## Open Questions & Assumptions
 Clarifying questions, settling assumptions, or explicit defaults (or "None").
 
-## Success Criteria
-- [SC#] Checkable outcome.
-  - Changes: <relative-path>[, <relative-path>...]
-  - Verify: `<command>`
-
 ## Technical-Design Traceability
 <!-- Optional; present on phased implementation plans for exactly one approved increment. -->
 - Parent design: `.scratch/plan/<yyyy-mm-dd>-<design-slug>-design.md`
@@ -28,6 +23,11 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
 - Increment ID and inherited contract: I<nn> — <outcome, invariants, and rollback boundary inherited from the design>
 - Prerequisite evidence: <ledger/verification evidence that prerequisite increments completed>
 - Acceptance mapping: <proposed change / test → increment acceptance criterion>
+
+## Success Criteria
+- [SC#] Checkable outcome.
+  - Changes: <relative-path>[, <relative-path>...]
+  - Verify: `<command>`
 
 ## Proposed Changes
 

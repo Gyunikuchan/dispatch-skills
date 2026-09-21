@@ -32,7 +32,7 @@ describe('v0.4 Phase 4 keyed opt-ins and clustered fixes contracts', () => {
     assert.match(skill, /independence clusters/i);
     assert.match(skill, /C-<sha256/);
     assert.match(skill, /parentTaskId/);
-    assert.match(skill, /cannot\s+exceed\s+three|capped\s+at\s+three/is);
+    assert.match(skill, /no\s+descendant\s+attempt\s+number\s+exceeds\s+three/is);
   });
 
   it('dispatch-code-review documents standalone fix clustering', () => {

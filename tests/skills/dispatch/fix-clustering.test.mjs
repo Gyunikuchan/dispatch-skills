@@ -76,7 +76,7 @@ describe('fix clustering and opt-in handling', () => {
       assert.deepEqual(clusters.map((c) => c.findingIds), [['R1-F001'], ['R1-F002'], ['R1-F003']]);
     });
 
-    it('separates path-disjoint findings that share a common dependency', () => {
+    it('groups path-disjoint dependents of a shared prerequisite after its cluster', () => {
       const findings = [
         { id: 'R1-F001', affectedPaths: ['src/base.ts'], dependsOn: [], verification: ['npm test'] },
         { id: 'R1-F002', affectedPaths: ['src/a.ts'], dependsOn: ['R1-F001'], verification: ['npm test -- a'] },
@@ -89,6 +89,16 @@ describe('fix clustering and opt-in handling', () => {
       assert.equal(clusters.length, 2);
       assert.deepEqual(clusters[0].findingIds, ['R1-F001']);
       assert.deepEqual(clusters[1].findingIds, ['R1-F002', 'R1-F003']);
+      assert.deepEqual(clusters[1].dependsOnClusters, [clusters[0].clusterId]);
+    });
+
+    it('orders a prerequisite cluster first even when its ID sorts later', () => {
+      const findings = [
+        { id: 'R1-F001', affectedPaths: ['src/a.ts'], dependsOn: ['R1-F002'], verification: ['npm test'] },
+        { id: 'R1-F002', affectedPaths: ['src/b.ts'], dependsOn: [], verification: ['npm test'] },
+      ];
+      const clusters = createIndependenceClusters(findings, { runId: 'run-1' });
+      assert.deepEqual(clusters.map((c) => c.findingIds), [['R1-F002'], ['R1-F001']]);
     });
 
     it('requires non-empty runId', () => {

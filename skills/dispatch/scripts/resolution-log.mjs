@@ -185,6 +185,9 @@ function applicationRecordProblem(record, entry, roundNumber) {
   if (!Array.isArray(record.dependsOn) || record.dependsOn.some((dep) => typeof dep !== 'string')) {
     return 'dependsOn must be an array of strings';
   }
+  if (record.dependsOn.some((dep) => !/^R[1-9]d*-F[0-9]{3,}$/.test(dep))) {
+    return 'dependsOn entries must be finding IDs (R<n>-F<nnn>)';
+  }
   if (!isSortedUnique(record.dependsOn)) {
     return 'dependsOn must be sorted and contain unique finding IDs';
   }
@@ -317,7 +320,12 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
             if (strict) throw new Error(`Round ${current.number} application record is malformed JSON: ${err.message}`);
           }
           if (value) {
-            if (strict) validateApplicationRecord(value, lastEntry, current.number);
+            if (strict) {
+              validateApplicationRecord(value, lastEntry, current.number);
+              if (formatApplicationRecord(value).trimStart() !== line.trim()) {
+                throw new Error(`Round ${current.number} application record is not in canonical form.`);
+              }
+            }
             lastEntry.application = value;
           }
         }

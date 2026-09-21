@@ -1,16 +1,16 @@
 {
-  "SKILL.md": "d15d630d391988d2ee3ee09ec15657cfc3164398a00a28e6d80133b547f5871c",
+  "SKILL.md": "df0159126d71d41e9ad6b50c0890bb709c71977b398ec179d059dbb4766b6ed0",
   "references/design-contract.md": "58132fbad6e1f8eec6285e504d059d7c7da57899ed208f676910a9e5a35d5d65",
-  "references/implementation-delegate-contract.md": "a08a5eeb9dcd79aac494fa46dc20f03f56d6e1ad764c8c81eb5efa20fc4a1a1a",
-  "references/ledger-contract.md": "dcd19c058146c3b48f00947796b41abef72e66e6c887d9c5c98df2e64c3dac6f",
-  "references/verification-contract.md": "7e03a6cb78053f17e4d4e7fe4365f45664f00a4c3db600ccfd2ccd23f47194d7",
+  "references/implementation-delegate-contract.md": "a41067d5d2af7c91ea6ded44b8907877f1fad5706fd9a9acfa4f6bc10df17c31",
+  "references/ledger-contract.md": "ca9c3a58005ccf9de3bf77fe5818cbe0bc5f9022d3c8fd1d09189bc91e92858e",
+  "references/verification-contract.md": "a8de2bc88507e6665debe553d1fb3c65741b1cbf5be78fbc807f2b00b8bb02e0",
   "scripts/build-rebuttal-packets.mjs": "2a59b29153e4216529af21523a5433ff35b4eb560a8a4810df0a4c7ffc5d25de",
-  "scripts/design-amendment.mjs": "f8809028e05a4d63524a6d7ea8643efa0112e7592643f22bf2b7768107390729",
-  "scripts/design-run.mjs": "00261e736ff937c70d0dcb094876b845e25e4817b6e62924b0e0b9a196ff3d81",
+  "scripts/design-amendment.mjs": "a7df15fd42273a5dea4e2658356bad021b8fbbccfdf578e09b8957d50537af73",
+  "scripts/design-run.mjs": "a8d66c075c759f85bc1e4c30906ac590662de95e33f0704400c93316c8dff3ea",
   "scripts/git-state.mjs": "14b5802369477662564cad57768d15eb73252628b83560f5c8b9875f410fa74a",
-  "scripts/implementation-outcome.mjs": "11adb91fb3cf4848a3e47631c26a2bd5c437c799b14ae66355fa183a8437476a",
-  "scripts/ledger-events.mjs": "b0e23640841bb13137f617450bb63bc2651ddd07cc7a83f894bc2240ddaa4cd3",
-  "scripts/ledger.mjs": "c0b4cff2a27bb5aa729b8746d02549102b8eee776de1bab474960584c76719ef",
+  "scripts/implementation-outcome.mjs": "d1f7d6291c1c6b96742f5332deb28f145f2f0206da7eff6c65d92c2104581e34",
+  "scripts/ledger-events.mjs": "cf2d3150d303ef7f5faf81910f44b3fe8e1c2bd229b622a21baf60c9c81a5703",
+  "scripts/ledger.mjs": "ef5a0398c57c1950268d42124b179dfbe027fe54b9deab449e30754a5d4af247",
   "scripts/resolve-flow.mjs": "ca2fe8cabed37cd8ce9e89c69cd264abe5e6242cf6e85ad747098c2a4c9cffb6",
-  "scripts/verification-evidence.mjs": "2c3baf800b9892d905f1193144e51c395c62db8cbb2e992a639bedee5186ebcd"
+  "scripts/verification-evidence.mjs": "b1bdf82a6196bcafa7d329d7bafee9b4124f504c2801b1eb485038584b993396"
 }

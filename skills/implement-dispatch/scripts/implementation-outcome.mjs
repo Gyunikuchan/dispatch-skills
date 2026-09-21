@@ -73,16 +73,36 @@ function validateEnvelope(value) {
   return value;
 }
 
+// JSON.parse keeps the last duplicate silently; scan object key tokens per nesting level instead.
+function hasDuplicateKeys(source) {
+  const stack = [];
+  for (const [token, string, colon] of source.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}[\]]/g)) {
+    if (token === '{') stack.push(new Set());
+    else if (token === '[') stack.push(null);
+    else if (token === '}' || token === ']') stack.pop();
+    else if (colon && stack.at(-1)) {
+      const key = JSON.parse(string);
+      if (stack.at(-1).has(key)) return true;
+      stack.at(-1).add(key);
+    }
+  }
+  return false;
+}
+
 export function parseImplementationOutcome(text) {
   if (typeof text !== 'string' || text.trim() === '') {
     throw new Error('missing terminal envelope');
   }
-  const fenced = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
-  if (fenced.length > 1) throw new Error('expected exactly one terminal envelope');
+  // Every fence counts toward the one-envelope rule; only a bare `json` tag is accepted.
+  const fences = [...text.matchAll(/```([^\n`]*)\n([\s\S]*?)```/g)];
+  if (fences.length > 1) throw new Error('expected exactly one terminal envelope');
+  if (fences.length === 1 && fences[0][1].trim().toLowerCase() !== 'json') {
+    throw new Error('terminal envelope fence must use the json language tag');
+  }
 
   let source;
-  if (fenced.length === 1) {
-    source = fenced[0][1];
+  if (fences.length === 1) {
+    source = fences[0][2];
   } else {
     const trimmed = text.trim();
     if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
@@ -97,6 +117,7 @@ export function parseImplementationOutcome(text) {
   } catch {
     throw new Error('terminal envelope is not valid JSON');
   }
+  if (hasDuplicateKeys(source)) throw new Error('terminal envelope has duplicate keys');
   return validateEnvelope(parsed);
 }
 

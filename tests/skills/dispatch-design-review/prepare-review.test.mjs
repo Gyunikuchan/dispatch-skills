@@ -6,8 +6,10 @@ import { describe, it } from 'node:test';
 import { designSnapshot, prepareDesignReview } from '../../../skills/dispatch-design-review/scripts/prepare-review.mjs';
 import { withDispatchFrontmatter } from '../../../skills/dispatch/scripts/resolution-log.mjs';
 
-const validDesign = `# Design
+import { designExtras } from '../../fixtures/design-sections.mjs';
 
+const validDesign = `# Design
+${designExtras(['I01'])}
 ## Architecture & Boundaries
 A.
 

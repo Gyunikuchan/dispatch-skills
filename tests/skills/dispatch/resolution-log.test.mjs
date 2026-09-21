@@ -315,6 +315,18 @@ describe('resolution log scanner', () => {
       /normalized repository-relative slash path/,
     );
 
+    // Non-canonical key order
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"findingId":"R2-F001","v":1,"state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      /canonical form/,
+    );
+
+    // dependsOn must hold finding IDs
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["src/foo.ts"],"verification":["npm test"],"reason":"test"}`),
+      /dependsOn entries must be finding IDs/,
+    );
+
     // Invalid version
     assert.throws(
       () => scanResolutionLog(`${validEntry}\n  - application: {"v":2,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),

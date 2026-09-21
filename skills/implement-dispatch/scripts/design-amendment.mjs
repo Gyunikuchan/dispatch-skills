@@ -73,6 +73,13 @@ function fsyncFile(pathValue) {
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
+// Makes created/renamed directory entries durable. NOTE: win32 cannot open a directory for fsync.
+export function fsyncDir(dirPath) {
+  if (process.platform === 'win32') return;
+  const fd = fs.openSync(dirPath, 'r');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
 function candidateWithApprovalMetadata(source, approvedContentHash) {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(source);
   if (!frontmatter) return null;
@@ -145,6 +152,7 @@ export function prepareAmendment({
   fs.copyFileSync(candidatePath, candidate);
   fsyncFile(candidate);
   fsyncFile(backup);
+  fsyncDir(path.dirname(designPath));
   return { ...preparedData, state: 'prepared' };
 }
 
@@ -190,6 +198,7 @@ export function activateAmendment({ designPath, ledgerPath, amendmentId }) {
   fs.writeFileSync(staging.candidate, metadataCandidate);
   fsyncFile(staging.candidate);
   fs.renameSync(staging.candidate, designPath);
+  fsyncDir(path.dirname(designPath));
   const activatedHash = governingHash(fs.readFileSync(designPath, 'utf8'), { kind: 'design' });
   if (activatedHash.status !== 'ok' || activatedHash.hash !== candidateHash) {
     throw new Error('Amendment activation mismatch: canonical governed hash does not match the activated candidateHash; needs-reconciliation');
@@ -369,6 +378,7 @@ export function recoverAmendment({ designPath, ledgerPath }) {
       };
     }
     fs.writeFileSync(designPath, repaired);
+    fsyncFile(designPath);
     const read2 = foldState(ledgerPath);
     amendmentEvent({
       ledgerPath,

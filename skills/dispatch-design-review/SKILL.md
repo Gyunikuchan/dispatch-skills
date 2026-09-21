@@ -13,10 +13,10 @@ Use the same dispatch pins and preparation flow as `dispatch-plan-review`, with 
 
 ## Authoring
 
-Use [design-template.md](references/design-template.md). Include required high-level sections and a deterministic increment dependency graph. Run `design-lint.mjs` before dispatch; invalid sections, IDs, prerequisites, cycles, or priority order block review.
+Ask the user about decision-changing ambiguities instead of silently defaulting intent. Use [design-template.md](references/design-template.md). Include every required high-level section, a deterministic increment dependency graph, and an `### I<nn>` details block per increment carrying each template field. Run `design-lint.mjs` before dispatch; invalid sections, IDs, prerequisites, cycles, or priority order block review.
 
 ## Adjudication
 
-Parse reports with `scripts/parse-report.mjs`. Verify each finding at its cited design section. Apply accepted findings to the design and record the resolution log. Review settlement establishes a governed revision; it does not authorize implementation.
+Parse reports with `scripts/parse-report.mjs`. Verify each finding at its cited design section. Apply accepted findings to the design and record the resolution log. Round limits and dispute handling follow `dispatch-plan-review` policy. Review settlement establishes a governed revision; it does not authorize implementation. When review is disabled or unavailable, say so; never present it as consensus.
 
 **Done when:** the design is structurally valid, every finding is verified and settled, and governed metadata is checkpointed.

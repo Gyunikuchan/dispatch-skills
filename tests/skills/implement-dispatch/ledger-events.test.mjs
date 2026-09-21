@@ -10,6 +10,7 @@ import {
   selectOrdinarySegment,
   selectDesignSegment,
   serializeEvent,
+  validateEvent,
 } from '../../../skills/implement-dispatch/scripts/ledger-events.mjs';
 
 const runId = '11111111-1111-4111-8111-111111111111';
@@ -110,6 +111,38 @@ describe('v1 fold', () => {
     const folded = foldEvents(events);
     assert.equal(folded.tasks.get('t1').latestAttempt, 1);
     assert.equal(folded.tasks.get('t1').complete, true);
+  });
+
+  it('rejects non-canonical lines, v2-only values in v1, and complete on attempts', () => {
+    const line = serializeEvent(start()).trimEnd();
+    assert.equal(parseEventLine(line).seq, 1);
+    assert.throws(() => parseEventLine(line.replace('{"at"', '{ "at"')), /canonical/);
+    assert.throws(() => parseEventLine(line.replace('"v":1}', '"v":1,"v":1}')), /canonical/);
+    assert.throws(() => validateEvent(event(2, 'run-complete', { result: 'design-approved-stop', evidenceRefs: [] })), /result/);
+    assert.throws(() => validateEvent(event(2, 'review', { kind: 'design', round: 1, counts: {}, checkpointRef: null })), /kind/);
+    assert.throws(() => validateEvent(event(2, 'implementation-attempt', {
+      taskId: 't1', attempt: 1, launch: 'full', target: { platform: 'copilot' },
+      terminalEnvelope: {}, evidence: ['x'], transition: 'complete',
+    })), /transition/);
+  });
+
+  it('rejects an attempt beyond the task attemptBudget', () => {
+    const attempt = (seq, n) => [
+      event(seq, 'implementation-attempt', {
+        taskId: 't1', attempt: n, launch: 'full', target: { platform: 'copilot' },
+        terminalEnvelope: {}, evidence: ['x'], transition: 'verify',
+      }),
+      event(seq + 1, 'verification', {
+        taskId: 't1', attempt: n, result: 'regression', commandRefs: ['test'], transition: 'escalate',
+      }),
+    ];
+    assert.throws(() => foldEvents([
+      start(),
+      approval(2),
+      event(3, 'task-start', { taskId: 't1', attemptBudget: 1, paths: ['a'], preState: state }),
+      ...attempt(4, 1),
+      ...attempt(6, 2),
+    ]), /attemptBudget/);
   });
 
   it('rejects illegal ordering and sequence duplication', () => {
@@ -385,6 +418,8 @@ describe('v2 phased ledger events', () => {
     assert.equal(nextDesignAction(incomplete).action, 'resolve-reconciliation');
     const withPreparedAmendment = { incrementStates, amendments: new Map([['A01', { state: 'prepared' }]]) };
     assert.equal(nextDesignAction(withPreparedAmendment).action, 'resolve-amendment');
+    const openRuling = { incrementStates, activeIncrementId: 'I01', rulings: new Map([['baseline-red', { state: 'open' }]]) };
+    assert.deepEqual(nextDesignAction(openRuling), { action: 'resolve-ruling', rulingKey: 'baseline-red' });
     const unterminatedIncrement = { incrementStates, activeIncrementId: 'I01', needsReconciliation: false, amendments: new Map() };
     assert.equal(nextDesignAction(unterminatedIncrement).action, 'resume-increment');
     const allComplete = { incrementStates: new Map([['I01', 'complete']]), needsReconciliation: false, amendments: new Map(), activeIncrementId: null, integrationPassed: false };

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { incrementGraphSection, parseIncrementGraph } from '../../../skills/dispatch/scripts/design-graph.mjs';
 import { lintDesign } from '../../../skills/dispatch-design-review/scripts/design-lint.mjs';
+import { designExtras } from '../../fixtures/design-sections.mjs';
 
 const base = [
   '# D',
@@ -85,7 +86,7 @@ describe('increment dependency graph parser', () => {
   });
 
   it('stays aligned with the design lint over the same document', () => {
-    const populatedMirror = `${base}\n\n## Execution Status\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
+    const populatedMirror = `${base}\n${designExtras(['I01', 'I02'])}\n## Execution Status\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
     assert.equal(lintDesign(populatedMirror).valid, true);
     assert.ok(lintDesign(populatedMirror.replace('| I02 | 2 | two | I01 | b |', '| I05 | 2 | two | I01 | b |'))
       .diagnostics.some(d => d.code === 'invalid-id-sequence'));

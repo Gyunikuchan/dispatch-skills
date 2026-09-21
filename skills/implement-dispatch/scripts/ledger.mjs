@@ -112,10 +112,20 @@ export function readLedger(ledgerPath) {
     throw error;
   }
   const finalNewline = bytes.length === 0 || bytes.at(-1) === 0x0a;
-  const completeEnd = finalNewline ? bytes.length : bytes.lastIndexOf(0x0a) + 1;
+  let completeEnd = finalNewline ? bytes.length : bytes.lastIndexOf(0x0a) + 1;
+  // NOTE: a malformed final line is an interrupted append even when newline-terminated.
+  if (finalNewline && bytes.length > 0) {
+    const lastStart = bytes.lastIndexOf(0x0a, bytes.length - 2) + 1;
+    const lastLine = bytes.subarray(lastStart, bytes.length - 1).toString('utf8');
+    if (lastLine.length > 0) {
+      try { parseEventLine(lastLine); } catch { completeEnd = lastStart; }
+    }
+  }
   const validBytes = bytes.subarray(0, completeEnd);
-  const tornBytes = finalNewline ? Buffer.alloc(0) : bytes.subarray(completeEnd);
-  const lines = validBytes.toString('utf8').split('\n').filter(Boolean);
+  const tornBytes = bytes.subarray(completeEnd);
+  // Only the terminator after the last line is dropped; an empty interior line is malformed.
+  const lines = validBytes.toString('utf8').split('\n');
+  if (lines.at(-1) === '') lines.pop();
   const events = [];
   let segments;
   try {

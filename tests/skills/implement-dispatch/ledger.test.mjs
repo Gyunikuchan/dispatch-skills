@@ -109,6 +109,16 @@ describe('ledger I/O and resume', () => {
     assert.equal(final.status, 'ok', final.diagnostic);
   });
 
+  it('treats a malformed newline-terminated final line as a torn tail', () => {
+    const hash = governingHash('# Plan\n\nBody\n').hash;
+    appendEvent(ledgerPath, runStart(hash));
+    fs.appendFileSync(ledgerPath, '- event: {"torn"\n');
+    const inspected = readLedger(ledgerPath);
+    assert.equal(inspected.issue, 'torn-tail');
+    assert.equal(repairTornTail(ledgerPath).repaired, true);
+    assert.equal(readLedger(ledgerPath).issue, 'reconciliation');
+  });
+
   it('repairs a tear immediately after run-start without making the segment unfoldable', () => {
     const hash = governingHash('# Plan\n\nBody\n').hash;
     appendEvent(ledgerPath, runStart(hash));

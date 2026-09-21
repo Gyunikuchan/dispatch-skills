@@ -25,17 +25,17 @@ export function mapVerificationCommandsToPaths(source, commands, approvedPaths =
       continue;
     }
     if (!inCriteria) continue;
-    if (/^-\s+\[SC[1-9]\d*\]/.test(text)) {
+    if (/^(?:[-*+]|\d+[.)])\s+\[SC[1-9]\d*\]/.test(text)) {
       current = { paths: null, commands: [] };
       mappings.push(current);
       continue;
     }
     if (!current) continue;
-    const changes = /^ {2,}- Changes:\s*(.+)$/.exec(text);
+    const changes = /^ {2,}[-*+] Changes:\s*(.+)$/.exec(text);
     if (changes) {
       current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
     }
-    const verify = /^ {2,}- Verify:\s*`([^`]+)`\s*$/.exec(text);
+    const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*$/.exec(text);
     if (verify) current.commands.push(verify[1].trim());
   }
   return Object.fromEntries(commands.map((command) => {

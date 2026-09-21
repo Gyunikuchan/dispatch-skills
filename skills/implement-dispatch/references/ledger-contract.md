@@ -82,11 +82,11 @@ path at the base revision. An amendment precedes the `increment-state` transitio
 `foldDesignRun(events)` folds every valid segment for the matching design identity (normalized
 design path + root slug) across revisions, merging increment states, amendments, adjacent-fixes,
 integration results, and rulings; `nextDesignAction(fold)` derives exactly one of
-`resolve-reconciliation`, `resolve-amendment:<id>`, `resume-increment`, `implement:I<nn>`,
+`resolve-reconciliation`, `resolve-amendment:<id>`, `resolve-ruling:<key>`, `resume-increment`, `implement:I<nn>`,
 `final-integration`, `complete` — in that precedence order, with final integration requiring
 every folded increment to be `complete` and reopened increments remaining implementable. Phased
 resume is authoritative over
-the pre-5B `selectDesignSegment` path, which remains for design-review-only runs.
+the design-only `selectDesignSegment` path, which remains for design-review-only runs.
 
 ## Interruption and handoff
 

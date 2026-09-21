@@ -121,6 +121,12 @@ describe('deterministic plan lint', () => {
     assert.ok(result.warnings.some(({ rule }) => rule === 'missing-success-criteria'));
   });
 
+  it('matches placeholder phrases only on word boundaries', () => {
+    const result = lintPlan(`${clean}
+We reimplement latership and refill in bulk.`);
+    assert.equal(result.warnings.filter(({ rule }) => rule === 'placeholder').length, 0);
+  });
+
   it('excludes examples and reports prose placeholders with exact line loci', () => {
     const source = `${clean}\n<!-- TODO hidden -->\n> TBD quoted\n\`implement later\`\nProse says fill in this detail.`;
     const result = lintPlan(source);

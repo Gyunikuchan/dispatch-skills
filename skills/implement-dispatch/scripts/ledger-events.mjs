@@ -113,6 +113,7 @@ function validateData(event) {
       enumeration(data.action, ['ordinary', 'design', 'increment', 'integration'], 'run-start.data.action');
       if (data.repair !== undefined && typeof data.repair !== 'boolean') throw new Error('run-start.data.repair must be boolean');
       if (data.action === 'ordinary' && event.v !== 1) throw new Error('Ordinary segments require ledger version 1');
+      if (data.action === 'ordinary' && data.design !== undefined) throw new Error('run-start.data.design is only valid on phased actions');
       if (data.action !== 'ordinary' && event.v !== 2) throw new Error('Phased segments require ledger version 2');
       if (data.action === 'increment' || data.action === 'integration') {
         exact(data.design, ['path', 'revision'], [], 'run-start.data.design');
@@ -195,7 +196,7 @@ function validateData(event) {
       break;
     case 'run-complete':
       exact(data, ['result', 'evidenceRefs'], [], 'run-complete.data');
-      enumeration(data.result, ['complete', 'stable-failure', 'aborted', 'design-approved-stop'], 'run-complete.data.result');
+      enumeration(data.result, ['complete', 'stable-failure', 'aborted', ...(event.v === 2 ? ['design-approved-stop'] : [])], 'run-complete.data.result');
       strings(data.evidenceRefs, 'run-complete.data.evidenceRefs');
       break;
     case 'task-start':
@@ -216,7 +217,7 @@ function validateData(event) {
       string(data.target.platform, 'target.platform');
       if (data.terminalEnvelope !== null) object(data.terminalEnvelope, 'terminalEnvelope');
       strings(data.evidence, 'implementation-attempt.data.evidence');
-      enumeration(data.transition, [...TRANSITIONS], 'implementation-attempt.data.transition');
+      enumeration(data.transition, [...TRANSITIONS].filter(transition => transition !== 'complete'), 'implementation-attempt.data.transition');
       break;
     case 'verification':
       exact(data, ['taskId', 'attempt', 'result', 'commandRefs', 'transition'], ['failureIdentity'], 'verification.data');
@@ -244,7 +245,7 @@ function validateData(event) {
       break;
     case 'review':
       exact(data, ['kind', 'round', 'counts', 'checkpointRef'], [], 'review.data');
-      enumeration(data.kind, ['plan', 'code', 'design', 'integration'], 'review.data.kind');
+      enumeration(data.kind, ['plan', 'code', ...(event.v === 2 ? ['design', 'integration'] : [])], 'review.data.kind');
       if (!Number.isSafeInteger(data.round) || data.round < 1) throw new Error('review round must be positive');
       exact(data.counts, ['accepted', 'rejected', 'resolvedDispute', 'disputed', 'pendingConfirmation', 'unknown'], [], 'review.data.counts');
       for (const count of Object.values(data.counts)) if (!Number.isSafeInteger(count) || count < 0) throw new Error('review counts must be non-negative integers');
@@ -282,7 +283,10 @@ export function parseEventLine(line) {
   if (!line.startsWith('- event: ')) throw new Error('Malformed ledger line');
   let event;
   try { event = JSON.parse(line.slice(9)); } catch { throw new Error('Malformed ledger JSON'); }
-  return validateEvent(event);
+  validateEvent(event);
+  // Byte-exact canonical form also rejects duplicate keys and reordered properties.
+  if (line.slice(9) !== canonicalJson(event)) throw new Error('Ledger line is not canonical JSON');
+  return event;
 }
 
 function taskFor(state, taskId) {
@@ -354,7 +358,7 @@ export function foldEvents(events, context = {}) {
         }
         state.tasks.set(event.data.taskId, {
           ...event.data, incrementId: state.segmentAction === 'increment' ? state.activeIncrementId : null,
-          latestAttempt: nextAttempt - 1, nextAttempt, lastAttempt: null,
+          latestAttempt: nextAttempt - 1, nextAttempt, maxAttempt: nextAttempt - 1 + event.data.attemptBudget, lastAttempt: null,
           lastVerification: null, complete: false,
         });
         break;
@@ -366,6 +370,7 @@ export function foldEvents(events, context = {}) {
         if (attempt < task.nextAttempt || attempt > task.nextAttempt) {
           if (!(event.data.launch === 'continuation' && attempt === task.latestAttempt)) throw new Error('Illegal attempt number');
         }
+        if (attempt > task.maxAttempt) throw new Error('Attempt exceeds task attemptBudget');
         if (event.data.launch === 'continuation') {
           if (!task.lastVerification || task.lastVerification.data.result !== 'red' ||
               task.lastVerification.data.attempt !== attempt) throw new Error('Continuation requires matching red verification');
@@ -510,7 +515,7 @@ const INCREMENT_LEGAL = new Set([
 ]);
 
 function incrementTransitionLegal(prior, next) {
-  const unfinished = ['pending', 'ready', 'active', 'reopened'];
+  const unfinished = ['pending', 'ready', 'active', 'reopened', 'blocked'];
   if (unfinished.includes(prior) && (next === 'blocked' || next === 'invalidated')) return true;
   if (prior === 'invalidated' && next === 'pending') return true;
   return INCREMENT_LEGAL.has(`${prior}->${next}`);
@@ -701,7 +706,7 @@ export function foldDesignRun(events) {
 }
 
 /** Derives exactly one next action from a design-run fold, in total precedence order:
- *  resolve-reconciliation > resolve-amendment:<id> > resume-increment > implement:I<nn> >
+ *  resolve-reconciliation > resolve-amendment:<id> > resolve-ruling:<key> > resume-increment > implement:I<nn> >
  *  final-integration > complete. Final integration requires every folded increment to be
  *  `complete`; `reopened` increments are resumable/implementable, and `blocked`/`invalidated`
  *  increments without a ready successor resolve to the reconciliation/ruling path. */
@@ -713,6 +718,9 @@ export function nextDesignAction(fold) {
     if (['proposed', 'reviewed', 'prepared'].includes(amendment.state)) {
       return { action: 'resolve-amendment', amendmentId };
     }
+  }
+  for (const [key, ruling] of fold.rulings ?? new Map()) {
+    if (ruling.state === 'open') return { action: 'resolve-ruling', rulingKey: key };
   }
   if (fold.activeIncrementId) return { action: 'resume-increment', incrementId: fold.activeIncrementId };
   const states = fold.incrementStates ?? new Map();

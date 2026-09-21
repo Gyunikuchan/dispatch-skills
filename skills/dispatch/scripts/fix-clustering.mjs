@@ -113,22 +113,50 @@ export function createIndependenceClusters(findings, { runId, maxAttempts = 3 } 
     }
   }
 
-  return clusterGroups.map((group) => {
-    const memberIds = group.map((f) => f.findingId).sort();
-    const unionPaths = [...new Set(group.flatMap((f) => f.affectedPaths))].sort();
-    const unionVerification = [...new Set(group.flatMap((f) => f.verification))];
-    const clusterId = computeClusterId({ runId, parentTaskId: '', findingIds: memberIds });
+  // Greedy grouping can make two clusters depend on each other; singletons are then the safe order.
+  return orderClusters(clusterGroups, findingMap, runId, maxAttempts) ??
+    orderClusters(normalized.map((finding) => [finding]), findingMap, runId, maxAttempts) ??
+    (() => { throw new Error('finding dependencies contain a cycle'); })();
+}
 
+/**
+ * Builds clusters with `dependsOnClusters` and returns them in dependency order, or null on a cycle.
+ */
+function orderClusters(groups, findingMap, runId, maxAttempts) {
+  const clusters = groups.map((group) => {
+    const memberIds = group.map((f) => f.findingId).sort();
     return {
-      clusterId,
+      clusterId: computeClusterId({ runId, parentTaskId: '', findingIds: memberIds }),
       findingIds: memberIds,
-      affectedPaths: unionPaths,
-      verification: unionVerification,
+      affectedPaths: [...new Set(group.flatMap((f) => f.affectedPaths))].sort(),
+      verification: [...new Set(group.flatMap((f) => f.verification))],
       attemptBudget: maxAttempts,
       parentTaskId: null,
+      dependsOnClusters: [],
       findings: group,
     };
   });
+  const owner = new Map(clusters.flatMap((cluster) => cluster.findingIds.map((id) => [id, cluster])));
+  for (const cluster of clusters) {
+    const deps = new Set();
+    for (const finding of cluster.findings) {
+      for (const depId of getTransitiveClosure(finding.findingId, findingMap, new Set())) {
+        const dep = owner.get(depId);
+        if (dep && dep !== cluster) deps.add(dep.clusterId);
+      }
+    }
+    cluster.dependsOnClusters = [...deps].sort();
+  }
+  const ordered = [];
+  const done = new Set();
+  while (ordered.length < clusters.length) {
+    const next = clusters.find((cluster) => !done.has(cluster.clusterId) &&
+      cluster.dependsOnClusters.every((id) => done.has(id)));
+    if (!next) return null;
+    done.add(next.clusterId);
+    ordered.push(next);
+  }
+  return ordered;
 }
 
 /**
@@ -136,7 +164,7 @@ export function createIndependenceClusters(findings, { runId, maxAttempts = 3 } 
  * - Preserves completed findings without another dispatch.
  * - Isolates failedFindingId into its own cluster.
  * - Descendants inherit parent attempt lineage and share the remaining budget.
- * - Total attempts across parent and descendants cannot exceed maxAttempts.
+ * - Descendant attempt numbers continue the parent's; none exceeds maxAttempts.
  * - Sets parentTaskId to the failed cluster's ID.
  */
 export function splitFailedCluster(cluster, {

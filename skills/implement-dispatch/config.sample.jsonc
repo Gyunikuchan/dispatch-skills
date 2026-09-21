@@ -62,7 +62,7 @@
           "model": "gemini-3.7-flash",
           "effort": "medium",
         },
-        "max": {
+        "high": {
           "model": "gemini-3.8-flash",
           "effort": "medium",
         },
@@ -167,7 +167,7 @@
           "model": "gemini-3.7-flash",
           "effort": "medium",
         },
-        "max": {
+        "high": {
           "model": "gemini-3.8-flash",
           "effort": "medium",
         },
