@@ -21,6 +21,17 @@ in the plan's resolution log; ledger `review` events record the increment's code
 which always occur inside the open segment. No ledger event may ever be appended between a prior
 `run-complete` and the next `run-start`.
 
+Author the increment plan from the plan-review template extended with
+`## Technical-Design Traceability` (parent design path, approved revision, increment ID and
+inherited contract, prerequisite evidence, acceptance mapping); review it under the configured
+plan-review policy with bounded approved-design context. Take the ledger identity from the
+binding above, never from filenames. Ask the user only on a decision-changing ambiguity and
+classify each answer as a local refinement (recorded in the plan) or design-changing (amendment
+path). Keyed opt-ins render as for ordinary plans; design-changing selections enter the amendment
+path instead of materialization. Update the status mirror with
+`scripts/design-run.mjs --design <path> --states '<ledger states JSON>'`, which refuses
+governed-hash changes. Commits and compaction remain user-owned and optional.
+
 One increment runs per invocation. Among ready increments the highest-priority ready increment
 (healthy prerequisites, not blocked/invalidated/complete) runs first. After verification, code
 review, and checkpoint settlement, update the ledger and the design's `## Execution Status`
@@ -28,7 +39,9 @@ mirror — a status-only write that preserves the governed hash and approval met
 the invocation with `run-complete` result `complete` and the durable stop report (completed
 increment, verification/review state, deferred items, commit state, exact `Next Action`, exact
 resume command, optional compaction point). The user-selected adjacent-fix loop is the sole
-one-increment-per-invocation exception.
+one-increment-per-invocation exception: implement only the selected findings as an adjacent-fix
+cluster, keep their verification and scoped review separate from the increment contract, then
+stop.
 
 ## Design amendments
 
@@ -78,7 +91,8 @@ After the last increment settles, the next `/implement-dispatch <design-path>` i
 the final integration gate only. Freshly verify cross-increment behavior and, when code review
 is enabled and available, run the configured final review over the union of ledger-owned paths
 — completed increments, accepted adjacent-fix clusters, reopened increments, active integration
-fixes — from the design-run baseline commit through current HEAD plus working tree, so committed
+fixes — from the design-run baseline commit (code-review `baseRevision` with `allowedPaths`) through
+current HEAD plus working tree, so committed
 increments stay visible. Unrelated paths in the range are excluded; pre-existing or user-retained
 changes on owned paths are included conservatively and disclosed. A zero-path owned intersection
 is a fail-closed integration diagnostic (the gate cannot settle with nothing owned to review);

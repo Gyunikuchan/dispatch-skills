@@ -90,17 +90,13 @@ After approval, initialize and append the durable events in the
 Implement approved plan scope through a native subagent of `flow.implementation.platform`,
 never inline: `claude` -> `general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose`
 (`task` tool with `model` and `reasoning_effort`); `agy` defines no named agent types, so launch
-its default subagent. All platforms follow configured `model` and `effort` supported by their
-native launcher. Treat a resolved model array as a **launch cascade**, not an implementation-attempt
-sequence: call the native subagent with model 1 and the resolved effort; if the tool rejects the
-launch for model unavailability, authentication, or quota, immediately call it with model 2 and the
-same effort, continuing in order. A subagent that starts has consumed the cascade: its malformed
-envelope, `BLOCKED`, test failure, timeout, or implementation defect follows attempt recovery and
-never selects the next fallback model. Derive `--implementation-fields` from that native launch
-tool's schema; default to model only. Pass resolved fields explicitly and disclose ignored fields;
-missing models stop preflight. Before interpreting the outcome, record every cascade entry as
-`model <index>/<count> <name>; effort <value>; <launch-rejected: reason|started>`. Preserve the
-index/unrelated changes and inspect Git read-only. Trivial work alone may start on the host
+its default subagent. A resolved model array is a **launch cascade**: on a launch rejection
+(model unavailability, authentication, quota) retry the next model with the same effort; a started
+subagent ends the cascade. Record each entry as
+`model <index>/<count> <name>; effort <value>; <launch-rejected: reason|started>`. Derive
+`--implementation-fields` from the native launch tool's schema (default: model only), pass
+resolved fields explicitly, and disclose ignored fields; missing models stop preflight. Preserve
+the index/unrelated changes and inspect Git read-only. Trivial work alone may start on the host
 platform.
 
 Follow the [implementation delegate contract](references/implementation-delegate-contract.md):
@@ -183,67 +179,21 @@ artifact.
 ## Technical designs
 
 When explicit direction or qualifying architectural evidence calls for phased work, author and
-settle a technical design through `dispatch-design-review`. Record approval and the next ready
-increment in the v2 design ledger, then stop at the durable `design-approved-stop` boundary
-before authoring increment plans or modifying production files. Ordinary plans retain the v1
-flow.
+settle a technical design through `dispatch-design-review`, record approval and the next ready
+increment in the v2 design ledger, then stop at the durable `design-approved-stop` boundary.
+Ordinary plans retain the v1 flow.
 
-**Resuming a phased design.** `/implement-dispatch <design-path>` folds every valid ledger
-segment bound to the design's normalized path and root slug across approved revisions, proves
-completed increments with ledger and Git evidence, and derives exactly one `Next Action`:
-implement a named ready increment, resume an interrupted increment, resolve a named
-reconciliation or amendment, run final integration, or complete. Resume only dispatches work
-proven ready by the design graph, the ledger fold, artifact checkpoints, and Git evidence; drift
-enters reconciliation instead of redispatching.
+`/implement-dispatch <design-path>` folds every valid ledger segment bound to the design's
+normalized path and root slug, proves completed increments with ledger and Git evidence, and
+derives exactly one `Next Action`: implement a named ready increment, resume an interrupted one,
+resolve a named reconciliation or amendment, run final integration, or complete. Dispatch only
+work the design graph, ledger fold, artifact checkpoints, and Git evidence prove ready; drift
+enters reconciliation.
 
-**Implementation increments.** One coherent outcome per increment, one increment per invocation
-(run-complete closes every invocation segment) in the current working tree. Author the increment's implementation plan from the
-plan-review template extended with `## Technical-Design Traceability` (parent design path,
-approved revision, increment ID and inherited contract, prerequisite evidence, acceptance
-mapping); review it under the configured plan-review policy with bounded approved-design context
-and never derive the ledger identity from filenames. Ask the user only when a
-decision-changing ambiguity appears; classify each answer as a local refinement (recorded in
-the plan) or design-changing (the amendment path below). At settlement render the keyed opt-in
-sections as for ordinary plans; design-changing selections enter the amendment path instead of
-materialization. Open the increment's ledger segment (`action: "increment"` carrying the design
-path/revision and `increment:{id,planPath,walkthroughPath,planHash}`) immediately after plan
-settlement, then run the verification evidence contract's baseline and its side-effect reconciliation before the first
-implementation dispatch. New or corrected behavior still requires the tests-only stage and
-host-observed RED before the production continuation. After implementation, verification, and
-code review, append the increment's ledger events, update the design's `## Execution Status`
-mirror with `scripts/design-run.mjs --design <path> --states '<ledger states JSON>'` (status-only;
-refuses governed-hash changes), and stop at the durable boundary reporting the
-completed increment, verification and review state, deferred items, commit state, the exact
-`Next Action`, the exact `/implement-dispatch <design-path>` resume command, and that this is a
-safe optional compaction point. Commits and compaction remain user-owned and optional. The
-immediate adjacent-fix loop after settlement is the sole one-increment-per-invocation exception:
-implement only user-selected findings as an adjacent-fix cluster, keep their verification and
-scoped review separate from the increment contract, then stop.
-
-**Design amendments.** A design-changing discovery pauses before additional writes. Amendments
-are transactional: retain the last approved governed design as the only executable revision
-while an OS-temp candidate records the proposed changes and affected increment IDs; review the
-candidate's changed sections; record `proposed`, `reviewed`, `prepared` (user approval), then
-`activated` — or `rejected`/`aborted` — in the ledger. User approval first appends and fsyncs
-the `prepared` event; only then copy the byte-for-byte `.<design-file>.bak` backup and stage
-`.<design-file>.tmp`, compare hashes, and atomically rename the replacement over the canonical
-design before appending `activated` and removing the backup. Startup recovery treats prepared
-without activated by window: pre-rename needs a resume-or-discard ruling, post-rename verifies
-the candidate hash and repairs approval metadata before appending the missing `activated`, and
-a mismatch preserves both copies and enters reconciliation. Only activation invalidates affected
-pending/active increments and reopens completed ones whose contracts or shared invariants
-changed; independent completed increments remain valid. Rejection or abort leaves the proposed
-revision non-authoritative and requires live-diff reconciliation before execution resumes.
-
-**Final integration.** After the last increment settles, the next
-`/implement-dispatch <design-path>` invocation runs the final integration gate only: fresh
-cross-increment verification plus, when code review is enabled and available, the configured
-final review across the union of ledger-owned paths (completed increments, accepted adjacent-fix
-clusters, reopened increments, active integration fixes) from the design-run baseline commit
-(code-review `baseRevision`, with `allowedPaths`) through current HEAD plus working tree — the sum of increment checks never replaces this gate.
-Record evidence under `.scratch/plan/<date>-<design-slug>-integration-walkthrough.md`. If
-integration exposes a defect inside an approved increment contract, reopen that increment; if it
-exposes missing scope or changed architecture, use the amendment path. Keep the design and every
-increment plan and walkthrough under `.scratch/` through integration; after the integration gate
-settles, pass every design-run artifact to `dispatch/scripts/relocate-scratch.mjs` and report
-every destination. Never relocate the ledger.
+One increment per invocation: each runs this flow's §§ 1–5 (baseline before the first
+dispatch, tests-only stage and host-observed RED for new behavior), updates `## Execution Status`,
+closes with `run-complete`, and stops. Design-changing discoveries take the amendment path; the
+last increment is followed by a separate final integration gate recorded in the
+`integration-walkthrough`. Never relocate the ledger. Follow the
+[technical-design contract](references/design-contract.md) for increment binding, the adjacent-fix
+exception, amendment transactions, and final integration.

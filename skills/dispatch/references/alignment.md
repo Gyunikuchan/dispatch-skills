@@ -95,7 +95,7 @@ Preparation context is invocation-bound. Checkpoint only after terminal outcomes
 verification, and consensus exit `0`: send `action: "checkpoint-preview"`, verify its observed
 settlement and writes, and resend them as `checkpoint`; then remove returned cleanup paths in finally-style success
 or failure handling. Canonical artifacts are the only write targets; views and packets are
-read-only OS-temp inputs and must not expose source-map session handles.
+read-only OS-temp inputs that omit source-map session handles.
 
 Successful `implement-dispatch` runs warn before moving scratch artifacts: `The resolved plan and
 walkthrough are moving to OS temp and may be deleted by the OS.` Report every destination.
@@ -113,9 +113,8 @@ review skills attach a bounded approved-design excerpt through the single-source
 `## Execution Status` (fence-aware at both boundaries) and the resolution log, bounds its length,
 and pairs the excerpt with the explicit revision and the recomputed governed hash. Reviewers of
 increment plans additionally check one increment's concrete files and symbols, sequencing, error
-behavior, prerequisite evidence, exact verification, and bounded blast radius. Ledger identity is
-never derived from artifact filenames; it comes only from explicit paths plus the design/ledger
-slug. For final integration, code-review preparation accepts an explicit `allowedPaths` set
+behavior, prerequisite evidence, exact verification, and bounded blast radius. Ledger identity
+comes only from explicit paths plus the design/ledger slug, never from artifact filenames. For final integration, code-review preparation accepts an explicit `allowedPaths` set
 restricting range review to the ledger-owned path union plus owned working-tree changes, and a
 `baseRevision` (the ledger `run-start` baseline commit) replacing the merge-base; a non-ancestor
 baseline fails closed. A zero-path owned intersection is a
