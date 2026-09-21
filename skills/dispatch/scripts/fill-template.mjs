@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Extracts and fills the `#### Prompt template` fenced block from a template file — each review
- * skill's own `references/prompt-template.md` — so orchestrators stop hand-rolling an
+ * Extracts and fills the `#### Prompt template` fenced block from a template file — a shared
+ * frame under `references/templates/`, optionally assembled with a per-kind block — so orchestrators stop hand-rolling an
  * extraction/substitution script per dispatch and stop piping a multi-line, backtick-heavy prompt
  * through shell quoting. The template stays in the skill that owns it; this script reads it, and
  * never relocates it; review preparation owns the returned path's lifecycle.
@@ -10,7 +10,7 @@
  * path, not a SKILL.md.
  *
  * Usage:
- *   node fill-template.mjs --skill <template path> [--section "Prompt template"]
+ *   node fill-template.mjs --skill <template path> [--kind-block <path>] [--section "Prompt template"]
  *                           (--var Name=Value)... [--vars <json file>|-]
  *                           [--out <path>|--temp-out] [--list]
  *
@@ -32,8 +32,8 @@
  * ungoverned grammar placeholders in the template body (`<file>:L<line>`, `<tag>`, `<axis>`,
  * `<Section>`) are left untouched because they were never declared.
  *
- * Before filling, the owning skill's `skill-hashes.json` (one directory up from a
- * `references/` template) is checked when present: drift in the template itself aborts the
+ * Before filling, the owning skill's `skill-hashes.json` (the nearest ancestor manifest of each
+ * template file, frame and kind block alike) is checked when present: drift in the template itself aborts the
  * fill, drift elsewhere in the skill only warns. This detects an unnoticed or accidental
  * modification before the prompt reaches a delegate — it is not tamper resistance, since
  * whoever can edit the template can also rewrite the unhashed manifest. A skill with no
@@ -126,6 +126,80 @@ export function extractTemplate(markdown, section = DEFAULT_SECTION) {
 }
 
 // ============================================================================
+// SECTION: Assembly (frame + kind block)
+// ============================================================================
+
+const SLOT_PATTERN = /<<slot:([A-Za-z0-9_-]+)>>/g;
+
+/**
+ * Splits a kind block into its leading `<Name>` variable bullets and its `## NAME` sections.
+ * Only level-2 headings open a section, so section bodies may carry deeper headings or fences.
+ */
+function parseKindBlock(markdown) {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  const variables = [];
+  const sections = new Map();
+  let current = null;
+  let fence = null;
+  for (const line of lines) {
+    const fenceMatch = /^(`{3,}|~{3,})\s*\S*\s*$/.exec(line);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length && /^(`+|~+)\s*$/.test(line)) fence = null;
+    }
+    const heading = fence || fenceMatch ? null : /^##\s+(\S.*?)\s*$/.exec(line);
+    if (heading) {
+      current = heading[1];
+      if (sections.has(current)) throw new Error(`Kind block declares section "${current}" twice`);
+      sections.set(current, []);
+      continue;
+    }
+    if (current === null) {
+      const varMatch = /^-\s+`<([^>]+)>`/.exec(line);
+      if (varMatch) variables.push(varMatch[1]);
+    } else {
+      sections.get(current).push(line);
+    }
+  }
+  const trimmed = new Map();
+  for (const [name, body] of sections) {
+    trimmed.set(name, body.join('\n').replace(/^(?:[ \t]*\n)+/, '').replace(/\s+$/, ''));
+  }
+  return { variables, sections: trimmed };
+}
+
+/**
+ * Assembles a shared frame template with one kind block: every `<<slot:NAME>>` in the frame's
+ * fenced template becomes the kind block's `## NAME` section body, and the declared variables are
+ * the union of both files' bullets. A slot without a section, or a section without a slot, throws.
+ *
+ * @param {string} framePath
+ * @param {string} kindPath
+ * @param {string} [section]
+ * @returns {{ variables: string[], template: string }}
+ */
+export function assembleTemplate(framePath, kindPath, section = DEFAULT_SECTION) {
+  const frame = extractTemplate(fs.readFileSync(framePath, 'utf8'), section);
+  const kind = parseKindBlock(fs.readFileSync(kindPath, 'utf8'));
+  const slots = new Set([...frame.template.matchAll(SLOT_PATTERN)].map((match) => match[1]));
+  const missing = [...slots].filter((name) => !kind.sections.has(name));
+  if (missing.length > 0) {
+    throw new Error(`Kind block ${kindPath} has no section for slot(s): ${missing.join(', ')}`);
+  }
+  const unused = [...kind.sections.keys()].filter((name) => !slots.has(name));
+  if (unused.length > 0) {
+    throw new Error(`Kind block ${kindPath} declares section(s) with no frame slot: ${unused.join(', ')}`);
+  }
+  // An empty section drops its whole slot line rather than leaving a blank one behind.
+  const template = frame.template
+    .replace(/^[ \t]*<<slot:([A-Za-z0-9_-]+)>>[ \t]*\n/gm, (line, name) => (kind.sections.get(name) ? line : ''))
+    .replace(SLOT_PATTERN, (_, name) => kind.sections.get(name));
+  const variables = [...new Set([...frame.variables, ...kind.variables])];
+  return { variables, template };
+}
+
+// ============================================================================
 // SECTION: Substitution
 // ============================================================================
 
@@ -166,12 +240,16 @@ export function fillTemplate(template, variables, values) {
 // ============================================================================
 
 /**
- * Resolves the skill root owning a template path: `<skill>/references/x.md` and
- * `<skill>/SKILL.md` both resolve to `<skill>`.
+ * Resolves the skill root owning a template path: the nearest ancestor directory holding a
+ * `skill-hashes.json`, so nested `references/templates/**` files stay verified. Falls back to
+ * the template's own directory (checked unverified) when no ancestor holds a manifest.
  */
 function resolveSkillRoot(templatePath) {
-  const dir = path.dirname(path.resolve(templatePath));
-  return path.basename(dir) === 'references' ? path.dirname(dir) : dir;
+  const start = path.dirname(path.resolve(templatePath));
+  for (let dir = start; ; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, 'skill-hashes.json'))) return dir;
+    if (path.dirname(dir) === dir) return start;
+  }
 }
 
 /**
@@ -234,6 +312,7 @@ function parseArgs(args) {
     out: null,
     tempOut: false,
     list: false,
+    kindBlock: null,
   };
 
   const value = (i) => {
@@ -248,6 +327,7 @@ function parseArgs(args) {
     const arg = args[i];
     if (arg === '--skill') { opts.skill = value(i); i++; }
     else if (arg === '--section') { opts.section = value(i); i++; }
+    else if (arg === '--kind-block') { opts.kindBlock = value(i); i++; }
     else if (arg === '--var') {
       const raw = value(i); i++;
       const eq = raw.indexOf('=');
@@ -326,13 +406,14 @@ function printHelp() {
 Fill a review skill's prompt template (fill-template.mjs)
 
 Usage:
-  node fill-template.mjs --skill <template path> [--section "Prompt template"]
+  node fill-template.mjs --skill <template path> [--kind-block <path>] [--section "Prompt template"]
                          (--var Name=Value)... [--vars <json file>|-]
                          [--out <path>|--temp-out] [--list]
 
 Options:
   --skill <template path>   The template file to read. Spelled --skill for callers' sake, but
-                            its value is a references/prompt-template.md path, not a SKILL.md.
+                            its value is a references/templates/*.md path, not a SKILL.md.
+  --kind-block <path>       Kind block whose ## NAME sections fill the frame's <<slot:NAME>> lines.
   --section <heading>       Heading holding the template (default: "Prompt template").
   --var Name=Value          One substitution; repeatable. Wins over --vars on a collision.
   --vars <json file>|-      A JSON object of string values; use "-" to read it from stdin.
@@ -368,13 +449,19 @@ function main() {
     process.exit(1);
   }
 
-  assertTemplateIntegrity(opts.skill);
+  if (opts.kindBlock && !fs.existsSync(opts.kindBlock)) {
+    process.stderr.write(`Error: Kind block file not found: ${opts.kindBlock}\n`);
+    process.exit(1);
+  }
 
-  const markdown = fs.readFileSync(opts.skill, 'utf8');
+  assertTemplateIntegrity(opts.skill);
+  if (opts.kindBlock) assertTemplateIntegrity(opts.kindBlock);
 
   let extracted;
   try {
-    extracted = extractTemplate(markdown, opts.section);
+    extracted = opts.kindBlock
+      ? assembleTemplate(opts.skill, opts.kindBlock, opts.section)
+      : extractTemplate(fs.readFileSync(opts.skill, 'utf8'), opts.section);
   } catch (err) {
     process.stderr.write(`Error: ${err.message}\n`);
     process.exit(1);

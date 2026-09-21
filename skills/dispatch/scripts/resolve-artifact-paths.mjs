@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Resolves plan/walkthrough artifact paths deterministically, so the review-flow skills (see
- * `references/alignment.md`) — run together or independently — converge on the same on-disk
+ * `references/review.md`) — run together or independently — converge on the same on-disk
  * file for a given change instead of each inventing its own slug or re-authoring a copy.
  *
  * Resolution order per kind (native artifacts always win over scratch):

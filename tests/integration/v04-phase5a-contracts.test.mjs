@@ -15,7 +15,7 @@ describe('v0.4 Phase 5A contracts', () => {
   });
 
   it('ships the design contract with increment execution now available', () => {
-    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'skills/implement-dispatch/references/design-contract.md')));
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, 'skills/dispatch/references/verbs/design.md')));
     const skill = fs.readFileSync(path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'), 'utf8');
     assert.match(skill, /design-approved-stop/);
     assert.match(skill, /\/implement-dispatch <design-path>/);

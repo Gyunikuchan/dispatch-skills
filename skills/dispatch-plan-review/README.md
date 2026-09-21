@@ -148,8 +148,8 @@ accepted, rejected, downgraded, or disputed, then records the rationale in the p
 ## Nuances & troubleshooting
 
 - **The plan is stale:** If a new requirement does not match the plan resolved for its branch slug,
-  choose whether to reuse it, overwrite it, or review under a fresh slug.
-- **Preparation fails:** `scripts/prepare-review.mjs --request <json-file|->` validates both skill
-  manifests, request fields, artifact freshness, and temporary dispatch inputs before launch.
+  pass an explicit plan path or a fresh slug.
+- **Preparation fails:** `../dispatch/scripts/prepare-review.mjs --kind plan --request <json-file|->` validates the
+  `dispatch` manifest, request fields, artifact freshness, and temporary dispatch inputs before launch.
 - **No automatic plan path:** On a protected branch or detached `HEAD`, pass an explicit plan path.
 - **Provider or authentication issue:** Follow [`dispatch`'s troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).

@@ -6,7 +6,7 @@ description: Review an implementation plan across independent agent CLIs before 
 # dispatch-plan-review
 
 Review or author one plan, then verify every claim against the requirement, repository rules, and
-cited section. Follow [`alignment.md`](../dispatch/references/alignment.md).
+cited section. Follow [`review.md`](../dispatch/references/review.md).
 
 ## Invocation
 
@@ -14,15 +14,14 @@ cited section. Follow [`alignment.md`](../dispatch/references/alignment.md).
 /dispatch-plan-review (<pins>) [<plan.md>] [<requirement or focus>]
 ```
 
-Pins use `dispatch` grammar. Preparation classifies unambiguous trailing text; a legacy plan with
-unclear coverage keeps the overwrite / as-is / fresh-slug choice.
+Pins use `dispatch` grammar. Preparation classifies unambiguous trailing text.
 
 ## Prepare and launch
 
 1. Send a closed JSON request:
 
    ```bash
-   node <skill-path>/scripts/prepare-review.mjs --request <json-file|->
+   node <skills-dir>/dispatch/scripts/prepare-review.mjs --kind plan --request <json-file|->
    ```
 
    Standalone requests carry `selector` plus unclassified `trailingText` (or classified
@@ -32,14 +31,10 @@ unclear coverage keeps the overwrite / as-is / fresh-slug choice.
    `targets`/`reserves`, and optional packet/context. The manifest returns
    the canonical plan (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), freshness, scope, prompt/views,
    argv, invocation context, and cleanup paths.
-2. On `authoring-required`, write the plan from [plan-template.md](references/plan-template.md),
+2. On `authoring-required`, write the plan from [plan.md](../dispatch/references/templates/plan.md),
    settling decision-changing ambiguities one focused question at a time, then prepare again.
 3. On `decision-required`, ask only when non-empty `choices` are present. Report `plan-lint`
-   diagnostics and stop; never ask or replay that decision. Standalone asks other decisions once per
-   invocation. Later per-target requests carry
-   the supplied fields plus `artifactOwned: true`, never a replayed `decision`: `overwrite`
-   re-authors and `fresh-slug` throws. An orchestrator may answer only from an artifact it
-   authored in-run; otherwise it stops with the manifest diagnostic.
+   diagnostics and stop; never ask or replay that decision.
 4. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
    target/reserve/fallback outcome, retaining paths still needed. Classify missing runner results
    through [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
@@ -52,18 +47,18 @@ terminal.
 1. Read every direct, reserve, or native-fallback report from its slot's
    `dispatch.outputPath` (or documented stdout-result channel). A fallback must first be captured
    there under the original candidate/source identity with fallback metadata; it receives no
-   alternate adjudication path. Normalize it with `scripts/parse-report.mjs --file <path>`, adding
-   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per alignment; exit
+   alternate adjudication path. Normalize it with `<skills-dir>/dispatch/scripts/parse-report.mjs --kind plan --file <path>`, adding
+   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per review; exit
    `1` is an empty report; `2` is terminal.
 2. Verify each finding at its `§ <Section>` and any cited code, and an `adjacent` finding at its
-   cited code. Accept, reject, downgrade, or dispute under alignment finality; rebuttal keys must
+   cited code. Accept, reject, downgrade, or dispute under `review.md` finality; rebuttal keys must
    match the packet exactly.
 3. Apply accepted in-scope findings to the plan body and accepted `adjacent` findings under
    `## Out of Scope` as deferred follow-ups. Append the enriched source map and every ruling under
    `## Review Findings & Resolutions`; sanitize delegate text first.
 
 **Done when:** every finding is verified at its cited locus, rulings are recorded, and consensus
-is evaluated under the alignment cap.
+is evaluated under the `review.md` cap.
 
 ## Settle and report
 

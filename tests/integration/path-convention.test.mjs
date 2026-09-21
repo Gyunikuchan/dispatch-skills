@@ -57,10 +57,10 @@ const GUARDED = [
 /**
  * The review skills must keep pointing at the shared resolver (script + reference
  * doc) rather than restating the naming convention inline, so there is exactly one
- * place — `skills/dispatch/references/alignment.md` — that can drift.
+ * place — `skills/dispatch/references/review.md` — that can drift.
  */
 const MUST_REFERENCE_RESOLVER = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md', 'skills/dispatch-design-review/SKILL.md'];
-const RESOLVER_MENTIONS = ['resolve-artifact-paths.mjs', 'alignment.md'];
+const RESOLVER_MENTIONS = ['resolve-artifact-paths.mjs', 'review.md'];
 
 /**
  * Mentions of the scratch directory that name no artifact: the bare directory and the
@@ -155,10 +155,10 @@ describe('artifact path convention', () => {
   });
 
   it('keeps the shared reference doc naming the convention', () => {
-    const mentions = scratchMentions('skills/dispatch/references/alignment.md').filter(m =>
+    const mentions = scratchMentions('skills/dispatch/references/review.md').filter(m =>
       CANONICAL.some(s => s.test(m.token))
     );
-    assert.ok(mentions.length > 0, 'skills/dispatch/references/alignment.md no longer names a canonical artifact path');
+    assert.ok(mentions.length > 0, 'skills/dispatch/references/review.md no longer names a canonical artifact path');
   });
 
   it('keeps every skill markdown mention on a canonical shape', () => {

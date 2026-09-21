@@ -100,7 +100,7 @@ describe('dispatch flag parity (--help vs SKILL.md vs README.md)', () => {
 // SKILL.md Troubleshooting points an agent at `<runner>-run.mjs --help` as the diagnostic surface,
 // so a spelling the runner accepts but never prints is a dead end mid-incident. Each runner exports
 // its own CLI_FLAGS rather than having this test scrape source for `arg === '--x'` comparisons.
-const DESIGN_PREPARE = path.join(REPO_ROOT, 'skills', 'dispatch-design-review', 'scripts', 'prepare-review.mjs');
+const DESIGN_PREPARE = path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', 'prepare-review.mjs');
 
 const RUNNERS = [
   ['claude-run.mjs', claudeFlags],
@@ -118,7 +118,7 @@ function runnerHelpSpellings(script) {
   return new Set([...res.stdout.matchAll(/--?[a-z][a-z-]*/g)].map(([f]) => f));
 }
 
-describe('design preparation adapter parity', () => {
+describe('kind-parameterized preparation parity', () => {
   it('supports --help', () => {
     const result = spawnSync(process.execPath, [DESIGN_PREPARE, '--help'], { encoding: 'utf8' });
     assert.equal(result.status, 0);
@@ -167,9 +167,9 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'dispatch', 'scripts', 'resolve-flow.mjs'],
     ['skills', 'dispatch', 'scripts', 'check-consensus.mjs'],
     ['skills', 'dispatch', 'scripts', 'source-map.mjs'],
-    ['skills', 'dispatch-code-review', 'scripts', 'resolve-review-range.mjs'],
-    ['skills', 'dispatch-plan-review', 'scripts', 'prepare-review.mjs'],
-    ['skills', 'dispatch-code-review', 'scripts', 'prepare-review.mjs'],
+    ['skills', 'dispatch', 'scripts', 'resolve-review-range.mjs'],
+    ['skills', 'dispatch', 'scripts', 'prepare-review.mjs'],
+    ['skills', 'dispatch', 'scripts', 'parse-report.mjs'],
   ]) {
     const name = script[script.length - 1];
     it(`${name} --help exits 0 and prints usage`, () => {

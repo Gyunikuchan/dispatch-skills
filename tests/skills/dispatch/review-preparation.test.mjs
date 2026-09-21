@@ -7,6 +7,7 @@ import { afterEach, describe, it } from 'node:test';
 import {
   advanceInvocationState,
   assertObjectKeys,
+  assertPreparationIntegrity,
   buildReviewView,
   changedKeys,
   checkpointDriftRemedy,
@@ -23,6 +24,7 @@ import {
   sha256,
   writeArtifactMetadata,
 } from '../../../skills/dispatch/scripts/review-preparation.mjs';
+import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
 
 const tempDirs = [];
 const makeDir = () => {
@@ -393,5 +395,17 @@ describe('fence-aware excluded-section stripping', () => {
     assert.ok(excerpt.excerpt.length <= 4000);
     assert.match(excerpt.excerpt, /## Architecture & Boundaries/);
     assert.doesNotMatch(excerpt.excerpt, /## Execution Status/);
+  });
+});
+
+describe('assertPreparationIntegrity', () => {
+  it('verifies only the dispatch skill', () => {
+    const dispatchDir = makeDir();
+    fs.writeFileSync(path.join(dispatchDir, 'SKILL.md'), '# valid\n');
+    fs.writeFileSync(path.join(dispatchDir, 'skill-hashes.json'), `${JSON.stringify(generateSkillHashes(dispatchDir), null, 2)}\n`);
+    assert.equal(assertPreparationIntegrity.length, 1, 'single dispatch target');
+    assertPreparationIntegrity(dispatchDir);
+    fs.writeFileSync(path.join(dispatchDir, 'SKILL.md'), '# tampered\n');
+    assert.throws(() => assertPreparationIntegrity(dispatchDir), /dispatch skill integrity failure/);
   });
 });

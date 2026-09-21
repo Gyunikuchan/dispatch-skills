@@ -34,7 +34,7 @@ describe('v0.4 core correctness contracts', () => {
   });
 
   it('rejects speculative and decision-conflicting findings', () => {
-    const alignment = read('skills/dispatch/references/alignment.md');
+    const alignment = read('skills/dispatch/references/review.md');
     assert.match(alignment, /success reports are claims, not verification/);
     assert.match(alignment, /unused capability/);
     assert.match(alignment, /user-approved decision/);
@@ -42,8 +42,15 @@ describe('v0.4 core correctness contracts', () => {
   });
 
   it('defines a downstream-neutral minimum walkthrough', () => {
-    const contract = read('skills/dispatch/references/walkthrough-contract.md');
-    const template = read('skills/dispatch-code-review/references/walkthrough-template.md');
+    // walkthrough-contract.md is merged into review.md as one section.
+    const review = read('skills/dispatch/references/review.md');
+    const lines = review.split('\n');
+    const start = lines.findIndex((line) => /^#{2,3} .*walkthrough/i.test(line));
+    assert.ok(start >= 0, 'review.md carries the walkthrough contract section');
+    const level = lines[start].match(/^#+/)[0].length;
+    const endOffset = lines.slice(start + 1).findIndex((line) => new RegExp(`^#{1,${level}} `).test(line));
+    const contract = lines.slice(start, endOffset < 0 ? lines.length : start + 1 + endOffset).join('\n');
+    const template = read('skills/dispatch/references/templates/walkthrough.md');
     const headings = [...contract.matchAll(/`(## [^`]+)`/g)].map((match) => match[1]);
     assert.match(contract, /## Verification & Validation/);
     assert.match(contract, /\*No reviews conducted yet\.\*/);
@@ -61,7 +68,7 @@ describe('v0.4 core correctness contracts', () => {
 
   it('orchestrator applies review fixes directly without implementation subagents', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
-    const delegateContract = read('skills/implement-dispatch/references/implementation-delegate-contract.md');
+    const delegateContract = read('skills/dispatch/references/verbs/implement.md');
 
     assert.match(skill, /apply accepted fixes directly as orchestrator/i);
     assert.match(delegateContract, /post-review fixes in § 4 are applied directly by the orchestrator/i);
@@ -69,7 +76,7 @@ describe('v0.4 core correctness contracts', () => {
 
   it('makes native implementation model fallback an observable launch cascade', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
-    const delegateContract = read('skills/implement-dispatch/references/implementation-delegate-contract.md');
+    const delegateContract = read('skills/dispatch/references/verbs/implement.md');
 
     assert.match(skill, /launch cascade/i);
     assert.match(skill, /same effort/i);
@@ -81,7 +88,7 @@ describe('v0.4 core correctness contracts', () => {
 
   it('routes native review fallback through the direct-result pipeline', () => {
     const providers = read('skills/dispatch/references/providers.md');
-    const alignment = read('skills/dispatch/references/alignment.md');
+    const alignment = read('skills/dispatch/references/review.md');
     const planReview = read('skills/dispatch-plan-review/SKILL.md');
     const codeReview = read('skills/dispatch-code-review/SKILL.md');
 

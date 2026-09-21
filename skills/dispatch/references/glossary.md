@@ -14,6 +14,8 @@ headings use these terms.
 | **Write subagent** | A native host subagent that edits code; never dispatched. | implementer | |
 | **Candidate / Target / Reserve** | A configured provider entry; one selected for a wave; one held back to replace a failed target. | | |
 | **Round / Wave / Slot** | One adjudication record; the concurrent launches for one round; one launched delegate. | iteration | |
+| **Affinity** | Routing a rebuttal to its effective source. | | |
+| **Change scope / Review Scope / Installation scope** | Implementation size; a review's evidence boundary; where skills are installed. | | |
 | **Run** | One driver invocation, with its state file. | | session (a provider handle) |
 | **Action** | One driver instruction to the agent (closed set). | | step, task |
 | **Finding / Ruling / Settlement / Checkpoint** | A delegate claim; the host's decision on it; the recorded final status of a round (consensus exit `0`, or host-final when `consensus: false`); the recorded freshness metadata. | verdict | |

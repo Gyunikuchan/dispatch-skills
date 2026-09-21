@@ -9,7 +9,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 
 describe('v0.4 Phase 4 keyed opt-ins and clustered fixes contracts', () => {
   it('alignment reference documents interaction aliases and application continuation format', () => {
-    const alignment = read('skills/dispatch/references/alignment.md');
+    const alignment = read('skills/dispatch/references/review.md');
     assert.match(alignment, /Interaction aliases/i);
     assert.match(alignment, /\[R#\]/);
     assert.match(alignment, /\[O#\]/);

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdirSync, existsSync } from 'node:fs';
+import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -42,6 +42,19 @@ describe('link integrity guard (authored markdown)', () => {
   it('resolves every relative link and anchor in authored markdown', () => {
     const offenders = SCAN_FILES.filter((f) => existsSync(f)).flatMap((file) =>
       brokenLinks(file).map((p) => `${path.relative(REPO_ROOT, file).split(path.sep).join('/')}:L${p.line} → ${p.target} (${p.reason})`),
+    );
+    assert.deepEqual(offenders, []);
+  });
+});
+
+describe('retired reference names (v0.5 I02)', () => {
+  it('no authored markdown or docs still names alignment.md or walkthrough-contract.md', () => {
+    const files = [...SCAN_FILES, ...walkMarkdown(path.join(REPO_ROOT, 'docs'))].filter((f) => existsSync(f));
+    const offenders = files.flatMap((file) =>
+      readFileSync(file, 'utf8').split('\n').flatMap((line, index) =>
+        /\balignment\.md\b|\bwalkthrough-contract\.md\b/.test(line)
+          ? [`${path.relative(REPO_ROOT, file).split(path.sep).join('/')}:L${index + 1}`]
+          : []),
     );
     assert.deepEqual(offenders, []);
   });

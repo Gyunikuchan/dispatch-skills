@@ -57,17 +57,17 @@ Owned by `dispatch`; see [dispatch-notes.md](dispatch-notes.md#consensus-gate).
 
 ### Review Preparation
 
-Each review skill owns `scripts/prepare-review.mjs`. It validates a closed JSON request, resolves
+`dispatch/scripts/prepare-review.mjs --kind plan|code|design` serves every review kind (code-kind logic in
+`prepare-code-review.mjs`; per-kind tags, templates, and schemas in `review-kinds.mjs`). It validates a closed JSON request, resolves
 artifacts and freshness, builds bounded views/prompts/batch manifests, and returns argv plus
 cleanup paths. The caller launches and awaits dispatch, adjudicates untrusted reports, checkpoints
 only settled writes, and performs finally-style cleanup. Generic frontmatter, hashing, invocation
 state, and view projection live in `dispatch/scripts/review-preparation.mjs`.
 
-### Rebuttal Packets (`scripts/build-rebuttal-packets.mjs`)
+### Rebuttal Packets (`dispatch/scripts/build-rebuttal-packets.mjs`)
 
 Combines strict consensus JSON with explicit orchestrator counter-evidence, groups live findings by
-effective source key, and writes owner-only OS-temp packet files. Legacy findings use conservative
-round-wide affinity. Packet paths and cleanup directories are returned in a manifest.
+effective source key, and writes owner-only OS-temp packet files. Packet paths and cleanup directories are returned in a manifest.
 
 ---
 
@@ -86,8 +86,7 @@ Replaces the flow resolver's real provider probing with a literal JSON map (e.g.
   stable candidate IDs, host/model demotion, level-knob fallback, pin normalization, candidate
   array expansion, and platform exclusions.
 - `tests/skills/dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
-- `tests/skills/implement-dispatch/build-rebuttal-packets.test.mjs`: Source grouping, legacy
-  affinity, context validation, and private temp-file output.
+- `tests/skills/dispatch/build-rebuttal-packets.test.mjs`: Source grouping, context validation, and private temp-file output.
 - `tests/skills/dispatch/config.test.mjs`: Schema validation and level-policy snapshot of `dispatch/config.sample.jsonc`.
 
 ---

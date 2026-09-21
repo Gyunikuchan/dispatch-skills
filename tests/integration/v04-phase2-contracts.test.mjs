@@ -11,12 +11,12 @@ describe('v0.4 durable ledger contracts', () => {
   it('routes canonical plan resume through the disclosed ledger contract', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
     assert.match(skill, /\/implement-dispatch <plan-path>/);
-    assert.match(skill, /references\/ledger-contract\.md/);
+    assert.match(skill, /references\/verbs\/implement\.md/);
     assert.match(skill, /explicit slug matching the canonical plan filename/);
   });
 
   it('defines append, reconciliation, flow confirmation, and handoff behavior', () => {
-    const contract = read('skills/implement-dispatch/references/ledger-contract.md');
+    const contract = read('skills/dispatch/references/verbs/implement.md');
     for (const phrase of [
       'append `run-start`, then `approval`',
       'Before each task or cluster dispatch append `task-start`',

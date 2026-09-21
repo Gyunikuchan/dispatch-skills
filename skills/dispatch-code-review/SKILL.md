@@ -7,7 +7,7 @@ description: Review a selected diff across independent agent CLIs, verify every 
 
 The selected diff is authoritative: verify every delegate claim against a changed line or direct
 contract locus. Shared finality and logging rules are in
-[`alignment.md`](../dispatch/references/alignment.md).
+[`review.md`](../dispatch/references/review.md).
 
 ## Invocation
 
@@ -15,15 +15,14 @@ contract locus. Shared finality and logging rules are in
 /dispatch-code-review (<pins>) [<plan-or-walkthrough.md>] [<summary or focus>]
 ```
 
-Pins use `dispatch` grammar. Preparation resolves the shared artifact slug; a legacy walkthrough
-mismatch keeps the overwrite / as-is / fresh-slug choice.
+Pins use `dispatch` grammar. Preparation resolves the shared artifact slug.
 
 ## Prepare and launch
 
 1. Run:
 
    ```bash
-   node <skill-path>/scripts/prepare-review.mjs --request <json-file|->
+   node <skills-dir>/dispatch/scripts/prepare-review.mjs --kind code --request <json-file|->
    ```
 
    Standalone requests carry `selector`, classified `summary`/`focus`, and
@@ -39,10 +38,8 @@ mismatch keeps the overwrite / as-is / fresh-slug choice.
    (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), compares freshness, derives scope, and
    returns bounded views/prompts, attachments, response schema, argv, context, and cleanup paths. A missing walkthrough comes from the canonical template when summary and
    verification inputs are complete.
-4. On `decision-required`, standalone asks once per invocation. Later per-target requests carry
-   the supplied fields plus `artifactOwned: true`, never a replayed `decision`: `overwrite`
-   regenerates the walkthrough and `fresh-slug` throws. An orchestrator answers only from artifacts
-   it authored in-run; otherwise it stops with the corrective diagnostic.
+4. On `decision-required` (`walkthrough-inputs`), standalone asks once for the listed `missing`
+   inputs and prepares again; an orchestrator stops with the corrective diagnostic.
 5. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
    target/reserve/fallback outcome. Classify missing runner results through
    [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
@@ -55,12 +52,12 @@ terminal.
 1. Read every direct, reserve, or native-fallback report from its slot's
    `dispatch.outputPath` (or documented stdout-result channel). A fallback must first be captured
    there under the original candidate/source identity with fallback metadata; it receives no
-   alternate adjudication path. Normalize with `scripts/parse-report.mjs --file <path>`, adding
-   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per alignment; exit
+   alternate adjudication path. Normalize with `<skills-dir>/dispatch/scripts/parse-report.mjs --kind code --file <path>`, adding
+   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per review; exit
    `1` is an empty report; `2` is terminal.
 2. Verify each in-scope finding against its cited changed line and surrounding contract, and each
    `adjacent` finding at its cited locus. Reject uncited, contradicted, or unverifiable claims.
-   Apply alignment finality and sanitize every artifact write.
+   Apply `review.md` finality and sanitize every artifact write.
 3. Both modes record accepted `adjacent` findings under `## Follow-ups`. Standalone also applies
    accepted in-scope `MUST` and safe `SHOULD` fixes as independence clusters via
    `node <skills-dir>/dispatch/scripts/fix-clustering.mjs --cluster` (pairwise disjoint paths,
@@ -105,7 +102,7 @@ handled.
 Statelessly verify a checkpointed walkthrough artifact against current git and working-tree state without ephemeral invocation state:
 
 ```bash
-node <skill-path>/scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
+node <skills-dir>/dispatch/scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
 ```
 
 Exits 0 (fresh), 1 (stale/drifted), or 2 (error). Details and output schema in [README.md](README.md#verify-walkthrough-freshness).

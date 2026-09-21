@@ -39,20 +39,20 @@ describe('v0.4 Phase 5B contracts', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
     assert.match(skill, /baseline/i);
     assert.match(skill, /run-complete/);
-    const contract = read('skills/implement-dispatch/references/design-contract.md');
+    const contract = read('skills/dispatch/references/verbs/design.md');
     assert.match(contract, /increment/i);
     assert.doesNotMatch(contract, /unavailable until a later capability exists/);
     assert.match(contract, /integration/i);
   });
 
   it('documents amendment write-ahead, backup, and activation rules', () => {
-    const contract = read('skills/implement-dispatch/references/design-contract.md');
+    const contract = read('skills/dispatch/references/verbs/design.md');
     assert.match(contract, /prepared/i);
     assert.match(contract, /\.bak/);
     assert.match(contract, /\.tmp/);
     assert.match(contract, /activated/i);
     assert.match(contract, /reconcil/i);
-    const ledgerContract = read('skills/implement-dispatch/references/ledger-contract.md');
+    const ledgerContract = read('skills/dispatch/references/verbs/implement.md');
     assert.match(ledgerContract, /increment-state/);
     assert.match(ledgerContract, /amendment/);
     assert.match(ledgerContract, /adjacent-fix/);
@@ -67,7 +67,7 @@ describe('v0.4 Phase 5B contracts', () => {
   });
 
   it('ships the Execution Status template shape and drops unavailability wording', () => {
-    const template = read('skills/dispatch-design-review/references/design-template.md');
+    const template = read('skills/dispatch/references/templates/design.md');
     assert.match(template, /## Execution Status/);
     assert.match(template, /Next Action/);
     assert.match(template, /ready|completed/);

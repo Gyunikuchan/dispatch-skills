@@ -20,9 +20,9 @@ describe('Phase 0 workflow contracts', () => {
   });
 
   it('removes the implicit HEAD~1 fallback and names the corrective action', () => {
-    const prompt = read('skills/dispatch-code-review/references/prompt-template.md');
+    const prompt = read('skills/dispatch/references/templates/review-prompt.md') + read('skills/dispatch/references/templates/review-prompt-code.md');
     const skill = read('skills/dispatch-code-review/SKILL.md');
-    const prepare = read('skills/dispatch-code-review/scripts/prepare-review.mjs');
+    const prepare = read('skills/dispatch/scripts/prepare-code-review.mjs');
     assert.doesNotMatch(prompt, /git diff HEAD~1/);
     assert.match(prompt, /Never substitute `HEAD~1`/);
     assert.match(skill, /No reviewable changes/);
@@ -32,7 +32,7 @@ describe('Phase 0 workflow contracts', () => {
 
   it('warns before OS-temp relocation and preserves exact destination reporting', () => {
     const implement = read('skills/implement-dispatch/SKILL.md');
-    const alignment = read('skills/dispatch/references/alignment.md');
+    const alignment = read('skills/dispatch/references/review.md');
     assert.match(implement, /may be\s+deleted by the OS/);
     assert.match(implement, /destination/);
     assert.match(alignment, /may be deleted by the OS/);

@@ -30,6 +30,13 @@ const sourceMap = JSON.stringify({
   },
 });
 
+const roundSources = (n) => `- **Sources:** ${JSON.stringify({
+  [`plan-review:R${n}:claude:0`]: {
+    provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'medium', status: 'target', session: null, substitutesFor: null,
+  },
+})}`;
+const PENDING_B = '- **[Rejected — pending confirmation]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § B — scope: broad → retained';
+
 const document = [
   '# Plan',
   '',
@@ -41,18 +48,21 @@ const document = [
   '',
   '### Round 1 — Claude',
   '',
-  '- **[Accepted]** § A — test: missing → added',
+  roundSources(1),
+  '- **[Accepted]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — test: missing → added',
   '',
   '### Round 2 — Copilot',
   '',
-  '- **[Rejected — pending confirmation]** § B — scope: broad → retained',
+  roundSources(2),
+  PENDING_B,
   '',
   '### Round 3 — Claude',
   '',
+  roundSources(3),
   '```markdown',
   '- **[Disputed]** fenced example',
   '```',
-  '- **[Resolved Dispute]** § C — intent: unclear → user ruled',
+  '- **[Resolved Dispute]** [R3-F001] [MUST] [sources=plan-review:R3:claude:0] § C — intent: unclear → user ruled',
   '',
   '## Out of Scope',
   '',
@@ -69,7 +79,8 @@ describe('resolution log scanner', () => {
       '',
       '## Review Findings & Resolutions',
       '### Round 1',
-      '- **[Accepted]** § A — test: issue → fixed',
+      roundSources(1),
+      '- **[Accepted]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — test: issue → fixed',
     ].join('\n');
     const metadata = [
       '---',
@@ -92,9 +103,7 @@ describe('resolution log scanner', () => {
     assert.equal(scan.rounds[0].counts.accepted, 1);
     assert.equal(scan.rounds[1].counts.pendingConfirmation, 1);
     assert.equal(scan.rounds[2].counts.disputed, 0);
-    assert.deepEqual(scan.unsettled, [
-      '- **[Rejected — pending confirmation]** § B — scope: broad → retained',
-    ]);
+    assert.deepEqual(scan.unsettled, [PENDING_B]);
     assert.match(scan.semanticBody, /## Proposed Changes/);
     assert.match(scan.semanticBody, /## Out of Scope/);
     assert.doesNotMatch(scan.semanticBody, /Round 1/);
@@ -117,19 +126,19 @@ describe('resolution log scanner', () => {
   it('treats fences indented by four spaces as indented code', () => {
     const indented = document.replace(
       '```markdown\n- **[Disputed]** fenced example\n```',
-      '    ```markdown\n- **[Disputed]** visible after indented code\n    ```',
+      '    ```markdown\n- **[Disputed]** [R3-F002] [MUST] [sources=plan-review:R3:claude:0] § D — t: visible after indented code\n    ```',
     );
     assert.deepEqual(scanResolutionLog(indented).unsettled, [
-      '- **[Rejected — pending confirmation]** § B — scope: broad → retained',
-      '- **[Disputed]** visible after indented code',
+      PENDING_B,
+      '- **[Disputed]** [R3-F002] [MUST] [sources=plan-review:R3:claude:0] § D — t: visible after indented code',
     ]);
   });
 
   it('keeps the compatibility unsettled scan conservative for malformed logs', () => {
-    const duplicate = `${document}\n## Review Findings & Resolutions\n- **[Disputed]** duplicate section`;
+    const duplicate = `${document}\n## Review Findings & Resolutions\n- **[Disputed]** [R1-F009] [MUST] [sources=plan-review:R1:claude:0] § D — t: duplicate section`;
     assert.deepEqual(findUnsettledResolutionLines(duplicate), [
-      '- **[Rejected — pending confirmation]** § B — scope: broad → retained',
-      '- **[Disputed]** duplicate section',
+      PENDING_B,
+      '- **[Disputed]** [R1-F009] [MUST] [sources=plan-review:R1:claude:0] § D — t: duplicate section',
     ]);
   });
 
@@ -139,7 +148,8 @@ describe('resolution log scanner', () => {
         '# Plan',
         '## Review Findings & Resolutions',
         '### Round 1',
-        `- **[Rejected ${dash} pending confirmation]** § A — scope: retained`,
+        roundSources(1),
+        `- **[Rejected ${dash} pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — scope: retained`,
       ].join('\n');
       assert.equal(scanResolutionLog(input).rounds[0].counts.pendingConfirmation, 1);
       assert.equal(scanResolutionLog(input).unsettled.length, 1);
@@ -167,42 +177,41 @@ describe('resolution log scanner', () => {
     assert.equal(nextFindingId(input, 2), 'R2-F003');
   });
 
-  it('gives legacy findings invocation-local keys, severity, and coarse affinity', () => {
-    const scan = scanResolutionLog([
+  it('strictly rejects non-enriched resolution bullets and tolerant parsing skips them', () => {
+    const legacy = [
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 4 — Claude and Copilot, 2026-09-17',
       '- **[Disputed]** § A — tag (CONSIDER): x → y',
-    ].join('\n'));
-    assert.deepEqual(scan.unsettledItems[0], {
-      key: 'legacy:R4:L4',
-      id: null,
-      severity: 'CONSIDER',
-      sourceKeys: ['legacy:R4:claude', 'legacy:R4:copilot'],
-      status: 'disputed',
-      lineNumber: 4,
-      originalLine: '- **[Disputed]** § A — tag (CONSIDER): x → y',
-    });
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(legacy));
+    const tolerant = scanResolutionLog(legacy, { strict: false });
+    assert.deepEqual(tolerant.unsettledItems, []);
+    assert.ok(!JSON.stringify(tolerant).includes('legacy:'));
+    assert.ok(!JSON.stringify(tolerant).includes('ACTIONABLE'));
   });
 
-  it('does not treat (CONSIDER) inside legacy defect prose as CONSIDER severity', () => {
-    const scan = scanResolutionLog([
+  it('strictly rejects an enriched bullet with an unknown status label and tolerant parsing skips it', () => {
+    const unknown = [
       '# Plan',
       '## Review Findings & Resolutions',
-      '### Round 4 — Claude, 2026-09-17',
-      '- **[Disputed]** § A — tag: defect mentions (CONSIDER) option → resolution',
-    ].join('\n'));
-    assert.equal(scan.unsettledItems[0].severity, 'ACTIONABLE');
+      '### Round 1',
+      roundSources(1),
+      '- **[Maybe Later]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — tag: x → y',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(unknown));
+    assert.deepEqual(scanResolutionLog(unknown, { strict: false }).unsettledItems, []);
   });
 
-  it('correctly detects CONSIDER on legacy entries carrying a colon in locus', () => {
-    const scan = scanResolutionLog([
+  it('rejects the retired ACTIONABLE severity in enriched prefixes', () => {
+    const actionable = [
       '# Plan',
       '## Review Findings & Resolutions',
-      '### Round 4 — Claude, 2026-09-17',
-      '- **[Disputed]** skills/x.mjs:L12 — tag (CONSIDER): defect → resolution',
-    ].join('\n'));
-    assert.equal(scan.unsettledItems[0].severity, 'CONSIDER');
+      '### Round 1',
+      roundSources(1),
+      '- **[Disputed]** [R1-F001] [ACTIONABLE] [sources=plan-review:R1:claude:0] § A — tag: x → y',
+    ].join('\n');
+    assert.throws(() => scanResolutionLog(actionable));
   });
 
   it('keeps pre-Phase 2 enriched-looking source keys readable without a source map', () => {
@@ -386,5 +395,20 @@ describe('resolution log scanner', () => {
       () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
       /normalized repository-relative slash path/,
     );
+  });
+});
+
+describe('R7 legacy removal', () => {
+  it('no shipped skill file names ACTIONABLE or synthesizes legacy: keys', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const skillsDir = path.resolve(import.meta.dirname, '../../../skills');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+    const offenders = walk(skillsDir)
+      .filter((file) => /\.(md|mjs|json)$/.test(file))
+      .filter((file) => /\bACTIONABLE\b|legacy:/.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(skillsDir, file).split(path.sep).join('/'));
+    assert.deepEqual(offenders, []);
   });
 });

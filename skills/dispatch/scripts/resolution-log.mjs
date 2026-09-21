@@ -6,7 +6,7 @@ const ROUND = /^###\s+Round\s+(\d+)\b/i;
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const ENTRY = /^\s*[-*]\s+\*\*\[([^\]]+)\]\*\*(.*)$/;
 const ENRICHED_PREFIX =
-  /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER|ACTIONABLE)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
+  /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
 const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
 const APPLICATION_LINE = /^\s+[-*]\s+application:\s*(.*)$/;
 const SOURCE_KEY = /^(plan-review|code-review|design-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
@@ -76,22 +76,6 @@ export function splitDispatchFrontmatter(markdown) {
 export function withDispatchFrontmatter(markdown, metadata) {
   const { body } = splitDispatchFrontmatter(markdown);
   return `---\n${JSON.stringify({ dispatch: metadata }, null, 2)}\n---\n${body}`;
-}
-
-function legacySourceKeys(round) {
-  if (round.sourceMap && Object.keys(round.sourceMap).length > 0) {
-    return Object.keys(round.sourceMap);
-  }
-  const suffix = round.heading.split(/\s+[—–-]\s+/, 2)[1];
-  if (!suffix) return [`legacy:R${round.number}:round-wide`];
-  const names = suffix
-    .replace(/,\s*\d{4}-\d{2}-\d{2}.*$/, '')
-    .split(/\s*(?:,|\band\b)\s*/i)
-    .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''))
-    .filter(Boolean);
-  return names.length > 0
-    ? names.map((name) => `legacy:R${round.number}:${name}`)
-    : [`legacy:R${round.number}:round-wide`];
 }
 
 function parseSourceMap(line, { strict, roundNumber }) {
@@ -342,29 +326,36 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         }
         const status = statusKey(entryMatch[1]);
         const enriched = ENRICHED_PREFIX.exec(entryMatch[2]);
-        let id = null;
-        let severity = /(?:—\s*[^:]*|^[^:]*)\(CONSIDER\)\s*:/.test(entryMatch[2]) ? 'CONSIDER' : 'ACTIONABLE';
-        let sourceKeys = [];
-        let structured = false;
-        if (enriched) {
-          id = enriched[1];
-          const idRound = Number(enriched[2]);
-          severity = enriched[4];
-          sourceKeys = enriched[5].split(',').map((key) => key.trim()).filter(Boolean);
-          if (strict && idRound !== current.number) {
-            throw new Error(`Finding ${id} does not belong to Round ${current.number}.`);
+        // Every entry carries the enriched prefix and a known status label: strict parsing rejects
+        // anything else; tolerant parsing skips it rather than synthesizing an identity.
+        if (!enriched || status === 'unknown') {
+          if (strict) {
+            if (/^\s+\[R/i.test(entryMatch[2]) && !enriched) {
+              throw new Error(`Round ${current.number} contains a malformed enriched finding prefix.`);
+            }
+            throw new Error(enriched
+              ? `Round ${current.number} contains a resolution entry with unknown status "${entryMatch[1]}".`
+              : `Round ${current.number} contains a resolution entry without the [R<n>-F<nnn>] [MUST|SHOULD|CONSIDER] [sources=...] prefix.`);
           }
-          if (strict && new Set(sourceKeys).size !== sourceKeys.length) {
-            throw new Error(`Finding ${id} contains duplicate source keys.`);
-          }
-          const canonicalSourceCount = sourceKeys.filter((key) => SOURCE_KEY.test(key)).length;
-          if (strict && canonicalSourceCount > 0 && canonicalSourceCount !== sourceKeys.length) {
-            throw new Error(`Finding ${id} mixes canonical and legacy source keys.`);
-          }
-          structured = canonicalSourceCount === sourceKeys.length;
-        } else if (/^\s+\[R/i.test(entryMatch[2]) && strict) {
-          throw new Error(`Round ${current.number} contains a malformed enriched finding prefix.`);
+          current.lines.push(line);
+          lastLineWasEntry = false;
+          continue;
         }
+        const id = enriched[1];
+        const idRound = Number(enriched[2]);
+        const severity = enriched[4];
+        const sourceKeys = enriched[5].split(',').map((key) => key.trim()).filter(Boolean);
+        if (strict && idRound !== current.number) {
+          throw new Error(`Finding ${id} does not belong to Round ${current.number}.`);
+        }
+        if (strict && new Set(sourceKeys).size !== sourceKeys.length) {
+          throw new Error(`Finding ${id} contains duplicate source keys.`);
+        }
+        const canonicalSourceCount = sourceKeys.filter((key) => SOURCE_KEY.test(key)).length;
+        if (strict && canonicalSourceCount > 0 && canonicalSourceCount !== sourceKeys.length) {
+          throw new Error(`Finding ${id} mixes canonical and non-canonical source keys.`);
+        }
+        const structured = canonicalSourceCount === sourceKeys.length;
         const entry = {
           id,
           key: id,
@@ -400,13 +391,6 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
       entry.sourceKeys.some((key) => !Object.hasOwn(round.sourceMap, key)))) {
       throw new Error(`Round ${round.number} finding cites a source absent from its source map.`);
     }
-    const coarseSources = legacySourceKeys(round);
-    for (const entry of round.entries) {
-      if (!entry.id) {
-        entry.key = `legacy:R${round.number}:L${entry.lineNumber}`;
-        entry.sourceKeys = coarseSources;
-      }
-    }
     round.text = round.lines.join('\n').replace(/\n+$/, '');
     round.hash = digest(round.text);
     round.counts = {
@@ -432,7 +416,7 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
   }
   if (strict && sections.length > 1) throw new Error('Artifact contains duplicate resolution-log sections.');
   const selected = strict ? sections.slice(0, 1) : sections;
-  // NOTE: lineOffset is body-relative so that round hashes, entries, and legacy keys
+  // NOTE: lineOffset is body-relative so that round hashes and entries
   // remain invariant across metadata frontmatter adoption, as asserted by test contracts.
   const rounds = selected.flatMap((section) =>
     parseRounds(lines.slice(section.start, section.end), {

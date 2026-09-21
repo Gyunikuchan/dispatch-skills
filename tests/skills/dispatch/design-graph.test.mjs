@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { incrementGraphSection, parseIncrementGraph } from '../../../skills/dispatch/scripts/design-graph.mjs';
-import { lintDesign } from '../../../skills/dispatch-design-review/scripts/design-lint.mjs';
+import { lintDesign } from '../../../skills/dispatch/scripts/design-lint.mjs';
 import { designExtras } from '../../fixtures/design-sections.mjs';
 
 const base = [

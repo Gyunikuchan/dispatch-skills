@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
@@ -13,7 +13,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  *   dispatch-plan-review, dispatch-code-review -> dispatch
  *   dispatch -> (nothing)
  * `dispatch` never names a downstream skill, except its own
- * `references/alignment.md` and the gated "## Skill Alignment" section of
+ * `references/review.md` and the gated "## Skill Alignment" section of
  * `dispatch/SKILL.md` (up to the next `## ` heading) — those conventions exist
  * specifically to serve the three downstream skills. One further exception: the v0.4
  * rejection probe in `dispatch/scripts/config.mjs` must name the retired sibling config
@@ -25,7 +25,7 @@ const DOWNSTREAM_NAMES = ['implement-dispatch', 'dispatch-plan-review', 'dispatc
 const DOWNSTREAM_PATTERN = new RegExp(`\\b(${DOWNSTREAM_NAMES.join('|')})\\b`, 'g');
 
 const DISPATCH_DIR = path.join(REPO_ROOT, 'skills', 'dispatch');
-const ALIGNMENT_DOC = path.join(DISPATCH_DIR, 'references', 'alignment.md');
+const REVIEW_DOC = path.join(DISPATCH_DIR, 'references', 'review.md');
 const DISPATCH_SKILL_MD = path.join(DISPATCH_DIR, 'SKILL.md');
 const CONFIG_MODULE = path.join(DISPATCH_DIR, 'scripts', 'config.mjs');
 const LEGACY_PROBE_MARKER = 'v0.4 config probe';
@@ -74,12 +74,17 @@ function formatOffenders(offenders) {
 }
 
 describe('dependency direction guard', () => {
-  it('dispatch/ never names a downstream skill outside the allowlisted alignment references', () => {
+  it('the allowlisted review.md exists (alignment.md is retired)', () => {
+    assert.ok(existsSync(REVIEW_DOC), 'skills/dispatch/references/review.md is missing');
+    assert.equal(existsSync(path.join(DISPATCH_DIR, 'references', 'alignment.md')), false);
+  });
+
+  it('dispatch/ never names a downstream skill outside the allowlisted review.md and Skill Alignment section', () => {
     const skillMdText = readFileSync(DISPATCH_SKILL_MD, 'utf8');
     const allowedSkillMdLines = skillAlignmentSectionLines(skillMdText);
 
     const offenders = walkTextFiles(DISPATCH_DIR).flatMap((file) => {
-      if (file === ALIGNMENT_DOC) return []; // Fully allowlisted: exists to serve the three downstream skills.
+      if (file === REVIEW_DOC) return []; // Fully allowlisted: exists to serve the three downstream skills.
       const matches = findMatches(file, new RegExp(DOWNSTREAM_PATTERN.source, 'g'));
       if (file === DISPATCH_SKILL_MD) {
         return matches.filter((m) => !allowedSkillMdLines.has(m.line));

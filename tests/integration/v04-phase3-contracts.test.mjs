@@ -9,7 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 describe('v0.4 deterministic plan-lint contracts', () => {
   it('canonical template places stable criteria before changes and emits executable test bullets', () => {
-    const template = read('skills/dispatch-plan-review/references/plan-template.md');
+    const template = read('skills/dispatch/references/templates/plan.md');
     const criteriaAt = template.indexOf('## Success Criteria');
     const changesAt = template.indexOf('## Proposed Changes');
     assert.ok(criteriaAt !== -1 && criteriaAt < changesAt);
@@ -29,7 +29,10 @@ describe('v0.4 deterministic plan-lint contracts', () => {
 
   it('orchestrated handling repairs owned lint defects without accounting consumption', () => {
     const skill = read('skills/implement-dispatch/SKILL.md');
-    assert.match(skill, /artifactOwned:\s*true/);
+    // R7 (v0.5 I02): the legacy-coverage gate is gone, so no contract passes artifactOwned.
+    for (const rel of ['skills/implement-dispatch/SKILL.md', 'skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md']) {
+      assert.doesNotMatch(read(rel), /artifactOwned/, rel);
+    }
     assert.match(skill, /\[SC#\].*Changes:.*Verify:/s);
     assert.match(skill, /plan-lint/);
     assert.match(skill, /fix|repair/);
@@ -39,7 +42,7 @@ describe('v0.4 deterministic plan-lint contracts', () => {
   });
 
   it('documents conservative command-to-path mapping and unavailable evidence', () => {
-    const contract = read('skills/implement-dispatch/references/verification-contract.md');
+    const contract = read('skills/dispatch/references/verbs/implement.md');
     assert.match(contract, /exact trimmed-string match/i);
     assert.match(contract, /every criterion.*Changes:|all.*criteria.*Changes:/is);
     assert.match(contract, /full approved path set/i);

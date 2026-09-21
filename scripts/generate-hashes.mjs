@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
 /**
- * Generates skill-hashes.json for every skill that ships one — `dispatch` and the review
- * skills — covering SKILL.md, scripts/*.mjs, and references/*.md. Config
- * files (config*.jsonc) are excluded — user-edited/dynamic by design. The review skills'
- * manifests cover their prompt and walkthrough templates, which `fill-template.mjs` checks
- * before filling.
- * Run after modifying any skill file to update the integrity manifests.
+ * Generates skill-hashes.json for `dispatch`, the only skill that ships one — covering SKILL.md,
+ * scripts/*.mjs, and every .md/.json under references/ (nested templates included). Config files
+ * (config*.jsonc) are excluded — user-edited/dynamic by design. `fill-template.mjs` checks the
+ * review templates under references/templates/ against it before filling.
+ * Run after modifying any skill file to update the integrity manifest.
  *
  * Usage: node scripts/generate-hashes.mjs [--check] [--skill <name>] [--out <path>]
  *   --check        compare against the committed manifests; print drifted keys and exit 1 on drift
@@ -25,10 +24,9 @@ const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const skillsRoot = path.resolve(currentDir, '..', 'skills');
 
 // Skills carrying an integrity manifest. Keep in sync with `.husky/pre-commit`'s path pattern.
-// A skill is listed here only when something verifies its manifest: `dispatch` checks its own via
-// `assertSkillIntegrity` (and `resolve-flow.mjs`), and the review skills' templates are checked by
-// `fill-template.mjs`.
-const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review'];
+// A skill is listed here only when something verifies its manifest: every verifying script
+// (preparation, parsing, `fill-template.mjs`, `resolve-flow.mjs`) lives in and checks `dispatch`.
+const HASHED_SKILLS = ['dispatch'];
 
 const argv = process.argv.slice(2);
 let check = false;

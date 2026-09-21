@@ -28,7 +28,8 @@ describe('generate-hashes script', () => {
       assert.ok(typeof manifest === 'object' && manifest !== null);
       assert.ok('SKILL.md' in manifest);
       assert.ok('scripts/dispatch.mjs' in manifest);
-      assert.ok('references/alignment.md' in manifest);
+      assert.ok('references/review.md' in manifest);
+      assert.ok('references/templates/review-prompt.md' in manifest, 'nested references are hashed');
 
       for (const [file, hash] of Object.entries(manifest)) {
         assert.match(hash, /^[a-f0-9]{64}$/, `Expected valid sha256 hex hash for ${file}`);
@@ -38,32 +39,34 @@ describe('generate-hashes script', () => {
     }
   });
 
-  it('the committed manifests cover dispatch and the review skills (not implement-dispatch), including their templates', () => {
-    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
-      const manifestPath = path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json');
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      assert.ok('SKILL.md' in manifest, `${skill} manifest omits SKILL.md`);
-      if (skill !== 'dispatch') {
-        assert.ok(
-          'references/prompt-template.md' in manifest,
-          `${skill} manifest omits its prompt template`,
-        );
-      }
-      // Every references/*.md is hashed, not just the prompt template.
-      const referencesDir = path.join(PROJECT_ROOT, 'skills', skill, 'references');
-      if (fs.existsSync(referencesDir)) {
-        for (const file of fs.readdirSync(referencesDir)) {
-          if (file.endsWith('.md')) {
-            assert.ok(`references/${file}` in manifest, `${skill} manifest omits references/${file}`);
-          }
-        }
-      }
+  it('the committed dispatch manifest covers every nested reference; no other skill ships one', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(PROJECT_ROOT, 'skills', 'dispatch', 'skill-hashes.json'), 'utf8'));
+    assert.ok('SKILL.md' in manifest, 'dispatch manifest omits SKILL.md');
+    const referencesDir = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'references');
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
+      entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+    const nested = walk(referencesDir)
+      .filter((file) => /\.(md|json)$/.test(file))
+      .map((file) => path.relative(path.join(PROJECT_ROOT, 'skills', 'dispatch'), file).split(path.sep).join('/'));
+    assert.ok(nested.some((key) => key.startsWith('references/templates/')), 'expected nested templates');
+    for (const key of nested) assert.ok(key in manifest, `dispatch manifest omits ${key}`);
+    for (const skill of ['implement-dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
+      assert.equal(
+        fs.existsSync(path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json')),
+        false,
+        `${skill} no longer ships an integrity manifest`,
+      );
     }
-    assert.equal(
-      fs.existsSync(path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'skill-hashes.json')),
-      false,
-      'implement-dispatch no longer ships an integrity manifest',
-    );
+  });
+
+  it('HASHED_SKILLS names only dispatch', () => {
+    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch-plan-review'], {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 10_000,
+    });
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /hashed skills: dispatch\s*$/);
   });
 
   it('--skill writes just that skill, matching its committed manifest', () => {
@@ -72,17 +75,17 @@ describe('generate-hashes script', () => {
     try {
       const res = spawnSync(
         process.execPath,
-        [scriptPath, '--skill', 'dispatch-code-review', '--out', outPath],
+        [scriptPath, '--skill', 'dispatch', '--out', outPath],
         { cwd: PROJECT_ROOT, encoding: 'utf8', timeout: 10_000 },
       );
       assert.equal(res.status, 0, res.stderr);
 
       const written = JSON.parse(fs.readFileSync(outPath, 'utf8'));
       const committed = JSON.parse(
-        fs.readFileSync(path.join(PROJECT_ROOT, 'skills', 'dispatch-code-review', 'skill-hashes.json'), 'utf8'),
+        fs.readFileSync(path.join(PROJECT_ROOT, 'skills', 'dispatch', 'skill-hashes.json'), 'utf8'),
       );
       assert.deepEqual(written, committed);
-      assert.ok(!('scripts/dispatch.mjs' in written), 'wrote another skill\'s files');
+      assert.ok('scripts/dispatch.mjs' in written);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -99,7 +102,7 @@ describe('generate-hashes script', () => {
   });
 
   it('rejects a repeated --skill', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch', '--skill', 'dispatch-plan-review'], {
+    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch', '--skill', 'dispatch'], {
       cwd: PROJECT_ROOT,
       encoding: 'utf8',
       timeout: 10_000,

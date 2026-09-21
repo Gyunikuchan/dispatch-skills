@@ -35,12 +35,10 @@ export function requireNode22(version = process.versions.node) {
   }
 }
 
-export function assertPreparationIntegrity(ownerDir, dispatchDir) {
-  for (const [label, dir] of [['owner', ownerDir], ['dispatch', dispatchDir]]) {
-    const result = verifySkillIntegrity(dir);
-    if (!result.valid && !result.missing) {
-      throw new Error(`${label} skill integrity failure: ${result.violations.join(', ')}`);
-    }
+export function assertPreparationIntegrity(dispatchDir) {
+  const result = verifySkillIntegrity(dispatchDir);
+  if (!result.valid && !result.missing) {
+    throw new Error(`dispatch skill integrity failure: ${result.violations.join(', ')}`);
   }
 }
 
@@ -126,6 +124,43 @@ export function assertObjectKeys(value, allowed, label, hints = {}) {
       throw new Error(`${label} contains unsupported field "${key}"${hint ? `; did you mean "${hint}"?` : ''}; allowed: ${allowed.join(', ')}.`);
     }
   }
+}
+
+const PREVIEW_KEYS = ['action', 'invocationContext'];
+const CHECKPOINT_KEYS = ['action', 'invocationContext', 'settlement', 'settledWrites'];
+
+// Action, mode, and field-applicability rules shared by every review kind; returns the action.
+export function validateRequestAction(request) {
+  const action = request.action ?? 'prepare';
+  if (!['prepare', 'checkpoint', 'checkpoint-preview'].includes(action)) {
+    throw new Error('action must be "prepare", "checkpoint", or "checkpoint-preview".');
+  }
+  if (action === 'checkpoint-preview') {
+    for (const key of Object.keys(request)) {
+      if (!PREVIEW_KEYS.includes(key)) {
+        throw new Error(`checkpoint-preview request contains inapplicable field "${key}"; allowed: ${PREVIEW_KEYS.join(', ')}.`);
+      }
+    }
+    if (!request.invocationContext) throw new Error('checkpoint-preview requires invocationContext.');
+    return action;
+  }
+  if (request.mode !== undefined && !['standalone', 'orchestrated'].includes(request.mode)) {
+    throw new Error('mode must be "standalone" or "orchestrated".');
+  }
+  if (request.reviewMode !== undefined && !['full', 'rebuttal'].includes(request.reviewMode)) {
+    throw new Error('reviewMode must be "full" or "rebuttal".');
+  }
+  if (action === 'checkpoint') {
+    for (const key of Object.keys(request)) {
+      if (!CHECKPOINT_KEYS.includes(key)) {
+        throw new Error(`checkpoint request contains inapplicable field "${key}"; allowed: ${CHECKPOINT_KEYS.join(', ')}.`);
+      }
+    }
+  } else if (request.settlement !== undefined || request.settledWrites !== undefined) {
+    throw new Error('prepare request cannot contain settlement or settledWrites.');
+  }
+  if (request.consensus !== undefined && typeof request.consensus !== 'boolean') throw new Error('consensus must be boolean.');
+  return action;
 }
 
 export function normalizeText(value) {

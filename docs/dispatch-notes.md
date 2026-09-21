@@ -63,5 +63,5 @@ lower, then lowest higher; flat entry fields stand in for levels below the lowes
 
 ## Test Suite Structure
 
-- `tests/skills/dispatch/check-consensus.test.mjs`: Legacy/enriched consensus parsing, structured
+- `tests/skills/dispatch/check-consensus.test.mjs`: Enriched consensus parsing, structured
   output, fenced markdown handling, `evaluateConsensus`, and exit codes.

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Orchestrate `criteria → plan → review → approval → implementation → verification → handoff`.
 `dispatch` is required; missing review companions disable only that phase. Before reviews read
-[alignment.md](../dispatch/references/alignment.md); on runner failure use
+[review.md](../dispatch/references/review.md); on runner failure use
 [native fallback](../dispatch/references/providers.md#native-fallback).
 
 ## Invocation
@@ -24,7 +24,7 @@ bounded changes `medium`, and cross-cutting/public-contract changes `high`. `xhi
 explicit only. Pass pins unchanged to `resolve-flow.mjs`.
 The level-less plan-path form resumes only a canonical scratch plan. The level-less design-path
 form resumes a phased technical design under its durable design-slug ledger identity. Follow the
-[ledger contract](references/ledger-contract.md) before any dispatch.
+[ledger contract](../dispatch/references/verbs/implement.md#durable-execution-ledger) before any dispatch.
 
 ## 1. Criteria, plan, and flow
 
@@ -53,7 +53,7 @@ Skip when disabled. Prepare an orchestrated full review with flow targets/reserv
 and budget.
 Resolve `decision-required` only for in-run artifacts. Execute only manifest argv; await terminal
 outcomes, use runner fallback, verify claims, apply findings, log rulings, and check consensus.
-Prepare plans authored in-run with `artifactOwned: true`. On `plan-lint`, repair every defect and
+On `plan-lint`, repair every defect and
 re-prepare without a user ask; this consumes neither a review round nor budget.
 Re-review changed sections or live findings below the cap; at the cap obtain rulings and run one
 final verification wave.
@@ -73,8 +73,8 @@ the exact phase/target/round/consensus delta or `Resolved flow unchanged after f
 ## 3. Baseline, approval, and implementation
 
 Create the walkthrough before baseline verification using the shared
-[minimum contract](../dispatch/references/walkthrough-contract.md), whether code review is enabled,
-disabled, or unavailable. Follow the [verification evidence contract](references/verification-contract.md)
+[minimum contract](../dispatch/references/review.md#minimum-walkthrough-contract), whether code review is enabled,
+disabled, or unavailable. Follow the [verification evidence contract](../dispatch/references/verbs/implement.md#verification-evidence-contract)
 for command/path extraction, baseline records, path classification, side-effect reconciliation,
 red-baseline rulings, result identity, freshness, and the tests-only stage.
 
@@ -85,7 +85,7 @@ preserves caller-owned changes and production writes remain approval-gated.
 Present the settled plan exactly once after baseline reconciliation; approval is required before
 production writes. If it has a resolution log, only consensus exit `0` permits approval.
 After approval, initialize and append the durable events in the
-[ledger contract](references/ledger-contract.md). On resume, reconcile its fold before dispatch.
+[ledger contract](../dispatch/references/verbs/implement.md#durable-execution-ledger). On resume, reconcile its fold before dispatch.
 
 Implement approved plan scope through a native subagent of `flow.implementation.platform`,
 never inline: `claude` -> `general-purpose`, `opencode` -> `general`, `copilot` -> `general-purpose`
@@ -99,7 +99,7 @@ resolved fields explicitly, and disclose ignored fields; missing models stop pre
 the index/unrelated changes and inspect Git read-only. Trivial work alone may start on the host
 platform.
 
-Follow the [implementation delegate contract](references/implementation-delegate-contract.md):
+Follow the [implementation delegate contract](../dispatch/references/verbs/implement.md#implementation-delegate-contract):
 parse one typed envelope and obey its transition. Native launches are non-resumable unless the
 provider contract proves continuation. Delegates get at most three attempts (replacement, then one
 distinct native tier); host-platform launches get two. Never cross providers or transfer failed
@@ -112,7 +112,7 @@ deterministic cluster ID `C-<sha256[:12]>`, member path union, and attempt budge
 If a cluster fails, split recovery via `--split` retains completed clusters, sets `parentTaskId` on
 descendants, and continues the parent's attempt numbering; no descendant attempt number exceeds three.
 
-Run `node <skill-path>/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
+Run `node <skills-dir>/dispatch/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
 with `--transition <json-file|->`. A nonzero parse is a consumed malformed outcome; a nonzero
 transition is orchestrator input error to fix without consuming an attempt.
 
@@ -195,5 +195,5 @@ dispatch, tests-only stage and host-observed RED for new behavior), updates `## 
 closes with `run-complete`, and stops. Design-changing discoveries take the amendment path; the
 last increment is followed by a separate final integration gate recorded in the
 `integration-walkthrough`. Never relocate the ledger. Follow the
-[technical-design contract](references/design-contract.md) for increment binding, the adjacent-fix
+[technical-design contract](../dispatch/references/verbs/design.md) for increment binding, the adjacent-fix
 exception, amendment transactions, and final integration.

@@ -55,6 +55,23 @@ describe('common: skill hash validation', () => {
     }
   });
 
+  it('generateSkillHashes recurses into nested references with forward-slash keys', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-nested-hash-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      fs.mkdirSync(path.join(tmpDir, 'references', 'templates', 'schemas'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'review-prompt.md'), '# Frame', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'schemas', 'report-plan.json'), '{}', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'notes.txt'), 'x', 'utf8');
+      const manifest = generateSkillHashes(tmpDir);
+      assert.ok('references/templates/review-prompt.md' in manifest);
+      assert.ok('references/templates/schemas/report-plan.json' in manifest);
+      assert.ok(!('references/templates/notes.txt' in manifest));
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('generateSkillHashes hashes reference Markdown and JSON while excluding config files', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-reference-hash-'));
     try {

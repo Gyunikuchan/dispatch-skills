@@ -7,7 +7,7 @@ description: Dispatch bounded read-only tasks (investigation, research, or revie
 
 Dispatch bounded read-only work to an independent provider. The host owns judgment and changes.
 Read [providers.md](references/providers.md) for provider modes, isolation, recovery, or native
-fallback. Review workflows also use [alignment.md](references/alignment.md).
+fallback. Review workflows also use [review.md](references/review.md).
 
 ## Invocation
 

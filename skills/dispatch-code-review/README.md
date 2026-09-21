@@ -151,17 +151,16 @@ When using an orchestrating workflow, configure review breadth and rounds in its
 
 ## Nuances & Troubleshooting
 
-- **A walkthrough does not match the current diff:** the skill pauses and asks whether to reuse it,
-  overwrite it, or create a fresh one.
-- **Preparation fails:** `scripts/prepare-review.mjs --request <json-file|->` validates both skill
-  manifests, explicit ranges, artifact freshness, and temporary dispatch inputs before launch.
+- **A walkthrough does not match the current diff:** pass an explicit walkthrough path or a fresh slug.
+- **Preparation fails:** `../dispatch/scripts/prepare-review.mjs --kind code --request <json-file|->` validates the
+  `dispatch` manifest, explicit ranges, artifact freshness, and temporary dispatch inputs before launch.
 - **You want a narrower review:** add a concrete focus area to the command, such as
   `Focus on authorization and tenant isolation`.
 - **You want another perspective:** pin multiple providers with `(claude,copilot)` or use `(all)`.
 - **A provider is unavailable:** configure or authenticate it through `dispatch`; see its
   [troubleshooting guide](../dispatch/README.md#nuances-quirks--troubleshooting).
 - **Verify walkthrough freshness without preparation:** run
-  `scripts/resolve-review-range.mjs --verify-freshness <walkthrough>` to verify whether a
+  `../dispatch/scripts/resolve-review-range.mjs --verify-freshness <walkthrough>` to verify whether a
   checkpointed walkthrough's recorded hashes match current git/worktree state (exit 0 = fresh,
   1 = stale/drifted, 2 = error).
 
@@ -171,7 +170,7 @@ Callers can statelessly verify a checkpointed walkthrough artifact against curre
 working-tree state without re-running preparation:
 
 ```bash
-node scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
+node ../dispatch/scripts/resolve-review-range.mjs --verify-freshness <walkthrough-path> [--repo-root <path>]
 ```
 
 Exit codes:
