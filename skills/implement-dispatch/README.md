@@ -96,7 +96,7 @@ The level is optional. If omitted, the skill selects `low`, `medium`, or `high` 
 `medium` is the usual choice. Request `xhigh` or `max` explicitly when the change warrants it.
 
 > [!NOTE]
-> In `config.sample.jsonc`, `low` skips plan review but still runs one code-review round. An
+> In the `dispatch` `config.sample.jsonc`, `low` skips plan review but still runs one code-review round. An
 > uninstalled optional companion skips its phase entirely.
 
 ### Choose providers or reviewer count
@@ -116,19 +116,20 @@ selection preserve configured order, moving the current platform behind alternat
 current platform/model match to the end.
 
 > [!NOTE]
-> Provider pins select review delegates. The implementation subagent is selected separately in
-> this skill's configuration, and every review provider must also be enabled in `dispatch`.
+> Provider pins select review delegates. The implementation subagent comes from the
+> `write-subagents` table of the `dispatch` config.
 
 ## Configuration
 
-Create `config.local.jsonc` or `config.jsonc` beside this skill and use
-[`config.sample.jsonc`](config.sample.jsonc) as the schema reference. Provider credentials,
-models, fallback, and shared runner settings remain in `dispatch`.
+This skill has no config file. Phase policy (`phases`), review delegates (`read-delegates`), and
+implementation subagents (`write-subagents`) all live in the single `dispatch` config; see
+[`config.sample.jsonc`](../dispatch/config.sample.jsonc). A v0.4 `config.jsonc` beside this skill is
+rejected with a key map until it is migrated and removed.
 
 Inspect the resolved policy before a run with:
 
 ```bash
-node scripts/resolve-flow.mjs --show-effective --platform copilot --level high
+node ../dispatch/scripts/resolve-flow.mjs --show-effective --platform copilot --level high
 ```
 
 The workflow matrix intentionally differs from `dispatch`'s standalone defaults: this skill
@@ -138,11 +139,10 @@ the nearest lower key, otherwise the lowest higher key. With `{ medium: A, max: 
 `medium`, `high` uses `medium`, and `max` uses `max`.
 
 > [!NOTE]
-> Configuration files replace one another rather than merge. Copy `config.sample.jsonc` to
-> `config.jsonc` (or `config.local.jsonc`) and keep every review provider enabled in `dispatch` as
-> well.
+> Configuration files replace one another rather than merge. An absent `phases` entry turns that
+> phase off; an absent `write-subagents` entry reports `WRITE_SUBAGENT_NOT_CONFIGURED`.
 
-Every implementation platform entry must resolve an explicit `model` (a string or fallback model
+Every `write-subagents` entry must resolve an explicit `model` (a string or fallback model
 array like `["gpt-5.6-luna", "bedrock.gpt-5.6-luna"]`); a missing model stops flow resolution with
 the exact configuration key to update. Implementation entries are objects, not review candidate
 arrays. Higher level keys provide native-only escalation tiers when their launcher-supported model

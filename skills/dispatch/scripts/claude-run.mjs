@@ -576,7 +576,7 @@ export async function main() {
     if (res.failureKind === 'sandbox-unsupported') {
       console.error(
         `\n[dispatch] This Claude CLI does not support the inline --settings sandbox JSON. ` +
-          `Upgrade Claude Code, set platforms.claude.sandbox to false, or use --no-sandbox.\n` +
+          `Upgrade Claude Code, set read-delegates.claude.sandbox to false, or use --no-sandbox.\n` +
           `Session log: ${res.logFile}`,
       );
     }

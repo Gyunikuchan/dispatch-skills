@@ -5,19 +5,22 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import {
-  buildDoctorReport,
   dispatchBatch,
   loadBatchFile,
-  providerProbes,
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
+import { resolveReadDelegates } from '../../../skills/dispatch/scripts/config.mjs';
+import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from './stub-dispatch-fixture.mjs';
 
+/** v0.5 config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {
-  platforms: {
-    claude: { model: 'claude-opus-5', effort: 'low' },
+  'read-delegates': {
+    claude: { model: 'claude-opus-5', effort: 'low', high: { effort: 'high' } },
     agy: { model: 'gemini-3.8-flash', effort: 'medium' },
   },
 };
+/** loadBatchFile validates against the level-resolved { platforms } map (resolved-map contract). */
+const RESOLVED = resolveReadDelegates(CONFIG, 'medium');
 
 let root;
 let savedTelemetry;
@@ -59,7 +62,7 @@ function entry({
 
 describe('dispatch batch manifest', () => {
   it('validates and derives stable source keys', () => {
-    const batch = loadBatchFile(writeBatch({ targets: [entry()], reserves: [] }), CONFIG);
+    const batch = loadBatchFile(writeBatch({ targets: [entry()], reserves: [] }), RESOLVED);
     assert.equal(batch.targets[0].sourceKey, 'code-review:R1:claude:0');
   });
 
@@ -67,13 +70,13 @@ describe('dispatch batch manifest', () => {
     assert.throws(
       () => loadBatchFile(writeBatch({
         targets: [entry({ unknown: true })],
-      }), CONFIG),
+      }), RESOLVED),
       /unsupported field "unknown"/,
     );
     assert.throws(
       () => loadBatchFile(writeBatch({
         targets: [entry({ candidateIndex: 0 })],
-      }), CONFIG),
+      }), RESOLVED),
       /either candidateIndex or model\/effort, never both/,
     );
     assert.throws(
@@ -83,7 +86,7 @@ describe('dispatch batch manifest', () => {
           model: undefined,
           candidateIndex: 9,
         })],
-      }), CONFIG),
+      }), RESOLVED),
       /candidateIndex 9 is out of range/,
     );
   });
@@ -92,7 +95,7 @@ describe('dispatch batch manifest', () => {
     assert.throws(
       () => loadBatchFile(writeBatch({
         targets: [entry(), entry({ candidateId: 'code-review:claude:1' })],
-      }), CONFIG),
+      }), RESOLVED),
       /duplicates a target tuple/,
     );
   });
@@ -104,7 +107,7 @@ describe('dispatch batch manifest', () => {
           entry(),
           entry({ candidateId: 'code-review:claude:0', model: 'other-model' }),
         ],
-      }), CONFIG),
+      }), RESOLVED),
       /duplicates source key/,
     );
     assert.throws(
@@ -117,20 +120,20 @@ describe('dispatch batch manifest', () => {
             metricsFile: path.join(root, 'target.json'),
           }),
         ],
-      }), CONFIG),
+      }), RESOLVED),
       /unsupported field "metricsFile"/,
     );
   });
 
   it('rejects unsafe batch-file paths', () => {
-    assert.throws(() => loadBatchFile('relative.json', CONFIG), /absolute path/);
+    assert.throws(() => loadBatchFile('relative.json', RESOLVED), /absolute path/);
     assert.throws(
-      () => loadBatchFile(path.resolve('package.json'), CONFIG),
+      () => loadBatchFile(path.resolve('package.json'), RESOLVED),
       /OS temp directory/,
     );
     const oversized = path.join(root, 'oversized.json');
     fs.writeFileSync(oversized, ' '.repeat(64 * 1024 + 1));
-    assert.throws(() => loadBatchFile(oversized, CONFIG), /exceeds 64 KiB/);
+    assert.throws(() => loadBatchFile(oversized, RESOLVED), /exceeds 64 KiB/);
   });
 
   it('runs targets in order and substitutes the first reserve', async () => {
@@ -160,7 +163,7 @@ describe('dispatch batch manifest', () => {
         candidateId: 'code-review:agy:0',
         platform: 'agy',
       })],
-    }), CONFIG);
+    }), RESOLVED);
 
     const envelope = await dispatchBatch(batch, {
       prompt: 'Review',
@@ -219,7 +222,7 @@ describe('dispatch batch manifest', () => {
         candidateId: 'code-review:agy:0',
         platform: 'agy',
       })],
-    }), CONFIG);
+    }), RESOLVED);
 
     const envelope = await dispatchBatch(batch, {
       prompt: 'Review',
@@ -267,7 +270,7 @@ describe('dispatch batch manifest', () => {
         entry({ candidateId: 'code-review:agy:0', platform: 'agy' }),
       ],
       reserves: [],
-    }), CONFIG);
+    }), RESOLVED);
 
     const envelope = await dispatchBatch(batch, {
       prompt: 'Review',
@@ -292,7 +295,7 @@ describe('dispatch batch manifest', () => {
     const batch = loadBatchFile(writeBatch({
       targets: [entry({ candidateId: 'code-review:claude:0', platform: 'claude' })],
       reserves: [],
-    }), CONFIG);
+    }), RESOLVED);
 
     const envelope = await dispatchBatch(batch, {
       prompt: 'Review',
@@ -307,22 +310,101 @@ describe('dispatch batch manifest', () => {
   });
 });
 
-describe('dispatch doctor', () => {
-  it('reports effective candidates, sandbox support, and corrective commands', async () => {
-    mock.method(providerProbes, 'isClaudeAvailable', async () => true);
-    mock.method(providerProbes, 'isAgyAvailable', async () => false);
-    const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc');
+describe('dispatch batch level resolution', () => {
+  it('resolves read-delegates at options.level for batch records', async () => {
+    const seen = [];
+    mock.method(providerRunners, 'claude', async (options) => {
+      seen.push(options.effort);
+      return {
+        provider: 'claude',
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        failureKind: null,
+        logFile: path.join(root, 'claude.log'),
+        truncated: null,
+        metricsAttempts: [],
+      };
+    });
+    const resolvedHigh = resolveReadDelegates(CONFIG, 'high');
+    const batch = loadBatchFile(writeBatch({
+      targets: [entry({ model: undefined, candidateIndex: 0 })],
+    }), resolvedHigh);
+    const envelope = await dispatchBatch(batch, {
+      prompt: 'Review',
+      files: [],
+      configPath: 'test-config',
+      orchestrator: 'opencode',
+      level: 'high',
+    }, CONFIG);
+    assert.equal(envelope.complete, true);
+    assert.deepEqual(seen, ['high']);
+    assert.equal(envelope.targets[0].effort, 'high');
+  });
+});
 
-    assert.equal(report.configPath, '/tmp/config.jsonc');
-    assert.deepEqual(report.targets.map(target => target.platform), ['claude', 'agy']);
-    assert.equal(report.health[0].sandboxSupported, true);
-    assert.match(report.health[1].correctiveCommand, /agy/);
+describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
+  let fixture;
+  beforeEach(() => {
+    fixture = buildStubDispatchFixture(CONFIG);
+  });
+  afterEach(() => fixture.cleanup());
+
+  function writeFixtureBatch(value) {
+    const file = path.join(fixture.dir, `batch-${Date.now()}.json`);
+    fs.writeFileSync(file, JSON.stringify(value));
+    return file;
+  }
+
+  const BATCH = {
+    targets: [entry()],
+    reserves: [entry({ candidateId: 'code-review:agy:0', platform: 'agy' })],
+  };
+
+  it('prints one compact JSON line per slot and no envelope on stdout', () => {
+    const res = runStubDispatch(fixture, ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', 'Review']);
+    assert.equal(res.status, 0, res.stderr);
+    const lines = parseSlotLines(res.stdout);
+    assert.equal(lines.length, 1);
+    assert.deepEqual(Object.keys(lines[0]).sort(), ['exit', 'output', 'platform', 'session', 'slot', 'status']);
+    assert.deepEqual(
+      [lines[0].slot, lines[0].platform, lines[0].status, lines[0].exit, lines[0].session],
+      ['code-review:R1:claude:0', 'claude', 'ok', 0, 'claude-session'],
+    );
+    assert.ok(lines[0].output && fs.existsSync(lines[0].output));
+    assert.doesNotMatch(res.stdout, /"complete"/);
   });
 
-  it('respects orchestrator candidate demotion in doctor report', async () => {
-    mock.method(providerProbes, 'isClaudeAvailable', async () => true);
-    mock.method(providerProbes, 'isAgyAvailable', async () => true);
-    const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc', 'claude');
-    assert.deepEqual(report.targets.map(target => target.platform), ['agy', 'claude']);
+  it('prints a line for the failed target and for its reserve substitute', () => {
+    const res = runStubDispatch(
+      fixture,
+      ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', 'Review'],
+      { results: { claude: { exit: 1 } } },
+    );
+    assert.equal(res.status, 0, res.stderr);
+    const lines = parseSlotLines(res.stdout);
+    assert.deepEqual(
+      lines.map((l) => [l.slot, l.status, l.exit]),
+      [['code-review:R1:claude:0', 'failed', 1], ['code-review:R1:agy:0', 'ok', 0]],
+    );
+    assert.equal(lines[0].output, null);
+  });
+
+  it('keeps the full envelope unchanged in --output-file', () => {
+    const outputFile = path.join(fixture.dir, 'envelope.json');
+    const res = runStubDispatch(
+      fixture,
+      ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', '--output-file', outputFile, 'Review'],
+      { results: { claude: { exit: 1 } } },
+    );
+    assert.equal(res.status, 0, res.stderr);
+    const envelope = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+    assert.deepEqual(Object.keys(envelope).sort(), ['complete', 'failures', 'logDir', 'targets']);
+    assert.equal(envelope.complete, true);
+    assert.equal(envelope.targets[0].sourceKey, 'code-review:R1:agy:0');
+    assert.equal(envelope.targets[0].substitutesFor, 'code-review:R1:claude:0');
+    assert.equal(envelope.targets[0].report, 'report from agy test-model');
+    assert.equal(envelope.failures[0].sourceKey, 'code-review:R1:claude:0');
+    assert.equal(parseSlotLines(res.stdout).length, 2, 'per-slot lines still go to stdout');
   });
 });

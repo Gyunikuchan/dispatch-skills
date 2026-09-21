@@ -68,6 +68,14 @@ describe('dispatch flag parity (--help vs SKILL.md vs README.md)', () => {
     assert.deepEqual(missingFrom(README), []);
   });
 
+  it('--help, SKILL.md, and README.md all carry the v0.5 --level, --level-source, and --pins flags', () => {
+    for (const flag of ['--level', '--level-source', '--pins']) {
+      assert.ok(HELP_SPELLINGS.has(flag), `--help lacks ${flag}`);
+      assert.ok(SKILL.has(flag), `SKILL.md flag table lacks ${flag}`);
+      assert.ok(README.has(flag), `README.md flag table lacks ${flag}`);
+    }
+  });
+
   it('names no flag in the docs that --help does not accept', () => {
     const documented = [...new Set([...SKILL, ...README])].sort();
     assert.deepEqual(documented.filter((f) => !HELP_SPELLINGS.has(f)), []);
@@ -156,7 +164,7 @@ describe('every authored CLI answers --help', () => {
     ['skills', 'dispatch', 'scripts', 'opencode-run.mjs'],
     ['skills', 'dispatch', 'scripts', 'resolve-artifact-paths.mjs'],
     ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
-    ['skills', 'implement-dispatch', 'scripts', 'resolve-flow.mjs'],
+    ['skills', 'dispatch', 'scripts', 'resolve-flow.mjs'],
     ['skills', 'dispatch', 'scripts', 'check-consensus.mjs'],
     ['skills', 'dispatch', 'scripts', 'source-map.mjs'],
     ['skills', 'dispatch-code-review', 'scripts', 'resolve-review-range.mjs'],

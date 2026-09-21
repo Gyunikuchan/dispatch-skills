@@ -15,10 +15,9 @@ fallback. Review workflows also use [alignment.md](references/alignment.md).
 /dispatch (<pins>) <task>
 ```
 
-Pins are optional provider keys/aliases, one count, or `all`. Named pins run every configured named
-platform in input order. Count/`all` use `dispatch.mjs --list-targets`; unpinned runs use the
-configured cascade. Membership comes only from `--list-platforms`. Orchestrated callers supply
-`--batch-file`.
+Pins are optional provider keys/aliases, one count, or `all`; `--pins` launches that wave, one
+stdout line per slot. Unpinned runs use the configured cascade.
+Orchestrated callers supply `--batch-file`.
 
 ## Run
 
@@ -44,34 +43,38 @@ sanitized, provider-attributed report with available session handles.
 ## Boundaries
 
 - Delegates stay structurally read-only; edits and commits belong to the host.
-- Logs and prompt spills stay in OS temp. `-v` streams only to interactive stderr.
-- Attachments allow 128 KB each and 512 KB total; the runner delimiter-wraps and bounds them.
-- The first existing `config.local.jsonc` or `config.jsonc` is the whole effective config; copy
-  `config.sample.jsonc` to create one. Use `--doctor` for config/provider diagnosis.
+- Logs, prompt spills, and slot reports stay in OS temp; the caller deletes each run's
+  `dispatch-slots-*` directory after reading it.
+- Attachments: 128 KB each, 512 KB total, delimiter-wrapped and bounded by the runner.
+- The first existing `config.local.jsonc` or `config.jsonc` is the whole effective config
+  (`read-delegates`, `write-subagents`, `phases`); copy `config.sample.jsonc`. Use `--doctor` to diagnose.
 
 ## Runner flags
 
 | Flags | Use |
 |---|---|
 | `-p`, `--prompt` | Task prompt. |
-| `--prompt-file` | Prompt file; exclusive with inline prompt. |
+| `--prompt-file` | Prompt file; exclusive with `-p`. |
 | `-f`, `--file`, `--artifact` | Repeatable attachment. |
 | `-m`, `--model` | Model override. |
 | `-e`, `--effort` | Reasoning-effort override. |
 | `-a`, `--agent` | Agent override (opencode provider only). |
 | `-t`, `--timeout` | Timeout seconds; default `1800`. |
 | `--max-buffer` | Output cap MB; default `10`. |
-| `--batch-file` | Temporary caller-resolved target/reserve manifest. |
-| `--output-file` | Write the report or batch envelope to a file instead of stdout. |
+| `--level` | Level for `read-delegates`; default `medium`. |
+| `--level-source` | `explicit` or `classified`; requires `--level`. |
+| `--pins` | Keys, count, or `all`: one wave. |
+| `--batch-file` | Caller-resolved wave manifest. |
+| `--output-file` | Report or wave envelope file instead of stdout. |
 | `--response-schema-file` | Native JSON Schema output (Claude only). |
 | `--provider` | Provider pin; canonical key or alias. |
 | `--orchestrator` | Host platform for ordering. |
 | `--orchestrator-model` | Host model for same-model demotion. |
 | `--no-config` | Ignore config; requires `--provider`. |
 | `--validate-only` | Validate effective config. |
-| `--list-platforms` | Print configured platform keys. |
-| `--list-targets` | Print ordered configured candidates as JSON. |
-| `--doctor` | Report config, candidates, health, and corrections. |
+| `--list-platforms` | Configured platform keys. |
+| `--list-targets` | Ordered candidates as JSON. |
+| `--doctor` | Diagnose config, level, candidates, phases. |
 | `--candidate-index` | Zero-based configured candidate; requires provider. |
 | `--json` | Structured output (opencode provider only). |
 | `-v`, `--verbose` | Interactive stderr trace. |

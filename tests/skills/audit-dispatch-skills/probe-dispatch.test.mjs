@@ -23,7 +23,7 @@ describe('probe-dispatch: buildTargets', () => {
   it('emits one dispatch-level target per provider when --modes is off', () => {
     const targets = buildTargets(
       [row('claude', 'desktop', '/bin/claude'), row('claude', 'cli', '/usr/bin/claude')],
-      { modes: false, config: { platforms: { claude: {} } }, scriptsDir: SCRIPTS_DIR },
+      { modes: false, config: { 'read-delegates': { claude: {} } }, scriptsDir: SCRIPTS_DIR },
     );
     assert.equal(targets.length, 1);
     assert.equal(targets[0].via, 'dispatch');
@@ -34,7 +34,7 @@ describe('probe-dispatch: buildTargets', () => {
     // A provider the config omits cannot be pinned with --provider alone.
     const targets = buildTargets([row('agy', 'antigravity-cli', '/bin/agy')], {
       modes: false,
-      config: { platforms: { claude: {} } },
+      config: { 'read-delegates': { claude: {} } },
       scriptsDir: SCRIPTS_DIR,
     });
     assert.ok(targets[0].baseArgs.includes('--no-config'));
@@ -43,7 +43,7 @@ describe('probe-dispatch: buildTargets', () => {
   it('omits --no-config for a configured provider', () => {
     const targets = buildTargets([row('agy', 'antigravity-cli', '/bin/agy')], {
       modes: false,
-      config: { platforms: { agy: {} } },
+      config: { 'read-delegates': { agy: {} } },
       scriptsDir: SCRIPTS_DIR,
     });
     assert.ok(!targets[0].baseArgs.includes('--no-config'));
@@ -57,7 +57,7 @@ describe('probe-dispatch: buildTargets', () => {
         row('copilot', 'vscode', '/opt/copilot'),
         row('copilot', 'cli', '/usr/local/bin/copilot'),
       ],
-      { modes: true, config: { platforms: { copilot: {} } }, scriptsDir: SCRIPTS_DIR },
+      { modes: true, config: { 'read-delegates': { copilot: {} } }, scriptsDir: SCRIPTS_DIR },
     );
     assert.equal(targets.length, 2);
     assert.deepEqual(targets[0].aliases, ['desktop', 'vscode']);
@@ -76,7 +76,7 @@ describe('probe-dispatch: buildTargets', () => {
   it('passes the first model of an array entry, plus effort, under --modes', () => {
     const targets = buildTargets([row('claude', 'cli', '/bin/claude')], {
       modes: true,
-      config: { platforms: { claude: { model: ['m1', 'm2'], effort: 'high' } } },
+      config: { 'read-delegates': { claude: { model: ['m1', 'm2'], effort: 'high' } } },
       scriptsDir: SCRIPTS_DIR,
     });
     assert.deepEqual(targets[0].baseArgs.slice(-4), ['-m', 'm1', '-e', 'high']);
@@ -209,7 +209,7 @@ describe('probe-dispatch: classifyDenylistBehaviour', () => {
 
 describe('probe-dispatch: renderSummary', () => {
   const rows = [row('claude', 'cli', '/bin/claude'), row('agy', 'antigravity-cli', null, false)];
-  const config = { platforms: { claude: {} } };
+  const config = { 'read-delegates': { claude: {} } };
   const fixture = { dir: '/home/u/.dispatch-audit-probe-x' };
 
   /** One `runTarget` result, overridable per assertion. */

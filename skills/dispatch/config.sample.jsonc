@@ -1,30 +1,61 @@
 /**
  * Sample — copy to config.jsonc or config.local.jsonc beside this skill; there is no shipped
- * runtime default. Run `node scripts/dispatch.mjs --doctor` to inspect the selected
- * whole-file config, ordered candidates, and provider health.
+ * runtime default. Overrides are whole-file replacements: config.local.jsonc, then config.jsonc.
+ * Run `node scripts/dispatch.mjs --doctor --level <level>` to inspect the selected config,
+ * resolved candidates, phase policy, write subagents, and provider health.
  *
- * Each platform maps to one candidate or an ordered candidate array:
- *   "claude": [{ "model": "claude-opus-5", "effort": "low", "sandbox": true }]
+ * Three tables:
+ * - "read-delegates" (required): the one candidate table for asks and every review. Each platform
+ *   maps to a candidate or an ordered candidate array; a candidate sets `model`, `effort`, and
+ *   `sandbox` (Claude and Copilot only), plus optional level overrides of those fields (an object
+ *   or a candidate array). Missing platforms are not cascade members.
+ * - "write-subagents" (optional): native write subagents, selected by the host platform; never
+ *   dispatched. Each entry is one object whose `model` is a string or an ordered fallback array,
+ *   with `effort` and object-only level overrides. A missing entry fails the implement flow.
+ * - "phases" (optional): review policy for plan-review, design-review, code-review. Each present
+ *   phase needs `targets` (non-negative integer or "all"), `rounds`, and `consensus` level maps,
+ *   plus an optional `only` list filtering read-delegates. An absent phase is off.
  *
- * CLI model/effort overrides win; omitted values use provider defaults. `sandbox` is supported by
- * Claude and Copilot. Overrides are selected whole in this order: config.local.jsonc,
- * config.jsonc. Missing platforms are not cascade members.
+ * Levels are low, medium, high, xhigh, max. Resolution is exact, nearest lower, otherwise lowest
+ * higher; an entry's flat fields stand in for levels below its lowest override. With
+ * `{ medium: A, max: B }`: `high` -> A (nearest lower), `low` -> A (lowest higher).
+ * `rounds: 0` or an unpinned `targets: 0` disables that phase at that level. Effort values are
+ * provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and OpenCode receives the
+ * value as `--variant`. CLI model/effort overrides win; omitted values use provider defaults.
+ *
+ * v0.4 configs are rejected. Key map: top-level platforms -> read-delegates; per-section platforms
+ * -> only (membership) plus read-delegates (models); targetCount -> targets; maxRounds -> rounds;
+ * implementation -> write-subagents; the retired implement config moves into this file.
  */
 {
-  "platforms": {
+  "read-delegates": {
     "claude": {
       "model": "claude-opus-5",
       "effort": "low",
       "sandbox": true,
+      "max": {
+        "model": "claude-fable-5.1",
+      },
     },
     "agy": {
       "model": "gemini-3.7-flash",
       "effort": "medium",
+      "high": {
+        "model": "gemini-3.8-flash",
+      },
     },
     "copilot": {
-      "model": "gpt-6-astra",
-      "effort": "low",
+      "model": "gpt-5.6-luna",
+      "effort": "max",
       "sandbox": true,
+      "high": {
+        "model": "gpt-6-astra",
+        "effort": "low",
+      },
+      "max": {
+        "model": "gpt-6-astra",
+        "effort": "medium",
+      },
     },
     "opencode": [
       {
@@ -35,5 +66,58 @@
         "model": "lmstudio/qwen3.8-27b-ridge",
       },
     ],
+  },
+  // Implementation runs against an already-reviewed plan, so it is the cheaper half of the run:
+  // spend the reasoning budget on review, not here.
+  "write-subagents": {
+    "claude": {
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "high": {
+        "model": "claude-opus-5",
+        "effort": "low",
+      },
+      "max": {
+        "model": "claude-fable-5.1",
+        "effort": "low",
+      },
+    },
+    "agy": {
+      "model": "gemini-3.7-flash",
+      "effort": "medium",
+      "high": {
+        "model": "gemini-3.8-flash",
+      },
+    },
+    "copilot": {
+      "model": [
+        "gpt-5.6-luna",
+        "bedrock.gpt-5.6-luna",
+      ],
+      "effort": "max",
+    },
+    "opencode": {
+      "model": "opencode-go/glm-5.3-flash",
+      "effort": "max",
+    },
+  },
+  "phases": {
+    "plan-review": {
+      "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
+      "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
+      "consensus": { "low": false, "medium": true },
+    },
+    // `only` keeps design review on hosted models.
+    "design-review": {
+      "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
+      "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
+      "consensus": { "low": false, "medium": true },
+      "only": ["claude", "agy", "copilot"],
+    },
+    "code-review": {
+      "targets": { "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": "all" },
+      "rounds": { "low": 1, "medium": 3, "max": 5 },
+      "consensus": { "low": false, "medium": true },
+    },
   },
 }

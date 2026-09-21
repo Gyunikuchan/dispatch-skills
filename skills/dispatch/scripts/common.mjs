@@ -122,7 +122,7 @@ export const DEFAULT_MAX_BUFFER_MB = 10;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 512 * 1024;
 
-/** Canonical provider keys a dispatch config's `platforms` map may key on. */
+/** Canonical provider keys the dispatch config's platform tables may key on. */
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
 
 /** Accepted `--provider` aliases, normalized to their canonical Provider name. */
@@ -206,7 +206,7 @@ export function validateProviderSpec(provider, where = 'provider') {
   return canonical;
 }
 
-/** Providers whose `platforms.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
+/** Providers whose `read-delegates.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
 export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot'];
 
 /**
@@ -2196,105 +2196,6 @@ export function loadSkillConfig({ skillRoot } = {}) {
     );
   }
   return { config: parseJsonc(fs.readFileSync(configPath, 'utf8')), path: configPath };
-}
-
-const DISPATCH_CONFIG_DIFF_HINT = 'diff against config.sample.jsonc';
-
-/**
- * Validates a parsed dispatch config against the `{ platforms: { <key>: { model?, effort? } | Array<{ model?, effort? }> } }`
- * schema. Reports every problem in one pass; callers join and throw.
- *
- * @param {object} config
- * @returns {string[]} problem descriptions, empty when the config is valid
- */
-export function validateDispatchConfig(config) {
-  const hint = DISPATCH_CONFIG_DIFF_HINT;
-  const isPlainObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
-
-  if (!isPlainObject(config)) {
-    return [`Config must be a JSON object with a "platforms" key (${hint}).`];
-  }
-
-  const problems = [];
-  for (const key of Object.keys(config)) {
-    if (key !== 'platforms') {
-      problems.push(`Unrecognized top-level key "${key}". Valid keys: platforms (${hint}).`);
-    }
-  }
-
-  const platforms = config.platforms;
-  if (!isPlainObject(platforms)) {
-    problems.push(`"platforms" must be an object mapping platform key to model/effort settings (${hint}).`);
-    return problems;
-  }
-
-  const keys = Object.keys(platforms);
-  if (keys.length === 0) {
-    problems.push(`"platforms" must define at least one platform (${hint}).`);
-  }
-
-  function validateCandidate(key, candidate, where) {
-    if (!isPlainObject(candidate)) {
-      problems.push(`${where} must be an object (${hint}).`);
-      return;
-    }
-    const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(key);
-    const validKeys = supportsSandbox ? 'model, effort, sandbox' : 'model, effort';
-    for (const [field, value] of Object.entries(candidate)) {
-      if (field === 'model') {
-        if (value === null || value === undefined) {
-          problems.push(`${where}.model must be a string or non-empty array of strings (${hint}).`);
-        } else {
-          try {
-            validateModelSpec(value, `${where}.model`);
-          } catch {
-            problems.push(`${where}.model must be a string or non-empty array of strings (${hint}).`);
-          }
-        }
-      } else if (field === 'effort') {
-        if (value === null || value === undefined) {
-          problems.push(`${where}.effort must be a string (${hint}).`);
-        } else {
-          try {
-            validateEffortSpec(value, `${where}.effort`);
-          } catch {
-            problems.push(`${where}.effort must be a string (${hint}).`);
-          }
-        }
-      } else if (field === 'sandbox' && supportsSandbox) {
-        if (typeof value !== 'boolean') {
-          problems.push(`${where}.sandbox must be a boolean (${hint}).`);
-        }
-      } else {
-        problems.push(`${where} has unrecognized key "${field}". Valid keys: ${validKeys} (${hint}).`);
-      }
-    }
-  }
-
-  for (const key of keys) {
-    if (!KNOWN_PROVIDERS.includes(key)) {
-      problems.push(`platforms has unrecognized key "${key}". Valid keys: ${KNOWN_PROVIDERS.join(', ')} (${hint}).`);
-      continue;
-    }
-    const entry = platforms[key];
-    if (Array.isArray(entry)) {
-      if (entry.length === 0) {
-        problems.push(`platforms.${key} must define at least one candidate (${hint}).`);
-        continue;
-      }
-      for (let i = 0; i < entry.length; i++) {
-        validateCandidate(key, entry[i], `platforms.${key}[${i}]`);
-      }
-      continue;
-    }
-    if (!isPlainObject(entry)) {
-      problems.push(`platforms.${key} must be an object or array of candidate objects (${hint}).`);
-      continue;
-    }
-    validateCandidate(key, entry, `platforms.${key}`);
-  }
-
-  return problems;
 }
 
 /**

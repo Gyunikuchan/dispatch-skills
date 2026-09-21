@@ -38,19 +38,18 @@ describe('generate-hashes script', () => {
     }
   });
 
-  it('the committed manifests cover dispatch, both review skills, and implement-dispatch, including their templates', () => {
-    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review', 'implement-dispatch']) {
+  it('the committed manifests cover dispatch and the review skills (not implement-dispatch), including their templates', () => {
+    for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
       const manifestPath = path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json');
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       assert.ok('SKILL.md' in manifest, `${skill} manifest omits SKILL.md`);
-      if (skill !== 'dispatch' && skill !== 'implement-dispatch') {
+      if (skill !== 'dispatch') {
         assert.ok(
           'references/prompt-template.md' in manifest,
           `${skill} manifest omits its prompt template`,
         );
       }
-      // Every references/*.md is hashed, not just the prompt template. implement-dispatch ships
-      // no references/ dir at all.
+      // Every references/*.md is hashed, not just the prompt template.
       const referencesDir = path.join(PROJECT_ROOT, 'skills', skill, 'references');
       if (fs.existsSync(referencesDir)) {
         for (const file of fs.readdirSync(referencesDir)) {
@@ -60,6 +59,11 @@ describe('generate-hashes script', () => {
         }
       }
     }
+    assert.equal(
+      fs.existsSync(path.join(PROJECT_ROOT, 'skills', 'implement-dispatch', 'skill-hashes.json')),
+      false,
+      'implement-dispatch no longer ships an integrity manifest',
+    );
   });
 
   it('--skill writes just that skill, matching its committed manifest', () => {

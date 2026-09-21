@@ -17,13 +17,13 @@ import {
   PROJECT_ROOT,
   isMainModule,
   getConfigCandidates,
-  validateDispatchConfig,
 } from '../skills/dispatch/scripts/common.mjs';
-import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/opencode-run.mjs';
 import {
-  validateConfig as validateImplementDispatchSchema,
-  getImplementDispatchConfigCandidates,
-} from '../skills/implement-dispatch/scripts/resolve-flow.mjs';
+  detectLegacyConfig,
+  formatLegacyDiagnostic,
+  validateConfig as validateDispatchConfig,
+} from '../skills/dispatch/scripts/config.mjs';
+import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/opencode-run.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -69,18 +69,17 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
     addIfFound(path.join(skillRoot, 'config.sample.jsonc'), 'dispatch');
   }
 
-  // 1b. implement-dispatch configs across standard skill locations
-  const implementDispatchScriptDirs = [
-    path.join(projectRoot, 'skills', 'implement-dispatch', 'scripts'),
-    path.join(projectRoot, '.agents', 'skills', 'implement-dispatch', 'scripts'),
-    path.join(projectRoot, '.claude', 'skills', 'implement-dispatch', 'scripts'),
+  // 1b. Retired v0.4 implement-dispatch configs: any found is reported invalid, since the dispatch
+  // loader rejects every run while one sits beside it.
+  const implementDispatchRoots = [
+    path.join(projectRoot, 'skills', 'implement-dispatch'),
+    path.join(projectRoot, '.agents', 'skills', 'implement-dispatch'),
+    path.join(projectRoot, '.claude', 'skills', 'implement-dispatch'),
   ];
-
-  for (const scriptDir of implementDispatchScriptDirs) {
-    for (const candidate of getImplementDispatchConfigCandidates(scriptDir)) {
+  for (const skillRoot of implementDispatchRoots) {
+    for (const candidate of getConfigCandidates({ skillRoot })) {
       addIfFound(candidate, 'implement-dispatch');
     }
-    addIfFound(path.join(path.dirname(scriptDir), 'config.sample.jsonc'), 'implement-dispatch');
   }
 
   // 2. OpenCode configs
@@ -107,7 +106,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
 
   // 3. Skill hash manifests, for every skill that ships one (same order as HASHED_SKILLS in
   // scripts/generate-hashes.mjs)
-  for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review', 'implement-dispatch']) {
+  for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
     for (const base of ['skills', path.join('.agents', 'skills'), path.join('.claude', 'skills')]) {
       addIfFound(path.join(projectRoot, base, skill, 'skill-hashes.json'), 'skill-hashes');
     }
@@ -149,13 +148,13 @@ export function validateConfigFile(filePath, type = 'jsonc') {
 
   switch (type) {
     case 'dispatch': {
-      const schemaProblems = validateDispatchConfig(parsed);
-      problems.push(...schemaProblems);
+      // A v0.4 config gets the key-map diagnostic alone rather than a list of unknown keys.
+      const legacy = detectLegacyConfig(parsed);
+      problems.push(...(legacy ? [legacy.message] : validateDispatchConfig(parsed)));
       break;
     }
     case 'implement-dispatch': {
-      const schemaProblems = validateImplementDispatchSchema(parsed);
-      problems.push(...schemaProblems);
+      problems.push(formatLegacyDiagnostic([`retired implement-dispatch config: ${filePath}`]));
       break;
     }
     case 'opencode': {

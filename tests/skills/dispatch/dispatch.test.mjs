@@ -23,12 +23,12 @@ import {
   KNOWN_PROVIDERS,
   PROJECT_ROOT,
   parseJsonc,
-  validateDispatchConfig,
   verifySkillIntegrity,
 } from '../../../skills/dispatch/scripts/common.mjs';
+import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/config.mjs';
 
 const TEST_DISPATCH_CONFIG = {
-  platforms: {
+  'read-delegates': {
     claude: { model: 'claude-opus-5', effort: 'low' },
     agy: { model: 'gemini-3.8-flash', effort: 'medium' },
     copilot: { model: 'gpt-5.6-luna', effort: 'max' },
@@ -49,6 +49,23 @@ const getCandidateProviders = (options = {}) => getCandidateProvidersImpl({ ...T
 const dispatchTask = (options = {}) => dispatchTaskImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 
 describe('dispatch: configured target resolution', () => {
+  it('takes the level-resolved { platforms } map from resolveReadDelegates', () => {
+    const config = {
+      'read-delegates': {
+        claude: { model: 'claude-opus-5', high: { model: 'claude-fable-5.1' } },
+        agy: { model: 'gemini-3.7-flash', high: [{ model: 'gemini-3.8-flash' }, { model: 'gemini-3.7-flash' }] },
+      },
+    };
+    const high = resolveConfiguredTargets(resolveReadDelegates(config, 'high'), 'claude');
+    assert.deepEqual(high.map((t) => `${t.platform}:${t.candidateIndex}:${t.model}`), [
+      'agy:0:gemini-3.8-flash',
+      'agy:1:gemini-3.7-flash',
+      'claude:0:claude-fable-5.1',
+    ]);
+    const low = resolveConfiguredTargets(resolveReadDelegates(config, 'low'), 'claude');
+    assert.deepEqual(low.map((t) => `${t.platform}:${t.model}`), ['agy:gemini-3.7-flash', 'claude:claude-opus-5']);
+  });
+
   it('preserves config order while shifting the orchestrator and exact model match back', () => {
     const targets = resolveConfiguredTargets(
       {
@@ -463,7 +480,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         dispatchTask({
           prompt: 'Review',
           provider: 'copilot',
-          config: { platforms: { agy: {} } },
+          config: { 'read-delegates': { agy: {} } },
           configPath: 'x.jsonc',
         }),
         /is not configured in/,
@@ -612,7 +629,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
   describe('config-driven cascade', () => {
     const CONFIG = {
-      config: { platforms: { agy: { model: 'gemini-3.8-flash', effort: 'medium' }, claude: {} } },
+      config: { 'read-delegates': { agy: { model: 'gemini-3.8-flash', effort: 'medium' }, claude: {} } },
       configPath: '/fake/config.jsonc',
     };
 
@@ -624,19 +641,19 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
       const candidates = await getCandidateProviders({ ...CONFIG });
-      // Cascade order follows the config's platforms key order (agy, then claude),
+      // Cascade order follows the config's read-delegates key order (agy, then claude),
       // not the removed hardcoded PREFERENCE_ORDER — copilot/opencode are correctly
-      // excluded entirely since they're absent from CONFIG.platforms.
+      // excluded entirely since they're absent from CONFIG['read-delegates'].
       assert.deepEqual(candidates, ['agy', 'claude']);
     });
 
-    it('uses the config platforms key order as cascade order', async () => {
+    it('uses the config read-delegates key order as cascade order', async () => {
       clearOrchestratorEnv();
       mock.method(providerProbes, 'isClaudeAvailable', async () => true);
       mock.method(providerProbes, 'isAgyAvailable', async () => true);
 
       const candidates = await getCandidateProviders({
-        config: { platforms: { agy: {}, claude: {} } },
+        config: { 'read-delegates': { agy: {}, claude: {} } },
         configPath: '/fake/config.jsonc',
       });
       assert.deepEqual(candidates, ['agy', 'claude']);
@@ -653,7 +670,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await assert.rejects(
         getCandidateProviders({
           explicitProvider: 'claude',
-          config: { platforms: { agy: {} } },
+          config: { 'read-delegates': { agy: {} } },
           configPath: '/fake/agy-only.jsonc',
         }),
         (err) => err.code === 'PLATFORM_NOT_CONFIGURED' && /platform "claude" is not configured/.test(err.message),
@@ -719,7 +736,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'copilot',
         config: {
-          platforms: {
+          'read-delegates': {
             copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: true },
           },
         },
@@ -742,7 +759,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'copilot',
         config: {
-          platforms: {
+          'read-delegates': {
             copilot: { model: 'gpt-5.6-luna', effort: 'max' },
           },
         },
@@ -765,7 +782,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'copilot',
         config: {
-          platforms: {
+          'read-delegates': {
             copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: false },
           },
         },
@@ -788,7 +805,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'copilot',
         sandbox: false,
-        config: { platforms: { copilot: { model: 'gpt-5.6-luna', effort: 'max' } } },
+        config: { 'read-delegates': { copilot: { model: 'gpt-5.6-luna', effort: 'max' } } },
         configPath: 'custom.jsonc',
       });
 
@@ -808,7 +825,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'claude',
         config: {
-          platforms: {
+          'read-delegates': {
             claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: true },
           },
         },
@@ -830,7 +847,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         provider: 'claude',
-        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
         configPath: 'custom.jsonc',
       });
 
@@ -849,7 +866,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         provider: 'claude',
-        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: false } } },
+        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: false } } },
         configPath: 'custom.jsonc',
       });
 
@@ -869,7 +886,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'claude',
         sandbox: false,
-        config: { platforms: { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
         configPath: 'custom.jsonc',
       });
 
@@ -890,7 +907,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const result = await dispatchTask({
         prompt: 'Test',
         provider: 'copilot',
-        config: { platforms: { copilot: {} } },
+        config: { 'read-delegates': { copilot: {} } },
         configPath: 'custom.jsonc',
       });
       assert.equal(result.exitCode, 1);
@@ -902,7 +919,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
 
       const opencodeConfig = {
-        platforms: {
+        'read-delegates': {
           opencode: [
             { model: 'glm-5.3-flash', effort: 'max' },
             { model: 'mistral-small', effort: 'max' },
@@ -937,7 +954,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('cascades within a pinned platform array but stops without cascading to other providers', async () => {
       clearOrchestratorEnv();
       const multiConfig = {
-        platforms: {
+        'read-delegates': {
           opencode: [
             { model: 'glm-5.3-flash' },
             { model: 'mistral-small' },
@@ -985,7 +1002,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         provider: 'claude',
         candidateIndex: 1,
         config: {
-          platforms: {
+          'read-delegates': {
             claude: [
               { model: 'claude-opus-5', effort: 'low', sandbox: true },
               { effort: 'high', sandbox: false },
@@ -1007,7 +1024,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
           prompt: 'Test',
           provider: 'claude',
           candidateIndex: 2,
-          config: { platforms: { claude: [{ model: 'claude-opus-5' }] } },
+          config: { 'read-delegates': { claude: [{ model: 'claude-opus-5' }] } },
           configPath: 'custom.jsonc',
         }),
         /candidate index 2 is out of range/,
@@ -1020,7 +1037,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const multiConfig = {
-        platforms: {
+        'read-delegates': {
           claude: { model: 'claude-opus-5' },
           opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }, { model: 'qwen3.8-27b' }],
           agy: { model: 'gemini-3.8-flash' },
@@ -1064,7 +1081,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         orchestrator: 'claudecode',
-        config: { platforms: { claude: {}, agy: {} } },
+        config: { 'read-delegates': { claude: {}, agy: {} } },
         configPath: 'c.jsonc',
       }).catch(() => {});
       assert.deepEqual(calls, ['agy', 'claude']);
@@ -1076,7 +1093,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const multiConfig = {
-        platforms: {
+        'read-delegates': {
           claude: [
             { model: 'claude-opus-5' },
             { model: 'claude-sonnet-5' },
@@ -1118,7 +1135,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const config = {
-        platforms: {
+        'read-delegates': {
           claude: [
             { model: 'claude-opus-5', effort: 'low' },
             { model: 'claude-sonnet-5', effort: 'high' },
@@ -1157,7 +1174,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const config = {
-        platforms: {
+        'read-delegates': {
           claude: [
             { model: 'claude-opus-5' },
             { model: 'claude-sonnet-5' },
@@ -1193,7 +1210,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       clearOrchestratorEnv();
       mock.method(providerProbes, 'isClaudeAvailable', async () => true);
       const config = {
-        platforms: {
+        'read-delegates': {
           claude: [
             { model: 'claude-opus-5' },
             { model: 'claude-sonnet-5' },
@@ -1228,7 +1245,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const config = {
-        platforms: {
+        'read-delegates': {
           claude: [
             { model: 'claude-opus-5' },
             { model: 'claude-sonnet-5' },
@@ -1265,7 +1282,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         mock.method(providerProbes, probe, async () => true);
       }
       const multiConfig = {
-        platforms: {
+        'read-delegates': {
           opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }],
           agy: { model: 'gemini-3.8-flash' },
         },
@@ -1284,7 +1301,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('CLI -m flag collapses candidate array to a single target invocation', async () => {
       clearOrchestratorEnv();
       const multiConfig = {
-        platforms: {
+        'read-delegates': {
           opencode: [
             { model: 'glm-5.3-flash' },
             { model: 'mistral-small' },
@@ -1308,6 +1325,37 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       assert.equal(result.stdout, 'Success with single override');
       assert.deepEqual(opencodeCalls, ['custom-override']);
+    });
+
+    it('resolves read-delegates at options.level, defaulting to medium', async () => {
+      clearOrchestratorEnv();
+      mock.method(providerProbes, 'isAgyAvailable', async () => true);
+      const seen = [];
+      mock.method(providerRunners, 'agy', async (opts) => {
+        seen.push(opts.model);
+        return { provider: 'agy', stdout: 'ok', exitCode: 0 };
+      });
+      const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', high: { model: 'gemini-3.8-flash' } } } };
+      await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'high' });
+      await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc' });
+      await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'low' });
+      assert.deepEqual(seen, ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.7-flash']);
+    });
+
+    it('rejects an unknown level before probing', async () => {
+      clearOrchestratorEnv();
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test', provider: 'agy', level: 'ultra' }),
+        /Unknown level "ultra"/,
+      );
+    });
+
+    it('rejects a v0.4 injected config (top-level platforms) with INVALID_DISPATCH_CONFIG', async () => {
+      clearOrchestratorEnv();
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test', config: { platforms: { agy: {} } }, configPath: 'old.jsonc' }),
+        (err) => err.code === 'INVALID_DISPATCH_CONFIG',
+      );
     });
 
     it('dispatchTask rejects --no-config without --provider', async () => {
@@ -1343,7 +1391,7 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
   it('sets INVALID_DISPATCH_CONFIG at the dispatchTask throw site when injected config is malformed', async () => {
     const err = await dispatchTask({
       prompt: 'x',
-      config: { platforms: 'not-an-object', bogus: 1 },
+      config: { 'read-delegates': 'not-an-object', bogus: 1 },
       configPath: 'x.jsonc',
     }).then(
       () => null,
@@ -1354,8 +1402,8 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
     assert.match(err.message, /x\.jsonc/);
   });
 
-  it('pins the INVALID_DISPATCH_CONFIG predicate: validateDispatchConfig reports problems', () => {
-    const problems = validateDispatchConfig({ platforms: 'not-an-object', bogus: 1 });
+  it('pins the INVALID_DISPATCH_CONFIG predicate: validateConfig reports problems', () => {
+    const problems = validateConfig({ 'read-delegates': 'not-an-object', bogus: 1 });
     assert.ok(problems.length > 0, 'a malformed config yields a non-empty problems list');
   });
 
@@ -1415,7 +1463,7 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
   });
 
   it('reports native schema unavailability without a double negative', async () => {
-    const config = { platforms: { copilot: {} } };
+    const config = { 'read-delegates': { copilot: {} } };
     await assert.rejects(
       () => dispatchTaskImpl({
         prompt: 'Test',
@@ -1616,6 +1664,64 @@ describe('dispatch --validate-only CLI', () => {
     assert.notEqual(firstClaude, -1, 'effective config must include claude for this ordering assertion');
     assert.notEqual(lastAlternative, -1, 'effective config must include an alternative for this ordering assertion');
     assert.ok(firstClaude > lastAlternative);
+  });
+
+  it('--list-targets, --list-platforms, and --validate-only accept --level', () => {
+    for (const mode of ['--list-targets', '--list-platforms', '--validate-only']) {
+      const res = run([mode, '--level', 'high']);
+      assert.equal(res.status, 0, `${mode}: ${res.stderr}`);
+    }
+    const listed = JSON.parse(run(['--list-targets', '--level', 'max', '--orchestrator', 'claude']).stdout || '[]');
+    assert.ok(listed.length > 0);
+  });
+
+  it('rejects an unknown --level', () => {
+    const res = run(['--list-targets', '--level', 'ultra']);
+    assert.equal(res.status, 1);
+    assert.match(res.stderr || '', /Unknown level "ultra"/);
+  });
+
+  it('rejects --level-source outside --doctor and runs', () => {
+    for (const mode of ['--list-targets', '--list-platforms', '--validate-only']) {
+      const res = run([mode, '--level', 'high', '--level-source', 'explicit']);
+      assert.equal(res.status, 1, mode);
+      assert.match(res.stderr || '', /cannot be combined with: .*--level-source/);
+    }
+  });
+
+  it('rejects the orchestrator pair with --list-platforms and --validate-only', () => {
+    for (const mode of ['--list-platforms', '--validate-only']) {
+      const res = run([mode, '--orchestrator', 'claude']);
+      assert.equal(res.status, 1, mode);
+      assert.match(res.stderr || '', /cannot be combined with: .*--orchestrator/);
+    }
+  });
+
+  it('rejects a v0.4 dispatch config with the key-map diagnostic', () => {
+    const legacyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cli-legacy-'));
+    try {
+      const legacyDir = path.join(legacyRoot, 'dispatch');
+      fs.cpSync(path.join(fixtureRoot, 'dispatch'), legacyDir, { recursive: true });
+      fs.writeFileSync(path.join(legacyDir, 'config.jsonc'), JSON.stringify({ platforms: { claude: {} } }));
+      const res = cp.spawnSync(process.execPath, [path.join(legacyDir, 'scripts', 'dispatch.mjs'), '--validate-only'], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: PROJECT_ROOT,
+        env: { ...process.env, DISPATCH_TELEMETRY: '0' },
+      });
+      assert.equal(res.status, 1);
+      assert.match(res.stderr || '', /maxRounds\s*(→|->)\s*rounds/);
+      assert.match(res.stderr || '', /the retired implement config/);
+      assert.doesNotMatch(res.stderr || '', /implement-dispatch/);
+    } finally {
+      fs.rmSync(legacyRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('--help lists --level, --level-source, and --pins', () => {
+    const res = run(['--help']);
+    assert.equal(res.status, 0);
+    for (const flag of ['--level', '--level-source', '--pins']) assert.match(res.stdout, new RegExp(`${flag}\\b`));
   });
 
   it('rejects an empty candidate index', () => {

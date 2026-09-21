@@ -73,28 +73,28 @@ round-wide affinity. Packet paths and cleanup directories are returned in a mani
 
 ## 3. Test Harness Environment Hooks
 
-### Liveness Override (`IMPLEMENT_DISPATCH_LIVENESS_JSON`)
+### Liveness Override (`DISPATCH_LIVENESS_JSON`)
 
 Replaces the flow resolver's real provider probing with a literal JSON map (e.g. `{ "claude": true, "agy": false, "copilot": true, "opencode": false }`), allowing integration and unit tests to simulate arbitrary provider availability without spawning external CLI processes.
 
-- **Safety Guard**: Armed only when `IMPLEMENT_DISPATCH_TEST_MODE=1` is set alongside it. Setting the JSON map alone throws an error explicitly naming both variables to prevent accidental test-state inheritance in production runs.
+- **Safety Guard**: Armed only when `DISPATCH_TEST_MODE=1` is set alongside it. Setting the JSON map alone throws an error explicitly naming both variables to prevent accidental test-state inheritance in production runs.
 - **Diagnostics**: A run using this override sets `flow.diagnostics.livenessSource: "env-override"`; real runs report `"probe"`.
 
 ### Test Suite Structure
 
-- `tests/skills/implement-dispatch/resolve-flow.test.mjs`: Unit tests for candidate ordering,
+- `tests/skills/dispatch/resolve-flow.test.mjs`: Unit tests for candidate ordering,
   stable candidate IDs, host/model demotion, level-knob fallback, pin normalization, candidate
   array expansion, and platform exclusions.
-- `tests/skills/implement-dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
+- `tests/skills/dispatch/resolve-flow-cli.test.mjs`: CLI flag parsing, argument validation, `--validate-only`, integrity failure handling, and liveness probe overrides.
 - `tests/skills/implement-dispatch/build-rebuttal-packets.test.mjs`: Source grouping, legacy
   affinity, context validation, and private temp-file output.
-- `tests/skills/implement-dispatch/config.test.mjs`: Schema validation and level-policy snapshot of `config.sample.jsonc`.
+- `tests/skills/dispatch/config.test.mjs`: Schema validation and level-policy snapshot of `dispatch/config.sample.jsonc`.
 
 ---
 
 ## 4. Integrity Gate Behavior
 
-The flow resolver verifies its own files against `skill-hashes.json` before loading configuration:
+The flow resolver (`dispatch/scripts/resolve-flow.mjs`) verifies dispatch's files against `skill-hashes.json` before loading configuration:
 - A missing `skill-hashes.json` prints a warning and proceeds.
 - A modified `SKILL.md` or script aborts execution with a list of modified files.
 - Regenerate hashes with `npm run hashes` after editing skill files or scripts.

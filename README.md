@@ -205,16 +205,17 @@ adjudication rules, and artifact lifecycle.
 | `opencode` | OpenCode (`opencode`) |
 
 Provider availability is environment and configuration dependent. No default configuration ships,
-so from a fresh checkout nothing is enabled until you create a config — copy the skill's
-`config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it (`dispatch` owns
-provider routing; `implement-dispatch` ships a sample for its review policy; the two review
-skills have no configuration file). Then inspect the effective dispatch keys with:
+so from a fresh checkout nothing is enabled until you create a config — copy
+`skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it. That
+single config holds three tables: `read-delegates` (required provider cascade), `write-subagents`
+(implementation models), and `phases` (workflow policy per level); no other skill has a config
+file, and v0.4 configs are rejected with a key map. Then inspect the effective dispatch keys with:
 
 ```bash
 node skills/dispatch/scripts/dispatch.mjs --list-platforms
 ```
 
-Configuration is loaded per skill with first-match
+Configuration is loaded with first-match
 precedence: `config.local.jsonc`, then `config.jsonc`; the selected file replaces the
 lower-priority file rather than merging with it.
 

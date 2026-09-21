@@ -152,6 +152,9 @@ diagnostics.
 | `--json` | Request structured output from the OpenCode provider only. |
 | `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run. |
 | `--max-buffer <MB>` | Raise the output buffer if a provider result is truncated. |
+| `--level <level>` | Resolve `read-delegates` level overrides (`low`–`max`; default `medium`). |
+| `--level-source <source>` | Record how the level was chosen: `explicit` or `classified`; requires `--level`. |
+| `--pins <pins>` | Launch one wave from provider keys, a count, or `all`, printing one JSON stdout line per slot. |
 | `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
 | `--output-file <path>` | Write the report (or batch envelope) to a file instead of stdout, so background output shows only run banners. |
 | `--orchestrator <name>` | Override automatic host-platform detection. |
@@ -160,15 +163,26 @@ diagnostics.
 | `--validate-only` | Validate configuration without dispatching. |
 | `--list-platforms` | List provider keys in the effective configuration. |
 | `--list-targets` | List configured targets in count/`all` selection order as JSON. |
-| `--doctor` | Validate configuration and report the selected file, ordered candidates, and provider health. |
+| `--doctor` | Validate configuration and report the selected file, level, ordered candidates, phase policy, and provider health. |
 
 ## Configuration
 
 A config file is required — there is no shipped runtime default. Create `config.local.jsonc` or
 `config.jsonc` next to the installed skill, copying [`config.sample.jsonc`](config.sample.jsonc)
-as the schema reference, and customize provider membership, models, or reasoning effort there.
+as the schema reference. One file holds three tables:
 
-Run `node scripts/dispatch.mjs --doctor` from the installed skill directory to inspect the
+- `read-delegates` (required): the read-only provider cascade, per-platform models, effort, and
+  `sandbox`.
+- `write-subagents` (optional): native implementation models for orchestrated workflows.
+- `phases` (optional): per-phase review policy by level; an absent phase is off.
+
+Any entry may add level overrides (`low`–`max`). A level resolves by exact key, otherwise the
+nearest lower key, otherwise the lowest higher key; the entry's flat fields apply below its lowest
+override. A v0.4 config (top-level `platforms` or review/implementation sections, or a retired
+sibling workflow config) is rejected with a key map: `platforms` → `read-delegates`,
+`implementation` → `write-subagents`, review sections → `phases`.
+
+Run `node scripts/dispatch.mjs --doctor [--level <level>]` from the installed skill directory to inspect the
 effective file, candidate order, binary/mode reachability, sandbox support, and corrective
 commands. Standalone defaults may intentionally differ from a workflow's phase-and-level model
 policy.
@@ -192,7 +206,7 @@ For a simple setup, configure only the provider you want and let its CLI choose 
 
 ```jsonc
 {
-  "platforms": {
+  "read-delegates": {
     "claude": {
       "effort": "high"
     }
@@ -207,7 +221,7 @@ provider candidates:
 
 ```jsonc
 {
-  "platforms": {
+  "read-delegates": {
     "claude": {
       "model": ["claude-opus-5", "claude-sonnet-5"],
       "effort": "high"
@@ -238,7 +252,7 @@ running:
 
 ```jsonc
 {
-  "platforms": {
+  "read-delegates": {
     "opencode": {
       "model": "lmstudio/qwen3.8-27b-ridge"
     }

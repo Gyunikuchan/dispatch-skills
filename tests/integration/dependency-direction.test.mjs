@@ -15,8 +15,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * `dispatch` never names a downstream skill, except its own
  * `references/alignment.md` and the gated "## Skill Alignment" section of
  * `dispatch/SKILL.md` (up to the next `## ` heading) — those conventions exist
- * specifically to serve the three downstream skills. Review skills never name
- * `implement-dispatch` (their sibling, not their dependency).
+ * specifically to serve the three downstream skills. One further exception: the v0.4
+ * rejection probe in `dispatch/scripts/config.mjs` must name the retired sibling config
+ * directory, so only lines there carrying the `v0.4 config probe` marker may name it.
+ * Review skills never name `implement-dispatch` (their sibling, not their dependency).
  */
 
 const DOWNSTREAM_NAMES = ['implement-dispatch', 'dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review'];
@@ -25,6 +27,8 @@ const DOWNSTREAM_PATTERN = new RegExp(`\\b(${DOWNSTREAM_NAMES.join('|')})\\b`, '
 const DISPATCH_DIR = path.join(REPO_ROOT, 'skills', 'dispatch');
 const ALIGNMENT_DOC = path.join(DISPATCH_DIR, 'references', 'alignment.md');
 const DISPATCH_SKILL_MD = path.join(DISPATCH_DIR, 'SKILL.md');
+const CONFIG_MODULE = path.join(DISPATCH_DIR, 'scripts', 'config.mjs');
+const LEGACY_PROBE_MARKER = 'v0.4 config probe';
 
 const TEXT_EXTENSIONS = new Set(['.md', '.mjs', '.json', '.jsonc']);
 
@@ -80,10 +84,23 @@ describe('dependency direction guard', () => {
       if (file === DISPATCH_SKILL_MD) {
         return matches.filter((m) => !allowedSkillMdLines.has(m.line));
       }
+      if (file === CONFIG_MODULE) {
+        // Only the marked probe lines may name the retired skill, and only that one name.
+        return matches.filter(
+          (m) => !(m.text.includes(LEGACY_PROBE_MARKER) && !/\bdispatch-(plan|code|design)-review\b/.test(m.text)),
+        );
+      }
       return matches;
     });
 
     assert.deepEqual(formatOffenders(offenders), []);
+  });
+
+  it('config.mjs carries the marked v0.4 config probe that the allowlist depends on', () => {
+    const text = readFileSync(CONFIG_MODULE, 'utf8');
+    const probeLines = text.split(/\r?\n/).filter((line) => line.includes(LEGACY_PROBE_MARKER));
+    assert.ok(probeLines.length > 0, `expected a line marked "${LEGACY_PROBE_MARKER}" in config.mjs`);
+    assert.ok(probeLines.some((line) => /\bimplement-dispatch\b/.test(line)), 'the marked probe names the retired sibling directory');
   });
 
   it('no shipped skill markdown hard-codes a host install path', () => {

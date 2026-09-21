@@ -480,7 +480,7 @@ export async function main() {
     if (res.failureKind === 'sandbox-unsupported') {
       console.error(
         `\n[dispatch] This Copilot CLI does not support the experimental sandbox flags. ` +
-          `Upgrade Copilot CLI, set platforms.copilot.sandbox to false, or use --no-sandbox.\n` +
+          `Upgrade Copilot CLI, set read-delegates.copilot.sandbox to false, or use --no-sandbox.\n` +
           `Session log: ${res.logFile}`,
       );
     }

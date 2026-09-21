@@ -26,6 +26,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { isMainModule, terminateProcessTree } from '../../../../skills/dispatch/scripts/common.mjs';
+import { loadDispatchConfig, resolveReadDelegates } from '../../../../skills/dispatch/scripts/config.mjs';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
@@ -206,6 +207,8 @@ export function statusOf(row) {
  */
 export function buildTargets(rows, { modes, config, scriptsDir }) {
   const targets = [];
+  // Read delegates resolve at the runner's default level, the tier an unflagged dispatch uses.
+  const platforms = config ? resolveReadDelegates(config, 'medium').platforms : {};
 
   for (const provider of PROVIDERS) {
     const reachable = rows.filter((r) => r.provider === provider && r.reachable);
@@ -213,7 +216,7 @@ export function buildTargets(rows, { modes, config, scriptsDir }) {
 
     if (!modes || !RUNNER_MODE_FLAG[provider]) {
       // A provider missing from the config cannot be pinned without --no-config.
-      const configured = !!config?.platforms?.[provider];
+      const configured = !!platforms[provider];
       targets.push({
         id: provider,
         provider,
@@ -225,7 +228,7 @@ export function buildTargets(rows, { modes, config, scriptsDir }) {
       continue;
     }
 
-    const entry = config?.platforms?.[provider] ?? {};
+    const entry = platforms[provider]?.[0] ?? {};
     const model = Array.isArray(entry.model) ? entry.model[0] : entry.model;
     const byBin = new Map();
     for (const row of reachable) {
@@ -396,7 +399,7 @@ export function renderSummary({ rows, live, fixture, config, opts }) {
 
   lines.push('## Discovery (token-free)', '', '| Provider | Mode | Status | In config | Binary | Detail |', '|---|---|---|---|---|---|');
   for (const r of rows) {
-    const inConfig = config ? (config.platforms[r.provider] ? 'yes' : 'no') : '?';
+    const inConfig = config ? (resolveReadDelegates(config, 'medium').platforms[r.provider] ? 'yes' : 'no') : '?';
     lines.push(`| ${r.provider} | ${r.mode} | ${statusOf(r)} | ${inConfig} | ${cell(r.bin ?? '—')} | ${cell(r.detail)} |`);
   }
 
@@ -471,7 +474,7 @@ async function loadDispatchModules(scriptsDir) {
 
 function loadConfig(mods, repoRoot) {
   try {
-    return mods.common.loadSkillConfig({ skillRoot: path.join(repoRoot, 'skills', 'dispatch') }).config;
+    return loadDispatchConfig({ skillRoot: path.join(repoRoot, 'skills', 'dispatch') }).config;
   } catch {
     return null;
   }

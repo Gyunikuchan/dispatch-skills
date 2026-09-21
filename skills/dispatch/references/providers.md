@@ -36,7 +36,7 @@ These are defense-in-depth controls, not a complete secret boundary.
 - **Read-only:** `--permission-mode plan`, a read-tool allowlist, and an explicit write-tool
   denylist.
 - **Sandbox:** enabled by default through `--settings {"sandbox":{"enabled":true}}`. Set
-  `platforms.claude.sandbox` to `false` or pass `--no-sandbox` only for compatibility. macOS uses
+  `read-delegates.claude.sandbox` to `false` or pass `--no-sandbox` only for compatibility. macOS uses
   Seatbelt; Linux/WSL2 uses Bubblewrap plus its network helper; managed settings may override a
   local opt-out.
 - **Compatibility:** only `enabled` is forced; `allowUnsandboxedCommands` and `failIfUnavailable`
@@ -66,7 +66,7 @@ These are defense-in-depth controls, not a complete secret boundary.
   `--probe`, `--check`, `--test-modes`). The probe prints the resolved executable path.
 - **Read-only:** `--mode plan` prevents write actions.
 - **Sandbox:** enabled by default with `--experimental --sandbox`. Set
-  `platforms.copilot.sandbox` to `false` or pass `--no-sandbox` when the CLI lacks support or
+  `read-delegates.copilot.sandbox` to `false` or pass `--no-sandbox` when the CLI lacks support or
   blocks a required command. Built-in file edits are not OS-sandboxed; plan mode remains active.
 - **Compatibility:** unsupported sandbox flags return `sandbox-unsupported` without an
   unsandboxed retry. The outer dispatch may choose another provider; a direct runner reports the

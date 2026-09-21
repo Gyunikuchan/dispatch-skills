@@ -38,7 +38,7 @@ form resumes a phased technical design under its durable design-slug ledger iden
 4. Run:
 
    ```bash
-   node <skill-path>/scripts/resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>] [--implementation-fields <model[,effort]>] [--pins <pins>] [--exclude <keys>] [--show-effective]
+   node <skills-dir>/dispatch/scripts/resolve-flow.mjs --platform <key> [--orchestrator-model <model>] [--level <level>] [--implementation-fields <model[,effort]>] [--pins <pins>] [--exclude <keys>] [--show-effective]
    ```
 
    State: `Resolved flow: level <level>; plan review <on|off> — <targets>, rounds <n>, consensus
