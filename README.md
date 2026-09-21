@@ -1,6 +1,6 @@
 # dispatch-skills
 
-[![Version](https://img.shields.io/badge/version-v0.3.0-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v0.4.0-blue.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
 [![GitHub](https://img.shields.io/badge/GitHub-Gyunikuchan%2Fdispatch--skills-181717?logo=github)](https://github.com/Gyunikuchan/dispatch-skills)

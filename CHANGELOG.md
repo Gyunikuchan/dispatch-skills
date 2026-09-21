@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Breaking:** delegated Claude and OpenCode implementation entries must resolve an explicit
-  `model`; copy the updated `implement-dispatch/config.sample.jsonc` shape before invoking them.
-- Implementation delegates now return typed outcomes and use bounded native-only escalation:
-  three attempts for delegated targets and two for self execution.
+## [0.4.0] - 2026-09-21
+
+- New `dispatch-design-review` skill: large features can start from a reviewed technical design and ship in reviewed increments
+- Interrupted implementation runs can resume where they left off
+- More reliable implementation runs, with bounded retries and clearer failure reporting
+- Quieter output and lower token use during reviews
+- **Breaking:** delegated Claude and OpenCode implementation entries need an explicit `model`; update your config from `config.sample.jsonc`
 
 ## [0.3.0] - 2026-09-19
 
