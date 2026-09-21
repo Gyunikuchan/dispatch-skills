@@ -11,11 +11,14 @@ import { isReservedOrdinarySlug, ledgerNamespacePath } from '../../dispatch/scri
 import { materializedFingerprint } from './git-state.mjs';
 import {
   foldSegments,
+  foldDesignRun,
+  nextDesignAction,
   parseEventLine,
   selectOrdinarySegment,
   selectDesignSegment,
   serializeEvent,
 } from './ledger-events.mjs';
+import { parseIncrementGraph } from '../../dispatch/scripts/design-graph.mjs';
 
 export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 export const CANONICAL_DESIGN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
@@ -358,6 +361,18 @@ export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
   if (hash.status !== 'ok') return { ...hash, status: 'needs-reconciliation', requiresFlowConfirmation: true };
   const read = readLedger(ledgerPath);
   if (read.status !== 'ok') return { ...read, governingHash: hash.hash, requiresFlowConfirmation: true };
+  const hasPhasedEvents = read.events.some(event =>
+    event.type === 'amendment' || event.type === 'increment-state' ||
+    event.type === 'adjacent-fix' || event.type === 'integration' ||
+    (event.type === 'run-start' && event.v === 2 && ['increment', 'integration'].includes(event.data?.action)));
+  if (!hasPhasedEvents) {
+    return resumeDesignSegment({ planPath, artifact, hash, read });
+  }
+  return resumeDesignRun({ planPath, artifact, hash, read, repoRoot });
+}
+
+/** Pre-5B path: the design-review segment itself is the only design identity. */
+function resumeDesignSegment({ planPath, artifact, hash, read }) {
   const segment = selectDesignSegment(read.events, hash.hash);
   if (!segment) return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'No matching design segment.', requiresFlowConfirmation: true };
   if (segment.needsReconciliation || !segment.approved || (segment.terminal && segment.result !== 'design-approved-stop')) {
@@ -368,8 +383,110 @@ export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
   if (approvedHash !== hash.hash || ledgerApproval !== hash.hash) {
     return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'Design approval revision is stale or missing.', requiresFlowConfirmation: true };
   }
-  const result = segment.result === 'design-approved-stop' ? 'design-approved-stop' : 'design-review';
-  return { status: 'resumable', kind: 'design', planPath, governingHash: hash.hash, segment, nextAction: result === 'design-approved-stop' ? 'author-next-increment' : 'design-review', requiresFlowConfirmation: true };
+  if (segment.result !== 'design-approved-stop') {
+    return { status: 'resumable', kind: 'design', planPath, governingHash: hash.hash, segment, nextAction: 'design-review', requiresFlowConfirmation: true };
+  }
+  // Post-approval: derive the named ready increment from the design's graph exactly as the
+  // phased path does.
+  const graph = parseIncrementGraph(artifact.source);
+  const merged = mergedIncrementStates(graph, new Map());
+  const priorities = new Map((graph.increments ?? []).map(increment => [increment.id, increment.priority]));
+  const action = nextDesignAction({
+    incrementStates: merged, incrementPriorities: priorities,
+    amendments: new Map(), needsReconciliation: false,
+    activeIncrementId: null, integrationPassed: false,
+  });
+  return {
+    status: 'resumable', kind: 'design', planPath, governingHash: hash.hash, segment,
+    nextAction: formatNextAction(action), requiresFlowConfirmation: true,
+  };
+}
+
+/** Phased path: fold every matching segment across revisions and derive one next action. */
+function resumeDesignRun({ planPath, artifact, hash, read, repoRoot }) {
+  const folded = foldDesignRun(read.events);
+  if (!folded || folded.status === 'needs-reconciliation') {
+    return {
+      status: 'needs-reconciliation', governingHash: hash.hash,
+      diagnostic: folded?.diagnostic ?? 'No design-run segments in the ledger.',
+      requiresFlowConfirmation: true,
+    };
+  }
+  const activatedAmendments = [...folded.amendments.entries()]
+    .filter(([, amendment]) => amendment.state === 'activated')
+    .map(([, amendment]) => amendment);
+  const approvedRevision = activatedAmendments.at(-1)?.candidateHash ?? folded.approvalRevision;
+  if (!approvedRevision) {
+    return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'No approved design revision in the folded run.', requiresFlowConfirmation: true };
+  }
+  if (approvedRevision !== hash.hash || artifact.metadata?.approvedContentHash !== approvedRevision) {
+    return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'Design approval revision is stale or missing.', requiresFlowConfirmation: true };
+  }
+  const laterOwners = new Map();
+  for (const [taskId, completion] of folded.completedTasks) {
+    for (const owned of completion.paths) laterOwners.set(owned, taskId);
+  }
+  const drift = [];
+  for (const [taskId, completion] of folded.completedTasks) {
+    const authoritative = completion.paths.filter(owned => laterOwners.get(owned) === taskId);
+    if (authoritative.length === 0) continue;
+    if (authoritative.length !== completion.paths.length) {
+      drift.push({ taskId, paths: authoritative, reason: 'partial-overlap-cannot-prove-subset' });
+      continue;
+    }
+    const current = materializedFingerprint(repoRoot, authoritative);
+    if (current.digest !== completion.resultState) drift.push({ taskId, paths: authoritative });
+  }
+  if (drift.length) {
+    return {
+      status: 'needs-reconciliation', governingHash: hash.hash, drift,
+      diagnostic: 'Completed task result state drifted; attribute the live diff before dispatch.',
+      requiresFlowConfirmation: true,
+    };
+  }
+  const graph = parseIncrementGraph(artifact.source);
+  if (!graph.valid || !(graph.increments ?? []).length) {
+    return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'Increment Dependency Graph is invalid or empty.', requiresFlowConfirmation: true };
+  }
+  const merged = mergedIncrementStates(graph, folded.incrementStates);
+  const priorities = new Map((graph.increments ?? []).map(increment => [increment.id, increment.priority]));
+  const action = nextDesignAction({ ...folded, incrementStates: merged, incrementPriorities: priorities });
+  const nextAction = formatNextAction(action);
+  return {
+    status: 'resumable', kind: 'design', planPath, governingHash: hash.hash,
+    slug: designRootSlug(planPath), folded,
+    nextAction, requiresFlowConfirmation: true,
+  };
+}
+
+function mergedIncrementStates(graph, foldedStates) {
+  const merged = new Map(foldedStates);
+  for (const increment of graph.increments ?? []) {
+    if (!merged.has(increment.id)) merged.set(increment.id, 'pending');
+  }
+  // A graph increment still 'pending' becomes ready once every prerequisite is complete.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const increment of graph.increments ?? []) {
+      if (merged.get(increment.id) !== 'pending') continue;
+      const prerequisitesReady = increment.prerequisites.length === 0 ||
+        increment.prerequisites.every(prerequisite => merged.get(prerequisite) === 'complete');
+      if (prerequisitesReady) {
+        merged.set(increment.id, 'ready');
+        changed = true;
+      }
+    }
+  }
+  return merged;
+}
+
+function formatNextAction(action) {
+  switch (action.action) {
+    case 'implement': return `implement:${action.incrementId}`;
+    case 'resolve-amendment': return `resolve-amendment:${action.amendmentId ?? 'unknown'}`;
+    default: return action.action;
+  }
 }
 
 function help() {

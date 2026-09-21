@@ -230,7 +230,7 @@ describe('verification evidence', () => {
     assert.match(invalid.stderr, /Usage:/);
   });
 
-  it('rejects newline paths with a stable capture diagnostic', () => {
+  it('rejects newline paths with a stable capture diagnostic', { skip: process.platform === 'win32' ? 'NTFS forbids LF in filenames, so the fixture cannot exist on win32' : false }, () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verification-newline-'));
     tempDirs.push(repo);
     execFileSync('git', ['init', '-q'], { cwd: repo });

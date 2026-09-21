@@ -21,6 +21,14 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>`
 
+## Technical-Design Traceability
+<!-- Optional; present on phased implementation plans for exactly one approved increment. -->
+- Parent design: `.scratch/plan/<yyyy-mm-dd>-<design-slug>-design.md`
+- Approved revision: `sha256:<64 hex>`
+- Increment ID and inherited contract: I<nn> — <outcome, invariants, and rollback boundary inherited from the design>
+- Prerequisite evidence: <ledger/verification evidence that prerequisite increments completed>
+- Acceptance mapping: <proposed change / test → increment acceptance criterion>
+
 ## Proposed Changes
 
 ### <Component Name>

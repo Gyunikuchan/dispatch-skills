@@ -23,6 +23,10 @@ const PLAN_SHAPES = [
   // literally `walkthrough` matches neither list and is reported as an offender —
   // intentional, because that filename is genuinely ambiguous with a walkthrough.
   /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*(?<!-walkthrough)\.md$/,
+  // Phased artifacts: technical designs, increment plans, integration walkthroughs.
+  /^<yyyy-mm-dd>-<design-slug>-design\.md$/,
+  /^<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan\.md$/,
+  /^<date>-<design-slug>-integration-walkthrough\.md$/,
 ];
 
 const WALKTHROUGH_SHAPES = [

@@ -123,6 +123,81 @@ describe('code review preparation', () => {
     }
   });
 
+  describe('increment design context', () => {
+    function writeDesign(repo) {
+      const design = [
+        '---',
+        JSON.stringify({ dispatch: { schemaVersion: 1, kind: 'design', slug: 'demo-design' } }),
+        '---',
+        '# Demo design',
+        '',
+        '## Architecture & Boundaries',
+        'approved boundaries',
+        '## Alternatives & Decisions',
+        'choices',
+        '## Risks, Security & Operations',
+        'risks',
+        '## Increment Dependency Graph',
+        '| ID | Priority | Summary | Prerequisites | Paths |',
+        '| --- | ---: | --- | --- | --- |',
+        '| I01 | 1 | one | none | app.js |',
+        '',
+        '## Execution Status',
+        '<!-- machine-managed -->',
+        '',
+        '## Review Findings & Resolutions',
+        '*No reviews conducted yet.*',
+      ].join('\n');
+      fs.mkdirSync(path.join(repo, '.scratch', 'plan'), { recursive: true });
+      fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md'), design);
+      return design;
+    }
+
+    it('attaches bounded approved-design context and revision to prompts', () => {
+      const repo = makeRepo();
+      const design = writeDesign(repo);
+      const manifest = prepareCodeReview({
+        mode: 'orchestrated',
+        slug: 'feature',
+        summary: 'Update the exported value',
+        verification: { command: 'npm test', result: 'Passed' },
+        designPath: '.scratch/plan/2026-09-20-demo-design.md',
+        designRevision: null,
+        incrementId: 'I01',
+        targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+        artifactOwned: true,
+      }, { repoRoot: repo });
+      try {
+        assert.equal(manifest.status, 'ready');
+        assert.equal(manifest.designContext.revision, null);
+        assert.match(manifest.designContext.governedHash, /^sha256:[a-f0-9]{64}$/);
+        assert.match(manifest.designContext.excerpt, /## Architecture & Boundaries/);
+        assert.doesNotMatch(manifest.designContext.excerpt, /## Execution Status/);
+        assert.equal(manifest.designContext.incrementId, 'I01');
+        const prompt = fs.readFileSync(manifest.promptPath, 'utf8');
+        assert.match(prompt, /Approved technical-design context/i);
+        assert.match(prompt, /I01/);
+      } finally {
+        cleanupManifest(manifest);
+      }
+    });
+
+    it('rejects an invalid design path or revision', () => {
+      const repo = makeRepo();
+      writeDesign(repo);
+      assert.throws(() => prepareCodeReview({
+        mode: 'orchestrated',
+        slug: 'feature',
+        summary: 'Update the exported value',
+        verification: { command: 'npm test', result: 'Passed' },
+        designPath: '.scratch/plan/2026-09-20-missing-design.md',
+        incrementId: 'I01',
+        targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+        artifactOwned: true,
+      }, { repoRoot: repo }), /design/i);
+    });
+  });
+
   it('accepts a request with no top-level roundId and no per-entry roundId', () => {
     const repo = makeRepo();
     const manifest = prepareCodeReview({

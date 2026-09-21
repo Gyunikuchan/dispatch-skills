@@ -128,6 +128,91 @@ describe('code-review range preflight', () => {
   it('handles an unborn repository as empty', () => {
     assert.equal(resolveReviewScope({ repoRoot: repo }).reviewable, false);
   });
+
+  describe('allowedPaths restriction for final integration', () => {
+    it('restricts an explicit range to the owned-path intersection', () => {
+      const first = commit('owned.txt', 'owned');
+      commit('unrelated.txt', 'unrelated');
+      const scope = resolveReviewScope({ repoRoot: repo, explicitRange: first, allowedPaths: ['owned.txt'] });
+      assert.equal(scope.kind, 'explicit-range');
+      assert.deepEqual(scope.paths, ['owned.txt']);
+    });
+
+    it('fails closed with a distinct diagnostic when the owned intersection is empty', () => {
+      const first = commit('unrelated.txt', 'unrelated');
+      const scope = resolveReviewScope({ repoRoot: repo, explicitRange: first, allowedPaths: ['owned.txt'] });
+      assert.equal(scope.reviewable, false);
+      assert.equal(scope.kind, 'empty-owned-intersection');
+      assert.notEqual(scope.kind, 'empty');
+      assert.match(scope.message, /owned/i);
+    });
+
+    it('conservatively includes user-retained changes on owned paths and discloses them', () => {
+      const first = commit('owned.txt', 'owned');
+      fs.writeFileSync(path.join(repo, 'owned.txt'), 'owned+retained');
+      const scope = resolveReviewScope({ repoRoot: repo, explicitRange: first, allowedPaths: ['owned.txt'] });
+      assert.equal(scope.reviewable, true);
+      assert.deepEqual(scope.paths, ['owned.txt']);
+      assert.match(scope.disclosure ?? scope.reviewScope, /owned\.txt/);
+    });
+
+    it('unions owned committed-range paths with owned working-tree changes', () => {
+      commit('owned.txt', 'owned');
+      commit('unrelated.txt', 'unrelated');
+      fs.writeFileSync(path.join(repo, 'owned.txt'), 'owned+retained');
+      const scope = resolveReviewScope({ repoRoot: repo, allowedPaths: ['owned.txt'] });
+      assert.equal(scope.reviewable, true);
+      assert.deepEqual(scope.paths, ['owned.txt']);
+      assert.match(scope.disclosure, /working-tree owned changes included/);
+    });
+
+    it('includes owned working-tree edits in an explicit range ending at HEAD', () => {
+      const base = commit('seed.txt', 'seed');
+      commit('owned.txt', 'owned');
+      fs.writeFileSync(path.join(repo, 'late.txt'), 'uncommitted');
+      const scope = resolveReviewScope({ repoRoot: repo, explicitRange: `${base}..HEAD`, allowedPaths: ['owned.txt', 'late.txt'] });
+      assert.deepEqual(scope.paths, ['late.txt', 'owned.txt']);
+      assert.match(scope.disclosure, /working-tree owned changes included/);
+    });
+
+    it('reviews from an explicit baseRevision instead of the merge-base', () => {
+      commit('pre.txt', 'pre');
+      const baseline = commit('seed.txt', 'seed');
+      commit('owned.txt', 'owned');
+      const scope = resolveReviewScope({ repoRoot: repo, baseRevision: baseline, allowedPaths: ['owned.txt', 'pre.txt'] });
+      assert.equal(scope.range, `${baseline}..HEAD`);
+      assert.equal(scope.baseSha, baseline);
+      assert.deepEqual(scope.paths, ['owned.txt']);
+    });
+
+    it('fails closed when baseRevision is not an ancestor of HEAD', () => {
+      commit('seed.txt', 'seed');
+      git('checkout', '-q', '-b', 'side');
+      const side = commit('side.txt', 'side');
+      git('checkout', '-q', '-');
+      commit('owned.txt', 'owned');
+      assert.throws(
+        () => resolveReviewScope({ repoRoot: repo, baseRevision: side, allowedPaths: ['owned.txt'] }),
+        /not an ancestor/,
+      );
+      assert.throws(
+        () => resolveReviewScope({ repoRoot: repo, baseRevision: side, explicitRange: side }),
+        /not both/,
+      );
+    });
+
+    it('rejects absolute and escaping allowedPaths entries with a stable diagnostic', () => {
+      const first = commit('owned.txt', 'owned');
+      assert.throws(
+        () => resolveReviewScope({ repoRoot: repo, explicitRange: first, allowedPaths: ['../escape.txt'] }),
+        /inside the repository/,
+      );
+      assert.throws(
+        () => resolveReviewScope({ repoRoot: repo, explicitRange: first, allowedPaths: ['C:/absolute.txt'] }),
+        /inside the repository/,
+      );
+    });
+  });
 });
 
 describe('verifyFreshness', () => {

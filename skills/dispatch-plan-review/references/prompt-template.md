@@ -31,6 +31,13 @@ On re-review, verify the resolutions logged under `## Review Findings & Resoluti
 earlier settled sections as closed. When Scope names changed sections, raise new in-scope findings
 only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 
+When the preparation attaches an "Approved technical-design context" section, the plan is an
+implementation plan for exactly one approved increment: judge the concrete files and symbols,
+sequencing, error behavior, prerequisite evidence, exact verification, and bounded blast radius
+against that increment's inherited contract and acceptance criteria; do not re-litigate the
+governed design, and treat a design-changing proposal as an out-of-scope remark routed to the
+orchestrator's amendment path.
+
 Check these tags:
 - intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states

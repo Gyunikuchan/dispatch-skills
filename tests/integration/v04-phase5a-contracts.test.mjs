@@ -14,10 +14,11 @@ describe('v0.4 Phase 5A contracts', () => {
     assert.equal(isReservedOrdinarySlug('root-design'), true);
   });
 
-  it('ships design contract and explicitly keeps increment execution unavailable', () => {
+  it('ships the design contract with increment execution now available', () => {
     assert.ok(fs.existsSync(path.join(REPO_ROOT, 'skills/implement-dispatch/references/design-contract.md')));
     const skill = fs.readFileSync(path.join(REPO_ROOT, 'skills/implement-dispatch/SKILL.md'), 'utf8');
     assert.match(skill, /design-approved-stop/);
-    assert.match(skill, /Increment execution, amendments, and integration remain unavailable/);
+    assert.match(skill, /\/implement-dispatch <design-path>/);
+    assert.doesNotMatch(skill, /Increment execution, amendments, and integration remain unavailable/);
   });
 });

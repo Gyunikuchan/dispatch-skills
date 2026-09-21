@@ -27,7 +27,7 @@ describe('Phase 0 workflow contracts', () => {
     assert.match(prompt, /Never substitute `HEAD~1`/);
     assert.match(skill, /No reviewable changes/);
     assert.match(skill, /explicit `range`/);
-    assert.match(prepare, /resolveReviewScope\(\{ repoRoot, explicitRange: request\.range/);
+    assert.match(prepare, /resolveReviewScope\(\{\s*repoRoot,\s*explicitRange: request\.range/);
   });
 
   it('warns before OS-temp relocation and preserves exact destination reporting', () => {

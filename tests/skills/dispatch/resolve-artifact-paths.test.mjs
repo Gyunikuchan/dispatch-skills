@@ -24,6 +24,7 @@ import {
   defaultNativeCandidateRoots,
   isNativeArtifactPath,
   isReservedOrdinarySlug,
+  parseIncrementArtifactPath,
   findExistingScratchArtifact,
   findExistingTempArtifact,
   resolveArtifactPath,
@@ -61,6 +62,44 @@ describe('buildScratchPaths', () => {
       assert.equal(isReservedOrdinarySlug(slug), true, slug);
       assert.throws(() => resolveArtifacts({ slug, slugSource: 'branch', kinds: ['plan'] }), /reserved/);
     }
+  });
+
+  describe('increment artifact identity', () => {
+    it('parses canonical increment plan and walkthrough paths', () => {
+      const parsed = parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-i01-foundation-plan.md');
+      assert.deepEqual(parsed, {
+        date: '2026-09-21', designRootSlug: 'demo', incrementId: 'I01',
+        incrementSlug: 'foundation', kind: 'increment-plan',
+      });
+      const walkthrough = parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-i01-foundation-walkthrough.md');
+      assert.equal(walkthrough.kind, 'increment-walkthrough');
+      assert.equal(parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-design.md'), null);
+      assert.equal(parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-plan.md'), null);
+      assert.equal(parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-i1-short-plan.md'), null);
+    });
+
+    it('rejects a second -iNN- segment inside the increment slug', () => {
+      assert.throws(
+        () => parseIncrementArtifactPath('.scratch/plan/2026-09-21-demo-i01-foundation-i02-switch-plan.md'),
+        /ambiguous|-i\\d\{2\}-|second/,
+      );
+    });
+
+    it('fails closed on cross-date reserved-form collisions for the same root slug', () => {
+      const root = process.cwd();
+      const scratch = path.join(root, '.scratch', 'plan');
+      mkdirSync(scratch, { recursive: true });
+      const fixture = path.join(scratch, '2026-01-01-collision-design.md');
+      writeFileSync(fixture, '# fixture\n');
+      try {
+        assert.throws(
+          () => resolveArtifactPath('increment-plan', { slug: 'collision-i01-one', date: '2026-09-21', projectRoot: root }),
+          /collision|reserved|occupied/,
+        );
+      } finally {
+        rmSync(fixture, { force: true });
+      }
+    });
   });
 
   describe('ledger path resolution', () => {

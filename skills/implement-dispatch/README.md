@@ -196,4 +196,4 @@ resume command are reported because OS temp cleanup, including Windows Storage S
 
 ### Technical-design foundation
 
-Large phased work may be captured in a governed technical design and reviewed with `dispatch-design-review`. Approval records the next ready increment and stops before implementation; increment execution is not available in this phase. Ordinary plan runs are unchanged.
+Large phased work may be captured in a governed technical design and reviewed with `dispatch-design-review`. Approval records the next ready increment and stops before implementation. Resume with `/implement-dispatch <design-path>`: each invocation executes exactly one implementation increment (plan, baseline, tests-only RED, implementation, verification, code review, durable stop with one `Next Action`), design-changing discoveries use transactional amendments with crash recovery, and a later invocation runs the final integration gate before relocating the design-run artifacts. Ordinary plan runs are unchanged.

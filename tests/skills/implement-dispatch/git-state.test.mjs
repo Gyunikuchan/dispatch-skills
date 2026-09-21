@@ -37,7 +37,7 @@ describe('Git ledger state', () => {
 
   it('captures dirty tracked, untracked, binary, mode, symlink, deletion, and rename state', () => {
     writeFileSync(path.join(repo, 'tracked.txt'), Buffer.from([0, 1, 13, 10]));
-    chmodSync(path.join(repo, 'tracked.txt'), 0o755);
+    if (process.platform !== 'win32') chmodSync(path.join(repo, 'tracked.txt'), 0o755);
     writeFileSync(path.join(repo, 'untracked.bin'), Buffer.from([255, 0, 10]));
     symlinkSync('tracked.txt', path.join(repo, 'link'));
     git('mv', 'tracked.txt', 'renamed.txt');
@@ -49,7 +49,11 @@ describe('Git ledger state', () => {
     const snapshot = materializedFingerprint(repo, paths);
     assert.match(snapshot.digest, /^sha256:[a-f0-9]{64}$/);
     assert.equal(snapshot.entries.find(entry => entry.path === 'tracked.txt').mode, 'absent');
-    assert.equal(snapshot.entries.find(entry => entry.path === 'renamed.txt').mode, '100755');
+    if (process.platform !== 'win32') {
+      assert.equal(snapshot.entries.find(entry => entry.path === 'renamed.txt').mode, '100755');
+    } else {
+      assert.equal(snapshot.entries.find(entry => entry.path === 'renamed.txt').mode, '100644');
+    }
     assert.equal(snapshot.entries.find(entry => entry.path === 'link').mode, '120000');
   });
 

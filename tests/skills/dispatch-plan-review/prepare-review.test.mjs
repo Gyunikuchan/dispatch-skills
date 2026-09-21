@@ -256,6 +256,139 @@ describe('plan review preparation', () => {
     }
   });
 
+  describe('increment design context', () => {
+    function writeDesign(repo) {
+      const design = [
+        '---',
+        JSON.stringify({ dispatch: { schemaVersion: 1, kind: 'design', slug: 'demo-design' } }),
+        '---',
+        '# Demo design',
+        '',
+        '## Architecture & Boundaries',
+        'approved boundaries',
+        '## Alternatives & Decisions',
+        'choices',
+        '## Risks, Security & Operations',
+        'risks',
+        '## Increment Dependency Graph',
+        '| ID | Priority | Summary | Prerequisites | Paths |',
+        '| --- | ---: | --- | --- | --- |',
+        '| I01 | 1 | one | none | src/sample.js |',
+        '',
+        '## Execution Status',
+        '<!-- machine-managed -->',
+        '',
+        '## Review Findings & Resolutions',
+        '*No reviews conducted yet.*',
+      ].join('\n');
+      fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md'), design);
+      return design;
+    }
+
+    it('attaches bounded approved-design context and revision to increment plan reviews', () => {
+      const repo = makeRepo();
+      writeDesign(repo);
+      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      fs.writeFileSync(plan, planBody);
+      const manifest = preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        requirement: 'Implement sample',
+        roundId: 'plan-review:R1',
+        designPath: '.scratch/plan/2026-09-20-demo-design.md',
+        designRevision: null,
+        incrementId: 'I01',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo });
+      try {
+        assert.equal(manifest.status, 'ready');
+        assert.match(manifest.designContext.excerpt, /## Architecture & Boundaries/);
+        assert.doesNotMatch(manifest.designContext.excerpt, /## Execution Status/);
+        assert.equal(manifest.designContext.incrementId, 'I01');
+        const prompt = fs.readFileSync(manifest.promptPath, 'utf8');
+        assert.match(prompt, /Approved technical-design context/i);
+      } finally {
+        cleanManifest(manifest);
+      }
+    });
+
+    it('keeps ordinary behavior unchanged without design context', () => {
+      const repo = makeRepo();
+      writeDesign(repo);
+      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      fs.writeFileSync(plan, planBody);
+      const manifest = preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        requirement: 'Implement sample',
+        roundId: 'plan-review:R1',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo });
+      try {
+        assert.equal(manifest.status, 'ready');
+        assert.equal('designContext' in manifest, false);
+      } finally {
+        cleanManifest(manifest);
+      }
+    });
+
+    it('rejects an invalid design path or revision with a stable diagnostic', () => {
+      const repo = makeRepo();
+      writeDesign(repo);
+      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      fs.writeFileSync(plan, planBody);
+      assert.throws(() => preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        roundId: 'plan-review:R1',
+        designPath: '.scratch/plan/2026-09-20-missing-design.md',
+        incrementId: 'I01',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo }), /Design artifact not found/);
+      assert.throws(() => preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        roundId: 'plan-review:R1',
+        designPath: 'package.json',
+        incrementId: 'I01',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo }), /Design artifact not found/);
+      assert.throws(() => preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        roundId: 'plan-review:R1',
+        designPath: '../outside-design.md',
+        incrementId: 'I01',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo }), /inside the repository/);
+      assert.throws(() => preparePlanReview({
+        mode: 'orchestrated',
+        artifactPath: plan,
+        slug: 'sample',
+        artifactOwned: true,
+        roundId: 'plan-review:R1',
+        incrementId: 'I01',
+        targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
+        reserves: [],
+      }, { repoRoot: repo }), /requires both designPath and incrementId/);
+    });
+  });
+
   it('reuses an existing relocated plan in OS temp rather than requiring authoring', () => {
     const repo = makeRepo();
     const tempPlan = path.join(os.tmpdir(), `2026-09-20-sample-${Date.now()}.md`);

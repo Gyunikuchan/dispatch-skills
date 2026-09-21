@@ -1,6 +1,6 @@
 {
   "SKILL.md": "76549f3e88e315c43454992e4d654f5722555df0cb6927f6bfc323d58ee47a0c",
-  "references/alignment.md": "77eec9529eb3f87d258d60eb0079b043ca3f00f6c7303669893d6de14f0595ee",
+  "references/alignment.md": "20bb11bb723d9a38861486287878be07097458cf5519f0198250cf1a8b150fef",
   "references/providers.md": "09b9484902ec0a284cab2b00e430624bd8ac45380e8193ff38326e18612fcb8c",
   "references/walkthrough-contract.md": "a941ac7cdd9867107930b58f4e8a0009a68bb778365ad35264c017e37101ceaf",
   "scripts/agy-run.mjs": "444f556bf7153f27ebd66b73e38effbfdb643e07eb25dd8e2b287f369d634485",
@@ -8,6 +8,7 @@
   "scripts/claude-run.mjs": "726a86c595479cd820334060431072dcaeb87168a40923cacca39cc741237626",
   "scripts/common.mjs": "54873812e3f0ea55b2c06e085ddd01471b2c1e3f98cb29bd1478a17faa44069d",
   "scripts/copilot-run.mjs": "a281e8911a64cc54db1b7ea5b31bec07612b67d8321d1e3fb0d109a979d61be9",
+  "scripts/design-graph.mjs": "98e11f8e2804de16df4800560a507bd2662e9c82624f16a7e24b7b0d5c235c3f",
   "scripts/dispatch.mjs": "5872c21c53e850079d7f80f1572bfc3ead95c6a200d67eb3c0c8ee48b2ceaf64",
   "scripts/fill-template.mjs": "840101e70ca76e7632c69c0003f73bd749afd0e618068e4befe53c91a37a92db",
   "scripts/fix-clustering.mjs": "f22de64fb0ba7cd512941b3193e45f6d2e949d7c73a1bf0435fdcf918cc42110",
@@ -15,8 +16,8 @@
   "scripts/plan-structure.mjs": "58e902b66285ec12077be45d6e7ba52581650f4531b48f20607f187910408fb5",
   "scripts/relocate-scratch.mjs": "5d266086968f77842cbe6fbb07ee9236431248110a932a6dc7063dfa4bba0c20",
   "scripts/resolution-log.mjs": "e139f5e9cc484cc83de3ae7aa234bb899d1d925b8228a7bdf4350076d8e6952b",
-  "scripts/resolve-artifact-paths.mjs": "9ed318d91c51e4a06f6bdb4702c2c0ce86043547994f596996dd1899d35b1a6e",
-  "scripts/review-preparation.mjs": "062ad200278953ed2ec6fa8e6b02fd452e8148c813c77ecc2059fd026d414907",
+  "scripts/resolve-artifact-paths.mjs": "3574d59ed0d4d392733c5b185fc56ee050c60d431780b729925ddcb6a79fd395",
+  "scripts/review-preparation.mjs": "82d0ba43d832224f7cdb66db40e7e5a87e8cfbfb64fbec101fd95b863e0e42be",
   "scripts/review-report.mjs": "ee1857c1d525c893ab97094a631e014b5c3773cd644024c7eb0ba29009885f30",
   "scripts/source-map.mjs": "4e52b196c496cd6e1c62471965564fcb30e74a861c712ace3499bbc2916b2201",
   "scripts/telemetry.mjs": "c8900ab70508f054cd29cb9f5f7ae3ad5c8acdf29f771dc9958756d01e2f6159"

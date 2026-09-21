@@ -207,55 +207,125 @@ function resolveBase(repoRoot) {
   return null;
 }
 
-export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = null } = {}) {
+function filterAllowed(paths, allowedPaths) {
+  if (allowedPaths === null || allowedPaths === undefined) return { paths, restricted: false };
+  if (!Array.isArray(allowedPaths)) {
+    throw new Error('allowedPaths must be an array of non-empty repository-relative path strings');
+  }
+  const owned = new Set();
+  for (const entry of allowedPaths) {
+    if (typeof entry !== 'string' || !entry) {
+      throw new Error('allowedPaths must be an array of non-empty repository-relative path strings');
+    }
+    const normalized = entry.replaceAll('\\', '/').replace(/^\.\//, '');
+    if (path.isAbsolute(entry) || normalized.startsWith('/') || normalized.split('/').includes('..')) {
+      throw new Error(`allowedPaths entry must stay inside the repository: ${entry}`);
+    }
+    owned.add(normalized);
+  }
+  return { paths: paths.filter(file => owned.has(file)), restricted: true };
+}
+
+function emptyOwnedIntersection(message) {
+  return {
+    reviewable: false,
+    kind: 'empty-owned-intersection',
+    range: null,
+    paths: [],
+    disclosure: 'No owned paths in the review selection; the integration gate cannot settle with nothing owned to review. Attribute ownership or replace the baseline before review.',
+    message,
+  };
+}
+
+export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = null, allowedPaths = null, baseRevision = null } = {}) {
   repoRoot = path.resolve(repoRoot);
+  if (explicitRange && baseRevision) throw new Error('Pass either an explicit range or a base revision, not both.');
   if (explicitRange) {
     const range = resolveExplicitRange(repoRoot, explicitRange);
-    const paths = rangePaths(repoRoot, range);
+    const rangeResult = rangePaths(repoRoot, range);
+    const rangeFiltered = filterAllowed(rangeResult, allowedPaths);
+    const { restricted } = rangeFiltered;
+    const head = git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
+    // Owned selections ending at HEAD also cover uncommitted owned edits so integration never drops them.
+    const includeWorking = restricted && head.status === 0 &&
+      resolveRangeShas(repoRoot, range).headSha === head.stdout.trim();
+    const paths = includeWorking
+      ? [...new Set([...rangeFiltered.paths, ...filterAllowed(currentPaths(repoRoot), allowedPaths).paths])].sort()
+      : rangeFiltered.paths;
+    if (restricted && paths.length === 0) {
+      return emptyOwnedIntersection('The ledger-owned path set does not intersect the review range; integration cannot settle on an empty owned intersection.');
+    }
     if (paths.length === 0) {
       return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
     }
     const shas = resolveRangeShas(repoRoot, range);
-    return { reviewable: true, kind: 'explicit-range', range, paths, ...shas, reviewScope: `Explicit Git range: ${range}` };
+    const disclosure = restricted
+      ? `Owned-path restriction: ${paths.join(', ')}; unrelated range paths excluded${includeWorking ? '; working-tree owned changes included' : ''}.`
+      : null;
+    return { reviewable: true, kind: 'explicit-range', range, paths, ...shas, reviewScope: `Explicit Git range: ${range}`, ...(disclosure ? { disclosure } : {}) };
   }
-  const paths = currentPaths(repoRoot);
-  if (paths.length > 0) {
+  const current = currentPaths(repoRoot);
+  const workingFiltered = filterAllowed(current, allowedPaths);
+  if (!workingFiltered.restricted && !baseRevision && workingFiltered.paths.length > 0) {
     return {
       reviewable: true,
       kind: 'working-tree',
       range: null,
-      paths,
+      paths: workingFiltered.paths,
       reviewScope: 'Current staged, unstaged, and untracked changes',
     };
   }
+  // A restricted selection unions owned committed-range paths with owned working-tree paths so
+  // committed increments stay visible next to retained working-tree changes. Unrestricted
+  // selections keep the original behavior (working tree wins; empty falls to the range logic).
   const head = git(repoRoot, ['rev-parse', '--verify', 'HEAD^{commit}'], { allowFailure: true });
   if (head.status !== 0) {
-    return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
+    return workingFiltered.restricted
+      ? emptyOwnedIntersection('The ledger-owned path set does not intersect the reviewable changes; integration cannot settle on an empty owned intersection.')
+      : { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
   }
-  const base = resolveBase(repoRoot);
-  if (!base) {
-    return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
+  let range = null;
+  let mergeBaseSha = null;
+  let rangeOwned = { paths: [], restricted: workingFiltered.restricted };
+  let baseSha = null;
+  if (baseRevision) {
+    // A design-run baseline replaces the merge-base; a non-ancestor (e.g. after rebase) fails closed.
+    baseSha = verifyCommit(repoRoot, baseRevision);
+    const ancestor = git(repoRoot, ['merge-base', '--is-ancestor', baseSha, 'HEAD'], { allowFailure: true });
+    if (ancestor.status !== 0) {
+      throw new Error(`Base revision ${baseRevision} is not an ancestor of HEAD; supply a replacement baseline.`);
+    }
+  } else {
+    const base = resolveBase(repoRoot);
+    if (base) {
+      const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD'], { allowFailure: true });
+      if (mergeBase.status !== 0) {
+        throw new Error(`Cannot resolve merge-base for ${base}; history may be shallow or unrelated.`);
+      }
+      baseSha = mergeBase.stdout.trim();
+    }
   }
-  const mergeBase = git(repoRoot, ['merge-base', base, 'HEAD'], { allowFailure: true });
-  if (mergeBase.status !== 0) {
-    throw new Error(`Cannot resolve merge-base for ${base}; history may be shallow or unrelated.`);
+  if (baseSha && baseSha !== head.stdout.trim()) {
+    range = `${baseSha}..HEAD`;
+    rangeOwned = filterAllowed(rangePaths(repoRoot, range), allowedPaths);
+    mergeBaseSha = baseSha;
   }
-  if (mergeBase.stdout.trim() === head.stdout.trim()) {
-    return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
+  const union = [...new Set([...(rangeOwned?.paths ?? []), ...workingFiltered.paths])].sort();
+  if (workingFiltered.restricted && union.length === 0) {
+    return emptyOwnedIntersection('The ledger-owned path set does not intersect the reviewable changes; integration cannot settle on an empty owned intersection.');
   }
-  const range = `${mergeBase.stdout.trim()}..HEAD`;
-  const rangeFiles = rangePaths(repoRoot, range);
-  if (rangeFiles.length === 0) {
+  if (union.length === 0) {
     return { reviewable: false, kind: 'empty', range: null, paths: [], message: 'No reviewable changes; name a commit or range to review.' };
   }
   return {
     reviewable: true,
-    kind: 'branch',
+    kind: range ? 'branch' : 'working-tree',
     range,
-    paths: rangeFiles,
-    baseSha: mergeBase.stdout.trim(),
+    paths: union,
+    ...(mergeBaseSha ? { baseSha: mergeBaseSha } : {}),
     headSha: head.stdout.trim(),
-    reviewScope: `Branch range: ${range}`,
+    reviewScope: range ? `Branch range: ${range}` : 'Current staged, unstaged, and untracked changes',
+    ...(rangeOwned?.restricted ? { disclosure: `Owned-path restriction: ${union.join(', ')}; unrelated range paths excluded; working-tree owned changes included.` } : {}),
   };
 }
 
@@ -306,6 +376,7 @@ function parseArgs(argv) {
     const arg = argv[i];
     if (arg === '--repo-root') out.repoRoot = path.resolve(argv[++i] ?? '');
     else if (arg === '--range') out.explicitRange = argv[++i] ?? '';
+    else if (arg === '--base') out.baseRevision = argv[++i] ?? '';
     else if (arg === '--verify-freshness') out.verifyFreshness = argv[++i] ?? '';
     else if (arg === '-h' || arg === '--help') out.help = true;
     else throw new Error(`Unknown argument: ${arg}`);
@@ -314,7 +385,7 @@ function parseArgs(argv) {
 }
 
 const USAGE = `Usage:
-  node resolve-review-range.mjs [--repo-root <path>] [--range <commit|a..b|a...b>]
+  node resolve-review-range.mjs [--repo-root <path>] [--range <commit|a..b|a...b> | --base <commit>]
   node resolve-review-range.mjs [--repo-root <path>] --verify-freshness <walkthrough>
 `;
 

@@ -59,12 +59,12 @@
       },
       "agy": {
         "low": {
-          "model": "gemini-3.8-flash",
+          "model": "gemini-3.7-flash",
           "effort": "medium",
         },
         "max": {
           "model": "gemini-3.8-flash",
-          "effort": "high",
+          "effort": "medium",
         },
       },
       "copilot": {
@@ -72,13 +72,13 @@
           "model": "gpt-5.6-luna",
           "effort": "max",
         },
-        "medium": {
+        "high": {
           "model": "gpt-6-astra",
           "effort": "low",
         },
         "max": {
           "model": "gpt-6-astra",
-          "effort": "high",
+          "effort": "medium",
         },
       },
       "opencode": [
@@ -164,12 +164,12 @@
       },
       "agy": {
         "low": {
-          "model": "gemini-3.8-flash",
+          "model": "gemini-3.7-flash",
           "effort": "medium",
         },
         "max": {
           "model": "gemini-3.8-flash",
-          "effort": "high",
+          "effort": "medium",
         },
       },
       "copilot": {
@@ -177,13 +177,13 @@
           "model": "gpt-5.6-luna",
           "effort": "max",
         },
-        "medium": {
+        "high": {
           "model": "gpt-6-astra",
           "effort": "low",
         },
         "max": {
           "model": "gpt-6-astra",
-          "effort": "high",
+          "effort": "medium",
         },
       },
       "opencode": [

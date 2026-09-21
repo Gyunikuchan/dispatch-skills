@@ -158,10 +158,12 @@ describe('ledger I/O and resume', () => {
     try {
       const namespace = path.join(hostileRoot, 'dispatch-skills-test');
       fs.mkdirSync(namespace, { mode: 0o777 });
-      fs.chmodSync(namespace, 0o777);
-      assert.throws(() => ensureLedgerNamespace({
-        tempRoot: hostileRoot, repoHash: 'abcdef123456', env: { USER: 'test' },
-      }), /writable/);
+      if (process.platform !== 'win32') {
+        fs.chmodSync(namespace, 0o777);
+        assert.throws(() => ensureLedgerNamespace({
+          tempRoot: hostileRoot, repoHash: 'abcdef123456', env: { USER: 'test' },
+        }), /writable/);
+      }
       fs.rmSync(namespace, { recursive: true, force: true });
       fs.symlinkSync(repo, namespace);
       assert.throws(() => ensureLedgerNamespace({
@@ -241,7 +243,9 @@ describe('ledger I/O and resume', () => {
     const metadata = { approvedContentHash: hash };
     const designRunId = '22222222-2222-4222-8222-222222222222';
     appendEvent(ledgerPath, { ...runStart(hash, designPath), v: 2, runId: designRunId, data: { ...runStart(hash, designPath).data, action: 'design' } });
-    assert.match(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata }, repoRoot: repo }).diagnostic, /not an approved durable stop/);
+    const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata }, repoRoot: repo });
+    assert.equal(resumed.status, 'needs-reconciliation');
+    assert.match(resumed.diagnostic, /No matching design segment|not an approved durable stop/);
   });
 
   it('maps strict governing-plan scan failures to reconciliation', () => {
@@ -279,5 +283,130 @@ describe('ledger I/O and resume', () => {
     assert.equal(resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo }).status, 'missing');
     appendEvent(ledgerPath, runStart(`sha256:${'d'.repeat(64)}`, planPath));
     assert.equal(resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo }).status, 'needs-reconciliation');
+  });
+
+  describe('design-run resume across segments', () => {
+    const designPath = '.scratch/plan/2026-09-20-demo-design.md';
+    const designBody = [
+      '# Design',
+      '',
+      '## Architecture',
+      'A',
+      '## Increment Dependency Graph',
+      '| ID | Priority | Summary | Prerequisites | Paths |',
+      '| --- | ---: | --- | --- | --- |',
+      '| I01 | 1 | one | none | a |',
+      '| I02 | 2 | two | I01 | b |',
+      '',
+      '## Execution Status',
+      'Ready',
+      '',
+    ].join('\n');
+    const designHash = governingHash(designBody, { kind: 'design' }).hash;
+    const designRunId = '22222222-2222-4222-8222-222222222222';
+    const designEvents = [
+      { ...runStart(designHash, designPath), v: 2, runId: designRunId, data: { ...runStart(designHash, designPath).data, action: 'design' } },
+      { v: 2, type: 'approval', runId: designRunId, at, data: { governingHash: designHash, decision: 'approved', actor: 'user' } },
+      { v: 2, type: 'run-complete', runId: designRunId, at, data: { result: 'design-approved-stop', evidenceRefs: ['design'] } },
+    ];
+    const designMetadata = { approvedContentHash: designHash };
+
+    function incrementRunStart(id, slug, segmentRunId) {
+      return {
+        v: 2, type: 'run-start', runId: segmentRunId, at,
+        data: {
+          governingPath: designPath,
+          governingHash: designHash,
+          rootSlug: 'example',
+          action: 'increment',
+          baseline: { commit: oid, repositoryState: state, dirtyPaths: [] },
+          design: { path: designPath, revision: designHash },
+          increment: {
+            id, planPath: `.scratch/plan/2026-09-20-example-${slug}-plan.md`,
+            walkthroughPath: `.scratch/plan/2026-09-20-example-${slug}-walkthrough.md`,
+            planHash: designHash,
+          },
+        },
+      };
+    }
+
+    it('selects the next ready increment by priority after a completed increment segment', () => {
+      const incrementRunId = '33333333-3333-4333-8333-333333333333';
+      const events = [
+        ...designEvents,
+        incrementRunStart('I01', 'one', incrementRunId),
+        ...completedIncrement('I01', incrementRunId),
+        { v: 2, type: 'run-complete', runId: incrementRunId, at, data: { result: 'complete', evidenceRefs: [] } },
+      ];
+      for (const event of events) appendEvent(ledgerPath, event);
+      const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
+      assert.equal(resumed.status, 'resumable');
+      assert.equal(resumed.nextAction, 'implement:I02');
+    });
+
+    it('resumes an interrupted increment segment', () => {
+      const incrementRunId = '33333333-3333-4333-8333-333333333333';
+      const events = [
+        ...designEvents,
+        incrementRunStart('I01', 'one', incrementRunId),
+        { v: 2, type: 'task-start', runId: incrementRunId, at, data: { taskId: 'I01-task', attemptBudget: 2, paths: ['a.txt'], preState: state } },
+        { v: 2, type: 'implementation-attempt', runId: incrementRunId, at, data: { taskId: 'I01-task', attempt: 1, launch: 'tests-only', target: { platform: 'opencode' }, terminalEnvelope: {}, evidence: ['red'], transition: 'run-red' } },
+        { v: 2, type: 'verification', runId: incrementRunId, at, data: { taskId: 'I01-task', attempt: 1, result: 'red', failureIdentity: { id: 'expected' }, commandRefs: ['test'], transition: 'continue' } },
+      ];
+      for (const event of events) appendEvent(ledgerPath, event);
+      const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
+      assert.equal(resumed.status, 'resumable');
+      assert.equal(resumed.nextAction, 'resume-increment');
+    });
+
+    it('requires final integration once every increment completes', () => {
+      const firstRunId = '33333333-3333-4333-8333-333333333333';
+      const secondRunId = '44444444-4444-4444-8444-444444444444';
+      const events = [
+        ...designEvents,
+        incrementRunStart('I01', 'one', firstRunId),
+        ...completedIncrement('I01', firstRunId),
+        { v: 2, type: 'run-complete', runId: firstRunId, at, data: { result: 'complete', evidenceRefs: [] } },
+        incrementRunStart('I02', 'two', secondRunId),
+        ...completedIncrement('I02', secondRunId),
+        { v: 2, type: 'run-complete', runId: secondRunId, at, data: { result: 'complete', evidenceRefs: [] } },
+      ];
+      for (const event of events) appendEvent(ledgerPath, event);
+      const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
+      assert.equal(resumed.status, 'resumable');
+      assert.equal(resumed.nextAction, 'final-integration');
+    });
+
+    it('excludes an amendment-only design segment from approval-bearing selection', () => {
+      const incrementRunId = '33333333-3333-4333-8333-333333333333';
+      const amendmentRunId = '44444444-4444-4444-8444-444444444444';
+      const events = [
+        ...designEvents,
+        incrementRunStart('I01', 'one', incrementRunId),
+        ...completedIncrement('I01', incrementRunId),
+        { v: 2, type: 'run-complete', runId: incrementRunId, at, data: { result: 'complete', evidenceRefs: [] } },
+        { v: 2, type: 'run-start', runId: amendmentRunId, at, data: { governingPath: designPath, governingHash: `sha256:${'f'.repeat(64)}`, rootSlug: 'example', action: 'design', baseline: { commit: oid, repositoryState: state, dirtyPaths: [] } } },
+        { v: 2, type: 'amendment', runId: amendmentRunId, at, data: { amendmentId: 'A01', state: 'proposed', affectedIncrements: [] } },
+        { v: 2, type: 'amendment', runId: amendmentRunId, at, data: { amendmentId: 'A01', state: 'reviewed', affectedIncrements: [] } },
+        { v: 2, type: 'amendment', runId: amendmentRunId, at, data: { amendmentId: 'A01', state: 'rejected', affectedIncrements: [] } },
+        { v: 2, type: 'run-complete', runId: amendmentRunId, at, data: { result: 'complete', evidenceRefs: [] } },
+      ];
+      for (const event of events) appendEvent(ledgerPath, event);
+      const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
+      assert.equal(resumed.status, 'resumable');
+      assert.equal(resumed.nextAction, 'implement:I02');
+    });
+
+    function completedIncrement(id, runId) {
+      const file = `${id}.txt`;
+      fs.writeFileSync(path.join(repo, file), `${id} done\n`);
+      const resultState = materializedFingerprint(repo, [file]).digest;
+      return [
+        { v: 2, type: 'task-start', runId, at, data: { taskId: `${id}-task`, attemptBudget: 1, paths: [file], preState: state } },
+        { v: 2, type: 'implementation-attempt', runId, at, data: { taskId: `${id}-task`, attempt: 1, launch: 'full', target: { platform: 'opencode' }, terminalEnvelope: {}, evidence: ['done'], transition: 'verify' } },
+        { v: 2, type: 'verification', runId, at, data: { taskId: `${id}-task`, attempt: 1, result: 'pass', commandRefs: ['test'], transition: 'complete' } },
+        { v: 2, type: 'task-complete', runId, at, data: { taskId: `${id}-task`, paths: [file], head: oid, preState: state, resultState, diffHash: state } },
+      ];
+    }
   });
 });

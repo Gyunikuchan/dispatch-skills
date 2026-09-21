@@ -16,12 +16,14 @@ Orchestrate `criteria → plan → review → approval → implementation → ve
 ```text
 /implement-dispatch <level> (<pins>): <ask>
 /implement-dispatch <plan-path>
+/implement-dispatch <design-path>
 ```
 
 Explicit `low|medium|high|xhigh|max` is preserved; otherwise classify mechanical edits `low`,
 bounded changes `medium`, and cross-cutting/public-contract changes `high`. `xhigh`/`max` are
 explicit only. Pass pins unchanged to `resolve-flow.mjs`.
-The level-less plan-path form resumes only a canonical scratch plan. Follow the
+The level-less plan-path form resumes only a canonical scratch plan. The level-less design-path
+form resumes a phased technical design under its durable design-slug ledger identity. Follow the
 [ledger contract](references/ledger-contract.md) before any dispatch.
 
 ## 1. Criteria, plan, and flow
@@ -180,4 +182,68 @@ artifact.
 
 ## Technical designs
 
-When explicit direction or qualifying architectural evidence calls for phased work, author and settle a technical design through `dispatch-design-review`. Record approval and the next ready increment in the v2 design ledger, then stop at the durable `design-approved-stop` boundary. Increment execution, amendments, and integration remain unavailable until a later capability is delivered. Ordinary plans retain the v1 flow.
+When explicit direction or qualifying architectural evidence calls for phased work, author and
+settle a technical design through `dispatch-design-review`. Record approval and the next ready
+increment in the v2 design ledger, then stop at the durable `design-approved-stop` boundary
+before authoring increment plans or modifying production files. Ordinary plans retain the v1
+flow.
+
+**Resuming a phased design.** `/implement-dispatch <design-path>` folds every valid ledger
+segment bound to the design's normalized path and root slug across approved revisions, proves
+completed increments with ledger and Git evidence, and derives exactly one `Next Action`:
+implement a named ready increment, resume an interrupted increment, resolve a named
+reconciliation or amendment, run final integration, or complete. Resume only dispatches work
+proven ready by the design graph, the ledger fold, artifact checkpoints, and Git evidence; drift
+enters reconciliation instead of redispatching.
+
+**Implementation increments.** One coherent outcome per increment, one increment per invocation
+(run-complete closes every invocation segment) in the current working tree. Author the increment's implementation plan from the
+plan-review template extended with `## Technical-Design Traceability` (parent design path,
+approved revision, increment ID and inherited contract, prerequisite evidence, acceptance
+mapping); review it under the configured plan-review policy with bounded approved-design context
+and never derive the ledger identity from filenames. Ask the user only when a
+decision-changing ambiguity appears; classify each answer as a local refinement (recorded in
+the plan) or design-changing (the amendment path below). At settlement render the keyed opt-in
+sections as for ordinary plans; design-changing selections enter the amendment path instead of
+materialization. Open the increment's ledger segment (`action: "increment"` carrying the design
+path/revision and `increment:{id,planPath,walkthroughPath,planHash}`) immediately after plan
+settlement, then run the verification evidence contract's baseline and its side-effect reconciliation before the first
+implementation dispatch. New or corrected behavior still requires the tests-only stage and
+host-observed RED before the production continuation. After implementation, verification, and
+code review, append the increment's ledger events, update the design's `## Execution Status`
+mirror with `scripts/design-run.mjs --design <path> --states '<ledger states JSON>'` (status-only;
+refuses governed-hash changes), and stop at the durable boundary reporting the
+completed increment, verification and review state, deferred items, commit state, the exact
+`Next Action`, the exact `/implement-dispatch <design-path>` resume command, and that this is a
+safe optional compaction point. Commits and compaction remain user-owned and optional. The
+immediate adjacent-fix loop after settlement is the sole one-increment-per-invocation exception:
+implement only user-selected findings as an adjacent-fix cluster, keep their verification and
+scoped review separate from the increment contract, then stop.
+
+**Design amendments.** A design-changing discovery pauses before additional writes. Amendments
+are transactional: retain the last approved governed design as the only executable revision
+while an OS-temp candidate records the proposed changes and affected increment IDs; review the
+candidate's changed sections; record `proposed`, `reviewed`, `prepared` (user approval), then
+`activated` — or `rejected`/`aborted` — in the ledger. User approval first appends and fsyncs
+the `prepared` event; only then copy the byte-for-byte `.<design-file>.bak` backup and stage
+`.<design-file>.tmp`, compare hashes, and atomically rename the replacement over the canonical
+design before appending `activated` and removing the backup. Startup recovery treats prepared
+without activated by window: pre-rename needs a resume-or-discard ruling, post-rename verifies
+the candidate hash and repairs approval metadata before appending the missing `activated`, and
+a mismatch preserves both copies and enters reconciliation. Only activation invalidates affected
+pending/active increments and reopens completed ones whose contracts or shared invariants
+changed; independent completed increments remain valid. Rejection or abort leaves the proposed
+revision non-authoritative and requires live-diff reconciliation before execution resumes.
+
+**Final integration.** After the last increment settles, the next
+`/implement-dispatch <design-path>` invocation runs the final integration gate only: fresh
+cross-increment verification plus, when code review is enabled and available, the configured
+final review across the union of ledger-owned paths (completed increments, accepted adjacent-fix
+clusters, reopened increments, active integration fixes) from the design-run baseline commit
+(code-review `baseRevision`, with `allowedPaths`) through current HEAD plus working tree — the sum of increment checks never replaces this gate.
+Record evidence under `.scratch/plan/<date>-<design-slug>-integration-walkthrough.md`. If
+integration exposes a defect inside an approved increment contract, reopen that increment; if it
+exposes missing scope or changed architecture, use the amendment path. Keep the design and every
+increment plan and walkthrough under `.scratch/` through integration; after the integration gate
+settles, pass every design-run artifact to `dispatch/scripts/relocate-scratch.mjs` and report
+every destination. Never relocate the ledger.

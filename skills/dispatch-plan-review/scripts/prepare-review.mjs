@@ -14,6 +14,7 @@ import {
 } from '../../dispatch/scripts/resolve-artifact-paths.mjs';
 import { evaluateConsensus } from '../../dispatch/scripts/check-consensus.mjs';
 import { scanResolutionLog } from '../../dispatch/scripts/resolution-log.mjs';
+import { governingDesignExcerpt } from '../../dispatch/scripts/review-preparation.mjs';
 import {
   advanceInvocationState,
   assertObjectKeys,
@@ -45,7 +46,8 @@ const REQUEST_KEYS = [
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
   'toolTurnBudget', 'targets', 'reserves', 'roundId', 'consensus',
   'findingPacketPath', 'findingKeys', 'selector', 'decision', 'artifactOwned',
-  'invocationContext', 'settlement', 'settledWrites',
+  'invocationContext', 'settlement', 'settledWrites', 'designPath',
+  'designRevision', 'incrementId',
 ];
 
 function toManifestPath(file, repoRoot) {
@@ -427,7 +429,34 @@ export function preparePlanReview(request, {
     ? `Plan lint warnings: ${lintWarnings.map(({ rule, locus, message }) => `${rule} (${locus}): ${message}`).join(' | ')}`
     : '';
   const scope = [derivedScope, request.reviewScope, warningScope].filter(Boolean).join('; ');
-  const prompt = reviewMode === 'full'
+  let designContext = null;
+  if (request.designPath !== undefined || request.incrementId !== undefined) {
+    if (!request.designPath || request.incrementId === undefined) {
+      throw new Error('Design context requires both designPath and incrementId.');
+    }
+    const designAbsolute = path.resolve(repoRoot, request.designPath);
+    const containment = path.relative(path.resolve(repoRoot), designAbsolute);
+    if (containment.startsWith('..') || path.isAbsolute(containment)) {
+      throw new Error(`Design artifact must stay inside the repository: ${request.designPath}`);
+    }
+    if (!fs.existsSync(designAbsolute) || !fs.statSync(designAbsolute).isFile()) {
+      throw new Error(`Design artifact not found: ${request.designPath}`);
+    }
+    const designSource = fs.readFileSync(designAbsolute, 'utf8');
+    const excerpt = governingDesignExcerpt(designSource, { revision: request.designRevision ?? null });
+    if (request.designRevision !== undefined && request.designRevision !== null &&
+        excerpt.governedHash !== request.designRevision) {
+      throw new Error(`Design revision mismatch: governed hash ${excerpt.governedHash} does not match the explicit designRevision`);
+    }
+    designContext = {
+      designPath: toManifestPath(designAbsolute, repoRoot),
+      revision: request.designRevision ?? null,
+      governedHash: excerpt.governedHash,
+      incrementId: request.incrementId ?? null,
+      excerpt: excerpt.excerpt,
+    };
+  }
+  const promptBase = reviewMode === 'full'
     ? loadPrompt({
       'Plan Path': toManifestPath(reviewPath, repoRoot),
       Requirement: request.requirement ?? artifact.body.match(/^#\s+(.+)$/m)?.[1] ?? 'Review the plan',
@@ -445,6 +474,10 @@ export function preparePlanReview(request, {
         'Tool Turn Budget': request.toolTurnBudget ?? 'Unspecified',
       });
     })();
+
+  const prompt = designContext
+    ? `${promptBase}\n\nApproved technical-design context (increment ${designContext.incrementId ?? 'unknown'}, revision ${designContext.revision ?? designContext.governedHash}):\n\n${designContext.excerpt}\n`
+    : promptBase;
 
   // A present entry roundId must agree with the resolved round; then every entry (whether it
   // carried one or not) is normalized to the resolved roundId — `loadBatchFile` in dispatch.mjs
@@ -508,6 +541,7 @@ export function preparePlanReview(request, {
     },
     freshness,
     scope,
+    ...(designContext ? { designContext } : {}),
     advisoryTarget: request.toolTurnBudget ?? 'Unspecified',
     invocationContext: invocation.context,
     promptPath: files.promptPath,

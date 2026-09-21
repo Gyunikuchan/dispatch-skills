@@ -32,6 +32,7 @@ import {
   readInvocationState,
   readJsonRequest,
   requireNode22,
+  governingDesignExcerpt,
   rawSha256,
   semanticSectionHashes,
   settledWritesMismatch,
@@ -53,7 +54,8 @@ const REQUEST_KEYS = [
   'trailingText', 'reviewScope', 'toolTurnBudget', 'targets', 'reserves',
   'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'selector',
   'decision', 'artifactOwned', 'range', 'verification', 'invocationContext',
-  'settlement', 'settledWrites',
+  'settlement', 'settledWrites', 'designPath', 'designRevision', 'incrementId',
+  'allowedPaths', 'baseRevision',
 ];
 
 function toManifestPath(file, repoRoot) {
@@ -447,8 +449,20 @@ export function prepareCodeReview(request, {
   if (priorState && request.range !== undefined && request.range !== priorState.explicitRange) {
     throw new Error('A later wave cannot change the selected explicit range.');
   }
+  if (priorState && request.allowedPaths !== undefined &&
+      JSON.stringify(request.allowedPaths ?? null) !== JSON.stringify(priorState.allowedPaths ?? null)) {
+    throw new Error('A later wave cannot change the owned allowedPaths set.');
+  }
+  if (priorState && request.baseRevision !== undefined && (request.baseRevision ?? null) !== (priorState.baseRevision ?? null)) {
+    throw new Error('A later wave cannot change the selected base revision.');
+  }
   const scopeResult = priorState?.selectedScope ??
-    resolveReviewScope({ repoRoot, explicitRange: request.range ?? null });
+    resolveReviewScope({
+      repoRoot,
+      explicitRange: request.range ?? null,
+      allowedPaths: request.allowedPaths ?? null,
+      baseRevision: request.baseRevision ?? null,
+    });
   if (!scopeResult.reviewable) {
     return {
       schemaVersion: 1,
@@ -456,6 +470,7 @@ export function prepareCodeReview(request, {
       action,
       status: 'no-reviewable-changes',
       message: scopeResult.message,
+      ...(scopeResult.kind === 'empty-owned-intersection' ? { scopeKind: scopeResult.kind } : {}),
       cleanupPaths: [],
     };
   }
@@ -576,6 +591,33 @@ export function prepareCodeReview(request, {
         ? `Re-review round ${round} — walkthrough body changed; review full selected range (${scopeResult.reviewScope})`
         : `Re-review round ${round} — changed paths: ${reReviewPaths.join(', ') || 'review resolutions only'}; ${scopeResult.reviewScope}`;
   const scope = request.reviewScope ? `${derivedScope}; ${request.reviewScope}` : derivedScope;
+  let designContext = null;
+  if (request.designPath !== undefined || request.incrementId !== undefined) {
+    if (!request.designPath || request.incrementId === undefined) {
+      throw new Error('Design context requires both designPath and incrementId.');
+    }
+    const designAbsolute = path.resolve(repoRoot, request.designPath);
+    const containment = path.relative(path.resolve(repoRoot), designAbsolute);
+    if (containment.startsWith('..') || path.isAbsolute(containment)) {
+      throw new Error(`Design artifact must stay inside the repository: ${request.designPath}`);
+    }
+    if (!fs.existsSync(designAbsolute) || !fs.statSync(designAbsolute).isFile()) {
+      throw new Error(`Design artifact not found: ${request.designPath}`);
+    }
+    const designSource = fs.readFileSync(designAbsolute, 'utf8');
+    const excerpt = governingDesignExcerpt(designSource, { revision: request.designRevision ?? null });
+    if (request.designRevision !== undefined && request.designRevision !== null &&
+        excerpt.governedHash !== request.designRevision) {
+      throw new Error(`Design revision mismatch: governed hash ${excerpt.governedHash} does not match the explicit designRevision`);
+    }
+    designContext = {
+      designPath: toManifestPath(designAbsolute, repoRoot),
+      revision: request.designRevision ?? null,
+      governedHash: excerpt.governedHash,
+      incrementId: request.incrementId ?? null,
+      excerpt: excerpt.excerpt,
+    };
+  }
   const prompt = reviewMode === 'full'
     ? loadPrompt('prompt-template.md', {
       'Task Summary': request.summary ?? walkthrough.body.match(/^# Walkthrough — (.+)$/m)?.[1] ?? 'Review the changes',
@@ -592,6 +634,9 @@ export function prepareCodeReview(request, {
       'Review Scope': scope,
       'Tool Turn Budget': request.toolTurnBudget ?? 'Unspecified',
     });
+  const promptWithDesignContext = designContext
+    ? `${prompt}\n\nApproved technical-design context (increment ${designContext.incrementId ?? 'unknown'}, revision ${designContext.revision ?? designContext.governedHash}):\n\n${designContext.excerpt}\n`
+    : prompt;
 
   // A present entry roundId must agree with the resolved round; then every entry (whether it
   // carried one or not) is normalized to the resolved roundId — `loadBatchFile` in dispatch.mjs
@@ -635,10 +680,12 @@ export function prepareCodeReview(request, {
       round,
       explicitRange: request.range ?? null,
       selectedScope: scopeResult,
+      allowedPaths: request.allowedPaths ?? null,
+      baseRevision: request.baseRevision ?? null,
     });
   }
   const files = createDispatchFiles({
-    prompt,
+    prompt: promptWithDesignContext,
     batch: mode === 'orchestrated' ? { targets, reserves } : null,
     attachments: [
       reviewPath,
@@ -674,6 +721,7 @@ export function prepareCodeReview(request, {
     freshness,
     reviewRange: scopeResult,
     scope,
+    ...(designContext ? { designContext } : {}),
     advisoryTarget: request.toolTurnBudget ?? 'Unspecified',
     invocationContext: invocation.context,
     promptPath: files.promptPath,

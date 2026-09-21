@@ -1,3 +1,3 @@
 # dispatch-design-review
 
-Standalone high-level technical-design authoring and review. Install with the repository skill installer. It shares provider preparation, parsing, rebuttal, and consensus machinery with plan review, but uses an architectural rubric. Review settlement records a governed design revision; increment execution is not yet available.
+Standalone high-level technical-design authoring and review. Install with the repository skill installer. It shares provider preparation, parsing, rebuttal, and consensus machinery with plan review, but uses an architectural rubric. Review settlement records a governed design revision; the orchestrator's approval then starts a phased execution run — increments execute one per invocation under the design-slug ledger identity, design-changing discoveries use transactional amendments, and a later invocation runs the final integration gate before design-run artifacts relocate together.

@@ -339,3 +339,59 @@ describe('checkpointDriftRemedy', () => {
     assert.match(message, /Rerun preparation; the prior checkpoint is retained\.$/);
   });
 });
+
+describe('fence-aware excluded-section stripping', () => {
+  const design = (body) => [
+    '# D',
+    '',
+    '## Architecture & Boundaries',
+    'content',
+    ...body,
+    '',
+    '## Alternatives & Decisions',
+    'choices',
+  ].join('\n');
+
+  it('strips the real Execution Status section', () => {
+    const hashes = semanticSectionHashes(design([
+      '## Execution Status',
+      'ready',
+    ]), { excludedSections: ['Execution Status'] });
+    assert.equal(Object.hasOwn(hashes.sectionHashes, 'Execution Status'), false);
+  });
+
+  it('does not treat a fenced Execution Status heading as the section start', () => {
+    const source = design([
+      '## Preparation',
+      '```md',
+      '## Execution Status',
+      'example inside a fence',
+      '```',
+    ]);
+    const hashes = semanticSectionHashes(source, { excludedSections: ['Execution Status'] });
+    assert.equal(Object.hasOwn(hashes.sectionHashes, 'Execution Status'), false);
+    assert.equal(Object.hasOwn(hashes.sectionHashes, 'Preparation'), true);
+    assert.match(hashes.sectionHashes['Preparation'] ? 'present' : 'missing', /present/);
+  });
+
+  it('fails closed on fenced ## lines inside the excluded section', () => {
+    // A stray fence pairing with a later one would otherwise hide governed sections from the hash.
+    const source = design(['## Execution Status', '```', 'rows', '## Governed', 'body', '```']);
+    assert.throws(
+      () => semanticSectionHashes(source, { excludedSections: ['Execution Status'] }),
+      /Fenced `## ` heading inside ## Execution Status/,
+    );
+  });
+
+  it('bounds the governed design excerpt', async () => {
+    const { governingDesignExcerpt } = await import('../../../skills/dispatch/scripts/review-preparation.mjs');
+    const excerpt = governingDesignExcerpt(design([
+      '## Execution Status',
+      'rows',
+    ]), { revision: `sha256:${'a'.repeat(64)}` });
+    assert.match(excerpt.revision, /^sha256:[a-f0-9]{64}$/);
+    assert.ok(excerpt.excerpt.length <= 4000);
+    assert.match(excerpt.excerpt, /## Architecture & Boundaries/);
+    assert.doesNotMatch(excerpt.excerpt, /## Execution Status/);
+  });
+});

@@ -493,6 +493,68 @@ export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir()) {
 // SECTION: Core resolution
 // ============================================================================
 
+/** Canonical increment artifact path:
+ *  `.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
+ *  Returns `{date, designRootSlug, incrementId, incrementSlug, kind}` or null. */
+const INCREMENT_ARTIFACT_PATTERN = /^\.scratch\/plan\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
+
+export function parseIncrementArtifactPath(value) {
+  const normalized = String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '');
+  const match = INCREMENT_ARTIFACT_PATTERN.exec(normalized);
+  if (!match) return null;
+  const [, date, designRootSlug, digits, incrementSlug, suffix] = match;
+  if (/(^|-)i\d{2}-/.test(incrementSlug) || /(^|-)i\d{2}$/.test(incrementSlug)) {
+    throw new Error(`Increment artifact path "${normalized}" is ambiguous: the increment slug contains a second -i${digits}- segment.`);
+  }
+  return {
+    date,
+    designRootSlug,
+    incrementId: `I${digits}`,
+    incrementSlug,
+    kind: suffix === 'plan' ? 'increment-plan' : 'increment-walkthrough',
+  };
+}
+
+/** Bounded off-date scan: a reserved-form artifact for the same root slug at another date
+ *  must not be silently shadowed by a new-dated phased artifact. */
+function assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate) {
+  const scratchDir = path.resolve(projectRoot, SCRATCH_DIR);
+  let entries;
+  try {
+    entries = fs.readdirSync(scratchDir);
+  } catch {
+    return;
+  }
+  const requestedRoot = kind === 'increment-plan' || kind === 'increment-walkthrough'
+    ? /^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-(?:[a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(slug)?.[1] ?? slug
+    : slug;
+  if (!requestedRoot) return;
+  for (const entry of entries) {
+    const dated = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/.exec(entry);
+    if (!dated) continue;
+    const [, fileDate, candidateSlug] = dated;
+    if (!isReservedOrdinarySlug(candidateSlug) || candidateSlug === slug) continue;
+    const reservedRoot = phasedRootSlug(candidateSlug);
+    if (reservedRoot && reservedRoot === requestedRoot && fileDate !== resolvedDate) {
+      throw new Error(`Phased ${kind} slug "${slug}" collides with reserved artifact "${entry}" for the same root slug "${requestedRoot}" at another date; use the design's canonical date and slug.`);
+    }
+  }
+}
+
+/** Root slug of a reserved-form slug: `X-design`, `X-integration(-walkthrough)`, or `X-i<NN>-…`. */
+function phasedRootSlug(candidateSlug) {
+  if (/^([a-z0-9]+(?:-[a-z0-9]+)*)-design$/.test(candidateSlug)) {
+    return /^([a-z0-9]+(?:-[a-z0-9]+)*)-design$/.exec(candidateSlug)[1];
+  }
+  if (/^([a-z0-9]+(?:-[a-z0-9]+)*)-integration(?:-walkthrough)?$/.test(candidateSlug)) {
+    return /^([a-z0-9]+(?:-[a-z0-9]+)*)-integration(?:-walkthrough)?$/.exec(candidateSlug)[1];
+  }
+  if (/^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-.+$/.test(candidateSlug)) {
+    return /^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-.+$/.exec(candidateSlug)[1];
+  }
+  return null;
+}
+
 /**
  * Resolves one artifact kind: native tier, then existing scratch, then existing
  * temp artifact (relocated scratch), then the deterministic scratch-new path.
@@ -505,6 +567,7 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
   if (PHASED_KINDS.includes(kind)) {
     const resolvedDate = date ?? localDate();
     const canonical = buildScratchPaths(resolvedDate, slug, kind);
+    assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate);
     const absolute = path.resolve(projectRoot, canonical);
     if (existsSync(absolute)) {
       const source = fs.readFileSync(absolute, 'utf8');

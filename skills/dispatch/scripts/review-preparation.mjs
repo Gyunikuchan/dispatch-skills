@@ -533,11 +533,38 @@ export function completeInvocationState(context) {
   return { state: advanced.state, cleanupPath: advanced.cleanupPath };
 }
 
+/** Fence-aware removal of one `## <section>` block: a fenced `## <section>` heading inside a
+ *  code fence never starts a section. A fenced `## ` line inside the excluded section fails
+ *  closed: a stray fence pairing with a later one would otherwise hide governed sections. */
+function stripExcludedSection(body, section) {
+  const lines = body.split('\n');
+  const out = [];
+  let fence = null;
+  let skipping = false;
+  for (const line of lines) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+    }
+    if (!fence && !skipping && /^##\s+/.test(line)) {
+      const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`^##\\s+${escaped}\\s*$`).test(line)) { skipping = true; continue; }
+    }
+    if (skipping) {
+      if (fence && /^##\s/.test(line)) throw new Error(`Fenced \`## \` heading inside ## ${section}`);
+      if (!fence && /^##\s/.test(line)) skipping = false;
+      else continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}
+
 export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
   let body = scanResolutionLog(source, { strict: true }).semanticBody;
   for (const section of excludedSections) {
-    const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    body = body.replace(new RegExp(`^##\\s+${escaped}\\s*$[\\s\\S]*?(?=^##\\s+|(?![\\s\\S]))`, 'gm'), '');
+    body = stripExcludedSection(body, section);
   }
   if (excludedSections.length > 0) {
     body = body.normalize('NFC').replace(/\r\n?/g, '\n').replace(/\s+$/, '');
@@ -569,6 +596,44 @@ export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
   }
   flush();
   return { contentHash: sha256(body), sectionHashes: sections };
+}
+
+/** Shared governed-design excerpt: strips the dispatch frontmatter, the resolution log, and
+ *  `## Execution Status` (fence-aware at both boundaries), then bounds the remaining governed
+ *  content per section (each heading plus its first lines) and pairs the excerpt with the
+ *  explicit approved revision and the recomputed governed hash. */
+export function governingDesignExcerpt(source, { revision = null, maxChars = 4000, maxLinesPerSection = 12 } = {}) {
+  const { contentHash } = semanticSectionHashes(source, { excludedSections: ['Execution Status'] });
+  const semantic = scanResolutionLog(source, { strict: false }).semanticBody;
+  const withoutFrontmatter = semantic.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '');
+  const lines = withoutFrontmatter.split('\n');
+  const excerptLines = [];
+  let fence = null;
+  let skipping = false;
+  let linesInSection = 0;
+  for (const line of lines) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (marker) {
+      if (!fence) fence = marker[1];
+      else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
+    }
+    if (!fence && !skipping && /^##\s+Execution Status\s*$/.test(line)) { skipping = true; continue; }
+    if (skipping) {
+      if (!fence && /^##\s/.test(line)) skipping = false;
+      else continue;
+    }
+    if (/^##\s/.test(line) && !fence) {
+      excerptLines.push('');
+      linesInSection = 0;
+    } else if (!fence && ++linesInSection > maxLinesPerSection) {
+      continue;
+    }
+    excerptLines.push(line);
+    if (excerptLines.join('\n').length >= maxChars) break;
+  }
+  let excerpt = excerptLines.join('\n').replace(/\s+$/, '');
+  if (excerpt.length > maxChars) excerpt = `${excerpt.slice(0, maxChars)}…`;
+  return { revision, governedHash: contentHash, excerpt };
 }
 
 export function createDispatchFiles({

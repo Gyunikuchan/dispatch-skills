@@ -25,7 +25,7 @@ Canonical scratch artifacts are `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and
 
 ## Evidence and finality
 
-Reports arrive as schema JSON or prose, whether direct, reserve, or native fallback. Fallback is a
+Reports arrive as schema JSON or prose. Arrivals are read identically whether direct, reserve, or native fallback. Fallback is a
 transport replacement only: capture its final response in the failed slot's normal report channel,
 preserve the candidate/source identity with fallback metadata, and perform the same parse,
 verification, adjudication, consensus, resolution-log, and checkpoint sequence. Restate a report
@@ -103,3 +103,20 @@ walkthrough are moving to OS temp and may be deleted by the OS.` Report every de
 ## Technical-design review
 
 `design-review` uses the shared preparation, dispatch, parsing, rebuttal, consensus, and checkpoint machinery with a distinct architectural rubric. Technical designs remain scratch-only and are retained at the durable approval stop; ordinary successful relocation is unchanged.
+
+## Implementation-plan reviews and governed design excerpts
+
+Increment implementation plans are ordinary `plan`-kind reviews with design traceability. When an
+orchestrator supplies explicit `designPath`/`designRevision`/`incrementId` request fields, both
+review skills attach a bounded approved-design excerpt through the single-sourced
+`governingDesignExcerpt` helper (`dispatch/scripts/review-preparation.mjs`): the excerpt strips
+`## Execution Status` (fence-aware at both boundaries) and the resolution log, bounds its length,
+and pairs the excerpt with the explicit revision and the recomputed governed hash. Reviewers of
+increment plans additionally check one increment's concrete files and symbols, sequencing, error
+behavior, prerequisite evidence, exact verification, and bounded blast radius. Ledger identity is
+never derived from artifact filenames; it comes only from explicit paths plus the design/ledger
+slug. For final integration, code-review preparation accepts an explicit `allowedPaths` set
+restricting range review to the ledger-owned path union plus owned working-tree changes, and a
+`baseRevision` (the ledger `run-start` baseline commit) replacing the merge-base; a non-ancestor
+baseline fails closed. A zero-path owned intersection is a
+fail-closed integration diagnostic distinct from the no-changes `empty` outcome.
