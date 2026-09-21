@@ -70,7 +70,7 @@ Differentiate human documentation, agent execution contracts, and maintainer not
 
 ## Authoring & Cross-Platform Standards
 
-Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`.agents/AGENTS.md`, `SKILL.md`, reference docs).
+Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`AGENTS.md`, `SKILL.md`, reference docs).
 
 Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
 

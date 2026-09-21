@@ -49,7 +49,7 @@ Prints the next open findings — highest severity first, grouped by the file th
 |---|---|
 | The code still matches the claim | leave `open` — it goes into step 3 |
 | The code contradicts the claim, or a later commit already fixed it | `set <id> false-positive --note "<the contradicting line or commit>"` |
-| The proposal is one of several defensible designs, changes a public interface, adds a dependency, or trades off against a pillar in `.agents/AGENTS.md` | `set <id> decision --note "<the question, and your recommendation>"` |
+| The proposal is one of several defensible designs, changes a public interface, adds a dependency, or trades off against a pillar in `AGENTS.md` | `set <id> decision --note "<the question, and your recommendation>"` |
 | Real, but out of this run's scope (needs another OS, another repo, a CLI you cannot reach) | `set <id> deferred --note "<what would settle it>"` |
 
 A finding whose note begins `dispatched` was handed to `implement-dispatch` by an earlier run that did not get to record the result. Check the cited location against the tree before re-dispatching it — the fix may already be there.
@@ -74,7 +74,7 @@ node <skill>/scripts/status.mjs set A-3 open --note "dispatched <run or batch la
 
 Without it the batch has no identity in the report between dispatch and step 4's `set … fixed`: a run interrupted in that window makes step 2's `batch` reprint the already-fixed findings byte-identically, and the work gets dispatched twice.
 
-Then hand the still-`open` findings of this batch to `implement-dispatch`, quoting each finding's ID, Location, Claim and Proposal in the ask, plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `.agents/AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
+Then hand the still-`open` findings of this batch to `implement-dispatch`, quoting each finding's ID, Location, Claim and Proposal in the ask, plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
 
 ```
 /implement-dispatch <level>: Fix audit findings A-3, A-12, A-14 from .scratch/audits/<run>-audit.md

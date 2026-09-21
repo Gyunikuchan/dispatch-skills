@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 /**
- * Guards the repo's unidirectional dependency flow (`.agents/AGENTS.md` §
+ * Guards the repo's unidirectional dependency flow (`AGENTS.md` §
  * Architecture & Dependency Invariants):
  *   implement-dispatch -> dispatch-plan-review, dispatch-code-review, dispatch
  *   dispatch-plan-review, dispatch-code-review -> dispatch
@@ -104,7 +104,7 @@ describe('dependency direction guard', () => {
   });
 
   it('no shipped skill markdown hard-codes a host install path', () => {
-    // `.agents/AGENTS.md` § Architecture permits a relative link to a sibling inside the one
+    // `AGENTS.md` § Architecture permits a relative link to a sibling inside the one
     // skills directory, but never a host-specific install path: those break the moment the skill
     // is installed under a different host's directory name.
     const hostPaths = /(?:\.claude|\.agents|\.github)\/skills\/|\.opencode\/skill\//g;

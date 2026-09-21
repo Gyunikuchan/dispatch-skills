@@ -8,7 +8,7 @@ metadata:
 
 # Audit Dispatch Skills
 
-A **report-only** audit of the `dispatch-skills` repository. The standard is `.agents/AGENTS.md`; skills are verified for behavioral flow, correctness, and goal fulfillment; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
+A **report-only** audit of the `dispatch-skills` repository. The standard is `AGENTS.md`; skills are verified for behavioral flow, correctness, and goal fulfillment; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
 
 Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start. `<skill>` is this skill's own directory, which differs per host:
 

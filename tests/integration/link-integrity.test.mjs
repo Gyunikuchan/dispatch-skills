@@ -20,7 +20,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const SCAN_FILES = [
   path.join(REPO_ROOT, 'README.md'),
-  path.join(REPO_ROOT, '.agents', 'AGENTS.md'),
+  path.join(REPO_ROOT, 'AGENTS.md'),
 ];
 
 // `skills/**/*.md` and every repo-authored `.agents/skills/*/**/*.md`

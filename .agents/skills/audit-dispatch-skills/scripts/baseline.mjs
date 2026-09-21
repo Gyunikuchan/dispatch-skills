@@ -172,7 +172,7 @@ export function authoredSkillDirs(root) {
 function authoredDocs(root) {
   return [
     path.join(root, 'README.md'),
-    path.join(root, '.agents', 'AGENTS.md'),
+    path.join(root, 'AGENTS.md'),
     ...walk(path.join(root, 'skills')),
     ...authoredSkillDirs(root).flatMap(walk),
   ].filter((f) => f.endsWith('.md') && fs.existsSync(f));
