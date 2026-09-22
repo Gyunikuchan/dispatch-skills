@@ -345,8 +345,8 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
 
 /**
  * Runs a batch's targets concurrently, substituting ordered reserves for failed non-orchestrator
- * targets. `options.onSlot(record, exit)` fires once per launched slot, in target order with each
- * target's substitutes after it, so per-slot output stays deterministic.
+ * targets. `options.onSlot(record, exit)` fires as each launched slot terminates; reserve outcomes
+ * follow the failed target they replace.
  *
  * @param {{ targets: object[], reserves: object[] }} batch
  * @param {object} options dispatchTask options plus `level` and optional `onSlot`
@@ -358,14 +358,17 @@ export async function dispatchBatch(batch, options, config) {
   const resolved = resolveReadDelegates(config, taskOptions.level ?? 'medium');
   const reserves = [...batch.reserves];
   const orchestrator = normalizeOrchestrator(taskOptions.orchestrator || detectOrchestrator());
-  const outcomes = await Promise.all(batch.targets.map(entry => runBatchEntry(entry, taskOptions, config, resolved)));
+  const outcomes = await Promise.all(batch.targets.map(async entry => {
+    const outcome = await runBatchEntry(entry, taskOptions, config, resolved);
+    onSlot?.(outcome.record, outcome.exit);
+    return outcome;
+  }));
   const records = [];
   const failures = [];
   let unresolved = 0;
   const integrityStop = () =>
     Object.assign(new Error('Batch dispatch stopped on an integrity failure.'), { code: 'INTEGRITY_VIOLATION' });
   for (const outcome of outcomes) {
-    onSlot?.(outcome.record, outcome.exit);
     if (outcome.ok) {
       records.push(outcome.record);
       continue;

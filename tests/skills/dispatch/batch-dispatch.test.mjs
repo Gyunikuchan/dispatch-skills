@@ -136,6 +136,36 @@ describe('dispatch batch manifest', () => {
     assert.throws(() => loadBatchFile(oversized, RESOLVED), /exceeds 64 KiB/);
   });
 
+  it('emits a terminal slot before slower peers complete', async () => {
+    let releaseSlow;
+    const slow = new Promise((resolve) => { releaseSlow = resolve; });
+    mock.method(providerRunners, 'claude', async () => ({
+      provider: 'claude', stdout: '', stderr: 'quota', exitCode: 1, failureKind: 'quota',
+      logFile: path.join(root, 'claude.log'), truncated: null, metricsAttempts: [],
+    }));
+    mock.method(providerRunners, 'agy', async () => {
+      await slow;
+      return {
+        provider: 'agy', stdout: 'review', stderr: '', exitCode: 0, failureKind: null,
+        logFile: path.join(root, 'agy.log'), truncated: null, metricsAttempts: [],
+      };
+    });
+    const batch = loadBatchFile(writeBatch({
+      targets: [entry(), entry({ candidateId: 'code-review:agy:0', platform: 'agy' })],
+      reserves: [],
+    }), RESOLVED);
+    const seen = [];
+    const running = dispatchBatch(batch, {
+      prompt: 'Review', files: [], configPath: 'test-config', orchestrator: 'claude',
+      onSlot: (record) => seen.push(record.sourceKey),
+    }, CONFIG);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(seen, ['code-review:R1:claude:0']);
+    releaseSlow();
+    await running;
+    assert.deepEqual(seen, ['code-review:R1:claude:0', 'code-review:R1:agy:0']);
+  });
+
   it('runs targets in order and substitutes the first reserve', async () => {
     mock.method(providerRunners, 'claude', async () => ({
       provider: 'claude',

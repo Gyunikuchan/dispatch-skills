@@ -58,10 +58,38 @@
         }
       }
     },
+    "replyOnly": {
+      "type": "boolean"
+    },
     "keys": {
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "earlyFallbacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["slot", "promptPath", "outputPath", "descriptor"],
+        "properties": {
+          "slot": { "type": "string", "minLength": 1 },
+          "promptPath": { "type": "string", "minLength": 1 },
+          "outputPath": { "type": "string", "minLength": 1 },
+          "descriptor": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sourceKey", "agentType", "model", "reasoningEffort", "substitutesFor"],
+            "properties": {
+              "sourceKey": { "type": "string", "minLength": 1 },
+              "agentType": { "type": "string", "minLength": 1 },
+              "model": { "type": "string", "minLength": 1 },
+              "reasoningEffort": { "type": "string", "minLength": 1 },
+              "substitutesFor": { "type": ["string", "null"] }
+            }
+          }
+        }
       }
     }
   }

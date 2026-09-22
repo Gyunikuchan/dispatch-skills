@@ -8,7 +8,31 @@
     {
       "type": "object",
       "additionalProperties": false,
-      "properties": {}
+      "properties": {
+        "earlyFallbacks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["slot", "outputPath", "captured", "actual"],
+            "properties": {
+              "slot": { "type": "string", "minLength": 1 },
+              "outputPath": { "type": "string", "minLength": 1 },
+              "captured": { "const": true },
+              "actual": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["agentType", "model", "reasoningEffort"],
+                "properties": {
+                  "agentType": { "type": "string", "minLength": 1 },
+                  "model": { "type": "string", "minLength": 1 },
+                  "reasoningEffort": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

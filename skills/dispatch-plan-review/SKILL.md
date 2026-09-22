@@ -35,8 +35,9 @@ Pins use `dispatch` grammar. Preparation classifies unambiguous trailing text.
    settling decision-changing ambiguities one focused question at a time, then prepare again.
 3. On `decision-required`, ask only when non-empty `choices` are present. Report `plan-lint`
    diagnostics and stop; never ask or replay that decision.
-4. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
-   target/reserve/fallback outcome, retaining paths still needed. Classify missing runner results
+4. On `ready`, execute only `dispatch.argv` in the background and follow `review.md`'s one-shot
+   early-fallback launch protocol. Await every terminal target/reserve/fallback outcome, retaining
+   paths still needed. Classify missing runner results
    through [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
 
 **Done when:** preparation is ready, the exact manifest argv is launched, and outcomes are

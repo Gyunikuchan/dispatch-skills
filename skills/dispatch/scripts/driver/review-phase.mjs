@@ -303,7 +303,13 @@ async function resolvePolicy(config, levelInfo, invocation) {
   const flow = resolveFlow({ ...options, livenessSource: source }, liveness, effective)[phase];
   const entry = (target) => {
     const index = Number(target.candidateId.split(':').at(-1));
-    return { candidateId: target.candidateId, platform: target.platform, candidateIndex: index };
+    return {
+      candidateId: target.candidateId,
+      platform: target.platform,
+      candidateIndex: index,
+      ...(target.model ? { model: target.model } : {}),
+      ...(target.effort ? { effort: target.effort } : {}),
+    };
   };
   return {
     configured: levelInfo.configured,
@@ -317,11 +323,12 @@ async function resolvePolicy(config, levelInfo, invocation) {
 // SECTION: preparation and waves
 
 function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], packetPath = null, keys = [] }) {
+  const dispatchEntry = ({ candidateId, platform, candidateIndex }) => ({ candidateId, platform, candidateIndex });
   const request = {
     mode: 'orchestrated',
     orchestrator: state.invocation.orchestrator,
-    targets,
-    reserves,
+    targets: targets.map(dispatchEntry),
+    reserves: reserves.map(dispatchEntry),
   };
   if (state.invocation.orchestratorModel) request.orchestratorModel = state.invocation.orchestratorModel;
   if (state.invocationContext) request.invocationContext = state.invocationContext;
@@ -385,20 +392,56 @@ function prepareWave(state, type, rebuttal = null) {
   const round = Number(manifest.roundId.split(':R')[1]);
   if (type === 'review') state.reviewWaves += 1;
   if (type === 'final') state.finalDone = true;
+  const earlyFallbacks = state.policy.targets
+    .filter((target) => target.platform === state.invocation.orchestrator && target.model && target.effort)
+    .map((target, index) => {
+      const sourceKey = `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
+      return {
+        slot: sourceKey,
+        promptPath: manifest.promptPath,
+        outputPath: runFile(state, `early-fallback-${index + 1}.txt`),
+        descriptor: {
+          sourceKey,
+          agentType: NATIVE_AGENT_TYPES[target.platform] ?? 'explore',
+          model: target.model,
+          reasoningEffort: target.effort,
+          substitutesFor: null,
+        },
+      };
+    });
   state.wave = {
     type,
     round,
     argv: [...manifest.dispatch.argv, '--level', state.level],
     outputPath: manifest.dispatch.outputPath,
     promptPath: manifest.promptPath,
+    earlyFallbacks,
     retried: false,
     keys: rebuttal?.keys ?? null,
   };
   return launchAction(state);
 }
 
+function launchReplyAction(state, error) {
+  const action = {
+    ...state.pending,
+    replyOnly: true,
+    error,
+    guidance: ['The wave is complete; do not rerun argv. Correct only the earlyFallbacks reply and call --next again.'],
+  };
+  REEMITTED.add(action);
+  return action;
+}
+
 function launchAction(state, error) {
-  const guidance = ['Run argv as one background command, wait for it to exit, then call --next with no --input.'];
+  const guidance = state.wave.earlyFallbacks.length > 0
+    ? [
+      'Run argv as one background command. After exactly 5 seconds, inspect its streamed slot lines once; do not poll again.',
+      'For every failed slot matching earlyFallbacks, immediately launch its native fallback in one parallel tool-call round while the wave continues.',
+      'Return only successful non-empty captures with exact descriptor metadata. Omit an unproductive launch so ordinary post-wave fallback can retry it.',
+      'After the wave and launched fallbacks finish, call --next once with {"earlyFallbacks":[...]} (empty when none succeeded).',
+    ]
+    : ['Run argv as one background command, wait for it to exit, then call --next with no --input.'];
   if (state.wave.type === 'rebuttal') {
     guidance.push('Delegates answer each key: CONFIRM accepts the rejection, REBUT keeps the finding live, INTENT-DISPUTE records a dispute.');
   }
@@ -406,11 +449,12 @@ function launchAction(state, error) {
     argv: state.wave.argv,
     wave: { type: state.wave.type, round: state.wave.round },
     ...(state.wave.keys ? { keys: state.wave.keys } : {}),
+    ...(state.wave.earlyFallbacks.length > 0 ? { earlyFallbacks: state.wave.earlyFallbacks } : {}),
     ...(error ? { error } : {}),
   }, guidance);
 }
 
-function onLaunch(state) {
+function onLaunch(state, reply) {
   let envelope = null;
   try {
     const text = fs.readFileSync(state.wave.outputPath, 'utf8');
@@ -437,10 +481,25 @@ function onLaunch(state) {
       substitutesFor: record.substitutesFor ?? null,
     };
   }
+  const earlyBySlot = new Map((reply?.earlyFallbacks ?? []).map((fallback) => [fallback.slot, fallback]));
+  const failuresBySlot = new Map((envelope.failures ?? []).map((failure) => [failure.sourceKey, failure]));
+  for (const [slot, fallback] of earlyBySlot) {
+    const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === slot);
+    const actual = fallback.actual;
+    if (!planned || !failuresBySlot.has(slot) || actual.agentType !== planned.descriptor.agentType || actual.model !== planned.descriptor.model || actual.reasoningEffort !== planned.descriptor.reasoningEffort) {
+      return launchReplyAction(state, `Early fallback metadata or failed-slot identity does not match the descriptor for ${slot}.`);
+    }
+    const text = fs.existsSync(fallback.outputPath) ? fs.readFileSync(fallback.outputPath, 'utf8') : '';
+    if (!text.trim()) earlyBySlot.delete(slot);
+    else fallback.text = text;
+  }
   const unresolved = (envelope.failures ?? []).filter((failure) =>
-    !failure.substitutesFor && !envelope.targets.some((record) => record.substitutesFor === failure.sourceKey));
+    !earlyBySlot.has(failure.sourceKey) && !failure.substitutesFor && !envelope.targets.some((record) => record.substitutesFor === failure.sourceKey));
   state.collect = {
-    reports: envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
+    reports: [
+      ...envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
+      ...[...earlyBySlot].map(([sourceKey, fallback]) => ({ sourceKey, text: fallback.text, fallback: true })),
+    ],
     sourceMap,
     queue: unresolved.map((failure) => ({
       sourceKey: failure.sourceKey,
@@ -450,8 +509,20 @@ function onLaunch(state) {
       effort: failure.effort ?? null,
       substitutesFor: failure.substitutesFor ?? null,
     })),
-    fallbackTried: [],
+    fallbackTried: [...earlyBySlot.keys()],
   };
+  for (const [sourceKey, fallback] of earlyBySlot) {
+    const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
+    state.collect.sourceMap[sourceKey] = {
+      provider: failure?.platform ?? state.invocation.orchestrator,
+      candidateIndex: failure?.candidateIndex ?? Number(sourceKey.split(':').at(-1)),
+      model: fallback.actual.model,
+      effort: fallback.actual.reasoningEffort,
+      status: 'fallback',
+      session: null,
+      substitutesFor: null,
+    };
+  }
   return processCollected(state);
 }
 

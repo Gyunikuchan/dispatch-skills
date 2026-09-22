@@ -278,6 +278,7 @@ const DEFAULT_POLICY = {
   waveResults: () => allProviders(report()),
   // `true` simulates a wave process that exited without writing its envelope.
   skipLaunch: () => false,
+  launchReply: () => undefined,
   rule: (finding) => ({ status: 'accepted', scope: 'in-scope' }),
   fix: () => undefined,
   restate: () => null,
@@ -380,12 +381,12 @@ export function drive(fixture, {
     switch (action.action) {
       case 'launch': {
         assert.ok(isDispatchArgv(action.argv), `launch argv must be a dispatch.mjs invocation: ${JSON.stringify(action.argv)}`);
-        if (!policy.skipLaunch(action, ctx)) {
+        if (!action.replyOnly && !policy.skipLaunch(action, ctx)) {
           argvLog.push(action.argv);
           const res = runLaunch(fixture, action.argv, { cwd, results: policy.waveResults(action, ctx) });
           ctx.lastLaunch = res;
         }
-        input = undefined;
+        input = action.earlyFallbacks ? policy.launchReply(action, ctx) ?? { earlyFallbacks: [] } : undefined;
         break;
       }
       case 'adjudicate':

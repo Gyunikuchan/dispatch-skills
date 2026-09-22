@@ -195,6 +195,109 @@ describe('scripted review paths (SC5)', () => {
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 
+  it('captures a same-platform fallback started during the wave without requesting it again', () => {
+    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: (action) => {
+          assert.equal(action.earlyFallbacks.length, 1);
+          assert.ok(action.guidance.some((line) => /exactly 5 seconds/i.test(line)));
+          assert.ok(action.guidance.some((line) => /do not poll again/i.test(line)));
+          const [fallback] = action.earlyFallbacks;
+          fs.writeFileSync(fallback.outputPath, report([planFinding({ defect: 'early-fallback defect.' })]));
+          return { earlyFallbacks: [{
+            slot: fallback.slot,
+            outputPath: fallback.outputPath,
+            captured: true,
+            actual: {
+              agentType: fallback.descriptor.agentType,
+              model: fallback.descriptor.model,
+              reasoningEffort: fallback.descriptor.reasoningEffort,
+            },
+          }] };
+        },
+      },
+    });
+    assert.equal(run.trace.some((action) => action.action === 'native-fallback'), false);
+    assert.ok(run.trace.find((action) => action.action === 'adjudicate').findings.some((finding) => /early-fallback/.test(finding.defect)));
+    assert.ok(Object.values(readLog(plan).rounds[0].sourceMap).some((source) => source.status === 'fallback'));
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('re-requests only corrected early fallback metadata without relaunching the wave', () => {
+    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const plan = writePlan(repo.dir);
+    let replies = 0;
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: (action) => {
+          const [fallback] = action.earlyFallbacks;
+          fs.writeFileSync(fallback.outputPath, report());
+          replies++;
+          return { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true, actual: {
+            agentType: fallback.descriptor.agentType,
+            model: fallback.descriptor.model,
+            reasoningEffort: replies === 1 ? 'wrong' : fallback.descriptor.reasoningEffort,
+          } }] };
+        },
+      },
+    });
+    assert.equal(launches(run.trace).length, 2);
+    assert.match(launches(run.trace)[1].guidance[0], /do not rerun argv/i);
+    assert.equal(run.argvLog.filter((argv) => argv.includes('--batch-file')).length, 1);
+  });
+
+  it('queues an empty early capture for ordinary post-wave fallback', () => {
+    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: (action) => {
+          const [fallback] = action.earlyFallbacks;
+          return { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true, actual: {
+            agentType: fallback.descriptor.agentType, model: fallback.descriptor.model, reasoningEffort: fallback.descriptor.reasoningEffort,
+          } }] };
+        },
+      },
+    });
+    assert.ok(run.trace.some((action) => action.action === 'native-fallback'));
+    assert.equal(run.done.outcome, 'complete');
+  });
+
+  it('rejects an early fallback claimed for a successful slot', () => {
+    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const plan = writePlan(repo.dir);
+    let replies = 0;
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        launchReply: (action) => {
+          replies++;
+          if (replies > 1) return { earlyFallbacks: [] };
+          const [fallback] = action.earlyFallbacks;
+          fs.writeFileSync(fallback.outputPath, report());
+          return { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true, actual: {
+            agentType: fallback.descriptor.agentType, model: fallback.descriptor.model, reasoningEffort: fallback.descriptor.reasoningEffort,
+          } }] };
+        },
+      },
+    });
+    assert.match(launches(run.trace)[1].error, /failed-slot identity/);
+    assert.equal(run.argvLog.filter((argv) => argv.includes('--batch-file')).length, 1);
+    assert.equal(run.done.outcome, 'complete');
+  });
+
   it('native fallback: an unresolved slot with no reserve goes to native-fallback and is re-read', () => {
     const { fixture, repo } = setup(config({}, { agy: DELEGATES.agy }));
     const plan = writePlan(repo.dir);

@@ -89,12 +89,16 @@ contract.
 ## Wave and lifecycle
 
 Launch only preparation-manifest argv directly as the background command, as-is, so `[dispatch]`
-banners stream live (a buffering wrapper such as `spawnSync` in `node -e` hides them); yield and await every launched
-target or reserve, then read results from `dispatch.outputPath` (or the task output when the
-runner warns it fell back to stdout) before adjudication. Same-platform runner failure uses native
-read-only fallback; other targets consume ordered reserves first. Configuration, membership, and
-integrity failures are terminal. Preserve candidate IDs; record effective sources and failed
-attempts separately.
+banners and terminal slot lines stream live (a buffering wrapper such as `spawnSync` in `node -e`
+hides them). When the launch action supplies `earlyFallbacks`, inspect those lines exactly once
+5 seconds after launch. Immediately launch every visible terminal failure matching the host
+platform as parallel native fallbacks, then await the continuing wave and launched fallbacks
+without further polling. Return only successful non-empty captures in the launch reply; omission
+routes an unproductive launch through ordinary post-wave fallback. Failures arriving
+after that inspection take the ordinary post-wave fallback. Other targets consume ordered
+reserves first. Read results from `dispatch.outputPath` (or documented stdout fallback) before
+adjudication. Configuration, membership, and integrity failures are terminal. Preserve candidate
+IDs; record effective sources and failed attempts separately.
 
 Preparation context is invocation-bound. Checkpoint only after terminal outcomes, adjudication,
 verification, and consensus exit `0`: send `action: "checkpoint-preview"`, verify its observed

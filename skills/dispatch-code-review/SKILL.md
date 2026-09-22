@@ -40,8 +40,9 @@ Pins use `dispatch` grammar. Preparation resolves the shared artifact slug.
    verification inputs are complete.
 4. On `decision-required` (`walkthrough-inputs`), standalone asks once for the listed `missing`
    inputs and prepares again; an orchestrator stops with the corrective diagnostic.
-5. On `ready`, execute only `dispatch.argv` in the background and yield. Await every terminal
-   target/reserve/fallback outcome. Classify missing runner results through
+5. On `ready`, execute only `dispatch.argv` in the background and follow `review.md`'s one-shot
+   early-fallback launch protocol. Await every terminal target/reserve/fallback outcome. Classify
+   missing runner results through
    [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
 
 **Done when:** preparation is ready, the exact manifest argv is launched, and outcomes are

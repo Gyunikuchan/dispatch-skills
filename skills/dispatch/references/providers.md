@@ -163,7 +163,10 @@ artifacts: prune them only after this fallback consumes them or reaches a termin
 channel, the caller has processed it through the same pipeline as a direct result, and its fallback
 source metadata and reason are recorded.
 
-For an orchestrated review wave, a same-platform failure takes the native branch immediately.
+For an orchestrated multi-dispatch review wave, the launch action precomputes same-platform
+fallback descriptors. Inspect streamed terminal slot lines once 5 seconds after launch and start
+all matching failures as parallel native fallbacks while the wave continues; never poll again.
+A matching failure first observed after that inspection takes the native branch after the wave.
 Other targets may use ordered reserves before step 3; use each reserve at most once per wave and
 record `<failed target> → <reserve>: <reason>`.
 
