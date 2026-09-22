@@ -444,8 +444,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
           assert.match(error.message, /Cross-platform failure \(agy failed, host is copilot\)/);
           assert.match(error.message, /each failed platform's in-process native subagent/);
           assert.doesNotMatch(error.message, /copilot's own native subagent/);
-          assert.match(error.message, /Reuse these exact inputs unchanged — prompt file: tmp\/brief\.md/);
-          assert.match(error.message, /attachments: tmp\/walkthrough\.md/);
+          assert.match(error.message, /read this prompt file in full and follow it as the authoritative instructions: tmp\/brief\.md/i);
+          assert.match(error.message, /attachment paths: tmp\/walkthrough\.md/);
           assert.match(error.message, /prune them once this fallback consumes them or reaches a terminal outcome/);
           return true;
         },

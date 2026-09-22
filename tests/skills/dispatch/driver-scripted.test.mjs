@@ -205,6 +205,7 @@ describe('scripted review paths (SC5)', () => {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback: (action) => {
           assert.ok(fs.existsSync(action.promptPath), 'fallback names the slot prompt');
+          assert.ok(action.guidance.some((line) => /read promptPath in full and follow it as the authoritative instructions/i.test(line)));
           assert.deepEqual(action.descriptor, {
             sourceKey: action.slot,
             agentType: 'research',

@@ -143,8 +143,10 @@ report the exact diagnostic instead.
    | `copilot` | `explore` |
    | `opencode` | `explore` |
 
-   Reuse the exact prompt and attachments. A launcher that cannot accept the descriptor excludes
-   and re-resolves the source; it never substitutes defaults, re-enters `dispatch`, or answers inline.
+   Native subagents share the orchestrator's environment. Instruct the subagent to read the generated
+   prompt file in full and follow it as the authoritative instructions; pass attachment paths named by
+   the action. A launcher that cannot accept the descriptor excludes and re-resolves the source; it
+   never substitutes defaults, re-enters `dispatch`, or answers inline.
 3. Treat fallback as a transport replacement, not a reduced review. Capture the complete final response in the failed slot's `dispatch.outputPath` (or its named
    stdout-result channel). Record the actual `agentType`, `model`, and `reasoningEffort`; reject
    missing or mismatched launch metadata. Preserve source identity, `substitutesFor`, and the
