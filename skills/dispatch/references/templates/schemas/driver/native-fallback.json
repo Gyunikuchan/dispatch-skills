@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: native-fallback",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "slot",
+    "promptPath",
+    "outputPath"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "native-fallback"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "slot": {
+      "type": "string",
+      "minLength": 1
+    },
+    "promptPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "outputPath": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

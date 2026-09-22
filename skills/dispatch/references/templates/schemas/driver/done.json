@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: done",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "outcome",
+    "summary"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "done"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "outcome": {
+      "enum": [
+        "complete",
+        "skipped",
+        "refused",
+        "failed",
+        "no-reviewable-changes",
+        "lint-defects"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "command": {
+      "type": "string"
+    },
+    "defects": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "checkpointed": {
+      "type": "boolean"
+    },
+    "artifactPath": {
+      "type": "string"
+    }
+  }
+}

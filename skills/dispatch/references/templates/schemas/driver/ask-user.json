@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: ask-user",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "question",
+    "text"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "ask-user"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "question": {
+      "enum": [
+        "rulings",
+        "opt-in",
+        "inputs"
+      ]
+    },
+    "text": {
+      "type": "string"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

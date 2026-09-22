@@ -55,6 +55,25 @@ describe('common: skill hash validation', () => {
     }
   });
 
+  it('generateSkillHashes recurses into scripts/ subdirectories such as scripts/driver (plan R1-F001)', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-driver-hash-'));
+    try {
+      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
+      fs.mkdirSync(path.join(tmpDir, 'scripts', 'driver'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'scripts', 'dispatch.mjs'), '// entry', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'scripts', 'driver', 'index.mjs'), '// router', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'scripts', 'driver', 'notes.txt'), 'x', 'utf8');
+      const manifest = generateSkillHashes(tmpDir);
+      assert.ok('scripts/dispatch.mjs' in manifest, 'existing flat keys are preserved');
+      assert.ok('scripts/driver/index.mjs' in manifest);
+      assert.ok(!('scripts/driver/notes.txt' in manifest));
+      assert.ok(!Object.keys(manifest).some((key) => key.includes('\\')),'forward-slash keys');
+      assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('generateSkillHashes recurses into nested references with forward-slash keys', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-nested-hash-'));
     try {

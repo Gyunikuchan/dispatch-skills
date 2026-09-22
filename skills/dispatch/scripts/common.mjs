@@ -1642,6 +1642,23 @@ export function hashFile(filePath) {
 }
 
 /**
+ * Renames `src` over `dest` atomically where the platform allows.
+ * NOTE: Windows rejects renaming onto an existing file with EPERM, so the destination is removed first there.
+ */
+export function safeRenameSync(src, dest) {
+  try {
+    fs.renameSync(src, dest);
+  } catch (err) {
+    if (err?.code === 'EPERM' && process.platform === 'win32') {
+      fs.rmSync(dest, { force: true });
+      fs.renameSync(src, dest);
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
  * Verifies skill file integrity against a manifest of expected hashes.
  * Returns an object with `valid` (boolean) and `violations` (array of paths).
  *
@@ -1696,9 +1713,10 @@ export function generateSkillHashes(skillDir) {
 
   const scriptsDir = path.join(skillDir, 'scripts');
   if (fs.existsSync(scriptsDir)) {
-    for (const entry of fs.readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs'))) {
-      const rel = `scripts/${entry}`;
-      entries[rel] = hashFile(path.join(skillDir, rel));
+    // Recursive so script subdirectories (scripts/driver/**) stay integrity-checked.
+    for (const entry of fs.readdirSync(scriptsDir, { recursive: true })) {
+      const rel = `scripts/${String(entry).split(path.sep).join('/')}`;
+      if (rel.endsWith('.mjs') && fs.statSync(path.join(skillDir, rel)).isFile()) entries[rel] = hashFile(path.join(skillDir, rel));
     }
   }
 

@@ -92,7 +92,7 @@ export function buildStubDispatchFixture(config) {
 }
 
 /** Orchestrator-detection variables scrubbed so the host running the tests never leaks in. */
-const ORCHESTRATOR_ENV = [
+export const ORCHESTRATOR_ENV = [
   'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
   'CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
   'COPILOT_AGENT', 'COPILOT_CLI_SESSION_ID', 'OPENCODE_PORT', 'OPENCODE_AGENT',

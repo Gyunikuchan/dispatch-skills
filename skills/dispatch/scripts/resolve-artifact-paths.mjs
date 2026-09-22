@@ -142,6 +142,16 @@ export function ledgerNamespacePath({ tempRoot = os.tmpdir(), repoHash, env = pr
   return path.join(tempRoot, `dispatch-skills-${userSlug({ env })}`, repoHash);
 }
 
+/**
+ * Repo-scoped home of relocated scratch artifacts: `<ledger namespace>/relocated/`, keyed by the
+ * project's Git root (the project root itself outside Git) so another repository's same-slug
+ * artifact never resolves here.
+ */
+export function relocatedArtifactsPath({ projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), env = process.env } = {}) {
+  const repoHash = repositoryRootHash(getRepositoryRoot(projectRoot) ?? projectRoot);
+  return path.join(ledgerNamespacePath({ tempRoot, repoHash, env }), 'relocated');
+}
+
 // ============================================================================
 // SECTION: Slug derivation
 // ============================================================================
@@ -557,7 +567,7 @@ function phasedRootSlug(candidateSlug) {
 
 /**
  * Resolves one artifact kind: native tier, then existing scratch, then existing
- * temp artifact (relocated scratch), then the deterministic scratch-new path.
+ * temp artifact (this repository's relocated scratch), then the deterministic scratch-new path.
  *
  * @param {'plan'|'walkthrough'} kind
  * @param {{ slug: string, date: string, projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
@@ -588,7 +598,7 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
   const existing = findExistingScratchArtifact(kind, slug, projectRoot);
   if (existing) return { tier: 'scratch-existing', path: existing, exists: true };
 
-  const existingTemp = findExistingTempArtifact(kind, slug, tempRoot);
+  const existingTemp = findExistingTempArtifact(kind, slug, relocatedArtifactsPath({ projectRoot, tempRoot }));
   if (existingTemp) return { tier: 'temp-existing', path: existingTemp, exists: true };
 
   return { tier: 'scratch-new', path: buildScratchPaths(date ?? localDate(), slug)[kind], exists: false };

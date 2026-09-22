@@ -1099,6 +1099,15 @@ function loadValidConfigOrExit() {
 }
 
 export async function main() {
+  // Driver entry points are flags, not subcommands, so a prompt starting with "run" stays a prompt.
+  // Checked before importing so plain `ask` runs never load the driver's review stack.
+  const args = process.argv.slice(2);
+  const driverSeparator = args.indexOf('--');
+  const head = driverSeparator === -1 ? args : args.slice(0, driverSeparator);
+  if (head.some((arg) => arg === '--run' || arg === '--next' || arg.startsWith('--run='))) {
+    const driver = await import('./driver/index.mjs');
+    process.exit(await driver.runDriver(args));
+  }
   const options = parseCommonArgs(process.argv, {
     booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
     valueFlags: DISPATCH_VALUE_FLAGS,
@@ -1387,6 +1396,17 @@ Options:
   --json                      Request structured JSON output (opencode provider only)
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
+
+Driver (each call prints one JSON action; see the dispatch skill):
+  --run <verb>                plan|design|review|implement (review only in this release); needs --orchestrator
+  --kind <kind>               Review kind plan|code|design (default: inferred from the argument)
+  --fix                       Apply accepted fixes (review is report-only by default)
+  --phases from:<phase>       Start phase for implement (rejected by review)
+  --next                      Advance a run started with --run
+  --state <file>              The stateFile named by the previous action
+  --input <json|@file>        Reply to the previous action (omit after launch)
+  --verbose                   Add report bodies and diagnostics to actions
+  -- <argument>               Review target: artifact path or Git range
 `);
 }
 

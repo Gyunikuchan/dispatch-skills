@@ -336,6 +336,15 @@ describe('resolution log scanner', () => {
       /dependsOn entries must be finding IDs/,
     );
 
+    // Multi-digit round IDs are valid dependsOn entries
+    assert.doesNotThrow(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R10-F001"],"verification":["npm test"],"reason":"test"}`),
+    );
+    assert.throws(
+      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R1d-F001"],"verification":["npm test"],"reason":"test"}`),
+      /dependsOn entries must be finding IDs/,
+    );
+
     // Invalid version
     assert.throws(
       () => scanResolutionLog(`${validEntry}\n  - application: {"v":2,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),

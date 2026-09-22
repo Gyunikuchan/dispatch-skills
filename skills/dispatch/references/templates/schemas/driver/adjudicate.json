@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: adjudicate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "round",
+    "findings"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "adjudicate"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "round": {
+      "type": "integer"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "key",
+          "sourceKeys"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "MUST",
+              "SHOULD",
+              "CONSIDER"
+            ]
+          },
+          "locus": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "defect": {
+            "type": "string"
+          },
+          "requiredChange": {
+            "type": "string"
+          },
+          "sourceKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "restate": {
+            "type": "boolean"
+          },
+          "reportPath": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

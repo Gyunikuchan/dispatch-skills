@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: verify",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "commands"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "verify"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

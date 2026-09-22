@@ -12,6 +12,11 @@ import {
   relocateScratchItem,
   relocateScratchPaths,
 } from '../../../skills/dispatch/scripts/relocate-scratch.mjs';
+import {
+  ledgerNamespacePath,
+  repositoryRootHash,
+  resolveArtifactPath,
+} from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 
 const SCRIPT_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -65,6 +70,68 @@ describe('relocate-scratch', () => {
       fs.mkdirSync(path.join(tmpDestDir, 'run.v2'), { recursive: true });
       const dest = resolveUniqueDest(tmpDestDir, 'run.v2', true);
       assert.match(path.basename(dest), /^run\.v2-\d+$/);
+    });
+  });
+
+  // O1: relocation targets the repo-scoped namespace `<tempRoot>/dispatch-skills-<user>/<repoHash>/relocated/`
+  // (repoHash of the cwd's Git root, or cwd itself outside Git), never flat os.tmpdir().
+  describe('repo-scoped destination (O1)', () => {
+    let tempRoot;
+    beforeEach(() => { tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-root-')); });
+    afterEach(() => { fs.rmSync(tempRoot, { recursive: true, force: true }); });
+
+    const scopedDir = (root) =>
+      path.join(ledgerNamespacePath({ tempRoot: root, repoHash: repositoryRootHash(tmpWorkspace) }), 'relocated');
+
+    it('defaults the destination to the repo-scoped relocated directory under tempRoot', () => {
+      const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-scoped.md');
+      fs.writeFileSync(srcFile, '# Scoped');
+      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace, tempRoot });
+      try {
+        assert.ok(dest);
+        assert.equal(path.dirname(dest), scopedDir(tempRoot));
+        assert.equal(fs.readFileSync(dest, 'utf8'), '# Scoped');
+        assert.ok(!fs.existsSync(path.join(tempRoot, '2026-09-14-scoped.md')), 'nothing lands in flat temp');
+      } finally {
+        if (dest) fs.rmSync(dest, { force: true });
+      }
+    });
+
+    it('defaults tempRoot to os.tmpdir() with the same repo-scoped layout', () => {
+      const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-default-root.md');
+      fs.writeFileSync(srcFile, '# Default');
+      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace });
+      try {
+        assert.ok(dest);
+        assert.equal(path.dirname(dest), scopedDir(os.tmpdir()));
+      } finally {
+        // Remove only the moved file: before the fix, dirname(dest) is os.tmpdir() itself.
+        if (dest) {
+          fs.rmSync(dest, { force: true });
+          // Non-recursive: removes only the now-empty per-test namespace directories.
+          for (const dir of [path.dirname(dest), path.dirname(path.dirname(dest))]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
+        }
+      }
+    });
+
+    it('a relocated walkthrough is found by the temp tier; a flat-temp stray is not', () => {
+      fs.writeFileSync(path.join(tempRoot, '2026-09-01-roundtrip-walkthrough.md'), '# stray');
+      const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-roundtrip-walkthrough.md');
+      fs.writeFileSync(srcFile, '# Walkthrough');
+      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace, tempRoot });
+      try {
+        const resolved = resolveArtifactPath('walkthrough', {
+          slug: 'roundtrip',
+          date: '2026-09-20',
+          projectRoot: tmpWorkspace,
+          tempRoot,
+          native: { orchestrator: null },
+        });
+        assert.equal(resolved.tier, 'temp-existing');
+        assert.equal(resolved.path, dest.split(path.sep).join('/'));
+      } finally {
+        if (dest) fs.rmSync(dest, { force: true });
+      }
     });
   });
 

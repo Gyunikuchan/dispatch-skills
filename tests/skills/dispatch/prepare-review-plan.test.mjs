@@ -9,6 +9,7 @@ import {
   planSnapshot,
   preparePlanReview,
 } from '../../../skills/dispatch/scripts/prepare-review.mjs';
+import { relocatedArtifactsPath } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 import { loadBatchFile } from '../../../skills/dispatch/scripts/dispatch.mjs';
 
 const BATCH_CONFIG = {
@@ -365,7 +366,10 @@ describe('plan review preparation', () => {
 
   it('reuses an existing relocated plan in OS temp rather than requiring authoring', () => {
     const repo = makeRepo();
-    const tempPlan = path.join(os.tmpdir(), `2026-09-20-sample-${Date.now()}.md`);
+    // The temp tier reads only this repository's relocated directory (O1).
+    const relocated = relocatedArtifactsPath({ projectRoot: repo });
+    fs.mkdirSync(relocated, { recursive: true });
+    const tempPlan = path.join(relocated, `2026-09-20-sample-${Date.now()}.md`);
     fs.writeFileSync(tempPlan, planBody);
     try {
       const manifest = preparePlanReview({
@@ -379,6 +383,8 @@ describe('plan review preparation', () => {
       cleanManifest(manifest);
     } finally {
       fs.rmSync(tempPlan, { force: true });
+      // Non-recursive: removes only the now-empty per-test namespace directories.
+      for (const dir of [relocated, path.dirname(relocated)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
     }
   });
 

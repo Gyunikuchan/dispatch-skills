@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver reply: delegate-write",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "envelope"
+  ],
+  "properties": {
+    "envelope": {
+      "type": "object"
+    }
+  }
+}

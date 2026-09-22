@@ -150,12 +150,19 @@ diagnostics.
 |---|---|
 | `-a <name>` / `--agent <name>` | Select an agent for the OpenCode provider only. |
 | `--json` | Request structured output from the OpenCode provider only. |
-| `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run. |
+| `-v` / `--verbose` | Show live provider traces while diagnosing a long-running run; with the driver, add report bodies and diagnostics to actions. |
 | `--max-buffer <MB>` | Raise the output buffer if a provider result is truncated. |
 | `--level <level>` | Resolve `read-delegates` level overrides (`low`–`max`; default `medium`). |
 | `--level-source <source>` | Record how the level was chosen: `explicit` or `classified`; requires `--level`. |
 | `--pins <pins>` | Launch one wave from provider keys, a count, or `all`, printing one JSON stdout line per slot. |
 | `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
+| `--run <verb>` | Start a script-driven run (`review` in this release; `plan`, `design`, and `implement` arrive later); prints one JSON action. Requires `--orchestrator`. |
+| `--kind <kind>` | Review kind for `--run review`: `plan`, `design`, or `code` (inferred from the argument when omitted). |
+| `--fix` | Let `--run review` apply accepted fixes; reviews are report-only without it. |
+| `--phases from:<phase>` | Start phase for `implement` runs (not accepted by `review`). |
+| `--next` | Advance a driver run by one action. |
+| `--state <file>` | The `stateFile` named by the previous driver action. |
+| `--input <json|@file>` | Reply to the previous driver action (omit after `launch`). |
 | `--output-file <path>` | Write the report (or batch envelope) to a file instead of stdout, so background output shows only run banners. |
 | `--orchestrator <name>` | Override automatic host-platform detection. |
 | `--orchestrator-model <model>` | Override automatic host-model detection. |

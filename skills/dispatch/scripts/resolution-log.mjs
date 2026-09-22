@@ -169,7 +169,7 @@ function applicationRecordProblem(record, entry, roundNumber) {
   if (!Array.isArray(record.dependsOn) || record.dependsOn.some((dep) => typeof dep !== 'string')) {
     return 'dependsOn must be an array of strings';
   }
-  if (record.dependsOn.some((dep) => !/^R[1-9]d*-F[0-9]{3,}$/.test(dep))) {
+  if (record.dependsOn.some((dep) => !/^R[1-9][0-9]*-F[0-9]{3,}$/.test(dep))) {
     return 'dependsOn entries must be finding IDs (R<n>-F<nnn>)';
   }
   if (!isSortedUnique(record.dependsOn)) {

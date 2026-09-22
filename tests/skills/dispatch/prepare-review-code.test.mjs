@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
+import { relocatedArtifactsPath } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 import { prepareCodeReview } from '../../../skills/dispatch/scripts/prepare-review.mjs';
 import { loadBatchFile } from '../../../skills/dispatch/scripts/dispatch.mjs';
 
@@ -83,7 +84,10 @@ describe('code review preparation', () => {
 
   it('reuses an existing relocated walkthrough in OS temp rather than generating a new one', () => {
     const repo = makeRepo();
-    const tempWalkthrough = path.join(os.tmpdir(), `2026-09-20-feature-walkthrough-${Date.now()}.md`);
+    // The temp tier reads only this repository's relocated directory (O1).
+    const relocated = relocatedArtifactsPath({ projectRoot: repo });
+    fs.mkdirSync(relocated, { recursive: true });
+    const tempWalkthrough = path.join(relocated, `2026-09-20-feature-walkthrough-${Date.now()}.md`);
     fs.writeFileSync(tempWalkthrough, '# Walkthrough — Existing in Temp\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
     try {
       const manifest = prepareCodeReview({
@@ -99,6 +103,8 @@ describe('code review preparation', () => {
       cleanupManifest(manifest);
     } finally {
       fs.rmSync(tempWalkthrough, { force: true });
+      // Non-recursive: removes only the now-empty per-test namespace directories.
+      for (const dir of [relocated, path.dirname(relocated)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
     }
   });
 

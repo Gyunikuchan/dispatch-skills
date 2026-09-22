@@ -65,6 +65,8 @@ sanitized, provider-attributed report with available session handles.
 | `--level-source` | `explicit` or `classified`; requires `--level`. |
 | `--pins` | Keys, count, or `all`: one wave. |
 | `--batch-file` | Caller-resolved wave manifest. |
+| `--run`, `--kind`, `--fix`, `--phases` | Driver start: one JSON action; `review` only for now. |
+| `--next`, `--state`, `--input` | Driver step: reply to the previous action. |
 | `--output-file` | Report or wave envelope file instead of stdout. |
 | `--response-schema-file` | Native JSON Schema output (Claude only). |
 | `--provider` | Provider pin; canonical key or alias. |
@@ -77,7 +79,7 @@ sanitized, provider-attributed report with available session handles.
 | `--doctor` | Diagnose config, level, candidates, phases. |
 | `--candidate-index` | Zero-based configured candidate; requires provider. |
 | `--json` | Structured output (opencode provider only). |
-| `-v`, `--verbose` | Interactive stderr trace. |
+| `-v`, `--verbose` | Interactive stderr trace; driver: fuller actions. |
 
 Each terminal dispatch appends one content-free line to
 `<tmp>/dispatch-telemetry-<username>/telemetry.jsonl`; `DISPATCH_TELEMETRY=0` disables it.

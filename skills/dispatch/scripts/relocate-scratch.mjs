@@ -2,13 +2,10 @@
 
 /**
  * @file relocate-scratch.mjs
- * @description Cross-platform utility for relocating scratch artifacts (.scratch/) to OS temp (os.tmpdir()).
+ * @description Cross-platform utility for relocating scratch artifacts (.scratch/) to this
+ * repository's OS-temp namespace (`<os.tmpdir()>/dispatch-skills-<user>/<repoHash>/relocated/`),
+ * where the temp tier of resolve-artifact-paths finds them.
  * Handles atomic moves, cross-device EXDEV fallbacks, collision avoidance, and workspace boundary checks.
- *
- * Deliberately imports nothing from common.mjs: a library import here would pay common's
- * import-time `git rev-parse` spawn (PROJECT_ROOT) for a four-function file that needs none
- * of it — so the module guard below is this file's own inline equivalent of common's
- * `isMainModule`, and stays one.
  */
 
 import fs from 'node:fs';
@@ -16,7 +13,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ensureLedgerNamespace } from './ledger.mjs';
+import { getRepositoryRoot, relocatedArtifactsPath, repositoryRootHash } from './resolve-artifact-paths.mjs';
+
 const HELP_TEXT = `relocate-scratch.mjs — Relocate workspace scratch files/directories to OS temp
+
+Destination: <os.tmpdir()>/dispatch-skills-<user>/<repoHash>/relocated/ (repoHash of the Git root).
 
 Usage:
   node relocate-scratch.mjs <path> [<path>...]
@@ -82,14 +84,15 @@ export function resolveUniqueDest(targetDir, baseName, isDirectory = false) {
 }
 
 /**
- * Relocates a single file or directory from .scratch to OS temp.
+ * Relocates a single file or directory from .scratch to the repo-scoped relocated directory.
  * @param {string} srcPath
  * @param {object} [options]
- * @param {string} [options.targetDir]
+ * @param {string} [options.targetDir] explicit destination; overrides the repo-scoped default
+ * @param {string} [options.tempRoot]
  * @param {string} [options.cwd]
  * @returns {string|null} Resolved destination path, or null if skipped.
  */
-export function relocateScratchItem(srcPath, { targetDir = os.tmpdir(), cwd = process.cwd() } = {}) {
+export function relocateScratchItem(srcPath, { targetDir, tempRoot = os.tmpdir(), cwd = process.cwd() } = {}) {
   const absSrc = path.resolve(cwd, srcPath);
   if (!fs.existsSync(absSrc)) {
     process.stderr.write(`[relocate-scratch] skipped: '${srcPath}' (not found)\n`);
@@ -100,6 +103,7 @@ export function relocateScratchItem(srcPath, { targetDir = os.tmpdir(), cwd = pr
     throw new Error(`Source path '${srcPath}' is outside the .scratch/ directory.`);
   }
 
+  targetDir ??= ensureRelocatedDir({ cwd, tempRoot });
   const stat = fs.statSync(absSrc);
   const isDir = stat.isDirectory();
   const baseName = path.basename(absSrc);
@@ -137,6 +141,15 @@ export function relocateScratchItem(srcPath, { targetDir = os.tmpdir(), cwd = pr
   }
 
   return dest;
+}
+
+/** Creates (private) and returns the relocated directory inside the ledger namespace. */
+function ensureRelocatedDir({ cwd, tempRoot }) {
+  const repoHash = repositoryRootHash(getRepositoryRoot(cwd) ?? cwd);
+  ensureLedgerNamespace({ tempRoot, repoHash });
+  const dir = relocatedArtifactsPath({ projectRoot: cwd, tempRoot });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return dir;
 }
 
 /**

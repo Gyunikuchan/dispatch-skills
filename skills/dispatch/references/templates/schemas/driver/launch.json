@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver action: launch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "action",
+    "stateFile",
+    "guidance",
+    "argv",
+    "wave"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "action": {
+      "const": "launch"
+    },
+    "stateFile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "guidance": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      }
+    },
+    "wave": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "round"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "review",
+            "rebuttal",
+            "final"
+          ]
+        },
+        "round": {
+          "type": "integer"
+        }
+      }
+    },
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

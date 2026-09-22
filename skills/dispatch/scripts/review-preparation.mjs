@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { verifySkillIntegrity } from './common.mjs';
+import { safeRenameSync, verifySkillIntegrity } from './common.mjs';
 import { RESPONSE_SCHEMA_PROVIDERS } from './dispatch.mjs';
 import {
   scanResolutionLog,
@@ -422,19 +422,6 @@ function contextFor(state) {
     generation: state.generation,
     token: state.token,
   };
-}
-
-function safeRenameSync(src, dest) {
-  try {
-    fs.renameSync(src, dest);
-  } catch (err) {
-    if (err?.code === 'EPERM' && process.platform === 'win32') {
-      fs.rmSync(dest, { force: true });
-      fs.renameSync(src, dest);
-    } else {
-      throw err;
-    }
-  }
 }
 
 function writeState(state, { exclusive = false } = {}) {

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dispatch driver reply: apply-fixes",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "clusters"
+  ],
+  "properties": {
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "clusterId",
+          "status",
+          "paths",
+          "note"
+        ],
+        "properties": {
+          "clusterId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "enum": [
+              "applied",
+              "failed"
+            ]
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
