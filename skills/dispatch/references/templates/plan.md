@@ -28,6 +28,10 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
 - [SC#] Checkable outcome.
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>`
+  - Evidence: <red|verify|review>
+  - Test rationale: <why retained RED is discriminating, stable, regression-bearing, proportionate, and behavioral; or why a new retained test is low-signal>
+  - Review: <artifact: path; scenario: bounded inspection; pass: observable condition> <!-- required only for review -->
+  - Enforcement infeasibility: <why deterministic enforcement is infeasible> <!-- required for critical review criteria -->
 
 ## Proposed Changes
 

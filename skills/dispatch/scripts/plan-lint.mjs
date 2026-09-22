@@ -83,7 +83,16 @@ export function lintPlan(source) {
     let current = null;
     const approved = new Set(records.filter(record => record.path).map(record => record.path));
     const finish = () => {
-      if (current && !current.hasMapping) defects.push(diagnostic('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
+      if (!current) return;
+      if (!current.hasMapping) defects.push(diagnostic('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
+      if (!current.evidence) defects.push(diagnostic('criterion-evidence', current.line, `Criterion ${current.id ?? 'without an ID'} requires exactly one Evidence mapping: red, verify, or review.`));
+      else if (!['red', 'verify', 'review'].includes(current.evidence)) defects.push(diagnostic('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidence}"; accepted classes are red, verify, review.`));
+      if (!current.testRationale) defects.push(diagnostic('criterion-test-rationale', current.line, 'Criterion requires a concrete Test rationale describing retained RED signal or why a new retained test is low-signal.'));
+      if (current.evidence === 'review' && !current.review) defects.push(diagnostic('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.'));
+      if (current.evidence === 'review' && current.review && !/(?:artifact|file|path)\s*:/i.test(current.review)) defects.push(diagnostic('criterion-review', current.reviewLine, 'Review must name the artifact with artifact:, file:, or path:.'));
+      if (current.evidence === 'review' && current.review && !/scenario\s*:/i.test(current.review)) defects.push(diagnostic('criterion-review', current.reviewLine, 'Review must name a bounded scenario with scenario:.'));
+      if (current.evidence === 'review' && current.review && !/(?:pass|observable)\s*:/i.test(current.review)) defects.push(diagnostic('criterion-review', current.reviewLine, 'Review must name the observable pass condition with pass: or observable:.'));
+      if (current.evidence === 'review' && current.critical && !current.enforcementRationale) defects.push(diagnostic('criterion-critical-review', current.line, 'Critical correctness, safety, recovery, durability, or protocol review evidence requires Enforcement infeasibility: <reason>.'));
     };
     for (const entry of lines.slice(start + 1, end)) {
       const item = /^(?:[-*+]|\d+[.)])\s+(.+)$/.exec(entry.text);
@@ -92,11 +101,11 @@ export function lintPlan(source) {
         const id = /^\[SC([1-9]\d*)\]\s+/.exec(item[1]);
         if (!id) {
           defects.push(diagnostic('criterion-id', entry.line, 'Success criterion requires a stable [SC#] identifier.'));
-          current = { line: entry.line, hasMapping: false };
+          current = { line: entry.line, hasMapping: false, critical: /\b(?:correctness|safety|recovery|durability|protocol)\b/i.test(item[1]) };
         } else {
           if (ids.has(id[1])) defects.push(diagnostic('criterion-id', entry.line, `Duplicate criterion SC${id[1]}.`));
           ids.add(id[1]);
-          current = { line: entry.line, hasMapping: false };
+          current = { id: `SC${id[1]}`, line: entry.line, hasMapping: false, critical: /\b(?:correctness|safety|recovery|durability|protocol)\b/i.test(item[1]) };
         }
         continue;
       }
@@ -116,6 +125,22 @@ export function lintPlan(source) {
         current.hasMapping = true;
         if (!/^`[^`]+`\s*$/.test(verify[1])) defects.push(diagnostic('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
       }
+      const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(entry.text);
+      if (evidence) {
+        if (current.evidence) defects.push(diagnostic('criterion-evidence', entry.line, 'Criterion requires exactly one Evidence mapping.'));
+        current.evidence = evidence[1].toLowerCase();
+        current.evidenceLine = entry.line;
+      }
+      const rationale = /^ {2,}[-*+] Test rationale:\s*(.*)$/.exec(entry.text);
+      if (rationale) {
+        if (current.testRationale) defects.push(diagnostic('criterion-test-rationale', entry.line, 'Criterion requires exactly one Test rationale.'));
+        if (rationale[1].trim().length < 12) defects.push(diagnostic('criterion-test-rationale', entry.line, 'Test rationale must concretely explain signal and regression value or why a retained test is low-signal.'));
+        current.testRationale = rationale[1].trim();
+      }
+      const review = /^ {2,}[-*+] Review:\s*(.*)$/.exec(entry.text);
+      if (review) { current.review = review[1].trim(); current.reviewLine = entry.line; }
+      const enforcement = /^ {2,}[-*+] Enforcement infeasibility:\s*(.*)$/.exec(entry.text);
+      if (enforcement) current.enforcementRationale = enforcement[1].trim();
     }
     finish();
   }

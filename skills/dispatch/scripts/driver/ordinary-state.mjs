@@ -47,13 +47,29 @@ export function ruling(state, key, decision, reason, status = 'resolved') {
   state.ordinary.rulings ??= [];
   state.ordinary.rulings.push(data);
 }
+function renderValidatedEvidence(text, ordinary) {
+  if (!ordinary?.implementationComplete || !ordinary.completionResults) return text;
+  const records = ordinary.completionResults.flatMap(result => result.criterionEvidence ?? []);
+  const trace = ordinary.criteria.map(criterion => {
+    const row = ordinary.envelope?.evidence?.find(item => typeof item === 'string' && item.startsWith(`CRITERION ${criterion.id} |`));
+    const parts = row?.split('|').map(item => item.trim()) ?? [];
+    const evidence = records.find(item => item.criterionId === criterion.id);
+    if (!row || (criterion.evidence !== 'red' && !evidence)) return `- [${criterion.id}] Pending — missing validated ${criterion.evidence} evidence.`;
+    const fresh = evidence ? `${evidence.evidenceClass}; ${evidence.reviewer}; ${evidence.scenario}; revision ${evidence.inspectedRevision}; ${evidence.observableResult}; limitations: ${evidence.limitations}` : `red; mutation epoch ${ordinary.mutationEpoch}`;
+    return `- [${criterion.id}] ${parts[1]} — production path: \`${parts[2]}\`; evidence: ${fresh}.`;
+  });
+  const manual = records.map(item => `- [${item.criterionId}] ${item.evidenceClass}; reviewer: ${item.reviewer}; scenario: ${item.scenario}; inspected revision: ${item.inspectedRevision}; observable result: ${item.observableResult}; limitations: ${item.limitations}; mutation epoch: ${item.mutationEpoch}.`);
+  text = text.replace(/## Outcome Traceability\n[\s\S]*?\n## Key Deviations/, `## Outcome Traceability\n${trace.join('\n')}\n\n## Key Deviations`);
+  text = text.replace(/## Verification & Validation\n[\s\S]*?\n## Outcome Traceability/, `## Verification & Validation\n### Manual Verification\n${manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.'}\n\n## Outcome Traceability`);
+  return text;
+}
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
   if (state.ordinary.checkpoint || state.reviewState?.kind === 'code' || state.riskState) return;
   const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
   const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`\n`;
-  const text = fs.readFileSync(state.walkthroughPath, 'utf8');
+  const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);
   fs.writeFileSync(state.walkthroughPath, MARKER.test(text) ? text.replace(MARKER, () => block) : text + block);
 }
 export function restoreEvidence(state) {

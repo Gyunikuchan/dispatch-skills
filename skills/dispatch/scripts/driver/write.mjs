@@ -26,11 +26,19 @@ export function writeAction(state) {
     attempt: data.attempt, model: write.models[write.candidate], effort: write.effort ?? null,
     platform: write.platform, cascadePosition: write.candidate, modelCascade: write.models,
     planPath: state.planPath, walkthroughPath: state.walkthroughPath,
-    paths: data.launch === 'tests-only' ? data.testPaths : data.approvedPaths,
+    paths: data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths,
+    criteria: (data.launch === 'tests-only' ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
+    packet: data.launch === 'tests-only' ? null : {
+      ...data.packet,
+      instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',
+      conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
+      governingPlan: state.planPath,
+      redGate: data.redGate ?? 'validated',
+    },
     evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
   } }, [
-    'Launch the configured native write subagent with the exact model and effort. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
-    data.launch === 'tests-only' ? 'Only edit classified test paths. Return RED_READY with one primary RED-MATRIX row per mapped criterion; the host must observe attributable RED before production.' : 'Implement approved paths only. Return COMPLETE with evidence; host verification and shared code review determine completion.',
+    'Launch the configured native write subagent with the exact model and effort. Pass the criteria and packet fields verbatim on retries and continuations. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
+    data.launch === 'tests-only' ? 'Only edit paths mapped to red criteria. Return RED_READY with one primary RED-MATRIX row per red criterion; the host must observe attributable RED before production.' : 'Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence.',
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

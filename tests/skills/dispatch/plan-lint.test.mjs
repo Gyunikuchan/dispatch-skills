@@ -9,6 +9,8 @@ const clean = [
   '- [SC1] Change and test the feature.',
   '  - Changes: `src/a.js`, tests/a.test.js',
   '  - Verify: `node --test tests/a.test.js`',
+  '  - Evidence: red',
+  '  - Test rationale: Behavioral failure isolates the feature and protects a plausible regression.',
   '## Proposed Changes',
   '#### [MODIFY] src/a.js',
   '#### [NEW] tests/a.test.js',
@@ -65,7 +67,7 @@ describe('deterministic plan lint', () => {
       '- `node --test tests/a.test.js`',
       '- `npm test` and `npm run lint`\n- `npm test` then `npm run check`',
     )).warnings.filter(({ rule }) => rule === 'ambiguous-command');
-    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 11', 'line 12']);
+    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 13', 'line 14']);
     assert.ok(rules(lintPlan(clean.replace(
       '- `node --test tests/a.test.js`',
       '```sh\n# explanation\n\n```',
@@ -105,6 +107,18 @@ describe('deterministic plan lint', () => {
     assert.ok(rules(lintPlan(clean.replace('  - Verify: `node --test tests/a.test.js`', '  - Verify: `npm test` and `npm run lint`'))).includes('criterion-verify'));
   });
 
+  it('validates evidence classes, rationales, review scenarios, and critical review enforcement', () => {
+    assert.ok(rules(lintPlan(clean.replace('  - Evidence: red\n', ''))).includes('criterion-evidence'));
+    assert.ok(rules(lintPlan(clean.replace('Evidence: red', 'Evidence: maybe'))).includes('criterion-evidence'));
+    assert.ok(rules(lintPlan(clean.replace('  - Test rationale: Behavioral failure isolates the feature and protects a plausible regression.\n', ''))).includes('criterion-test-rationale'));
+    const review = clean.replace('Evidence: red', 'Evidence: review');
+    assert.ok(rules(lintPlan(review)).includes('criterion-review'));
+    assert.deepEqual(lintPlan(review.replace('  - Test rationale:', '  - Review: artifact: src/a.js; scenario: inspect behavior; pass: observable outcome\n  - Test rationale:')).defects, []);
+    const critical = review.replace('Change and test the feature.', 'Protect recovery safety.').replace('  - Test rationale:', '  - Review: artifact: src/a.js; scenario: inspect recovery; pass: safe restoration\n  - Test rationale:');
+    assert.ok(rules(lintPlan(critical)).includes('criterion-critical-review'));
+    assert.deepEqual(lintPlan(critical.replace('  - Test rationale:', '  - Enforcement infeasibility: External human judgment has no deterministic oracle.\n  - Test rationale:')).defects, []);
+  });
+
   it('matches backticked criterion paths containing spaces', () => {
     const spaced = clean
       .replace('`src/a.js`, tests/a.test.js', '`src/file with spaces.js`, tests/a.test.js')
@@ -131,6 +145,6 @@ We reimplement latership and refill in bulk.`);
     const source = `${clean}\n<!-- TODO hidden -->\n> TBD quoted\n\`implement later\`\nProse says fill in this detail.`;
     const result = lintPlan(source);
     assert.equal(result.warnings.filter(({ rule }) => rule === 'placeholder').length, 1);
-    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 15/i);
+    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 17/i);
   });
 });

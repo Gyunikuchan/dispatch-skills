@@ -31,7 +31,7 @@ export function loadSchema(name) {
 }
 
 // SECTION: subset validator (type, required, properties, additionalProperties, enum, items, const,
-// minLength, minItems, anyOf); anything richer belongs in driver code, not schemas.
+// minLength, minItems, uniqueItems, pattern, anyOf, oneOf, allOf, if/then).
 
 function typeOf(value) {
   if (value === null) return 'null';
@@ -47,12 +47,17 @@ function matchesType(value, type) {
 /** Returns a list of readable violations; empty when `value` satisfies `schema`. */
 export function validateAgainstSchema(schema, value, where = '$') {
   const errors = [];
+  if (schema.allOf) for (const sub of schema.allOf) errors.push(...validateAgainstSchema(sub, value, where));
+  if (schema.if && validateAgainstSchema(schema.if, value, where).length === 0 && schema.then) errors.push(...validateAgainstSchema(schema.then, value, where));
+  if (schema.oneOf && schema.oneOf.filter((sub) => validateAgainstSchema(sub, value, where).length === 0).length !== 1) errors.push(`${where} must match exactly one allowed shape`);
   if (schema.anyOf) {
     if (!schema.anyOf.some((sub) => validateAgainstSchema(sub, value, where).length === 0)) {
       errors.push(`${where} matches none of the allowed shapes`);
     }
   }
   if (schema.const !== undefined && value !== schema.const) errors.push(`${where} must be ${JSON.stringify(schema.const)}`);
+  if (typeof value === 'number' && schema.minimum !== undefined && value < schema.minimum) errors.push(`${where} must be at least ${schema.minimum}`);
+  if (typeof value === 'string' && schema.pattern && !(new RegExp(schema.pattern)).test(value)) errors.push(`${where} must match ${schema.pattern}`);
   if (schema.enum && !schema.enum.includes(value)) errors.push(`${where} must be one of ${schema.enum.join(', ')}`);
   if (schema.type) {
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];
@@ -66,6 +71,7 @@ export function validateAgainstSchema(schema, value, where = '$') {
   }
   if (Array.isArray(value)) {
     if (schema.minItems !== undefined && value.length < schema.minItems) errors.push(`${where} needs at least ${schema.minItems} item(s)`);
+    if (schema.uniqueItems && new Set(value.map(item => JSON.stringify(item))).size !== value.length) errors.push(`${where} items must be unique`);
     if (schema.items) value.forEach((item, index) => errors.push(...validateAgainstSchema(schema.items, item, `${where}[${index}]`)));
   }
   if (typeOf(value) === 'object') {

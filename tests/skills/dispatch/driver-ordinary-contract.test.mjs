@@ -37,7 +37,7 @@ function policies(repo, overrides = {}) {
       const testsOnly = action.fields.stage === 'tests-only';
       fs.writeFileSync(path.join(repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
         ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-      return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['Implemented mapped behavior.'] })) };
+      return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
     },
     verify(action) {
       return { results: action.commands.map(command => {
@@ -50,7 +50,7 @@ function policies(repo, overrides = {}) {
 }
 function run({ fixture, repo, plan }, options = {}) {
   return drive(fixture, { cwd: repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', plan], policy: policies(repo, options.policy),
-    onAction(action) { assert.deepEqual(validateAgainstSchema(loadSchema(action.action), action), [], JSON.stringify(action)); assert.equal(action.error, undefined, JSON.stringify(action)); options.onAction?.(action); }, ...Object.fromEntries(Object.entries(options).filter(([key]) => !['policy', 'onAction'].includes(key))) });
+    onAction(action) { assert.deepEqual(validateAgainstSchema(loadSchema(action.action), action), [], JSON.stringify(action)); if (!options.allowErrors) assert.equal(action.error, undefined, JSON.stringify(action)); options.onAction?.(action); }, ...Object.fromEntries(Object.entries(options).filter(([key]) => !['policy', 'onAction', 'allowErrors'].includes(key))) });
 }
 describe('ordinary driver canonical contracts', () => {
   it('executes mapped host baseline, typed approval, real RED, configured risk review and checkpoint relocation', () => {
@@ -79,6 +79,104 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(ledger.events.filter(event => event.type === 'run-start').length, 1);
     assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
+  });
+  it('skips RED for verify-only criteria, emits the bounded packet, and renders fresh traceability', () => {
+    const fixture = setup();
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8')
+      .replace('Evidence: red', 'Evidence: verify')
+      .replace('Behavioral failure isolates the sample outcome and protects its regression.', 'A retained pre-change test would add no signal beyond the mapped deterministic check.'));
+    let packet;
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } };
+        return policies(fixture.repo).askUser(action);
+      },
+      delegateWrite(action) {
+        assert.equal(action.fields.stage, 'production');
+        packet = action.fields.packet;
+        fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+        fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      },
+      verify(action) {
+        const base = policies(fixture.repo).verify(action);
+        if (action.purpose === 'completion') base.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
+        return base;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['production']);
+    assert.deepEqual(Object.keys(packet).slice(0, 5), ['governingOutcome', 'settledBoundary', 'criteria', 'repositoryContext', 'testsAsEvidence']);
+    assert.equal(packet.testsAsEvidence.label, 'evidence, not specification');
+    assert.match(packet.governingOutcome.title, /Plan/);
+    assert.equal(packet.criteria[0].evidenceClass, 'verify');
+    const walkthrough = fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8');
+    assert.match(walkthrough, /\[SC1\] delivered value=2/);
+    assert.match(walkthrough, /reviewer: host/);
+    assert.doesNotMatch(walkthrough, /\[SC1\] Pending/);
+  });
+  it('rejects missing and stale per-criterion evidence before accepting a fresh record', () => {
+    const fixture = setup();
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
+    let completionReplies = 0;
+    const result = run(fixture, { allowErrors: true, policy: {
+      askUser(action) {
+        if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify fixture.' } };
+        return policies(fixture.repo).askUser(action);
+      },
+      delegateWrite(action) {
+        fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+        fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      },
+      verify(action) {
+        const reply = policies(fixture.repo).verify(action);
+        if (action.purpose !== 'completion') return reply;
+        completionReplies++;
+        if (completionReplies === 1) return reply;
+        reply.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'mapped check', inspectedRevision: completionReplies === 2 ? 'sha256:stale' : action.scopeHash, observableResult: 'value=2', limitations: 'mapped scope only', mutationEpoch: action.mutationEpoch }];
+        return reply;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete');
+    assert.equal(completionReplies, 3);
+    const rejected = result.trace.filter(action => action.action === 'verify' && action.purpose === 'completion' && action.error);
+    assert.equal(rejected.length, 2);
+    assert.match(rejected[0].error, /fresh structured verify evidence/);
+    assert.match(rejected[1].error, /fresh structured verify evidence/);
+  });
+  it('rejects mixed-plan non-red path leakage from the canonical tests-only scope', () => {
+    const fixture = setup();
+    const source = fs.readFileSync(fixture.plan, 'utf8')
+      .replace('Changes: `src/app.js`, `tests/sample.test.mjs`', 'Changes: `tests/sample.test.mjs`')
+      .replace('## Proposed Changes', '- [SC2] Deliver production behavior.\n  - Changes: `src/app.js`\n  - Verify: `node --test tests/sample.test.mjs`\n  - Evidence: verify\n  - Test rationale: Existing mapped verification is sufficient and a second retained test would be redundant.\n\n## Proposed Changes');
+    fs.writeFileSync(fixture.plan, source);
+    let scope;
+    const result = run(fixture, { policy: { delegateWrite(action) {
+      if (action.fields.stage === 'tests-only') {
+        scope = action.fields.paths;
+        fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
+        fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 99;\n');
+        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+      }
+      throw new Error('production must not launch after leakage');
+    } } });
+    assert.deepEqual(scope, ['tests/sample.test.mjs']);
+    assert.equal(result.done.outcome, 'stable-failure');
+    assert.match(result.done.summary, /outside its approved write scope/);
+  });
+  it('strictly validates criteria and stage-conditional packets', () => {
+    const fixture = setup(); let production;
+    const result = run(fixture, { onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = structuredClone(action); } });
+    assert.equal(result.done.outcome, 'complete');
+    assert.deepEqual(validateAgainstSchema(loadSchema('delegate-write'), production), []);
+    const missingCriteria = structuredClone(production); delete missingCriteria.fields.criteria;
+    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), missingCriteria).length);
+    const nullPacket = structuredClone(production); nullPacket.fields.packet = null;
+    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), nullPacket).length);
+    const testsOnly = structuredClone(production); testsOnly.fields.stage = 'tests-only'; testsOnly.fields.launch = 'tests-only'; testsOnly.fields.packet = null;
+    testsOnly.fields.criteria[0].evidence = 'verify';
+    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), testsOnly).length);
   });
   it('authors an ask into a canonical plan and stops before baseline or ledger', () => {
     const fixture = setup();

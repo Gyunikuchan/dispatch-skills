@@ -16,7 +16,7 @@ function serializedEntries(state) {
 export function beginImplementation(state) {
   const data = state.ordinary;
   if (!ledgerSegment(state)?.approved) throw new Error('Implementation requires recorded approval.');
-  if (!data.baselineResults || !data.testPaths) throw new Error('Implementation requires reconciled baseline and test classification.');
+  if (!data.baselineResults || !data.testsOnlyPaths) throw new Error('Implementation requires reconciled baseline and test classification.');
   data.phase = 'implementation';
   data.write ??= resolveWrite(state);
   if (data.failure) return failureQuestion(state);
@@ -39,6 +39,10 @@ export function beginImplementation(state) {
   data.indexStart = indexFingerprint(state.repoRoot).digest;
   data.preEntries = serializedEntries(state);
   data.preState = fingerprint(state);
+  if (!data.redCriteria.length) {
+    data.redGate = 'not applicable — no red-class criteria';
+    return startTask(state, 'full');
+  }
   return startTask(state, 'tests-only');
 }
 function startTask(state, launch) {
@@ -73,7 +77,7 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
     return openFailure(state, 'Configured write model cascade exhausted.');
   }
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
-  const allowed = data.launch === 'tests-only' ? data.testPaths : data.approvedPaths;
+  const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
   if (changed.some(file => !allowed.includes(file))) return openFailure(state, 'Delegate changed paths outside its approved write scope.');
   const parsed = outcomeTransition(state, reply, { concernsResolved });
   data.envelope = parsed.envelope;
@@ -130,7 +134,13 @@ export async function afterImplementationVerification(state) {
     data.redValidated = { scopeHash: fingerprint(state), evidence: data.envelope.evidence };
     return beginRiskReview(state);
   }
-  const result = completionResult(state);
+  let result = completionResult(state);
+  const traceRows = data.envelope?.evidence?.filter(item => typeof item === 'string' && item.startsWith('CRITERION ')) ?? [];
+  const missingTrace = data.criteria.filter(criterion => !traceRows.some(row => row.startsWith(`CRITERION ${criterion.id} |`) && criterion.paths.some(file => row.includes(file))));
+  if (missingTrace.length) {
+    result = 'regression';
+    data.traceabilityDefects = missingTrace.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
+  }
   const transition = verificationTransition(state, result, 'final');
   append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.commands, transition: transition.action });
   if (transition.action !== 'complete') return retryOrFail(state, transition);

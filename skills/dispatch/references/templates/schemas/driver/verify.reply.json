@@ -44,6 +44,59 @@
           },
           "mutationEpoch": {
             "type": "integer"
+          },
+          "criterionEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "criterionId",
+                "evidenceClass",
+                "reviewer",
+                "scenario",
+                "inspectedRevision",
+                "observableResult",
+                "limitations",
+                "mutationEpoch"
+              ],
+              "properties": {
+                "criterionId": {
+                  "type": "string",
+                  "pattern": "^SC[1-9][0-9]*$"
+                },
+                "evidenceClass": {
+                  "enum": [
+                    "verify",
+                    "review"
+                  ]
+                },
+                "reviewer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "scenario": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "inspectedRevision": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observableResult": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "limitations": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "mutationEpoch": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
           }
         }
       }

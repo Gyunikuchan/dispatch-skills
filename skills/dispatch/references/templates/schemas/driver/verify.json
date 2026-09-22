@@ -59,6 +59,37 @@
     },
     "mutationEpoch": {
       "type": "integer"
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "evidenceClass",
+          "review"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^SC[1-9][0-9]*$"
+          },
+          "evidenceClass": {
+            "enum": [
+              "red",
+              "verify",
+              "review"
+            ]
+          },
+          "review": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
     }
   }
 }

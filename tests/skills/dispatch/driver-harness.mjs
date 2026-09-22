@@ -42,6 +42,8 @@ export const PLAN_BODY = [
   '- [SC1] Implement and verify the sample.',
   '  - Changes: `src/app.js`',
   '  - Verify: `node --test tests/sample.test.mjs`',
+  '  - Evidence: red',
+  '  - Test rationale: Behavioral failure isolates the sample outcome and protects its regression.',
   '',
   '## Proposed Changes',
   '',

@@ -58,6 +58,7 @@ describe('v0.4 core correctness contracts', () => {
     assert.deepEqual(headings, [
       '## Changes Made',
       '## Verification & Validation',
+      '## Outcome Traceability',
       '## Key Deviations',
       '## Review Findings & Resolutions',
       '## Follow-ups',

@@ -14,7 +14,8 @@ export function beginBaseline(state) {
   if (!fs.existsSync(state.walkthroughPath)) fs.writeFileSync(state.walkthroughPath, [
     '# Implementation walkthrough', '', 'Implementation of the approved governing plan.', '', '## Changes Made',
     ...state.ordinary.approvedPaths.map(file => `- **[MODIFY]** \`${file}\` — Approved implementation scope.`), '',
-    '## Verification & Validation', 'Host verification is recorded in Ordinary execution evidence.', '',
+    '## Verification & Validation', 'Host verification is recorded in Ordinary execution evidence with evidence class, revision, result, and limitations.', '',
+    '## Outcome Traceability', ...state.ordinary.criteria.map(item => `- [${item.id}] Pending — evidence: ${item.evidence}; production path: pending implementation.`), '',
     '## Key Deviations', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '', '## Follow-ups', 'None.', '',
   ].join('\n'));
   return beginVerification(state, 'baseline');
@@ -29,7 +30,7 @@ export function baselineDecision(state) {
   data.phase = 'baseline';
   data.step = 'approval';
   data.approvalSnapshot = repositoryBaseline(state);
-  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline. Return {decision:"approved", governingHash, testPaths, reason}. Classify only approved paths that may be changed by the tests-only delegate.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, commands: data.commands }]);
+  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands }]);
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;
@@ -41,8 +42,10 @@ export function approve(state, reply) {
   const answer = reply.answer, data = state.ordinary;
   if (answer?.decision !== 'approved' || answer.governingHash !== state.governingHash || !answer.reason?.trim()) throw new Error('Approval requires the current governingHash, decision approved, and reason.');
   if (JSON.stringify(repositoryBaseline(state)) !== JSON.stringify(data.approvalSnapshot)) throw new Error('Repository drifted during approval; recapture baseline.');
-  if (!Array.isArray(answer.testPaths) || !answer.testPaths.length || answer.testPaths.some(file => !data.approvedPaths.includes(file))) throw new Error('Approval must classify nonempty tests-only paths within the approved scope.');
-  data.testPaths = [...new Set(answer.testPaths)];
+  const redPaths = new Set(data.redCriteria.flatMap(item => item.paths));
+  if (!Array.isArray(answer.testPaths) || (data.redCriteria.length > 0 && !answer.testPaths.length) || answer.testPaths.some(file => !data.approvedPaths.includes(file) || !redPaths.has(file))) throw new Error('Approval must classify tests-only paths mapped to red criteria; nonempty paths are required only for red criteria.');
+  data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
+  data.testPaths = data.testsOnlyPaths;
   data.baselineSnapshot = snapshot(state);
   ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
   const segment = ledgerSegment(state);

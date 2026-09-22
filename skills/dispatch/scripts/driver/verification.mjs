@@ -1,4 +1,4 @@
-import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths } from '../verification-evidence.mjs';
+import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
 import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
 import { checkRedQuality } from '../red-quality.mjs';
 import { emitAction } from './actions.mjs';
@@ -9,8 +9,14 @@ export function verificationPlan(state) {
   const approvedPaths = extractApprovedPathSet(text);
   const criteria = criterionMappings(text);
   const commands = [...new Set(criteria.flatMap(item => item.commands))];
-  if (!approvedPaths.length || !commands.length || criteria.some(item => !item.paths.length || !item.commands.length)) throw new Error('Baseline requires mapped approved paths and commands for every criterion.');
-  return { approvedPaths, commands, scopes: mapVerificationCommandsToPaths(text, commands, approvedPaths), criteria };
+  if (!approvedPaths.length || !commands.length || criteria.some(item => !item.paths.length || !item.commands.length || !['red', 'verify', 'review'].includes(item.evidence))) throw new Error('Baseline requires approved paths, commands, and explicit evidence classes for every criterion.');
+  return {
+    approvedPaths, commands, scopes: mapVerificationCommandsToPaths(text, commands, approvedPaths), criteria,
+    packet: outcomeFirstPacket(text, criteria),
+    redCriteria: criteria.filter(item => item.evidence === 'red'),
+    verifyCriteria: criteria.filter(item => item.evidence === 'verify'),
+    reviewCriteria: criteria.filter(item => item.evidence === 'review'),
+  };
 }
 export function snapshot(state) {
   const capture = captureRepositoryState(state.repoRoot);
@@ -37,7 +43,7 @@ export function verificationAction(state) {
   pending.epoch = data.mutationEpoch ?? 0;
   return emitAction(state, 'verify', {
     purpose: pending.purpose, commands: [command], scopes: { [command]: data.scopes[command] },
-    mutationEpoch: pending.epoch, scopeHash: pending.scopeHash,
+    mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: data.criteria.filter(item => item.commands.includes(command)).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
   }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.']);
 }
 export function acceptVerification(state, reply) {
@@ -48,8 +54,18 @@ export function acceptVerification(state, reply) {
   if (result.scopeHash !== pending.scopeHash || result.mutationEpoch !== pending.epoch) throw new Error('Verification reply has stale or missing scope/mutation identity.');
   const after = snapshot(state);
   const changed = diffRepositoryState(pending.before, after).changed;
+  const mapped = data.criteria.filter(item => item.commands.includes(command));
+  const criterionEvidence = result.criterionEvidence ?? [];
+  if (pending.purpose === 'completion') {
+    for (const criterion of mapped.filter(item => item.evidence !== 'red')) {
+      const evidence = criterionEvidence.find(item => item.criterionId === criterion.id);
+      if (!evidence || evidence.evidenceClass !== criterion.evidence || !evidence.reviewer?.trim() || !evidence.scenario?.trim() || !evidence.observableResult?.trim() || !evidence.limitations?.trim() || evidence.inspectedRevision !== pending.scopeHash || evidence.mutationEpoch !== pending.epoch) {
+        throw new Error(`Completion requires fresh structured ${criterion.evidence} evidence for ${criterion.id}.`);
+      }
+    }
+  }
   const record = { command, exitStatus: result.exit, identifiers: result.identifiers ?? [], diagnostic: result.diagnostic ?? result.evidence,
-    identity: failureIdentity({ exitStatus: result.exit, identifiers: result.identifiers, diagnostic: result.diagnostic ?? result.evidence }),
+    identity: failureIdentity({ exitStatus: result.exit, identifiers: result.identifiers, diagnostic: result.diagnostic ?? result.evidence }), criterionEvidence,
     scopeHash: pending.scopeHash, mutationEpoch: pending.epoch, before: pending.before, after, changed };
   pending.results.push(record);
   pending.index++;
@@ -69,6 +85,11 @@ export function freshResults(state, purpose) {
 }
 export function completionResult(state) {
   if (!freshResults(state, 'completion')) return 'regression';
+  const data = state.ordinary;
+  for (const criterion of data.criteria.filter(item => item.evidence !== 'red')) {
+    const evidence = data.completionResults.flatMap(item => item.criterionEvidence ?? []).find(item => item.criterionId === criterion.id);
+    if (!evidence || evidence.evidenceClass !== criterion.evidence || evidence.mutationEpoch !== (data.mutationEpoch ?? 0)) return 'regression';
+  }
   let knownRed = false;
   for (const result of state.ordinary.completionResults) {
     if (result.exitStatus === 0) continue;
@@ -82,9 +103,9 @@ export function validateRed(state, envelope) {
   const data = state.ordinary, defects = [];
   if (!freshResults(state, 'red')) defects.push('RED host evidence is stale or changed the repository.');
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
-  if (!changed.length || changed.some(file => !data.testPaths.includes(file))) defects.push('Tests-only mutation must change only classified approved test paths.');
+  if (!changed.length || changed.some(file => !data.testsOnlyPaths.includes(file))) defects.push('Tests-only mutation must change only classified approved test paths.');
   const rows = envelope.evidence.filter(item => item.startsWith('RED-MATRIX '));
-  for (const criterion of data.criteria) {
+  for (const criterion of data.redCriteria) {
     const matches = rows.filter(row => row.startsWith(`RED-MATRIX ${criterion.id} |`));
     if (matches.length !== 1) defects.push(`Exactly one primary RED-MATRIX row required for ${criterion.id}.`);
     if (matches.some(row => /\|\s*N\/A\s*\|/.test(row))) defects.push(`${criterion.id} exception requires an explicit evidence-backed ruling.`);
@@ -97,12 +118,12 @@ export function validateRed(state, envelope) {
     else if (baseline.exitStatus !== 0 && compareFailureIdentity(baseline.identity, red.identity)) defects.push('Known-red baseline collision is not attributable RED.');
     defects.push(...checkRedQuality(source(state), envelope, red));
   }
-  for (const criterion of data.criteria) {
+  for (const criterion of data.redCriteria) {
     const row = rows.find(item => item.startsWith(`RED-MATRIX ${criterion.id} |`));
     const match = row && /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row);
     if (!match) continue;
     const test = match[2].trim(), expected = match[3];
-    if (!data.testPaths.some(file => test === file || test.startsWith(`${file}:`) || test.startsWith(`${file} `))) defects.push(`${criterion.id} matrix test is outside classified test paths.`);
+    if (!data.testsOnlyPaths.some(file => test === file || test.startsWith(`${file}:`) || test.startsWith(`${file} `))) defects.push(`${criterion.id} matrix test is outside classified test paths.`);
     const identifiers = expected.match(/\b(?:test|error|failure):[^\s]+/gi) ?? [];
     const exit = /\bexit\s+(\d+)\b/i.exec(expected);
     const expectedIdentity = failureIdentity({ exitStatus: exit ? Number(exit[1]) : 1, identifiers,

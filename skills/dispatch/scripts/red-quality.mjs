@@ -6,7 +6,7 @@ import { criterionMappings, mapVerificationCommandsToPaths, compareFailureIdenti
 function arg(name, argv) { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null; }
 function load(file) { return file === '-' ? JSON.parse(fs.readFileSync(0, 'utf8')) : JSON.parse(fs.readFileSync(file, 'utf8')); }
 export function checkRedQuality(plan, evidence, red) {
-  const mappings = criterionMappings(plan);
+  const mappings = criterionMappings(plan).filter(item => item.evidence === 'red');
   const commands = [...new Set(mappings.flatMap(item => item.commands))];
   const scoped = mapVerificationCommandsToPaths(plan, commands);
   const rows = (evidence.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '));
@@ -31,10 +31,14 @@ export function checkRedQuality(plan, evidence, red) {
   }
   const normalizedRedDiagnostic = normalizeDiagnostic(red.diagnostic ?? '');
   for (const item of mappings) if (!seen.has(item.id) && !rows.some(raw => normalizeDiagnostic(raw.split('|').at(-1)?.replace(/\bexit\s*1\b/i, '').trim() ?? '') === normalizedRedDiagnostic)) defects.push(`missing matrix row for ${item.id}`);
-  if (red.exitStatus !== 1) defects.push('RED exit status mismatch');
-  const commandText = red.command ?? '';
+  if (!mappings.length) {
+    if (rows.length) defects.push('RED-MATRIX rows are invalid when the plan has no red criteria');
+    return defects;
+  }
+  if (!red || red.exitStatus !== 1) defects.push('RED exit status mismatch');
+  const commandText = red?.command ?? '';
   if (commands.length && !commands.some(command => commandText.includes(command.replace(/^.*?node --test\s*/, '')) || command === commandText)) defects.push('RED command mismatch');
-  const stable = failureIdentity(red);
+  const stable = failureIdentity(red ?? {});
   const expected = rows.map(raw => raw.split('|').at(-1)?.trim()).filter(Boolean).find(value => /exit\s*1/i.test(value));
   if (expected) {
     const expectedIds = expected.match(/\b(?:test|error|failure):[^\s]+/gi) ?? [];
@@ -51,7 +55,7 @@ function main(argv) {
   const plan = fs.readFileSync(planPath, 'utf8');
   const defects = checkRedQuality(plan, load(evidencePath), load(redPath));
   if (defects.length) { process.stderr.write(`[red-quality] ${defects.join('; ')}\n`); process.exitCode = 1; return; }
-  process.stdout.write(JSON.stringify({ status: 'valid', criteria: criterionMappings(plan).map(item => item.id) }) + '\n');
+  process.stdout.write(JSON.stringify({ status: 'valid', criteria: criterionMappings(plan).filter(item => item.evidence === 'red').map(item => item.id) }) + '\n');
 }
 if (isMainModule(import.meta.url)) {
   try { main(process.argv.slice(2)); } catch (error) { process.stderr.write(`[red-quality] ${error.message}\n`); process.exitCode = 2; }

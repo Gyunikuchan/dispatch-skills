@@ -3,7 +3,7 @@ import { readArtifact, semanticSectionHashes } from '../review-preparation.mjs';
 import { scanResolutionLog } from '../resolution-log.mjs';
 import { relocateScratchPaths } from '../relocate-scratch.mjs';
 import { emitAction } from './actions.mjs';
-import { append, ledgerSegment, relative } from './ordinary-state.mjs';
+import { append, ledgerSegment, persistEvidence, relative } from './ordinary-state.mjs';
 import { completeTask } from './implementation-phase.mjs';
 import { completionResult, fingerprint } from './verification.mjs';
 import { reviewPolicy } from './plan-phase.mjs';
@@ -32,6 +32,12 @@ export function finishCodeReview(state, action) {
 }
 export function handoff(state) {
   requireImplementation(state);
+  persistEvidence(state);
+  const walkthrough = readArtifact(state.walkthroughPath, { kind: 'code' }).source;
+  for (const criterion of state.ordinary.criteria) {
+    const row = walkthrough.split(/\r?\n/).find(line => line.startsWith(`- [${criterion.id}]`));
+    if (!row || /Pending|missing validated/i.test(row)) throw new Error(`handoff requires complete outcome traceability for ${criterion.id}.`);
+  }
   const disabled = reviewPolicy(state, 'code').skipped;
   const checkpoint = disabled ? null : codeCheckpoint(state);
   const segment = ledgerSegment(state, { terminal: true });

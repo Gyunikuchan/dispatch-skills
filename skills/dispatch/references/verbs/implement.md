@@ -150,15 +150,27 @@ Risk-heavy durability, recovery, concurrency, security, or protocol work receive
 
 Implementation failure preserves the working tree, captures Git state, and opens `failure-disposition` before asking the user to `keep-for-repair`, `revert-attributable`, or `inspect-first`. Resume checks a matching captured failure snapshot before completed-task drift; later drift requires reconciliation. Reversion is explicit and only attributable paths are eligible: baseline caller-dirty, mixed/non-separable, or post-snapshot-drift paths remain preserved. Resolve the ruling with post-choice state and walkthrough evidence before appending `run-complete: stable-failure`; `inspect-first` remains open and unterminated; a resolved ruling precedes `stable-failure`.
 
-### RED boundary
+### Evidence classes and RED boundary
 
-When new or corrected behavior is required, allow at most one tests-only launch in addition to the
-run's implementation attempt budget. It changes only test/test-support paths and returns the
-typed `RED_READY` stage defined in
+Each criterion declares exactly one `Evidence: red|verify|review` and a concrete `Test rationale:`.
+Choose existing checks first, then retained RED only when discriminating, stable, regression-bearing,
+proportionate, and behavioral; otherwise use deterministic `verify` or bounded `review`. Review
+names artifact, scenario, observable pass condition, inspected revision, result, and limitations.
+Critical correctness, safety, recovery, durability, or protocol guarantees use review only with a
+recorded deterministic-enforcement infeasibility rationale.
+
+When one or more criteria use `red`, allow at most one tests-only launch in addition to the
+run's implementation attempt budget. Give it only red criteria and their mapped test/test-support
+paths. It returns the typed `RED_READY` stage defined in
 [Implementation delegate contract](#implementation-delegate-contract); the host runs the
 mapped command and production work begins only after failure for the expected reason.
 Characterization, test-only repair, and generated/snapshot exceptions require evidence and a
 recorded ruling. A late test is a missed gate requiring user acceptance.
+
+A plan without red criteria records `RED gate: not applicable — no red-class criteria` and launches
+production directly after approval. Mixed plans require matrix rows only for red criteria. Verify
+checks run after relevant mutation and again at completion; review evidence must postdate its last
+mapped mutation. All mapped commands remain mandatory final regression evidence.
 
 An unrelated failure or production-path mutation is invalid RED and consumes the current bounded
 implementation attempt. A regression after implementation consumes its current attempt under the
@@ -169,8 +181,12 @@ same transition contract.
 This contract governs delegated implementation tasks (initial approved scope implementation and
 task clusters), whereas accepted post-review fixes in § 4 are applied directly by the orchestrator.
 
-Every implementation launch receives the settled scope, attempt number, prior failure evidence,
-and an explicit resolved model.
+Every full implementation launch receives one ordered packet: governing outcome; settled scope,
+non-scope, invariants, and rollback boundary; observable criteria and evidence classes; repository
+constraints and prior failures; then tests/checks labeled **evidence, not specification**. Instruct
+`implement the smallest complete behavior satisfying the outcome and scope`. A conflicting,
+incomplete, or out-of-scope test yields `NEEDS_CONTEXT` or `BLOCKED` with the exact conflict; repair
+or reclassify evidence through reviewed scope change before redispatch.
 
 ### Launch cascade
 

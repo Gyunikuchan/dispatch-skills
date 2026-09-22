@@ -27,9 +27,13 @@ function fixture() {
     '- [SC1] Basic behavior.',
     '  - Changes: src/value.js',
     '  - Verify: `node --test tests/value.test.mjs`',
+    '  - Evidence: red',
+    '  - Test rationale: Behavioral failure isolates the value contract and protects regression.',
     '- [SC2] Recovery.',
     '  - Changes: src/value.js',
     '  - Verify: `node --test tests/value.test.mjs`',
+    '  - Evidence: red',
+    '  - Test rationale: Recovery behavior has stable interruption coverage and durable regression value.',
     '## Proposed Changes',
     '#### [MODIFY] src/value.js',
   ].join('\n'));

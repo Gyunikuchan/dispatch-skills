@@ -20,7 +20,10 @@ Summary of changes made, context, and what was accomplished.
 ### Automated Tests
 - Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).
 ### Manual Verification
-- Concrete manual verification performed and observed results.
+- For each `verify`/`review` criterion: evidence class, inspected revision, scenario/result, and limitations.
+
+## Outcome Traceability
+- [SC#] <delivered observable behavior> — production path: `<relative-path>`; evidence: <fresh record>.
 
 ## Key Deviations
 Deviations from original plan or design intent, with rationale (or "None").

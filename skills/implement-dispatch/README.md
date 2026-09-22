@@ -157,8 +157,7 @@ implementation failures use attempt recovery rather than the next array model.
 2. It scopes the draft and resolves the execution flow.
 3. It reviews the plan when `dispatch-plan-review` is installed and enabled.
 4. It creates the walkthrough and runs the plan's automated verification commands as a baseline.
-5. It asks for implementation approval after baseline reconciliation, then implements test-first
-   and reruns fresh verification. Implementation launches return typed outcomes; delegated work
+5. It asks for implementation approval after baseline reconciliation. Each criterion selects retained RED, deterministic verification, or bounded review evidence; only RED criteria get a tests-only launch. The full implementation launch receives the governing outcome and scope before tests, which are evidence rather than specification, then reruns fresh verification. Implementation launches return typed outcomes; delegated work
    has at most three native-platform attempts and `self` execution (a subagent on the host platform)
    has at most two.
 6. It reviews and fixes the changes when `dispatch-code-review` is installed and enabled,
@@ -185,7 +184,7 @@ requests.
 The ledger is not a review artifact and is not moved during handoff. Its exact path and canonical
 resume command are reported because OS temp cleanup, including Windows Storage Sense, can remove it.
 
-RED-quality validates the tests-only acceptance matrix before production delegation. Failed implementation changes remain until the user explicitly chooses **keep**, **revert attributable**, or **inspect**.
+RED-quality validates only red-class acceptance rows before production delegation; no-red plans record the gate as not applicable. Completion additionally requires fresh class-appropriate evidence and criterion-to-production-path traceability, so green commands alone are insufficient. Failed implementation changes remain until the user explicitly chooses **keep**, **revert attributable**, or **inspect**.
 
 ## Nuances, Quirks & Troubleshooting
 

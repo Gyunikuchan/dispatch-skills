@@ -44,7 +44,9 @@
         "planPath",
         "walkthroughPath",
         "paths",
-        "evidence"
+        "evidence",
+        "criteria",
+        "packet"
       ],
       "properties": {
         "stage": {
@@ -100,7 +102,249 @@
           "items": {
             "type": "string",
             "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "outcome",
+              "evidence",
+              "paths",
+              "commands"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^SC[1-9][0-9]*$"
+              },
+              "outcome": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence": {
+                "enum": [
+                  "red",
+                  "verify",
+                  "review"
+                ]
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "commands": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "review": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
+        },
+        "packet": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "governingOutcome",
+                "settledBoundary",
+                "criteria",
+                "repositoryContext",
+                "testsAsEvidence",
+                "instruction",
+                "conflict",
+                "governingPlan",
+                "redGate"
+              ],
+              "properties": {
+                "governingOutcome": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "title",
+                    "context"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "context": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "settledBoundary": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "scope",
+                    "nonScope",
+                    "invariants",
+                    "rollback"
+                  ],
+                  "properties": {
+                    "scope": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "nonScope": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "invariants": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "rollback": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "criteria": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "id",
+                      "outcome",
+                      "evidenceClass",
+                      "paths",
+                      "commands",
+                      "review"
+                    ],
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^SC[1-9][0-9]*$"
+                      },
+                      "outcome": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidenceClass": {
+                        "enum": [
+                          "red",
+                          "verify",
+                          "review"
+                        ]
+                      },
+                      "paths": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "commands": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "review": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "repositoryContext": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "constraints",
+                    "priorFailures"
+                  ],
+                  "properties": {
+                    "constraints": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "priorFailures": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "testsAsEvidence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "commands"
+                  ],
+                  "properties": {
+                    "label": {
+                      "const": "evidence, not specification"
+                    },
+                    "commands": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                },
+                "instruction": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "conflict": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "governingPlan": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "redGate": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
         },
         "evidence": {
           "type": "array",
@@ -118,5 +362,240 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "fields": {
+            "properties": {
+              "stage": {
+                "const": "tests-only"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "fields": {
+            "properties": {
+              "packet": {
+                "type": "null"
+              },
+              "criteria": {
+                "items": {
+                  "properties": {
+                    "evidence": {
+                      "const": "red"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "fields": {
+            "properties": {
+              "stage": {
+                "const": "production"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "fields": {
+            "properties": {
+              "packet": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "governingOutcome",
+                  "settledBoundary",
+                  "criteria",
+                  "repositoryContext",
+                  "testsAsEvidence",
+                  "instruction",
+                  "conflict",
+                  "governingPlan",
+                  "redGate"
+                ],
+                "properties": {
+                  "governingOutcome": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "title",
+                      "context"
+                    ],
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "context": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "settledBoundary": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "scope",
+                      "nonScope",
+                      "invariants",
+                      "rollback"
+                    ],
+                    "properties": {
+                      "scope": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "nonScope": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "invariants": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "rollback": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "criteria": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "outcome",
+                        "evidenceClass",
+                        "paths",
+                        "commands",
+                        "review"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^SC[1-9][0-9]*$"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "evidenceClass": {
+                          "enum": [
+                            "red",
+                            "verify",
+                            "review"
+                          ]
+                        },
+                        "paths": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "commands": {
+                          "type": "array",
+                          "minItems": 1,
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "review": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "repositoryContext": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "constraints",
+                      "priorFailures"
+                    ],
+                    "properties": {
+                      "constraints": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "priorFailures": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "testsAsEvidence": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "label",
+                      "commands"
+                    ],
+                    "properties": {
+                      "label": {
+                        "const": "evidence, not specification"
+                      },
+                      "commands": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      }
+                    }
+                  },
+                  "instruction": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "conflict": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "governingPlan": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "redGate": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -33,7 +33,7 @@ for RED-quality and failure disposition, follow its [branch contract](../dispatc
    Requests/reports go in OS temp. Establish an explicit slug matching the canonical plan filename
    when branch/conversation identity differs.
 3. Author from the plan-review template. Group files by `[NEW]`/`[MODIFY]`/`[DELETE]`; write
-   stable `[SC#]` criteria with indented `Changes:` and/or `Verify:` mappings.
+   stable `[SC#]` criteria with indented `Changes:`, `Verify:`, exactly one `Evidence: red|verify|review`, and concrete `Test rationale:` mappings. `review` also names artifact, scenario, and observable pass condition.
 4. Run:
 
    ```bash
@@ -101,14 +101,10 @@ Follow the [implementation delegate contract](../dispatch/references/verbs/imple
 parse one typed envelope and obey its transition. Native launches are non-resumable unless the
 provider contract proves continuation. Delegates get at most three attempts (replacement, then one
 distinct native tier); host-platform launches get two. Never cross providers or transfer failed
-delegated work to the host platform. New/corrected behavior requires `RED_READY` and host-observed RED.
+delegated work to the host platform. Only `red` criteria require `RED_READY` and host-observed RED; no-red plans skip tests-only delegation, and mixed plans expose only red criteria and mapped paths.
 
-For multi-finding follow-ups or accepted fix groups, form independence clusters with
-`node <skills-dir>/dispatch/scripts/fix-clustering.mjs --cluster` (pairwise disjoint paths, same-file
-separate, union verification); run clusters in emitted order, after their `dependsOnClusters`. Each cluster executes as a v1 ledger task (`task-start` with
-deterministic cluster ID `C-<sha256[:12]>`, member path union, and attempt budget).
-If a cluster fails, split recovery via `--split` retains completed clusters, sets `parentTaskId` on
-descendants, and continues the parent's attempt numbering; no descendant attempt number exceeds three.
+
+Use independence clusters with deterministic `C-<sha256[:12]>` IDs for multi-finding fixes; split recovery sets `parentTaskId`, and no descendant attempt number exceeds three.
 
 Run `node <skills-dir>/dispatch/scripts/implementation-outcome.mjs --parse <file|->`, then the same command
 with `--transition <json-file|->`. A nonzero parse is a consumed malformed outcome; a nonzero
@@ -119,9 +115,7 @@ levels and never downgrade an automatically resolved level. A final completion c
 fresh host output after the last mapped mutation and accepted fix. Record terminal failure with
 envelope, verification, root-cause, and escalation evidence.
 
-**Done when:** approved scope is implemented, RED evidence or its allowed exception is recorded,
-verification is passing, unavailable, or `known red — unchanged`, and the walkthrough describes
-the active diff with fresh evidence.
+**Done when:** the governing outcome is implemented, every criterion maps delivered observable behavior to its owning production path and fresh class-appropriate evidence, final verification is passing or accepted `known red — unchanged`, and limitations/deviations are recorded. Green commands alone never complete work.
 
 ## 4. Review and settle code
 

@@ -22,12 +22,44 @@ export function criterionMappings(source) {
     if (/^##\s+/.test(text)) { inCriteria = /^## Success Criteria\s*$/.test(text); current = null; continue; }
     if (!inCriteria) continue;
     const criterion = /^(?:[-*+]|\d+[.)])\s+\[(SC[1-9]\d*)\]\s*(.*)$/.exec(text);
-    if (criterion) { current = { id: criterion[1], title: criterion[2], text: criterion[2], paths: [], commands: [] }; mappings.push(current); continue; }
+    if (criterion) {
+      current = { id: criterion[1], title: criterion[2], text: criterion[2], paths: [], commands: [], evidence: null, testRationale: null, review: null, enforcementRationale: null };
+      mappings.push(current);
+      continue;
+    }
     if (!current) continue;
     const changes = /^ {2,}[-*+] Changes:\s*(.+)$/.exec(text); if (changes) current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
     const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*$/.exec(text); if (verify) current.commands.push(verify[1].trim());
+    const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(text); if (evidence) current.evidence = evidence[1].toLowerCase();
+    const rationale = /^ {2,}[-*+] Test rationale:\s*(.+)$/.exec(text); if (rationale) current.testRationale = rationale[1].trim();
+    const review = /^ {2,}[-*+] Review:\s*(.+)$/.exec(text); if (review) current.review = review[1].trim();
+    const enforcement = /^ {2,}[-*+] Enforcement infeasibility:\s*(.+)$/.exec(text); if (enforcement) current.enforcementRationale = enforcement[1].trim();
   }
   return mappings;
+}
+
+export function outcomeFirstPacket(source, criteria) {
+  const lines = structuralLines(source);
+  const title = lines.find(({ text }) => /^#\s+/.test(text))?.text.replace(/^#\s+/, '').trim() ?? '';
+  const sections = new Map();
+  let heading = 'preamble';
+  for (const { text } of lines) {
+    const match = /^##\s+(.+?)\s*$/.exec(text);
+    if (match) { heading = match[1]; sections.set(heading, []); continue; }
+    if (text.trim() && sections.has(heading)) sections.get(heading).push(text.trim());
+  }
+  const section = name => (sections.get(name) ?? []).join('\n').trim();
+  const proposed = section('Proposed Changes');
+  const invariants = proposed.split('\n').filter(line => /(?:^|[-*])\s*Invariants?:/i.test(line));
+  const constraints = [section('Key Decisions & Context'), section('Open Questions & Assumptions')].filter(Boolean);
+  const failures = section('Review Findings & Resolutions');
+  return {
+    governingOutcome: { title, context: section('Context & Intent') || lines.slice(1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
+    settledBoundary: { scope: proposed, nonScope: section('Out of Scope') || 'None.', invariants, rollback: section('Rollback & Blast Radius') || 'None.' },
+    criteria: criteria.map(({ id, title: outcome, evidence, paths, commands, review }) => ({ id, outcome, evidenceClass: evidence, paths, commands, review: review ?? null })),
+    repositoryContext: { constraints, priorFailures: failures && !/No reviews conducted yet/i.test(failures) ? failures : 'None recorded.' },
+    testsAsEvidence: { label: 'evidence, not specification', commands: [...new Set(criteria.flatMap(item => item.commands))] },
+  };
 }
 
 export function mapVerificationCommandsToPaths(source, commands, approvedPaths = extractApprovedPathSet(source)) {

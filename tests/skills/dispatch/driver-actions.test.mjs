@@ -57,14 +57,15 @@ describe('driver action schemas (SC2)', () => {
 
   it('schemas use only the in-repo validator subset', () => {
     const allowed = new Set(['$schema', '$id', 'title', 'description', 'type', 'required', 'properties',
-      'additionalProperties', 'enum', 'items', 'const', 'minLength', 'minItems', 'anyOf']);
+      'additionalProperties', 'enum', 'items', 'const', 'minLength', 'minItems', 'minimum', 'uniqueItems', 'pattern',
+      'anyOf', 'oneOf', 'allOf', 'if', 'then']);
     const walk = (node, where) => {
       if (!node || typeof node !== 'object' || Array.isArray(node)) return;
       for (const [key, value] of Object.entries(node)) {
         assert.ok(allowed.has(key), `${where}: unsupported keyword ${key}`);
         if (key === 'properties') for (const [prop, sub] of Object.entries(value)) walk(sub, `${where}.${prop}`);
-        else if (key === 'items' || key === 'additionalProperties') walk(value, `${where}.${key}`);
-        else if (key === 'anyOf') value.forEach((sub, i) => walk(sub, `${where}.anyOf[${i}]`));
+        else if (['items', 'additionalProperties', 'if', 'then'].includes(key)) walk(value, `${where}.${key}`);
+        else if (['anyOf', 'oneOf', 'allOf'].includes(key)) value.forEach((sub, i) => walk(sub, `${where}.${key}[${i}]`));
       }
     };
     for (const file of fs.readdirSync(SCHEMA_DIR)) walk(JSON.parse(fs.readFileSync(path.join(SCHEMA_DIR, file), 'utf8')), file);
