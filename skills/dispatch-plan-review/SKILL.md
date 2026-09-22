@@ -1,86 +1,13 @@
 ---
 name: dispatch-plan-review
-description: Review an implementation plan across independent agent CLIs before code is written, verifying every returned claim.
+description: Compatibility alias for reviewing an implementation plan.
+disable-model-invocation: true
 ---
 
-# dispatch-plan-review
+# Plan review alias
 
-Review or author one plan, then verify every claim against the requirement, repository rules, and
-cited section. Follow [`review.md`](../dispatch/references/review.md).
+Preserve any level, pins, and explicit `--fix` in the prefix, then forward the post-colon text to `/dispatch review plan: <argument>`, inserting the preserved prefix before `review`.
 
-## Invocation
+If `dispatch` is unavailable, stop with: `dispatch-plan-review requires the dispatch skill; install or enable dispatch, then retry.`
 
-```text
-/dispatch-plan-review (<pins>) [<plan.md>] [<requirement or focus>]
-```
-
-Pins use `dispatch` grammar. Preparation classifies unambiguous trailing text.
-
-## Prepare and launch
-
-1. Send a closed JSON request:
-
-   ```bash
-   node <skills-dir>/dispatch/scripts/prepare-review.mjs --kind plan --request <json-file|->
-   ```
-
-   Standalone requests carry `selector` plus unclassified `trailingText` (or classified
-   `requirement`/`focus`); for count/`all` pins, prepare once per `dispatch.mjs --list-targets`
-   entry with `selector: {provider: <platform>, candidateIndex}`. Orchestrated
-   requests carry `mode`, `reviewMode`, `roundId`, `consensus`, caller-resolved
-   `targets`/`reserves`, and optional packet/context. The manifest returns
-   the canonical plan (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), freshness, scope, prompt/views,
-   argv, invocation context, and cleanup paths.
-2. On `authoring-required`, write the plan from [plan.md](../dispatch/references/templates/plan.md),
-   settling decision-changing ambiguities one focused question at a time, then prepare again.
-3. On `decision-required`, ask only when non-empty `choices` are present. Report `plan-lint`
-   diagnostics and stop; never ask or replay that decision.
-4. On `ready`, execute only `dispatch.argv` in the background and follow `review.md`'s one-shot
-   early-fallback launch protocol. Await every terminal target/reserve/fallback outcome, retaining
-   paths still needed. Classify missing runner results
-   through [`dispatch`'s run contract](../dispatch/SKILL.md#run), without polling.
-
-**Done when:** preparation is ready, the exact manifest argv is launched, and outcomes are
-terminal.
-
-## Adjudicate
-
-1. Read every direct, reserve, or native-fallback report from its slot's
-   `dispatch.outputPath` (or documented stdout-result channel). A fallback must first be captured
-   there under the original candidate/source identity with fallback metadata; it receives no
-   alternate adjudication path. Normalize it with `<skills-dir>/dispatch/scripts/parse-report.mjs --kind plan --file <path>`, adding
-   `--rebuttal-packet <packet>` for rebuttals. Exit `3`: read the prose report per review; exit
-   `1` is an empty report; `2` is terminal.
-2. Verify each finding at its `§ <Section>` and any cited code, and an `adjacent` finding at its
-   cited code. Accept, reject, downgrade, or dispute under `review.md` finality; rebuttal keys must
-   match the packet exactly.
-3. Apply accepted in-scope findings to the plan body and accepted `adjacent` findings under
-   `## Out of Scope` as deferred follow-ups. Append the enriched source map and every ruling under
-   `## Review Findings & Resolutions`; sanitize delegate text first.
-
-**Done when:** every finding is verified at its cited locus, rulings are recorded, and consensus
-is evaluated under the `review.md` cap.
-
-## Settle and report
-
-After every source is terminal and `dispatch/scripts/check-consensus.mjs` exits `0`, standalone lists accepted
-`adjacent` findings and asks which to fold into `## Proposed Changes` before the checkpoint. Each
-folded one re-reviews that section in a new loop with a fresh cap until consensus exits `0`,
-offering that loop's findings the same way. Unchosen ones stay under `## Out of Scope`; orchestrated returns
-them unasked.
-
-Then send the same preparation CLI `action: "checkpoint-preview"` and resend its `settlement` and
-`settledWrites` as `action: "checkpoint"`; it atomically records freshness metadata for settled
-runs only.
-A rejection prints the observed list as JSON: resend exactly that list and retry once.
-Drift means rerun preparation, never force the write.
-
-Prune finished `cleanupPaths` finally-style on every outcome and report failures. A pending native
-fallback leaves the prompt path unfinished: prune it once that fallback has consumed it or reached a
-terminal outcome. Keep
-invocation state (`invocationCleanupPath`, never inside `cleanupPaths`) until checkpoint or abort, so
-rejections stay retriable. Standalone reports a concise provider-attributed result;
-orchestrated returns adjudications without another user report.
-
-**Done when:** the plan reflects every ruling, consensus is settled or escalated, metadata is
-checkpointed only for a settled invocation, and temporary paths are handled.
+This alias is report-only unless the user explicitly supplied `--fix`.

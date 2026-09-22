@@ -226,7 +226,7 @@ function filterAllowed(paths, allowedPaths) {
       throw new Error('allowedPaths must be an array of non-empty repository-relative path strings');
     }
     const normalized = entry.replaceAll('\\', '/').replace(/^\.\//, '');
-    if (path.isAbsolute(entry) || normalized.startsWith('/') || normalized.split('/').includes('..')) {
+    if (path.isAbsolute(entry) || path.win32.isAbsolute(entry) || normalized.startsWith('/') || normalized.split('/').includes('..')) {
       throw new Error(`allowedPaths entry must stay inside the repository: ${entry}`);
     }
     owned.add(normalized);

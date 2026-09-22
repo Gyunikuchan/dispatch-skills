@@ -31,33 +31,30 @@ Report adjacent findings in output; keep execution strictly bounded to requested
 
 ## Architecture & Dependency Invariants
 
-Skills live in `skills/` with `SKILL.md` (agent contract) and `README.md` (human documentation):
+`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. The four companion skills are user-invoked compatibility aliases:
 
-```
-skills/dispatch/                 runner + provider cascade; scripts/ and references/
-skills/dispatch-design-review/   technical-design review criteria and adjudication
-skills/dispatch-plan-review/     plan review criteria and adjudication
-skills/dispatch-code-review/     code review criteria and adjudication
-skills/implement-dispatch/       control flow: plan → review → implement → review → consensus
-.agents/skills/                  repo-development skills (audit-dispatch-skills, -fix), vendored
-                                 skills (tracked in skills-lock.json), and symlinks to skills/; none shipped
-scripts/                         repo tooling (hash generation, config validation)
-tests/                           mirrors the tree under test: tests/skills/<skill>/, tests/scripts/,
-                                 tests/integration/ for cross-skill invariants
+```text
+dispatch-plan-review ─┐
+dispatch-code-review ─┼─> dispatch ─> nothing
+dispatch-design-review┤
+implement-dispatch ───┘
 ```
 
-### Unidirectional Dependency Flow
+Repository layout:
 
-```
-implement-dispatch → dispatch-design-review, dispatch-plan-review, dispatch-code-review, dispatch
-dispatch-design-review, dispatch-plan-review, dispatch-code-review → dispatch
-dispatch → (nothing)
+```text
+skills/dispatch/          model-visible contract, config, scripts, references
+skills/*-review/          small user-invoked aliases and human manuals
+skills/implement-dispatch/ compatibility alias and human manual
+.agents/skills/           repository-development and vendored skills; none shipped
+scripts/                  repository tooling
+tests/                    mirrors source plus cross-skill integration guards
 ```
 
-- **Name the skill, not its install path**: Reference skills by name or sibling-relative paths (`<skills-dir>`). Never use host-specific install paths (`.claude/skills/`, `.agents/skills/`, `.github/skills/`, `.opencode/skill/`) or absolute paths in operational skill markdown or script invocations (discovery tables documenting standard installation locations are permitted).
-- **Assume dependencies are installed**: Downstream skills assume upstream dependencies exist and invoke them directly.
-- **Upstream skills never name downstream skills** in prose or frontmatter (gated exceptions: `skills/dispatch/references/review.md` and `skills/dispatch/SKILL.md` § Skill Alignment).
-- **Graceful degradation**: State absence of optional dependencies and run the reduced flow.
+- Reference skills by name or sibling-relative `<skills-dir>` paths, never a host-specific installation path.
+- Aliases require `dispatch`, map arguments to one verb, and provide a named missing-dependency diagnostic.
+- `dispatch` names no alias; the marked v0.4 config rejection probe is the only sibling exception.
+- Shared review behavior lives in `skills/dispatch/references/review.md`.
 
 ## Documentation Standards
 
@@ -78,7 +75,7 @@ Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, C
 - **Naming**: kebab-case for skill identifiers, filenames, and slugs.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
-- **Scratch directory allowlist**: Only active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), technical designs (`.scratch/plan/<yyyy-mm-dd>-<slug>-design.md`), increment implementation plans (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan.md`), increment walkthroughs (matching `-walkthrough.md` shape), integration walkthroughs (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-integration-walkthrough.md`), hidden design staging files (`.scratch/plan/.<design-file>.bak`/`.tmp`/`.status.tmp`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. All other data (subprocess logs, traces, filled prompts `*-review-prompt*.md`, probe captures, ephemeral run files) belongs in OS temp (`os.tmpdir()`). Orchestrators relocate working scratch artifacts to OS temp on completion; design-run artifacts relocate together only after final integration; standalone reviews retain plans/walkthroughs in place (see `skills/dispatch/references/review.md` § Wave and lifecycle). Note: `.scratch/` is not git-ignored; do not stage scratch files into git commits.
+- **Scratch directory allowlist**: Only active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), technical designs (`.scratch/plan/<yyyy-mm-dd>-<slug>-design.md`), increment implementation plans (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan.md`), increment walkthroughs (matching `-walkthrough.md` shape), integration walkthroughs (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-integration-walkthrough.md`), hidden design staging files (`.scratch/plan/.<design-file>.bak`/`.tmp`/`.status.tmp`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. All other data (subprocess logs, traces, filled prompts `*-review-prompt*.md`, probe captures, ephemeral run files) belongs in OS temp (`os.tmpdir()`). Orchestrators relocate working scratch artifacts to OS temp on completion; design-run artifacts relocate together only after final integration; standalone reviews retain plans/walkthroughs in place (see `skills/dispatch/references/review.md` § Wave and artifact lifecycle). Note: `.scratch/` is not git-ignored; do not stage scratch files into git commits.
 
 ### Comments
 

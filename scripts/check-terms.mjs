@@ -85,8 +85,8 @@ export function findBannedTerms(text, banned) {
   text.split(/\r?\n/).forEach((line, index) => {
     const marker = line.match(/^\s*(`{3,}|~{3,})/);
     if (marker) {
-      if (!fence) fence = marker[1][0];
-      else if (marker[1][0] === fence) fence = null;
+      if (!fence) fence = { character: marker[1][0], length: marker[1].length };
+      else if (marker[1][0] === fence.character && marker[1].length >= fence.length) fence = null;
       return;
     }
     if (fence) return;

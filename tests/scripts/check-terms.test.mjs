@@ -66,8 +66,9 @@ describe('findBannedTerms', () => {
     assert.deepEqual(hits.map((h) => h.line), [1, 2]);
   });
 
-  it('skips inline code spans and fenced blocks', () => {
+  it('skips inline code spans and fenced blocks, including nested shorter markers', () => {
     assert.deepEqual(findBannedTerms('Use `reviewer` here.\n```\nreviewer\n```\n~~~\nreviewer\n~~~', banned), []);
+    assert.deepEqual(findBannedTerms('````markdown\n```json\n{"reviewer":true}\n```\nreviewer\n````', banned), []);
   });
 });
 

@@ -1,3 +1,29 @@
+---
+{
+  "dispatch": {
+    "schemaVersion": 1,
+    "kind": "design",
+    "slug": "v0-5-0-streamline",
+    "invocationId": "121e9f14-e2d7-4d80-bc67-f07b6a3223fe",
+    "contentHash": "sha256:af5fcf9fd862920f29ca6384e43cbeb31e181b2a4415261dccc652ee0adbe54b",
+    "sectionHashes": {
+      "__preamble__": "sha256:58ea4b7053288f51ae41aa0f7171297ea964d0c8a32cc0c091e641b8cd92d7b7",
+      "Context & Intent": "sha256:84344284406e318c8590bee2dba072406ef887be29166e2ba106bb9893d9499a",
+      "Goals & Requirements": "sha256:f1cb206fff8356130c66769b009d3b42958a1209bd89196906e9843198010926",
+      "Architecture & Boundaries": "sha256:73b228d2100d0b5ff42ba07d47d812aa62b12974466f4e36689be9c4efe914bf",
+      "Alternatives & Decisions": "sha256:25f0a8c2a78a4c65080c5b2a0b0e4ae8c0e4cee8bb79c258ac9dc61e88418c20",
+      "Risks, Security & Operations": "sha256:f48ac4a094c091470432309d2c04d569b64c760f8b4a683666e99e93e33313b9",
+      "Increment Dependency Graph": "sha256:c5fb38a07d4c5dff2fb967d470f27bf4803964fbe324ea049c489cd8db9a53d0",
+      "Increment Details": "sha256:0d4b75b69a42ac30683430708428dd1ec8d952539cc0dfca089f474298a9087e",
+      "Final Integration": "sha256:f8d6d5ae2108d0961cc28d7a91912f26dace7c6aab94baaad3620e1bbf3d242d",
+      "Execution Status": "sha256:445de41e0934f5b7380382060adf4c4e0607a23943da3e082507dae5b313f839"
+    },
+    "reviewedAt": "2026-09-22T13:34:53.680Z",
+    "approvedContentHash": "sha256:a9b052a89ff092a97eebdae144f4dc050c0231019353a60afdba2faea646b097",
+    "approvedAt": "2026-09-22T13:34:53.680Z"
+  }
+}
+---
 # v0.5.0 — Unified dispatch skill with script-driven workflow
 
 ## Context & Intent
@@ -613,12 +639,9 @@ Each decision gives the ruling first, then the rationale.
 | I03 | complete | Driver protocol and standalone review phases |
 | I04 | complete | Implement verb as composed phases |
 | I05 | complete | Design verb and increment execution on the driver |
+| I06 | complete | Contract rewrite, aliases, and docs |
 
-### Ready
-
-| I06 | ready | Contract rewrite, aliases, and docs |
-
-Next Action: implement:I06
+Next Action: final-integration
 
 
 ## Review Findings & Resolutions

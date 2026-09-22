@@ -61,6 +61,8 @@ const planBody = [
   '- [SC1] Implement and verify the sample.',
   '  - Changes: `src/sample.js`',
   '  - Verify: `node --test tests/sample.test.mjs`',
+  '  - Evidence: verify',
+  '  - Test rationale: The existing command deterministically verifies the sample behavior.',
   '',
   '## Proposed Changes',
   '',

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-22
+
+- Unified delegation, plan, design, review, and implementation under one model-visible `dispatch` skill and script-driven action protocol.
+- Retained four familiar slash commands as small user-invoked compatibility aliases.
+- Made standalone reviews report-only by default; accepted fixes require explicit `--fix`.
+- Consolidated provider candidates, native write subagents, and phase policy into one dispatch config.
+- Added shipped-contract terminology enforcement and made CLI `--help` the flag source of truth.
+- **Breaking:** v0.4 configs and operational skill interfaces are retired. See the [v0.5.0 migration and decision notes](docs/v0.5.0-release-notes.md).
+
 ## [0.4.0] - 2026-09-21
 
 - New `dispatch-design-review` skill: large features can start from a reviewed technical design and ship in reviewed increments

@@ -53,46 +53,27 @@ function helpFlagGroups() {
 
 const HELP_GROUPS = helpFlagGroups();
 const HELP_SPELLINGS = new Set(HELP_GROUPS.flat());
-const SKILL = tableFlags(readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'SKILL.md'), 'utf8'));
-const README = tableFlags(readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'README.md'), 'utf8'));
+const SKILL_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'SKILL.md'), 'utf8');
+const README_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'README.md'), 'utf8');
 
-const missingFrom = (documented) =>
-  HELP_GROUPS.filter((group) => !group.some((flag) => documented.has(flag))).map((g) => g.join('/'));
-
-describe('dispatch flag parity (--help vs SKILL.md vs README.md)', () => {
-  it('documents every flag --help accepts in SKILL.md', () => {
-    assert.deepEqual(missingFrom(SKILL), []);
-  });
-
-  it('documents every flag --help accepts in README.md', () => {
-    assert.deepEqual(missingFrom(README), []);
-  });
-
-  it('--help, SKILL.md, and README.md all carry the v0.5 --level, --level-source, and --pins flags', () => {
-    for (const flag of ['--level', '--level-source', '--pins']) {
+describe('dispatch flag source of truth', () => {
+  it('--help carries the required v0.5 routing flags', () => {
+    for (const flag of ['--level', '--level-source', '--pins', '--run', '--kind', '--fix', '--phases', '--next', '--state', '--input']) {
       assert.ok(HELP_SPELLINGS.has(flag), `--help lacks ${flag}`);
-      assert.ok(SKILL.has(flag), `SKILL.md flag table lacks ${flag}`);
-      assert.ok(README.has(flag), `README.md flag table lacks ${flag}`);
     }
   });
-
-  it('names no flag in the docs that --help does not accept', () => {
-    const documented = [...new Set([...SKILL, ...README])].sort();
-    assert.deepEqual(documented.filter((f) => !HELP_SPELLINGS.has(f)), []);
+  it('agent and human docs point to --help without caching a flag table', () => {
+    for (const [name, text] of [['SKILL.md', SKILL_TEXT], ['README.md', README_TEXT]]) {
+      assert.match(text, /--help/);
+      assert.equal(tableFlags(text).size, 0, `${name} duplicates the CLI flag table`);
+    }
   });
-
-  it('scopes --json and -a to the opencode provider in every surface', () => {
+  it('--help scopes provider-only flags', () => {
     const res = spawnSync(process.execPath, [DISPATCH_CLI, '--help'], { encoding: 'utf8' });
-    for (const [name, text] of [
-      ['--help', res.stdout],
-      ['SKILL.md', readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'SKILL.md'), 'utf8')],
-      ['README.md', readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'README.md'), 'utf8')],
-    ]) {
-      for (const flag of ['--json', '-a']) {
-        const line = text.split('\n').find((l) => l.includes(flag) && /provider only/i.test(l));
-        assert.ok(line, `${name} does not scope ${flag} to a provider`);
-        assert.match(line, /opencode provider only/i, `${name} scopes ${flag} to the wrong provider`);
-      }
+    for (const flag of ['--json', '-a']) {
+      const line = res.stdout.split('\n').find((value) => value.includes(flag) && /provider only/i.test(value));
+      assert.ok(line, `--help does not scope ${flag}`);
+      assert.match(line, /opencode provider only/i);
     }
   });
 });

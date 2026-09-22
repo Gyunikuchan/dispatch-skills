@@ -55,14 +55,6 @@ const GUARDED = [
 ];
 
 /**
- * The review skills must keep pointing at the shared resolver (script + reference
- * doc) rather than restating the naming convention inline, so there is exactly one
- * place — `skills/dispatch/references/review.md` — that can drift.
- */
-const MUST_REFERENCE_RESOLVER = ['skills/dispatch-plan-review/SKILL.md', 'skills/dispatch-code-review/SKILL.md', 'skills/dispatch-design-review/SKILL.md'];
-const RESOLVER_MENTIONS = ['resolve-artifact-paths.mjs', 'review.md'];
-
-/**
  * Mentions of the scratch directory that name no artifact: the bare directory and the
  * abbreviated diagram label.
  */
@@ -144,13 +136,11 @@ describe('artifact path convention', () => {
     assert.deepEqual(GUARDED.filter(rel => !discovered.has(rel)), []);
   });
 
-  it('keeps the review skills pointing at the shared resolver', () => {
-    for (const rel of MUST_REFERENCE_RESOLVER) {
-      const text = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
-      assert.ok(
-        RESOLVER_MENTIONS.some(mention => text.includes(mention)),
-        `${rel} no longer references the shared artifact resolver (${RESOLVER_MENTIONS.join(' or ')})`
-      );
+  it('keeps aliases routing through dispatch rather than shared internals', () => {
+    for (const skill of ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review']) {
+      const text = readFileSync(path.join(REPO_ROOT, 'skills', skill, 'SKILL.md'), 'utf8');
+      assert.match(text, /dispatch review/);
+      assert.doesNotMatch(text, /resolve-artifact-paths\.mjs|prepare-review\.mjs/);
     }
   });
 

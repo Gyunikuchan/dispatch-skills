@@ -1,37 +1,25 @@
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { describe, it } from 'node:test';
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const read = file => fs.readFileSync(path.join(root, file), 'utf8');
-
-describe('v0.4 durable ledger contracts', () => {
-  it('routes canonical plan resume through the disclosed ledger contract', () => {
-    const skill = read('skills/implement-dispatch/SKILL.md');
-    assert.match(skill, /\/implement-dispatch <plan-path>/);
-    assert.match(skill, /references\/verbs\/implement\.md/);
-    assert.match(skill, /explicit slug matching the canonical plan filename/);
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, it } from "node:test";
+const root = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+const read = (f) => fs.readFileSync(path.join(root, f), "utf8");
+describe("v0.5 ledger disclosure", () => {
+  it("places ledger ownership and recovery in dispatch", () => {
+    const c = read("skills/dispatch/references/verbs/implement.md");
+    assert.match(c, /Resolve and fold the ledger/);
+    assert.match(c, /run-start/);
+    assert.match(c, /run-complete/);
+    assert.match(c, /reconciliation/);
+    assert.match(c, /never relocated/);
   });
-
-  it('defines append, reconciliation, flow confirmation, and handoff behavior', () => {
-    const contract = read('skills/dispatch/references/verbs/implement.md');
-    for (const phrase of [
-      'append `run-start`, then `approval`',
-      'Before each task or cluster dispatch append `task-start`',
-      'needs-reconciliation',
-      'always obtains user confirmation before dispatch',
-      'never relocated',
-      '`Rulings made`',
-      'Review-log rulings are authoritative',
-    ]) assert.match(contract, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  });
-
-  it('keeps the ledger out of scratch relocation', () => {
-    const skill = read('skills/implement-dispatch/SKILL.md');
-    assert.match(skill, /Never relocate the ledger/);
-    assert.match(skill, /canonical\s+resume command/);
-    assert.match(skill, /`Rulings made` list/);
-  });
+  it("keeps implementation alias mapping-only", () =>
+    assert.doesNotMatch(
+      read("skills/implement-dispatch/SKILL.md"),
+      /ledger-events|task-start|run-complete/,
+    ));
 });
