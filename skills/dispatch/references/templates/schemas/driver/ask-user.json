@@ -35,7 +35,15 @@
       "enum": [
         "rulings",
         "opt-in",
-        "inputs"
+        "inputs",
+        "approval",
+        "baseline-red",
+        "failure-disposition",
+        "implementation-recovery",
+        "implementation-concerns",
+        "implementation-blocked",
+        "risk-review-degradation",
+        "implementation-context"
       ]
     },
     "text": {

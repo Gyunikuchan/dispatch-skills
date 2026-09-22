@@ -27,6 +27,23 @@
           },
           "evidence": {
             "type": "string"
+          },
+          "identifiers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "diagnostic": {
+            "type": "string"
+          },
+          "scopeHash": {
+            "type": "string",
+            "minLength": 1
+          },
+          "mutationEpoch": {
+            "type": "integer"
           }
         }
       }

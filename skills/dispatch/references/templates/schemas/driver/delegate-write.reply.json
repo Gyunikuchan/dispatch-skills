@@ -3,12 +3,38 @@
   "title": "dispatch driver reply: delegate-write",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "envelope"
-  ],
   "properties": {
     "envelope": {
       "type": "object"
+    },
+    "raw": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rejected": {
+      "const": true
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
     }
-  }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "envelope"
+      ]
+    },
+    {
+      "required": [
+        "raw"
+      ]
+    },
+    {
+      "required": [
+        "rejected",
+        "reason"
+      ]
+    }
+  ]
 }

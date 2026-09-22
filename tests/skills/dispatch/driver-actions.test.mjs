@@ -260,3 +260,21 @@ describe('driver reply handling end to end (SC2)', () => {
     assert.notEqual(good.action, 'adjudicate', good.error);
   });
 });
+
+// Ordinary write replies preserve raw JSON so the outcome parser can reject duplicate keys.
+describe('ordinary action reply forms', () => {
+  it('accepts raw outcomes and explicit launch rejection, but rejects ambiguous forms', () => {
+    assert.equal(validateReply('delegate-write', { raw: '{"schemaVersion":1}' }).ok, true);
+    assert.equal(validateReply('delegate-write', { rejected: true, reason: 'Configured model unavailable.' }).ok, true);
+    assert.equal(validateReply('delegate-write', { raw: '{}', envelope: {} }).ok, false);
+    assert.equal(validateReply('delegate-write', { rejected: true }).ok, false);
+    assert.equal(validateReply('delegate-write', { envelope: {}, reason: 'ambiguous' }).ok, false);
+  });
+  it('versioned schemas disclose ordinary gate payloads', () => {
+    const questions = loadSchema('ask-user').properties.question.enum;
+    for (const question of ['approval', 'baseline-red', 'failure-disposition', 'implementation-recovery', 'risk-review-degradation']) assert.ok(questions.includes(question));
+    for (const field of ['purpose', 'scopes', 'scopeHash', 'mutationEpoch']) assert.ok(loadSchema('verify').properties[field]);
+    assert.ok(loadSchema('done').properties.handoff.properties.destinations);
+    assert.ok(loadSchema('delegate-write').properties.fields.required.includes('modelCascade'));
+  });
+});

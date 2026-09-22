@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { isMainModule } from './common.mjs';
 import { criterionMappings, mapVerificationCommandsToPaths, compareFailureIdentity, failureIdentity, normalizeDiagnostic } from './verification-evidence.mjs';
 
 function arg(name, argv) { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : null; }
 function load(file) { return file === '-' ? JSON.parse(fs.readFileSync(0, 'utf8')) : JSON.parse(fs.readFileSync(file, 'utf8')); }
-function check(plan, evidence, red) {
+export function checkRedQuality(plan, evidence, red) {
   const mappings = criterionMappings(plan);
   const commands = [...new Set(mappings.flatMap(item => item.commands))];
   const scoped = mapVerificationCommandsToPaths(plan, commands);
@@ -48,8 +49,10 @@ function main(argv) {
   const planPath = arg('--plan', argv), evidencePath = arg('--evidence', argv), redPath = arg('--red', argv);
   if (!planPath || !evidencePath || !redPath) throw new Error('Usage: red-quality.mjs --plan <path> --evidence <json-file|-> --red <json-file|->');
   const plan = fs.readFileSync(planPath, 'utf8');
-  const defects = check(plan, load(evidencePath), load(redPath));
+  const defects = checkRedQuality(plan, load(evidencePath), load(redPath));
   if (defects.length) { process.stderr.write(`[red-quality] ${defects.join('; ')}\n`); process.exitCode = 1; return; }
   process.stdout.write(JSON.stringify({ status: 'valid', criteria: criterionMappings(plan).map(item => item.id) }) + '\n');
 }
-try { main(process.argv.slice(2)); } catch (error) { process.stderr.write(`[red-quality] ${error.message}\n`); process.exitCode = 2; }
+if (isMainModule(import.meta.url)) {
+  try { main(process.argv.slice(2)); } catch (error) { process.stderr.write(`[red-quality] ${error.message}\n`); process.exitCode = 2; }
+}

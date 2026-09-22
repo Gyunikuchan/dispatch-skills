@@ -88,13 +88,21 @@ export function validateAgainstSchema(schema, value, where = '$') {
 export function validateReply(action, reply) {
   if (!ACTIONS.includes(action) || action === 'done') throw new Error(`Action "${action}" takes no reply.`);
   const errors = validateAgainstSchema(loadSchema(`${action}.reply`), reply === undefined ? null : reply);
+  if (action === 'delegate-write' && reply && typeof reply === 'object') {
+    const forms = ['envelope', 'raw', 'rejected'].filter(key => Object.hasOwn(reply, key));
+    if (forms.length !== 1) errors.push('delegate-write reply must contain exactly one outcome form');
+    if (reply.reason !== undefined && reply.rejected !== true) errors.push('reason belongs only to launch rejection');
+  }
   return errors.length ? { ok: false, errors } : { ok: true, value: reply ?? null };
 }
 
 /** Builds one action object; payload keys follow the fixed envelope keys. */
 export function emitAction(state, action, payload = {}, guidance = []) {
   if (!ACTIONS.includes(action)) throw new Error(`Unknown driver action "${action}".`);
-  return { v: 1, action, stateFile: state.stateFile, guidance: [...guidance], ...payload };
+  const envelope = { ...payload, v: 1, action, stateFile: state.stateFile, guidance: [...guidance] };
+  const errors = validateAgainstSchema(loadSchema(action), envelope);
+  if (errors.length) throw new Error(`Invalid ${action} action: ${errors.join('; ')}`);
+  return envelope;
 }
 
 // SECTION: sanitization

@@ -85,14 +85,20 @@ describe('driver CLI (SC1)', () => {
     parseAction(viaFile.stdout);
   });
 
-  for (const verb of ['plan', 'design', 'implement']) {
-    it(`--run ${verb} exits 2 with a not-available-until diagnostic`, () => {
+  for (const verb of ['plan', 'implement']) {
+    it(`--run ${verb} is available`, () => {
       const res = run(['--run', verb, '--orchestrator', 'claude', '--', 'build a thing']);
-      assert.equal(res.status, 2);
-      assert.equal(res.stdout.trim(), '');
-      assert.match(res.stderr, /not available until v0\.5 I0[45]/);
+      assert.equal(res.status, 0, res.stderr);
+      parseAction(res.stdout);
     });
   }
+
+  it('--run design remains unavailable until I05', () => {
+    const res = run(['--run', 'design', '--orchestrator', 'claude', '--', 'build a thing']);
+    assert.equal(res.status, 2);
+    assert.equal(res.stdout.trim(), '');
+    assert.match(res.stderr, /not available until v0\.5 I05/);
+  });
 
   it('rejects an unknown verb, a missing --orchestrator, and --phases on review with exit 2', () => {
     for (const args of [

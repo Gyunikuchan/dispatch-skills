@@ -129,6 +129,42 @@ export function writeDesign(repoDir, name = '2026-09-22-sample-design.md', body 
   return file;
 }
 
+export function implementationOutcome({
+  status = 'DONE',
+  stage = 'COMPLETE',
+  summary = 'fixture implementation completed',
+  evidence = ['fixture evidence'],
+  ...extra
+} = {}) {
+  return { schemaVersion: 1, status, stage, summary, evidence, ...extra };
+}
+
+export function actionNames(trace) {
+  return trace.map(({ action }) => action);
+}
+
+export function artifactSnapshot(repoDir) {
+  const root = path.join(repoDir, '.scratch', 'plan');
+  if (!fs.existsSync(root)) return {};
+  return Object.fromEntries(fs.readdirSync(root).sort().map((name) => [
+    name,
+    fs.readFileSync(path.join(root, name), 'utf8')
+      .replaceAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<time>')
+      .replaceAll(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, '<id>'),
+  ]));
+}
+
+export function removeDriverState(action) {
+  fs.rmSync(action.stateFile, { force: true });
+}
+
+export function walkthroughPath(repoDir) {
+  const root = path.join(repoDir, '.scratch', 'plan');
+  const names = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.endsWith('-walkthrough.md')) : [];
+  assert.equal(names.length, 1, `expected one walkthrough, found: ${names.join(', ')}`);
+  return path.join(root, names[0]);
+}
+
 // SECTION: stub reports
 
 export function planFinding(overrides = {}) {
@@ -253,7 +289,18 @@ const DEFAULT_POLICY = {
   applyFixes: (action) => ({
     clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })),
   }),
-  verify: (action) => ({ results: action.commands.map((command) => ({ command, exit: 0, evidence: 'ok' })) }),
+  delegateWrite: (action) => ({ envelope: implementationOutcome({
+    stage: action.fields?.stage === 'tests-only' ? 'RED_READY' : 'COMPLETE',
+    summary: `${action.fields?.stage ?? 'production'} fixture completed`,
+    evidence: [`attempt:${action.fields?.attempt ?? 1}`],
+  }) }),
+  verify: (action) => ({ results: action.commands.map((command) => ({
+    command,
+    exit: action.purpose === 'red' ? 1 : 0,
+    evidence: action.purpose === 'red' ? 'test:SC1 expected RED after tests-only mutation' : 'ok',
+    scopeHash: action.scopeHash,
+    mutationEpoch: action.mutationEpoch,
+  })) }),
   nativeFallback: (action) => {
     fs.writeFileSync(action.outputPath, report());
     return { slot: action.slot, captured: true, actual: {
@@ -297,11 +344,19 @@ function writeInput(fixture, value) {
  * `argvLog` holds every argv the agent issued: driver invocations, launch argv, and verify commands
  * (recorded as `['<verify>', command]`).
  */
-export function drive(fixture, { cwd, runArgs, policy: overrides = {}, maxSteps = 80, onAction = null, state = {} }) {
+export function drive(fixture, {
+  cwd,
+  runArgs,
+  policy: overrides = {},
+  maxSteps = 80,
+  onAction = null,
+  restartWhen = null,
+  state = {},
+}) {
   const policy = { ...DEFAULT_POLICY, ...overrides };
   const trace = [];
   const argvLog = [];
-  const ctx = { fixture, cwd, trace, argvLog, state, step: 0 };
+  const ctx = { fixture, cwd, trace, argvLog, state, step: 0, restarts: 0 };
   const invoke = (args) => {
     argvLog.push([process.execPath, fixture.script, ...args]);
     const res = runDispatch(fixture, args, { cwd });
@@ -312,7 +367,13 @@ export function drive(fixture, { cwd, runArgs, policy: overrides = {}, maxSteps 
   for (; ctx.step < maxSteps; ctx.step++) {
     trace.push(action);
     onAction?.(action, ctx);
-    if (action.action === 'done') return { trace, argvLog, done: action };
+    if (restartWhen?.(action, ctx)) {
+      removeDriverState(action);
+      ctx.restarts += 1;
+      action = invoke(['--run', ...runArgs]);
+      continue;
+    }
+    if (action.action === 'done') return { trace, argvLog, done: action, restarts: ctx.restarts };
     let input;
     switch (action.action) {
       case 'launch': {
@@ -333,6 +394,9 @@ export function drive(fixture, { cwd, runArgs, policy: overrides = {}, maxSteps 
         break;
       case 'apply-fixes':
         input = policy.applyFixes(action, ctx);
+        break;
+      case 'delegate-write':
+        input = policy.delegateWrite(action, ctx);
         break;
       case 'verify':
         for (const command of action.commands) argvLog.push(['<verify>', command]);

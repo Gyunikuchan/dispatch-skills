@@ -59,13 +59,15 @@ describe('red quality and failure disposition contract', () => {
     const failure = { 'run.txt': { objectId: 'after' } };
     assert.deepEqual(attribution.attributablePaths({ baseline: base, taskStart, failureSnapshot: failure, authorized: true }), ['run.txt']);
     assert.deepEqual(attribution.attributablePaths({ baseline: base, taskStart, failureSnapshot: failure, authorized: false }), []);
-    assert.deepEqual(attribution.attributablePaths({ baseline: base, taskStart, failureSnapshot: { ...failure, 'run.txt': { objectId: 'drifted' } }, authorized: true }), []);
+    assert.equal(attribution.failureAttribution({ baseline: { 'run.txt': { objectId: 'caller' } }, taskStart, failureSnapshot: failure, authorized: true }).allowed, false);
+    assert.equal(attribution.failureAttribution({ baseline: base, taskStart, failureSnapshot: failure, currentState: { 'run.txt': { objectId: 'later' } }, authorized: true }).reason, 'post-failure-drift');
+    assert.deepEqual(attribution.attributablePaths({ taskStart: {}, failureSnapshot: { 'new.txt': { objectId: 'new' } }, authorized: true }), ['new.txt']);
   });
 
-  it('SC6: records governing-contract inheritance for the I04 retry without editing caller artifacts', () => {
+  it('SC6: keeps release-specific I04 migration out of shipped skill documentation', () => {
     const readme = read('skills/implement-dispatch/README.md');
-    assert.match(readme, /I04.*(?:inherit|governing).*contract revision|governing contract.*I04/i);
-    assert.match(readme, /refresh(?:ed)? and re-review(?:ed)?/i);
+    assert.doesNotMatch(readme, /\bI04\b/);
+    assert.match(readme, /RED-quality/);
   });
 
   it('SC7: keeps SKILL.md at or below the numeric 1,623-word bound', () => {

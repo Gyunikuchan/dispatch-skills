@@ -156,7 +156,7 @@ diagnostics.
 | `--level-source <source>` | Record how the level was chosen: `explicit` or `classified`; requires `--level`. |
 | `--pins <pins>` | Launch one wave from provider keys, a count, or `all`, printing one JSON stdout line per slot. |
 | `--batch-file <path>` | Execute caller-resolved targets and reserves from a temporary JSON manifest. |
-| `--run <verb>` | Start a script-driven run (`review` in this release; `plan`, `design`, and `implement` arrive later); prints one JSON action. Requires `--orchestrator`. |
+| `--run <verb>` | Start `review`, `plan`, or ordinary `implement`; prints one JSON action. Requires `--orchestrator`. `plan` and `implement` require an ask or canonical plan path after `--`; design execution remains I05. |
 | `--kind <kind>` | Review kind for `--run review`: `plan`, `design`, or `code` (inferred from the argument when omitted). |
 | `--fix` | Let `--run review` apply accepted fixes; reviews are report-only without it. |
 | `--phases from:<phase>` | Start phase for `implement` runs (not accepted by `review`). |
@@ -171,6 +171,12 @@ diagnostics.
 | `--list-platforms` | List provider keys in the effective configuration. |
 | `--list-targets` | List configured targets in count/`all` selection order as JSON. |
 | `--doctor` | Validate configuration and report the selected file, level, ordered candidates, phase policy, and provider health. |
+
+### Ordinary driver approval and recovery
+
+`plan` authors or reviews one canonical plan and stops without ledger writes. `implement` composes plan review, mapped baseline checks, explicit approval, tests-only RED, native implementation, code review, and handoff. Approval replies bind the current governing hash and classify approved test paths; verification replies echo the emitted scope hash and mutation epoch. Write replies carry a raw v1 implementation-outcome or an explicit launch rejection so the configured model cascade can advance.
+
+`--phases from:<phase>` accepts one of `plan`, `plan-review`, `baseline`, `implementation`, `code-review`, or `handoff`. Lost caches are reconstructed from the plan, walkthrough execution evidence, repository state, and repo-scoped v1 ledger. Missing or stale prerequisites refuse rather than skip gates. An interrupted write requires its captured outcome; `inspect-first` leaves failure disposition open. Successful handoff reports the real checkpoint and relocated artifact destinations; retain these because OS cleanup may purge temporary storage.
 
 ## Configuration
 

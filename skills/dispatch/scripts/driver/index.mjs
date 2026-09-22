@@ -10,8 +10,10 @@ import { fileURLToPath } from 'node:url';
 import { KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../common.mjs';
 import { LEVELS } from '../config.mjs';
 import { KIND_NAMES } from '../review-kinds.mjs';
-import { validateReply } from './actions.mjs';
+import { emitAction, validateReply } from './actions.mjs';
+import { createRunState } from './state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
+import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { readRunSidecar, readRunState } from './state.mjs';
 
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
@@ -26,7 +28,7 @@ const BOOLEAN_FLAGS = new Set(['--next', '--fix', '--verbose']);
 export const DRIVER_FLAGS = [...VALUE_FLAGS, ...BOOLEAN_FLAGS];
 
 export const DRIVER_HELP = `Driver (script-driven phases; each call prints one JSON action):
-  --run <verb>                ${VERBS.join('|')} (only review runs in this release)
+  --run <verb>                ${VERBS.join('|')} (design becomes available in v0.5 I05)
   --kind <kind>               Review kind: ${KIND_NAMES.join('|')} (default: inferred from the argument)
   --fix                       Apply accepted fixes (review is report-only by default)
   --phases from:<phase>       Start phase for implement (not accepted by review)
@@ -84,11 +86,13 @@ function normalizeOrchestrator(raw) {
 /** Normalized `--run` invocation, recorded in the sidecar. */
 function normalizeRun(parsed) {
   if (!VERBS.includes(parsed.run)) throw new UsageError(`--run must be one of ${VERBS.join('|')}.`);
-  if (parsed.run !== 'review') {
-    throw new UsageError(`--run ${parsed.run} is not available until v0.5 ${parsed.run === 'implement' ? 'I05' : 'I04'}.`);
+  if (!['review', 'plan', 'implement'].includes(parsed.run)) {
+    throw new UsageError(`--run ${parsed.run} is not available until v0.5 I05.`);
   }
   if (parsed.state || parsed.input !== undefined) throw new UsageError('--state and --input belong to --next.');
-  if (parsed.phases !== undefined) throw new UsageError('--phases is not accepted by --run review.');
+  if (parsed.phases !== undefined && parsed.run !== 'implement') throw new UsageError('--phases is not accepted by this run.');
+  if (['plan', 'implement'].includes(parsed.run) && !parsed.argument?.trim()) throw new UsageError(`${parsed.run} requires an ask or canonical plan path after --.`);
+  if (parsed.phases !== undefined && !/^from:(?:plan|plan-review|baseline|implementation|code-review|handoff)$/.test(parsed.phases)) throw new UsageError('--phases requires exactly one from:<ordinary-phase>.');
   if (!parsed.orchestrator) throw new UsageError('--run requires --orchestrator <platform>.');
   if (parsed.kind !== undefined && !KIND_NAMES.includes(parsed.kind)) {
     throw new UsageError(`--kind must be one of ${KIND_NAMES.join('|')}.`);
@@ -107,6 +111,7 @@ function normalizeRun(parsed) {
     orchestratorModel: parsed.orchestratorModel ?? null,
     level: parsed.level ?? 'medium',
     levelSource: parsed.level === undefined ? 'default' : (parsed.levelSource ?? 'explicit'),
+    phases: parsed.phases ?? null,
     pins: parsed.pins ?? null,
     verbose: parsed.verbose,
   };
@@ -119,6 +124,7 @@ export function resumeCommand(invocation) {
   const parts = ['node', quote(DISPATCH_SCRIPT), '--run', invocation.verb];
   if (invocation.kind) parts.push('--kind', invocation.kind);
   if (invocation.fix) parts.push('--fix');
+  if (invocation.phases) parts.push('--phases', invocation.phases);
   if (invocation.levelSource !== 'default') parts.push('--level', invocation.level, '--level-source', invocation.levelSource);
   if (invocation.pins) parts.push('--pins', quote(invocation.pins));
   parts.push('--orchestrator', invocation.orchestrator);
@@ -137,8 +143,23 @@ function readInput(raw) {
   }
 }
 
-function next(parsed) {
+async function next(parsed) {
   if (!parsed.state) throw new UsageError('--next requires --state <file>.');
+  // Serialize replies, including review subprocess completion, before reading the cached transition.
+  try { readRunState(parsed.state); } catch { return advanceLocked(parsed); }
+  const lock = `${path.resolve(parsed.state)}.advance.lock`;
+  let fd;
+  try {
+    fd = fs.openSync(lock, 'wx', 0o600);
+    fs.writeFileSync(fd, `${process.pid}\n`);
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new UsageError(`Driver advance lock exists at ${lock}; verify no process owns it, then remove the stale lock and resume with --next.`);
+    throw error;
+  }
+  try { return await advanceLocked(parsed); }
+  finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
+}
+function advanceLocked(parsed) {
   let state;
   try {
     state = readRunState(parsed.state);
@@ -154,7 +175,9 @@ function next(parsed) {
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
-  return advanceReview(state, checked.value);
+  return ['implement', 'plan'].includes(state.invocation?.verb)
+    ? advanceImplement(state, checked.value)
+    : advanceReview(state, checked.value);
 }
 
 /**
@@ -167,10 +190,12 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
     let action;
     if (parsed.next) {
       if (parsed.run !== undefined) throw new UsageError('--run and --next are exclusive.');
-      action = next(parsed);
+      action = await next(parsed);
     } else {
       const invocation = normalizeRun(parsed);
-      action = await startReview({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) });
+      action = ['implement', 'plan'].includes(invocation.verb)
+        ? await startImplement({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) })
+        : await startReview({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) });
     }
     stdout.write(`${JSON.stringify(action)}\n`);
     return 0;

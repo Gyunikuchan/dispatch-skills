@@ -24,7 +24,7 @@ function fixture() {
   const red = path.join(dir, 'red.json');
   fs.writeFileSync(plan, [
     '## Success Criteria',
-    '- [SC1] Validation.',
+    '- [SC1] Basic behavior.',
     '  - Changes: src/value.js',
     '  - Verify: `node --test tests/value.test.mjs`',
     '- [SC2] Recovery.',
@@ -83,7 +83,10 @@ describe('red-quality checker', () => {
 
   it('matches a stable identity even when only the normalized diagnostic is equal', () => {
     const f = fixture();
-    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: ['RED-MATRIX SC1 | tests/value.test.mjs | exit 1 failed at 2026-09-20T00:00:00Z'] }));
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 failed at 2026-09-20T00:00:00Z',
+      'RED-MATRIX SC2 | N/A | recovery is not applicable to this diagnostic check',
+    ] }));
     fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: [], diagnostic: 'failed at 2026-09-21T00:00:00Z', command: 'node --test tests/value.test.mjs' }));
     const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
     assert.equal(result.status, 0, result.stderr);

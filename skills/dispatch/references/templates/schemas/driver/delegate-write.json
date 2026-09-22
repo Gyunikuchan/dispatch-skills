@@ -31,7 +31,92 @@
       "type": "string"
     },
     "fields": {
-      "type": "object"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "launch",
+        "attempt",
+        "model",
+        "platform",
+        "cascadePosition",
+        "modelCascade",
+        "planPath",
+        "walkthroughPath",
+        "paths",
+        "evidence"
+      ],
+      "properties": {
+        "stage": {
+          "enum": [
+            "tests-only",
+            "production"
+          ]
+        },
+        "launch": {
+          "enum": [
+            "tests-only",
+            "full",
+            "continuation"
+          ]
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effort": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cascadePosition": {
+          "type": "integer"
+        },
+        "modelCascade": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "planPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "walkthroughPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "context": {
+          "type": [
+            "string",
+            "object",
+            "null"
+          ]
+        }
+      }
     }
   }
 }

@@ -613,7 +613,7 @@ Each decision gives the ruling first, then the rationale.
 | I01 | complete (`003e7bb`) | 2026-09-21 | `npm test` 1544 pass; hashes current; configs valid; plan review 3 rounds (28 accepted), code review 3 rounds (6 accepted), both consensus-settled |
 | I02 | complete (`ab6e72e`) | 2026-09-22 | `npm test` 1572 pass; hashes current; configs valid; code review 5 rounds (R1–R3 I02, R4–R5 adjacent O1), 4 accepted, consensus-settled and checkpointed; ledger `%TEMP%/dispatch-skills-fchei/47a8c8c9af77/v0-5-0-streamline-i02-ledger.md` |
 | I03 | complete (uncommitted) | 2026-09-22 | `npm test` 1655 pass (after follow-ups, code review R4–R6 settled and checkpointed); hashes current; plan review 3 rounds (21 accepted), code review 3 rounds (22 accepted), both consensus-settled and checkpointed; D16: driver 2586 B vs v0.4.0 2715 B (3873 B with checkpoint); ledger `%TEMP%/dispatch-skills-fchei/47a8c8c9af77/v0-5-0-streamline-i03-ledger.md` |
-| I04 | ready | 2026-09-22 | — |
+| I04 | complete (uncommitted) | 2026-09-22 | Contract-first ordinary driver implemented: canonical plan/review/baseline/approval, locked v1 ledger/resume, structural RED and typed outcomes, configured risk review, failure disposition, code checkpoint, and relocation handoff. Canonical contract 8/8, driver 88/88, focused 212/212; full suite 1671 pass with 11 unchanged I05-adjacent failures. |
 | I05–I06 | pending | — | — |
 
 **I01 run notes.** Executed as an ordinary `/implement-dispatch` plan (this design carries no
@@ -721,6 +721,10 @@ implementation by a claude-opus-5 native subagent. The driver lives in
   prose) and code R3 (invalid). The host settled code R3 on the two valid sources.
 - **Spec repair:** the I02 dependency-graph row, which had been overwritten by a status row, was
   restored, and the I02 status was moved to Execution Status (code-review adjacent finding).
+
+**I04 failed-run notes.** First plan `.scratch/plan/2026-09-22-v0-5-0-streamline-i04-ordinary-driver-plan.md`; walkthrough `…-walkthrough.md`. Baseline: 76 driver tests and config validation green. Host-observed RED: 14 expected missing-I04 failures. Native model cascade rejected `gpt-5.6-luna` on quota and started `bedrock.gpt-5.6-luna`; two implementation attempts remained incomplete. Code review found the implementation simulated rather than enforced phase review, resume, v1 ledger, RED/outcome, verification-freshness, and handoff contracts. An authorized orchestrator repair still left five blocking findings, so every I04 code/test/schema/hash delta was removed.
+
+**I04 retry notes.** Fresh plan `.scratch/plan/2026-09-22-ordinary-driver-retry.md`; walkthrough `…-walkthrough.md`. Plan review R1–R2 materialized missing RED-quality, risk-review, failure-disposition, identity, freshness, and handoff requirements. Early delegated attempts repeated the prior simulated implementation and were rejected. The final contract-first rebuild split the ordinary flow into plan, baseline, implementation, verification, write, state, and handoff modules; it uses the shared review state machine, canonical ledger writer/resume, structural RED and typed outcome contracts, configured risk review, attributable failure disposition, checkpoint metadata, and relocation helper. Review fixes added cross-scope mutation freshness, missing-baseline diagnostics, hermetic fixture commits, stale-lock guidance, and guarded reversion. The obsolete broad RED harness was removed after canonical contract coverage replaced it. Verification: canonical contract 8/8, all driver 88/88, focused 212/212, config/hashes/diff check green; `npm test` 1671 pass and the same 11 I05-adjacent failures. I04 complete; I05 is next.
 
 ## Review Findings & Resolutions
 <!-- machine-managed review history; excluded from governed content -->

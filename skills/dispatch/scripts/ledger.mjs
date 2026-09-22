@@ -335,20 +335,17 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
   if (disposition?.state === 'open') {
     let captured;
     try { captured = JSON.parse(disposition.reason).failureSnapshot; } catch { captured = null; }
-    if (captured) {
-      const current = captureRepositoryState(repoRoot);
-      const capturedEntries = captured.entries ?? {};
-      const currentEntries = current.entries ?? {};
-      const paths = new Set([...Object.keys(capturedEntries), ...Object.keys(currentEntries)]);
-      const comparable = (entries) => Object.fromEntries([...paths].sort().map(file => {
-        const entry = entries[file];
-        return [file, entry?.objectId === 'absent' ? null : (entry ?? null)];
-      }));
-      if (current.available === captured.available && JSON.stringify(comparable(currentEntries)) === JSON.stringify(comparable(capturedEntries))) {
-        return { status: 'resumable', slug, governingHash: hash.hash, segment, nextAction: 'failure-disposition', requiresFlowConfirmation: true };
-      }
-      return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: 'Failure snapshot drifted after disposition.', requiresFlowConfirmation: true };
+    if (!captured) {
+      return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: 'Failure disposition snapshot is missing or invalid.', requiresFlowConfirmation: true };
     }
+    let current;
+    try { current = captureRepositoryState(repoRoot); } catch (error) {
+      return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: `Failure snapshot capture failed: ${error.message}`, requiresFlowConfirmation: true };
+    }
+    if (current.available === captured.available && JSON.stringify(current.entries ?? {}) === JSON.stringify(captured.entries ?? {})) {
+      return { status: 'resumable', slug, governingHash: hash.hash, segment, nextAction: 'failure-disposition', requiresFlowConfirmation: true };
+    }
+    return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: 'Failure snapshot drifted after disposition.', requiresFlowConfirmation: true };
   }
   const completions = [...segment.completedTasks.entries()];
   const laterOwners = new Map();

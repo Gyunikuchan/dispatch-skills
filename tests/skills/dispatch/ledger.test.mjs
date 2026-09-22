@@ -18,6 +18,7 @@ import {
   slugFromPlanPath,
 } from '../../../skills/dispatch/scripts/ledger.mjs';
 import { materializedFingerprint } from '../../../skills/dispatch/scripts/git-state.mjs';
+import { captureRepositoryState } from '../../../skills/dispatch/scripts/verification-evidence.mjs';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const state = `sha256:${'b'.repeat(64)}`;
@@ -299,12 +300,14 @@ describe('ledger I/O and resume', () => {
     const planPath = '.scratch/plan/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
+    fs.writeFileSync(path.join(repo, 'active.txt'), 'failed mutation\n');
+    const failureSnapshot = captureRepositoryState(repo);
     for (const event of [
       runStart(hash, planPath),
       { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
       { v: 1, type: 'task-start', runId, at, data: { taskId: 'active', attemptBudget: 1, paths: ['active.txt'], preState: state } },
       { v: 1, type: 'implementation-attempt', runId, at, data: { taskId: 'active', attempt: 1, launch: 'full', target: { platform: 'copilot' }, terminalEnvelope: {}, evidence: ['failed'], transition: 'stop-user-ruling' } },
-      { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: { available: true, entries: { 'active.txt': { status: ' M', objectId: 'absent' } } } }), costIfWrong: 'tree state may be lost', state: 'open' } },
+      { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot }), costIfWrong: 'tree state may be lost', state: 'open' } },
     ]) appendEvent(ledgerPath, event);
     const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
     assert.equal(resumed.nextAction, 'failure-disposition');

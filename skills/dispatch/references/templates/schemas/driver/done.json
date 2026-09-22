@@ -38,7 +38,8 @@
         "refused",
         "failed",
         "no-reviewable-changes",
-        "lint-defects"
+        "lint-defects",
+        "stable-failure"
       ]
     },
     "summary": {
@@ -61,6 +62,72 @@
     },
     "artifactPath": {
       "type": "string"
+    },
+    "ledgerPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "resumeCommand": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ledgerPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rulings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "retained": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "reason"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "destinations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "warning": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewDisabled": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
     }
   }
 }
