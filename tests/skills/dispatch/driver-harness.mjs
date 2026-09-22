@@ -256,7 +256,11 @@ const DEFAULT_POLICY = {
   verify: (action) => ({ results: action.commands.map((command) => ({ command, exit: 0, evidence: 'ok' })) }),
   nativeFallback: (action) => {
     fs.writeFileSync(action.outputPath, report());
-    return { slot: action.slot, captured: true };
+    return { slot: action.slot, captured: true, actual: {
+      agentType: action.descriptor.agentType,
+      model: action.descriptor.model,
+      reasoningEffort: action.descriptor.reasoningEffort,
+    } };
   },
   author: () => { throw new Error('unexpected author action'); },
 };

@@ -102,7 +102,7 @@ describe('driver reply validation (SC2)', () => {
       ['verify', { results: [{ command: 'npm test', exit: 0, evidence: 'pass' }] }],
       ['ask-user', { answer: 'include O1' }],
       ['ask-user', { answer: { summary: 's', verification: { command: 'npm test', result: 'ok' } } }],
-      ['native-fallback', { slot: 'plan-review:R1:agy:0', captured: true }],
+      ['native-fallback', { slot: 'plan-review:R1:agy:0', captured: true, actual: { agentType: 'research', model: 'gemini', reasoningEffort: 'medium' } }],
       ['author', { path: '.scratch/plan/x.md' }],
       ['launch', null],
       ['launch', {}],

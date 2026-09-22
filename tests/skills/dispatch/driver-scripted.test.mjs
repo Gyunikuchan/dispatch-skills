@@ -205,8 +205,19 @@ describe('scripted review paths (SC5)', () => {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback: (action) => {
           assert.ok(fs.existsSync(action.promptPath), 'fallback names the slot prompt');
+          assert.deepEqual(action.descriptor, {
+            sourceKey: action.slot,
+            agentType: 'research',
+            model: 'gemini-3.7-flash',
+            reasoningEffort: 'medium',
+            substitutesFor: null,
+          });
           fs.writeFileSync(action.outputPath, report([planFinding({ defect: 'fallback-found defect.' })]));
-          return { slot: action.slot, captured: true };
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType,
+            model: action.descriptor.model,
+            reasoningEffort: action.descriptor.reasoningEffort,
+          } };
         },
       },
     });
@@ -218,6 +229,63 @@ describe('scripted review paths (SC5)', () => {
     const [round] = readLog(plan).rounds;
     assert.ok(Object.values(round.sourceMap).some((source) => source.status === 'fallback'));
     assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('native fallback rejects actual model or effort drift and re-emits the same action', () => {
+    const { fixture, repo } = setup(config({}, { agy: DELEGATES.agy }));
+    const plan = writePlan(repo.dir);
+    let attempts = 0;
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback: (action) => {
+          fs.writeFileSync(action.outputPath, report());
+          attempts++;
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType,
+            model: action.descriptor.model,
+            reasoningEffort: attempts === 1 ? 'wrong-effort' : action.descriptor.reasoningEffort,
+          } };
+        },
+      },
+    });
+    const fallbacks = run.trace.filter((action) => action.action === 'native-fallback');
+    assert.equal(fallbacks.length, 2);
+    assert.match(fallbacks[1].error, /must match the descriptor exactly/);
+    assert.equal(run.done.outcome, 'complete');
+  });
+
+  it('native fallback preserves two distinct configured model and effort descriptors', () => {
+    const delegates = {
+      agy: { model: 'gemini-3.7-flash', effort: 'medium' },
+      opencode: [{ model: 'openai/gpt-5', effort: 'high' }],
+    };
+    const { fixture, repo } = setup(config({ targets: 2 }, delegates));
+    const plan = writePlan(repo.dir);
+    const seen = [];
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback: (action) => {
+          seen.push(action.descriptor);
+          fs.writeFileSync(action.outputPath, report());
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType,
+            model: action.descriptor.model,
+            reasoningEffort: action.descriptor.reasoningEffort,
+          } };
+        },
+      },
+    });
+    assert.deepEqual(seen.map(({ agentType, model, reasoningEffort }) => ({ agentType, model, reasoningEffort })), [
+      { agentType: 'research', model: 'gemini-3.7-flash', reasoningEffort: 'medium' },
+      { agentType: 'explore', model: 'openai/gpt-5', reasoningEffort: 'high' },
+    ]);
+    assert.equal(run.done.outcome, 'complete');
   });
 
   it('reserve replacement: a failed target is replaced by the next reserve in the same wave', () => {
@@ -611,7 +679,11 @@ describe('scripted follow-ups', () => {
         waveResults: () => allProviders('{"status":"BOGUS"}'),
         nativeFallback: (action) => {
           fs.writeFileSync(action.outputPath, report([planFinding({ defect: 'fallback-after-invalid defect.' })]));
-          return { slot: action.slot, captured: true };
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType,
+            model: action.descriptor.model,
+            reasoningEffort: action.descriptor.reasoningEffort,
+          } };
         },
       },
     });

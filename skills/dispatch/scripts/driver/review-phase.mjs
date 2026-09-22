@@ -437,24 +437,52 @@ function onLaunch(state) {
   state.collect = {
     reports: envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
     sourceMap,
-    queue: unresolved.map((failure) => ({ sourceKey: failure.sourceKey, platform: failure.platform, candidateIndex: failure.candidateIndex })),
+    queue: unresolved.map((failure) => ({
+      sourceKey: failure.sourceKey,
+      platform: failure.platform,
+      candidateIndex: failure.candidateIndex,
+      model: failure.model ?? null,
+      effort: failure.effort ?? null,
+      substitutesFor: failure.substitutesFor ?? null,
+    })),
     fallbackTried: [],
   };
   return processCollected(state);
 }
 
+const NATIVE_AGENT_TYPES = Object.freeze({ claude: 'explore', agy: 'research', copilot: 'explore', opencode: 'explore' });
+
 function nativeFallbackAction(state) {
   const slot = state.collect.queue[0];
+  if (!slot.model || !slot.effort) {
+    state.collect.queue.shift();
+    state.collect.fallbackTried.push(slot.sourceKey);
+    return processCollected(state);
+  }
   const outputPath = runFile(state, `fallback-${state.collect.fallbackTried.length + 1}.txt`);
-  state.collect.current = { ...slot, outputPath };
-  return emitAction(state, 'native-fallback', { slot: slot.sourceKey, promptPath: state.wave.promptPath, outputPath }, [
-    'Run a read-only native subagent on the prompt file, write its final reply verbatim to outputPath, then reply {"slot": "<slot>", "captured": true}.',
+  const descriptor = {
+    sourceKey: slot.sourceKey,
+    agentType: NATIVE_AGENT_TYPES[slot.platform] ?? 'explore',
+    model: slot.model,
+    reasoningEffort: slot.effort,
+    substitutesFor: slot.substitutesFor,
+  };
+  state.collect.current = { ...slot, outputPath, descriptor };
+  return emitAction(state, 'native-fallback', { slot: slot.sourceKey, promptPath: state.wave.promptPath, outputPath, descriptor }, [
+    'Launch the named read-only native agent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; never use launcher defaults.',
+    'If the launcher cannot accept the configured model or effort, do not launch: re-resolve or exclude this source.',
+    'Write its final reply verbatim to outputPath, then report the actual launch metadata with the captured reply.',
   ]);
 }
 
 function onNativeFallback(state, reply) {
   const current = state.collect.current;
   if (reply.slot !== current.sourceKey) return reemit(state, `slot must be ${current.sourceKey}.`);
+  const expected = current.descriptor;
+  const actual = reply.actual;
+  if (actual.agentType !== expected.agentType || actual.model !== expected.model || actual.reasoningEffort !== expected.reasoningEffort) {
+    return reemit(state, `Native fallback launch metadata must match the descriptor exactly; expected ${JSON.stringify({ agentType: expected.agentType, model: expected.model, reasoningEffort: expected.reasoningEffort })}.`);
+  }
   state.collect.queue.shift();
   state.collect.fallbackTried.push(current.sourceKey);
   const text = fs.existsSync(current.outputPath) ? fs.readFileSync(current.outputPath, 'utf8') : '';
@@ -463,11 +491,11 @@ function onNativeFallback(state, reply) {
     state.collect.sourceMap[current.sourceKey] = {
       provider: current.platform,
       candidateIndex: current.candidateIndex,
-      model: null,
-      effort: null,
+      model: actual.model,
+      effort: actual.reasoningEffort,
       status: 'fallback',
       session: null,
-      substitutesFor: null,
+      substitutesFor: expected.substitutesFor,
     };
   }
   return processCollected(state);
@@ -490,10 +518,18 @@ function processCollected(state) {
       }
       // An empty or invalid report is not a review: take the native fallback once.
       state.collect.reports = state.collect.reports.filter((candidate) => candidate !== report);
+      const source = state.collect.sourceMap[report.sourceKey] ?? {};
       delete state.collect.sourceMap[report.sourceKey];
       if (!report.fallback && !state.collect.fallbackTried.includes(report.sourceKey)) {
         const [, , platform, index] = report.sourceKey.split(':');
-        state.collect.queue.push({ sourceKey: report.sourceKey, platform, candidateIndex: Number(index) });
+        state.collect.queue.push({
+          sourceKey: report.sourceKey,
+          platform,
+          candidateIndex: Number(index),
+          model: source.model ?? null,
+          effort: source.effort ?? null,
+          substitutesFor: source.substitutesFor ?? null,
+        });
       }
       continue;
     }

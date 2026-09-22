@@ -130,12 +130,11 @@ Use this path after `NO_DISPATCH_AVAILABLE`, a pinned non-zero result, an empty 
 runner failure. Configuration, integrity, membership, and `--no-config` errors are terminal:
 report the exact diagnostic instead.
 
-1. Identify the failed target platform and the declared or detected orchestrator platform.
-2. When they match, launch the host platform's own native subagent directly — never answer inline.
-   Reuse the exact prompt and attachments plus the failed invocation's effective model and effort;
-   resolve omitted flags from the same dispatch configuration. Do not re-enter `dispatch` or retry
-   another candidate on that platform.
-3. When they differ, launch the failed platform's in-process native subagent:
+1. Identify the failed target and orchestrator platforms. Resolve concrete effective `model` and
+   `reasoningEffort`; exclude and re-resolve a source whose cascade cannot identify them.
+2. Emit a closed descriptor containing `sourceKey`, `agentType`, `model`, `reasoningEffort`, and
+   `substitutesFor`, then pass it unchanged to the native launcher. Matching platforms use the
+   host's native read-only subagent; differing platforms use this map:
 
    | Failed platform | Native subagent |
    |---|---|
@@ -144,17 +143,14 @@ report the exact diagnostic instead.
    | `copilot` | `explore` |
    | `opencode` | `explore` |
 
-   Reuse the identical prompt and attachments. Preserve the target's effective model and effort
-   when the subagent accepts them.
-4. Treat fallback as a transport replacement, not a reduced review. Capture its complete final
-   response into the failed slot's `dispatch.outputPath` (or the same stdout-result channel named by
-   the runner warning), preserving the original candidate/source identity and adding fallback
-   metadata through `source-map.mjs --extra`. Then run the caller's unchanged parsing,
-   sanitization, verification, adjudication, finding IDs/rulings, consensus, artifact update, and
-   checkpoint steps. A clean fallback report participates in consensus exactly like a clean direct
-   report; an invalid fallback report remains a failed target.
-5. Record the native fallback reason/result and any reserve substitution as the target's outcome.
-   Do not summarize or relay it as a side channel in place of the caller's report pipeline.
+   Reuse the exact prompt and attachments. A launcher that cannot accept the descriptor excludes
+   and re-resolves the source; it never substitutes defaults, re-enters `dispatch`, or answers inline.
+3. Treat fallback as a transport replacement, not a reduced review. Capture the complete final response in the failed slot's `dispatch.outputPath` (or its named
+   stdout-result channel). Record the actual `agentType`, `model`, and `reasoningEffort`; reject
+   missing or mismatched launch metadata. Preserve source identity, `substitutesFor`, and the
+   fallback reason through `source-map.mjs --extra`.
+4. Run the unchanged parsing, sanitization, verification, adjudication, ruling, and consensus pipeline through artifact update and checkpoint. A clean fallback participates like a clean direct report; an invalid
+   fallback remains failed.
 
 A named agent type above is read-only by construction. A default subagent is write-capable, so its
 read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to make
