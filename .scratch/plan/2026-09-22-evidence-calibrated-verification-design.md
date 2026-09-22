@@ -12,10 +12,13 @@ failure modes:
 - workflow guarantees described in prose remained vulnerable to agent variance until moved into a
   script or schema and covered by behavioral tests.
 
-Intent: choose the cheapest durable evidence that can falsify each delivery claim. Require RED only
-when a retained test demonstrates the targeted behavioral gap and will provide useful future
-regression signal. Give changes without a high-signal test explicit non-RED evidence requirements
-rather than exemptions with no proof. Prose is one example, not a special case.
+Intent: choose the cheapest durable evidence that can falsify each delivery claim. **Tests are
+diagnostic signals, not the delivery goal:** use them to expose misunderstandings, prompt deeper
+investigation, and detect regressions. Red identifies evidence to investigate; green removes one
+source of doubt but does not prove completeness or correctness. Require RED only when a retained
+test demonstrates the targeted behavioral gap and will provide useful future regression signal.
+Give changes without a high-signal test explicit non-RED evidence requirements rather than
+exemptions with no proof. Prose is one example, not a special case.
 
 ## Goals & Requirements
 
@@ -33,6 +36,8 @@ rather than exemptions with no proof. Prose is one example, not a special case.
   either class.
 - **G6 — Regression safety remains universal.** Every shipped change still receives its mapped
   verification commands and the repository's final test suite.
+- **G7 — Outcomes drive implementation.** The write subagent implements the governing ask/design
+  outcome and settled scope; tests remain evidence and constraints, never a substitute objective.
 
 ### Non-goals
 
@@ -42,6 +47,7 @@ rather than exemptions with no proof. Prose is one example, not a special case.
 - No automatic inference of evidence class from file extension, change type, or implementation
   language alone.
 - No relaxation of baseline, freshness, side-effect, approval, review, or failure-disposition rules.
+- No instruction to maximize test passage independently of the requested outcome.
 
 ### Requirements
 
@@ -122,6 +128,44 @@ that `RED_READY` is required only when at least one `red` criterion exists.
 diagnostic rather than defaulting to `red` or bypassing the gate. The diagnostic lists each missing
 criterion and the three accepted classes.
 
+**R10 — Outcome-first implementation packet.** Every full implementation launch receives one
+ordered, bounded packet:
+
+1. governing goal/outcome from the ask, ticket, or approved design increment;
+2. settled scope, non-scope, invariants, and rollback boundary;
+3. observable success criteria and evidence classes;
+4. relevant repository constraints and prior failure evidence;
+5. tests and verification commands, explicitly labeled **evidence, not specification**.
+
+The launch instruction is `implement the smallest complete behavior satisfying the outcome and
+scope`, never `make the tests pass`. Raw test files are included only when needed to execute or
+understand mapped evidence; their incidental structure does not expand or narrow scope.
+
+**R11 — Authority and conflict handling.** The governing outcome and settled plan are authoritative;
+criteria refine them and tests provide evidence. If a test conflicts with, omits, or demands behavior
+outside those sources, the implementer returns `NEEDS_CONTEXT` or `BLOCKED` with the exact conflict.
+It must not change production behavior merely to satisfy that test. The orchestrator repairs or
+reclassifies the evidence through the existing reviewed scope-change path before redispatch.
+
+**R12 — Outcome-based completion.** Passing mapped high-signal tests remains a mandatory gate, but
+is never sufficient. Treat unexpected red as diagnostic evidence requiring investigation, not an
+obstacle to suppress; treat green as one resolved uncertainty, not proof of completeness. Before
+`task-complete`, the implementation outcome and walkthrough map every success criterion to:
+
+- the delivered observable behavior and production path that owns it;
+- fresh evidence appropriate to its class;
+- any limitation or deviation requiring a ruling.
+
+A completion claim based only on command exit status, snapshots, mocks, action ordering, or test
+names is invalid. For critical criteria, verification includes one goal-level scenario that
+exercises the production path rather than a test-only seam. Code review checks outcome/scope
+traceability before considering test results.
+
+**R13 — Anti-gaming review.** Review explicitly looks for hard-coded fixtures, test-environment
+branches, no-op implementations, simulated state, bypassed production paths, weakened assertions,
+and behavior implemented outside approved scope. A suspicious green result triggers a bounded
+counterexample or production-path scenario, not additional assertions for their own sake.
+
 ## Architecture & Boundaries
 
 The plan is the classification source of truth. Plan parsing exposes each criterion's evidence
@@ -132,10 +176,18 @@ class and optional review instruction. The implementation driver derives one of 
    approval.
 
 Verification evidence owns post-change `verify` records and freshness. Walkthrough evidence owns
-structured `review` records. The driver consumes these results; it does not infer semantic quality
-from prose or filenames.
+structured `review` records and criterion-to-delivered-behavior traceability. The driver assembles
+the outcome-first packet and consumes these results; it does not infer semantic quality from prose,
+filenames, or green commands. Tests remain downstream evidence of the governing outcome.
 
 ## Alternatives & Decisions
+
+### Decision: outcome hierarchy
+
+The ask/ticket/design outcome governs, the settled plan bounds, criteria refine, and evidence checks.
+Tests are diagnostic signals that prompt deeper consideration, not the end state. They cannot
+silently become the specification because they are necessarily incomplete and may be wrong.
+Conflicts stop for investigation and repair rather than encouraging test-driven scope drift.
 
 ### Decision: evidence value, not change category
 
@@ -187,6 +239,12 @@ contract; that criterion is then `red` or `verify` based on whether pre-change f
   documented migration example.
 - **Mixed-scope leakage:** the tests-only subagent could edit non-RED paths. Preserve path mutation
   checks and treat leakage as invalid RED under existing failure disposition.
+- **Green-goal divergence:** an implementer can satisfy weak tests while bypassing the requested
+  production behavior, as I04 demonstrated. Mitigate with the outcome-first packet, authority order,
+  criterion-to-production traceability, goal-level scenarios, and anti-gaming review.
+- **Prompt bloat:** repeating the entire ticket, plan, and tests can dilute attention. Assemble one
+  bounded packet containing only governing outcome, settled boundaries, criteria, mapped evidence,
+  and relevant failure history; link workspace files instead of restating them.
 
 Rollback is contract-level: restore mandatory RED for all new/corrected behavior and remove evidence
 classification. Plans authored with `Evidence:` remain readable as extra mappings during rollback.
@@ -195,67 +253,78 @@ classification. Plans authored with `Evidence:` remain readable as extra mapping
 
 | ID | Priority | Summary | Prerequisites | Paths |
 | --- | ---: | --- | --- | --- |
-| I01 | 1 | Define and parse criterion evidence classes | none | plan template, plan parser/lint, tests |
-| I02 | 2 | Make RED-quality and implementation branching criterion-selective | I01 | RED-quality, driver, tests |
-| I03 | 3 | Capture verify/review evidence and update agent contracts | I02 | verification evidence, walkthrough, contracts, docs, tests |
+| I01 | 1 | Implement outcome-first, evidence-calibrated verification atomically | none | plan grammar/lint, implementation packet, RED-quality, driver, verification evidence, walkthrough, contracts, docs, tests |
 
 ## Increment Details
 
 ### I01
-- Outcome: plans require a validated evidence class for every success criterion.
-- Scope: grammar, parsing, lint diagnostics, compatibility diagnostics, and representative fixtures.
-- Non-scope: changing implementation control flow.
-- Observable behavior: old or ambiguous plans fail with criterion-specific remediation; valid mixed
-  plans expose stable parsed classes and test-value rationales.
-- Affected contracts: plan schema/template and plan-lint output.
-- Validation: parser/lint tests cover all classes, missing rationales, malformed mappings, review
-  instructions, critical guarantees, and mixed plans.
-- Rollback boundary: restores the previous success-criterion grammar.
-- Parallel safety: unsafe beside I02; safe beside unrelated provider-runner work.
-
-### I02
-- Outcome: RED is required exactly when at least one criterion is classified `red`.
-- Scope: subset matrix validation, no-RED branching, delegated path bounds, attempt transitions, and
-  mixed-plan behavior.
-- Non-scope: changing post-implementation evidence formatting.
-- Observable behavior: prose-only plans skip tests-only delegation with an explicit reason; mixed
-  plans gate only their RED criteria; executable behavior remains blocked without valid RED.
-- Affected contracts: RED-quality input/output and implementation driver actions.
-- Validation: red-green tests prove no-RED, all-RED, mixed, leakage, malformed matrix, and resume
-  behavior.
-- Rollback boundary: restores universal new/corrected-behavior RED branching.
-- Parallel safety: depends on I01 and is unsafe beside implementation-driver changes.
-
-### I03
-- Outcome: non-RED criteria have fresh, auditable completion evidence and all user/agent guidance
-  reflects the new policy.
-- Scope: structured walkthrough records, freshness checks, agent execution contracts, human manual,
-  examples, and migration guidance.
-- Non-scope: generalized model benchmarking.
-- Observable behavior: completion fails when a `verify` command or required `review` record is
-  missing/stale; final handoff distinguishes deterministic verification from review evidence.
-- Affected contracts: verification evidence, walkthrough minimum contract, implementation guidance,
-  and README behavior.
-- Validation: behavioral tests cover evidence freshness and missing records; documentation examples
-  pass repository validation; full `npm test` passes or matches an accepted unchanged baseline.
-- Rollback boundary: removes structured non-RED records while leaving I01/I02 classification usable.
-- Parallel safety: begins after I02; documentation work may proceed in parallel only after output
-  shapes settle.
+- Outcome: implementation remains fixed on the governing goal and settled scope while each criterion
+  selects evidence by falsifiability and durable signal; RED is mandatory only for criteria whose
+  retained tests satisfy the signal threshold, and green tests never independently establish
+  completion.
+- Scope: deliver the complete contract and control-flow change in one atomic increment:
+  1. extend criterion parsing, the plan template, and plan lint with `Evidence`, `Test rationale`,
+     and conditional `Review` mappings;
+  2. assemble and validate the outcome-first implementation packet and authority ordering;
+  3. make RED-quality and the implementation driver operate on only `red` criteria, including the
+     explicit no-RED branch and mixed-plan path bounds;
+  4. capture and freshness-check structured evidence plus criterion-to-production traceability;
+  5. update implementation envelopes, walkthrough records, agent contracts, human documentation,
+     migration diagnostics, representative fixtures, and shipped hashes.
+- Non-scope: generalized model benchmarking, automatic evidence classification, test-value scoring,
+  weakening final regression verification, or changing unrelated review/provider behavior.
+- Atomicity: parser, driver, evidence capture, contracts, and migration diagnostics ship together.
+  No intermediate state may require the new plan grammar while retaining universal RED, or permit
+  no-RED execution without enforceable post-change evidence. Internal implementation checkpoints
+  are development order only, not separately releasable increments.
+- Observable behavior: plans branch by declared evidence class while preserving auditable completion.
+  - old or ambiguous plans fail before approval with criterion-specific migration guidance;
+  - all-RED plans preserve the current tests-only launch and host-observed RED gate;
+  - no-RED plans skip tests-only delegation with `RED gate: not applicable — no red-class criteria`;
+  - mixed plans expose only `red` criteria and their bounded paths to the tests-only subagent;
+  - completion refuses missing or stale `verify`/`review` evidence;
+  - green commands without criterion-to-delivered-behavior traceability cannot complete a task;
+  - conflicting or out-of-scope tests stop for evidence repair rather than drive implementation;
+  - handoff distinguishes delivered outcomes, retained regression tests, deterministic checks, and
+    bounded review.
+- Affected contracts: plan template/parser/lint, implementation launch packet and outcome envelope,
+  RED-quality input/output, driver actions and transitions, verification evidence, minimum walkthrough contract,
+  `implement-dispatch` execution contract, human manual, and migration behavior.
+- Validation: focused contract, driver, evidence, and end-to-end checks prove the atomic change.
+  - parser/lint tests cover all evidence classes, missing or boilerplate-inadequate mappings,
+    malformed rationales, review instructions, critical guarantees, mixed plans, and old-plan
+    diagnostics;
+  - behavioral driver tests cover packet authority/order, all-RED, no-RED low-signal code, no-RED
+    agent prose, no-RED human documentation, mixed criteria, path leakage, malformed matrices,
+    conflicting/out-of-scope tests, failure disposition, and interruption/resume;
+  - evidence tests prove missing/stale `verify` and `review` records block completion;
+  - anti-gaming fixtures prove hard-coded outputs, test-only branches, simulated state, and weakened
+    assertions cannot satisfy criterion-to-production traceability;
+  - representative end-to-end runs confirm goal-level behavior, launch counts, ledger transitions,
+    known-red handling, final freshness, and unchanged all-RED behavior;
+  - run the complete repository test suite and regenerate shipped skill hashes.
+- Rollback boundary: revert I01 as one unit to restore universal RED for new/corrected behavior and
+  the prior plan/evidence grammar. Plans authored with `Evidence:` remain readable as extra prose,
+  but are not relied on after rollback.
+- Parallel safety: unsafe beside implementation-driver, plan-grammar, RED-quality, walkthrough, or
+  verification-evidence changes; implement only after the current I04 work settles. Safe beside
+  unrelated provider-runner work with disjoint paths.
 
 ## Final Integration
 
-Run one ordinary implementation flow for each representative plan shape: all-RED, no-RED
-low-signal code change, no-RED agent prose, no-RED human documentation, and mixed. Confirm tests-only launch counts, path bounds,
-ledger transitions, walkthrough evidence, resume behavior, known-red handling, and final freshness.
-Run the complete repository test suite and regenerate shipped skill hashes.
+I01 includes integration; there is no separately delivered follow-up increment. Before completion,
+run representative all-RED, no-RED low-signal code, no-RED agent-prose, no-RED human-documentation,
+and mixed flows, plus an I04-shaped fixture where shallow green tests omit recovery and production
+state behavior. Confirm the fixture remains incomplete until the governing outcome is delivered,
+then confirm tests-only launch counts, delegated path bounds, ledger transitions, walkthrough
+evidence, interruption/resume, known-red handling, and final freshness. Run the complete
+repository test suite and regenerate shipped skill hashes.
 
 ## Execution Status
 
 | ID | State | Summary | Next Action |
 | --- | --- | --- | --- |
-| I01 | ready | Define and parse criterion evidence classes | implement:I01 |
-| I02 | blocked | Make RED-quality and implementation branching criterion-selective | blocked by I01 |
-| I03 | blocked | Capture verify/review evidence and update agent contracts | blocked by I02 |
+| I01 | ready | Implement outcome-first, evidence-calibrated verification atomically | implement:I01 |
 
 Next Action: implement:I01
 
