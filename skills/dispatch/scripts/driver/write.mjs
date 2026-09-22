@@ -1,3 +1,7 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { loadDispatchConfig } from '../config.mjs';
 import { resolveFlow } from '../resolve-flow.mjs';
 import { parseImplementationOutcome, resolveImplementationTransition } from '../implementation-outcome.mjs';
@@ -16,19 +20,44 @@ export function resolveWrite(state) {
   if (escalationModels.length) escalation.model = escalationModels[0];
   return { ...resolved, escalation, escalationModels, models, candidate: 0 };
 }
+function testsOnlyManifest(data) {
+  return data.redCriteria.map(({ id, title, paths, commands }) => ({ id, outcome: title, approvedTestPaths: paths.filter(file => data.testsOnlyPaths.includes(file)), commands, expected: 'RED for the stated observable with a stable failure identity' }));
+}
+function testsOnlyPrompt(state) {
+  const data = state.ordinary;
+  const repair = data.testsOnlyRepair;
+  const document = {
+    schemaVersion: 1,
+    purpose: repair ? 'tests-only-admission-repair' : 'tests-only-red',
+    manifest: testsOnlyManifest(data),
+    boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path/name> | exit <nonzero integer> <test:|error:|failure:><identifier> per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling' },
+    ...(repair ? { admissionDefects: repair.defects } : {}),
+  };
+  const content = `${JSON.stringify(document)}\n`;
+  const hash = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
+  const dir = path.join(fs.realpathSync(os.tmpdir()), 'dispatch-driver');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, `${state.runId}-tests-only${repair ? '-repair' : ''}.json`);
+  fs.writeFileSync(file, content, { mode: 0o600 });
+  return { path: file, hash };
+}
 export function writeAction(state) {
   const data = state.ordinary;
   const segment = ledgerSegment(state);
   if (!segment?.approved || segment.runId !== state.ledgerRunId) throw new Error('Recorded v1 approval is required before delegation.');
   const write = data.write;
+  const testsOnly = data.launch === 'tests-only';
+  const prompt = testsOnly ? testsOnlyPrompt(state) : null;
   return emitAction(state, 'delegate-write', { fields: {
-    stage: data.launch === 'tests-only' ? 'tests-only' : 'production', launch: data.launch,
+    stage: testsOnly ? 'tests-only' : 'production', launch: data.launch,
     attempt: data.attempt, model: write.models[write.candidate], effort: write.effort ?? null,
     platform: write.platform, cascadePosition: write.candidate, modelCascade: write.models,
     planPath: state.planPath, walkthroughPath: state.walkthroughPath,
-    paths: data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths,
-    criteria: (data.launch === 'tests-only' ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
-    packet: data.launch === 'tests-only' ? null : {
+    paths: testsOnly ? data.testsOnlyPaths : data.approvedPaths,
+    criteria: (testsOnly ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
+    ...(testsOnly ? { promptPath: prompt.path, promptHash: prompt.hash, continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : null } : {}),
+    packet: testsOnly ? null : {
       ...data.packet,
       instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',
       conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
@@ -38,7 +67,7 @@ export function writeAction(state) {
     evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
   } }, [
     'Launch the configured native write subagent with the exact model and effort. Pass the criteria and packet fields verbatim on retries and continuations. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
-    data.launch === 'tests-only' ? 'Only edit paths mapped to red criteria. Return RED_READY with one primary RED-MATRIX row per red criterion; the host must observe attributable RED before production.' : 'Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence.',
+    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : 'Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence.',
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

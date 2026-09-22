@@ -7,7 +7,7 @@ import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { readRunState } from './state.mjs';
-import { beginVerification, completionResult, fingerprint, snapshot, validateRed } from './verification.mjs';
+import { beginVerification, completionResult, fingerprint, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
 import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 function serializedEntries(state) {
@@ -24,7 +24,8 @@ export function beginImplementation(state) {
   if (data.step === 'blocking-condition' || data.step === 'missing-context') return ask(state, data.step === 'blocking-condition' ? 'implementation-blocked' : 'implementation-context', 'Supply the changed blocking condition or missing context with {decision:"retry", reason, context}, or stop.');
   if (data.step === 'risk-degradation') return ask(state, 'risk-review-degradation', 'Inspect the validated RED matrix and record an evidence-backed orchestrator-only gate, or stop.', [{ reason: data.riskFailure }]);
   if (data.step === 'write-pending') {
-    return ask(state, 'implementation-recovery', 'A write was dispatched before interruption. Return its captured raw terminal envelope. Missing evidence opens failure disposition; the driver will not duplicate the write.', [{ taskId: data.taskId, attempt: data.attempt, paths: data.approvedPaths }]);
+    const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
+    return ask(state, 'implementation-recovery', 'A write was dispatched before interruption. Return its captured raw terminal envelope. Missing evidence opens failure disposition; the driver will not duplicate the write.', [{ taskId: data.taskId, attempt: data.attempt, paths }]);
   }
   if (data.step === 'red-verify' || data.step === 'completion-verify') return beginVerification(state, data.step === 'red-verify' ? 'red' : 'completion');
   if (data.step === 'risk-review' && !data.riskReview) return beginRiskReview(state);
@@ -34,7 +35,7 @@ export function beginImplementation(state) {
     if (data.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed after the validated RED gate.');
     return startTask(state, 'full');
   }
-  if (data.testsOnlyLaunched) return openFailure(state, 'Tests-only launch consumed without validated RED evidence.');
+  if (data.testsOnlyAdmitted) return openFailure(state, 'Tests-only admission exists without validated RED evidence.');
   data.taskStart = snapshot(state);
   data.indexStart = indexFingerprint(state.repoRoot).digest;
   data.preEntries = serializedEntries(state);
@@ -57,7 +58,7 @@ function startTask(state, launch) {
     // v1 continuation keeps production Attempt 1 separate from the single tests-only launch.
     data.launch = 'continuation';
   } else append(state, 'task-start', { taskId: data.taskId, attemptBudget: 3, paths: data.approvedPaths, preState: fingerprint(state) });
-  if (launch === 'tests-only') data.testsOnlyLaunched = true;
+  if (launch === 'tests-only') data.testsOnlyAttempts = 1;
   data.write.candidate = 0;
   data.step = 'write-pending';
   return writeAction(state);
@@ -82,6 +83,20 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const parsed = outcomeTransition(state, reply, { concernsResolved });
   data.envelope = parsed.envelope;
   data.mutationEpoch = (data.mutationEpoch ?? 0) + 1;
+  if (data.launch === 'tests-only') {
+    const defects = parsed.parseError ? [parsed.parseError] : validateRedAdmission(state, parsed.envelope);
+    if (defects.length) {
+      if (!data.testsOnlyRepair) {
+        data.testsOnlyRepair = { defects };
+        data.testsOnlyAttempts++;
+        data.step = 'write-pending';
+        return writeAction(state);
+      }
+      return openFailure(state, `Tests-only admission failed after ${data.testsOnlyAttempts} launches: ${defects.join('; ')}`);
+    }
+    data.testsOnlyAdmitted = true;
+    delete data.testsOnlyRepair;
+  }
   if (parsed.transition.action === 'concern-ruling' && !concernsResolved) {
     data.step = 'concern-ruling';
     data.pendingOutcome = reply;

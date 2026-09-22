@@ -99,16 +99,36 @@ export function completionResult(state) {
   }
   return knownRed ? 'accepted-baseline-equivalent' : 'pass';
 }
-export function validateRed(state, envelope) {
+export function validateRedAdmission(state, envelope) {
   const data = state.ordinary, defects = [];
+  if (!envelope || !['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status) || envelope.stage !== 'RED_READY' || !Array.isArray(envelope.evidence)) return ['Valid tests-only RED_READY envelope required.'];
+  const rows = envelope.evidence.filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '));
+  const expected = new Set(data.redCriteria.map(item => item.id)), parsedRows = [];
+  for (const row of rows) {
+    const match = /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row);
+    if (!match) { defects.push(`Malformed RED-MATRIX row: ${row}`); continue; }
+    const [, id, test, failure] = match;
+    parsedRows.push({ id, test: test.trim(), failure });
+    if (!expected.has(id)) defects.push(`Unexpected RED-MATRIX criterion ${id}.`);
+    if (test.trim() === 'N/A') {
+      if (!failure.trim()) defects.push(`${id} N/A requires a non-empty class reason.`);
+    } else {
+      if (!data.testsOnlyPaths.some(file => test.trim() === file || test.trim().startsWith(`${file}:`) || test.trim().startsWith(`${file} `))) defects.push(`${id} matrix test is outside classified test paths.`);
+      if (!/\bexit\s+[1-9]\d*\b/i.test(failure) || !/\b(?:test|error|failure):[^\s]+/i.test(failure)) defects.push(`${id} expected failure lacks stable exit and identifier shape.`);
+    }
+  }
+  for (const criterion of data.redCriteria) if (parsedRows.filter(row => row.id === criterion.id).length !== 1) defects.push(`Exactly one primary RED-MATRIX row required for ${criterion.id}.`);
+  return [...new Set(defects)];
+}
+export function validateRed(state, envelope) {
+  const data = state.ordinary, defects = [...validateRedAdmission(state, envelope)];
   if (!freshResults(state, 'red')) defects.push('RED host evidence is stale or changed the repository.');
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
   if (!changed.length || changed.some(file => !data.testsOnlyPaths.includes(file))) defects.push('Tests-only mutation must change only classified approved test paths.');
   const rows = envelope.evidence.filter(item => item.startsWith('RED-MATRIX '));
+  const parsedRows = rows.map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean).map(([, id, test, failure]) => ({ id, test: test.trim(), failure }));
   for (const criterion of data.redCriteria) {
-    const matches = rows.filter(row => row.startsWith(`RED-MATRIX ${criterion.id} |`));
-    if (matches.length !== 1) defects.push(`Exactly one primary RED-MATRIX row required for ${criterion.id}.`);
-    if (matches.some(row => /\|\s*N\/A\s*\|/.test(row))) defects.push(`${criterion.id} exception requires an explicit evidence-backed ruling.`);
+    if (parsedRows.some(row => row.id === criterion.id && row.test === 'N/A')) defects.push(`${criterion.id} exception requires an explicit evidence-backed ruling.`);
   }
   const reds = data.redResults.filter(item => item.exitStatus !== 0);
   if (!reds.length) defects.push('No host-observed RED.');
@@ -119,10 +139,9 @@ export function validateRed(state, envelope) {
     defects.push(...checkRedQuality(source(state), envelope, red));
   }
   for (const criterion of data.redCriteria) {
-    const row = rows.find(item => item.startsWith(`RED-MATRIX ${criterion.id} |`));
-    const match = row && /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row);
-    if (!match) continue;
-    const test = match[2].trim(), expected = match[3];
+    const row = parsedRows.find(item => item.id === criterion.id);
+    if (!row || row.test === 'N/A') continue;
+    const test = row.test, expected = row.failure;
     if (!data.testsOnlyPaths.some(file => test === file || test.startsWith(`${file}:`) || test.startsWith(`${file} `))) defects.push(`${criterion.id} matrix test is outside classified test paths.`);
     const identifiers = expected.match(/\b(?:test|error|failure):[^\s]+/gi) ?? [];
     const exit = /\bexit\s+(\d+)\b/i.exec(expected);
