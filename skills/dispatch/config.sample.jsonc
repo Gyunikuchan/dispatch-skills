@@ -30,7 +30,7 @@
 {
   "read-delegates": {
     "claude": {
-      "model": "claude-opus-5",
+      "model": "claude-opus-5.5",
       "effort": "low",
       "sandbox": true,
       "max": {
@@ -74,7 +74,7 @@
       "model": "claude-sonnet-5",
       "effort": "medium",
       "high": {
-        "model": "claude-opus-5",
+        "model": "claude-opus-5.5",
         "effort": "low",
       },
       "max": {
