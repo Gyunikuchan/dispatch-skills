@@ -1,6 +1,6 @@
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
 import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
-import { checkRedQuality } from '../red-quality.mjs';
+import { checkRedQuality, parseIdentifiers } from '../red-quality.mjs';
 import { emitAction } from './actions.mjs';
 import { source } from './ordinary-state.mjs';
 
@@ -44,7 +44,8 @@ export function verificationAction(state) {
   return emitAction(state, 'verify', {
     purpose: pending.purpose, commands: [command], scopes: { [command]: data.scopes[command] },
     mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: data.criteria.filter(item => item.commands.includes(command)).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
-  }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.']);
+  }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.',
+    ...(pending.purpose === 'red' ? ['Report one identifier per failing leaf test using the convention `test:<full failing test name>`.'] : [])]);
 }
 export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
@@ -114,7 +115,7 @@ export function validateRedAdmission(state, envelope) {
       if (!failure.trim()) defects.push(`${id} N/A requires a non-empty class reason.`);
     } else {
       if (!data.testsOnlyPaths.some(file => test.trim() === file || test.trim().startsWith(`${file}:`) || test.trim().startsWith(`${file} `))) defects.push(`${id} matrix test is outside classified test paths.`);
-      if (!/\bexit\s+[1-9]\d*\b/i.test(failure) || !/\b(?:test|error|failure):[^\s]+/i.test(failure)) defects.push(`${id} expected failure lacks stable exit and identifier shape.`);
+      if (!/\bexit\s+[1-9]\d*\b/i.test(failure) || parseIdentifiers(failure).length === 0) defects.push(`${id} expected failure lacks stable exit and identifier shape.`);
     }
   }
   for (const criterion of data.redCriteria) if (parsedRows.filter(row => row.id === criterion.id).length !== 1) defects.push(`Exactly one primary RED-MATRIX row required for ${criterion.id}.`);
@@ -130,7 +131,8 @@ export function validateRed(state, envelope) {
   for (const criterion of data.redCriteria) {
     if (parsedRows.some(row => row.id === criterion.id && row.test === 'N/A')) defects.push(`${criterion.id} exception requires an explicit evidence-backed ruling.`);
   }
-  const reds = data.redResults.filter(item => item.exitStatus !== 0);
+  const redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
+  const reds = data.redResults.filter(item => item.exitStatus !== 0 && redCommands.has(item.command));
   if (!reds.length) defects.push('No host-observed RED.');
   for (const red of reds) {
     const baseline = data.baselineResults.find(item => item.command === red.command);
@@ -143,10 +145,13 @@ export function validateRed(state, envelope) {
     if (!row || row.test === 'N/A') continue;
     const test = row.test, expected = row.failure;
     if (!data.testsOnlyPaths.some(file => test === file || test.startsWith(`${file}:`) || test.startsWith(`${file} `))) defects.push(`${criterion.id} matrix test is outside classified test paths.`);
-    const identifiers = expected.match(/\b(?:test|error|failure):[^\s]+/gi) ?? [];
+    // A command shared by several red criteria is matched against the union of their rows' identifiers.
+    const peers = data.redCriteria.filter(other => other.commands.some(command => criterion.commands.includes(command)));
+    const peerRows = parsedRows.filter(item => peers.some(peer => peer.id === item.id) && item.test !== 'N/A' && /\bexit\s+\d+\b/i.test(item.failure));
+    const identifiers = [...new Set(peerRows.flatMap(item => parseIdentifiers(item.failure)))];
     const exit = /\bexit\s+(\d+)\b/i.exec(expected);
     const expectedIdentity = failureIdentity({ exitStatus: exit ? Number(exit[1]) : 1, identifiers,
-      diagnostic: expected.replace(/\bexit\s*\d+\b/i, '').replace(/\b(?:test|error|failure):[^\s]+/gi, '').trim() });
+      diagnostic: expected.replace(/\bexit\s*\d+\b/i, '').replace(/\b(?:test|error|failure):[^;]+/gi, '').trim() });
     if (!reds.some(red => criterion.commands.includes(red.command) && compareFailureIdentity(red.identity, expectedIdentity))) defects.push(`${criterion.id} has no matching stable failure in its mapped host command.`);
   }
   return [...new Set(defects)];

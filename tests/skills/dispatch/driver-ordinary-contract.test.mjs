@@ -152,6 +152,66 @@ describe('ordinary driver canonical contracts', () => {
     assert.match(rejected[0].error, /fresh structured verify evidence/);
     assert.match(rejected[1].error, /fresh structured verify evidence/);
   });
+  it('excludes an aggregate command mapped to no red criterion from RED admission', () => {
+    const fixture = setup();
+    const source = fs.readFileSync(fixture.plan, 'utf8')
+      .replace('## Proposed Changes', '- [SC2] Aggregate regression coverage.\n  - Changes: `src/app.js`\n  - Verify: `npm test`\n  - Evidence: verify\n  - Test rationale: The full suite is deterministic and needs no dedicated pre-change failure.\n\n## Proposed Changes')
+      .replace('- `node --test tests/sample.test.mjs`', '- `node --test tests/sample.test.mjs`\n- `npm test`');
+    fs.writeFileSync(fixture.plan, source);
+    const result = run(fixture, { policy: {
+      delegateWrite(action) {
+        const testsOnly = action.fields.stage === 'tests-only';
+        fs.writeFileSync(path.join(fixture.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
+          ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
+        return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
+          ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample']
+          : ['CRITERION SC1 | delivered value=2 | src/app.js', 'CRITERION SC2 | delivered value=2 | src/app.js'] })) };
+      },
+      verify(action) {
+        // The aggregate command belongs to a verify-class criterion, not a red one; it also goes RED
+        // during the tests-only mutation, and must not be checked for RED identity or admitted defects.
+        if (action.commands[0] === 'npm test') {
+          const failing = action.purpose === 'red';
+          return { results: [{ command: 'npm test', exit: failing ? 1 : 0, evidence: failing ? 'unrelated aggregate failure' : 'ok',
+            identifiers: failing ? ['error:aggregate-unrelated'] : [], diagnostic: failing ? 'unrelated aggregate diagnostic' : '',
+            scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch,
+            ...(action.purpose === 'completion' ? { criterionEvidence: [{ criterionId: 'SC2', evidenceClass: 'verify', reviewer: 'host', scenario: 'run the aggregate suite', inspectedRevision: action.scopeHash, observableResult: 'suite green', limitations: 'covers mapped aggregate only', mutationEpoch: action.mutationEpoch }] } : {}) }] };
+        }
+        return policies(fixture.repo).verify(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const ledger = readLedger(result.done.ledgerPath);
+    const redEvent = ledger.events.find(event => event.type === 'verification' && event.data.result === 'red');
+    assert.deepEqual(redEvent.data.failureIdentity.identifiers, ['test:sample']);
+  });
+  it('matches a command shared by two red criteria against the union of their identifiers', () => {
+    const attempt = (hostIdentifiers) => {
+      const fixture = setup();
+      const source = fs.readFileSync(fixture.plan, 'utf8')
+        .replace('## Proposed Changes', '- [SC2] Second observable on the shared command.\n  - Changes: `src/app.js`, `tests/sample.test.mjs`\n  - Verify: `node --test tests/sample.test.mjs`\n  - Evidence: red\n  - Test rationale: Shares the first criterion\'s command, so its RED must match the union.\n\n## Proposed Changes');
+      fs.writeFileSync(fixture.plan, source);
+      return run(fixture, { policy: {
+        delegateWrite(action) {
+          const testsOnly = action.fields.stage === 'tests-only';
+          fs.writeFileSync(path.join(fixture.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
+            ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
+          return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
+            ? ['RED-MATRIX SC1 | tests/sample.test.mjs:alpha one | exit 1 test:alpha one', 'RED-MATRIX SC2 | tests/sample.test.mjs:beta two | exit 1 test:beta two']
+            : ['CRITERION SC1 | delivered value=2 | src/app.js', 'CRITERION SC2 | delivered value=2 | src/app.js'] })) };
+        },
+        verify(action) {
+          if (action.purpose !== 'red') return policies(fixture.repo).verify(action);
+          return { results: [{ command: action.commands[0], exit: 1, evidence: 'failing', identifiers: hostIdentifiers, diagnostic: '',
+            scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch }] };
+        },
+      } });
+    };
+    const matched = attempt(['test:alpha one', 'test:beta two']);
+    assert.equal(matched.done.outcome, 'complete', JSON.stringify(matched.done));
+    const partial = attempt(['test:alpha one']);
+    assert.notEqual(partial.done?.outcome, 'complete');
+  });
   it('rejects mixed-plan non-red path leakage from the canonical tests-only scope', () => {
     const fixture = setup();
     const source = fs.readFileSync(fixture.plan, 'utf8')
@@ -271,6 +331,8 @@ describe('ordinary driver canonical contracts', () => {
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 assertion failed'] })), ['SC1 expected failure lacks stable exit and identifier shape.']);
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | malformed'] })), ['Malformed RED-MATRIX row: RED-MATRIX SC1 | malformed', 'Exactly one primary RED-MATRIX row required for SC1.']);
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | N/A | recovery is not applicable to this criterion class'] })), []);
+    // A full test name containing spaces is one identifier, not truncated at the first space.
+    assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:hops A then B'] })), []);
   });
   it('restores a dispatched admission repair from walkthrough evidence without relaunching it', () => {
     const fixture = setup(); let writes = 0, restarted = false;

@@ -143,7 +143,8 @@ export async function afterImplementationVerification(state) {
   if (data.step === 'red-verify') {
     const defects = validateRed(state, data.envelope);
     if (defects.length) return openFailure(state, defects.join('; '));
-    const red = data.redResults.find(result => result.exitStatus !== 0);
+    const redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
+    const red = data.redResults.find(result => result.exitStatus !== 0 && redCommands.has(result.command));
     const transition = verificationTransition(state, 'red', 'red-gate');
     append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: data.commands, transition: transition.action, failureIdentity: red.identity });
     data.redValidated = { scopeHash: fingerprint(state), evidence: data.envelope.evidence };

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import * as verificationEvidence from '../../../skills/dispatch/scripts/verification-evidence.mjs';
+import { parseIdentifiers } from '../../../skills/dispatch/scripts/red-quality.mjs';
 
 const {
   mapVerificationCommandsToPaths,
@@ -136,6 +137,57 @@ describe('red-quality checker', () => {
     const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
     assert.equal(result.status, 1);
     assert.match(result.stderr, /interruption|resume|adversarial/i);
+  });
+
+  it('parses identifiers containing spaces up to the next semicolon', () => {
+    assert.deepEqual(parseIdentifiers('exit 1 test:hops A then B'), ['test:hops A then B']);
+    assert.deepEqual(parseIdentifiers('exit 1 test:hops A then B; error:second one'), ['test:hops A then B', 'error:second one']);
+    assert.deepEqual(parseIdentifiers('exit 1 test:value'), ['test:value']);
+  });
+
+  it('admits a spaced full test-name identifier as a RED-MATRIX row', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 test:hops A then B',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:hops A then B',
+    ] }));
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['test:hops A then B'], diagnostic: 'failed', command: 'node --test tests/value.test.mjs' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it('matches a command shared by two criteria against the union of their row identifiers', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 test:first case',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:second case',
+    ] }));
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['test:first case', 'test:second case'], diagnostic: 'failed', command: 'node --test tests/value.test.mjs' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it('rejects a mismatched identity even against the shared-command union', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 test:first case',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:second case',
+    ] }));
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['test:unrelated case'], diagnostic: 'failed', command: 'node --test tests/value.test.mjs' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /identity mismatch/i);
+  });
+
+  it('ignores a RED result for a command mapped to no red criterion', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 test:value',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:value',
+    ] }));
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['error:unrelated aggregate failure'], diagnostic: 'unrelated', command: 'npm test' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    assert.equal(result.status, 0, result.stderr);
   });
 
   it('reuses exported mappings and failure identity helpers', () => {

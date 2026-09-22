@@ -31,7 +31,7 @@ function testsOnlyPrompt(state) {
     purpose: repair ? 'tests-only-admission-repair' : 'tests-only-red',
     manifest: testsOnlyManifest(data),
     boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
-    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path/name> | exit <nonzero integer> <test:|error:|failure:><identifier> per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling' },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling' },
     ...(repair ? { admissionDefects: repair.defects } : {}),
   };
   const content = `${JSON.stringify(document)}\n`;
