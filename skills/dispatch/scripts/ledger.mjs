@@ -19,6 +19,7 @@ import {
   serializeEvent,
 } from './ledger-events.mjs';
 import { parseIncrementGraph } from './design-graph.mjs';
+import { captureRepositoryState } from './verification-evidence.mjs';
 
 export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 export const CANONICAL_DESIGN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
@@ -329,6 +330,25 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
       diagnostic: 'No matching unterminated ordinary run segment.',
       requiresFlowConfirmation: true,
     };
+  }
+  const disposition = segment.rulings?.get('failure-disposition');
+  if (disposition?.state === 'open') {
+    let captured;
+    try { captured = JSON.parse(disposition.reason).failureSnapshot; } catch { captured = null; }
+    if (captured) {
+      const current = captureRepositoryState(repoRoot);
+      const capturedEntries = captured.entries ?? {};
+      const currentEntries = current.entries ?? {};
+      const paths = new Set([...Object.keys(capturedEntries), ...Object.keys(currentEntries)]);
+      const comparable = (entries) => Object.fromEntries([...paths].sort().map(file => {
+        const entry = entries[file];
+        return [file, entry?.objectId === 'absent' ? null : (entry ?? null)];
+      }));
+      if (current.available === captured.available && JSON.stringify(comparable(currentEntries)) === JSON.stringify(comparable(capturedEntries))) {
+        return { status: 'resumable', slug, governingHash: hash.hash, segment, nextAction: 'failure-disposition', requiresFlowConfirmation: true };
+      }
+      return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: 'Failure snapshot drifted after disposition.', requiresFlowConfirmation: true };
+    }
   }
   const completions = [...segment.completedTasks.entries()];
   const laterOwners = new Map();

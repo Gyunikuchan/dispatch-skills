@@ -182,7 +182,9 @@ disable it with `DISPATCH_TELEMETRY=0`.
 The skill changes the working tree but does not commit, push, create branches, or open pull
 requests.
 
-The ledger is not a review artifact and is not moved during handoff. Its exact path and canonical
+The ledger is not a review artifact and is not moved during handoff.
+
+RED-quality validates the tests-only acceptance matrix before production delegation. Failed implementation changes remain in the working tree until the user explicitly chooses **keep**, **revert attributable**, or **inspect**. The I04 retry inherits this governing contract revision and must be refreshed and re-reviewed before retry. Its exact path and canonical
 resume command are reported because OS temp cleanup, including Windows Storage Sense, can remove it.
 
 ## Nuances, Quirks & Troubleshooting

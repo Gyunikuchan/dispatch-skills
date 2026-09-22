@@ -7,9 +7,8 @@ disable-model-invocation: true
 # implement-dispatch
 
 Orchestrate `criteria → plan → review → approval → implementation → verification → handoff`.
-`dispatch` is required; missing review companions disable only that phase. Before reviews read
-[review.md](../dispatch/references/review.md); on runner failure use
-[native fallback](../dispatch/references/providers.md#native-fallback).
+`dispatch` is required; missing review companions disable that phase. Before reviews read
+[review.md](../dispatch/references/review.md); on runner failure use [native fallback](../dispatch/references/providers.md#native-fallback).
 
 ## Invocation
 
@@ -22,9 +21,9 @@ Orchestrate `criteria → plan → review → approval → implementation → ve
 Explicit `low|medium|high|xhigh|max` is preserved; otherwise classify mechanical edits `low`,
 bounded changes `medium`, and cross-cutting/public-contract changes `high`. `xhigh`/`max` are
 explicit only. Pass pins unchanged to `resolve-flow.mjs`.
-The level-less plan-path form resumes only a canonical scratch plan. The level-less design-path
-form resumes a phased technical design under its durable design-slug ledger identity. Follow the
-[ledger contract](../dispatch/references/verbs/implement.md#durable-execution-ledger) before any dispatch.
+Plan-path resumes only a canonical scratch plan. Design-path resumes a phased technical design under its durable ledger identity. Follow the
+[ledger contract](../dispatch/references/verbs/implement.md#durable-execution-ledger) before dispatch;
+for RED-quality and failure disposition, follow its [branch contract](../dispatch/references/verbs/implement.md#red-quality-and-failure-disposition).
 
 ## 1. Criteria, plan, and flow
 
@@ -65,8 +64,7 @@ If decision-changing items exist, render the keyed opt-in sections before approv
 Parse user response with `node <skills-dir>/dispatch/scripts/fix-clustering.mjs --parse-opt-in`; on ambiguous or empty input, re-prompt before applying defaults.
 Apply user response, materialize included recommendations into proposed changes, criteria, and verification mappings, and rerun plan-lint, flow resolution, and any required plan review before approval.
 
-Reclassify the reviewed plan. Preserve explicit level; otherwise re-resolve changed scope. State
-the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`
+Reclassify the plan. Preserve explicit level; otherwise re-resolve scope. State the exact phase/target/round/consensus delta or `Resolved flow unchanged after final scope check.`
 
 **Done when:** plan consensus/checkpoint settle, opt-ins materialize, and flow matches scope.
 

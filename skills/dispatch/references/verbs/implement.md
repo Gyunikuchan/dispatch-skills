@@ -142,6 +142,14 @@ Evidence is fresh only when produced after the last mutation or accepted fix in 
 mapped scope. Completion reruns every settled command. Delegate success reports do not establish
 verification.
 
+### RED quality and failure disposition
+
+The tests-only envelope carries one or more parseable `RED-MATRIX <SC#> | <test path/name> | <expected failure>` entries in `evidence[]`. Before production delegation, run `red-quality.mjs --plan <path> --evidence <json-file|-> --red <json-file|->`; every mapped criterion needs one primary row, mapped test scope, and a stable failure identity, with interruption/resume and adversarial rows where applicable. `N/A` requires a non-empty class reason. Exit 0 is valid, exit 1 is a quality defect, and exit 2 is invalid input. A matrix defect exhausts the single tests-only launch and opens failure disposition; an invalid host RED follows ordinary bounded attempt recovery.
+
+Risk-heavy durability, recovery, concurrency, security, or protocol work receives one bounded independent `dispatch` read-delegate over changed tests and matrix before production delegation. Routine work receives no extra reviewer; unavailable review degrades to an explicit orchestrator-only gate and consumes no review, checkpoint, or ledger accounting.
+
+Implementation failure preserves the working tree, captures Git state, and opens `failure-disposition` before asking the user to `keep-for-repair`, `revert-attributable`, or `inspect-first`. Resume checks a matching captured failure snapshot before completed-task drift; later drift requires reconciliation. Reversion is explicit and only attributable paths are eligible: baseline caller-dirty, mixed/non-separable, or post-snapshot-drift paths remain preserved. Resolve the ruling with post-choice state and walkthrough evidence before appending `run-complete: stable-failure`; `inspect-first` remains open and unterminated; a resolved ruling precedes `stable-failure`.
+
 ### RED boundary
 
 When new or corrected behavior is required, allow at most one tests-only launch in addition to the

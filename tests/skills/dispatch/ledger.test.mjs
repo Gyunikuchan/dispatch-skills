@@ -295,6 +295,55 @@ describe('ledger I/O and resume', () => {
     assert.equal(resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo }).status, 'needs-reconciliation');
   });
 
+  it('prioritizes an open failure-disposition ruling over ordinary completion drift', () => {
+    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const plan = '# Plan\n\nBody\n';
+    const hash = governingHash(plan).hash;
+    for (const event of [
+      runStart(hash, planPath),
+      { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
+      { v: 1, type: 'task-start', runId, at, data: { taskId: 'active', attemptBudget: 1, paths: ['active.txt'], preState: state } },
+      { v: 1, type: 'implementation-attempt', runId, at, data: { taskId: 'active', attempt: 1, launch: 'full', target: { platform: 'copilot' }, terminalEnvelope: {}, evidence: ['failed'], transition: 'stop-user-ruling' } },
+      { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: { available: true, entries: { 'active.txt': { status: ' M', objectId: 'absent' } } } }), costIfWrong: 'tree state may be lost', state: 'open' } },
+    ]) appendEvent(ledgerPath, event);
+    const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
+    assert.equal(resumed.nextAction, 'failure-disposition');
+    assert.equal(resumed.status, 'resumable');
+  });
+
+  it('routes post-failure snapshot drift to reconciliation', () => {
+    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const plan = '# Plan\n\nBody\n';
+    const hash = governingHash(plan).hash;
+    fs.writeFileSync(path.join(repo, 'active.txt'), 'changed after failure\n');
+    for (const event of [
+      runStart(hash, planPath),
+      { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
+      { v: 1, type: 'task-start', runId, at, data: { taskId: 'active', attemptBudget: 1, paths: ['active.txt'], preState: state } },
+      { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: { available: true, entries: { 'active.txt': { status: ' M', objectId: 'a'.repeat(40) } } } }), costIfWrong: 'drift', state: 'open' } },
+    ]) appendEvent(ledgerPath, event);
+    const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
+    assert.equal(resumed.status, 'needs-reconciliation');
+  });
+
+  it('keeps inspect-first open and resolves disposition with terminal stable-failure', () => {
+    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const plan = '# Plan\n\nBody\n';
+    const hash = governingHash(plan).hash;
+    const snapshot = { available: true, entries: {} };
+    for (const event of [
+      runStart(hash, planPath),
+      { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
+      { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: snapshot }), costIfWrong: 'tree state may be lost', state: 'open' } },
+    ]) appendEvent(ledgerPath, event);
+    const inspected = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
+    assert.equal(inspected.nextAction, 'failure-disposition');
+    assert.equal(readLedger(ledgerPath).events.at(-1).data.state, 'open');
+    appendEvent(ledgerPath, { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'keep-for-repair', reason: JSON.stringify({ failureSnapshot: snapshot, postChoiceState: snapshot }), costIfWrong: 'repair deferred', state: 'resolved' } });
+    appendEvent(ledgerPath, { v: 1, type: 'run-complete', runId, at, data: { result: 'stable-failure', evidenceRefs: ['failure-disposition'] } });
+    assert.equal(readLedger(ledgerPath).events.at(-1).data.result, 'stable-failure');
+  });
+
   describe('design-run resume across segments', () => {
     const designPath = '.scratch/plan/2026-09-20-demo-design.md';
     const designBody = [

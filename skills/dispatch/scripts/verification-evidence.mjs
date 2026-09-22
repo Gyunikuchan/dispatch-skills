@@ -13,6 +13,23 @@ import {
 
 export { extractApprovedPathSet };
 
+export function criterionMappings(source) {
+  const lines = structuralLines(source);
+  const mappings = [];
+  let inCriteria = false;
+  let current = null;
+  for (const { text } of lines) {
+    if (/^##\s+/.test(text)) { inCriteria = /^## Success Criteria\s*$/.test(text); current = null; continue; }
+    if (!inCriteria) continue;
+    const criterion = /^(?:[-*+]|\d+[.)])\s+\[(SC[1-9]\d*)\]\s*(.*)$/.exec(text);
+    if (criterion) { current = { id: criterion[1], title: criterion[2], text: criterion[2], paths: [], commands: [] }; mappings.push(current); continue; }
+    if (!current) continue;
+    const changes = /^ {2,}[-*+] Changes:\s*(.+)$/.exec(text); if (changes) current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
+    const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*$/.exec(text); if (verify) current.commands.push(verify[1].trim());
+  }
+  return mappings;
+}
+
 export function mapVerificationCommandsToPaths(source, commands, approvedPaths = extractApprovedPathSet(source)) {
   const lines = structuralLines(source);
   const mappings = [];
@@ -42,7 +59,7 @@ export function mapVerificationCommandsToPaths(source, commands, approvedPaths =
     const references = mappings.filter(entry => entry.commands.includes(command));
     const approved = new Set(approvedPaths);
     const narrowed = references.length > 0 &&
-      references.every(entry => entry.paths?.length && entry.paths.every(value => value && approved.has(value)))
+      references.every(entry => entry.paths?.length && entry.paths.every(value => value && (approved.size === 0 || approved.has(value))))
       ? [...new Set(references.flatMap(entry => entry.paths))].sort()
       : approvedPaths;
     return [command, narrowed];
