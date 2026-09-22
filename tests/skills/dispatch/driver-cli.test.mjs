@@ -93,11 +93,10 @@ describe('driver CLI (SC1)', () => {
     });
   }
 
-  it('--run design remains unavailable until I05', () => {
+  it('--run design is available', () => {
     const res = run(['--run', 'design', '--orchestrator', 'claude', '--', 'build a thing']);
-    assert.equal(res.status, 2);
-    assert.equal(res.stdout.trim(), '');
-    assert.match(res.stderr, /not available until v0\.5 I05/);
+    assert.equal(res.status, 0, res.stderr);
+    parseAction(res.stdout);
   });
 
   it('rejects an unknown verb, a missing --orchestrator, and --phases on review with exit 2', () => {

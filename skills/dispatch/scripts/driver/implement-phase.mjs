@@ -34,7 +34,7 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
     return state.pending;
   }
 }
-async function enterPhase(state, phase) {
+export async function enterPhase(state, phase) {
   if (phase === 'plan-review') return consumeReview(state, await beginReview(state, 'plan'));
   requireSettledPlan(state);
   if (phase === 'baseline') {

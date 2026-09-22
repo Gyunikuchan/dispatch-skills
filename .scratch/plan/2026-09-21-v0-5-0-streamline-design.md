@@ -606,125 +606,20 @@ Each decision gives the ruling first, then the rationale.
 - Confirm that every alias routes correctly and that `npm test` is green.
 
 ## Execution Status
-<!-- machine-managed; excluded from governed content -->
+### Completed
 
-| ID | State | Updated | Evidence |
-| --- | --- | --- | --- |
-| I01 | complete (`003e7bb`) | 2026-09-21 | `npm test` 1544 pass; hashes current; configs valid; plan review 3 rounds (28 accepted), code review 3 rounds (6 accepted), both consensus-settled |
-| I02 | complete (`ab6e72e`) | 2026-09-22 | `npm test` 1572 pass; hashes current; configs valid; code review 5 rounds (R1–R3 I02, R4–R5 adjacent O1), 4 accepted, consensus-settled and checkpointed; ledger `%TEMP%/dispatch-skills-fchei/47a8c8c9af77/v0-5-0-streamline-i02-ledger.md` |
-| I03 | complete (uncommitted) | 2026-09-22 | `npm test` 1655 pass (after follow-ups, code review R4–R6 settled and checkpointed); hashes current; plan review 3 rounds (21 accepted), code review 3 rounds (22 accepted), both consensus-settled and checkpointed; D16: driver 2586 B vs v0.4.0 2715 B (3873 B with checkpoint); ledger `%TEMP%/dispatch-skills-fchei/47a8c8c9af77/v0-5-0-streamline-i03-ledger.md` |
-| I04 | complete (uncommitted) | 2026-09-22 | Contract-first ordinary driver implemented: canonical plan/review/baseline/approval, locked v1 ledger/resume, structural RED and typed outcomes, configured risk review, failure disposition, code checkpoint, and relocation handoff. Canonical contract 8/8, driver 88/88, focused 212/212; full suite 1671 pass with 11 unchanged I05-adjacent failures. |
-| I05–I06 | pending | — | — |
+| I01 | complete | Glossary, unified config, and level resolution |
+| I02 | complete | Consolidate review assets and scripts under dispatch; drop legacy |
+| I03 | complete | Driver protocol and standalone review phases |
+| I04 | complete | Implement verb as composed phases |
+| I05 | complete | Design verb and increment execution on the driver |
 
-**I01 run notes.** Executed as an ordinary `/implement-dispatch` plan (this design carries no
-approval metadata or v2 design ledger). Plan and walkthrough:
-`.scratch/plan/2026-09-21-v0-5-0-streamline-i01.md`, `…-i01-walkthrough.md` (relocated at handoff;
-see handoff report). Ledger: `%TEMP%/dispatch-skills-fchei/47a8c8c9af77/v0-5-0-streamline-i01-ledger.md`.
+### Ready
 
-**I01 deviations and refinements (inputs for I02+):**
+| I06 | ready | Contract rewrite, aliases, and docs |
 
-- Config tables: `read-delegates` required; `write-subagents` and `phases` optional (absent →
-  empty; missing phase → disabled/"not configured"; missing write-subagent entry → diagnostic).
-  Duplicate platform keys after alias normalization are rejected.
-- Level resolution: flat `model`/`effort` fields apply below an entry's lowest level override (not
-  v0.4's lowest-higher override), matching R1's `{model: sonnet, high: {model: opus}}` example.
-- Pin validation: resolve-flow validates pins/excludes against the union of `phaseMembers` over
-  phases present (all `read-delegates` keys when `phases` is absent or empty), independent of
-  level; the runner validates `ask` pins against `read-delegates` only (`only` never narrows `ask`).
-- `--pins` waves: slots `ask:R1:<platform>:<idx>`; named pins cascade within the platform
-  (index 0 is a label), have no reserves, and a failed slot exits 1; empty pin lists and `--pins`
-  after `--` are handled explicitly.
-- R8: applied to wave runs only (`--pins`, `--batch-file`); a plain single-cascade `ask` still
-  prints the report on stdout (user ruling). Slot lines carry an added `slot` key. Per-run
-  `dispatch-slots-*` report directories are caller-owned (documented in `docs/dispatch-notes.md`;
-  shipped-contract wording deferred to I06).
-- `--level-source` echo is a `[dispatch] level=… source=…` stderr line from `dispatch.mjs`;
-  `emitInitBanner` is unchanged. Explicit `--level` without a source is `explicit`.
-- Resolver output emits `rounds` (was `maxRounds`) and a `design-review` section; liveness seam
-  renamed `DISPATCH_LIVENESS_JSON`/`DISPATCH_TEST_MODE`. `loadBatchFile(file, platforms)` takes the
-  level-resolved map.
-- The v0.4 key map in shipped `dispatch` files says "the retired implement config"; the named map
-  lives in `docs/dispatch-notes.md` (dependency guard).
-- `implement-dispatch/skill-hashes.json` deleted as scoped (user ruling);
-  `build-rebuttal-packets.mjs` tolerates the missing manifest, so its implement-dispatch integrity
-  check is inactive until I02 moves it.
-- Added to I01 scope: audit `probe-dispatch.mjs` (and its test) now read `read-delegates`.
-- User-local configs migrated to v0.5 and `implement-dispatch/config.local.jsonc` removed.
-- Carry into I02/I03: review skills still call `--list-targets` without `--level`; agy returned
-  narration-only reports in two review rounds.
+Next Action: implement:I06
 
-**I02 deviations (inputs for I03+):** metadata-less designs reach `ready` only via explicit
-`artifactPath` (canonical-path collision guard retained); `[R#]`/`[O#]` aliases stay in `review.md`;
-design prompt adopts shared-frame wording; plan-review SKILL.md keeps the non-empty `choices`
-sentence (pinned by v04-phase3; no plan decision carries choices now — trim in I06); shared
-`validateRequestAction` in `review-preparation.mjs`; staged-deletion snapshot fix. agy returned
-narration-only reports in 2 of 5 code rounds; opencode timed out (1800s) in code R1.
-
-**I03 run notes.** Executed as an ordinary `/implement-dispatch` plan (level high). Plan
-`.scratch/plan/2026-09-22-v0-5-0-streamline-i03.md` and walkthrough `…-i03-walkthrough.md`
-(relocated at handoff). Implemented as tests-only RED (35 new tests failing) and then the full
-implementation by a claude-opus-5 native subagent. The driver lives in
-`skills/dispatch/scripts/driver/{index,state,actions,review-phase}.mjs`, with 17 schemas under
-`references/templates/schemas/driver/`.
-
-**I03 deviations and refinements (inputs for I04+):**
-
-- **Resume path:** `--next` never rebuilds state. `--run` resumes from an unsettled log, and a
-  sidecar `<runId>.run.json` records the full normalized invocation so that a lost state names
-  the exact `--run` command (R3 deviation). The resume round count covers only rounds after the
-  latest settled log prefix. State files are trusted only when their realpath is directly under
-  `os.tmpdir()/dispatch-driver/`. States and sidecars untouched for 24h are pruned.
-- **Standalone reviews and phase policy:**
-  - Standalone reviews use `phases['<kind>-review']` targets, rounds, and consensus (rebuttals
-    included). In v0.4, standalone host rulings were always final.
-  - An unconfigured phase falls back to one target, one round, and host-final rulings, keeping
-    resolveFlow's demotion and liveness.
-  - The raise rule never demotes: a classified level with no enabled level above it is skipped
-    with a reason.
-- **Plan and design verification:** `--fix` verifies plan and design artifacts with the driver's
-  in-process lint instead of a `verify` action (R3 deviation, AC1).
-- **Fix loop:**
-  - A cluster fails verification only on its own commands.
-  - It stops after two identical failures or three failures of any kind, and is deferred as
-    `unapplied`.
-  - Under `--fix`, an accepted in-scope MUST or SHOULD needs `fix.affectedPaths`; if it is
-    missing, `adjudicate` is re-emitted. User-accepted findings (needs-user, round cap) that
-    arrive without fix details are deferred, never dropped.
-- **Sanitization:** the driver writes only agent-restated text. It strips fenced blocks,
-  tool-call lines (including bare lowercase `invoke(`), and mid-line tool markup, and it keeps
-  the contents of code spans.
-- **Rebuttal waves:** each wave sends one combined packet of the live keys to every citing
-  source. Only verdicts from a key's citing sources count.
-- **Module layout:**
-  - `safeRenameSync` moved to `common.mjs`.
-  - `generateSkillHashes` recurses into `scripts/` subdirectories.
-  - `dispatch.mjs` checks argv before it imports the driver, so a plain `ask` does not load the
-    review stack.
-- **D16 result:** the driver is cheaper than the v0.4 scripts (2586 B against 2715 B, or 3873 B
-  including checkpoint), so no re-plan of I04–I05 is needed.
-- **Follow-ups resolved in the same session (code review R4–R6):**
-  - R1-F009: scripted replay for an invalid non-prose delivered report → `native-fallback`.
-  - R3-F004: a `--fix` run writes `unapplied` application records (reason `pending --fix`)
-    carrying the real fix metadata and scope when it queues work; `--run --fix` after state loss
-    resumes exactly those records (`apply-fixes` first, adjacent items re-offered), marks
-    finished fixes `applied`, and never re-derives report-only rounds. Input for I04: the ledger
-    may subsume this.
-  - O1: relocation now targets the repo-scoped `<tmp>/dispatch-skills-<user>/<repoHash>/relocated/`
-    (`relocatedArtifactsPath`), and the temp tier of artifact resolution scans only that
-    directory, so stray flat-temp walkthroughs no longer bind.
-  - Found in review: `resolution-log.mjs` `dependsOn` pattern had a literal `d*` (I02), which rejected
-    multi-digit round IDs; fixed.
-  - Found in review: the shared `rebuttal.json` response schema declared a draft 2020-12 `$schema`,
-    which the claude CLI rejects, so every claude rebuttal launch failed; key removed and guarded by
-    `response-schemas.test.mjs`.
-- **Provider behavior:** agy returned narration-only or prose reports in plan R3 (CLEAN inside
-  prose) and code R3 (invalid). The host settled code R3 on the two valid sources.
-- **Spec repair:** the I02 dependency-graph row, which had been overwritten by a status row, was
-  restored, and the I02 status was moved to Execution Status (code-review adjacent finding).
-
-**I04 failed-run notes.** First plan `.scratch/plan/2026-09-22-v0-5-0-streamline-i04-ordinary-driver-plan.md`; walkthrough `…-walkthrough.md`. Baseline: 76 driver tests and config validation green. Host-observed RED: 14 expected missing-I04 failures. Native model cascade rejected `gpt-5.6-luna` on quota and started `bedrock.gpt-5.6-luna`; two implementation attempts remained incomplete. Code review found the implementation simulated rather than enforced phase review, resume, v1 ledger, RED/outcome, verification-freshness, and handoff contracts. An authorized orchestrator repair still left five blocking findings, so every I04 code/test/schema/hash delta was removed.
-
-**I04 retry notes.** Fresh plan `.scratch/plan/2026-09-22-ordinary-driver-retry.md`; walkthrough `…-walkthrough.md`. Plan review R1–R2 materialized missing RED-quality, risk-review, failure-disposition, identity, freshness, and handoff requirements. Early delegated attempts repeated the prior simulated implementation and were rejected. The final contract-first rebuild split the ordinary flow into plan, baseline, implementation, verification, write, state, and handoff modules; it uses the shared review state machine, canonical ledger writer/resume, structural RED and typed outcome contracts, configured risk review, attributable failure disposition, checkpoint metadata, and relocation helper. Review fixes added cross-scope mutation freshness, missing-baseline diagnostics, hermetic fixture commits, stale-lock guidance, and guarded reversion. The obsolete broad RED harness was removed after canonical contract coverage replaced it. Verification: canonical contract 8/8, all driver 88/88, focused 212/212, config/hashes/diff check green; `npm test` 1671 pass and the same 11 I05-adjacent failures. I04 complete; I05 is next.
 
 ## Review Findings & Resolutions
 <!-- machine-managed review history; excluded from governed content -->

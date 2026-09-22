@@ -30,6 +30,36 @@
     "error": {
       "type": "string"
     },
+    "nextAction": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase": {
+      "type": "string",
+      "minLength": 1
+    },
+    "incrementId": {
+      "type": ["string", "null"]
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["terminalEvent", "relocateAfterPass", "retain"],
+      "properties": {
+        "terminalEvent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "result", "beforeRelocation"],
+          "properties": {
+            "type": { "const": "integration" },
+            "result": { "const": "pass" },
+            "beforeRelocation": { "const": true }
+          }
+        },
+        "relocateAfterPass": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "retain": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "commands": {
       "type": "array",
       "items": {

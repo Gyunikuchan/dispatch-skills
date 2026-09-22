@@ -45,7 +45,7 @@ export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;
   persistEvidence(state);
   const action = await startReview({
-    invocation: { ...state.invocation, verb: 'review', kind, fix: true, phases: null, argument: kind === 'plan' ? state.planPath : state.walkthroughPath },
+    invocation: { ...state.invocation, verb: 'review', kind, fix: true, phases: null, argument: ['plan', 'design'].includes(kind) ? state.planPath : state.walkthroughPath },
     cwd: state.repoRoot, resumeCommand: state.resumeCommand,
   });
   state.reviewState = readRunState(action.stateFile);

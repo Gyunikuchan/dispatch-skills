@@ -45,6 +45,9 @@
       "items": {
         "type": "object"
       }
-    }
+    },
+    "incrementId": { "type": "string" },
+    "planPath": { "type": "string" },
+    "walkthroughPath": { "type": "string" }
   }
 }

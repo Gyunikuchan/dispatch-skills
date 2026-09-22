@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { appendEvent, governingHash, readLedger, resumeOrdinary, slugFromPlanPath } from '../ledger.mjs';
+import { parseIncrementGraph } from '../design-graph.mjs';
 import { foldSegments } from '../ledger-events.mjs';
 import { resolveLedgerPath } from '../resolve-artifact-paths.mjs';
 import { emitAction } from './actions.mjs';
@@ -11,7 +12,7 @@ export const relative = (state, file) => path.relative(state.repoRoot, file).spl
 export const source = state => fs.readFileSync(state.planPath, 'utf8');
 export function bindPlan(state, file) {
   state.planPath = path.resolve(state.repoRoot, file);
-  if (/-design\.md$/.test(state.planPath)) throw new Error('I05: design execution is not available.');
+  if (/-design\.md$/.test(state.planPath)) throw new Error('Design paths must be bound through resumeDesign.');
   state.slug = slugFromPlanPath(relative(state, state.planPath));
   const hash = governingHash(source(state));
   if (hash.status !== 'ok') throw new Error(hash.diagnostic);
@@ -67,7 +68,7 @@ export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
   if (state.ordinary.checkpoint || state.reviewState?.kind === 'code' || state.riskState) return;
-  const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
+  const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ...(state.designPath ? { designPath: relative(state, state.designPath), designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
   const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`\n`;
   const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);
   fs.writeFileSync(state.walkthroughPath, MARKER.test(text) ? text.replace(MARKER, () => block) : text + block);
@@ -78,6 +79,15 @@ export function restoreEvidence(state) {
   if (!match) return false;
   const record = JSON.parse(match[1]);
   if (record.schemaVersion !== 1 || record.governingHash !== state.governingHash || record.planPath !== relative(state, state.planPath)) throw new Error('Walkthrough evidence does not bind this governing plan.');
+  if (state.designPath) {
+    if (record.designPath !== relative(state, state.designPath) || record.designRevision !== state.designRevision && record.designRevision !== state.governingHash) throw new Error('Walkthrough evidence does not bind this parent design identity.');
+    if (state.increment?.id && record.incrementId !== state.increment.id) throw new Error('Walkthrough evidence increment ID does not bind the selected increment.');
+    if (!state.increment?.id && record.incrementId && !/^I\d{2}$/.test(record.incrementId)) throw new Error('Walkthrough evidence increment ID is invalid.');
+  } else if (record.designPath || record.designRevision) throw new Error('Walkthrough evidence contains an unbound parent design identity.');
+  if (!state.increment?.id && /-design\.md$/.test(state.planPath) && record.incrementId) {
+    const graphIds = new Set(parseIncrementGraph(fs.readFileSync(state.planPath, 'utf8')).increments.map(item => item.id));
+    if (!graphIds.has(record.incrementId)) throw new Error('Walkthrough evidence increment ID does not bind a known design increment.');
+  }
   state.ordinary = record.ordinary;
   state.ledgerRunId = record.ledgerRunId;
   const segment = ledgerSegment(state) ?? ledgerSegment(state, { terminal: true });
@@ -109,8 +119,8 @@ export function save(state, action) {
   writeRunState(state);
   return action;
 }
-export function refuse(state, reason) {
-  return emitAction(state, 'done', { outcome: 'refused', summary: reason, reason, command: state.resumeCommand });
+export function refuse(state, reason, nextAction = null) {
+  return emitAction(state, 'done', { outcome: 'refused', summary: reason, reason, command: state.resumeCommand, ...(nextAction ? { nextAction } : {}) });
 }
 export function ask(state, question, text, items = []) {
   return emitAction(state, 'ask-user', { question, text, items }, ['Relay the typed decision to the user and return its exact keyed answer.']);

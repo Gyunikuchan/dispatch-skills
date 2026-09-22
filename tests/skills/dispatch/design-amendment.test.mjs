@@ -47,6 +47,10 @@ const DESIGN_BODY = [
 function gitInit(repo) {
   const result = spawnSync('git', ['init', '--quiet', '--initial-branch=work'], { cwd: repo, encoding: 'utf8' });
   assert.equal(result.status, 0);
+  for (const args of [['config', 'user.email', 'test@example.com'], ['config', 'user.name', 'Test'], ['commit', '--allow-empty', '--no-gpg-sign', '-qm', 'initial']]) {
+    const configured = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(configured.status, 0, configured.stderr);
+  }
 }
 
 
@@ -54,7 +58,7 @@ function approvedDesign() {
   return `${DESIGN_BODY}<!-- approval marker -->\n`;
 }
 
-describe('design amendment transactions', () => {
+describe('design amendment transactions', { concurrency: false }, () => {
   function staging() {
     return path.join(path.dirname(designPath), `.${path.basename(designPath)}`);
   }
@@ -62,11 +66,11 @@ describe('design amendment transactions', () => {
   let repo;
   let designPath;
   let ledgerPath;
-
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-tmp-'));
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-repo-'));
     gitInit(repo);
+    repo = fs.realpathSync(repo);
     designPath = path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md');
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
@@ -75,7 +79,7 @@ describe('design amendment transactions', () => {
     appendEvent(ledgerPath, {
       v: 2, seq: 1, type: 'run-start', runId, at,
       data: {
-        governingPath: designPath.replaceAll('\\', '/'),
+        governingPath: path.relative(repo, designPath).replaceAll('\\', '/'),
         governingHash: governedHash(approvedDesign()),
         rootSlug: 'demo', action: 'design',
         baseline: { commit: oid, repositoryState: `sha256:${'a'.repeat(64)}`, dirtyPaths: [] },
@@ -259,8 +263,8 @@ describe('design amendment transactions', () => {
     const reviewedData = { amendmentId: 'A01', state: 'reviewed', affectedIncrements: [] };
     const preparedData = {
       amendmentId: 'A01', state: 'prepared', baseRevision: priorHash, candidateHash,
-      affectedIncrements: [], targetPath: designPath.replaceAll('\\', '/'),
-      replacementPath: `.${designPath.replaceAll('\\', '/')}.tmp`,
+      affectedIncrements: [], targetPath: path.relative(repo, designPath).replaceAll('\\', '/'),
+      replacementPath: `.${path.relative(repo, designPath).replaceAll('\\', '/')}.tmp`,
     };
     appendEvent(ledgerPath, { v: 2, seq: 3, type: 'amendment', runId, at, data: proposedData });
     appendEvent(ledgerPath, { v: 2, seq: 4, type: 'amendment', runId, at, data: reviewedData });

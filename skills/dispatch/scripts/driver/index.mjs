@@ -5,6 +5,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../common.mjs';
@@ -14,7 +15,9 @@ import { emitAction, validateReply } from './actions.mjs';
 import { createRunState } from './state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { advanceImplement, startImplement } from './implement-phase.mjs';
-import { readRunSidecar, readRunState } from './state.mjs';
+import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
+import { save } from './ordinary-state.mjs';
+import { readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
 
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
 const VERBS = ['plan', 'design', 'review', 'implement'];
@@ -28,7 +31,7 @@ const BOOLEAN_FLAGS = new Set(['--next', '--fix', '--verbose']);
 export const DRIVER_FLAGS = [...VALUE_FLAGS, ...BOOLEAN_FLAGS];
 
 export const DRIVER_HELP = `Driver (script-driven phases; each call prints one JSON action):
-  --run <verb>                ${VERBS.join('|')} (design becomes available in v0.5 I05)
+  --run <verb>                ${VERBS.join('|')} (design authoring and increment execution supported)
   --kind <kind>               Review kind: ${KIND_NAMES.join('|')} (default: inferred from the argument)
   --fix                       Apply accepted fixes (review is report-only by default)
   --phases from:<phase>       Start phase for implement (not accepted by review)
@@ -86,12 +89,9 @@ function normalizeOrchestrator(raw) {
 /** Normalized `--run` invocation, recorded in the sidecar. */
 function normalizeRun(parsed) {
   if (!VERBS.includes(parsed.run)) throw new UsageError(`--run must be one of ${VERBS.join('|')}.`);
-  if (!['review', 'plan', 'implement'].includes(parsed.run)) {
-    throw new UsageError(`--run ${parsed.run} is not available until v0.5 I05.`);
-  }
   if (parsed.state || parsed.input !== undefined) throw new UsageError('--state and --input belong to --next.');
   if (parsed.phases !== undefined && parsed.run !== 'implement') throw new UsageError('--phases is not accepted by this run.');
-  if (['plan', 'implement'].includes(parsed.run) && !parsed.argument?.trim()) throw new UsageError(`${parsed.run} requires an ask or canonical plan path after --.`);
+  if (['plan', 'design', 'implement'].includes(parsed.run) && !parsed.argument?.trim()) throw new UsageError(`${parsed.run} requires an ask or canonical artifact path after --.`);
   if (parsed.phases !== undefined && !/^from:(?:plan|plan-review|baseline|implementation|code-review|handoff)$/.test(parsed.phases)) throw new UsageError('--phases requires exactly one from:<ordinary-phase>.');
   if (!parsed.orchestrator) throw new UsageError('--run requires --orchestrator <platform>.');
   if (parsed.kind !== undefined && !KIND_NAMES.includes(parsed.kind)) {
@@ -175,6 +175,8 @@ function advanceLocked(parsed) {
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
+  if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value);
+  if (state.designPath) return advanceImplement(state, checked.value);
   return ['implement', 'plan'].includes(state.invocation?.verb)
     ? advanceImplement(state, checked.value)
     : advanceReview(state, checked.value);
@@ -193,9 +195,21 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
       action = await next(parsed);
     } else {
       const invocation = normalizeRun(parsed);
-      action = ['implement', 'plan'].includes(invocation.verb)
-        ? await startImplement({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) })
-        : await startReview({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) });
+      if (invocation.verb === 'design') {
+        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+        const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
+        writeRunSidecar(state, invocation);
+        action = save(state, startDesign(state));
+      } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('-design.md')) {
+        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+        const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
+        writeRunSidecar(state, invocation);
+        action = save(state, resumeDesignPath(state));
+      } else {
+        action = ['implement', 'plan'].includes(invocation.verb)
+          ? await startImplement({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) })
+          : await startReview({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) });
+      }
     }
     stdout.write(`${JSON.stringify(action)}\n`);
     return 0;
