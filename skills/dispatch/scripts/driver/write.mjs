@@ -72,11 +72,12 @@ export function writeAction(state) {
       conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
       governingPlan: state.planPath,
       redGate: data.redGate ?? 'validated',
+      ...(data.carriedFindings?.length ? { reviewFindings: data.carriedFindings } : {}),
     },
     evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
   } }, [
-    'Launch the configured native write subagent with the exact model and effort. Pass the criteria and packet fields verbatim on retries and continuations. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
-    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : 'Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one `CRITERION SC# | <paths> | <behavior>` evidence row per criterion. Later completion verify replies set each criterionEvidence.inspectedRevision to the emitted verify scopeHash.',
+    'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Pass the criteria and packet fields verbatim on retries and continuations. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
+    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict.${data.carriedFindings?.length ? ' Close packet.reviewFindings (accepted RED test-review findings) within the approved paths.' : ''} Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion. Later completion verify replies set each criterionEvidence.inspectedRevision to the emitted verify scopeHash.`,
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

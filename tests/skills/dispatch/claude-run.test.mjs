@@ -591,6 +591,25 @@ describe('Claude model-not-found and sandbox advisory classification (SC2)', () 
     const outcome = resolveClaudeOutcome({ envelope: parseClaudeEnvelope(MODEL_404_ENVELOPE), classifiedFailure, exitCode: 0 });
     assert.equal(outcome.failureKind, 'model-not-found');
   });
+
+  // Captured shape: an error envelope whose subtype is still "success".
+  const VERSION_TOO_OLD_ENVELOPE = JSON.stringify({
+    type: 'result', subtype: 'success', is_error: true, api_error_status: 400, api_error_code: 'claude_code_version_too_old',
+    result: "API Error: 400 Claude Code 2.1.274 does not support this model; version 2.1.280 or newer is required. Run 'claude update', or update the Claude desktop app, then try again.",
+  });
+  it('classifies claude_code_version_too_old as cli-outdated, never as subtype "success"', () => {
+    const envelope = parseClaudeEnvelope(VERSION_TOO_OLD_ENVELOPE);
+    assert.equal(envelope.apiErrorCode, 'claude_code_version_too_old');
+    const classifiedFailure = classifyClaudeResult({ exitCode: 1, stdout: envelope.text });
+    assert.equal(classifiedFailure, 'cli-outdated');
+    assert.equal(resolveClaudeOutcome({ envelope, classifiedFailure: null, exitCode: 1 }).failureKind, 'cli-outdated');
+    assert.equal(classifyClaudeFailure(envelope.text), 'cli-outdated');
+  });
+
+  it('drops an error envelope subtype of "success" in favour of the classified kind', () => {
+    const envelope = { isError: true, subtype: 'success', raw: '{}' };
+    assert.equal(resolveClaudeOutcome({ envelope, classifiedFailure: 'quota', exitCode: 1 }).failureKind, 'quota');
+  });
 });
 
 describe('Claude unsandboxed-run warning (SC3)', () => {

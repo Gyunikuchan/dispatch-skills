@@ -729,11 +729,13 @@ function onAdjudicate(state, reply) {
   }
   if (errors.length) return reemit(state, errors.join('; '));
   if (state.transient) {
-    const blocking = rulings.filter(ruling => ruling.status !== 'rejected');
+    // An accepted CONSIDER is advice for the production writer, never a RED-gate blocker.
+    const accepted = rulings.filter(ruling => ruling.status === 'accepted');
+    const blocking = rulings.filter(ruling => ruling.status !== 'rejected' && !(ruling.status === 'accepted' && ruling.severity === 'CONSIDER'));
     // Only fully accepted findings are repairable test defects; unresolved ones stay terminal.
-    const repairable = blocking.length && blocking.every(ruling => ruling.status === 'accepted')
-      ? { defects: blocking.map(ruling => ({ key: ruling.key, severity: ruling.severity, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key) })) } : {};
-    return done(state, blocking.length ? 'refused' : 'complete', blocking.length ? 'Bounded test review has verified or unresolved findings.' : 'Bounded test review claims were verified and rejected.', repairable);
+    const carried = accepted.length && blocking.every(ruling => ruling.status === 'accepted')
+      ? { defects: accepted.map(ruling => ({ key: ruling.key, severity: ruling.severity, tag: ruling.tag, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key) })) } : {};
+    return done(state, blocking.length ? 'refused' : 'complete', blocking.length ? 'Bounded test review has verified or unresolved findings.' : accepted.length ? 'Bounded test review accepted advisory findings only.' : 'Bounded test review claims were verified and rejected.', carried);
   }
   if (rulings.some((ruling) => ruling.status === 'needs-user')) {
     state.rulings = rulings;

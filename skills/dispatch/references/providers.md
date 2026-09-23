@@ -124,6 +124,7 @@ candidates are exhausted.
 | `context-overflow` | Prompt or context length exceeded | Cascade; otherwise narrow the brief. |
 | `auth` | 401/403, missing login, invalid key | Report the non-retryable provider error; an unpinned run may continue. |
 | `model-not-found` | Claude reports a 404 or an unavailable selected model | Cascade to another configured target. |
+| `cli-outdated` | Claude reports `claude_code_version_too_old` for the model | Cascade to another configured target; upgrade Claude Code. |
 | `model-not-loaded` | Local backend reports no loaded model | Cascade to another configured target. |
 | `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Fail closed; upgrade or set that provider's sandbox option to `false`. |
 | `not-found` | Missing or unlaunchable binary | Cascade or inspect the provider probe. |

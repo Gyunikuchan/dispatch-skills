@@ -1,13 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { failureAttribution } from '../failure-attribution.mjs';
+import { verifySkillIntegrity } from '../common.mjs';
 import { currentHead, diffHash, indexFingerprint, materializedFingerprint } from '../git-state.mjs';
 import { diffRepositoryState } from '../verification-evidence.mjs';
 import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { readRunState } from './state.mjs';
-import { beginVerification, completionResult, fingerprint, repositoryBaseline, loadFailureDefect, redLoadFailures, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
+import { beginVerification, completionResult, fingerprint, repositoryBaseline, loadFailureDefect, purposeCommands, redLoadFailures, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
 import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 function serializedEntries(state) {
@@ -22,6 +24,7 @@ export function beginImplementation(state) {
   if (data.failure) return failureQuestion(state);
   if (data.step === 'concern-ruling') return ask(state, 'implementation-concerns', 'Resolve the captured implementation concerns before accepting the outcome.', (data.envelope?.concerns ?? []).map(reason => ({ reason })));
   if (data.step === 'blocking-condition' || data.step === 'missing-context') return ask(state, data.step === 'blocking-condition' ? 'implementation-blocked' : 'implementation-context', 'Supply the changed blocking condition or missing context with {decision:"retry", reason, context}, or stop.');
+  if (data.step === 'write-scope') return scopeQuestion(state);
   if (data.step === 'risk-degradation') return ask(state, 'risk-review-degradation', 'Inspect the validated RED matrix and record an evidence-backed orchestrator-only gate, or stop.', [{ reason: data.riskFailure }]);
   if (data.step === 'write-pending') {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
@@ -115,12 +118,91 @@ function advanceWriteCascade(state, reply) {
   return blockedWrite(state, `Configured write model cascade exhausted. Models tried: ${writeHistoryLine(data.writeHistory)}.`);
 }
 
+// SECTION: write-scope rulings
+const MANIFEST = 'skill-hashes.json';
+/** Auto-approves dispatch's skill integrity manifest only as the nearest manifest above an approved
+ * path, and only when it verifies against the current files and hashes that approved path. */
+function integrityManifest(state, file, allowed) {
+  if (path.posix.basename(file) !== MANIFEST) return false;
+  const dir = path.posix.dirname(file);
+  const owned = allowed.filter(item => {
+    for (let parent = path.posix.dirname(item); parent !== '.'; parent = path.posix.dirname(parent)) {
+      if (fs.existsSync(path.join(state.repoRoot, parent, MANIFEST))) return parent === dir;
+    }
+    return false;
+  });
+  if (!owned.length) return false;
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(path.join(state.repoRoot, file), 'utf8')); } catch { return false; }
+  const integrity = verifySkillIntegrity(path.join(state.repoRoot, dir), MANIFEST);
+  return integrity.valid && !integrity.missing && owned.some(item => Object.hasOwn(manifest, path.posix.relative(dir, item)));
+}
+function widenScope(state, files) {
+  const data = state.ordinary;
+  data.approvedPaths = [...new Set([...data.approvedPaths, ...files])].sort();
+  // A path ruled in during tests-only is test support, so RED admission accepts it.
+  if (data.launch === 'tests-only') data.testsOnlyPaths = [...new Set([...data.testsOnlyPaths, ...files])].sort();
+}
+/** Only a path clean or absent at task start, with the index untouched since, has a recoverable prior state. */
+function revertable(state, file) {
+  const entry = state.ordinary.taskStart.entries[file];
+  // A staged edit would survive a worktree restore and keep the path dirty.
+  return (!entry || entry.objectId === 'absent') && indexFingerprint(state.repoRoot).digest === state.ordinary.indexStart;
+}
+function scopeQuestion(state) {
+  const data = state.ordinary;
+  return ask(state, 'write-scope', 'The write subagent changed paths outside its approved scope. Rule on every path: return {approve:[paths], revert:[paths], reason}, or {decision:"stop", reason} to open failure disposition. Approve widens the scope for this run; revert restores the task-start state and is offered only where recoverable.',
+    data.scopeExtras.map(file => ({ path: file, revertable: revertable(state, file) })));
+}
+function ruleScope(state, answer) {
+  const data = state.ordinary, extras = data.scopeExtras;
+  if (answer.decision === 'stop') return openFailure(state, `Delegate changed paths outside its approved write scope: ${extras.join(', ')}`);
+  const approve = Array.isArray(answer.approve) ? answer.approve : [], revert = Array.isArray(answer.revert) ? answer.revert : [];
+  const ruled = [...approve, ...revert];
+  if (ruled.length !== extras.length || extras.some(file => !ruled.includes(file))) throw new Error(`write-scope requires exactly one ruling per path: ${extras.join(', ')}`);
+  const blocked = revert.filter(file => !revertable(state, file));
+  if (blocked.length) throw new Error(`Paths dirty at task start, or with a changed index since, cannot be reverted: ${blocked.join(', ')}`);
+  for (const file of revert) {
+    const tracked = spawnSync('git', ['-C', state.repoRoot, 'cat-file', '-e', `HEAD:${file}`]).status === 0;
+    const absent = data.taskStart.entries[file]?.objectId === 'absent';
+    // Worktree-only restore keeps the index fingerprint captured at task start.
+    if (tracked && !absent) {
+      const restored = spawnSync('git', ['-C', state.repoRoot, 'restore', '--source=HEAD', '--worktree', '--', file], { encoding: 'utf8' });
+      if (restored.status !== 0) throw new Error(`Could not restore ${file}: ${restored.stderr.trim()}`);
+    } else fs.rmSync(path.join(state.repoRoot, file), { force: true });
+    ruling(state, 'write-scope', 'revert', `${file}: ${answer.reason}`);
+  }
+  if (approve.length) {
+    widenScope(state, approve);
+    for (const file of approve) ruling(state, 'write-scope', 'approve', `${file}: ${answer.reason}`);
+  }
+  const reply = data.pendingOutcome;
+  for (const key of ['scopeExtras', 'pendingOutcome']) delete data[key];
+  data.step = 'write-pending';
+  return acceptWrite(state, reply);
+}
 export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const data = state.ordinary;
   if (reply.rejected || reply.failed) return advanceWriteCascade(state, reply);
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
   const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
-  if (changed.some(file => !allowed.includes(file))) return openFailure(state, 'Delegate changed paths outside its approved write scope.');
+  const outside = changed.filter(file => !allowed.includes(file));
+  // Production edits during tests-only would precede the RED gate, so they stay a failure.
+  if (data.launch === 'tests-only' && outside.some(file => data.approvedPaths.includes(file))) return openFailure(state, 'Delegate changed paths outside its approved write scope.');
+  if (outside.length) {
+    const manifests = outside.filter(file => integrityManifest(state, file, allowed));
+    if (manifests.length) {
+      widenScope(state, manifests);
+      ruling(state, 'write-scope', 'auto-approve', `Integrity manifest regenerated with its approved skill files: ${manifests.join(', ')}`);
+    }
+    const extra = outside.filter(file => !manifests.includes(file));
+    if (extra.length) {
+      data.step = 'write-scope';
+      data.scopeExtras = extra;
+      data.pendingOutcome = reply;
+      return scopeQuestion(state);
+    }
+  }
   const parsed = outcomeTransition(state, reply, { concernsResolved });
   // A schema-invalid envelope is usually a relay mistake; ask once for the verbatim envelope before spending a launch.
   if (parsed.parseError && !data.relayRetried) {
@@ -191,11 +273,11 @@ export async function afterImplementationVerification(state) {
     const loadFailures = redLoadFailures(state);
     if (loadFailures.length && data.testsOnlyAttempts < 2) return relaunchTestsOnly(state, [loadFailureDefect(loadFailures)]);
     const defects = [...(loadFailures.length ? [loadFailureDefect(loadFailures)] : []), ...validateRed(state, data.envelope)];
-    if (defects.length) return openFailure(state, defects.join('; '));
+    if (defects.length) return openFailure(state, defects.join('; '), { purpose: 'red', step: 'red-verify' });
     const redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
     const red = data.redResults.find(result => result.exitStatus !== 0 && redCommands.has(result.command));
     const transition = verificationTransition(state, 'red', 'red-gate');
-    append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: data.commands, transition: transition.action, failureIdentity: red.identity });
+    append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: purposeCommands(data, 'red'), transition: transition.action, failureIdentity: red.identity });
     data.redValidated = { scopeHash: fingerprint(state), evidence: data.envelope.evidence };
     return beginRiskReview(state);
   }
@@ -207,7 +289,7 @@ export async function afterImplementationVerification(state) {
     data.traceabilityDefects = missingTrace.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
   }
   const transition = verificationTransition(state, result, 'final');
-  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.commands, transition: transition.action });
+  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: purposeCommands(data, 'completion'), transition: transition.action });
   if (transition.action !== 'complete') return retryOrFail(state, transition);
   data.implementationComplete = { result, scopeHash: fingerprint(state), envelope: data.envelope };
   data.step = 'implemented';
@@ -239,20 +321,24 @@ function relaunchTestsOnly(state, defects) {
 }
 function handleRiskAction(state, action) {
   if (action.action !== 'done') return { ...action, stateFile: state.stateFile };
+  const data = state.ordinary;
   // Accepted test-review findings earn one tests-only repair while a production attempt remains.
-  if (action.outcome === 'refused' && action.defects?.length && !state.ordinary.reviewRepaired && state.ordinary.attempt < 3) {
-    state.ordinary.reviewRepaired = true;
+  if (action.outcome === 'refused' && action.defects?.length && !data.reviewRepaired && data.attempt < 3) {
+    data.reviewRepaired = true;
     delete state.riskState;
     return relaunchTestsOnly(state, action.defects.map(item => `Accepted test-review finding ${item.key} (${item.severity}, ${item.locus}): ${item.defect}`));
   }
-  if (action.outcome === 'refused' || action.outcome === 'lint-defects') return openFailure(state, action.summary);
-  if (action.outcome !== 'complete') {
-    state.ordinary.step = 'risk-degradation';
-    state.ordinary.riskFailure = action.summary;
+  // Once the repair is spent, coverage gaps travel to the production writer; other defects still stop the run.
+  const carried = action.outcome === 'complete' || (action.outcome === 'refused' && action.defects?.length && action.defects.every(item => item.severity === 'CONSIDER' || item.tag === 'test-gap'));
+  if (!carried && (action.outcome === 'refused' || action.outcome === 'lint-defects')) return openFailure(state, action.summary);
+  if (!carried) {
+    data.step = 'risk-degradation';
+    data.riskFailure = action.summary;
     return ask(state, 'risk-review-degradation', 'Independent read review failed or was unavailable. Inspect the changed tests and RED matrix before accepting an orchestrator-only gate. Return {decision:"accept", reason} or stop.', [{ reason: action.summary }]);
   }
-  if (state.ordinary.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed during independent RED review.');
-  state.ordinary.riskReview = { outcome: action.outcome, sourceMap: state.riskState.collect?.sourceMap ?? {}, summary: action.summary };
+  if (data.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed during independent RED review.');
+  data.riskReview = { outcome: action.outcome, sourceMap: state.riskState.collect?.sourceMap ?? {}, summary: action.summary };
+  if (action.defects?.length) data.carriedFindings = action.defects;
   delete state.riskState;
   return startTask(state, 'full');
 }
@@ -264,6 +350,7 @@ export function acceptImplementationDecision(state, reply) {
     return acceptWrite(state, { raw: answer.raw });
   }
   if (!answer?.reason?.trim()) throw new Error('Decision requires a nonempty reason.');
+  if (data.step === 'write-scope') return ruleScope(state, answer);
   if (data.step === 'concern-ruling') {
     if (answer.decision !== 'accept') return openFailure(state, 'Implementation concerns were not accepted.');
     ruling(state, 'implementation-concerns', 'accept', answer.reason);
@@ -284,9 +371,10 @@ export function acceptImplementationDecision(state, reply) {
   }
   throw new Error('Unknown implementation decision.');
 }
-export function openFailure(state, reason) {
+/** `verification` marks a failure raised by host evidence alone, which `re-verify` may replace. */
+export function openFailure(state, reason, verification = null) {
   const data = state.ordinary;
-  data.failure = { reason, failureSnapshot: snapshot(state) };
+  data.failure = { reason, failureSnapshot: snapshot(state), ...(verification ? { verification } : {}) };
   data.step = 'failure-disposition';
   ruling(state, 'failure-disposition', 'inspect-first', JSON.stringify(data.failure), 'open');
   return failureQuestion(state);
@@ -294,12 +382,14 @@ export function openFailure(state, reason) {
 function failureQuestion(state) {
   const data = state.ordinary;
   const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart: data.taskStart?.entries ?? data.baselineSnapshot.entries, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
-  return ask(state, 'failure-disposition', 'Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}. Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.', [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
+  const reverify = data.failure.verification ? ` Only when the host evidence itself was wrong: {decision:"re-verify", reason} reruns the ${data.failure.verification.purpose} verification on the unchanged tree.` : '';
+  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
   if (answer.decision === 'manual-complete') return manualComplete(state, answer);
+  if (answer.decision === 're-verify') return reverify(state, answer);
   if (answer.decision === 'inspect-first') return emitAction(state, 'done', { outcome: 'failed', summary: 'Inspection requested; segment remains unterminated.', ledgerPath: state.ledgerPath, command: state.resumeCommand });
   if (answer.decision === 'revert-attributable') {
     const taskStart = data.taskStart?.entries ?? data.baselineSnapshot.entries;
@@ -320,6 +410,17 @@ function resolveFailure(state, answer) {
   ruling(state, 'failure-disposition', answer.decision, answer.reason);
   append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
   return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Repair evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+}
+/** Replaces host evidence the user ruled wrong; the tree must still match the failure snapshot. */
+function reverify(state, answer) {
+  const data = state.ordinary, verification = data.failure.verification;
+  if (!verification) throw new Error('re-verify applies only to a failure raised by host verification evidence.');
+  if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) throw new Error('The tree changed after the failure; re-verify reruns unchanged work only.');
+  ruling(state, 'failure-disposition', 're-verify', answer.reason);
+  delete data.failure;
+  delete data[`${verification.purpose}Results`];
+  data.step = verification.step;
+  return beginVerification(state, verification.purpose);
 }
 /** User-decided closure of a stuck run: records host evidence, reviewer, reason, and the repository fingerprint. */
 function manualComplete(state, answer) {

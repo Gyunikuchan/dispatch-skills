@@ -9,6 +9,7 @@ import { allProviders, codeFinding, drive, implementationOutcome, makeGitRepo, P
 import { readLedger } from '../../../skills/dispatch/scripts/ledger.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../skills/dispatch/scripts/driver/actions.mjs';
 import { validateRedAdmission } from '../../../skills/dispatch/scripts/driver/verification.mjs';
+import { hashFile } from '../../../skills/dispatch/scripts/common.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const config = {
@@ -562,5 +563,198 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(ledger.events.at(-2).data.key, 'failure-disposition');
     assert.equal(ledger.events.at(-2).data.state, 'resolved');
     assert.equal(result.trace.filter(action => action.action === 'delegate-write').length, 1);
+  });
+});
+describe('ordinary driver friction relief', () => {
+  const rulings = ledger => ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]);
+  const stray = (fixture, file) => action => {
+    if (action.fields.stage === 'production') fs.writeFileSync(path.join(fixture.repo.dir, file), 'stray\n');
+    return policies(fixture.repo).delegateWrite(action);
+  };
+  it('auto-approves a sibling integrity manifest and asks a ruling for other out-of-scope paths', () => {
+    const fixture = setup(); const asked = [];
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question !== 'write-scope') return base.askUser(action);
+        asked.push(action.items);
+        return { answer: { approve: ['docs/notes.md'], reason: 'Notes document the change.' } };
+      },
+      delegateWrite(action) {
+        const reply = base.delegateWrite(action);
+        if (action.fields.stage === 'production') {
+          fs.writeFileSync(path.join(fixture.repo.dir, 'src/skill-hashes.json'), JSON.stringify({ 'app.js': hashFile(path.join(fixture.repo.dir, 'src/app.js')) }));
+          fs.mkdirSync(path.join(fixture.repo.dir, 'docs'), { recursive: true });
+          fs.writeFileSync(path.join(fixture.repo.dir, 'docs/notes.md'), 'notes\n');
+        }
+        return reply;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(asked, [[{ path: 'docs/notes.md', revertable: true }]]);
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.deepEqual(rulings(ledger).filter(([key]) => key === 'write-scope'), [['write-scope', 'auto-approve'], ['write-scope', 'approve']]);
+    assert.deepEqual(ledger.events.find(event => event.type === 'task-complete').data.paths, ['docs/notes.md', 'src/app.js', 'src/skill-hashes.json', 'tests/sample.test.mjs']);
+  });
+  it('reverts ruled-out paths to their task-start state and continues', () => {
+    const fixture = setup();
+    fs.mkdirSync(path.join(fixture.repo.dir, 'docs'));
+    fs.writeFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'original\n');
+    fixture.repo.git('add', 'docs'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'docs');
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      askUser: action => action.question === 'write-scope' ? { answer: { revert: ['docs/keep.md', 'docs/stray.md'], reason: 'Out of plan scope.' } } : base.askUser(action),
+      delegateWrite(action) {
+        if (action.fields.stage === 'production') {
+          fs.writeFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'edited\n');
+          fs.writeFileSync(path.join(fixture.repo.dir, 'docs/stray.md'), 'stray\n');
+        }
+        return base.delegateWrite(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.equal(fs.readFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'utf8'), 'original\n');
+    assert.equal(fs.existsSync(path.join(fixture.repo.dir, 'docs/stray.md')), false);
+  });
+  it('routes a stale integrity manifest to the ruling and stops on a stop ruling', () => {
+    const fixture = setup(); let items;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question !== 'write-scope') return base.askUser(action);
+        items = action.items;
+        return { answer: { decision: 'stop', reason: 'Unexpected edit.' } };
+      },
+      delegateWrite(action) {
+        if (action.fields.stage === 'production') fs.writeFileSync(path.join(fixture.repo.dir, 'src/skill-hashes.json'), JSON.stringify({ 'app.js': 'sha256:stale' }));
+        return base.delegateWrite(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'stable-failure');
+    assert.deepEqual(items.map(item => item.path), ['src/skill-hashes.json']);
+    assert.match(result.done.summary, /outside its approved write scope: src\/skill-hashes\.json/);
+  });
+  it('refuses to revert a path the delegate staged', () => {
+    const fixture = setup(); const asked = []; let error = null;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { allowErrors: true, policy: {
+      askUser(action) {
+        if (action.question !== 'write-scope') return base.askUser(action);
+        asked.push(action.items);
+        if (action.error) { error = action.error; return { answer: { approve: ['stray.md'], reason: 'Keep it after all.' } }; }
+        return { answer: { revert: ['stray.md'], reason: 'Out of scope.' } };
+      },
+      delegateWrite(action) {
+        const reply = stray(fixture, 'stray.md')(action);
+        if (action.fields.stage === 'production') fixture.repo.git('add', 'stray.md');
+        return reply;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(asked[0], [{ path: 'stray.md', revertable: false }]);
+    assert.match(error, /cannot be reverted: stray\.md/);
+  });
+  it('re-verifies RED when the user rules the host evidence wrong', () => {
+    const fixture = setup(); let redCalls = 0, offered = null;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question !== 'failure-disposition') return base.askUser(action);
+        offered = action.text;
+        return { answer: { decision: 're-verify', reason: 'The host ran the command before the tests were written.' } };
+      },
+      verify(action) {
+        if (action.purpose === 'red' && ++redCalls === 1) return { results: action.commands.map(command => ({ command, exit: 0, evidence: 'pass 1 fail 0', identifiers: [], scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
+        return base.verify(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.match(offered, /"re-verify"/);
+    assert.equal(redCalls, 2);
+    assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition'), [['failure-disposition', 'inspect-first'], ['failure-disposition', 're-verify']]);
+  });
+  it('re-verifies a failed post-review completion and returns to code review', () => {
+    const fixture = setup(); let fixed = false, postReviewCalls = 0, disposition = null, codeWaves = 0, production = false;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      delegateWrite(action) { production ||= action.fields.stage === 'production'; return base.delegateWrite(action); },
+      waveResults: () => allProviders(report(production && ++codeWaves === 1 ? [codeFinding({ defect: 'Missing trailing comment.' })] : [])),
+      fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --test tests/sample.test.mjs'] }),
+      applyFixes(action) {
+        fs.appendFileSync(path.join(fixture.repo.dir, 'src/app.js'), '// fixed\n');
+        fixed = true;
+        return { clusters: action.clusters.map(cluster => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })) };
+      },
+      askUser(action) {
+        if (action.question !== 'failure-disposition') return base.askUser(action);
+        disposition = action.text;
+        return { answer: { decision: 're-verify', reason: 'The host ran the command against a stale checkout.' } };
+      },
+      verify(action) {
+        if (fixed && action.purpose === 'completion' && ++postReviewCalls === 1) return { results: action.commands.map(command => ({ command, exit: 1, evidence: 'pass 0 fail 1', identifiers: ['test:sample'], diagnostic: 'stale checkout', scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
+        return base.verify(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.match(disposition, /rerun the completion verification|reruns the completion verification/);
+    assert.equal(postReviewCalls, 2);
+    assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition').map(([, decision]) => decision), ['inspect-first', 're-verify']);
+  });
+  it('refuses re-verify for a failure that host evidence did not raise', () => {
+    const fixture = setup(); let error = null, offered = null;
+    const base = policies(fixture.repo);
+    run(fixture, { allowErrors: true, policy: {
+      askUser(action) {
+        if (action.question === 'write-scope') return { answer: { decision: 'stop', reason: 'Unexpected edit.' } };
+        if (action.question !== 'failure-disposition') return base.askUser(action);
+        offered ??= action.text;
+        if (action.error) { error = action.error; return base.askUser(action); }
+        return { answer: { decision: 're-verify', reason: 'Try again.' } };
+      },
+      delegateWrite: stray(fixture, 'stray.md'),
+    } });
+    assert.doesNotMatch(offered, /"re-verify"/);
+    assert.match(error, /re-verify applies only/);
+  });
+  it('treats an accepted CONSIDER test-review finding as advice for the production writer', () => {
+    const fixture = setup(); let testWaves = 0, testsWritten = false;
+    const base = policies(fixture.repo);
+    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Could also assert the zero case.' });
+    const result = run(fixture, { policy: {
+      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
+      waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
+      rule: () => ({ status: 'accepted', severity: 'CONSIDER', tag: 'test-gap' }),
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const writes = result.trace.filter(action => action.action === 'delegate-write');
+    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'production']);
+    assert.deepEqual(writes[1].fields.packet.reviewFindings.map(item => [item.severity, item.tag]), [['CONSIDER', 'test-gap']]);
+    assert.match(writes[1].guidance.join(' '), /packet\.reviewFindings/);
+  });
+  it('carries a second-round accepted test-gap finding to the production writer instead of stopping', () => {
+    const fixture = setup(); let testWaves = 0, testsWritten = false;
+    const base = policies(fixture.repo);
+    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'No negative-path coverage.' });
+    const result = run(fixture, { policy: {
+      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
+      waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
+      rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'test-gap' }),
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const writes = result.trace.filter(action => action.action === 'delegate-write');
+    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
+    assert.deepEqual(writes[2].fields.packet.reviewFindings.map(item => [item.severity, item.tag]), [['MUST', 'test-gap']]);
+  });
+  it('still stops on a second-round accepted finding that is not a coverage gap', () => {
+    const fixture = setup(); let testWaves = 0, testsWritten = false;
+    const base = policies(fixture.repo);
+    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Assertion checks the wrong export.' });
+    const result = run(fixture, { policy: {
+      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
+      waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
+      rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'correctness' }),
+    } });
+    assert.equal(result.done.outcome, 'stable-failure', JSON.stringify(result.done));
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'tests-only']);
   });
 });

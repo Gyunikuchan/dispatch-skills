@@ -43,7 +43,8 @@
         "implementation-concerns",
         "implementation-blocked",
         "risk-review-degradation",
-        "implementation-context"
+        "implementation-context",
+        "write-scope"
       ]
     },
     "text": {

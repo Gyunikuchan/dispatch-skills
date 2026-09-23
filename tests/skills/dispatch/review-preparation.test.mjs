@@ -23,6 +23,7 @@ import {
   semanticSectionHashes,
   settledWritesMismatch,
   sha256,
+  slugFromPath,
   writeArtifactMetadata,
 } from '../../../skills/dispatch/scripts/review-preparation.mjs';
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
@@ -455,5 +456,14 @@ describe('assertPreparationIntegrity', () => {
     assertPreparationIntegrity(dispatchDir);
     fs.writeFileSync(path.join(dispatchDir, 'SKILL.md'), '# tampered\n');
     assert.throws(() => assertPreparationIntegrity(dispatchDir), /dispatch skill integrity failure/);
+  });
+});
+
+describe('slugFromPath', () => {
+  it('strips the design and walkthrough suffixes for every review kind', () => {
+    assert.equal(slugFromPath('.scratch/plan/2026-09-23-cache-design.md'), 'cache');
+    assert.equal(slugFromPath(['.scratch', 'plan', '2026-09-23-cache-walkthrough.md'].join('\\')), 'cache');
+    assert.equal(slugFromPath('.scratch/plan/2026-09-23-cache.md'), 'cache');
+    assert.equal(slugFromPath('notes/cache.md'), null);
   });
 });

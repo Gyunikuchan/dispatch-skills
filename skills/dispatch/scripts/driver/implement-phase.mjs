@@ -50,7 +50,8 @@ export async function enterPhase(state, phase) {
     return baselineDecision(state);
   }
   if (phase === 'implementation') {
-    if (state.ordinary.implementationComplete) { requireImplementation(state); return consumeReview(state, await beginReview(state, 'code')); }
+    // An open post-review failure disposition outranks re-entering code review.
+    if (state.ordinary.implementationComplete && !state.ordinary.failure) { requireImplementation(state); return consumeReview(state, await beginReview(state, 'code')); }
     return beginImplementation(state);
   }
   requireImplementation(state);
@@ -103,7 +104,7 @@ export async function advanceImplement(state, reply) {
         if (!action) {
           if (data.phase === 'baseline') action = baselineDecision(state);
           else if (data.step === 'post-review-verify') {
-            if (completionResult(state) === 'regression') action = openFailure(state, 'Final post-review verification failed or is stale.');
+            if (completionResult(state) === 'regression') action = openFailure(state, 'Final post-review verification failed or is stale.', { purpose: 'completion', step: 'post-review-verify' });
             else { data.implementationComplete.scopeHash = fingerprint(state); action = await consumeReview(state, await beginReview(state, 'code')); }
           } else {
             action = await afterImplementationVerification(state);

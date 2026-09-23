@@ -37,6 +37,7 @@ import {
   requireNode22,
   semanticSectionHashes,
   settledWritesMismatch,
+  slugFromPath,
   writeArtifactMetadata,
   validateRequestAction,
 } from './review-preparation.mjs';
@@ -60,11 +61,6 @@ function toManifestPath(file, repoRoot) {
   return !relative.startsWith('..') && !path.isAbsolute(relative)
     ? relative.split(path.sep).join('/')
     : file.split(path.sep).join('/');
-}
-
-function slugFromPath(file) {
-  const match = /(?:^|\/)\d{4}-\d{2}-\d{2}-(.+?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
-  return match?.[1] ?? null;
 }
 
 function documentSnapshot(entry, source) {

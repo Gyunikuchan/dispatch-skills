@@ -163,6 +163,12 @@ export function validateRequestAction(request) {
   return action;
 }
 
+/** Artifact slug from a dated plan, design, or walkthrough filename. */
+export function slugFromPath(file) {
+  const match = /(?:^|\/)\d{4}-\d{2}-\d{2}-(.+?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
+  return match?.[1] ?? null;
+}
+
 export function normalizeText(value) {
   return String(value ?? '').normalize('NFC').replace(/\r\n?/g, '\n');
 }

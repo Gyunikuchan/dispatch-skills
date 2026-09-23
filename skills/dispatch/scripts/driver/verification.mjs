@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
 import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
 import { checkRedQuality, parseIdentifiers, stripIdentifierSpans } from '../red-quality.mjs';
@@ -10,13 +12,78 @@ export function verificationPlan(state) {
   const criteria = criterionMappings(text);
   const commands = [...new Set(criteria.flatMap(item => item.commands))];
   if (!approvedPaths.length || !commands.length || criteria.some(item => !item.paths.length || !item.commands.length || !['red', 'verify', 'review'].includes(item.evidence))) throw new Error('Baseline requires approved paths, commands, and explicit evidence classes for every criterion.');
+  const scopes = mapVerificationCommandsToPaths(text, commands, approvedPaths);
+  const coverage = suiteCoverage(state.repoRoot, commands);
+  // A covering suite's freshness must span the paths of every command it replaces.
+  for (const [covered, suite] of Object.entries(coverage)) scopes[suite] = [...new Set([...scopes[suite], ...scopes[covered]])].sort();
   return {
-    approvedPaths, commands, scopes: mapVerificationCommandsToPaths(text, commands, approvedPaths), criteria,
+    approvedPaths, commands, scopes, coverage, criteria,
     packet: outcomeFirstPacket(text, criteria),
     redCriteria: criteria.filter(item => item.evidence === 'red'),
     verifyCriteria: criteria.filter(item => item.evidence === 'verify'),
     reviewCriteria: criteria.filter(item => item.evidence === 'review'),
   };
+}
+// SECTION: aggregate suite coverage
+// `npm test` (or `npm run test`) covers a `node --test <files>` command when every file matches a
+// glob in package.json's `test` script; completion then runs the suite once instead of both.
+const SUITE_COMMAND = /^npm\s+(?:run\s+)?test$|^npm\s+t$/;
+const slashPath = file => file.replace(/\\/g, '/').replace(/^\.\//, '');
+function globRegExp(glob) {
+  let source = '', braces = 0;
+  const text = slashPath(glob);
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (text.startsWith('**/', index)) { source += '(?:.*/)?'; index += 2; }
+    else if (text.startsWith('**', index)) { source += '.*'; index++; }
+    else if (char === '*') source += '[^/]*';
+    else if (char === '?') source += '[^/]';
+    else if (char === '{') { source += '(?:'; braces++; }
+    else if (char === '}' && braces) { source += ')'; braces--; }
+    else if (char === ',' && braces) source += '|';
+    else source += char.replace(/[.+^$()|[\]\\{}]/g, '\\$&');
+  }
+  return new RegExp(`^${source}$`);
+}
+function commandArgs(text) {
+  return (text.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map(arg => arg.replace(/"([^"]*)"|'([^']*)'/g, '$1$2'));
+}
+function suiteGlobs(repoRoot) {
+  let script;
+  try { script = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).scripts?.test; } catch { return []; }
+  const run = typeof script === 'string' ? /\bnode\s+--test\b([^&|;]*)/.exec(script) : null;
+  const args = run ? commandArgs(run[1]) : [];
+  // A filtered or sharded suite may skip the tests a narrower command runs.
+  if (args.some(arg => /^--test-(?:name-pattern|skip-pattern|only|shard)\b/.test(arg))) return [];
+  return args.filter(arg => !arg.startsWith('-')).map(globRegExp);
+}
+/** Maps each `node --test` command whose files all fall under the plan's aggregate suite to that suite command. */
+export function suiteCoverage(repoRoot, commands) {
+  const suite = commands.find(command => SUITE_COMMAND.test(command.trim()));
+  const globs = suite ? suiteGlobs(repoRoot) : [];
+  if (!globs.length) return {};
+  const covered = commands.filter(command => {
+    const match = /^node\s+--test\s+(.+)$/.exec(command.trim());
+    if (!match) return false;
+    // Only `--flag=value` options are unambiguous; a bare option could consume the next argument.
+    const args = commandArgs(match[1]);
+    const files = args.filter(arg => !arg.startsWith('--'));
+    return files.length > 0 && args.every(arg => !arg.startsWith('-') || /^--[\w-]+=/.test(arg))
+      && files.every(file => globs.some(glob => glob.test(slashPath(file))));
+  });
+  return Object.fromEntries(covered.map(command => [command, suite]));
+}
+/** Commands each gate runs: RED runs only red-mapped commands; completion drops suite-covered commands; baseline records both. */
+export function purposeCommands(data, purpose) {
+  const red = new Set((data.redCriteria ?? []).flatMap(item => item.commands));
+  const uncovered = data.commands.filter(command => !data.coverage?.[command]);
+  if (purpose === 'red') return data.commands.filter(command => red.has(command));
+  if (purpose === 'baseline') return data.commands.filter(command => red.has(command) || uncovered.includes(command));
+  return uncovered;
+}
+/** Criteria whose evidence a command carries, including those of commands its suite replaces. */
+function commandCriteria(data, command) {
+  return data.criteria.filter(item => item.commands.some(mapped => mapped === command || data.coverage?.[mapped] === command));
 }
 export function snapshot(state) {
   const capture = captureRepositoryState(state.repoRoot);
@@ -32,30 +99,32 @@ export function repositoryBaseline(state) {
   return { commit, repositoryState, dirtyPaths };
 }
 export function beginVerification(state, purpose) {
-  state.ordinary.verification = { purpose, index: 0, results: [] };
+  state.ordinary.verification = { purpose, commands: purposeCommands(state.ordinary, purpose), index: 0, results: [] };
   return verificationAction(state);
 }
 export function verificationAction(state) {
   const data = state.ordinary, pending = data.verification;
-  const command = data.commands[pending.index];
+  // NOTE: a verification pending from before per-gate command selection restarts on this gate's commands.
+  if (!pending.commands) Object.assign(pending, { commands: purposeCommands(data, pending.purpose), index: 0, results: [] });
+  const command = pending.commands[pending.index];
   pending.before = snapshot(state);
   pending.scopeHash = fingerprint(state, data.scopes[command]);
   pending.epoch = data.mutationEpoch ?? 0;
   return emitAction(state, 'verify', {
     purpose: pending.purpose, commands: [command], scopes: { [command]: data.scopes[command] },
-    mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: data.criteria.filter(item => item.commands.includes(command)).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
+    mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: commandCriteria(data, command).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
   }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.',
     ...(pending.purpose === 'red' ? ['Report one identifier per failing leaf test using the convention `test:<full failing test name>`; when a test file fails to load, report `error:load <test file>` instead.'] : [])]);
 }
 export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
-  const command = data.commands[pending.index];
+  const command = pending.commands[pending.index];
   if (reply.results.length !== 1 || reply.results[0].command !== command) throw new Error('Verification reply must contain exactly the pending mapped command.');
   const result = reply.results[0];
   if (result.scopeHash !== pending.scopeHash || result.mutationEpoch !== pending.epoch) throw new Error('Verification reply has stale or missing scope/mutation identity.');
   const after = snapshot(state);
   const changed = diffRepositoryState(pending.before, after).changed;
-  const mapped = data.criteria.filter(item => item.commands.includes(command));
+  const mapped = commandCriteria(data, command);
   const criterionEvidence = result.criterionEvidence ?? [];
   if (pending.purpose === 'completion') {
     for (const criterion of mapped.filter(item => item.evidence !== 'red')) {
@@ -73,14 +142,14 @@ export function acceptVerification(state, reply) {
   pending.results.push(record);
   pending.index++;
   if (changed.length) data.mutationEpoch = (data.mutationEpoch ?? 0) + 1;
-  if (pending.index < data.commands.length) return verificationAction(state);
+  if (pending.index < pending.commands.length) return verificationAction(state);
   data[`${pending.purpose}Results`] = pending.results;
   delete data.verification;
   return null;
 }
 export function freshResults(state, purpose) {
-  const data = state.ordinary, results = data[`${purpose}Results`];
-  return results?.length === data.commands.length && data.commands.every(command => {
+  const data = state.ordinary, results = data[`${purpose}Results`], commands = purposeCommands(data, purpose);
+  return results?.length === commands.length && commands.every(command => {
     const result = results.find(item => item.command === command);
     return result && result.changed.length === 0 && result.mutationEpoch === (data.mutationEpoch ?? 0) &&
       result.scopeHash === fingerprint(state, data.scopes[command]);

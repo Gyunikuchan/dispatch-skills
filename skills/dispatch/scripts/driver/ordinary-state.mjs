@@ -81,6 +81,9 @@ export function restoreEvidence(state) {
   const match = MARKER.exec(fs.readFileSync(state.walkthroughPath, 'utf8'));
   if (!match) return false;
   const record = JSON.parse(match[1]);
+  // Ordinary evidence from a finished or never-approved run of an earlier plan revision has no authority over a restart.
+  const ordinaryRecord = !state.designPath && !record.designPath && !record.incrementId;
+  if (ordinaryRecord && record.schemaVersion === 1 && record.governingHash !== state.governingHash && record.planPath === relative(state, state.planPath) && !liveSegment(state, record.ledgerRunId)) return false;
   if (record.schemaVersion !== 1 || record.governingHash !== state.governingHash || record.planPath !== relative(state, state.planPath)) throw new Error('Walkthrough evidence does not bind this governing plan.');
   if (state.designPath) {
     if (record.designPath !== relative(state, state.designPath) || record.designRevision !== state.designRevision && record.designRevision !== state.governingHash) throw new Error('Walkthrough evidence does not bind this parent design identity.');
@@ -117,6 +120,13 @@ export function restoreEvidence(state) {
     }
   }
   return true;
+}
+function liveSegment(state, runId) {
+  if (!runId) return null;
+  const read = readLedger(state.ledgerPath);
+  if (read.status === 'missing') return null;
+  if (read.status !== 'ok') throw new Error(read.diagnostic);
+  return foldSegments(read.events).find(segment => segment.runId === runId && !segment.terminal) ?? null;
 }
 export function save(state, action) {
   state.pending = action;

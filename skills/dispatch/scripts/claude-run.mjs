@@ -608,9 +608,10 @@ export function parseModeFlags(args) {
  * Classifies Claude-specific diagnostics before applying the shared failure classifier.
  *
  * @param {string} text Raw stdout and stderr
- * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
+ * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'cli-outdated'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyClaudeFailure(text) {
+  if (CLI_OUTDATED_PATTERN.test(text ?? '')) return 'cli-outdated';
   if (MODEL_NOT_FOUND_PATTERN.test(text ?? '')) return 'model-not-found';
   const standardFailure = classifyFailure(text);
   if (standardFailure) return standardFailure;
@@ -625,7 +626,7 @@ export function classifyClaudeFailure(text) {
  * a non-zero run may include provider details on either stream.
  *
  * @param {{ exitCode: number, stderr?: string, stdout?: string }} result
- * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
+ * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'cli-outdated'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
   // The "Sandbox disabled … not active" advisory is informational, never an unsupported-flag diagnostic.
@@ -637,6 +638,7 @@ export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
       ? 'sandbox-unsupported'
       : null;
   }
+  if (CLI_OUTDATED_PATTERN.test(`${stderr}\n${stdout}`)) return 'cli-outdated';
   if (MODEL_NOT_FOUND_PATTERN.test(`${stderr}\n${stdout}`)) return 'model-not-found';
   const standardFailure = classifyFailure(`${stderr}\n${stdout}`);
   if (standardFailure) return standardFailure;
@@ -650,16 +652,23 @@ export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
  * contract failures in one pure seam.
  */
 export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, exitCode, truncated = null }) {
+  const cliOutdated = envelope.apiErrorCode === 'claude_code_version_too_old'
+    || (envelope.isError && CLI_OUTDATED_PATTERN.test(envelope.raw ?? ''))
+    || classifiedFailure === 'cli-outdated';
   const modelNotFound = envelope.apiErrorStatus === 404
     || (envelope.isError && MODEL_NOT_FOUND_PATTERN.test(envelope.raw ?? ''))
     || classifiedFailure === 'model-not-found';
-  // Precedence: genuine sandbox-unsupported > model-not-found > envelope subtype > other kinds > truncated.
+  // An API error envelope can still carry subtype 'success', which names no failure.
+  const subtype = envelope.isError && envelope.subtype !== 'success' ? envelope.subtype : null;
+  // Precedence: genuine sandbox-unsupported > cli-outdated > model-not-found > envelope subtype > other kinds > truncated.
   const failureKind =
     classifiedFailure === 'sandbox-unsupported'
       ? classifiedFailure
-      : modelNotFound
-        ? 'model-not-found'
-        : (envelope.isError && envelope.subtype) || classifiedFailure || truncated || null;
+      : cliOutdated
+        ? 'cli-outdated'
+        : modelNotFound
+          ? 'model-not-found'
+          : subtype || classifiedFailure || truncated || null;
   return {
     failureKind,
     effectiveExitCode: failureKind === 'sandbox-unsupported' ? 1 : exitCode,
@@ -667,6 +676,7 @@ export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, 
 }
 
 const MODEL_NOT_FOUND_PATTERN = /selected model|model\b[^\n]*\bnot found/i;
+const CLI_OUTDATED_PATTERN = /claude_code_version_too_old|Claude Code \S+ does not support this model/i;
 const SANDBOX_ADVISORY_PATTERN = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$/gim;
 
 function stripSandboxAdvisory(text) {
@@ -1134,6 +1144,7 @@ export function parseClaudeEnvelope(rawStdout) {
     isError: false,
     subtype: null,
     apiErrorStatus: null,
+    apiErrorCode: null,
     raw: rawStdout || '',
   });
 
@@ -1165,6 +1176,7 @@ export function parseClaudeEnvelope(rawStdout) {
     isError: envelope.is_error === true,
     subtype: typeof envelope.subtype === 'string' ? envelope.subtype : null,
     apiErrorStatus: Number.isInteger(envelope.api_error_status) ? envelope.api_error_status : null,
+    apiErrorCode: typeof envelope.api_error_code === 'string' ? envelope.api_error_code : null,
     raw: trimmed,
   };
 }
