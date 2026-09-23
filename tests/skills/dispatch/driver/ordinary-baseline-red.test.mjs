@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { afterEach, describe, it } from 'node:test';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+
+import { implementationOutcome } from '../../../helpers/driver-harness.mjs';
+import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+
+afterEach(runCleanup);
+
+describe('ordinary driver canonical contracts: baseline and RED', () => {
+  it('executes mapped host baseline, typed approval, real RED, configured risk review and checkpoint relocation', () => {
+    const fixture = setup();
+    const result = run(fixture);
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.ok(result.done.handoff.checkpoint.invocationId);
+    assert.equal(result.done.handoff.destinations.length, 2);
+    assert.ok(result.done.handoff.destinations.every(file => fs.existsSync(file)));
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok', ledger.diagnostic);
+    assert.deepEqual(ledger.events.slice(0, 2).map(event => event.type), ['run-start', 'approval']);
+    assert.equal(ledger.events[0].data.baseline.commit, fixture.repo.git('rev-parse', 'HEAD').toString().trim());
+    assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
+    const testsOnly = result.trace.find(action => action.action === 'delegate-write');
+    assert.match(testsOnly.fields.promptPath, /[\\/]sessions[\\/]/);
+    const prompt = fs.readFileSync(testsOnly.fields.promptPath, 'utf8');
+    assert.equal(testsOnly.fields.promptHash, `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`);
+    assert.match(testsOnly.guidance.join(' '), /Read .* fully/);
+    assert.equal(result.trace.some(action => action.action === 'native-fallback'), false);
+    assert.equal(ledger.events.at(-1).data.result, 'complete');
+  });
+  it('resumes an interrupted host RED verification without repeating approval or delegation', () => {
+    const fixture = setup(); let restarted = false;
+    const result = run(fixture, { restartWhen: action => !restarted && action.action === 'verify' && action.purpose === 'red' && (restarted = true) });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.equal(result.restarts, 1);
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok', ledger.diagnostic);
+    assert.equal(ledger.events.filter(event => event.type === 'run-start').length, 1);
+    assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
+  });
+  it('skips RED for verify-only criteria, emits the bounded packet, and renders fresh traceability', () => {
+    const fixture = setup();
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8')
+      .replace('Evidence: red', 'Evidence: verify')
+      .replace('Behavioral failure isolates the sample outcome and protects its regression.', 'A retained pre-change test would add no signal beyond the mapped deterministic check.'));
+    let packet;
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } };
+        return policies(fixture.repo).askUser(action);
+      },
+      delegateWrite(action) {
+        assert.equal(action.fields.stage, 'production');
+        packet = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8')).packet;
+        fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+        fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      },
+      verify(action) {
+        const base = policies(fixture.repo).verify(action);
+        if (action.purpose === 'completion') base.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
+        return base;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['production']);
+    assert.deepEqual(Object.keys(packet).slice(0, 5), ['governingOutcome', 'settledBoundary', 'criteria', 'repositoryContext', 'testsAsEvidence']);
+    assert.equal(packet.testsAsEvidence.label, 'evidence, not specification');
+    assert.match(packet.governingOutcome.title, /Plan/);
+    assert.equal(packet.criteria[0].evidenceClass, 'verify');
+    const walkthrough = fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8');
+    assert.match(walkthrough, /\[SC1\] delivered value=2/);
+    assert.match(walkthrough, /reviewer: host/);
+    assert.doesNotMatch(walkthrough, /\[SC1\] Pending/);
+  });
+});

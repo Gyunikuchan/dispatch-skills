@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import quietReporter, { formatDuration, formatFailure } from '../../scripts/test-reporter.mjs';
+import quietReporter, { formatDuration, formatFailure, formatSlowFiles } from '../../scripts/test-reporter.mjs';
 
 describe('test-reporter', () => {
   describe('formatDuration', () => {
@@ -131,6 +131,22 @@ describe('test-reporter', () => {
       assert.ok(output.includes('--- Test Failures ---'));
       assert.ok(output.includes('✖ broken test'));
       assert.ok(output.includes('✖ 1 of 1 test(s) failed (0 passed, 45ms across 1 file(s))'));
+    });
+
+    it('names the slowest files by summed top-level duration once one crosses 10s', async () => {
+      const pass = (file, ms, nesting = 0) => ({ type: 'test:pass', data: { name: 't', file, nesting, details: { type: 'test', duration_ms: ms } } });
+      async function* mockEvents() {
+        yield pass('/repo/slow.mjs', 6000);
+        yield pass('/repo/slow.mjs', 6000);
+        yield pass('/repo/slow.mjs', 9000, 1);
+        yield pass('/repo/fast.mjs', 200);
+        yield { type: 'test:summary', data: { counts: { passed: 3, failed: 0, tests: 3, topLevel: 3 }, duration_ms: 12000 } };
+      }
+      const chunks = [];
+      for await (const chunk of quietReporter(mockEvents())) chunks.push(chunk);
+      assert.match(chunks.join(''), /\n {2}Slowest files: \S*slow\.mjs 12\.00s, \S*fast\.mjs 200ms\n$/);
+      assert.match(formatSlowFiles(new Map([['/repo/slow.mjs', 12000], ['/repo/fast.mjs', 200]]), '/repo'), /Slowest files: slow\.mjs 12\.00s, fast\.mjs 200ms/);
+      assert.equal(formatSlowFiles(new Map([['/repo/fast.mjs', 9999]])), '');
     });
   });
 });

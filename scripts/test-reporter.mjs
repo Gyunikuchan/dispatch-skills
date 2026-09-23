@@ -3,9 +3,12 @@
  * @description Quiet test reporter for Node.js test runner (node --test).
  * Silences all passing test output to preserve agent context windows.
  * Outputs concise summary on success, or full actionable diagnostics on failure.
+ * Names the slowest files when one crosses SLOW_FILE_MS, since one serial file bounds the wall time.
  */
 
 import path from 'node:path';
+
+const SLOW_FILE_MS = 10_000;
 
 /**
  * Format duration in milliseconds to human-readable string.
@@ -74,6 +77,21 @@ export function formatFailure(eventData, projectRoot = process.cwd()) {
 }
 
 /**
+ * Formats the slowest files when any crosses SLOW_FILE_MS, or returns an empty string.
+ *
+ * @param {Map<string, number>} fileDurations Summed top-level test durations per file
+ * @param {string} [projectRoot=process.cwd()]
+ * @returns {string}
+ */
+export function formatSlowFiles(fileDurations, projectRoot = process.cwd()) {
+  const slowest = [...fileDurations].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  if (!slowest.length || slowest[0][1] < SLOW_FILE_MS) return '';
+  const entries = slowest.map(([file, ms]) => `${path.relative(projectRoot, file).replace(/\\/g, '/')} ${formatDuration(ms)}`);
+  return `  Slowest files: ${entries.join(', ')}
+`;
+}
+
+/**
  * Node.js test reporter generator.
  *
  * @param {AsyncIterable<object>} source Stream of test events
@@ -89,12 +107,18 @@ export default async function* quietReporter(source) {
   let totalDurationMs = 0;
   const failures = [];
   const files = new Set();
+  const fileDurations = new Map();
 
   for await (const event of source) {
     const { type, data } = event;
 
     if (data?.file) {
       files.add(data.file);
+    }
+
+    // NOTE: A file's top-level tests run serially, so their summed durations approximate the file's wall time.
+    if ((type === 'test:pass' || type === 'test:fail') && data?.file && (data.nesting ?? 0) === 0) {
+      fileDurations.set(data.file, (fileDurations.get(data.file) ?? 0) + (data.details?.duration_ms ?? 0));
     }
 
     switch (type) {
@@ -162,4 +186,6 @@ export default async function* quietReporter(source) {
     const fileCountStr = files.size > 0 ? ` across ${files.size} file(s)` : '';
     yield `✔ All ${totalTests || passedTests} test(s) passed (${formatDuration(totalDurationMs)}${fileCountStr}${skippedStr}${todoStr})\n`;
   }
+  const slowFiles = formatSlowFiles(fileDurations);
+  if (slowFiles) yield slowFiles;
 }

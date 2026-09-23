@@ -22,6 +22,10 @@ import {
   classifyCopilotResult,
 } from '../../../skills/dispatch/scripts/copilot-run.mjs';
 
+// NOTE: These run `--version` on every installed Copilot binary (up to 5s each), ~40s on a host with Copilot.
+const hostProbes = { skip: process.env.RUN_LIVE_PROVIDER_PROBES ? false : 'set RUN_LIVE_PROVIDER_PROBES=1 to run' };
+const installedProbes = { skip: hostProbes.skip || (!getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false) };
+
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
   describe('constants & defaults', () => {
     it('omits -m/-e entirely when model/effort are null (no hardcoded default)', () => {
@@ -85,7 +89,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       assert.ok(result.error !== null);
     });
 
-    it('supports explicit mode override in resolution', { skip: !getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false }, () => {
+    it('supports explicit mode override in resolution', installedProbes, () => {
       const targetDesktop = resolveCopilotTarget('desktop');
       if (targetDesktop) {
         assert.equal(targetDesktop.mode, 'desktop');
@@ -102,7 +106,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       }
     });
 
-    it('follows preference order: copilot cli > copilot desktop > copilot vscode', { skip: !getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false }, () => {
+    it('follows preference order: copilot cli > copilot desktop > copilot vscode', installedProbes, () => {
       const cliBin = getCopilotCliBinary();
       const desktopBin = getCopilotDesktopBinary();
       const vscodeBin = getCopilotVscodeBinary();
@@ -120,7 +124,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       }
     });
 
-    it('probes all copilot modes without consuming tokens', () => {
+    it('probes all copilot modes without consuming tokens', hostProbes, () => {
       const probe = probeCopilotModes();
       assert.ok('desktop' in probe);
       assert.ok('vscode' in probe);
@@ -130,7 +134,7 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
       assert.equal(typeof probe.cli.reachable, 'boolean');
     });
 
-    it('availability agrees with the resolved target reachability', async () => {
+    it('availability agrees with the resolved target reachability', hostProbes, async () => {
       const available = await isCopilotAvailable();
       const target = resolveCopilotTarget();
       const expected = target ? testCopilotReachability(target.binary).reachable : false;
