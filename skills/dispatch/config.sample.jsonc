@@ -22,7 +22,8 @@
  * `{ medium: A, max: B }`: `high` -> A (nearest lower), `low` -> A (lowest higher).
  * `rounds: 0` or an unpinned `targets: 0` disables that phase at that level. Effort values are
  * provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and OpenCode receives the
- * value as `--variant`. CLI model/effort overrides win; omitted values use provider defaults.
+ * value as the model variant (`model#effort`). CLI model/effort overrides win; omitted values use
+ * provider defaults.
  *
  * v0.4 configs are rejected. Key map: top-level platforms -> read-delegates; per-section platforms
  * -> only (membership) plus read-delegates (models); targetCount -> targets; maxRounds -> rounds;

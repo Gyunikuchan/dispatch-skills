@@ -115,7 +115,7 @@ describe('opencode-run config resolution', () => {
     it('treats an explicit loopback baseURL under any provider name as local, not just "lmstudio"', () => {
       const settings = resolveOpencodeSettings({
         model: 'selfhosted/some-model',
-        provider: { selfhosted: { options: { baseURL: 'http://127.0.0.1:8080/v1' } } },
+        providers: { selfhosted: { settings: { baseURL: 'http://127.0.0.1:8080/v1' } } },
       });
       assert.equal(settings.providerName, 'selfhosted');
       assert.equal(settings.isLocal, true);
@@ -126,7 +126,7 @@ describe('opencode-run config resolution', () => {
     it('treats an explicit non-loopback baseURL under the "lmstudio" provider key as remote', () => {
       const settings = resolveOpencodeSettings({
         model: 'lmstudio/some-model',
-        provider: { lmstudio: { options: { baseURL: 'https://remote-lmstudio.example.com/v1' } } },
+        providers: { lmstudio: { settings: { baseURL: 'https://remote-lmstudio.example.com/v1' } } },
       });
       assert.equal(settings.isLocal, false);
       assert.equal(settings.host, 'remote-lmstudio.example.com');
@@ -157,7 +157,7 @@ describe('opencode-run config resolution', () => {
     it('treats a bracketed IPv6 loopback baseURL as local', () => {
       const settings = resolveOpencodeSettings({
         model: 'selfhosted/some-model',
-        provider: { selfhosted: { options: { baseURL: 'http://[::1]:1234/v1' } } },
+        providers: { selfhosted: { settings: { baseURL: 'http://[::1]:1234/v1' } } },
       });
       assert.equal(settings.isLocal, true);
     });
@@ -165,7 +165,7 @@ describe('opencode-run config resolution', () => {
     it('defaults port to the scheme standard (443) for an explicit remote HTTPS baseURL with no port', () => {
       const settings = resolveOpencodeSettings({
         model: 'openaicompat/some-model',
-        provider: { openaicompat: { options: { baseURL: 'https://api.example.com/v1' } } },
+        providers: { openaicompat: { settings: { baseURL: 'https://api.example.com/v1' } } },
       });
       assert.equal(settings.isLocal, false);
       assert.equal(settings.protocol, 'https:');
@@ -225,7 +225,7 @@ describe('opencode-run config resolution', () => {
       // preflight; dropping its scheme made a working provider read as offline.
       const settings = resolveOpencodeSettings({
         model: 'lmstudio/qwen3.8-27b-ridge',
-        provider: { lmstudio: { options: { baseURL: 'https://127.0.0.1:1234/v1' } } },
+        providers: { lmstudio: { settings: { baseURL: 'https://127.0.0.1:1234/v1' } } },
       });
       const endpoint = getLMStudioEndpoint(settings);
       assert.equal(endpoint.protocol, 'https:');
@@ -266,9 +266,9 @@ describe('opencode-run config resolution', () => {
           path.join(projectRoot, '.opencode', 'opencode.jsonc'),
           JSON.stringify({
             model: 'lmstudio/fixture-model',
-            provider: {
+            providers: {
               lmstudio: {
-                options: { baseURL: 'http://127.0.0.1:1234/v1' },
+                settings: { baseURL: 'http://127.0.0.1:1234/v1' },
                 models: { 'fixture-model': { limit: { context: 73728, output: 8192 } } },
               },
             },
@@ -477,19 +477,19 @@ describe('opencode-run config resolution', () => {
         fs.mkdirSync(globalDir, { recursive: true });
         fs.writeFileSync(
           path.join(globalDir, 'opencode.jsonc'),
-          JSON.stringify({ provider: { lmstudio: { baseURL: 'http://global-lmstudio' } } }),
+          JSON.stringify({ providers: { lmstudio: { baseURL: 'http://global-lmstudio' } } }),
         );
 
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-config-mergeprov-root-'));
         try {
           fs.writeFileSync(
             path.join(tmpRoot, 'opencode.jsonc'),
-            JSON.stringify({ provider: { anthropic: { baseURL: 'http://project-anthropic' } } }),
+            JSON.stringify({ providers: { anthropic: { baseURL: 'http://project-anthropic' } } }),
           );
 
           const config = readOpencodeConfig(tmpRoot, { env: {}, homeDir: isolatedHome });
-          assert.equal(config.provider.lmstudio.baseURL, 'http://global-lmstudio');
-          assert.equal(config.provider.anthropic.baseURL, 'http://project-anthropic');
+          assert.equal(config.providers.lmstudio.baseURL, 'http://global-lmstudio');
+          assert.equal(config.providers.anthropic.baseURL, 'http://project-anthropic');
         } finally {
           fs.rmSync(tmpRoot, { recursive: true, force: true });
         }

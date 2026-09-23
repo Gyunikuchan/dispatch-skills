@@ -14,7 +14,7 @@
  *    allows the local backend); a remote provider's entire purpose is reaching WAN, so the trap
  *    does not apply there at all.
  * 3. Environment variable whitelisting (strips cloud keys, tokens, and SSH secrets) — a remote
- *    provider's credentials belong in opencode.jsonc's `provider.<name>.options.apiKey`, resolved
+ *    provider's credentials belong in opencode.jsonc's `providers.<name>.settings.apiKey`, resolved
  *    by opencode's own subprocess, not in the orchestrator's ambient environment.
  * 4. Sensitive file & key denylist (blocks attaching .env*, *.pem, id_rsa, .npmrc, etc.)
  * 5. Attachment boundary warning (an attachment outside the workspace, Antigravity brain, agent
@@ -32,11 +32,12 @@
  * - Model: set opencode.jsonc's `model` to a bare `lmstudio` model name to target a local
  *   LM Studio server (http://127.0.0.1:1234/v1), or to any other `provider/model` (e.g.
  *   `anthropic/claude-opus-5`, `openrouter/...`) to target a remote provider instead —
- *   its credentials go in that provider's `provider.<name>.options.apiKey` in opencode.jsonc
+ *   its credentials go in that provider's `providers.<name>.settings.apiKey` in opencode.jsonc
  *   (opencode resolves it itself), never in this process's environment. When opencode.jsonc
  *   sets no `model` at all, this script assumes nothing about the target — opencode's own
  *   CLI default applies (no `-m` flag passed, no LM Studio host guessed).
- * - OpenCode: `opencode` CLI installed and available in PATH.
+ * - OpenCode: `opencode` CLI v2 installed and available in PATH. Argv is v2-only — no
+ *   `--pure`/`--variant`, and no v1-CLI fallback is attempted.
  * - Config: merged across every locally-readable tier from opencode's own precedence order
  *   (https://opencode.ai/docs/config/#precedence-order) — global (`~/.config/opencode/`),
  *   `OPENCODE_CONFIG`, project root, `.opencode/` directories, `OPENCODE_CONFIG_CONTENT`, and
@@ -148,12 +149,15 @@ import {
  * @property {string[]} [files]
  * @property {string|string[]|null} [model] Overrides opencode.jsonc's configured model; a list is tried in order.
  * @property {string|null} [agent] Overrides opencode.jsonc's configured agent.
- * @property {string|null} [effort] Forwarded verbatim as `opencode run --variant <effort>`
- *   (provider-specific reasoning effort, e.g. high, max, minimal); omitted when null.
+ * @property {string|null} [effort] Folded into the model as `opencode run -m <model>#<effort>`
+ *   (provider-specific reasoning effort, e.g. high, max, minimal); omitted when null. Dropped
+ *   with a stderr note when no model is resolvable to fold it into.
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [json]
  * @property {boolean} [verbose]
+ * @property {string|null} [binary] Caller-supplied delegate binary, forwarded to
+ *   {@link buildCommand}; skips {@link resolveOpencodeTarget} when given (test seam).
  */
 
 /**
@@ -321,6 +325,7 @@ async function runOpencodeSingle(options = {}) {
     maxBufferMb = DEFAULT_MAX_BUFFER_MB,
     json = false,
     verbose = false,
+    binary = null,
   } = options;
 
   // Step 1: one config parse, threaded through every step below. A CLI -m override is folded in
@@ -329,13 +334,15 @@ async function runOpencodeSingle(options = {}) {
   // input.
   const rawConfig = readOpencodeConfig();
   const settings = resolveOpencodeSettings(model ? { ...rawConfig, model } : rawConfig);
-  // Recorded for the banner; the subprocess receives it as `--variant` (see buildCommand).
+  // Recorded for the banner; the subprocess receives it folded into `-m <model>#<effort>` (see buildCommand).
   if (effort) settings.reasoningEffort = effort;
   const { isLocal } = settings;
   const endpoint = isLocal ? getLMStudioEndpoint(settings) : null;
   // Binary discovery (cli > desktop > vscode) happens before the init banner so both banners
-  // carry the resolved mode; the target is threaded down into buildCommand.
-  const target = resolveOpencodeTarget();
+  // carry the resolved mode; the target is threaded down into buildCommand. A caller-supplied
+  // `binary` (test seam) skips discovery entirely — its mode is unknown, so banners/results
+  // carry a null mode rather than guessing.
+  const target = binary ? { mode: null, name: null, bin: binary } : resolveOpencodeTarget();
   // A resolved host (local, or an explicit remote baseURL) still gets a real URL, built with its
   // actual scheme/port so an HTTPS remote endpoint doesn't get relabeled as plain http://; a
   // remote provider relying on opencode's own built-in endpoint registry has no host this script
@@ -666,7 +673,7 @@ export async function isOpencodeAvailable(settings = resolveOpencodeSettings()) 
  * Recursively merges `overlay` onto `base`: plain objects merge key-by-key, arrays concatenate
  * (base then overlay), and any other value type is overridden by `overlay`. Approximates
  * opencode's own `mergeConfigConcatArrays` without a schema — sufficient for this config's
- * actual shape (`model`, `provider.<name>.*`, `agent.<name>.*`, `compaction`).
+ * actual shape (`model`, `providers.<name>.*`, `agent.<name>.*`, `compaction`).
  * @param {object|null} base
  * @param {object|null} overlay
  * @returns {object|null}
@@ -895,9 +902,9 @@ export function resolveDefaultAgent(config = readOpencodeConfig()) {
  */
 export function resolveDefaultModel(config = readOpencodeConfig()) {
   if (config && config.model) {
-    if (config.provider) {
-      for (const key of Object.keys(config.provider)) {
-        if (config.provider[key]?.models?.[config.model] && !config.model.startsWith(`${key}/`)) {
+    if (config.providers) {
+      for (const key of Object.keys(config.providers)) {
+        if (config.providers[key]?.models?.[config.model] && !config.model.startsWith(`${key}/`)) {
           return `${key}/${config.model}`;
         }
       }
@@ -960,11 +967,21 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
     const parts = rawModel.split('/');
     providerName = parts[0];
     modelKey = parts.slice(1).join('/');
+  } else if (rawModel && parsed.providers) {
+    // A bare model name (no provider/ prefix) may still be declared under a specific provider's
+    // `models` map — mirrors resolveDefaultModel's own prefix inference, so settings resolve the
+    // same provider that model would actually run under.
+    const matchedProvider = Object.keys(parsed.providers).find(
+      (key) => parsed.providers[key]?.models?.[rawModel],
+    );
+    if (matchedProvider) {
+      providerName = matchedProvider;
+    }
   }
 
-  const providerConfig = providerName ? parsed.provider?.[providerName] || {} : {};
+  const providerConfig = providerName ? parsed.providers?.[providerName] || {} : {};
   const explicitBaseURLValue =
-    process.env.LM_STUDIO_URL || providerConfig.options?.baseURL || providerConfig.baseURL || null;
+    process.env.LM_STUDIO_URL || providerConfig.settings?.baseURL || null;
   const explicitBaseURL = Boolean(explicitBaseURLValue);
   const isLmStudioDefault = !explicitBaseURL && providerName === 'lmstudio';
 
@@ -981,7 +998,7 @@ export function resolveOpencodeSettings(config = readOpencodeConfig()) {
   // Pass the already-read config to avoid re-reading the file.
   const defaultAgentKey = resolveDefaultAgent(parsed);
   const reasoningEffort =
-    modelConfig.options?.reasoningEffort || modelConfig.options?.reasoning_effort || null;
+    modelConfig.settings?.reasoningEffort || modelConfig.settings?.reasoning_effort || null;
 
   let host = null;
   let port = null;
@@ -1680,7 +1697,9 @@ export function buildBwrapArgs({
  * @param {string[]} [params.files]
  * @param {string|null} [params.model]
  * @param {string|null} [params.agent]
- * @param {string|null} [params.effort] Passed as `--variant` when set.
+ * @param {string|null} [params.effort] Folded into the model as `<model>#<effort>` when a model
+ *   is resolvable; dropped with a stderr note when it is not (opencode v2 has no standalone
+ *   effort flag to fall back to).
  * @param {boolean} [params.json]
  * @param {object|null} [params.config] Config `runOpencode` already parsed; passing it keeps the
  *   single parse threaded through, instead of re-reading and re-merging the tiers from disk here.
@@ -1722,8 +1741,9 @@ export function buildCommand({
     binary: effectiveBinary,
   });
   // NOTE: accepted risk — headless runs cannot answer permission prompts, so `--auto` stays;
-  // read-only on macOS/Windows rests on the prompt guardrail.
-  const opencodeArgs = ['run', '--auto', '--pure'];
+  // read-only on macOS/Windows rests on the prompt guardrail. opencode v2 argv never includes
+  // `--pure` or `--variant` — v1-only flags, dropped entirely rather than translated.
+  const opencodeArgs = ['run', '--auto'];
 
   const effectiveAgent = agent || (config ? resolveDefaultAgent(config) : resolveDefaultAgent());
   if (effectiveAgent) {
@@ -1732,11 +1752,14 @@ export function buildCommand({
 
   const effectiveModel = model || (config ? resolveDefaultModel(config) : resolveDefaultModel());
   if (effectiveModel) {
-    opencodeArgs.push('-m', effectiveModel);
-  }
-
-  if (effort) {
-    opencodeArgs.push('--variant', effort);
+    // v2 has no standalone effort flag — reasoning effort folds into the model spec itself.
+    opencodeArgs.push('-m', effort ? `${effectiveModel}#${effort}` : effectiveModel);
+  } else if (effort) {
+    // No model to fold the effort into and no flag to pass it as standalone; surface the drop
+    // rather than silently discarding it.
+    process.stderr.write(
+      `[dispatch] WARNING: effort '${effort}' has no resolvable model to fold into; dropping.\n`,
+    );
   }
 
   if (json) {
@@ -1838,7 +1861,7 @@ Options:
   -a, --agent <name>          Override agent (auto-resolved from opencode config, fallback 'plan')
   -m, --model <provider/name> Override model (defaults to opencode.jsonc model)
   -e, --effort, --reasoning-effort <variant>
-                              Passed as opencode run --variant (provider-specific reasoning effort)
+                              Folded into opencode run -m <model>#<effort> (provider-specific reasoning effort)
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --json                      Emit raw JSON event stream
@@ -1854,9 +1877,10 @@ Prerequisites:
     provider/model (e.g. anthropic/claude-opus-5, openrouter/...) targets that provider instead —
     setting no model at all leaves the choice to opencode's own CLI default —
     WAN proxy-trapping and the local GPU lock only apply when the resolved endpoint is local.
-  - Remote-provider credentials belong in opencode.jsonc's provider.<name>.options.apiKey
+  - Remote-provider credentials belong in opencode.jsonc's providers.<name>.settings.apiKey
     (resolved by opencode's own subprocess), not in this process's environment — cloud API keys
     and tokens are stripped before the delegate spawns regardless of provider.
+  - Requires opencode CLI v2; v1 is not supported (no --pure/--variant, no version detection).
 
 Examples:
   node scripts/opencode-run.mjs "Review git diff for bugs"

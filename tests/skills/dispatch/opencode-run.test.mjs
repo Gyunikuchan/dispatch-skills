@@ -8,6 +8,7 @@ import path from 'node:path';
 import { describe, it, afterEach, mock } from 'node:test';
 
 import { PROJECT_ROOT, SENSITIVE_ENV_KEY_PATTERN } from '../../../skills/dispatch/scripts/common.mjs';
+import * as opencodeRunModule from '../../../skills/dispatch/scripts/opencode-run.mjs';
 import {
   DEFAULT_FALLBACK_AGENT,
   GPU_LOCK_FILE_NAME,
@@ -212,7 +213,7 @@ describe('opencode-run', () => {
     it('still applies the proxy trap for an explicit local baseURL under a non-lmstudio provider key', () => {
       const settings = resolveOpencodeSettings({
         model: 'selfhosted/some-model',
-        provider: { selfhosted: { options: { baseURL: 'http://127.0.0.1:9090/v1' } } },
+        providers: { selfhosted: { settings: { baseURL: 'http://127.0.0.1:9090/v1' } } },
       });
       assert.equal(settings.isLocal, true);
 
@@ -573,6 +574,7 @@ describe('opencode-run', () => {
         prompt: 'Stream events',
         model: 'anthropic/claude-opus-5',
         json: true,
+        binary: 'opencode',
       });
       assert.ok(spawn.mock.calls[0].arguments[1].includes('--format'), 'the json run passes --format json');
       assert.equal(raw.stdout, noisyJson, 'the json run returns the raw stdout buffer');
@@ -581,6 +583,7 @@ describe('opencode-run', () => {
       const clean = await runOpencode({
         prompt: 'Stream events',
         model: 'anthropic/claude-opus-5',
+        binary: 'opencode',
       });
       assert.equal(clean.stdout, '{"type":"step","tool":"read"}', 'the plain run strips the trace line');
     });
@@ -609,12 +612,13 @@ describe('opencode-run', () => {
         files: [path.resolve('CONTEXT.md')],
         model: 'lmstudio/qwen3.8-27b@iq4_xs',
         json: true,
+        binary: 'opencode',
       });
 
       assert.equal(typeof res.command, 'string');
       assert.ok(res.args.includes('run'));
       assert.ok(res.args.includes('--auto'));
-      assert.ok(res.args.includes('--pure'));
+      assert.ok(!res.args.includes('--pure'), 'v2 argv must not include --pure');
       assert.ok(res.args.includes('--agent'));
       assert.ok(res.args.includes(DEFAULT_FALLBACK_AGENT));
       assert.ok(res.args.includes('-m'));
@@ -631,6 +635,7 @@ describe('opencode-run', () => {
       const res = buildCommand({
         prompt: 'Check code',
         files: ['package.json'],
+        binary: 'opencode',
       });
 
       assert.ok(!res.args.some((a) => a.startsWith('--file=')));
@@ -645,6 +650,7 @@ describe('opencode-run', () => {
         files: [],
         agent: 'custom-agent',
         json: false,
+        binary: 'opencode',
       });
 
       assert.ok(res.args.includes('--agent'));
@@ -657,7 +663,11 @@ describe('opencode-run', () => {
       // config named neither.
       const spy = mock.method(fs, 'readFileSync');
       try {
-        const res = buildCommand({ prompt: 'x', config: { agent: { delegate: {} }, model: 'lmstudio/m' } });
+        const res = buildCommand({
+          prompt: 'x',
+          config: { agent: { delegate: {} }, model: 'lmstudio/m' },
+          binary: 'opencode',
+        });
         assert.ok(res.args.includes('--agent'), 'agent came from the handed-in config');
         assert.ok(res.args.includes('-m'), 'model came from the handed-in config');
         assert.equal(spy.mock.callCount(), 0, 'no config file was read back off disk');
@@ -667,19 +677,22 @@ describe('opencode-run', () => {
     });
 
     it('omitting config keeps the previous behaviour for standalone callers', () => {
-      const withConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m' });
-      const withoutConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', config: null });
+      const withConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', binary: 'opencode' });
+      const withoutConfig = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', config: null, binary: 'opencode' });
       assert.deepEqual(withoutConfig.args, withConfig.args);
     });
 
-    it('buildCommand passes --variant when effort is set, omits it otherwise', () => {
-      const withEffort = buildCommand({ prompt: 'x', agent: 'delegate', effort: 'high' });
-      const variantIndex = withEffort.args.indexOf('--variant');
-      assert.ok(variantIndex !== -1);
-      assert.equal(withEffort.args[variantIndex + 1], 'high');
+    it('buildCommand folds effort into the model and never passes --variant', () => {
+      const withEffort = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', effort: 'high', binary: 'opencode' });
+      assert.ok(!withEffort.args.includes('--variant'), 'v2 argv must not include --variant');
+      const mIndex = withEffort.args.indexOf('-m');
+      assert.ok(mIndex !== -1);
+      assert.equal(withEffort.args[mIndex + 1], 'lmstudio/m#high', 'v2 folds effort into -m <model>#<effort>');
 
-      const withoutEffort = buildCommand({ prompt: 'x', agent: 'delegate' });
+      const withoutEffort = buildCommand({ prompt: 'x', agent: 'delegate', model: 'lmstudio/m', binary: 'opencode' });
       assert.ok(!withoutEffort.args.includes('--variant'));
+      const mIndex2 = withoutEffort.args.indexOf('-m');
+      assert.equal(withoutEffort.args[mIndex2 + 1], 'lmstudio/m', 'no effort means no #suffix');
     });
 
     it('returns the threaded binary as command (non-bwrap platforms)', { skip: process.platform === 'linux' }, () => {
@@ -695,6 +708,62 @@ describe('opencode-run', () => {
       assert.equal(res.command, 'bwrap');
       const chdirIndex = res.args.indexOf('--chdir');
       assert.equal(res.args[chdirIndex + 2], 'opencode', 'tmpfs-overlayed path falls back to the bare name');
+    });
+  });
+
+  describe('buildCommand — opencode v2 CLI argv', () => {
+    it('SC1 buildCommand emits v2 argv without --pure or --variant and folds effort into the model', () => {
+      assert.equal(typeof opencodeRunModule.buildCommand, 'function', 'buildCommand must exist');
+
+      const withEffort = buildCommand({
+        prompt: 'x',
+        agent: 'delegate',
+        model: 'p/m',
+        effort: 'high',
+        binary: 'opencode',
+      });
+      assert.ok(!withEffort.args.includes('--pure'), 'v2 argv must not include --pure');
+      assert.ok(!withEffort.args.includes('--variant'), 'v2 argv must not include --variant');
+      const mIndex = withEffort.args.indexOf('-m');
+      assert.ok(mIndex !== -1, 'v2 argv must include -m');
+      assert.equal(withEffort.args[mIndex + 1], 'p/m#high', 'v2 folds effort into -m <model>#<effort>');
+
+      const withoutEffort = buildCommand({
+        prompt: 'x',
+        agent: 'delegate',
+        model: 'p/m',
+        binary: 'opencode',
+      });
+      assert.ok(!withoutEffort.args.includes('--pure'), 'v2 argv must not include --pure');
+      assert.ok(!withoutEffort.args.includes('--variant'), 'v2 argv must not include --variant');
+      const mIndex2 = withoutEffort.args.indexOf('-m');
+      assert.equal(withoutEffort.args[mIndex2 + 1], 'p/m', 'no effort means no -m suffix');
+    });
+  });
+
+  describe('resolveOpencodeSettings / resolveDefaultModel — opencode v2 config keys', () => {
+    it('SC2 resolves model and base URL from v2 providers and settings keys', () => {
+      assert.equal(typeof opencodeRunModule.resolveOpencodeSettings, 'function');
+
+      const v2Config = {
+        model: 'some-model',
+        providers: {
+          selfhosted: {
+            settings: { baseURL: 'http://127.0.0.1:9191/v1' },
+            models: {
+              'some-model': { settings: { reasoningEffort: 'high' } },
+            },
+          },
+        },
+      };
+
+      const resolvedModel = opencodeRunModule.resolveDefaultModel(v2Config);
+      assert.equal(resolvedModel, 'selfhosted/some-model', 'v2 providers key must prefix the provider like v1 does');
+
+      const settings = resolveOpencodeSettings(v2Config);
+      assert.equal(settings.isLocal, true, 'v2 providers[p].settings.baseURL must be read for locality');
+      assert.ok(String(settings.baseURL).includes('9191'), 'v2 providers[p].settings.baseURL must be resolved as baseURL');
+      assert.equal(settings.reasoningEffort, 'high', 'v2 providers[p].models[m].settings.reasoningEffort must be resolved');
     });
   });
 

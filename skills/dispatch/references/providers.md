@@ -79,14 +79,18 @@ These are defense-in-depth controls, not a complete secret boundary.
 - **Direct runner:** `scripts/opencode-run.mjs`; discovery order is OpenCode CLI → Desktop
   sidecar → VS Code extension bundle. There is no token-free remote API probe; use `--help` and
   the session log to diagnose binary or config resolution.
-- **Configuration:** read the locally available `opencode.json`/`opencode.jsonc` precedence chain.
-  Any configured `provider/model` is valid; with no configured model, let OpenCode select one.
-  `-a` and `--json` are OpenCode-only dispatch options.
+- **Requires opencode CLI v2.** Argv is v2-only (`run --auto [--agent] [-m model[#effort]]
+  [--format json] -- <prompt>`); `--pure` and `--variant` are never emitted, and there is no v1
+  fallback. Reasoning effort folds into the model as `model#effort` rather than a standalone flag.
+- **Configuration:** read the locally available `opencode.json`/`opencode.jsonc` precedence chain,
+  using v2 keys only (opencode v2 migrates v1 config files itself). Any configured
+  `provider/model` is valid; with no configured model, let OpenCode select one. `-a` and `--json`
+  are OpenCode-only dispatch options.
 - **Read-only/local:** a loopback endpoint gets a fast `/models` preflight, a GPU concurrency
   lock, and a proxy trap that permits the local backend while blocking WAN. On Linux, Bubblewrap
   may mount the project and attachments read-only while keeping OpenCode state writable.
 - **Remote:** skip the live preflight and WAN trap so the provider can reach its service. Put
-  credentials in `opencode.jsonc` (`provider.<name>.options.apiKey`); ambient cloud keys are
+  credentials in `opencode.jsonc` (`providers.<name>.settings.apiKey`); ambient cloud keys are
   stripped.
 - **Recovery:** the session handle is the resolved endpoint URL or
   `opencode:<provider>/<model>`. `SERVER_OFFLINE`, `CONTEXT_BUDGET_EXCEEDED`, model-load, quota,

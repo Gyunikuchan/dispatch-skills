@@ -1,7 +1,7 @@
 {
   "SKILL.md": "3b64e4d353fed373a80cff753529881c90849730bf2341afa6ecb3af2896c145",
   "references/glossary.md": "1a889a19a977ae29e6d0e5a25931e51a876360ff07db4cb551009f221f92855b",
-  "references/providers.md": "b9d63b62d686fe7c067283494d14388e84f5e41c753ac6e6f0b3e2df433eda8d",
+  "references/providers.md": "a6a42d22c663d9936397bbb0d0f0b61f6ddd4e32879a1edaf8d46a7878d50edc",
   "references/review.md": "4988e1301c01925308746397340ed8cb2cbe198232520d98243f2d195aef3c0d",
   "references/templates/design.md": "ee330ae1b9f44ae7e3ff7f80a7958f7f652b4fe4e19bbf2782aecfd508f184dc",
   "references/templates/plan.md": "289ec394059c6d5bdc1a2b3b04f82f1851ed544e0c7f36936603261f16306ac5",
@@ -70,7 +70,7 @@
   "scripts/implementation-outcome.mjs": "3c2dabf47b2977bac2df9d6b677575675deaaefd5f3ba842b2c23cdf202cbf27",
   "scripts/ledger-events.mjs": "268a5fcd10579df7375dd90f73abcc6c369241c663c6d6010c29fda4bb8f80f9",
   "scripts/ledger.mjs": "fe474b493c1a94d84141a8b96f8954661a46ffb44335e70070e1e5ad57840a85",
-  "scripts/opencode-run.mjs": "b45da7c88926902b699704a1da1f35eb651981eff143b85121c2404ad3997c11",
+  "scripts/opencode-run.mjs": "059a393f5d5f8b240b6a242ef12fc1a6db3cd6ce5a806782b3f37a4893eec6bd",
   "scripts/parse-report.mjs": "fe5174e9a4c62a4647b0114e394c37afabbe9cbcc8722e9ada7bd4ac5518122f",
   "scripts/plan-lint.mjs": "6d82d14a279a3239fbc249fba21308eaabb1ff03ebeb98eddeb782b6ab2ad84b",
   "scripts/plan-structure.mjs": "58e902b66285ec12077be45d6e7ba52581650f4531b48f20607f187910408fb5",
