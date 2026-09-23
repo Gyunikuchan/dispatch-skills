@@ -1,8 +1,6 @@
 # Plan review prompt block
 
-Kind block for `review-prompt.md`. This is an implementation-plan review, not a technical-design
-review: require concrete files, symbols, sequence, error behavior, prerequisite evidence, exact
-verification, and bounded blast radius.
+Kind block for `review-prompt.md`.
 
 - `<Plan Path>` — path to the attached plan.
 - `<Requirement>` — original user ask, verbatim.
@@ -10,32 +8,32 @@ verification, and bounded blast radius.
 
 ## opener
 
-Review the plan adversarially: challenge the requirement, its premise, and the plan. No code has
-been written yet.
+Review the implementation plan adversarially: challenge the requirement, its premise, and the plan.
+An implementation plan is the lower-level plan for building the requested features or a
+technical-design increment: concrete files and symbols, step order, error behavior, prerequisite
+evidence, exact verification, and bounded blast radius. No code has been written yet; judge whether
+executing the plan as written delivers the requirement.
 
 ## context
 
 - Plan: <Plan Path>
 - Requirement: <Requirement>
 
+## against
+
+- The requirement: every part traced to a proposed change, and nothing added beyond it.
+- The plan's `## Success Criteria`: each criterion observable and paired with a named test or exact
+  verification step.
+- An attached "Approved technical-design context" section: the increment's inherited contract and
+  acceptance criteria. Treat the governed design as settled; raise a design-changing proposal as an
+  out-of-scope remark for the orchestrator's amendment path.
+
 ## inspection
 
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
-Inspect by reading and searching files or with read-only code-exploration tools; run no test or build commands.
-On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
-earlier settled sections as closed. When Scope names changed sections, raise new in-scope findings
-only there; `adjacent` findings may cite any locus. Stop at that blast radius.
-
-When the preparation attaches an "Approved technical-design context" section, the plan is an
-implementation plan for exactly one approved increment: judge the concrete files and symbols,
-sequencing, error behavior, prerequisite evidence, exact verification, and bounded blast radius
-against that increment's inherited contract and acceptance criteria; do not re-litigate the
-governed design, and treat a design-changing proposal as an out-of-scope remark routed to the
-orchestrator's amendment path.
 
 ## tags
 
-Check these tags:
 - intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
@@ -57,5 +55,5 @@ If unspecified, target `8 + 2 × proposed-change entries`; on re-review count ch
 ## closing
 
 Every finding needs a verifiable claim and a `§ <Plan heading>` locus. Cite existing code as
-`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, summaries,
-and next steps.
+`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, summaries, and next
+steps.

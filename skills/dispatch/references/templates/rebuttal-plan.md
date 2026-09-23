@@ -3,11 +3,13 @@
 Kind block for `rebuttal.md`.
 
 - `<Plan Path>` — bounded review view path.
-- `<Review Scope>` — supplied finding keys, optionally followed by non-actionable `Plan lint warnings:` context; respond only to supplied keys.
+- `<Review Scope>` — supplied finding keys, optionally followed by `Plan lint warnings:` context.
 
 ## opener
 
-Review only the supplied unsettled plan findings.
+Review only the supplied unsettled implementation-plan findings. An implementation plan details how the
+requested features or increment are built: concrete files, symbols, step order, and exact
+verification.
 
 ## context
 
@@ -19,4 +21,4 @@ Read the packet and verify each claim against the plan view and cited repository
 
 ## notes
 
-Plan-lint warnings in Scope are context only; respond to supplied finding keys and no others.
+`Plan lint warnings:` in Scope are context, not findings.

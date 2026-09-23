@@ -19,18 +19,29 @@ Populate the template variables (kind blocks declare the rest):
 - Scope: <Review Scope>
 - Advisory Tool Turn Target: <Tool Turn Budget>
 
-Inspect the supplied scope and its direct contracts. Adhere to this project's conventions: read
-`AGENTS.md` / `CLAUDE.md`, including nested ones on reviewed paths, and flag violations as
-`standards`.
-<<slot:inspection>>
+### Review against
+<<slot:against>>
 
+### Inspection
+Inspect by reading and searching files, running read-only commands in the foreground.
+Verification evidence comes from the orchestrator; run no test or build commands.
+Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on
+reviewed paths, and flag violations as `standards`.
+<<slot:inspection>>
+On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
+earlier settled findings as closed. When Scope names changed sections or paths, raise new in-scope
+findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
+
+### Tags
 <<slot:tags>>
 
+### Budget
 Treat the tool-turn value as one advisory target. Stop early when grounded. Exceed it only for a
 named in-scope risk supported by evidence.
 <<slot:budget>>
 
-Run commands in the foreground; reply once the review is complete.
+### Reply
+Reply once the review is complete.
 End your reply with one JSON object holding every finding. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}

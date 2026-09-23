@@ -116,13 +116,13 @@ describe('review preparation primitives', () => {
     assert.doesNotMatch(view.contents, /schemaVersion|dispatch/);
   });
 
-  it('plan-review prompt template states the read-only inspection bound (SC1)', () => {
+  it('shared review prompt template states the read-only inspection bound (SC1)', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-    const template = fs.readFileSync(path.join(root, 'skills/dispatch/references/templates/review-prompt-plan.md'), 'utf8');
+    const template = fs.readFileSync(path.join(root, 'skills/dispatch/references/templates/review-prompt.md'), 'utf8');
     assert.match(template, /inspect(?:ing)? by reading and searching files/i,
-      'the plan-review prompt must state the read-only bound');
+      'the shared review prompt must state the read-only bound');
     assert.match(template, /run no test or build commands/i,
-      'the plan-review prompt must forbid running test or build commands');
+      'the shared review prompt must forbid running test or build commands');
   });
 
   it('builds a code-review view with a readable verification table and no Ordinary execution evidence block (SC1)', () => {

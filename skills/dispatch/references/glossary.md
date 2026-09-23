@@ -8,6 +8,9 @@ headings use these terms.
 | **Verb** | One `/dispatch` operation: `ask`, `plan`, `design`, `review`, `implement`. | | command, mode |
 | **Phase** | One ordered unit of the workflow. Ordinary order: `plan` → `plan-review` → `baseline` → `implementation` → `code-review` → `handoff`. Design order: `design` → `design-review`; then each increment runs the ordinary phases; then `integration`. | stage | step, increment |
 | **Increment** | One `I<nn>` row of a technical design's dependency graph: a governed unit of delivery that runs the ordinary phases once. | milestone | phase |
+| **Technical design** | Higher-level architectural plan that breaks a large problem into increments: architecture, boundaries, interfaces, dependency graph, per-increment acceptance criteria; no file-level detail. | | implementation plan |
+| **Implementation plan** | Lower-level plan for building the requested features or a technical-design increment: concrete files and symbols, step order, Success Criteria, exact verification. | | technical design |
+| **Walkthrough** | Record of a completed implementation: changes, verification results, outcome traceability, review log. | | plan |
 | **Level** | Policy and model tier, `low` through `max`. | | effort (a provider setting) |
 | **Pin** | User selector fixing providers or breadth. | | |
 | **Read delegate** | A dispatched, structurally read-only provider CLI (the default candidate kind). | reviewer | |

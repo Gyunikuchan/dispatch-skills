@@ -9,8 +9,9 @@ Kind block for `review-prompt.md`.
 
 ## opener
 
-Review the changes adversarially: challenge the requirement, the author's mental model, and the
-diff.
+Review the implementation adversarially: challenge the requirement, the author's mental model, and
+the diff. The implementation is complete: judge whether it delivers the original ask and meets its
+success criteria well, not merely whether it matches the plan.
 
 ## context
 
@@ -18,22 +19,23 @@ diff.
 - Walkthrough: <Walkthrough Path>
 - Plan: <Plan Path>
 
+## against
+
+- The task, the plan's `## Success Criteria` (with no plan, the task alone), and the walkthrough's
+  `## Outcome Traceability`: every criterion demonstrably met by the diff and its tests. A goal
+  missed or met only on paper, such as a test passing without exercising it, is `intent`.
+- The walkthrough's verification results; when absent or unfilled, report a `test-gap` finding.
+- An attached "Approved technical-design context" section: the increment's acceptance criteria.
+
 ## inspection
 
 Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and untracked
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
-
-Cross-check the diff against the walkthrough and plan. Read verification results from the
-walkthrough; if absent or unfilled, spend one turn on the host verify command and report that fact.
-Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim. On
-re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat earlier
-settled lines as closed. When Scope names changed paths, raise new in-scope findings only there;
-`adjacent` findings may cite any locus. Stop at that blast radius.
+Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
 
 ## tags
 
-Check these tags:
 - intent: `intent`, `scope-creep` — misses, misreads, or exceeds the ask
 - correctness: `correctness`, `domain-logic`, `invariant`, `runtime`, `type` — domain rules and invariants; domain-valid formulas and algorithms; type-valid, domain-invalid states; sign, unit, and scale (monthly/annual, fraction/percent); off-by-one
 - robustness: `edge-case`, `partial-failure`, `race` — boundary inputs; unhandled branches; unguarded indexing; partial updates; floating promises; races

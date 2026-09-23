@@ -3,11 +3,12 @@
 Kind block for `rebuttal.md`.
 
 - `<Design Path>` — bounded design review view path.
-- `<Review Scope>` — supplied finding keys, optionally followed by non-actionable `Design lint warnings:` context; respond only to supplied keys.
+- `<Review Scope>` — supplied finding keys, optionally followed by `Design lint warnings:` context.
 
 ## opener
 
-Review only the supplied unsettled design findings.
+Review only the supplied unsettled technical-design findings. A technical design fixes architecture
+and increment decomposition; file-level detail belongs to later implementation plans.
 
 ## context
 
@@ -15,9 +16,9 @@ Review only the supplied unsettled design findings.
 
 ## inspection
 
-Read the packet and verify each claim against the design view and cited repository evidence, with
-source-affine architectural reasoning.
+Read the packet and verify each claim against the design view and cited repository evidence, at
+the design's architectural altitude.
 
 ## notes
 
-Design-lint warnings in Scope are context only; respond to supplied finding keys and no others.
+`Design lint warnings:` in Scope are context, not findings.

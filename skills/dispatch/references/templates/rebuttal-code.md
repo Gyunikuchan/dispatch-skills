@@ -8,16 +8,16 @@ Kind block for `rebuttal.md`.
 
 ## opener
 
-Review only the supplied unsettled code findings.
+Review only the supplied unsettled code findings. The implementation is complete; judge each claim
+against the diff and its recorded verification.
 
 ## context
 
-- Bounded walkthrough view: <Walkthrough Path>
-- Plan: <Plan Path>
+- Walkthrough view: <Walkthrough Path>
+- Plan view: <Plan Path>
 
 ## inspection
 
-Read the bounded view named in the packet context and inspect only cited changed code needed to
-test each claim.
+Read the packet and verify each claim against the walkthrough view and the cited changed code.
 
 ## notes

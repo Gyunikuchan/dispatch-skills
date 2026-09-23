@@ -486,7 +486,7 @@ describe('fill-template: assembly', () => {
   const GOLDEN = path.join(PROJECT_ROOT, 'tests', 'fixtures', 'review-prompt-golden');
   const normalize = (text) => text.replace(/\s+/g, ' ').trim();
 
-  for (const kind of ['plan', 'code']) {
+  for (const kind of ['plan', 'code', 'design']) {
     it(`assembles the ${kind} review prompt to its whitespace-normalized golden`, () => {
       const assembled = assemble(path.join(TEMPLATES, 'review-prompt.md'), path.join(TEMPLATES, `review-prompt-${kind}.md`));
       const golden = extractTemplate(fs.readFileSync(path.join(GOLDEN, `review-prompt-${kind}.md`), 'utf8'));
