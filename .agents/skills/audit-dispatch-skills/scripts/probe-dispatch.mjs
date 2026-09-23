@@ -27,6 +27,7 @@ import { pathToFileURL } from 'node:url';
 
 import { isMainModule, terminateProcessTree } from '../../../../skills/dispatch/scripts/common.mjs';
 import { loadDispatchConfig, resolveReadDelegates } from '../../../../skills/dispatch/scripts/config.mjs';
+import { moveEntry } from './finalize.mjs';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
@@ -77,7 +78,16 @@ async function main() {
   // Liveness marker: `summary.md` lands only at the very end, so without this a probe still working
   // through minutes of live prompts is indistinguishable from one that died on startup.
   fs.writeFileSync(path.join(outDir, 'started.txt'), `${new Date().toISOString()}\n`, 'utf8');
+  try {
+    await probe({ opts, repoRoot, rel, scriptsDir, mods, outDir });
+  } catch (err) {
+    // A crash after the liveness marker would otherwise read as "still running" forever.
+    fs.writeFileSync(path.join(outDir, 'failed.txt'), `${err.stack || err.message}\n`, 'utf8');
+    throw err;
+  }
+}
 
+async function probe({ opts, repoRoot, rel, scriptsDir, mods, outDir }) {
   const providers = opts.only ?? PROVIDERS;
   const rows = await discover(mods, providers);
   const config = loadConfig(repoRoot);
@@ -331,27 +341,22 @@ export function classifyDenylistBehaviour({ rejected, stderr, code, failureKind 
 }
 
 /**
- * Moves staged captures into the run's output directory. `rename` fails with `EXDEV` when OS temp
- * and the repo sit on different devices, so it falls back to copy+unlink.
+ * Moves staged captures into the run's output directory through `moveEntry`, which falls back to
+ * copy+remove on EXDEV (temp and repo on different devices) and Windows EPERM/EBUSY.
  */
 export function drainStaging(stageDir, outDir) {
   if (!fs.existsSync(stageDir)) return;
-  // `finally`, so an EBUSY/EPERM on one file does not orphan the whole staging dir in OS temp.
-  try {
-    for (const name of fs.readdirSync(stageDir)) {
-      const from = path.join(stageDir, name);
-      const to = path.join(outDir, name);
-      try {
-        fs.renameSync(from, to);
-      } catch (err) {
-        if (err.code !== 'EXDEV') throw err;
-        fs.copyFileSync(from, to);
-        fs.unlinkSync(from);
-      }
+  const failures = [];
+  for (const name of fs.readdirSync(stageDir)) {
+    try {
+      moveEntry(path.join(stageDir, name), path.join(outDir, name));
+    } catch (err) {
+      failures.push(`${name}: ${err.code ?? err.message}`);
     }
-  } finally {
-    fs.rmSync(stageDir, { recursive: true, force: true });
   }
+  // Keep the staging dir while any capture is unmoved, so a failed move never deletes evidence.
+  if (failures.length > 0) throw new Error(`Captures left in ${stageDir}: ${failures.join(', ')}`);
+  fs.rmSync(stageDir, { recursive: true, force: true });
 }
 
 // ============================================================================

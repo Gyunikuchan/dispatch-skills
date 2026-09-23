@@ -82,3 +82,47 @@ describe("v0.5 dependency direction", () => {
     );
   });
 });
+
+// SECTION: alias forwarding grammar
+
+/** Builds a matcher from the grammar block in dispatch/SKILL.md, so the aliases track its shape. */
+function dispatchGrammar() {
+  const block = read("skills/dispatch/SKILL.md").match(/```text\n([\s\S]*?)```/)[1];
+  const levels = block.match(/^level\s+=\s+(.+)$/m)[1].split("|").map((s) => s.trim());
+  assert.match(block, /review \[plan\|design\|code\] \[--fix\]/);
+  assert.match(block, /implement \[--phases from:<phase>\]/);
+  const verb = "(?:ask|plan|design|review(?: (?:plan|design|code))?(?: --fix)?|implement(?: --phases from:[a-z-]+)?)";
+  return new RegExp(`^/dispatch(?: (?:${levels.join("|")}))?(?: \\([^)]+\\))?(?: ${verb})?: \\S`);
+}
+
+describe("alias forwarding conforms to the dispatch grammar", () => {
+  const grammar = dispatchGrammar();
+  const render = (form, flags) =>
+    form
+      .replace("<prefix>", "high (all)")
+      .replace("<phase>", flags.phase ?? "code-review")
+      .replace("<argument>", "x");
+  for (const name of aliases) {
+    it(`${name} renders grammar-valid invocations`, () => {
+      const text = read(`skills/${name}/SKILL.md`);
+      const forms = [...text.matchAll(/`(\/dispatch [^`]+)`/g)].map((m) => m[1]);
+      const prefixed = forms.filter((f) => f.includes("<prefix>"));
+      assert.ok(prefixed.length > 0, `${name} must show the prefixed forwarding form`);
+      for (const form of forms) {
+        const rendered = render(form, {});
+        assert.match(rendered, grammar, `${name}: ${rendered}`);
+      }
+      // Level and pins go before the verb, never after the argument colon.
+      for (const form of prefixed)
+        assert.ok(form.indexOf("<prefix>") < form.search(/ (?:review|implement)\b/), form);
+    });
+  }
+  it("the grammar rejects the misplaced forms the aliases once produced", () => {
+    for (const bad of [
+      "/dispatch --fix review plan: x",
+      "/dispatch implement high (all): x",
+      "/dispatch high review --fix plan: x",
+    ])
+      assert.doesNotMatch(bad, grammar, bad);
+  });
+});

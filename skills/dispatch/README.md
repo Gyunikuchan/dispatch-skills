@@ -45,7 +45,7 @@ Use `node scripts/dispatch.mjs --help` for all flags and current usage. Provider
 ## Troubleshooting
 
 - **No candidates:** create the single dispatch config, then run `--doctor`.
-- **v0.4 schema diagnostic:** migrate using the [release field map](../../docs/v0.5.0-release-notes.md#configuration-field-map).
+- **v0.4 schema diagnostic:** migrate using the [release field map](https://github.com/Gyunikuchan/dispatch-skills/blob/main/docs/v0.5.0-release-notes.md#configuration-field-map).
 - **Missing prerequisite:** resume from the named producing phase or restore its canonical artifact.
 - **Provider failure:** preserve the reported source identity and use the emitted native-fallback action.
 - **Gate failure:** open the `logPath` named in the verify results under the session directory; a failure disposition of `retry` continues the same segment with your ruling as writer context.

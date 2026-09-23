@@ -133,49 +133,39 @@ candidates are exhausted.
 
 ### Native fallback
 
-Use this path after `NO_DISPATCH_AVAILABLE`, a pinned non-zero result, an empty result, or another
-runner failure. Configuration, integrity, membership, and `--no-config` errors are terminal:
-report the exact diagnostic instead.
+The driver emits `native-fallback` only for a runner failure on the orchestrator's own platform;
+other platforms' failures are recorded with their kind. Configuration, integrity, membership, and
+`--no-config` errors are terminal: report the exact diagnostic instead.
 
-1. The driver emits native fallback only for a failed target on the orchestrator's own platform
-   (for example, opencode targets under an opencode orchestrator); other platforms' failures are
-   recorded failed with their kind. It resolves the failed target's own `model` array from
-   `state.policy` targets/reserves by `(platform, candidateIndex)` — never from a batch record,
-   whose `model` is `null` for an array candidate — and walks it one model at a time from index 0.
-   Exclude and re-resolve a source whose cascade cannot identify a model.
-2. Emit a closed descriptor containing `sourceKey`, `agentType`, `model`, `reasoningEffort`,
-   `substitutesFor`, `cascadePosition` (the model's index), and `modelCascade` (the full array),
-   then pass it unchanged to the host's native read-only subagent. A host that cannot set reasoning
-   effort (Claude Code's Agent tool) reports the configured value and states that limitation.
-   Native subagents share the orchestrator's environment. Instruct the subagent to read the generated
-   prompt file in full and follow it as the authoritative instructions; pass attachment paths named by
-   the action. A launcher that cannot accept the descriptor excludes and re-resolves the source; it
-   never substitutes defaults, re-enters `dispatch`, or answers inline.
-3. Treat fallback as a transport replacement, not a reduced review. Capture the complete final response in the failed slot's `dispatch.outputPath` (or its named
-   stdout-result channel). Record the actual `agentType`, `model`, and `reasoningEffort`; reject
-   missing or mismatched launch metadata. Preserve source identity, `substitutesFor`, and the
-   fallback reason through `source-map.mjs --extra`. A hop can instead reply `failed: {kind, reason}`
-   using the kinds above; the driver advances `cascadePosition` to the next model in `modelCascade`
-   and re-emits `native-fallback`, or, once the cascade is exhausted, drops the source and continues
-   without it.
-4. Run the unchanged parsing, sanitization, verification, adjudication, ruling, and consensus pipeline through artifact update and checkpoint. A clean fallback participates like a clean direct report; an invalid
-   fallback remains failed.
+1. Pass the closed descriptor (`sourceKey`, `agentType`, `model`, `reasoningEffort`,
+   `substitutesFor`, `cascadePosition`, `modelCascade`) unchanged to the host's native read-only
+   subagent. Instruct it to read the generated prompt file in full as its authoritative
+   instructions, and pass the attachment paths the action names. A host that cannot set reasoning
+   effort (Claude Code's Agent tool) reports the configured value and states that limitation. A
+   launcher that cannot honour the descriptor replies `failed`; never substitute defaults, re-enter
+   `dispatch`, or answer inline.
+2. Treat fallback as a transport replacement, not a reduced review. Capture the complete final
+   response in the action's `outputPath`, then reply with the `actual` `agentType`, `model`,
+   and `reasoningEffort` exactly as launched, or with `failed: {kind, reason}` using the kinds
+   above. The driver runs the reply through the same pipeline as a direct report.
+3. Walk the **model cascade** one hop per action: each `native-fallback` names one model
+   (`modelCascade[cascadePosition]`), launched fresh. A `failed` reply or an empty capture
+   re-emits `native-fallback` at the next `cascadePosition`; once `modelCascade` is exhausted the
+   driver drops the source. Mismatched `actual` metadata re-emits the same hop.
 
-A named agent type above is read-only by construction. A default subagent is write-capable, so its
-read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to make
-no file edits. A generated prompt file and its attachments are inputs to this path, not finished
-artifacts: prune them only after this fallback consumes them or reaches a terminal outcome.
+The descriptor's `agentType` is read-only by construction. A default subagent is write-capable, so
+its read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to
+make no file edits.
 
-**Done when:** the matching fallback has a terminal result in the failed slot's normal report
-channel, the caller has processed it through the same pipeline as a direct result, and its fallback
-source metadata and reason are recorded.
+**Done when:** every emitted `native-fallback` has a reply, and its output sits in the action's
+`outputPath` or its reply carries `failed`.
 
 For an orchestrated multi-dispatch review wave, the launch action precomputes same-platform
 fallback descriptors at `cascadePosition: 0` (the target's first model). After launch, run
 `node dispatch.mjs --slots <slotsPath>` once and inspect the failed slots it prints; start all
 matching failures as parallel native fallbacks while the wave continues, then never poll again.
 A matching failure first observed after that inspection starts the native branch at
-`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1` (a single-model cascade retries model[0] once natively); a successful early fallback is final. Other targets may use ordered reserves before step 3; use
+`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1` (a single-model cascade retries model[0] once natively); a successful early fallback is final. Targets without a same-platform fallback may use ordered reserves instead; use
 each reserve at most once per wave and record `<failed target> → <reserve>: <reason>`.
 
 ## Integrity and diagnosis

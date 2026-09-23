@@ -4,7 +4,7 @@ Load this reference for ledger, verification, RED, delegation, and recovery acti
 
 ## Ledger and recovery
 
-Resolve and fold the ledger before trusting completion. Ordinary runs use v1 segments bound to a canonical plan path and governed hash. Design, increment, and integration runs use v2 segments bound to normalized design identity and revision. Sequence numbers are ledger-global; append under an exclusive lock and fsync. Malformed tails, identity drift, unsupported events, ownership drift, or unverifiable locks enter reconciliation rather than authorizing work.
+Resolve and fold the ledger before trusting completion. Ordinary runs use v1 segments bound to a canonical plan path and governed hash. Design, increment, and integration runs use v2 segments bound to normalized design identity and revision. Malformed tails, identity drift, unsupported events, ownership drift, or unverifiable locks enter reconciliation rather than authorizing work.
 
 Append `run-start` before run events and `run-complete` last. Record approval before ordinary production work, every attempt before its verification, and completion only after non-regression evidence. Increment segments derive approval from their design binding. Nothing may append after a terminal event except a new `run-start`.
 
@@ -22,7 +22,7 @@ Failure disposition preserves and fingerprints the tree, then records one ruling
 
 ## Write subagent
 
-A `delegate-write` brief at `promptPath` (sha256 `promptHash`) carries the governing outcome, settled scope, criteria, rules, prior findings, and evidence labelled as evidence; relay the path, not the brief. The write subagent returns exactly the driver-requested typed envelope. Validate it with `implementation-outcome.mjs`; malformed output consumes the attempt according to the emitted recovery action.
+A `delegate-write` brief at `promptPath` (sha256 `promptHash`) carries the governing outcome, settled scope, criteria, rules, prior findings, and evidence labelled as evidence; relay the path, not the brief. The write subagent returns exactly the driver-requested typed envelope; the driver validates it, and malformed output consumes the attempt according to the emitted recovery action.
 
 A configured model array is a launch cascade inside one attempt: it advances on a `rejected` reply or a `failed: {kind, reason}` reply (availability, authentication, quota, and the other providers.md failure kinds), with identical brief and effort, and consumes no attempt. Malformed output, verification failure, or defective code from a started subagent follows attempt recovery instead. A partial diff outside the approved scope is restored from the pre-attempt baseline before the next model launches. A finished write that changed other paths asks a per-path `write-scope` ruling; the nearest `skill-hashes.json` above an approved path is auto-approved when it verifies, and production edits from a tests-only write always fail. A terminal kind (`sandbox-unsupported`, `integrity`) or an exhausted cascade ends the run in `done` with `outcome: "failed"` instead of entering failure disposition.
 

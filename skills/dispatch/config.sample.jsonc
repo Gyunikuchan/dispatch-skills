@@ -15,7 +15,8 @@
  *   with `effort` and object-only level overrides. A missing entry fails the implement flow.
  * - "phases" (optional): review policy for plan-review, design-review, code-review. Each present
  *   phase needs `targets` (non-negative integer or "all"), `rounds`, and `consensus` level maps,
- *   plus an optional `only` list filtering read-delegates. An absent phase is off.
+ *   plus an optional `only` list filtering read-delegates. An absent phase runs one
+ *   target for one round with host-final rulings.
  *
  * Levels are low, medium, high, xhigh, max. Resolution is exact, nearest lower, otherwise lowest
  * higher; an entry's flat fields stand in for levels below its lowest override. With

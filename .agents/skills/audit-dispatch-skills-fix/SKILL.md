@@ -66,7 +66,7 @@ If the batch produced any `decision` findings, put them to the user as **one** q
 
 If no finding in the batch is still `open` — all triaged to `false-positive`, `deferred` or `decision` — skip this step entirely and go to step 4; never invoke `dispatch ... implement:` with an empty list.
 
-First mark the batch, so an interruption between here and step 4 is recoverable:
+First mark every finding in the batch (`set` takes one ID; run it once per finding), so an interruption between here and step 4 is recoverable:
 
 ```bash
 node <skill>/scripts/status.mjs set A-3 open --note "dispatched <run or batch label>"
@@ -74,7 +74,7 @@ node <skill>/scripts/status.mjs set A-3 open --note "dispatched <run or batch la
 
 Without it the batch has no identity in the report between dispatch and step 4's `set … fixed`: a run interrupted in that window makes step 2's `batch` reprint the already-fixed findings byte-identically, and the work gets dispatched twice.
 
-Then hand the still-`open` findings of this batch to `dispatch ... implement:`, quoting each finding's ID, Location, Claim and Proposal in the ask, plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
+Then hand the still-`open` findings of this batch to `dispatch ... implement:`, citing the findings by ID and the report path (the implementer reads each finding there), plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
 
 ```
 /dispatch <level> implement: Fix audit findings A-3, A-12, A-14 from .scratch/audits/<run>-audit.md

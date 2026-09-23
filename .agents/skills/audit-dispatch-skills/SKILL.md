@@ -67,13 +67,14 @@ Return only: finding counts by severity and the findings path.
 
 ## 4. Synthesize
 
-Read every findings file and `<run>-work/dispatch/summary.md` (wait for all subagents to finish first). Test the probe's state three ways, since a slow probe and a dead one look alike from the outside:
+Read every findings file and `<run>-work/dispatch/summary.md` (wait for all subagents to finish first). Test the probe's state, since a slow probe and a dead one look alike from the outside:
 
 | On disk | State | Action |
 |---|---|---|
 | `dispatch/summary.md` exists | finished | read it |
-| `dispatch/started.txt` only | still running | wait, then re-test |
-| neither | crashed before the live loop | report `probe crashed: <last lines of probe-stdout.txt>` in the dispatch-platforms section |
+| `dispatch/failed.txt` exists | crashed during the probe | report `probe crashed: <first line of failed.txt>` in the dispatch-platforms section |
+| `dispatch/started.txt` only | still running | wait, then re-test; once `started.txt` is older than `--timeout` (default 300 s) plus 2 minutes, treat it as crashed and quote `probe-stdout.txt` |
+| none of them | crashed before the live loop | report `probe crashed: <last lines of probe-stdout.txt>` in the dispatch-platforms section |
 
 1. **Dedupe**: merge findings that name the same defect — same location, or one root cause across locations. Keep every source scope and the highest severity the evidence supports.
 2. **Verify** each merged finding by opening its cited locations. Confirmed → `Verified`. Contradicted by the code → refuted, moved to the appendix with the reason. Settled only by a run you cannot do here (another OS, a missing CLI) → `Unverified` plus what would settle it. Evidence decides, not how many scopes raised it.

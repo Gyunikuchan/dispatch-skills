@@ -311,4 +311,17 @@ describe('probe-dispatch: drainStaging', () => {
       fs.rmSync(base, { recursive: true, force: true });
     }
   });
+
+  it('keeps the staging dir and its captures when a move fails', () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
+    const stageDir = path.join(base, 'stage');
+    fs.mkdirSync(stageDir);
+    try {
+      fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
+      assert.throws(() => drainStaging(stageDir, path.join(base, 'missing-out')), /Captures left in/);
+      assert.equal(fs.readFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
 });

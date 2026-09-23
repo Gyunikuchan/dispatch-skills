@@ -18,7 +18,7 @@ The ledger, never filenames or user choice, selects the highest-priority healthy
 
 A design-changing discovery pauses further writes. Keep the approved design authoritative while an OS-temp candidate records changes and affected increments. Review the candidate's changed sections. The ledger records `proposed`, `reviewed`, `prepared`, and `activated`, or a terminal rejection/abort.
 
-After explicit approval, fsync `prepared`, write deterministic backup and candidate files beside the design, reverify both hashes, atomically activate, append `activated`, and remove staging files. Startup recovery uses canonical, prior, and candidate hashes to resume, complete activation, or enter reconciliation; ambiguous state preserves every copy. Activation alone invalidates affected work and dependants. Caller-owned changes are never removed automatically.
+After explicit approval the driver activates the candidate atomically and recovers an interrupted activation; ambiguous state preserves every copy and enters reconciliation. Activation alone invalidates affected work and dependants. Caller-owned changes are never removed automatically.
 
 ## Final integration
 

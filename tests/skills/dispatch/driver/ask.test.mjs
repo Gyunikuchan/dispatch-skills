@@ -258,3 +258,58 @@ describe('`--run ask` native fallback (SC5)', () => {
     assert.deepEqual(pendingAfter, pendingBefore, 'the state file pending action is unchanged by a re-emit');
   });
 });
+
+// SECTION: A-15 ask terminal branches
+
+describe('`--run ask` terminal branches', () => {
+  it('ask with no configured read delegate finishes failed without launching', () => {
+    const { fixture, repo } = setupWith({ 'read-delegates': {} });
+    const res = runDispatch(fixture, ['--run', 'ask', '--orchestrator', 'claude', ...QUESTION], { cwd: repo.dir });
+    assert.equal(res.status, 0, res.stderr);
+    const action = parseAction(res.stdout);
+    assert.equal(action.action, 'done');
+    assert.equal(action.outcome, 'failed');
+    assert.match(action.summary, /No read delegate/);
+  });
+
+  it('a missing wave envelope finishes failed', () => {
+    const { fixture, repo } = setupWith(CONFIG);
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['ask', '--orchestrator', 'claude', ...QUESTION],
+      policy: { skipLaunch: () => true },
+    });
+    assert.equal(run.done.outcome, 'failed');
+    assert.match(run.done.summary, /envelope is missing/);
+  });
+
+  it('a same-platform failure with no resolvable model records unresolved-model', () => {
+    const { fixture, repo } = setupWith({ 'read-delegates': { agy: { effort: 'low' } } });
+    const seen = [];
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['ask', '--orchestrator', 'agy', ...QUESTION],
+      policy: { waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }) },
+      onAction(action) { seen.push(action.action); },
+    });
+    assert.ok(!seen.includes('native-fallback'), seen.join(', '));
+    assert.deepEqual(run.done.failed.map((entry) => entry.kind), ['unresolved-model']);
+  });
+
+  it('a slot mismatch re-emits native-fallback with an error', () => {
+    let calls = 0;
+    let reemitted = null;
+    const run = driveFallback((action) => {
+      calls += 1;
+      if (calls === 1) return { slot: 'not-the-slot', captured: true, actual: actualOf(action) };
+      fs.writeFileSync(action.outputPath, 'Answer.\n');
+      return { slot: action.slot, captured: true, actual: actualOf(action) };
+    }, (action) => {
+      if (action.action === 'native-fallback' && action.error && !reemitted) reemitted = action;
+    });
+    assert.ok(reemitted, 'the mismatch re-emits native-fallback');
+    assert.match(reemitted.error, /slot must be/);
+    assert.equal(reemitted.descriptor.cascadePosition, 0, 'a mismatch does not advance the cascade');
+    assert.equal(run.done.outcome, 'complete');
+  });
+});
