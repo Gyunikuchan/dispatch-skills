@@ -41,8 +41,8 @@ named in-scope risk supported by evidence.
 <<slot:budget>>
 
 ### Reply
-Reply once the review is complete.
-End your reply with one JSON object holding every finding. For a clean review use:
+Your whole reply is one JSON object holding every finding; the JSON is the report. If JSON cannot
+carry a finding, write that finding as plain text instead. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -52,5 +52,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"<<slot:locus>>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
+Every finding needs a verifiable claim at its locus. Use only the tags above.
 <<slot:closing>>
 ````

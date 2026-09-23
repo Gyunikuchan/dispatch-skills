@@ -57,5 +57,5 @@ round only.
 
 ## closing
 
-Every finding needs a verifiable claim: in scope, a changed-line locus; `adjacent`, its real locus.
-Use only the tags above. Omit praise, summaries, and next steps.
+Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
+is `adjacent`.

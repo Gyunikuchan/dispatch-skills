@@ -50,6 +50,4 @@ without demanding implementation detail.
 
 ## closing
 
-Every finding needs a verifiable claim and a `§ <Design heading>` locus. Cite existing code as
-`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, summaries, and next
-steps.
+Cite existing code as `path/to/file:L<line>` inside `defect`.
