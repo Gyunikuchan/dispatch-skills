@@ -51,12 +51,6 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
 
 class UsageError extends Error {}
 
-/** True when argv (before `--`) asks for the driver. */
-export function isDriverInvocation(args) {
-  const separator = args.indexOf('--');
-  return (separator === -1 ? args : args.slice(0, separator)).some((arg) => arg === '--run' || arg === '--next' || arg === '--verify' || arg.startsWith('--run='));
-}
-
 function parseDriverArgs(args) {
   const out = { fix: false, next: false, verbose: false, argument: null };
   for (let index = 0; index < args.length; index++) {

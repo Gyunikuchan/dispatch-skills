@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { designSnapshot, prepareDesignReview } from '../../../skills/dispatch/scripts/prepare-review.mjs';
 import { withDispatchFrontmatter } from '../../../skills/dispatch/scripts/resolution-log.mjs';
 
-import { designExtras } from '../../fixtures/design-sections.mjs';
+import { designExtras } from '../../helpers/design-sections.mjs';
 
 const validDesign = `# Design
 ${designExtras(['I01'])}

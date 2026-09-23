@@ -13,6 +13,9 @@ const SCHEMA_DIR = path.resolve(
   '..', '..', 'references', 'templates', 'schemas', 'driver',
 );
 
+/** Read-only native agent type per platform for `native-fallback` descriptors. */
+export const NATIVE_AGENT_TYPES = Object.freeze({ claude: 'explore', agy: 'research', copilot: 'explore', opencode: 'explore' });
+
 export const ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',
 ]);

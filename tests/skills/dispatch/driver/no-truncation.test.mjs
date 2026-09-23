@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, codeFinding, drive, makeGitRepo, report } from './driver-harness.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { allProviders, codeFinding, drive, makeGitRepo, report } from '../../../helpers/driver-harness.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 const FINDING_COUNT = 60;

@@ -2,8 +2,6 @@
 
 const GRAPH_HEADING = 'Increment Dependency Graph';
 
-export const INCREMENT_ID_PATTERN = /^I\d{2}$/;
-
 /** Splits a source into lines between the graph heading and the next unfenced `^## ` heading. */
 export function incrementGraphSection(source) {
   const lines = String(source).split(/\r?\n/);

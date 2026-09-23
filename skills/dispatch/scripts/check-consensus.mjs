@@ -13,24 +13,11 @@
 import fs from 'node:fs';
 
 import { isMainModule } from './common.mjs';
-import {
-  findUnsettledResolutionLines,
-  scanResolutionLog,
-} from './resolution-log.mjs';
+import { scanResolutionLog } from './resolution-log.mjs';
 
 const USAGE = `Usage:
   node check-consensus.mjs [--json] <artifact path>
 `;
-
-/**
- * Returns the unsettled resolution lines of an artifact.
- *
- * @param {string} markdown
- * @returns {string[]}
- */
-export function findUnsettled(markdown) {
-  return findUnsettledResolutionLines(markdown);
-}
 
 /**
  * Runs the gate's strict scan; preparation's checkpoint-preview shares it so both agree.

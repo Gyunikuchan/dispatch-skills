@@ -483,11 +483,11 @@ describe('fill-template: assembly', () => {
   });
 
   const TEMPLATES = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'references', 'templates');
-  const GOLDEN = path.join(PROJECT_ROOT, 'tests', 'fixtures', 'v04-templates');
+  const GOLDEN = path.join(PROJECT_ROOT, 'tests', 'fixtures', 'review-prompt-golden');
   const normalize = (text) => text.replace(/\s+/g, ' ').trim();
 
   for (const kind of ['plan', 'code']) {
-    it(`assembles the ${kind} review prompt to the v0.4 wording (whitespace-normalized golden)`, () => {
+    it(`assembles the ${kind} review prompt to its whitespace-normalized golden`, () => {
       const assembled = assemble(path.join(TEMPLATES, 'review-prompt.md'), path.join(TEMPLATES, `review-prompt-${kind}.md`));
       const golden = extractTemplate(fs.readFileSync(path.join(GOLDEN, `review-prompt-${kind}.md`), 'utf8'));
       assert.equal(normalize(assembled.template), normalize(golden.template));

@@ -9,11 +9,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, it } from 'node:test';
 
-import { loadSchema, validateReply } from '../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, drive, makeGitRepo, parseAction, planFinding, report, runDispatch, writePlan } from './driver-harness.mjs';
+import { loadSchema, validateReply } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { allProviders, drive, makeGitRepo, parseAction, planFinding, report, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const DISPATCH_SCRIPT = path.join(ROOT, 'skills', 'dispatch', 'scripts', 'dispatch.mjs');
 
 // The read-delegates entry pairs a same-platform candidate with a two-model cascade; a sibling

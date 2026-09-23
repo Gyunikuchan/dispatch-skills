@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from './stub-dispatch-fixture.mjs';
+import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
 
 // `code-review.only` names claude alone: an ask wave must ignore it (only never narrows ask).
 const CONFIG = {

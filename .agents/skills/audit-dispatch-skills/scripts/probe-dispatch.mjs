@@ -80,7 +80,7 @@ async function main() {
 
   const providers = opts.only ?? PROVIDERS;
   const rows = await discover(mods, providers);
-  const config = loadConfig(mods, repoRoot);
+  const config = loadConfig(repoRoot);
 
   let live = [];
   let fixture = null;
@@ -472,7 +472,7 @@ async function loadDispatchModules(scriptsDir) {
   return { common, claude, agy, copilot, opencode };
 }
 
-function loadConfig(mods, repoRoot) {
+function loadConfig(repoRoot) {
   try {
     return loadDispatchConfig({ skillRoot: path.join(repoRoot, 'skills', 'dispatch') }).config;
   } catch {

@@ -601,19 +601,6 @@ function splitRawSegments(events) {
   return segments;
 }
 
-/** Approval-bearing design segment: the latest design segment whose fold carries an approved
- *  approval event; approval-less amendment-only design segments are excluded. */
-export function selectApprovalBearingDesignSegment(events) {
-  const segments = foldSegments(events);
-  for (let index = segments.length - 1; index >= 0; index--) {
-    const segment = segments[index];
-    if (segment.runStart?.action !== 'design') continue;
-    if (segment.approval?.decision !== 'approved') continue;
-    return segment;
-  }
-  return null;
-}
-
 const PHASED_ACTIONS = new Set(['increment', 'integration']);
 
 /** Cross-segment design-run fold: merges every valid segment for the matching design identity

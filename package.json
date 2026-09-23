@@ -31,14 +31,13 @@
   },
   "files": [
     "skills",
-    "scripts",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
     "prepare": "husky",
     "hashes": "node scripts/generate-hashes.mjs",
-    "test": "node scripts/check-terms.mjs && node --test --import=./tests/setup/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs \"tests/**/*.test.mjs\"",
+    "test": "node scripts/generate-hashes.mjs --check && node scripts/check-terms.mjs && node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs \"tests/**/*.test.mjs\"",
     "validate:configs": "node scripts/validate-configs.mjs"
   },
   "devDependencies": {

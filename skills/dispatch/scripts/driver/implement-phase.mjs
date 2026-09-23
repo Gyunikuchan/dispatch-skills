@@ -10,7 +10,6 @@ import { acceptVerification, beginVerification, completionResult, fingerprint } 
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, continueRiskReview, openFailure } from './implementation-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 
-export const ORDINARY_PHASES = ['plan', 'plan-review', 'baseline', 'implementation', 'code-review', 'handoff'];
 export async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {
   const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
   const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });

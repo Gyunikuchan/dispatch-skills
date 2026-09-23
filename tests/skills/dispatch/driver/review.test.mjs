@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { inferReviewKind, resolveReviewLevel } from '../../../skills/dispatch/scripts/driver/review-phase.mjs';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { makeGitRepo, parseAction, runDispatch, writePlan } from './driver-harness.mjs';
+import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-phase.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 

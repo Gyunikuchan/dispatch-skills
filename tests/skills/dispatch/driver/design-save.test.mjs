@@ -9,8 +9,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import fs from 'node:fs';
 
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY } from './driver-harness.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY } from '../../../helpers/driver-harness.mjs';
 
 const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 

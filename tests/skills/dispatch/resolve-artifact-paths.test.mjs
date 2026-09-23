@@ -52,6 +52,8 @@ describe('buildScratchPaths', () => {
     assert.equal(paths.walkthrough, '.scratch/plan/2026-09-11-auth-v2-walkthrough.md');
     assert.equal(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-plan'), '.scratch/plan/2026-09-11-auth-i01-model-plan.md');
     assert.equal(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-walkthrough'), '.scratch/plan/2026-09-11-auth-i01-model-walkthrough.md');
+    assert.equal(buildScratchPaths('2026-09-11', 'auth', 'design'), '.scratch/plan/2026-09-11-auth-design.md');
+    assert.equal(buildScratchPaths('2026-09-11', 'auth', 'integration-walkthrough'), '.scratch/plan/2026-09-11-auth-integration-walkthrough.md');
     assert.equal(resolveArtifacts({
       slug: 'auth-i01-model', slugSource: 'explicit', date: '2026-09-11',
       kinds: ['increment-plan'], repositoryRoot: null,

@@ -8,9 +8,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { validateReply } from '../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { drive, makeGitRepo, parseAction, PLAN_BODY, runDispatch, writePlan } from './driver-harness.mjs';
+import { validateReply } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { drive, makeGitRepo, parseAction, PLAN_BODY, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const CONFIG = {

@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { evaluateConsensus } from '../check-consensus.mjs';
 import { safeRenameSync } from '../common.mjs';
@@ -15,6 +16,20 @@ import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } fr
 
 // Pre-session state directory, pruned only.
 const LEGACY_STATE_DIR = 'dispatch-driver';
+
+/** Repository root of `cwd`, or `cwd` itself outside a work tree. */
+export function gitRoot(cwd) {
+  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
+  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : path.resolve(cwd);
+}
+
+/** Writes a private run-scoped file beside the state file and queues it for cleanup. */
+export function runFile(state, name, contents = '') {
+  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}`);
+  fs.writeFileSync(file, contents, { mode: 0o600 });
+  state.cleanup.push(file);
+  return file;
+}
 
 export function sidecarPathFor(stateFile) {
   return stateFile.replace(/\.json$/, '.run.json');

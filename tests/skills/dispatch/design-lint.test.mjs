@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'; import { describe, it } from 'node:test'; import { lintDesign } from '../../../skills/dispatch/scripts/design-lint.mjs';
-import { designExtras } from '../../fixtures/design-sections.mjs';
+import { designExtras } from '../../helpers/design-sections.mjs';
 import { spawnSync } from 'node:child_process'; import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
 const lintScript=fileURLToPath(new URL('../../../skills/dispatch/scripts/design-lint.mjs', import.meta.url));
 const base=`# D\n${designExtras(['I01','I02'])}\n## Architecture & Boundaries\nx\n## Alternatives & Decisions\nx\n## Risks, Security & Operations\nx\n## Increment Dependency Graph\n| ID | Priority | Summary | Prerequisites | Paths |\n| --- | ---: | --- | --- | --- |\n| I01 | 1 | one | none | a |\n| I02 | 2 | two | I01 | b |`;

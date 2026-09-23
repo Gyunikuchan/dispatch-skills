@@ -10,7 +10,7 @@ import {
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { resolveReadDelegates } from '../../../skills/dispatch/scripts/config.mjs';
-import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from './stub-dispatch-fixture.mjs';
+import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
 
 /** v0.5 config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {

@@ -5,9 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { sanitizeReplyText } from '../../../skills/dispatch/scripts/driver/actions.mjs';
-import { createRunState, pruneFinishedStates, readRunState, rebuildFromArtifact, writeRunState } from '../../../skills/dispatch/scripts/driver/state.mjs';
-import { sessionsRoot } from '../../../skills/dispatch/scripts/session-temp.mjs';
+import { sanitizeReplyText } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { createRunState, pruneFinishedStates, readRunState, rebuildFromArtifact, writeRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
+import { sessionsRoot } from '../../../../skills/dispatch/scripts/session-temp.mjs';
 
 const source = (round) => `- **Sources:** {"plan-review:R${round}:agy:0":{"provider":"agy","candidateIndex":0,"model":"m","effort":null,"status":"target","session":null,"substitutesFor":null}}`;
 const entry = (round, status, severity = 'MUST') =>

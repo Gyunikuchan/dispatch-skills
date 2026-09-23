@@ -11,8 +11,8 @@ import {
   loadSchema,
   sanitizeReplyText,
   validateReply,
-} from '../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
+} from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import {
   DRIVER_ACTIONS,
   makeGitRepo,
@@ -22,9 +22,9 @@ import {
   runDispatch,
   runLaunch,
   writePlan,
-} from './driver-harness.mjs';
+} from '../../../helpers/driver-harness.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const SCHEMA_DIR = path.join(ROOT, 'skills', 'dispatch', 'references', 'templates', 'schemas', 'driver');
 const NON_TERMINAL = DRIVER_ACTIONS.filter((name) => name !== 'done');
 

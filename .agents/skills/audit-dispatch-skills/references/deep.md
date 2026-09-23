@@ -5,7 +5,9 @@ You audit **one skill end to end**: its `SKILL.md`, references, config, scripts,
 | Skill kind | `README.md` | Tests live in |
 |---|---|---|
 | Shipped (`skills/<name>/`) | required — audit it | `tests/skills/<name>/` |
-| Repo-development (`.agents/skills/<name>/`) | none by design — its absence is not a finding | `tests/scripts/<name>/` | You are the only auditor reading this skill in full, so be relentless inside it; cross-skill matters belong to the broad auditor — note them in `Handoff` and move on.
+| Repo-development (`.agents/skills/<name>/`) | none by design — its absence is not a finding | `tests/skills/<name>/` |
+
+You are the only auditor reading this skill in full, so be relentless inside it; cross-skill matters belong to the broad auditor — note them in `Handoff` and move on.
 
 Read first: `AGENTS.md` (the standard), `.agents/skills/writing-for-agents/SKILL.md` and its `SKILL-MECHANICS.md`, then every file in scope. Use the work dir's `metrics.md` and `tests.txt` (coverage, uncovered lines) as leads, confirmed by reading the code. Test evidence is the work dir's `tests.txt`; re-run a single file with `node --test <file>` only — never `npm test`/`npm run hashes`.
 

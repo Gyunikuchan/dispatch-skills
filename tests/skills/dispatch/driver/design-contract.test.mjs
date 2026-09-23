@@ -3,12 +3,12 @@ import { describe, it } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report, PLAN_BODY } from './driver-harness.mjs';
-import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../skills/dispatch/scripts/ledger.mjs';
-import { resolveLedgerPath } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
-import { restoreEvidence } from '../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
-import { readRunState } from '../../../skills/dispatch/scripts/driver/state.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
+import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
+import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
+import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 const RUN = '11111111-1111-4111-8111-111111111111';

@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { evaluateConsensus, findUnsettled } from '../../../skills/dispatch/scripts/check-consensus.mjs';
+import { evaluateConsensus } from '../../../skills/dispatch/scripts/check-consensus.mjs';
+import { findUnsettledResolutionLines as findUnsettled } from '../../../skills/dispatch/scripts/resolution-log.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const SCRIPT = path.join(REPO_ROOT, 'skills/dispatch/scripts/check-consensus.mjs');

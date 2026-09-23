@@ -1,7 +1,7 @@
 /**
  * Test support for the v0.5 script driver (`dispatch.mjs --run` / `--next`).
  *
- * A scripted agent drives a stub-runner copy of the dispatch skill (see stub-dispatch-fixture.mjs)
+ * A scripted agent drives a stub-runner copy of the dispatch skill (see stub-dispatch.mjs)
  * over a throwaway Git repository. It records every argv it issues (AC1): driver calls, each
  * `launch` argv, and each host verify command.
  *
@@ -27,10 +27,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ORCHESTRATOR_ENV } from './stub-dispatch-fixture.mjs';
-import { scanResolutionLog } from '../../../skills/dispatch/scripts/resolution-log.mjs';
-import { materializedFingerprint } from '../../../skills/dispatch/scripts/git-state.mjs';
-import { captureRepositoryState } from '../../../skills/dispatch/scripts/verification-evidence.mjs';
+import { ORCHESTRATOR_ENV } from './stub-dispatch.mjs';
+import { scanResolutionLog } from '../../skills/dispatch/scripts/resolution-log.mjs';
+import { materializedFingerprint } from '../../skills/dispatch/scripts/git-state.mjs';
+import { captureRepositoryState } from '../../skills/dispatch/scripts/verification-evidence.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',

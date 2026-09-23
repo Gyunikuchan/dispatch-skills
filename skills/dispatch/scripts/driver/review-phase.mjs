@@ -4,7 +4,6 @@
  * clustering, checkpoint); the agent only verifies, rules, edits under `--fix`, and asks the user.
  */
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,9 +22,9 @@ import { InvalidReviewReportError, normalizeLocus } from '../review-report.mjs';
 import { reviewKind } from '../review-kinds.mjs';
 import { formatSourceMapLine } from '../source-map.mjs';
 import { safeRenameSync } from '../common.mjs';
-import { emitAction, sanitizeReplyText } from './actions.mjs';
+import { NATIVE_AGENT_TYPES, emitAction, sanitizeReplyText } from './actions.mjs';
 import {
-  PENDING_FIX_REASON, REEMITTED, createRunState, finish, reemit, pruneFinishedStates, rebuildFromArtifact, unappliedFixesFromArtifact, writeRunSidecar, writeRunState,
+  PENDING_FIX_REASON, REEMITTED, createRunState, finish, gitRoot, reemit, pruneFinishedStates, rebuildFromArtifact, runFile, unappliedFixesFromArtifact, writeRunSidecar, writeRunState,
 } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -84,20 +83,8 @@ export function resolveReviewLevel({ config, kind, level = 'medium', levelSource
 
 // SECTION: helpers
 
-function gitRoot(cwd) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
-  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : path.resolve(cwd);
-}
-
 const today = () => new Date().toISOString().slice(0, 10);
 const toSlash = (value) => value.split(path.sep).join('/');
-
-function runFile(state, name, contents = '') {
-  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}`);
-  fs.writeFileSync(file, contents, { mode: 0o600 });
-  state.cleanup.push(file);
-  return file;
-}
 
 function readArtifactText(state) {
   return fs.readFileSync(state.artifactPath, 'utf8');
@@ -525,8 +512,6 @@ function onLaunch(state, reply) {
   }
   return processCollected(state);
 }
-
-const NATIVE_AGENT_TYPES = Object.freeze({ claude: 'explore', agy: 'research', copilot: 'explore', opencode: 'explore' });
 
 /** Resolves a failed slot's own model cascade from the policy target/reserve identified by
  * `(platform, candidateIndex)` — never from the batch failure record, whose `model` is null for

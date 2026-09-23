@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { makeGitRepo, parseAction, runDispatch, writePlan } from './driver-harness.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const CONFIG = {
   'read-delegates': {

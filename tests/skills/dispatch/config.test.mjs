@@ -26,7 +26,7 @@ import {
   validateConfig,
 } from '../../../skills/dispatch/scripts/config.mjs';
 import { resolveFlow } from '../../../skills/dispatch/scripts/resolve-flow.mjs';
-import { buildStubDispatchFixture, runStubDispatch } from './stub-dispatch-fixture.mjs';
+import { buildStubDispatchFixture, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const SAMPLE_CONFIG = parseJsonc(readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'config.sample.jsonc'), 'utf8'));

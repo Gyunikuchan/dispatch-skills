@@ -12,6 +12,3 @@ export function failureAttribution({ baseline = {}, taskStart = {}, failureSnaps
   return { allowed: true, paths: changed, nonSeparable: [], reason: null };
 }
 
-export function attributablePaths(input) {
-  return failureAttribution(input).paths;
-}

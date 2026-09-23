@@ -5,8 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { afterEach, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, drive, makeGitRepo, parseAction, readBatchFile, runDispatch } from './driver-harness.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { allProviders, drive, makeGitRepo, parseAction, readBatchFile, runDispatch } from '../../../helpers/driver-harness.mjs';
 
 const CONFIG = {
   'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } },

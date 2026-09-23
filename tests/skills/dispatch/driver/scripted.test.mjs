@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { evaluateConsensus } from '../../../skills/dispatch/scripts/check-consensus.mjs';
-import { planSnapshot } from '../../../skills/dispatch/scripts/prepare-review.mjs';
-import { splitDispatchFrontmatter } from '../../../skills/dispatch/scripts/resolution-log.mjs';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
+import { evaluateConsensus } from '../../../../skills/dispatch/scripts/check-consensus.mjs';
+import { planSnapshot } from '../../../../skills/dispatch/scripts/prepare-review.mjs';
+import { splitDispatchFrontmatter } from '../../../../skills/dispatch/scripts/resolution-log.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import {
   PLAN_BODY,
   allProviders,
@@ -27,7 +27,7 @@ import {
   runLaunch,
   writeDesign,
   writePlan,
-} from './driver-harness.mjs';
+} from '../../../helpers/driver-harness.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 const phase = ({ rounds = 1, targets = 1, consensus = false } = {}) => ({ rounds: ALL(rounds), targets: ALL(targets), consensus: ALL(consensus) });

@@ -221,7 +221,8 @@ describe('ledger I/O and resume', () => {
     assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /must match/);
   });
 
-  it('normalizes Windows design paths and rejects reserved roots', () => {
+  it('derives design root slugs across path styles and rejects reserved roots', () => {
+    assert.equal(designRootSlug('.scratch/plan/2026-09-20-platform-design.md'), 'platform');
     assert.equal(designRootSlug('.scratch\\plan\\2026-09-20-platform-design.md'), 'platform');
     assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-i01-one-design.md'), null);
     assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-integration-design.md'), null);

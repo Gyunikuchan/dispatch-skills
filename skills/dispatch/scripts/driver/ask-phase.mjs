@@ -6,32 +6,17 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../config.mjs';
 import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
 import { createTempFile } from '../review-preparation.mjs';
 import { sessionArgs } from '../session-temp.mjs';
-import { emitAction } from './actions.mjs';
-import { createRunState, finish, reemit, writeRunSidecar } from './state.mjs';
+import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
+import { createRunState, finish, gitRoot, reemit, runFile, writeRunSidecar } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SCRIPT = path.join(DISPATCH_DIR, 'scripts', 'dispatch.mjs');
-
-const NATIVE_AGENT_TYPES = Object.freeze({ claude: 'explore', agy: 'research', copilot: 'explore', opencode: 'explore' });
-
-function gitRoot(cwd) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
-  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : path.resolve(cwd);
-}
-
-function runFile(state, name, contents = '') {
-  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}`);
-  fs.writeFileSync(file, contents, { mode: 0o600 });
-  state.cleanup.push(file);
-  return file;
-}
 
 /** Starts `--run ask`; returns the first (`launch`) action. */
 export async function startAsk({ invocation, cwd, resumeCommand }) {

@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
-import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, codeFinding, drive, implementationOutcome, makeGitRepo, PLAN_BODY, report, runDispatch, writePlan } from './driver-harness.mjs';
-import { readLedger } from '../../../skills/dispatch/scripts/ledger.mjs';
-import { loadSchema, validateAgainstSchema } from '../../../skills/dispatch/scripts/driver/actions.mjs';
-import { validateRedAdmission } from '../../../skills/dispatch/scripts/driver/verification.mjs';
-import { hashFile } from '../../../skills/dispatch/scripts/common.mjs';
+import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { allProviders, codeFinding, drive, implementationOutcome, makeGitRepo, PLAN_BODY, report, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
+import { hashFile } from '../../../../skills/dispatch/scripts/common.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const config = {
