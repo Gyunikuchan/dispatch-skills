@@ -1,5 +1,9 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { ensureLedgerNamespace } from '../ledger.mjs';
+import { extractGeneratedPaths } from '../plan-structure.mjs';
+import { repositoryRootHash } from '../resolve-artifact-paths.mjs';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
 import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
 import { checkRedQuality, parseIdentifiers, stripIdentifierSpans } from '../red-quality.mjs';
@@ -18,6 +22,7 @@ export function verificationPlan(state) {
   for (const [covered, suite] of Object.entries(coverage)) scopes[suite] = [...new Set([...scopes[suite], ...scopes[covered]])].sort();
   return {
     approvedPaths, commands, scopes, coverage, criteria,
+    generators: extractGeneratedPaths(text).filter(item => item.path && item.command).map(({ path: file, command }) => ({ path: file, command })),
     packet: outcomeFirstPacket(text, criteria),
     redCriteria: criteria.filter(item => item.evidence === 'red'),
     verifyCriteria: criteria.filter(item => item.evidence === 'verify'),
@@ -48,14 +53,17 @@ function globRegExp(glob) {
 function commandArgs(text) {
   return (text.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []).map(arg => arg.replace(/"([^"]*)"|'([^']*)'/g, '$1$2'));
 }
-function suiteGlobs(repoRoot) {
+function suiteArgs(repoRoot) {
   let script;
-  try { script = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).scripts?.test; } catch { return []; }
+  try { script = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).scripts?.test; } catch { return null; }
   const run = typeof script === 'string' ? /\bnode\s+--test\b([^&|;]*)/.exec(script) : null;
   const args = run ? commandArgs(run[1]) : [];
   // A filtered or sharded suite may skip the tests a narrower command runs.
-  if (args.some(arg => /^--test-(?:name-pattern|skip-pattern|only|shard)\b/.test(arg))) return [];
-  return args.filter(arg => !arg.startsWith('-')).map(globRegExp);
+  if (!run || args.some(arg => /^--test-(?:name-pattern|skip-pattern|only|shard)\b/.test(arg))) return null;
+  return args;
+}
+function suiteGlobs(repoRoot) {
+  return (suiteArgs(repoRoot) ?? []).filter(arg => !arg.startsWith('-')).map(globRegExp);
 }
 /** Maps each `node --test` command whose files all fall under the plan's aggregate suite to that suite command. */
 export function suiteCoverage(repoRoot, commands) {
@@ -72,6 +80,25 @@ export function suiteCoverage(repoRoot, commands) {
       && files.every(file => globs.some(glob => glob.test(slashPath(file))));
   });
   return Object.fromEntries(covered.map(command => [command, suite]));
+}
+// SECTION: RED narrowing
+// The RED gate needs only the new tests: an aggregate suite command narrows to `node --test` over
+// the red criteria's approved test files, keeping the suite's `--flag=value` options. A suite with
+// any bare option stays whole: it could consume the next argument, so files and values are ambiguous.
+export function redSubstitutions(state) {
+  const data = state.ordinary, args = suiteArgs(state.repoRoot), out = {};
+  if (!args) return out;
+  const flags = args.filter(arg => arg.startsWith('-'));
+  const globs = args.filter(arg => !arg.startsWith('-')).map(globRegExp);
+  if (!globs.length || flags.some(arg => !/^--[\w-]+=\S+$/.test(arg))) return out;
+  const quote = value => (/[\s"'&|;<>^%]/.test(value) ? `"${value}"` : value);
+  for (const command of purposeCommands(data, 'red')) {
+    if (!SUITE_COMMAND.test(command.trim())) continue;
+    const files = [...new Set(data.redCriteria.filter(item => item.commands.includes(command)).flatMap(item => item.paths))]
+      .filter(file => data.testsOnlyPaths.includes(file) && globs.some(glob => glob.test(slashPath(file)))).sort();
+    if (files.length) out[command] = ['node', '--test', ...flags, ...files].map(quote).join(' ');
+  }
+  return out;
 }
 /** Commands each gate runs: RED runs only red-mapped commands; completion drops suite-covered commands; baseline records both. */
 export function purposeCommands(data, purpose) {
@@ -98,54 +125,115 @@ export function repositoryBaseline(state) {
   const { commit, repositoryState, dirtyPaths } = baselineFingerprint(state.repoRoot);
   return { commit, repositoryState, dirtyPaths };
 }
+// SECTION: driver-run verification
+// The driver executes plan-approved commands itself (`dispatch.mjs --verify`), capturing Git
+// state around each one and extracting failure identities from its log; the host only runs that
+// argv and, at completion, supplies judgment evidence for verify/review criteria.
 export function beginVerification(state, purpose) {
-  state.ordinary.verification = { purpose, commands: purposeCommands(state.ordinary, purpose), index: 0, results: [] };
+  const data = state.ordinary, token = crypto.randomUUID();
+  data.verification = {
+    purpose, token, commands: purposeCommands(data, purpose),
+    substitutions: purpose === 'red' ? redSubstitutions(state) : {},
+    generators: purpose === 'completion' ? data.generators ?? [] : [],
+    resultsPath: path.join(path.dirname(state.stateFile), `${state.runId}-verify-${purpose}-${token.slice(0, 8)}.json`),
+  };
   return verificationAction(state);
+}
+/** Non-red criteria whose evidence these commands carry. */
+function judgedCriteria(data, commands) {
+  return data.criteria.filter(item => item.evidence !== 'red' && commands.some(command => commandCriteria(data, command).includes(item)));
 }
 export function verificationAction(state) {
   const data = state.ordinary, pending = data.verification;
-  // NOTE: a verification pending from before per-gate command selection restarts on this gate's commands.
-  if (!pending.commands) Object.assign(pending, { commands: purposeCommands(data, pending.purpose), index: 0, results: [] });
-  const command = pending.commands[pending.index];
+  // NOTE: a host-run verification pending from before driver-run gates restarts on this gate's commands.
+  if (!pending.token) return beginVerification(state, pending.purpose);
   pending.before = snapshot(state);
-  pending.scopeHash = fingerprint(state, data.scopes[command]);
   pending.epoch = data.mutationEpoch ?? 0;
+  const judged = pending.purpose === 'completion' ? judgedCriteria(data, pending.commands) : [];
+  const substitutions = Object.keys(pending.substitutions ?? {}).length ? { substitutions: pending.substitutions } : {};
+  const generators = pending.generators.length ? { generators: [...new Set(pending.generators.map(item => item.command))] } : {};
+  const criteria = pending.commands.flatMap(command => commandCriteria(data, command)).filter((item, index, all) => all.indexOf(item) === index);
   return emitAction(state, 'verify', {
-    purpose: pending.purpose, commands: [command], scopes: { [command]: data.scopes[command] },
-    mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: commandCriteria(data, command).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
-  }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.',
-    ...(pending.purpose === 'red' ? ['Report one identifier per failing leaf test using the convention `test:<full failing test name>`; when a test file fails to load, report `error:load <test file>` instead.'] : [])]);
+    purpose: pending.purpose, commands: pending.commands.map(command => pending.substitutions?.[command] ?? command), ...substitutions, ...generators,
+    argv: [process.execPath, state.dispatchScript, '--verify', '--state', state.stateFile], resultsPath: pending.resultsPath,
+    scopes: Object.fromEntries(pending.commands.map(command => [command, data.scopes[command]])), mutationEpoch: pending.epoch,
+    criteria: criteria.map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null, commands: pending.commands.filter(command => commandCriteria(data, command).includes(item)) })),
+  }, [
+    'Run argv once as one background command and wait for it to exit: it runs every listed command on the host, logs each to the session directory, and extracts failure identities. Do not run the commands yourself.',
+    judged.length
+      ? `Then read its summary (and logs as needed) and call --next with --input {"criterionEvidence":[...]} holding one entry for each of ${judged.map(item => item.id).join(', ')}: {criterionId, evidenceClass, reviewer, scenario, inspectedRevision (the summary scopeHash of the criterion's command), observableResult, limitations, mutationEpoch (that command's summary mutationEpoch)}.`
+      : 'Then call --next with no --input.',
+  ]);
 }
 export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
-  const command = pending.commands[pending.index];
-  if (reply.results.length !== 1 || reply.results[0].command !== command) throw new Error('Verification reply must contain exactly the pending mapped command.');
-  const result = reply.results[0];
-  if (result.scopeHash !== pending.scopeHash || result.mutationEpoch !== pending.epoch) throw new Error('Verification reply has stale or missing scope/mutation identity.');
-  const after = snapshot(state);
-  const changed = diffRepositoryState(pending.before, after).changed;
-  const mapped = commandCriteria(data, command);
-  const criterionEvidence = result.criterionEvidence ?? [];
+  if (reply?.results) throw new Error('This gate runs on the driver: run the verify argv, then call --next without results.');
+  let file;
+  try { file = JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8')); } catch { throw new Error('Verification results are missing: run the verify argv, wait for it to exit, then call --next.'); }
+  if (file.token !== pending.token || file.purpose !== pending.purpose) throw new Error('Verification results belong to another gate; rerun the verify argv.');
+  // Edits after the runner finished postdate every result, so they mark the last one changed.
+  const drift = diffRepositoryState(file.final, snapshot(state)).changed;
+  const criterionEvidence = reply?.criterionEvidence ?? [];
+  const records = pending.commands.map((command) => {
+    const result = file.results.find(item => item.command === command);
+    if (!result) throw new Error(`Verification results lack ${command}; rerun the verify argv.`);
+    const mapped = commandCriteria(data, command).map(item => item.id);
+    return {
+      command, ...(result.ran !== command ? { ran: result.ran } : {}), exitStatus: result.exit, ...(result.counts ?? {}),
+      identifiers: result.identifiers, diagnostic: result.diagnostic, logPath: result.logPath,
+      identity: failureIdentity({ exitStatus: result.exit, identifiers: result.identifiers, diagnostic: result.diagnostic }),
+      criterionEvidence: criterionEvidence.filter(item => mapped.includes(item.criterionId)),
+      scopeHash: result.scopeHash, mutationEpoch: result.mutationEpoch, changed: result.changed,
+    };
+  });
+  if (drift.length && records.length) records.at(-1).changed = [...new Set([...records.at(-1).changed, ...drift])];
   if (pending.purpose === 'completion') {
-    for (const criterion of mapped.filter(item => item.evidence !== 'red')) {
+    for (const criterion of judgedCriteria(data, pending.commands)) {
       const evidence = criterionEvidence.find(item => item.criterionId === criterion.id);
-      if (!evidence || evidence.evidenceClass !== criterion.evidence || !evidence.reviewer?.trim() || !evidence.scenario?.trim() || !evidence.observableResult?.trim() || !evidence.limitations?.trim() || evidence.inspectedRevision !== pending.scopeHash || evidence.mutationEpoch !== pending.epoch) {
+      const carriers = records.filter(record => commandCriteria(data, record.command).includes(criterion));
+      if (!evidence || evidence.evidenceClass !== criterion.evidence || !evidence.reviewer?.trim() || !evidence.scenario?.trim() || !evidence.observableResult?.trim() || !evidence.limitations?.trim()
+        || !carriers.some(record => evidence.inspectedRevision === record.scopeHash && evidence.mutationEpoch === record.mutationEpoch)) {
         throw new Error(`Completion requires fresh structured ${criterion.evidence} evidence for ${criterion.id}.`);
       }
     }
   }
-  // Counts only, for the review-view table; the raw test output is not persisted.
-  const counts = /\bpass\s+(\d+)[\s\S]*?\bfail\s+(\d+)/i.exec(`${result.evidence ?? ''}\n${result.diagnostic ?? ''}`);
-  const record = { command, exitStatus: result.exit, ...(counts ? { pass: Number(counts[1]), fail: Number(counts[2]) } : {}), identifiers: result.identifiers ?? [], diagnostic: result.diagnostic ?? result.evidence,
-    identity: failureIdentity({ exitStatus: result.exit, identifiers: result.identifiers, diagnostic: result.diagnostic ?? result.evidence }), criterionEvidence,
-    scopeHash: pending.scopeHash, mutationEpoch: pending.epoch, before: pending.before, after, changed };
-  pending.results.push(record);
-  pending.index++;
-  if (changed.length) data.mutationEpoch = (data.mutationEpoch ?? 0) + 1;
-  if (pending.index < pending.commands.length) return verificationAction(state);
-  data[`${pending.purpose}Results`] = pending.results;
+  data.generatorDefects = (file.generated ?? []).flatMap(item => (item.exit !== 0 ? [`Generator \`${item.command}\` exited ${item.exit}; log: ${item.logPath}`]
+    : item.outside.length ? [`Generator \`${item.command}\` changed undeclared paths: ${item.outside.join(', ')}`] : []));
+  data.mutationEpoch = file.mutationEpoch + (drift.length ? 1 : 0);
+  data[`${pending.purpose}Results`] = records;
   delete data.verification;
+  if (pending.purpose === 'baseline') storeBaseline(state, records);
   return null;
+}
+// SECTION: baseline reuse
+// A baseline is a function of the tree, commands, and runtime: an identical repository state
+// (HEAD, index, dirty-path contents) within a day reuses it instead of rerunning the suite.
+const BASELINE_TTL_MS = 24 * 60 * 60 * 1000;
+function baselineCachePath(state) {
+  return state.ledgerPath.replace(/-ledger\.md$/, '-baseline.json');
+}
+function baselineKey(state) {
+  const data = state.ordinary, commands = purposeCommands(data, 'baseline');
+  const key = { repository: repositoryBaseline(state), commands, scopes: commands.map(command => data.scopes[command]), node: process.version, platform: process.platform };
+  return `sha256:${crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex')}`;
+}
+/** Cached baseline results for the current tree, or null. */
+export function cachedBaseline(state, { now = Date.now() } = {}) {
+  try {
+    const cache = JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8'));
+    if (cache.v !== 1 || cache.key !== baselineKey(state) || !(now - Date.parse(cache.capturedAt) <= BASELINE_TTL_MS)) return null;
+    return cache;
+  } catch { return null; }
+}
+export function storeBaseline(state, results) {
+  try {
+    ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
+    const file = baselineCachePath(state), temp = `${file}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify({ v: 1, key: baselineKey(state), capturedAt: new Date().toISOString(), results })}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+  } catch {
+    // NOTE: the cache only saves time; a failed write reruns the baseline next segment.
+  }
 }
 export function freshResults(state, purpose) {
   const data = state.ordinary, results = data[`${purpose}Results`], commands = purposeCommands(data, purpose);
@@ -158,6 +246,7 @@ export function freshResults(state, purpose) {
 export function completionResult(state) {
   if (!freshResults(state, 'completion')) return 'regression';
   const data = state.ordinary;
+  if (data.generatorDefects?.length) return 'regression';
   for (const criterion of data.criteria.filter(item => item.evidence !== 'red')) {
     const evidence = data.completionResults.flatMap(item => item.criterionEvidence ?? []).find(item => item.criterionId === criterion.id);
     if (!evidence || evidence.evidenceClass !== criterion.evidence || evidence.mutationEpoch !== (data.mutationEpoch ?? 0)) return 'regression';
@@ -224,7 +313,8 @@ export function validateRed(state, envelope) {
   for (const red of reds) {
     const baseline = data.baselineResults.find(item => item.command === red.command);
     if (!baseline) defects.push(`RED command has no baseline result: ${red.command}`);
-    else if (baseline.exitStatus !== 0 && compareFailureIdentity(baseline.identity, red.identity) && !data.redCriteria.filter(item => item.commands.includes(red.command)).every(item => item.preExisting)) defects.push('Known-red baseline collision is not attributable RED; declare "Pre-existing: yes" on the criterion to adopt it.');
+    // A narrowed RED run sees a subset of the suite's failures, so it collides when the baseline already fails every one of them.
+    else if (baseline.exitStatus !== 0 && (red.ran ? red.identity.identifiers.length > 0 && red.identity.identifiers.every(id => baseline.identity.identifiers.includes(id)) : compareFailureIdentity(baseline.identity, red.identity)) &&!data.redCriteria.filter(item => item.commands.includes(red.command)).every(item => item.preExisting)) defects.push('Known-red baseline collision is not attributable RED; declare "Pre-existing: yes" on the criterion to adopt it.');
     defects.push(...checkRedQuality(source(state), envelope, red));
   }
   for (const criterion of data.redCriteria) {

@@ -40,15 +40,15 @@
  * manifest is filled without a check.
  *
  * `--out <path>` writes the filled prompt as UTF-8 (creating parent directories) and prints the
- * path; `--temp-out` creates a private file in a unique directory under `os.tmpdir()` and prints
+ * path; `--temp-out` creates a private file in a unique session temp directory and prints
  * its path; omitted, the filled prompt is printed to stdout.
  */
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { hashFile, isMainModule, verifySkillIntegrity } from './common.mjs';
+import { sessionTempDir } from './session-temp.mjs';
 
 const DEFAULT_SECTION = 'Prompt template';
 
@@ -390,7 +390,7 @@ function loadVarsFile(varsFile) {
 }
 
 function writeTempOutput(contents) {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fill-template-'));
+  const tempDir = sessionTempDir('fill-template-');
   const outputPath = path.join(tempDir, 'prompt.md');
   fs.writeFileSync(outputPath, contents, { encoding: 'utf8', mode: 0o600 });
   // Drive-qualified forward-slash paths survive handoff between Git Bash and native Node.
@@ -418,7 +418,7 @@ Options:
   --var Name=Value          One substitution; repeatable. Wins over --vars on a collision.
   --vars <json file>|-      A JSON object of string values; use "-" to read it from stdin.
   --out <path>              Write the filled prompt here instead of stdout.
-  --temp-out                Write to a private file in a unique os.tmpdir() directory and print its path.
+  --temp-out                Write to a private file in a unique session temp directory and print its path.
   --list                    Print the declared variable names as JSON and exit.
   -h, --help                Show this help.
 

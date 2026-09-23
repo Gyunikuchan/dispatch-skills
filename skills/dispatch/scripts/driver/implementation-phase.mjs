@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { failureAttribution } from '../failure-attribution.mjs';
 import { verifySkillIntegrity } from '../common.mjs';
-import { currentHead, diffHash, indexFingerprint, materializedFingerprint } from '../git-state.mjs';
+import { currentHead, diffHash, indexFingerprint, materializedFingerprint, snapshotContent, snapshotEntries } from '../git-state.mjs';
 import { diffRepositoryState } from '../verification-evidence.mjs';
 import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
@@ -12,9 +12,6 @@ import { readRunState } from './state.mjs';
 import { beginVerification, completionResult, fingerprint, repositoryBaseline, loadFailureDefect, purposeCommands, redLoadFailures, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
 import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
-function serializedEntries(state) {
-  return materializedFingerprint(state.repoRoot, state.ordinary.approvedPaths).entries.map(entry => ({ ...entry, content: entry.content.toString('base64') }));
-}
 export function beginImplementation(state) {
   const data = state.ordinary;
   if (!ledgerSegment(state)?.approved) throw new Error('Implementation requires recorded approval.');
@@ -41,7 +38,7 @@ export function beginImplementation(state) {
   if (data.testsOnlyAdmitted) return openFailure(state, 'Tests-only admission exists without validated RED evidence.');
   data.taskStart = snapshot(state);
   data.indexStart = indexFingerprint(state.repoRoot).digest;
-  data.preEntries = serializedEntries(state);
+  data.preEntries = snapshotEntries(state.repoRoot, data.approvedPaths);
   data.preState = fingerprint(state);
   if (!data.redCriteria.length) {
     data.redGate = 'not applicable — no red-class criteria';
@@ -279,6 +276,11 @@ export async function afterImplementationVerification(state) {
     const transition = verificationTransition(state, 'red', 'red-gate');
     append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: purposeCommands(data, 'red'), transition: transition.action, failureIdentity: red.identity });
     data.redValidated = { scopeHash: fingerprint(state), evidence: data.envelope.evidence };
+    if (!RISK_REVIEW_LEVELS.has(state.invocation.level)) {
+      // Below high, code review after production covers test quality; the pre-production read pass is skipped.
+      data.riskReview = { outcome: 'skipped', reason: `level ${state.invocation.level} runs no pre-production RED review` };
+      return startTask(state, 'full');
+    }
     return beginRiskReview(state);
   }
   let result = completionResult(state);
@@ -295,6 +297,7 @@ export async function afterImplementationVerification(state) {
   data.step = 'implemented';
   return null;
 }
+const RISK_REVIEW_LEVELS = new Set(['high', 'xhigh', 'max']);
 async function beginRiskReview(state) {
   const data = state.ordinary;
   data.step = 'risk-review';
@@ -383,12 +386,14 @@ function failureQuestion(state) {
   const data = state.ordinary;
   const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart: data.taskStart?.entries ?? data.baselineSnapshot.entries, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
   const reverify = data.failure.verification ? ` Only when the host evidence itself was wrong: {decision:"re-verify", reason} reruns the ${data.failure.verification.purpose} verification on the unchanged tree.` : '';
-  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
+  const retry = retryable(state) ? ' To continue this segment instead: {decision:"retry", reason, context} keeps the tree and relaunches the writer (tests-only before a validated RED gate, production after) with context carrying the ruling, consuming one attempt.' : '';
+  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify}${retry} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
   if (answer.decision === 'manual-complete') return manualComplete(state, answer);
+  if (answer.decision === 'retry') return retryFailure(state, answer);
   if (answer.decision === 're-verify') return reverify(state, answer);
   if (answer.decision === 'inspect-first') return emitAction(state, 'done', { outcome: 'failed', summary: 'Inspection requested; segment remains unterminated.', ledgerPath: state.ledgerPath, command: state.resumeCommand });
   if (answer.decision === 'revert-attributable') {
@@ -404,12 +409,37 @@ function resolveFailure(state, answer) {
     for (const file of attribution.paths) {
       const entry = data.preEntries.find(item => item.path === file), absolute = path.join(state.repoRoot, file);
       if (entry.mode === 'absent') fs.rmSync(absolute, { force: true });
-      else { fs.writeFileSync(absolute, Buffer.from(entry.content, 'base64')); fs.chmodSync(absolute, entry.mode === '100755' ? 0o755 : 0o644); }
+      else { fs.writeFileSync(absolute, snapshotContent(state.repoRoot, entry)); fs.chmodSync(absolute, entry.mode === '100755' ? 0o755 : 0o644); }
     }
   }
   ruling(state, 'failure-disposition', answer.decision, answer.reason);
   append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
   return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Repair evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+}
+/** A failure inside the task, with an attempt left and implementation not yet complete, can continue in-segment. */
+function retryable(state) {
+  const data = state.ordinary, task = data.taskId ? ledgerSegment(state)?.tasks.get(data.taskId) : null;
+  return Boolean(task && task.nextAttempt <= task.maxAttempt && !data.implementationComplete);
+}
+/** Continues the open segment: the ruling travels to the next writer as context, so a fixable failure needs no new run. */
+function retryFailure(state, answer) {
+  const data = state.ordinary;
+  if (!retryable(state)) throw new Error('retry needs a dispatched task with an attempt left, before implementation completes; choose another disposition.');
+  const reason = data.failure.reason, context = (typeof answer.context === 'string' && answer.context.trim()) || answer.reason.trim();
+  ruling(state, 'failure-disposition', 'retry', answer.reason);
+  delete data.failure;
+  // The ledger's next legal attempt: a failure before its outcome was recorded leaves that attempt unspent.
+  const next = ledgerSegment(state).tasks.get(data.taskId).nextAttempt;
+  if (data.redCriteria.length && !data.redValidated) {
+    data.attempt = next - 1;
+    return relaunchTestsOnly(state, [`Retry after failure: ${reason}. Ruling: ${context}`]);
+  }
+  data.continuationContext = `Retry after failure: ${reason}. Ruling: ${context}`;
+  data.attempt = next;
+  data.launch = 'full';
+  data.write.candidate = 0;
+  data.step = 'write-pending';
+  return writeAction(state);
 }
 /** Replaces host evidence the user ruled wrong; the tree must still match the failure snapshot. */
 function reverify(state, answer) {
@@ -440,6 +470,6 @@ export function completeTask(state) {
   const data = state.ordinary, segment = ledgerSegment(state);
   if (segment.completedTasks.has('implementation')) return;
   const after = materializedFingerprint(state.repoRoot, data.approvedPaths);
-  const before = data.preEntries.map(entry => ({ ...entry, content: Buffer.from(entry.content, 'base64') }));
+  const before = data.preEntries.map(({ objectId, ...entry }) => ({ ...entry, content: snapshotContent(state.repoRoot, { objectId, content: entry.content }) }));
   append(state, 'task-complete', { taskId: 'implementation', paths: data.approvedPaths, head: currentHead(state.repoRoot), preState: data.preState, resultState: after.digest, diffHash: diffHash(before, after.entries) });
 }

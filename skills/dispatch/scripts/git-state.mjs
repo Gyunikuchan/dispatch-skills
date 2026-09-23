@@ -224,3 +224,20 @@ export function diffHash(beforeEntries, afterEntries) {
     })),
   }));
 }
+
+// SECTION: task-start snapshots
+// File contents go to the object database, not run evidence: evidence keeps only object IDs.
+const BLOB_MODES = new Set(['100644', '100755', '120000']);
+
+/** Materialized entries with blob-backed contents: `{ path, mode, objectId | content(base64), worktreeAbsent, submoduleHead }`. */
+export function snapshotEntries(repoRoot, paths) {
+  return materializedFingerprint(repoRoot, paths).entries.map(({ content, ...entry }) => (BLOB_MODES.has(entry.mode)
+    ? { ...entry, objectId: git(repoRoot, ['hash-object', '-w', '--no-filters', '--stdin'], { input: content }).toString('ascii').trim() }
+    : { ...entry, content: content.toString('base64') }));
+}
+
+/** Contents of a snapshot entry (legacy entries carry base64 `content`). */
+export function snapshotContent(repoRoot, entry) {
+  if (entry.objectId) return git(repoRoot, ['cat-file', 'blob', entry.objectId]);
+  return Buffer.from(entry.content ?? '', 'base64');
+}

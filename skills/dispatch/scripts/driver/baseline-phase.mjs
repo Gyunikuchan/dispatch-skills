@@ -5,7 +5,7 @@ import { repositoryRootHash } from '../resolve-artifact-paths.mjs';
 import { append, ask, ledgerSegment, relative, ruling } from './ordinary-state.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
-import { beginVerification, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
+import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
 
 export function beginBaseline(state) {
   state.ordinary.planReview = requireSettledPlan(state);
@@ -19,6 +19,13 @@ export function beginBaseline(state) {
     '## Outcome Traceability', ...state.ordinary.criteria.map(item => `- [${item.id}] Pending — evidence: ${item.evidence}; production path: pending implementation.`), '',
     '## Key Deviations', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '', '## Follow-ups', 'None.', '',
   ].join('\n'));
+  const cached = cachedBaseline(state);
+  if (cached) {
+    // An identical tree reuses its recorded baseline instead of rerunning every command.
+    state.ordinary.baselineResults = cached.results;
+    state.ordinary.baselineReused = cached.capturedAt;
+    return baselineDecision(state);
+  }
   return beginVerification(state, 'baseline');
 }
 export function baselineDecision(state) {
@@ -31,7 +38,7 @@ export function baselineDecision(state) {
   data.phase = 'baseline';
   data.step = 'approval';
   data.approvalSnapshot = repositoryBaseline(state);
-  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands }]);
+  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.generators?.length ? { generators: data.generators } : {}) }]);
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;

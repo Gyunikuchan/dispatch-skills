@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { safeRenameSync, verifySkillIntegrity } from './common.mjs';
+import { dispatchTempRoot, isSessionDir, sessionArgs, sessionTempDir } from './session-temp.mjs';
 import { RESPONSE_SCHEMA_PROVIDERS } from './dispatch.mjs';
 import {
   scanResolutionLog,
@@ -318,7 +319,10 @@ export function readArtifact(file, expected = {}) {
 
 export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = null } = {}) {
   const resolved = path.resolve(file);
-  const lock = path.join(os.tmpdir(), `dispatch-metadata-${rawSha256(resolved).slice(7)}.lock`);
+  // Cross-session lock: concurrent sessions may checkpoint the same artifact.
+  const locks = path.join(dispatchTempRoot(), 'locks');
+  fs.mkdirSync(locks, { recursive: true, mode: 0o700 });
+  const lock = path.join(locks, `dispatch-metadata-${rawSha256(resolved).slice(7)}.lock`);
   try {
     fs.mkdirSync(lock, { mode: 0o700 });
   } catch (err) {
@@ -429,8 +433,7 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
 }
 
 export function createTempFile(prefix, filename, contents) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  fs.chmodSync(dir, 0o700);
+  const dir = sessionTempDir(prefix);
   const file = path.join(dir, filename);
   fs.writeFileSync(file, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return { path: file, cleanupPath: dir };
@@ -471,8 +474,7 @@ function writeState(state, { exclusive = false } = {}) {
 }
 
 export function createInvocationState({ kind, artifactPath, snapshot, expectedSourceKeys = [] }) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `dispatch-${kind}-invocation-`));
-  fs.chmodSync(dir, 0o700);
+  const dir = sessionTempDir(`dispatch-${kind}-invocation-`);
   const statePath = path.join(dir, 'state.json');
   const state = {
     schemaVersion: 1,
@@ -492,7 +494,7 @@ export function createInvocationState({ kind, artifactPath, snapshot, expectedSo
 }
 
 // Containment is checked lexically first so a forged missing path never earns the recovery hint.
-function missingInvocationState(resolved, tempRoot) {
+function missingInvocationState(resolved) {
   const dir = path.dirname(resolved);
   let container;
   try {
@@ -501,7 +503,7 @@ function missingInvocationState(resolved, tempRoot) {
     return new Error('invocationContext statePath is invalid.');
   }
   if (
-    container !== tempRoot ||
+    !isSessionDir(container) ||
     path.basename(resolved) !== 'state.json' ||
     !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(dir))
   ) return new Error('invocationContext statePath is invalid.');
@@ -524,7 +526,7 @@ export function readInvocationState(context) {
   } catch {
     present = false;
   }
-  if (!present) throw missingInvocationState(resolved, tempRoot);
+  if (!present) throw missingInvocationState(resolved);
   const parent = fs.realpathSync(path.dirname(resolved));
   if (parent !== tempRoot && !parent.startsWith(`${tempRoot}${path.sep}`)) {
     throw new Error('invocationContext statePath must be beneath OS temp.');
@@ -705,7 +707,7 @@ export function createDispatchFiles({
 }) {
   const promptFile = createTempFile('dispatch-review-prompt-', 'prompt.md', prompt);
   const cleanupPaths = [promptFile.cleanupPath];
-  const argv = [process.execPath, path.resolve(dispatchScriptPath)];
+  const argv = [process.execPath, path.resolve(dispatchScriptPath), ...sessionArgs()];
   if (batch) {
     const batchFile = createTempFile('dispatch-review-batch-', 'batch.json', `${JSON.stringify(batch, null, 2)}\n`);
     cleanupPaths.push(batchFile.cleanupPath);

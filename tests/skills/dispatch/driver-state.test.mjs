@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 
 import { sanitizeReplyText } from '../../../skills/dispatch/scripts/driver/actions.mjs';
 import { createRunState, pruneFinishedStates, readRunState, rebuildFromArtifact, writeRunState } from '../../../skills/dispatch/scripts/driver/state.mjs';
+import { sessionsRoot } from '../../../skills/dispatch/scripts/session-temp.mjs';
 
 const source = (round) => `- **Sources:** {"plan-review:R${round}:agy:0":{"provider":"agy","candidateIndex":0,"model":"m","effort":null,"status":"target","session":null,"substitutesFor":null}}`;
 const entry = (round, status, severity = 'MUST') =>
@@ -43,7 +44,7 @@ describe('rebuildFromArtifact', () => {
 });
 
 describe('readRunState trust boundary', () => {
-  it('rejects a state file outside the OS-temp state dir even when its parent is named dispatch-driver', () => {
+  it('rejects a state file outside the sessions root even when its parent is named dispatch-driver', () => {
     const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'driver-evil-')), 'nested', 'dispatch-driver');
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, 'x.json');
@@ -67,26 +68,36 @@ describe('readRunState trust boundary', () => {
 });
 
 describe('pruneFinishedStates', () => {
-  it('removes stale states, their sidecars, and orphaned sidecars; keeps fresh ones', () => {
-    const stale = createRunState({ probe: 'stale' });
-    const fresh = createRunState({ probe: 'fresh' });
-    writeRunState(stale);
-    writeRunState(fresh);
-    const staleSidecar = stale.stateFile.replace(/\.json$/, '.run.json');
-    const orphan = path.join(path.dirname(stale.stateFile), `orphan-${stale.runId}.run.json`);
-    fs.writeFileSync(staleSidecar, '{}');
-    fs.writeFileSync(orphan, '{}');
+  it('removes stale sessions whole, keeps fresh and bound ones', () => {
+    const bound = createRunState({ probe: 'bound' });
+    writeRunState(bound);
+    const session = (name) => {
+      const dir = path.join(sessionsRoot(), `${name}-${process.pid}`);
+      fs.mkdirSync(path.join(dir, 'verify'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'state.json'), '{}');
+      return dir;
+    };
+    const stale = session('stale'), fresh = session('fresh');
     const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-    for (const file of [stale.stateFile, staleSidecar, orphan]) fs.utimesSync(file, old, old);
+    for (const file of [stale, path.join(stale, 'verify'), path.join(stale, 'state.json')]) fs.utimesSync(file, old, old);
+    fs.utimesSync(path.dirname(bound.stateFile), old, old);
+    fs.utimesSync(bound.stateFile, old, old);
     try {
       pruneFinishedStates();
-      assert.equal(fs.existsSync(stale.stateFile), false);
-      assert.equal(fs.existsSync(staleSidecar), false);
-      assert.equal(fs.existsSync(orphan), false);
-      assert.equal(fs.existsSync(fresh.stateFile), true);
+      assert.equal(fs.existsSync(stale), false);
+      assert.equal(fs.existsSync(fresh), true);
+      assert.equal(fs.existsSync(bound.stateFile), true);
     } finally {
-      for (const file of [stale.stateFile, staleSidecar, orphan, fresh.stateFile]) fs.rmSync(file, { force: true });
+      for (const dir of [stale, fresh]) fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('session directories', () => {
+  it('keeps a driver run and its nested runs in one session directory', () => {
+    const first = createRunState({ probe: 1 }), nested = createRunState({ probe: 2 });
+    assert.equal(path.dirname(first.stateFile), path.dirname(nested.stateFile));
+    assert.equal(path.dirname(path.dirname(first.stateFile)), sessionsRoot());
   });
 });
 

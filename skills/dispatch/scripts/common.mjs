@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isSessionDir, sessionDir, sessionTempDir } from './session-temp.mjs';
 
 // ============================================================================
 // SECTION: Types
@@ -1306,9 +1307,7 @@ export function getArgvByteLimit() {
 export function createBriefFile(prompt, providerName) {
   sweepStaleBriefDirs();
 
-  const prefix = path.join(os.tmpdir(), `dispatch-brief-${providerName}-`);
-  const briefDir = fs.mkdtempSync(prefix);
-  try { fs.chmodSync(briefDir, 0o700); } catch {}
+  const briefDir = sessionTempDir(`dispatch-brief-${providerName}-`);
 
   const briefFile = path.join(briefDir, 'brief.md');
   fs.writeFileSync(briefFile, prompt, { encoding: 'utf8', mode: 0o600 });
@@ -1328,7 +1327,7 @@ export function createBriefFile(prompt, providerName) {
  *
  * Security: refuses anything that isn't demonstrably one of our own brief directories —
  * absolute path, `dispatch-brief-` basename, a real (non-symlink) directory whose realpath's
- * parent is the OS temp dir's own realpath — so a crafted or symlinked path can never cause
+ * parent is a session directory (or, for legacy briefs, the OS temp dir) — so a crafted or symlinked path can never cause
  * deletion outside temp. Best-effort: errors are swallowed because on Windows a lingering
  * delegate process may still hold the file open.
  *
@@ -1346,8 +1345,8 @@ export function removeBriefFile(briefFile) {
 
     const realDir = fs.realpathSync(dir);
     const realParent = fs.realpathSync(path.dirname(realDir));
-    const realTmp = fs.realpathSync(os.tmpdir());
-    if (realParent !== realTmp) return;
+    // Session briefs live in a session directory; legacy briefs sat directly in OS temp.
+    if (!isSessionDir(realParent) && realParent !== fs.realpathSync(os.tmpdir())) return;
 
     // NOTE: retries ride out transient Windows AV/indexer locks (EBUSY/EPERM) on the fresh brief.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -1423,7 +1422,7 @@ export function preparePromptForArgv(prompt, providerName, { binary, reservedByt
  */
 export function createSessionLogger(providerName) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logDir = path.join(os.tmpdir(), 'agent-dispatch-logs');
+  const logDir = path.join(sessionDir(), 'logs');
   // Logs hold full delegate transcripts; owner-only modes (ignored on Windows) keep them private.
   try {
     if (!fs.existsSync(logDir)) {

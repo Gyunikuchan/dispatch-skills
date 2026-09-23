@@ -19,7 +19,7 @@ describe("v0.5 plan and verification contract", () => {
   });
   it("discloses evidence mapping and baseline handling under implement", () => {
     const c = read("skills/dispatch/references/verbs/implement.md");
-    assert.match(c, /Extract approved paths, commands, and criterion mappings/);
+    assert.match(c, /Extract approved paths, commands, criterion mappings, and `\[GENERATED\]` paths/);
     assert.match(c, /baseline/);
     assert.match(c, /known red — unchanged/);
   });

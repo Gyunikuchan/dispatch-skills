@@ -49,6 +49,9 @@ Summary of component changes, separated by files (use relative paths with forwar
 #### [DELETE] <relative-path>
 - Deleted symbols and migration/cleanup steps.
 
+#### [GENERATED] <relative-path>
+- Command: `<generator command>` <!-- regenerates this path; the driver reruns it before completion verification -->
+
 ## Rollback & Blast Radius
 Downstream caller impacts, data/schema migrations, and fallback/rollback paths (or "None").
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Faster implementation runs: the driver runs verify gates itself and extracts failure identities, RED checks run only the new tests, an unchanged tree reuses its baseline, and the pre-production RED review runs only at `high` effort and above
+- Easier recovery: a failed task can `retry` in the same run with your ruling as context, and verify logs are kept per run
+- Plans can declare `[GENERATED]` paths with a generator command; the driver regenerates them at completion instead of asking about them
+- Leaner walkthroughs and write briefs: task snapshots live in Git, the RED matrix renders as a table, and writers receive a hashed brief file
+- All temporary files for a run now live in one session directory under the OS temp directory
+
 ## [0.5.0] - 2026-09-22
 
 - Unified delegation, plan, design, review, and implementation under one model-visible `dispatch` skill and script-driven action protocol.

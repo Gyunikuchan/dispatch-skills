@@ -12,6 +12,7 @@ import {
   diffRepositoryState,
   extractApprovedPathSet,
   failureIdentity,
+  findingDigest,
   mapVerificationCommandsToPaths,
   normalizeDiagnostic,
   outcomeFirstPacket,
@@ -273,5 +274,21 @@ describe('verification evidence', () => {
     assert.equal(compareFailureIdentity(first, second), true);
     assert.equal(normalizeDiagnostic('at 2026-09-20T00:00:00Z took 12.4ms /tmp/run-123/output'), 'at <timestamp> took <duration> <tmp-path>');
     assert.equal(compareFailureIdentity(first, { ...second, exitStatus: 2 }), false);
+  });
+});
+
+describe('prior-finding digest', () => {
+  it('keeps bounded entry headlines, drops source lines, and counts omissions', () => {
+    const entry = (n, extra = '') => `- **[F${n}] MUST** src/a.js:L${n} — defect ${n}${extra}`;
+    const log = ['## Review Findings & Resolutions', entry(1, 'x'.repeat(400)), '  - **Sources:** code-review:R1', entry(2), ...Array.from({ length: 40 }, (_, i) => entry(i + 3, 'y'.repeat(200)))].join('\n');
+    const digest = findingDigest(log).split('\n');
+    assert.ok(digest[0].startsWith('- **[F1]') && digest[0].length === 240 && digest[0].endsWith('…'));
+    assert.ok(!digest.some(line => line.includes('Sources')));
+    assert.ok(digest.join('\n').length <= 4000 + 80);
+    assert.match(digest.at(-1), /^… \d+ more in the governing plan's Review Findings/);
+  });
+  it('falls back to a bounded prefix when no entries parse', () => {
+    assert.equal(findingDigest('free text'), 'free text');
+    assert.equal(findingDigest('z'.repeat(5000)).length, 4000);
   });
 });

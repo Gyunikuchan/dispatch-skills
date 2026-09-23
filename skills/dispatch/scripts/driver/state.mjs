@@ -1,6 +1,6 @@
 /**
- * Driver run state: a cache under `os.tmpdir()/dispatch-driver/` (R3). Canonical artifacts stay
- * authoritative; a lost cache is rebuilt from the artifact's resolution log through `--run`.
+ * Driver run state: a cache in the run's session directory (`session-temp.mjs`, R3). Canonical
+ * artifacts stay authoritative; a lost cache is rebuilt from the artifact's resolution log through `--run`.
  */
 
 import crypto from 'node:crypto';
@@ -11,14 +11,10 @@ import path from 'node:path';
 import { evaluateConsensus } from '../check-consensus.mjs';
 import { safeRenameSync } from '../common.mjs';
 import { scanResolutionLog } from '../resolution-log.mjs';
+import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../session-temp.mjs';
 
-export const STATE_DIR_NAME = 'dispatch-driver';
-
-function stateDir() {
-  const dir = path.join(fs.realpathSync(os.tmpdir()), STATE_DIR_NAME);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  return dir;
-}
+// Pre-session state directory, pruned only.
+const LEGACY_STATE_DIR = 'dispatch-driver';
 
 export function sidecarPathFor(stateFile) {
   return stateFile.replace(/\.json$/, '.run.json');
@@ -34,20 +30,32 @@ function writeAtomic(file, value) {
   }
 }
 
-/** Creates a fresh run state with a new run ID. */
+/**
+ * Creates a fresh run state with a new run ID. A top-level run opens its own session; a nested run
+ * (bounded risk review) shares the bound session.
+ */
 export function createRunState(fields) {
   const runId = crypto.randomUUID();
-  const stateFile = path.join(stateDir(), `${runId}.json`);
+  const bound = process.env[SESSION_ENV];
+  const dir = bound && isSessionDir(bound) ? bindSession(bound) : openSession(runId);
+  const stateFile = path.join(dir, `${runId}.json`);
   return { v: 1, runId, stateFile, ...fields };
+}
+
+/** Binds the session that holds `stateFile`, so a `--next` process and its children share it. */
+export function bindStateSession(stateFile) {
+  let real = null;
+  try { real = fs.realpathSync(path.resolve(stateFile)); } catch { return null; }
+  return isSessionDir(path.dirname(real)) ? bindSession(path.dirname(real)) : null;
 }
 
 /** Reads a state file; throws with `code: 'STATE_UNREADABLE'` when missing or corrupt. */
 export function readRunState(stateFile) {
   const resolved = path.resolve(stateFile);
-  // Trust only files directly under the OS-temp state dir: state names artifacts and argv.
+  // Trust only files directly in a session directory: state names artifacts and argv.
   let real = null;
   try { real = fs.realpathSync(resolved); } catch { real = null; }
-  const inside = real !== null && path.dirname(real) === path.join(fs.realpathSync(os.tmpdir()), STATE_DIR_NAME);
+  const inside = real !== null && isSessionDir(path.dirname(real));
   let state = null;
   try {
     if (inside) state = JSON.parse(fs.readFileSync(resolved, 'utf8'));
@@ -90,11 +98,13 @@ function roundsSinceSettled(markdown, total) {
 }
 
 /**
- * Removes run states and sidecars untouched for `maxAgeMs`, finished or abandoned (an in-flight
- * wave relaunches whole via the sidecar anyway), plus orphaned sidecars; best-effort.
+ * Removes sessions untouched for `maxAgeMs`, finished or abandoned (an in-flight wave relaunches
+ * whole via the sidecar anyway), plus pre-session state files; best-effort.
  */
 export function pruneFinishedStates({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
-  const dir = stateDir();
+  pruneSessions({ maxAgeMs, now });
+  const dir = path.join(fs.realpathSync(os.tmpdir()), LEGACY_STATE_DIR);
+  if (!fs.existsSync(dir)) return;
   for (const name of fs.readdirSync(dir)) {
     if (!name.endsWith('.json')) continue;
     const file = path.join(dir, name);

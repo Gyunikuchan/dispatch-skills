@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE)\]\s+(.+?)\s*$/;
+const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;
 
 export function structuralLines(source) {
   const input = source.split(/\r?\n/);
@@ -71,4 +71,23 @@ export function extractApprovedPathSet(source) {
   return [...new Set(extractActionHeadingRecords(source)
     .filter(({ path }) => path)
     .map(({ path: value }) => value))].sort();
+}
+
+/**
+ * `[GENERATED]` paths and their generator commands: `- Command: \`<command>\`` under the heading.
+ * A generated path is approved scope; completion verification reruns its generator first.
+ */
+export function extractGeneratedPaths(source) {
+  const lines = structuralLines(source);
+  const records = extractActionHeadingRecords(source).filter(record => record.action === 'GENERATED');
+  return records.map((record) => {
+    const start = lines.findIndex(entry => entry.line === record.line);
+    let command = null;
+    for (const entry of lines.slice(start + 1)) {
+      if (/^#{2,4}\s+/.test(entry.text)) break;
+      const match = /^[-*+]\s+Command:\s*`([^`]+)`\s*$/.exec(entry.text.trim());
+      if (match) { command = match[1].trim(); break; }
+    }
+    return { path: record.path, command, line: record.line };
+  });
 }

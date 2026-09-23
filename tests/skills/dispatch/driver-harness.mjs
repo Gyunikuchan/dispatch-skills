@@ -14,7 +14,9 @@
  *   sourceKeys, restate?, reportPath? }] }`;
  * - `ask-user`: `{ question: 'rulings'|'opt-in'|'inputs', text, items?, missing? }`;
  * - `apply-fixes`: `{ clusters: [{ clusterId, findingIds, affectedPaths, verification }] }`;
- * - `verify`: `{ commands: string[] }`;
+ * - `verify`: `{ commands: string[], argv?, resultsPath? }` — with `argv` the driver runs the gate
+ *   (`--verify`); the harness simulates that runner from `policy.verify` results unless the policy
+ *   sets `realVerify`, then replies with only the policy's `criterionEvidence`;
  * - `author`: `{ path, template, defects }`;
  * - `done`: `{ outcome: 'complete'|'skipped'|'refused'|'failed'|'no-reviewable-changes'|'lint-defects',
  *   summary, reason?, command?, defects?, checkpointed? }`.
@@ -27,6 +29,8 @@ import path from 'node:path';
 
 import { ORCHESTRATOR_ENV } from './stub-dispatch-fixture.mjs';
 import { scanResolutionLog } from '../../../skills/dispatch/scripts/resolution-log.mjs';
+import { materializedFingerprint } from '../../../skills/dispatch/scripts/git-state.mjs';
+import { captureRepositoryState } from '../../../skills/dispatch/scripts/verification-evidence.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',
@@ -402,8 +406,8 @@ export function drive(fixture, {
         input = policy.delegateWrite(action, ctx);
         break;
       case 'verify':
-        for (const command of action.commands) argvLog.push(['<verify>', command]);
-        input = policy.verify(action, ctx);
+        if (!action.argv) for (const command of action.commands) argvLog.push(['<verify>', command]);
+        input = verifyInput(action, policy, ctx, fixture, cwd);
         break;
       case 'native-fallback':
         input = policy.nativeFallback(action, ctx);
@@ -419,6 +423,62 @@ export function drive(fixture, {
     action = invoke(args);
   }
   throw new Error(`run did not reach done within ${maxSteps} steps: ${trace.map((a) => a.action).join(' → ')}`);
+}
+
+// SECTION: driver-run verification
+
+function repoSnapshot(cwd) {
+  const capture = captureRepositoryState(cwd);
+  capture.entries = Object.fromEntries(Object.entries(capture.entries).filter(([file]) => !file.startsWith('.scratch/')));
+  return capture;
+}
+
+/** Decorates a driver-run verify action with the per-command scope hashes its evidence must cite. */
+function decorateVerify(action, cwd) {
+  const state = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+  const data = state.ordinary, pending = data.verification;
+  const scopeHashes = Object.fromEntries(pending.commands.map((command) => [command, materializedFingerprint(cwd, data.scopes?.[command] ?? data.approvedPaths).digest]));
+  action.scopeHashes = scopeHashes;
+  action.scopeHash = scopeHashes[pending.commands[0]];
+  return pending;
+}
+
+/** Writes the results file the `--verify` runner would, from policy-supplied per-command results. */
+function simulateVerify(action, pending, reply, cwd) {
+  const original = Object.fromEntries(Object.entries(pending.substitutions ?? {}).map(([from, to]) => [to, from]));
+  const results = pending.commands.map((command) => {
+    const ran = pending.substitutions?.[command] ?? command;
+    const given = reply.results.find((item) => item.command === ran || item.command === command || original[item.command] === command) ?? { exit: 0 };
+    return {
+      command, ran, exit: given.exit, counts: null, identifiers: given.identifiers ?? [],
+      diagnostic: given.exit === 0 ? '' : String(given.diagnostic ?? given.evidence ?? ''), logPath: '',
+      scopeHash: given.scopeHash ?? action.scopeHashes[command], mutationEpoch: given.mutationEpoch ?? action.mutationEpoch, changed: [],
+    };
+  });
+  const record = { v: 1, token: pending.token, purpose: pending.purpose, results, generated: [], mutationEpoch: action.mutationEpoch, final: repoSnapshot(cwd) };
+  fs.writeFileSync(action.resultsPath, `${JSON.stringify(record)}\n`);
+}
+
+function verifyInput(action, policy, ctx, fixture, cwd) {
+  if (!action.argv) return policy.verify(action, ctx);
+  const pending = decorateVerify(action, cwd);
+  if (policy.realVerify) {
+    ctx.argvLog.push(action.argv);
+    const res = runDispatch(fixture, action.argv.slice(2), { cwd });
+    assert.equal(res.status, 0, `verify runner failed: ${res.stderr}`);
+    ctx.lastVerify = JSON.parse(res.stdout.trim().split('\n').at(-1));
+    for (const result of ctx.lastVerify.results) action.scopeHashes[result.command] = result.scopeHash;
+    action.scopeHash = ctx.lastVerify.results[0]?.scopeHash;
+    const reply = policy.verify(action, ctx) ?? {};
+    const evidence = reply.criterionEvidence ?? (reply.results ?? []).flatMap((item) => item.criterionEvidence ?? []);
+    return evidence.length ? { criterionEvidence: evidence } : undefined;
+  }
+  for (const command of action.commands) ctx.argvLog.push(['<verify>', command]);
+  const reply = policy.verify(action, ctx);
+  if (reply?.criterionEvidence && !reply.results) return { criterionEvidence: reply.criterionEvidence };
+  simulateVerify(action, pending, reply, cwd);
+  const evidence = reply.criterionEvidence ?? reply.results.flatMap((item) => item.criterionEvidence ?? []);
+  return evidence.length ? { criterionEvidence: evidence } : undefined;
 }
 
 /** AC1: every recorded command is a dispatch.mjs invocation or a host verify command. */

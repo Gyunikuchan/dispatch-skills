@@ -19,7 +19,8 @@ export function userSlug({ env = process.env, userInfo = () => os.userInfo() } =
 }
 
 export function telemetryPath({ dir } = {}) {
-  const base = dir ?? path.join(os.tmpdir(), `dispatch-telemetry-${userSlug()}`);
+  // Cross-session aggregate under the single dispatch temp root.
+  const base = dir ?? path.join(os.tmpdir(), `dispatch-skills-${userSlug()}`, 'telemetry');
   return path.join(base, FILE_NAME);
 }
 

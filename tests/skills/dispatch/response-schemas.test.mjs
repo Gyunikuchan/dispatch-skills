@@ -13,8 +13,12 @@ describe('delegate response schemas', () => {
     const driver = path.join(dir, 'driver');
     for (const name of ['ask-user', 'delegate-write', 'delegate-write.reply', 'verify', 'verify.reply', 'done']) {
       const schema = JSON.parse(fs.readFileSync(path.join(driver, `${name}.json`), 'utf8'));
-      assert.equal(schema.type, 'object');
-      assert.equal(schema.additionalProperties, false);
+      // A driver-run verify gate takes no reply, so verify.reply also admits null.
+      const objects = name === 'verify.reply' ? schema.anyOf.filter(branch => branch.type !== 'null') : [schema];
+      for (const branch of objects) {
+        assert.equal(branch.type, 'object', name);
+        assert.equal(branch.additionalProperties, false, name);
+      }
     }
     const reply = JSON.parse(fs.readFileSync(path.join(driver, 'delegate-write.reply.json'), 'utf8'));
     assert.equal(reply.properties.raw.minLength, 1);

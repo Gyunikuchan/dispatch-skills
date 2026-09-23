@@ -1,12 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { loadDispatchConfig } from '../config.mjs';
 import { currentHead } from '../git-state.mjs';
 import { resolveFlow } from '../resolve-flow.mjs';
 import { parseImplementationOutcome, resolveImplementationTransition } from '../implementation-outcome.mjs';
-import { emitAction } from './actions.mjs';
+import { emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
 import { ledgerSegment } from './ordinary-state.mjs';
 import { SKILL_ROOT } from './plan-phase.mjs';
 
@@ -35,13 +34,31 @@ function testsOnlyPrompt(state) {
     envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling' },
     ...(repair ? { admissionDefects: repair.defects } : {}),
   };
+  return briefFile(state, `tests-only${repair ? '-repair' : ''}`, document);
+}
+/** Writes a hashed write brief beside the run state, so the host relays a path instead of the brief. */
+function briefFile(state, name, document) {
   const content = `${JSON.stringify(document)}\n`;
   const hash = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
-  const dir = path.join(fs.realpathSync(os.tmpdir()), 'dispatch-driver');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = path.join(dir, `${state.runId}-tests-only${repair ? '-repair' : ''}.json`);
+  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}.json`);
   fs.writeFileSync(file, content, { mode: 0o600 });
   return { path: file, hash };
+}
+let packetSchema;
+function productionPrompt(state) {
+  const data = state.ordinary;
+  const packet = {
+    ...data.packet,
+    instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',
+    conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
+    governingPlan: state.planPath,
+    redGate: data.redGate ?? 'validated',
+    ...(data.carriedFindings?.length ? { reviewFindings: data.carriedFindings } : {}),
+  };
+  packetSchema ??= loadSchema('delegate-write').properties.fields.properties.packet.oneOf[1];
+  const errors = validateAgainstSchema(packetSchema, packet, '$.packet');
+  if (errors.length) throw new Error(`Invalid production packet: ${errors.join('; ')}`);
+  return briefFile(state, `production-a${data.attempt}`, { schemaVersion: 1, purpose: 'production', packet });
 }
 export function writeAction(state) {
   const data = state.ordinary;
@@ -52,7 +69,7 @@ export function writeAction(state) {
   // emission for this task: a later cascade hop's restore must undo only what that hop itself dirtied.
   if (write.baselineHead === undefined) write.baselineHead = currentHead(state.repoRoot);
   const testsOnly = data.launch === 'tests-only';
-  const prompt = testsOnly ? testsOnlyPrompt(state) : null;
+  const prompt = testsOnly ? testsOnlyPrompt(state) : productionPrompt(state);
   const cascadeContinuation = data.pendingCascadeContinuation ?? null;
   const restore = data.pendingRestore ?? null;
   delete data.pendingCascadeContinuation;
@@ -64,20 +81,15 @@ export function writeAction(state) {
     planPath: state.planPath, walkthroughPath: state.walkthroughPath,
     paths: testsOnly ? data.testsOnlyPaths : data.approvedPaths,
     criteria: (testsOnly ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
-    ...(testsOnly ? { promptPath: prompt.path, promptHash: prompt.hash, continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : cascadeContinuation } : (cascadeContinuation ? { continuation: cascadeContinuation } : {})),
+    promptPath: prompt.path, promptHash: prompt.hash,
+    ...(testsOnly ? { continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : cascadeContinuation } : (cascadeContinuation ? { continuation: cascadeContinuation } : {})),
     ...(restore ? { restore } : {}),
-    packet: testsOnly ? null : {
-      ...data.packet,
-      instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',
-      conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
-      governingPlan: state.planPath,
-      redGate: data.redGate ?? 'validated',
-      ...(data.carriedFindings?.length ? { reviewFindings: data.carriedFindings } : {}),
-    },
+    // The production packet lives in promptPath: the host relays a path, not ~30 KB of packet.
+    packet: null,
     evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
   } }, [
-    'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Pass the criteria and packet fields verbatim on retries and continuations. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
-    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict.${data.carriedFindings?.length ? ' Close packet.reviewFindings (accepted RED test-review findings) within the approved paths.' : ''} Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion. Later completion verify replies set each criterionEvidence.inspectedRevision to the emitted verify scopeHash.`,
+    'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Give it promptPath with promptHash, paths, criteria, and any evidence, context, continuation, or restore fields; do not restate the brief. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
+    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict.${data.carriedFindings?.length ? ' Close packet.reviewFindings (accepted RED test-review findings) within the approved paths.' : ''} Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

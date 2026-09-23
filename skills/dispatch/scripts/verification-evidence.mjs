@@ -39,6 +39,24 @@ export function criterionMappings(source) {
   return mappings;
 }
 
+// Plan-review findings are already folded into the plan; the writer needs only their headlines.
+const DIGEST_ENTRY_CHARS = 240;
+const DIGEST_TOTAL_CHARS = 4000;
+export function findingDigest(log) {
+  const entries = log.split('\n').filter(line => /^[-*]\s+\*\*\[/.test(line) && !/^[-*]\s+\*\*Sources:\*\*/.test(line))
+    .map(line => (line.length > DIGEST_ENTRY_CHARS ? `${line.slice(0, DIGEST_ENTRY_CHARS - 1)}…` : line));
+  if (!entries.length) return log.slice(0, DIGEST_TOTAL_CHARS);
+  const kept = [];
+  let size = 0;
+  for (const entry of entries) {
+    if (size + entry.length + 1 > DIGEST_TOTAL_CHARS) break;
+    kept.push(entry);
+    size += entry.length + 1;
+  }
+  const omitted = entries.length - kept.length;
+  return [...kept, ...(omitted ? [`… ${omitted} more in the governing plan's Review Findings & Resolutions.`] : [])].join('\n');
+}
+
 export function outcomeFirstPacket(source, criteria) {
   const lines = structuralLines(source);
   const titleIndex = lines.findIndex(({ text }) => /^#\s+/.test(text));
@@ -59,7 +77,7 @@ export function outcomeFirstPacket(source, criteria) {
     governingOutcome: { title, context: section('Context & Intent') || lines.slice(titleIndex + 1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
     settledBoundary: { scope: proposed, nonScope: section('Out of Scope') || 'None.', invariants, rollback: section('Rollback & Blast Radius') || 'None.' },
     criteria: criteria.map(({ id, title: outcome, evidence, paths, commands, review }) => ({ id, outcome, evidenceClass: evidence, paths, commands, review: review ?? null })),
-    repositoryContext: { constraints, priorFailures: failures && !/No reviews conducted yet/i.test(failures) ? failures : 'None recorded.' },
+    repositoryContext: { constraints, priorFailures: failures && !/No reviews conducted yet/i.test(failures) ? findingDigest(failures) : 'None recorded.' },
     testsAsEvidence: { label: 'evidence, not specification', commands: [...new Set(criteria.flatMap(item => item.commands))] },
   };
 }

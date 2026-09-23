@@ -22,6 +22,11 @@ const clean = [
 const rules = result => result.defects.map(({ rule }) => rule);
 
 describe('deterministic plan lint', () => {
+  it('requires a generator command for each [GENERATED] path', () => {
+    const generated = clean.replace('## Verification Plan', '#### [GENERATED] dist/a.js\n- Command: `node build.mjs`\n## Verification Plan');
+    assert.ok(!rules(lintPlan(generated)).includes('generated-command'));
+    assert.ok(rules(lintPlan(generated.replace('- Command: `node build.mjs`', '- Built output.'))).includes('generated-command'));
+  });
   it('accepts a canonical executable plan', () => {
     assert.deepEqual(lintPlan(clean), { defects: [], warnings: [] });
   });

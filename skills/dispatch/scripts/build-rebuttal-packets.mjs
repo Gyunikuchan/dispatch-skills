@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,6 +9,7 @@ import {
   verifySkillIntegrity,
 } from './common.mjs';
 import { scanResolutionLog } from './resolution-log.mjs';
+import { sessionTempDir } from './session-temp.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VERDICTS = new Set(['reject', 'downgrade', 'disputed']);
@@ -98,7 +98,7 @@ export function writeRebuttalPackets({ artifact, context }) {
   const markdown = fs.readFileSync(artifact, 'utf8');
   const contextValue = JSON.parse(fs.readFileSync(context === '-' ? 0 : context, 'utf8'));
   const packets = buildRebuttalPackets(markdown, contextValue);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-rebuttal-packets-'));
+  const dir = sessionTempDir('dispatch-rebuttal-packets-');
   const written = packets.map((group, index) => {
     const safeSource = group.sourceKey.replace(/[^A-Za-z0-9._-]+/g, '-');
     const packetPath = path.join(dir, `${String(index + 1).padStart(2, '0')}-${safeSource}.json`);

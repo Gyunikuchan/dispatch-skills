@@ -6,8 +6,8 @@ import { afterEach, describe, it } from 'node:test';
 import { makeGitRepo, writePlan } from './driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../skills/dispatch/scripts/ledger.mjs';
 import { resolveLedgerPath } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
-import { restoreEvidence } from '../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
-import { purposeCommands, suiteCoverage } from '../../../skills/dispatch/scripts/driver/verification.mjs';
+import { persistEvidence, restoreEvidence } from '../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
+import { cachedBaseline, purposeCommands, redSubstitutions, storeBaseline, suiteCoverage } from '../../../skills/dispatch/scripts/driver/verification.mjs';
 
 const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
@@ -47,6 +47,52 @@ describe('aggregate suite coverage', () => {
     assert.deepEqual(purposeCommands(data, 'red'), ['node --test tests/a.test.mjs']);
     assert.deepEqual(purposeCommands(data, 'completion'), ['npm test', 'node scripts/lint.mjs']);
     assert.deepEqual(purposeCommands(data, 'baseline'), ['node --test tests/a.test.mjs', 'npm test', 'node scripts/lint.mjs']);
+  });
+});
+
+describe('RED narrowing', () => {
+  const red = (command) => ({ id: 'SC1', commands: [command], paths: ['src/a.js', 'tests/a.test.mjs'] });
+  const state = (script, command = 'npm test') => ({ repoRoot: repoWithTestScript(script), ordinary: { commands: [command], redCriteria: [red(command)], testsOnlyPaths: ['tests/a.test.mjs'] } });
+  it('narrows a covering suite to the red test files, keeping --flag=value options', () => {
+    assert.deepEqual(redSubstitutions(state('node scripts/check.mjs && node --test --test-reporter=./r.mjs "tests/**/*.test.mjs"')),
+      { 'npm test': 'node --test --test-reporter=./r.mjs tests/a.test.mjs' });
+  });
+  it('keeps the suite whole when an option could take a separate value or no red file is under its glob', () => {
+    assert.deepEqual(redSubstitutions(state('node --test --import ./setup.mjs "tests/**/*.test.mjs"')), {});
+    assert.deepEqual(redSubstitutions(state('node --test "other/**/*.test.mjs"')), {});
+    assert.deepEqual(redSubstitutions(state('node --test "tests/**/*.test.mjs"', 'node --test tests/a.test.mjs')), {});
+  });
+});
+
+describe('baseline reuse', () => {
+  function baselineState() {
+    const repo = makeGitRepo();
+    cleanup.push(repo.cleanup);
+    const commands = ['node --test tests/a.test.mjs'];
+    return { repoRoot: repo.dir, ledgerPath: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-cache-')), 'sample-ledger.md'), ordinary: { commands, redCriteria: [], coverage: {}, scopes: { [commands[0]]: ['src/app.js'] } } };
+  }
+  it('reuses a stored baseline only for the identical tree within a day', () => {
+    const state = baselineState(), results = [{ command: 'node --test tests/a.test.mjs', exitStatus: 0 }];
+    assert.equal(cachedBaseline(state), null);
+    storeBaseline(state, results);
+    assert.deepEqual(cachedBaseline(state).results, results);
+    assert.equal(cachedBaseline(state, { now: Date.now() + 25 * 60 * 60 * 1000 }), null, 'expired');
+    fs.writeFileSync(path.join(state.repoRoot, 'src/app.js'), 'export const value = 3;\n');
+    assert.equal(cachedBaseline(state), null, 'a changed tree reruns the baseline');
+  });
+});
+
+describe('walkthrough evidence rendering', () => {
+  it('renders the RED matrix into a CRLF walkthrough', () => {
+    const repo = makeGitRepo();
+    cleanup.push(repo.cleanup);
+    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
+    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', '', '## Key Deviations', 'None.', ''].join('\r\n'));
+    const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs | exit 1 test:a'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
+    persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
+    const text = fs.readFileSync(walkthroughPath, 'utf8');
+    assert.match(text, /### RED matrix/);
+    assert.match(text, /\| SC1 \| `tests\/a\.test\.mjs` \| exit 1 test:a \|/);
   });
 });
 

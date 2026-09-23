@@ -14,6 +14,8 @@ import {
   indexFingerprint,
   materializedFingerprint,
   normalizeTaskPath,
+  snapshotContent,
+  snapshotEntries,
 } from '../../../skills/dispatch/scripts/git-state.mjs';
 
 describe('Git ledger state', () => {
@@ -34,6 +36,18 @@ describe('Git ledger state', () => {
     git('commit', '--quiet', '--no-gpg-sign', '-m', 'base');
   });
   afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it('snapshots file contents as Git blobs and restores them byte-exact', () => {
+    const bytes = Buffer.from([0, 1, 13, 10, 255]);
+    writeFileSync(path.join(repo, 'tracked.txt'), bytes);
+    const entries = snapshotEntries(repo, ['tracked.txt', 'missing.txt']);
+    const entry = entries.find(item => item.path === 'tracked.txt'), absent = entries.find(item => item.path === 'missing.txt');
+    assert.match(entry.objectId, /^[0-9a-f]{40,64}$/);
+    assert.equal(entry.content, undefined, 'blob entries carry no inline content');
+    assert.deepEqual(snapshotContent(repo, entry), bytes);
+    assert.equal(absent.mode, 'absent');
+    assert.deepEqual(snapshotContent(repo, { content: Buffer.from('legacy').toString('base64') }), Buffer.from('legacy'));
+  });
 
   it('captures dirty tracked, untracked, binary, mode, symlink, deletion, and rename state', () => {
     writeFileSync(path.join(repo, 'tracked.txt'), Buffer.from([0, 1, 13, 10]));

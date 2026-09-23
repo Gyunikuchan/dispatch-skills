@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../config.mjs';
 import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
 import { createTempFile } from '../review-preparation.mjs';
+import { sessionArgs } from '../session-temp.mjs';
 import { emitAction } from './actions.mjs';
 import { createRunState, finish, reemit, writeRunSidecar } from './state.mjs';
 
@@ -86,7 +87,7 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
   const outputFile = createTempFile('dispatch-ask-output-', 'output.txt', '');
   state.cleanup.push(promptFile.cleanupPath, batchFile.cleanupPath, outputFile.cleanupPath);
   const argv = [
-    process.execPath, DISPATCH_SCRIPT,
+    process.execPath, DISPATCH_SCRIPT, ...sessionArgs(),
     '--batch-file', batchFile.path,
     '--prompt-file', promptFile.path,
     '--level', invocation.level,

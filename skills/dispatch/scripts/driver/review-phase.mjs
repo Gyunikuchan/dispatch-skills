@@ -369,7 +369,7 @@ function prepareWave(state, type, rebuttal = null) {
     return done(state, 'lint-defects', `${state.kind} lint failed; the review did not run.`, { defects: manifest.defects });
   }
   if (state.transient) {
-    fs.appendFileSync(manifest.promptPath, '\nBounded pre-production RED review: inspect only the changed tests and the RED-MATRIX in the walkthrough Ordinary execution evidence. Verify criterion coverage, negative assertions, test isolation, attribution to missing production behavior, and interruption/recovery coverage. Report raw claims; do not implement or certify production code.\n');
+    fs.appendFileSync(manifest.promptPath, '\nBounded pre-production RED review: inspect only the changed tests and the RED matrix table under the walkthrough Verification & Validation section. Verify criterion coverage, negative assertions, test isolation, attribution to missing production behavior, and interruption/recovery coverage. Report raw claims; do not implement or certify production code.\n');
   }
   state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
   state.invocationContext = manifest.invocationContext;

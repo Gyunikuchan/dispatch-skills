@@ -39,31 +39,86 @@
       "minLength": 1
     },
     "incrementId": {
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "lifecycle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["terminalEvent", "relocateAfterPass", "retain"],
+      "required": [
+        "terminalEvent",
+        "relocateAfterPass",
+        "retain"
+      ],
       "properties": {
         "terminalEvent": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "result", "beforeRelocation"],
+          "required": [
+            "type",
+            "result",
+            "beforeRelocation"
+          ],
           "properties": {
-            "type": { "const": "integration" },
-            "result": { "const": "pass" },
-            "beforeRelocation": { "const": true }
+            "type": {
+              "const": "integration"
+            },
+            "result": {
+              "const": "pass"
+            },
+            "beforeRelocation": {
+              "const": true
+            }
           }
         },
-        "relocateAfterPass": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "retain": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        "relocateAfterPass": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "retain": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
       }
     },
     "commands": {
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "resultsPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "substitutions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "generators": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "purpose": {
@@ -117,6 +172,13 @@
               "string",
               "null"
             ]
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }

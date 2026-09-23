@@ -18,7 +18,7 @@ import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
 import { advanceAsk, startAsk } from './ask-phase.mjs';
 import { save } from './ordinary-state.mjs';
-import { readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
+import { bindStateSession, readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
 
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
 const VERBS = ['plan', 'design', 'review', 'implement', 'ask'];
@@ -27,7 +27,7 @@ const VALUE_FLAGS = new Set([
   '--run', '--state', '--input', '--kind', '--phases', '--orchestrator', '--orchestrator-model',
   '--level', '--level-source', '--pins',
 ]);
-const BOOLEAN_FLAGS = new Set(['--next', '--fix', '--verbose']);
+const BOOLEAN_FLAGS = new Set(['--next', '--fix', '--verbose', '--verify']);
 
 export const DRIVER_FLAGS = [...VALUE_FLAGS, ...BOOLEAN_FLAGS];
 
@@ -37,6 +37,7 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   --fix                       Apply accepted fixes (review is report-only by default)
   --phases from:<phase>       Start phase for implement (not accepted by review)
   --next                      Advance a run; requires --state
+  --verify                    Run the pending verify action's commands; requires --state
   --state <file>              State file named by the previous action's stateFile
   --input <json|@file>        Reply to the previous action (omit for launch)
   --orchestrator <platform>   Orchestrating platform (required with --run)
@@ -53,7 +54,7 @@ class UsageError extends Error {}
 /** True when argv (before `--`) asks for the driver. */
 export function isDriverInvocation(args) {
   const separator = args.indexOf('--');
-  return (separator === -1 ? args : args.slice(0, separator)).some((arg) => arg === '--run' || arg === '--next' || arg.startsWith('--run='));
+  return (separator === -1 ? args : args.slice(0, separator)).some((arg) => arg === '--run' || arg === '--next' || arg === '--verify' || arg.startsWith('--run='));
 }
 
 function parseDriverArgs(args) {
@@ -151,6 +152,7 @@ function readInput(raw) {
 
 async function next(parsed) {
   if (!parsed.state) throw new UsageError('--next requires --state <file>.');
+  bindStateSession(parsed.state);
   // Serialize replies, including review subprocess completion, before reading the cached transition.
   try { readRunState(parsed.state); } catch { return advanceLocked(parsed); }
   const lock = `${path.resolve(parsed.state)}.advance.lock`;
@@ -197,6 +199,13 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
   try {
     const parsed = parseDriverArgs(argv);
     let action;
+    if (parsed.verify) {
+      if (parsed.run !== undefined || parsed.next || parsed.input !== undefined) throw new UsageError('--verify takes only --state.');
+      if (!parsed.state) throw new UsageError('--verify requires --state <file>.');
+      const { runVerification } = await import('./verify-run.mjs');
+      stdout.write(`${JSON.stringify(runVerification(parsed.state))}\n`);
+      return 0;
+    }
     if (parsed.next) {
       if (parsed.run !== undefined) throw new UsageError('--run and --next are exclusive.');
       action = await next(parsed);

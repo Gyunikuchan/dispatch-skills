@@ -51,8 +51,25 @@ export function ruling(state, key, decision, reason, status = 'resolved') {
   state.ordinary.rulings ??= [];
   state.ordinary.rulings.push(data);
 }
+const cell = value => String(value ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+/** Readable RED gate evidence: reviewers inspect this table, not the JSON run state. */
+function redMatrix(ordinary) {
+  const rows = (ordinary.redValidated?.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '))
+    .map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean);
+  if (!rows.length) return [];
+  const observed = (ordinary.redResults ?? []).map(result => `\`${cell(result.ran ?? result.command)}\` exit ${result.exitStatus}${result.fail !== undefined ? `, ${result.fail} failing` : ''}`).join('; ');
+  return ['### RED matrix', `Host RED run: ${observed || 'not recorded'}.`, '', '| Criterion | Test | Expected failure |', '| --- | --- | --- |',
+    ...rows.map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${cell(failure)} |`), ''];
+}
+function replaceVerification(text, lines) {
+  // NOTE: a host-authored walkthrough may use CRLF; an LF-only match would silently skip the rewrite.
+  return text.replace(/## Verification & Validation\r?\n[\s\S]*?\r?\n## Outcome Traceability/, () => `## Verification & Validation\n${lines.join('\n')}\n\n## Outcome Traceability`);
+}
 function renderValidatedEvidence(text, ordinary) {
-  if (!ordinary?.implementationComplete || !ordinary.completionResults) return text;
+  const matrix = ordinary ? redMatrix(ordinary) : [];
+  if (!ordinary?.implementationComplete || !ordinary.completionResults) {
+    return matrix.length ? replaceVerification(text, [...matrix, 'Completion evidence pending.']) : text;
+  }
   const records = ordinary.completionResults.flatMap(result => result.criterionEvidence ?? []);
   const trace = ordinary.criteria.map(criterion => {
     const row = ordinary.envelope?.evidence?.find(item => typeof item === 'string' && item.startsWith(`CRITERION ${criterion.id} |`));
@@ -63,9 +80,8 @@ function renderValidatedEvidence(text, ordinary) {
     return `- [${criterion.id}] ${parts[1]} — production path: \`${parts[2]}\`; evidence: ${fresh}.`;
   });
   const manual = records.map(item => `- [${item.criterionId}] ${item.evidenceClass}; reviewer: ${item.reviewer}; scenario: ${item.scenario}; inspected revision: ${item.inspectedRevision}; observable result: ${item.observableResult}; limitations: ${item.limitations}; mutation epoch: ${item.mutationEpoch}.`);
-  text = text.replace(/## Outcome Traceability\n[\s\S]*?\n## Key Deviations/, `## Outcome Traceability\n${trace.join('\n')}\n\n## Key Deviations`);
-  text = text.replace(/## Verification & Validation\n[\s\S]*?\n## Outcome Traceability/, `## Verification & Validation\n### Manual Verification\n${manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.'}\n\n## Outcome Traceability`);
-  return text;
+  text = text.replace(/## Outcome Traceability\r?\n[\s\S]*?\r?\n## Key Deviations/, () => `## Outcome Traceability\n${trace.join('\n')}\n\n## Key Deviations`);
+  return replaceVerification(text, [...matrix, '### Manual Verification', manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.']);
 }
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;

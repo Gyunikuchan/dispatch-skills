@@ -13,8 +13,8 @@ describe("v0.5 RED and failure disposition", () => {
     const c = read("skills/dispatch/references/verbs/implement.md");
     assert.match(c, /tests-only write subagent/);
     assert.match(c, /matrix row per red criterion/);
-    assert.match(c, /host observe the expected failure/);
-    assert.match(c, /risk-heavy/i);
+    assert.match(c, /driver observes the expected failure/);
+    assert.match(c, /At `high` and above, RED receives one bounded independent read-delegate check/);
   });
   it("keeps failure preservation and explicit rulings", () => {
     const c = read("skills/dispatch/references/verbs/implement.md");

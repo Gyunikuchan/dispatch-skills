@@ -21,7 +21,7 @@ membership and effective model/effort; this file defines provider mechanics and 
 ### Shared runner boundary
 
 Every runner strips credentials from the delegate environment, applies the sensitive-file prompt
-guardrail, enforces provider-specific read-only controls, and writes session logs under OS temp.
+guardrail, enforces provider-specific read-only controls, and writes logs to the run's OS-temp session directory.
 These are defense-in-depth controls, not a complete secret boundary.
 
 ## Provider mechanics

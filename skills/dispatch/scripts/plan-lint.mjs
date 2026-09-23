@@ -1,5 +1,6 @@
 import {
   extractActionHeadingRecords,
+  extractGeneratedPaths,
   normalizePlanPath,
   structuralLines,
 } from './plan-structure.mjs';
@@ -82,6 +83,9 @@ export function lintPlan(source) {
   }
 
   for (const record of records) if (record.path && EXCLUDED_CHANGE_PATH.test(record.path)) defects.push(excludedPathDefect(record.line, record.path));
+  for (const generated of extractGeneratedPaths(source)) {
+    if (!generated.command) defects.push(diagnostic('generated-command', generated.line, 'A [GENERATED] path requires a "- Command: `<generator>`" bullet.'));
+  }
 
   if (criteria.length === 1) {
     const { start, end } = criteria[0];

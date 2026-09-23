@@ -63,6 +63,7 @@ import {
   validateConfig,
 } from './config.mjs';
 import { normalizePin, parsePins, resolveFlow } from './resolve-flow.mjs';
+import { consumeSessionFlag, sessionTempDir } from './session-temp.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -1115,10 +1116,12 @@ function loadValidConfigOrExit() {
 export async function main() {
   // Driver entry points are flags, not subcommands, so a prompt starting with "run" stays a prompt.
   // Checked before importing so plain `ask` runs never load the driver's review stack.
+  // Host-run argv carries its session explicitly: a fresh shell does not inherit the driver's env.
+  process.argv = [...process.argv.slice(0, 2), ...consumeSessionFlag(process.argv.slice(2))];
   const args = process.argv.slice(2);
   const driverSeparator = args.indexOf('--');
   const head = driverSeparator === -1 ? args : args.slice(0, driverSeparator);
-  if (head.some((arg) => arg === '--run' || arg === '--next' || arg.startsWith('--run='))) {
+  if (head.some((arg) => arg === '--run' || arg === '--next' || arg === '--verify' || arg.startsWith('--run='))) {
     const driver = await import('./driver/index.mjs');
     process.exit(await driver.runDriver(args));
   }
@@ -1374,7 +1377,7 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
     batch = wave;
   }
 
-  const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-slots-'));
+  const reportDir = sessionTempDir('dispatch-slots-');
   let envelope;
   try {
     envelope = await dispatchBatch(batch, {

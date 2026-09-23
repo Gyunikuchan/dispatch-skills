@@ -133,17 +133,17 @@ describe('telemetry', () => {
       encoding: 'utf8', env, timeout: 30000,
     });
     assert.notEqual(run.status, 0);
-    assert.equal(fs.existsSync(path.join(tmp, 'dispatch-telemetry-tel-test')), false);
+    assert.equal(fs.existsSync(path.join(tmp, 'dispatch-skills-tel-test', 'telemetry')), false);
   });
 
   it('sanitizes the username in the default path', () => {
     process.env.USER = '../ev il/..';
     const file = telemetryPath();
-    assert.equal(path.dirname(file), path.join(os.tmpdir(), 'dispatch-telemetry-.._ev_il_..'));
+    assert.equal(path.dirname(file), path.join(os.tmpdir(), 'dispatch-skills-.._ev_il_..', 'telemetry'));
     assert.equal(path.basename(file), 'telemetry.jsonl');
     for (const value of ['..', '.']) {
       process.env.USER = value;
-      assert.equal(path.dirname(telemetryPath()), path.join(os.tmpdir(), 'dispatch-telemetry-unknown'));
+      assert.equal(path.dirname(telemetryPath()), path.join(os.tmpdir(), 'dispatch-skills-unknown', 'telemetry'));
     }
   });
 });

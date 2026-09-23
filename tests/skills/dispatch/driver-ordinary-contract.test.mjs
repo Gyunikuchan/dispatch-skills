@@ -70,7 +70,7 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
     const testsOnly = result.trace.find(action => action.action === 'delegate-write');
-    assert.match(testsOnly.fields.promptPath, /dispatch-driver/);
+    assert.match(testsOnly.fields.promptPath, /[\\/]sessions[\\/]/);
     const prompt = fs.readFileSync(testsOnly.fields.promptPath, 'utf8');
     assert.equal(testsOnly.fields.promptHash, `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`);
     assert.match(testsOnly.guidance.join(' '), /Read .* fully/);
@@ -101,7 +101,7 @@ describe('ordinary driver canonical contracts', () => {
       },
       delegateWrite(action) {
         assert.equal(action.fields.stage, 'production');
-        packet = action.fields.packet;
+        packet = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8')).packet;
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
         return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
@@ -171,14 +171,13 @@ describe('ordinary driver canonical contracts', () => {
       verify(action) {
         // The aggregate command belongs to a verify-class criterion, not a red one; it also goes RED
         // during the tests-only mutation, and must not be checked for RED identity or admitted defects.
-        if (action.commands[0] === 'npm test') {
-          const failing = action.purpose === 'red';
-          return { results: [{ command: 'npm test', exit: failing ? 1 : 0, evidence: failing ? 'unrelated aggregate failure' : 'ok',
-            identifiers: failing ? ['error:aggregate-unrelated'] : [], diagnostic: failing ? 'unrelated aggregate diagnostic' : '',
-            scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch,
-            ...(action.purpose === 'completion' ? { criterionEvidence: [{ criterionId: 'SC2', evidenceClass: 'verify', reviewer: 'host', scenario: 'run the aggregate suite', inspectedRevision: action.scopeHash, observableResult: 'suite green', limitations: 'covers mapped aggregate only', mutationEpoch: action.mutationEpoch }] } : {}) }] };
-        }
-        return policies(fixture.repo).verify(action);
+        assert.ok(action.purpose !== 'red' || !action.commands.includes('npm test'), 'RED runs only red-mapped commands');
+        const base = policies(fixture.repo).verify(action);
+        if (!action.commands.includes('npm test')) return base;
+        const scopeHash = action.scopeHashes['npm test'];
+        base.results = base.results.map(item => item.command !== 'npm test' ? item : { command: 'npm test', exit: 0, evidence: 'ok', identifiers: [], diagnostic: '', scopeHash, mutationEpoch: action.mutationEpoch,
+          ...(action.purpose === 'completion' ? { criterionEvidence: [{ criterionId: 'SC2', evidenceClass: 'verify', reviewer: 'host', scenario: 'run the aggregate suite', inspectedRevision: scopeHash, observableResult: 'suite green', limitations: 'covers mapped aggregate only', mutationEpoch: action.mutationEpoch }] } : {}) });
+        return base;
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
@@ -240,8 +239,10 @@ describe('ordinary driver canonical contracts', () => {
     assert.deepEqual(validateAgainstSchema(loadSchema('delegate-write'), production), []);
     const missingCriteria = structuredClone(production); delete missingCriteria.fields.criteria;
     assert.ok(validateAgainstSchema(loadSchema('delegate-write'), missingCriteria).length);
-    const nullPacket = structuredClone(production); nullPacket.fields.packet = null;
-    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), nullPacket).length);
+    const inlinePacket = structuredClone(production); inlinePacket.fields.packet = JSON.parse(fs.readFileSync(production.fields.promptPath, 'utf8')).packet;
+    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), inlinePacket).length, 'production relays the brief by path, never inline');
+    const noPrompt = structuredClone(production); delete noPrompt.fields.promptPath;
+    assert.ok(validateAgainstSchema(loadSchema('delegate-write'), noPrompt).length);
     const testsOnly = structuredClone(production); testsOnly.fields.stage = 'tests-only'; testsOnly.fields.launch = 'tests-only'; testsOnly.fields.packet = null;
     testsOnly.fields.criteria[0].evidence = 'verify';
     assert.ok(validateAgainstSchema(loadSchema('delegate-write'), testsOnly).length);
@@ -407,7 +408,7 @@ describe('ordinary driver canonical contracts', () => {
     const fixture = setup(); let testWaves = 0, testsWritten = false;
     const base = policies(fixture.repo);
     const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'RED lacks a negative assertion.' });
-    const result = run(fixture, { policy: {
+    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
       delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
       // Only the first wave after the tests-only write is the RED test review.
       waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
@@ -518,15 +519,33 @@ describe('ordinary driver canonical contracts', () => {
     assert.doesNotMatch(resumed.stderr + JSON.stringify(parsed), /Task already dispatched/);
   });
 
-  it('production delegate-write guidance names CRITERION rows and the inspectedRevision rule (SC4)', () => {
+  it('production guidance names CRITERION rows; judged verify guidance names the inspectedRevision rule (SC4)', () => {
     const fixture = setup();
-    let production;
-    const result = run(fixture, { onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action; } });
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('Evidence: red', 'Evidence: verify')
+      .replace('Behavioral failure isolates the sample outcome and protects its regression.', 'A retained pre-change test would add no signal beyond the mapped deterministic check.'));
+    let production, completion;
+    const base = policies(fixture.repo);
+    const result = run(fixture, {
+      onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action; if (action.action === 'verify' && action.purpose === 'completion') completion ??= action; },
+      policy: {
+        delegateWrite(action) {
+          fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+          fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+        },
+        askUser(action) { return action.question === 'approval' ? { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } } : base.askUser(action); },
+        verify(action) {
+          const reply = base.verify(action);
+          if (action.purpose === 'completion') reply.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
+          return reply;
+        },
+      },
+    });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    const guidance = production.guidance.join(' ');
-    assert.match(guidance, /CRITERION\s+SC#\s*\|/, 'guidance must name the CRITERION SC# | <paths> | <behavior> envelope row format');
+    assert.match(production.guidance.join(' '), /CRITERIONs+SC#s*|/, 'guidance must name the CRITERION SC# | <paths> | <behavior> envelope row format');
+    const guidance = completion.guidance.join(' ');
     assert.match(guidance, /inspectedRevision/, 'guidance must name the inspectedRevision field');
-    assert.match(guidance, /scopeHash/, 'guidance must state that inspectedRevision equals the emitted scopeHash');
+    assert.match(guidance, /scopeHash/, 'guidance must state that inspectedRevision equals the summary scopeHash');
   });
 
   it('rejects a RED-MATRIX row whose test identifier contains a semicolon at admission (SC4)', () => {
@@ -700,6 +719,31 @@ describe('ordinary driver friction relief', () => {
     assert.equal(postReviewCalls, 2);
     assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition').map(([, decision]) => decision), ['inspect-first', 're-verify']);
   });
+  it('retries in-segment after a failure, carrying the ruling to the next writer', () => {
+    const fixture = setup(); let testsOnlyWrites = 0;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      // The first tests-only write claims RED without changing the test, so the host observes GREEN.
+      delegateWrite(action) {
+        if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        return base.delegateWrite(action);
+      },
+      askUser(action) {
+        if (action.question === 'failure-disposition') {
+          assert.match(action.text, /"retry"/);
+          return { answer: { decision: 'retry', reason: 'The test was never changed.', context: 'Write the failing value=2 assertion.' } };
+        }
+        return base.askUser(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const writes = result.trace.filter(action => action.action === 'delegate-write');
+    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
+    assert.match(writes[1].fields.continuation.defects[0], /Retry after failure: .*Ruling: Write the failing value=2 assertion\./);
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.events.filter(event => event.type === 'run-start').length, 1, 'retry continues the same segment');
+    assert.deepEqual(ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]).at(-1), ['failure-disposition', 'retry']);
+  });
   it('refuses re-verify for a failure that host evidence did not raise', () => {
     const fixture = setup(); let error = null, offered = null;
     const base = policies(fixture.repo);
@@ -720,7 +764,7 @@ describe('ordinary driver friction relief', () => {
     const fixture = setup(); let testWaves = 0, testsWritten = false;
     const base = policies(fixture.repo);
     const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Could also assert the zero case.' });
-    const result = run(fixture, { policy: {
+    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
       delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
       waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
       rule: () => ({ status: 'accepted', severity: 'CONSIDER', tag: 'test-gap' }),
@@ -728,14 +772,14 @@ describe('ordinary driver friction relief', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     const writes = result.trace.filter(action => action.action === 'delegate-write');
     assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'production']);
-    assert.deepEqual(writes[1].fields.packet.reviewFindings.map(item => [item.severity, item.tag]), [['CONSIDER', 'test-gap']]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(writes[1].fields.promptPath, 'utf8')).packet.reviewFindings.map(item => [item.severity, item.tag]), [['CONSIDER', 'test-gap']]);
     assert.match(writes[1].guidance.join(' '), /packet\.reviewFindings/);
   });
   it('carries a second-round accepted test-gap finding to the production writer instead of stopping', () => {
     const fixture = setup(); let testWaves = 0, testsWritten = false;
     const base = policies(fixture.repo);
     const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'No negative-path coverage.' });
-    const result = run(fixture, { policy: {
+    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
       delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
       waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
       rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'test-gap' }),
@@ -743,18 +787,56 @@ describe('ordinary driver friction relief', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     const writes = result.trace.filter(action => action.action === 'delegate-write');
     assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
-    assert.deepEqual(writes[2].fields.packet.reviewFindings.map(item => [item.severity, item.tag]), [['MUST', 'test-gap']]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(writes[2].fields.promptPath, 'utf8')).packet.reviewFindings.map(item => [item.severity, item.tag]), [['MUST', 'test-gap']]);
   });
   it('still stops on a second-round accepted finding that is not a coverage gap', () => {
     const fixture = setup(); let testWaves = 0, testsWritten = false;
     const base = policies(fixture.repo);
     const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Assertion checks the wrong export.' });
-    const result = run(fixture, { policy: {
+    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
       delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
       waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
       rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'correctness' }),
     } });
     assert.equal(result.done.outcome, 'stable-failure', JSON.stringify(result.done));
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'tests-only']);
+  });
+});
+
+describe('driver-run verification', () => {
+  it('runs every gate and plan generator on the driver, logs to the session, and extracts real failure identities', () => {
+    const fixture = setup();
+    fs.writeFileSync(path.join(fixture.repo.dir, 'gen.mjs'), "import fs from 'node:fs';\nfs.writeFileSync('gen.txt', 'generated');\n");
+    fixture.repo.git('add', 'gen.mjs'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'generator');
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('## Verification Plan', '#### [GENERATED] gen.txt\n\n- Command: `node gen.mjs`\n\n## Verification Plan'));
+    const base = policies(fixture.repo);
+    const verifies = [];
+    const result = run(fixture, { onAction(action) { if (action.action === 'verify') verifies.push(action); }, policy: {
+      realVerify: true,
+      delegateWrite(action) {
+        const testsOnly = action.fields.stage === 'tests-only';
+        if (testsOnly) fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { value } from '../src/app.js';\ntest('sample', () => { assert.equal(value, 2); });\n");
+        else fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+        return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      },
+      verify: () => undefined,
+      askUser: base.askUser,
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(verifies.map(action => action.purpose), ['baseline', 'red', 'completion']);
+    for (const action of verifies) {
+      assert.deepEqual(action.argv.slice(-3, -1), ['--verify', '--state']);
+      const record = JSON.parse(fs.readFileSync(action.resultsPath, 'utf8'));
+      assert.equal(record.purpose, action.purpose);
+      for (const item of record.results) assert.ok(fs.existsSync(item.logPath) && /[\\/]sessions[\\/]/.test(item.logPath), item.logPath);
+    }
+    const completion = JSON.parse(fs.readFileSync(verifies[2].resultsPath, 'utf8'));
+    assert.deepEqual(completion.generated.map(item => [item.exit, item.changed, item.outside]), [[0, ['gen.txt'], []]]);
+    assert.equal(fs.readFileSync(path.join(fixture.repo.dir, 'gen.txt'), 'utf8'), 'generated');
+    const red = JSON.parse(fs.readFileSync(verifies[1].resultsPath, 'utf8')).results[0];
+    assert.equal(red.exit, 1);
+    assert.deepEqual(red.identifiers, ['test:sample']);
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.deepEqual(ledger.events.find(event => event.type === 'verification' && event.data.result === 'red').data.failureIdentity.identifiers, ['test:sample']);
   });
 });
