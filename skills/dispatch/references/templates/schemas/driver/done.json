@@ -67,6 +67,30 @@
     "artifactPath": {
       "type": "string"
     },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceKey", "text"],
+        "properties": {
+          "sourceKey": { "type": "string", "minLength": 1 },
+          "text": { "type": "string" }
+        }
+      }
+    },
+    "failed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceKey", "kind"],
+        "properties": {
+          "sourceKey": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
     "ledgerPath": {
       "type": "string",
       "minLength": 1

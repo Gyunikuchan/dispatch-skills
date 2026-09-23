@@ -130,11 +130,14 @@ Use this path after `NO_DISPATCH_AVAILABLE`, a pinned non-zero result, an empty 
 runner failure. Configuration, integrity, membership, and `--no-config` errors are terminal:
 report the exact diagnostic instead.
 
-1. Identify the failed target and orchestrator platforms. Resolve concrete effective `model` and
-   `reasoningEffort`; exclude and re-resolve a source whose cascade cannot identify them.
-2. Emit a closed descriptor containing `sourceKey`, `agentType`, `model`, `reasoningEffort`, and
-   `substitutesFor`, then pass it unchanged to the native launcher. Matching platforms use the
-   host's native read-only subagent; differing platforms use this map:
+1. Identify the failed target and orchestrator platforms. The driver resolves the failed target's
+   own `model` array from `state.policy` targets/reserves by `(platform, candidateIndex)` — never
+   from a batch record, whose `model` is `null` for an array candidate — and walks it one model at
+   a time from index 0. Exclude and re-resolve a source whose cascade cannot identify a model.
+2. Emit a closed descriptor containing `sourceKey`, `agentType`, `model`, `reasoningEffort`,
+   `substitutesFor`, `cascadePosition` (the model's index), and `modelCascade` (the full array),
+   then pass it unchanged to the native launcher. Matching platforms use the host's native
+   read-only subagent; differing platforms use this map:
 
    | Failed platform | Native subagent |
    |---|---|
@@ -150,7 +153,10 @@ report the exact diagnostic instead.
 3. Treat fallback as a transport replacement, not a reduced review. Capture the complete final response in the failed slot's `dispatch.outputPath` (or its named
    stdout-result channel). Record the actual `agentType`, `model`, and `reasoningEffort`; reject
    missing or mismatched launch metadata. Preserve source identity, `substitutesFor`, and the
-   fallback reason through `source-map.mjs --extra`.
+   fallback reason through `source-map.mjs --extra`. A hop can instead reply `failed: {kind, reason}`
+   using the kinds above; the driver advances `cascadePosition` to the next model in `modelCascade`
+   and re-emits `native-fallback`, or, once the cascade is exhausted, drops the source and continues
+   without it.
 4. Run the unchanged parsing, sanitization, verification, adjudication, ruling, and consensus pipeline through artifact update and checkpoint. A clean fallback participates like a clean direct report; an invalid
    fallback remains failed.
 
@@ -164,11 +170,12 @@ channel, the caller has processed it through the same pipeline as a direct resul
 source metadata and reason are recorded.
 
 For an orchestrated multi-dispatch review wave, the launch action precomputes same-platform
-fallback descriptors. Inspect streamed terminal slot lines once 5 seconds after launch and start
-all matching failures as parallel native fallbacks while the wave continues; never poll again.
-A matching failure first observed after that inspection takes the native branch after the wave.
-Other targets may use ordered reserves before step 3; use each reserve at most once per wave and
-record `<failed target> → <reserve>: <reason>`.
+fallback descriptors at `cascadePosition: 0` (the target's first model). After launch, run
+`node dispatch.mjs --slots <slotsPath>` once and inspect the failed slots it prints; start all
+matching failures as parallel native fallbacks while the wave continues, then never poll again.
+A matching failure first observed after that inspection starts the native branch at
+`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1`. Other targets may use ordered reserves before step 3; use
+each reserve at most once per wave and record `<failed target> → <reserve>: <reason>`.
 
 ## Integrity and diagnosis
 

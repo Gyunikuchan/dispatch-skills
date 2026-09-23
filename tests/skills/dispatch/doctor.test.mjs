@@ -24,7 +24,7 @@ const CONFIG = {
   },
 };
 
-const ASK_ONLY = { 'read-delegates': { claude: { model: 'claude-opus-5' }, agy: { model: 'gemini-3.8-flash' } } };
+const ASK_ONLY = { 'read-delegates': { claude: { model: 'claude-opus-5', effort: 'medium' }, agy: { model: 'gemini-3.8-flash', effort: 'medium' } } };
 
 function mockProbes(live = {}) {
   for (const [name, provider] of [

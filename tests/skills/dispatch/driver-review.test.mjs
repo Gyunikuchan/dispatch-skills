@@ -61,7 +61,7 @@ describe('review kind inference (design order 1–6)', () => {
 });
 
 describe('review level resolution (raise rule)', () => {
-  const config = (phase) => ({ 'read-delegates': { agy: { model: 'm' } }, phases: { 'plan-review': phase } });
+  const config = (phase) => ({ 'read-delegates': { agy: { model: 'm', effort: 'medium' } }, phases: { 'plan-review': phase } });
   const highOnly = { rounds: { low: 0, medium: 0, high: 2, xhigh: 2, max: 2 }, targets: ALL(1), consensus: ALL(false) };
 
   it('raises a classified level to the lowest level that enables the phase', () => {
@@ -117,7 +117,7 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('maps each kind to its <kind>-review phase and reports configured:false when absent', () => {
-    const cfg = { 'read-delegates': { agy: { model: 'm' } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
+    const cfg = { 'read-delegates': { agy: { model: 'm', effort: 'medium' } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
     assert.equal(resolveReviewLevel({ config: cfg, kind: 'code', level: 'medium', levelSource: 'default' }).phase, 'code-review');
     const design = resolveReviewLevel({ config: cfg, kind: 'design', level: 'medium', levelSource: 'default' });
     assert.equal(design.phase, 'design-review');

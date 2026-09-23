@@ -66,17 +66,55 @@ function startTask(state, launch) {
 function target(data) {
   return { platform: data.write.platform, model: data.write.models[data.write.candidate], ...(data.write.effort ? { effort: data.write.effort } : {}) };
 }
-export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
+// Terminal transport failure kinds (providers.md § Failure classification / Native fallback):
+// configuration, integrity, and sandbox-rejection errors never cascade to another configured model.
+const TERMINAL_WRITE_KINDS = new Set(['sandbox-unsupported', 'integrity']);
+
+function writeHistoryLine(history) {
+  return history.map(({ model, kind }) => `${model} (${kind})`).join(', ');
+}
+
+/** Ends the segment on a terminal write-cascade failure or cascade exhaustion; never asks the user. */
+function blockedWrite(state, reason) {
   const data = state.ordinary;
+  data.failure = { reason, failureSnapshot: snapshot(state) };
+  return emitAction(state, 'done', { outcome: 'failed', summary: reason, ledgerPath: state.ledgerPath, command: state.resumeCommand });
+}
+
+/** A `rejected` or `failed` reply is a transport hop: it advances the model cascade without
+ * consuming an implementation attempt. A `failed` hop's partial diff is inspected for out-of-scope
+ * paths before the next hop, which restores them and carries a continuation note. */
+function advanceWriteCascade(state, reply) {
+  const data = state.ordinary;
+  const write = data.write;
+  const failedModel = write.models[write.candidate];
+  data.writeHistory ??= [];
   if (reply.rejected) {
     data.launchRejections ??= [];
     data.launchRejections.push({ target: target(data), reason: reply.reason });
-    if (data.write.candidate + 1 < data.write.models.length) {
-      data.write.candidate++;
-      return writeAction(state);
+    data.writeHistory.push({ model: failedModel, kind: 'rejected' });
+  } else {
+    const { kind, reason } = reply.failed;
+    data.writeHistory.push({ model: failedModel, kind });
+    if (TERMINAL_WRITE_KINDS.has(kind)) {
+      return blockedWrite(state, `Write cascade terminated: ${failedModel} failed with terminal kind "${kind}": ${reason}. Models tried: ${writeHistoryLine(data.writeHistory)}.`);
     }
-    return openFailure(state, 'Configured write model cascade exhausted.');
+    const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
+    const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
+    const outside = changed.filter(file => !allowed.includes(file));
+    data.pendingRestore = outside.length ? { baseline: write.baselineHead, paths: outside } : null;
+    data.pendingCascadeContinuation = { kind: 'cascade', failedModel, failureKind: kind };
   }
+  if (write.candidate + 1 < write.models.length) {
+    write.candidate++;
+    return writeAction(state);
+  }
+  return blockedWrite(state, `Configured write model cascade exhausted. Models tried: ${writeHistoryLine(data.writeHistory)}.`);
+}
+
+export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
+  const data = state.ordinary;
+  if (reply.rejected || reply.failed) return advanceWriteCascade(state, reply);
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
   const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
   if (changed.some(file => !allowed.includes(file))) return openFailure(state, 'Delegate changed paths outside its approved write scope.');

@@ -8,7 +8,8 @@
  * - "read-delegates" (required): the one candidate table for asks and every review. Each platform
  *   maps to a candidate or an ordered candidate array; a candidate sets `model`, `effort`, and
  *   `sandbox` (Claude and Copilot only), plus optional level overrides of those fields (an object
- *   or a candidate array). Missing platforms are not cascade members.
+ *   or a candidate array). Missing platforms are not cascade members. `effort` is required: any
+ *   candidate or level override naming a `model` must also resolve a non-blank `effort`.
  * - "write-subagents" (optional): native write subagents, selected by the host platform; never
  *   dispatched. Each entry is one object whose `model` is a string or an ordered fallback array,
  *   with `effort` and object-only level overrides. A missing entry fails the implement flow.
@@ -64,6 +65,7 @@
       },
       {
         "model": "lmstudio/qwen3.8-27b-ridge",
+        "effort": "medium",
       },
     ],
   },

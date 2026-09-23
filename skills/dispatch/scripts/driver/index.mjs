@@ -16,11 +16,12 @@ import { createRunState } from './state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
+import { advanceAsk, startAsk } from './ask-phase.mjs';
 import { save } from './ordinary-state.mjs';
 import { readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
 
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
-const VERBS = ['plan', 'design', 'review', 'implement'];
+const VERBS = ['plan', 'design', 'review', 'implement', 'ask'];
 const LEVEL_SOURCES = ['explicit', 'classified'];
 const VALUE_FLAGS = new Set([
   '--run', '--state', '--input', '--kind', '--phases', '--orchestrator', '--orchestrator-model',
@@ -91,7 +92,7 @@ function normalizeRun(parsed) {
   if (!VERBS.includes(parsed.run)) throw new UsageError(`--run must be one of ${VERBS.join('|')}.`);
   if (parsed.state || parsed.input !== undefined) throw new UsageError('--state and --input belong to --next.');
   if (parsed.phases !== undefined && parsed.run !== 'implement') throw new UsageError('--phases is not accepted by this run.');
-  if (['plan', 'design', 'implement'].includes(parsed.run) && !parsed.argument?.trim()) throw new UsageError(`${parsed.run} requires an ask or canonical artifact path after --.`);
+  if (['plan', 'design', 'implement', 'ask'].includes(parsed.run) && !parsed.argument?.trim()) throw new UsageError(`${parsed.run} requires an ask or canonical artifact path after --.`);
   if (parsed.phases !== undefined && !/^from:(?:plan|plan-review|baseline|implementation|code-review|handoff)$/.test(parsed.phases)) throw new UsageError('--phases requires exactly one from:<ordinary-phase>.');
   if (!parsed.orchestrator) throw new UsageError('--run requires --orchestrator <platform>.');
   if (parsed.kind !== undefined && !KIND_NAMES.includes(parsed.kind)) {
@@ -175,6 +176,7 @@ function advanceLocked(parsed) {
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
+  if (state.invocation?.verb === 'ask') return advanceAsk(state, checked.value);
   if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value);
   if (state.designPath) return advanceImplement(state, checked.value);
   return ['implement', 'plan'].includes(state.invocation?.verb)
@@ -205,6 +207,8 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, resumeDesignPath(state));
+      } else if (invocation.verb === 'ask') {
+        action = await startAsk({ invocation, cwd, resumeCommand: resumeCommand(invocation) });
       } else {
         action = ['implement', 'plan'].includes(invocation.verb)
           ? await startImplement({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) })

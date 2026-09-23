@@ -396,6 +396,7 @@ function prepareWave(state, type, rebuttal = null) {
     .filter((target) => target.platform === state.invocation.orchestrator && target.model && target.effort)
     .map((target, index) => {
       const sourceKey = `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
+      const modelCascade = Array.isArray(target.model) ? target.model : [target.model];
       return {
         slot: sourceKey,
         promptPath: manifest.promptPath,
@@ -403,18 +404,22 @@ function prepareWave(state, type, rebuttal = null) {
         descriptor: {
           sourceKey,
           agentType: NATIVE_AGENT_TYPES[target.platform] ?? 'explore',
-          model: target.model,
+          model: modelCascade[0],
           reasoningEffort: target.effort,
           substitutesFor: null,
+          cascadePosition: 0,
+          modelCascade,
         },
       };
     });
+  const slotsPath = runFile(state, 'slots.jsonl');
   state.wave = {
     type,
     round,
-    argv: [...manifest.dispatch.argv, '--level', state.level],
+    argv: [...manifest.dispatch.argv, '--level', state.level, '--slots-file', slotsPath],
     outputPath: manifest.dispatch.outputPath,
     promptPath: manifest.promptPath,
+    slotsPath,
     earlyFallbacks,
     retried: false,
     keys: rebuttal?.keys ?? null,
@@ -436,7 +441,7 @@ function launchReplyAction(state, error) {
 function launchAction(state, error) {
   const guidance = state.wave.earlyFallbacks.length > 0
     ? [
-      'Run argv as one background command. After exactly 5 seconds, inspect its streamed slot lines once; do not poll again.',
+      'Run argv as one background command. Once, run `node dispatch.mjs --slots <slotsPath>` after launch and inspect the failed slots it prints; do not poll again.',
       'For every failed slot matching earlyFallbacks, immediately launch its native fallback in one parallel tool-call round while the wave continues.',
       'Return only successful non-empty captures with exact descriptor metadata. Omit an unproductive launch so ordinary post-wave fallback can retry it.',
       'After the wave and launched fallbacks finish, call --next once with {"earlyFallbacks":[...]} (empty when none succeeded).',
@@ -448,6 +453,7 @@ function launchAction(state, error) {
   return emitAction(state, 'launch', {
     argv: state.wave.argv,
     wave: { type: state.wave.type, round: state.wave.round },
+    ...(state.wave.slotsPath ? { slotsPath: state.wave.slotsPath } : {}),
     ...(state.wave.keys ? { keys: state.wave.keys } : {}),
     ...(state.wave.earlyFallbacks.length > 0 ? { earlyFallbacks: state.wave.earlyFallbacks } : {}),
     ...(error ? { error } : {}),
@@ -501,17 +507,24 @@ function onLaunch(state, reply) {
       ...[...earlyBySlot].map(([sourceKey, fallback]) => ({ sourceKey, text: fallback.text, fallback: true })),
     ],
     sourceMap,
-    queue: unresolved.map((failure) => ({
-      sourceKey: failure.sourceKey,
-      platform: failure.platform,
-      candidateIndex: failure.candidateIndex,
-      model: failure.model ?? null,
-      effort: failure.effort ?? null,
-      substitutesFor: failure.substitutesFor ?? null,
-    })),
+    // The batch record's own `model` is null for an array candidate; the cascade's model list
+    // always comes from the resolved policy target/reserve for this (platform, candidateIndex).
+    queue: unresolved.map((failure) => cascadeSlot(state, failure, 0)),
     fallbackTried: [...earlyBySlot.keys()],
   };
+  // A same-platform early fallback that ran model[0] and failed resumes the post-wave cascade at
+  // position 1: model[0] is not retried.
+  for (const sourceKey of earlyBySlot.keys()) {
+    const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === sourceKey);
+    if (planned?.descriptor.modelCascade.length > 1) {
+      const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
+      state.collect.queue.push(cascadeSlot(state, failure, 1));
+      state.collect.fallbackTried = state.collect.fallbackTried.filter((key) => key !== sourceKey);
+      delete state.collect.sourceMap[sourceKey];
+    }
+  }
   for (const [sourceKey, fallback] of earlyBySlot) {
+    if (state.collect.queue.some((slot) => slot.sourceKey === sourceKey)) continue; // requeued for cascade continuation above
     const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
     state.collect.sourceMap[sourceKey] = {
       provider: failure?.platform ?? state.invocation.orchestrator,
@@ -528,9 +541,27 @@ function onLaunch(state, reply) {
 
 const NATIVE_AGENT_TYPES = Object.freeze({ claude: 'explore', agy: 'research', copilot: 'explore', opencode: 'explore' });
 
+/** Resolves a failed slot's own model cascade from the policy target/reserve identified by
+ * `(platform, candidateIndex)` — never from the batch failure record, whose `model` is null for
+ * an array candidate. */
+function cascadeSlot(state, failure, cascadePosition) {
+  const match = [...state.policy.targets, ...state.policy.reserves]
+    .find((candidate) => candidate.platform === failure.platform && candidate.candidateIndex === failure.candidateIndex);
+  const models = match?.model ? (Array.isArray(match.model) ? match.model : [match.model]) : (failure.model ? [failure.model] : []);
+  return {
+    sourceKey: failure.sourceKey,
+    platform: failure.platform,
+    candidateIndex: failure.candidateIndex,
+    models,
+    cascadePosition,
+    effort: match?.effort ?? failure.effort ?? null,
+    substitutesFor: failure.substitutesFor ?? null,
+  };
+}
+
 function nativeFallbackAction(state) {
   const slot = state.collect.queue[0];
-  if (!slot.model || !slot.effort) {
+  if (!slot.models[slot.cascadePosition] || !slot.effort) {
     state.collect.queue.shift();
     state.collect.fallbackTried.push(slot.sourceKey);
     return processCollected(state);
@@ -539,16 +570,18 @@ function nativeFallbackAction(state) {
   const descriptor = {
     sourceKey: slot.sourceKey,
     agentType: NATIVE_AGENT_TYPES[slot.platform] ?? 'explore',
-    model: slot.model,
+    model: slot.models[slot.cascadePosition],
     reasoningEffort: slot.effort,
     substitutesFor: slot.substitutesFor,
+    cascadePosition: slot.cascadePosition,
+    modelCascade: slot.models,
   };
   state.collect.current = { ...slot, outputPath, descriptor };
   return emitAction(state, 'native-fallback', { slot: slot.sourceKey, promptPath: state.wave.promptPath, outputPath, descriptor }, [
     'Launch the named read-only native agent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; never use launcher defaults.',
     'Tell the native agent: Read promptPath in full and follow it as the authoritative instructions.',
     'If the launcher cannot accept the configured model or effort, do not launch: re-resolve or exclude this source.',
-    'Write its final reply verbatim to outputPath, then report the actual launch metadata with the captured reply.',
+    'Write its final reply verbatim to outputPath, then report the actual launch metadata with the captured reply, or a {kind, reason} failure.',
   ]);
 }
 
@@ -556,8 +589,21 @@ function onNativeFallback(state, reply) {
   const current = state.collect.current;
   if (reply.slot !== current.sourceKey) return reemit(state, `slot must be ${current.sourceKey}.`);
   const expected = current.descriptor;
+  if (reply.failed) {
+    // A failed hop advances to the next model in this candidate's own cascade; sibling candidates
+    // are never substituted in. Exhaustion drops the slot and records it failed.
+    const nextPosition = current.cascadePosition + 1;
+    if (nextPosition < current.models.length) {
+      state.collect.queue[0] = { ...current, cascadePosition: nextPosition };
+    } else {
+      state.collect.queue.shift();
+      state.collect.fallbackTried.push(current.sourceKey);
+      delete state.collect.sourceMap[current.sourceKey];
+    }
+    return processCollected(state);
+  }
   const actual = reply.actual;
-  if (actual.agentType !== expected.agentType || actual.model !== expected.model || actual.reasoningEffort !== expected.reasoningEffort) {
+  if (!actual || actual.agentType !== expected.agentType || actual.model !== expected.model || actual.reasoningEffort !== expected.reasoningEffort) {
     return reemit(state, `Native fallback launch metadata must match the descriptor exactly; expected ${JSON.stringify({ agentType: expected.agentType, model: expected.model, reasoningEffort: expected.reasoningEffort })}.`);
   }
   state.collect.queue.shift();
@@ -599,14 +645,14 @@ function processCollected(state) {
       delete state.collect.sourceMap[report.sourceKey];
       if (!report.fallback && !state.collect.fallbackTried.includes(report.sourceKey)) {
         const [, , platform, index] = report.sourceKey.split(':');
-        state.collect.queue.push({
+        state.collect.queue.push(cascadeSlot(state, {
           sourceKey: report.sourceKey,
           platform,
           candidateIndex: Number(index),
           model: source.model ?? null,
           effort: source.effort ?? null,
           substitutesFor: source.substitutesFor ?? null,
-        });
+        }, 0));
       }
       continue;
     }

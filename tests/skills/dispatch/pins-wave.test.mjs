@@ -7,10 +7,10 @@ import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from './stu
 // `code-review.only` names claude alone: an ask wave must ignore it (only never narrows ask).
 const CONFIG = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', high: { model: 'claude-fable-5.1' } },
+    claude: { model: 'claude-opus-5', effort: 'medium', high: { model: 'claude-fable-5.1', effort: 'medium' } },
     agy: { model: 'gemini-3.7-flash', effort: 'medium', high: { model: 'gemini-3.8-flash' } },
     copilot: { model: 'gpt-6-astra', effort: 'low' },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge' }],
+    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
   },
   phases: {
     'code-review': { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false }, only: ['claude'] },

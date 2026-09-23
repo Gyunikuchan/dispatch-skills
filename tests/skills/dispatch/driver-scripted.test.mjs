@@ -205,7 +205,7 @@ describe('scripted review paths (SC5)', () => {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         launchReply: (action) => {
           assert.equal(action.earlyFallbacks.length, 1);
-          assert.ok(action.guidance.some((line) => /exactly 5 seconds/i.test(line)));
+          assert.ok(action.guidance.some((line) => /--slots/i.test(line)));
           assert.ok(action.guidance.some((line) => /do not poll again/i.test(line)));
           const [fallback] = action.earlyFallbacks;
           fs.writeFileSync(fallback.outputPath, report([planFinding({ defect: 'early-fallback defect.' })]));
@@ -315,6 +315,8 @@ describe('scripted review paths (SC5)', () => {
             model: 'gemini-3.7-flash',
             reasoningEffort: 'medium',
             substitutesFor: null,
+            cascadePosition: 0,
+            modelCascade: ['gemini-3.7-flash'],
           });
           fs.writeFileSync(action.outputPath, report([planFinding({ defect: 'fallback-found defect.' })]));
           return { slot: action.slot, captured: true, actual: {

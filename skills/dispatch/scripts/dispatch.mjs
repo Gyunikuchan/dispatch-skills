@@ -474,6 +474,17 @@ function slotLine(record, exit, reportDir) {
   });
 }
 
+/** Reads a `--slots-file` NDJSON log and returns only the slots recorded as failed so far. */
+function readFailedSlots(file) {
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line)).filter((record) => record.status !== 'ok');
+}
+
 const PROVIDER_CORRECTIVE_COMMANDS = {
   claude: 'claude auth login',
   agy: 'agy --help',
@@ -1063,7 +1074,7 @@ export function writeDispatchOutput(text, outputFile, { stdout = process.stdout,
   stdout.write(text);
 }
 
-const DISPATCH_VALUE_FLAGS = ['--response-schema-file', '--batch-file', '--output-file', '--level', '--level-source', '--pins'];
+const DISPATCH_VALUE_FLAGS = ['--response-schema-file', '--batch-file', '--output-file', '--level', '--level-source', '--pins', '--slots-file'];
 const LEVEL_SOURCES = ['explicit', 'classified'];
 
 /**
@@ -1111,6 +1122,20 @@ export async function main() {
     const driver = await import('./driver/index.mjs');
     process.exit(await driver.runDriver(args));
   }
+  const slotsIndex = head.indexOf('--slots');
+  if (slotsIndex !== -1) {
+    if (head.length > 2) {
+      console.error('Error: --slots is a read-only inspection mode and cannot be combined with other flags.');
+      process.exit(1);
+    }
+    const slotsFile = head[slotsIndex + 1];
+    if (!slotsFile) {
+      console.error('Error: --slots requires a file path.');
+      process.exit(1);
+    }
+    console.log(JSON.stringify(readFailedSlots(slotsFile)));
+    process.exit(0);
+  }
   const options = parseCommonArgs(process.argv, {
     booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
     valueFlags: DISPATCH_VALUE_FLAGS,
@@ -1125,6 +1150,7 @@ export async function main() {
       '--level': 'level',
       '--level-source': 'levelSource',
       '--pins': 'pins',
+      '--slots-file': 'slotsFile',
     },
   });
   const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
@@ -1133,6 +1159,7 @@ export async function main() {
   const rawLevel = dispatchValues.level ?? null;
   const rawLevelSource = dispatchValues.levelSource ?? null;
   const rawPins = dispatchValues.pins ?? null;
+  const slotsFile = dispatchValues.slotsFile ?? null;
   // NOTE: parseRunnerModeArgs maps an empty value to null, so presence is read from argv; an empty
   // list must not fall through to a plain cascade or silently widen to an `all` wave.
   const optionArgs = process.argv.slice(2);
@@ -1232,6 +1259,15 @@ export async function main() {
       process.exit(1);
     }
   }
+  if (options.model !== null && options.effort === null) {
+    console.error('Error: --model requires --effort.');
+    process.exit(1);
+  }
+
+  if (slotsFile && !batchFile && rawPins === null) {
+    console.error('Error: --slots-file requires --batch-file or --pins.');
+    process.exit(1);
+  }
 
   const pipedStdin = await readStdin();
   let finalPrompt = options.prompt.trim();
@@ -1259,6 +1295,7 @@ export async function main() {
         responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
         promptFile: pipedStdin ? null : options.promptFile,
         outputFile,
+        slotsFile,
       });
       return;
     }
@@ -1308,7 +1345,7 @@ export async function main() {
  * successful report in an OS-temp file, and the full envelope in `--output-file` when given.
  * Exits 0 only when every slot resolved.
  */
-async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, responseSchema, promptFile, outputFile }) {
+async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, responseSchema, promptFile, outputFile, slotsFile = null }) {
   if (batchFile) {
     const conflicts = [];
     if (options.provider !== null) conflicts.push('--provider');
@@ -1347,7 +1384,12 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
       responseSchema,
       configPath: loaded.path,
       promptFile,
-      onSlot: (record, exit) => process.stdout.write(`${slotLine(record, exit, reportDir)}\n`),
+      onSlot: (record, exit) => {
+        process.stdout.write(`${slotLine(record, exit, reportDir)}\n`);
+        if (slotsFile) {
+          fs.appendFileSync(slotsFile, `${JSON.stringify({ slot: record.sourceKey, platform: record.platform, status: record.status, exit, session: record.session })}\n`);
+        }
+      },
     }, loaded.config);
   } finally {
     if (batchFile) fs.rmSync(batch.path, { force: true });

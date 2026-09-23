@@ -17,6 +17,15 @@
     "reason": {
       "type": "string",
       "minLength": 1
+    },
+    "failed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
     }
   },
   "anyOf": [
@@ -34,6 +43,11 @@
       "required": [
         "rejected",
         "reason"
+      ]
+    },
+    {
+      "required": [
+        "failed"
       ]
     }
   ]

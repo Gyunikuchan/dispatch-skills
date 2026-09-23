@@ -397,8 +397,52 @@
                   }
                 }
               }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind",
+                "failedModel",
+                "failureKind"
+              ],
+              "properties": {
+                "kind": {
+                  "const": "cascade"
+                },
+                "failedModel": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "failureKind": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           ]
+        },
+        "restore": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseline",
+            "paths"
+          ],
+          "properties": {
+            "baseline": {
+              "type": "string",
+              "minLength": 1
+            },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     }

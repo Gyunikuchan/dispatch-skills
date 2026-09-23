@@ -35,7 +35,7 @@ const TEST_DISPATCH_CONFIG = {
     opencode: [
       { model: 'opencode-go/glm-5.3-flash', effort: 'max' },
       { model: 'opencode-go/mistral-small', effort: 'max' },
-      { model: 'lmstudio/qwen3.8-27b-ridge' },
+      { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'max' },
     ],
   },
 };
@@ -923,7 +923,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
           opencode: [
             { model: 'glm-5.3-flash', effort: 'max' },
             { model: 'mistral-small', effort: 'max' },
-            { model: 'lmstudio/qwen3.8-27b-ridge' },
+            { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' },
           ],
         },
       };
@@ -947,7 +947,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.deepEqual(calls, [
         { model: 'glm-5.3-flash', effort: 'max' },
         { model: 'mistral-small', effort: 'max' },
-        { model: 'lmstudio/qwen3.8-27b-ridge', effort: null },
+        { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' },
       ]);
     });
 
@@ -956,10 +956,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const multiConfig = {
         'read-delegates': {
           opencode: [
-            { model: 'glm-5.3-flash' },
-            { model: 'mistral-small' },
+            { model: 'glm-5.3-flash', effort: 'medium' },
+            { model: 'mistral-small', effort: 'medium' },
           ],
-          copilot: { model: 'gpt-5.6-luna' },
+          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
         },
       };
 
@@ -1024,7 +1024,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
           prompt: 'Test',
           provider: 'claude',
           candidateIndex: 2,
-          config: { 'read-delegates': { claude: [{ model: 'claude-opus-5' }] } },
+          config: { 'read-delegates': { claude: [{ model: 'claude-opus-5', effort: 'medium' }] } },
           configPath: 'custom.jsonc',
         }),
         /candidate index 2 is out of range/,
@@ -1038,10 +1038,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         'read-delegates': {
-          claude: { model: 'claude-opus-5' },
-          opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }, { model: 'qwen3.8-27b' }],
-          agy: { model: 'gemini-3.8-flash' },
-          copilot: { model: 'gpt-5.6-luna' },
+          claude: { model: 'claude-opus-5', effort: 'medium' },
+          opencode: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }, { model: 'qwen3.8-27b', effort: 'medium' }],
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
         },
       };
 
@@ -1095,11 +1095,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const multiConfig = {
         'read-delegates': {
           claude: [
-            { model: 'claude-opus-5' },
-            { model: 'claude-sonnet-5' },
+            { model: 'claude-opus-5', effort: 'medium' },
+            { model: 'claude-sonnet-5', effort: 'medium' },
           ],
-          agy: { model: 'gemini-3.8-flash' },
-          copilot: { model: 'gpt-5.6-luna' },
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
         },
       };
 
@@ -1140,7 +1140,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
             { model: 'claude-opus-5', effort: 'low' },
             { model: 'claude-sonnet-5', effort: 'high' },
           ],
-          agy: { model: 'gemini-3.8-flash' },
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
         },
       };
 
@@ -1176,10 +1176,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const config = {
         'read-delegates': {
           claude: [
-            { model: 'claude-opus-5' },
-            { model: 'claude-sonnet-5' },
+            { model: 'claude-opus-5', effort: 'medium' },
+            { model: 'claude-sonnet-5', effort: 'medium' },
           ],
-          agy: { model: 'gemini-3.8-flash' },
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
         },
       };
 
@@ -1212,8 +1212,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const config = {
         'read-delegates': {
           claude: [
-            { model: 'claude-opus-5' },
-            { model: 'claude-sonnet-5' },
+            { model: 'claude-opus-5', effort: 'medium' },
+            { model: 'claude-sonnet-5', effort: 'medium' },
           ],
         },
       };
@@ -1247,10 +1247,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const config = {
         'read-delegates': {
           claude: [
-            { model: 'claude-opus-5' },
-            { model: 'claude-sonnet-5' },
+            { model: 'claude-opus-5', effort: 'medium' },
+            { model: 'claude-sonnet-5', effort: 'medium' },
           ],
-          agy: { model: 'gemini-3.8-flash' },
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
         },
       };
 
@@ -1283,8 +1283,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         'read-delegates': {
-          opencode: [{ model: 'glm-5.3-flash' }, { model: 'mistral-small' }],
-          agy: { model: 'gemini-3.8-flash' },
+          opencode: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }],
+          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
         },
       };
       const calls = [];
@@ -1303,8 +1303,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const multiConfig = {
         'read-delegates': {
           opencode: [
-            { model: 'glm-5.3-flash' },
-            { model: 'mistral-small' },
+            { model: 'glm-5.3-flash', effort: 'medium' },
+            { model: 'mistral-small', effort: 'medium' },
           ],
         },
       };
@@ -1335,7 +1335,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         seen.push(opts.model);
         return { provider: 'agy', stdout: 'ok', exitCode: 0 };
       });
-      const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', high: { model: 'gemini-3.8-flash' } } } };
+      const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium', high: { model: 'gemini-3.8-flash' } } } };
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'high' });
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc' });
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'low' });

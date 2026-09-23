@@ -382,6 +382,30 @@ function validateOnly(where, only, readKeys, problems) {
 }
 
 /**
+ * Requires a non-blank `effort` at every level for a resolved candidate that names a `model`: an
+ * entry with no model at all (an unconfigured placeholder) is exempt. `resolveAt(entry, level)`
+ * returns the level's resolved candidate array (read-delegates) or one-candidate array
+ * (write-subagents' `resolveLevelEntry`, wrapped by the caller).
+ */
+function validateResolvedEffort(where, entry, resolveAt, problems) {
+  if (!entry || (!isPlainObject(entry) && !Array.isArray(entry))) return;
+  for (const level of LEVELS) {
+    let candidates;
+    try {
+      candidates = resolveAt(entry, level);
+    } catch {
+      continue; // Malformed entries are already reported by structural validation.
+    }
+    candidates.forEach((candidate, index) => {
+      if (candidate?.model !== undefined && !candidate.effort) {
+        const suffix = candidates.length > 1 ? `[${index}]` : '';
+        problems.push(`${where}${suffix} effort is missing at level ${level}; add "effort" (e.g. "medium").`);
+      }
+    });
+  }
+}
+
+/**
  * Validates a parsed config against the v0.5 schema, reporting every problem in one pass.
  *
  * @param {object} config
@@ -403,7 +427,10 @@ export function validateConfig(config) {
     problems.push(`Missing required table "read-delegates" (${DIFF_HINT}).`);
   } else {
     readKeys = validatePlatformTable('read-delegates', config['read-delegates'], problems,
-      (where, entry, canonical) => validateReadDelegate(where, entry, canonical, problems));
+      (where, entry, canonical) => {
+        validateReadDelegate(where, entry, canonical, problems);
+        validateResolvedEffort(where, entry, resolvePlatformCandidates, problems);
+      });
     if (isPlainObject(config['read-delegates']) && Object.keys(config['read-delegates']).length === 0) {
       problems.push(`read-delegates must define at least one platform (${DIFF_HINT}).`);
     }
@@ -416,6 +443,7 @@ export function validateConfig(config) {
         return;
       }
       validateEntry(where, entry, WRITE_FIELDS, problems, false);
+      validateResolvedEffort(where, entry, (item, level) => [resolveLevelEntry(item, level)], problems);
     });
   }
 

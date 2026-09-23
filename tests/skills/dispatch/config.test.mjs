@@ -26,6 +26,7 @@ import {
   validateConfig,
 } from '../../../skills/dispatch/scripts/config.mjs';
 import { resolveFlow } from '../../../skills/dispatch/scripts/resolve-flow.mjs';
+import { buildStubDispatchFixture, runStubDispatch } from './stub-dispatch-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const SAMPLE_CONFIG = parseJsonc(readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'config.sample.jsonc'), 'utf8'));
@@ -35,7 +36,7 @@ const VALID = {
     claude: { model: 'claude-opus-5', effort: 'low', sandbox: true },
     agy: { model: 'gemini-3.8-flash', effort: 'medium' },
     copilot: { model: 'gpt-6-astra', effort: 'low', sandbox: true },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge' }],
+    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
   },
   'write-subagents': {
     claude: { model: 'claude-sonnet-5', effort: 'medium', high: { model: 'claude-opus-5' } },
@@ -206,7 +207,7 @@ describe('validateConfig (v0.5 schema)', () => {
 
     it('validates inline level overrides (object or candidate array)', () => {
       assert.deepEqual(
-        validateConfig({ 'read-delegates': { opencode: { model: 'a', high: [{ model: 'b' }, { model: 'c' }] }, claude: { max: { sandbox: false } } } }),
+        validateConfig({ 'read-delegates': { opencode: { model: 'a', effort: 'medium', high: [{ model: 'b', effort: 'medium' }, { model: 'c', effort: 'medium' }] }, claude: { max: { sandbox: false } } } }),
         [],
       );
       const misspelled = problemsOf({ 'read-delegates': { agy: { low: { modle: 'x' } } } });
@@ -382,6 +383,36 @@ describe('uniform level resolution', () => {
     it('returns every read-delegate key when only is absent', () => {
       assert.deepEqual(phaseMembers(VALID, 'code-review'), ['claude', 'agy', 'copilot', 'opencode']);
     });
+  });
+});
+
+// SC5: v0.5.0 native-fallback model cascade — effort becomes required per resolved level.
+describe('effort required per resolved level (v0.5.0 cascade)', () => {
+  it('rejects a read-delegates candidate with no resolvable effort at any level', () => {
+    assert.match(problemsOf({ 'read-delegates': { claude: { model: 'm' } } }), /effort/i);
+  });
+
+  it('rejects a read-delegates level override that leaves that level with no resolvable effort', () => {
+    assert.match(problemsOf({ 'read-delegates': { claude: { high: { model: 'x' } } } }), /effort/i);
+  });
+
+  it('rejects a write-subagents entry with no resolvable effort', () => {
+    assert.match(problemsOf(withTables({ 'write-subagents': { claude: { model: 'm' } } })), /effort/i);
+  });
+
+  it('keeps a model-only level override valid when a flat effort exists', () => {
+    assert.deepEqual(validateConfig({ 'read-delegates': { claude: { model: 'm', effort: 'low', high: { model: 'x' } } } }), []);
+  });
+
+  it('CLI --model without --effort is rejected, naming --effort', () => {
+    const fixture = buildStubDispatchFixture({ 'read-delegates': { claude: { model: 'claude-opus-5', effort: 'low' } } });
+    try {
+      const res = runStubDispatch(fixture, ['--no-config', '--provider', 'claude', '-m', 'claude-opus-5', 'positional prompt']);
+      assert.notEqual(res.status, 0, `expected rejection, got stdout: ${res.stdout}`);
+      assert.match(res.stderr || '', /--effort/);
+    } finally {
+      fixture.cleanup();
+    }
   });
 });
 

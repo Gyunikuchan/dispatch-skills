@@ -28,6 +28,8 @@ Copy `config.sample.jsonc` to `config.jsonc` or `config.local.jsonc`. First matc
 - `write-subagents`: native implementation models by host platform.
 - `phases`: targets, rounds, consensus, and optional membership filters.
 
+Any candidate or level override naming a `model` must also set `effort`; validation rejects a resolvable candidate left without one.
+
 Validate with `node scripts/dispatch.mjs --validate-only` and inspect effective routing with `node scripts/dispatch.mjs --doctor --orchestrator <platform>`. v0.4 config keys are rejected with a migration diagnostic.
 
 ## Operation

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadDispatchConfig } from '../config.mjs';
+import { currentHead } from '../git-state.mjs';
 import { resolveFlow } from '../resolve-flow.mjs';
 import { parseImplementationOutcome, resolveImplementationTransition } from '../implementation-outcome.mjs';
 import { emitAction } from './actions.mjs';
@@ -47,8 +48,15 @@ export function writeAction(state) {
   const segment = ledgerSegment(state);
   if (!segment?.approved || segment.runId !== state.ledgerRunId) throw new Error('Recorded v1 approval is required before delegation.');
   const write = data.write;
+  // Baseline (HEAD plus any pre-existing dirty paths) is captured once, at the first delegate-write
+  // emission for this task: a later cascade hop's restore must undo only what that hop itself dirtied.
+  if (write.baselineHead === undefined) write.baselineHead = currentHead(state.repoRoot);
   const testsOnly = data.launch === 'tests-only';
   const prompt = testsOnly ? testsOnlyPrompt(state) : null;
+  const cascadeContinuation = data.pendingCascadeContinuation ?? null;
+  const restore = data.pendingRestore ?? null;
+  delete data.pendingCascadeContinuation;
+  delete data.pendingRestore;
   return emitAction(state, 'delegate-write', { fields: {
     stage: testsOnly ? 'tests-only' : 'production', launch: data.launch,
     attempt: data.attempt, model: write.models[write.candidate], effort: write.effort ?? null,
@@ -56,7 +64,8 @@ export function writeAction(state) {
     planPath: state.planPath, walkthroughPath: state.walkthroughPath,
     paths: testsOnly ? data.testsOnlyPaths : data.approvedPaths,
     criteria: (testsOnly ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
-    ...(testsOnly ? { promptPath: prompt.path, promptHash: prompt.hash, continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : null } : {}),
+    ...(testsOnly ? { promptPath: prompt.path, promptHash: prompt.hash, continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : cascadeContinuation } : (cascadeContinuation ? { continuation: cascadeContinuation } : {})),
+    ...(restore ? { restore } : {}),
     packet: testsOnly ? null : {
       ...data.packet,
       instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',

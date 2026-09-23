@@ -179,7 +179,7 @@ describe('validate-configs', () => {
         const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-dispatch-'));
         try {
           const file = path.join(tempDir, 'config.jsonc');
-          writeFileSync(file, JSON.stringify({ 'read-delegates': { claude: { model: 'claude-opus-5' } } }), 'utf8');
+          writeFileSync(file, JSON.stringify({ 'read-delegates': { claude: { model: 'claude-opus-5', effort: 'medium' } } }), 'utf8');
           const res = validateConfigFile(file, 'dispatch');
           assert.deepEqual(res.problems, []);
           assert.equal(res.valid, true);
