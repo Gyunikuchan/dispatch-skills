@@ -122,6 +122,12 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
   if (changed.some(file => !allowed.includes(file))) return openFailure(state, 'Delegate changed paths outside its approved write scope.');
   const parsed = outcomeTransition(state, reply, { concernsResolved });
+  // A schema-invalid envelope is usually a relay mistake; ask once for the verbatim envelope before spending a launch.
+  if (parsed.parseError && !data.relayRetried) {
+    data.relayRetried = true;
+    return ask(state, 'implementation-recovery', `The relayed terminal envelope failed its schema (${parsed.parseError}). Return {raw} holding the delegate's verbatim terminal envelope; do not retype or reshape fields.`, [{ taskId: data.taskId, attempt: data.attempt, paths: allowed }]);
+  }
+  delete data.relayRetried;
   data.envelope = parsed.envelope;
   data.mutationEpoch = (data.mutationEpoch ?? 0) + 1;
   if (data.launch === 'tests-only') {

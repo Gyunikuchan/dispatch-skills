@@ -305,7 +305,7 @@ describe('ordinary driver canonical contracts', () => {
     const fixture = setup();
     const result = run(fixture, { policy: {
       delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
-      askUser: action => action.question === 'failure-disposition'
+      askUser: action => action.question === 'implementation-recovery' ? { answer: { raw: '{"status":"DONE"}' } } : action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
         : policies(fixture.repo).askUser(action),
     } });
@@ -335,7 +335,7 @@ describe('ordinary driver canonical contracts', () => {
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:hops A then B'] })), []);
   });
   it('restores a dispatched admission repair from walkthrough evidence without relaunching it', () => {
-    const fixture = setup(); let writes = 0, restarted = false;
+    const fixture = setup(); let writes = 0, restarted = false, recoveries = 0;
     const base = policies(fixture.repo);
     const result = run(fixture, {
       restartWhen: action => action.action === 'delegate-write' && action.fields.continuation?.kind === 'admission-repair' && !restarted && (restarted = true),
@@ -347,7 +347,8 @@ describe('ordinary driver canonical contracts', () => {
           return { raw: '{"status":"DONE"}' };
         },
         askUser(action) {
-          if (action.question === 'implementation-recovery') return { answer: { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) } };
+          // The first recovery is the schema re-relay of genuine writer junk; the post-restart one restores the repair.
+          if (action.question === 'implementation-recovery') return { answer: { raw: ++recoveries === 1 ? '{"status":"DONE"}' : JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) } };
           return base.askUser(action);
         },
       },
@@ -379,6 +380,26 @@ describe('ordinary driver canonical contracts', () => {
     const evidence = JSON.parse(fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
+  });
+  it('asks once for a verbatim envelope when the relay fails its schema, without spending a launch', () => {
+    const fixture = setup(); let relays = 0;
+    const base = policies(fixture.repo);
+    const valid = JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
+    const result = run(fixture, { policy: {
+      askUser(action) {
+        if (action.question === 'implementation-recovery') { relays++; return { answer: { raw: valid } }; }
+        return base.askUser(action);
+      },
+      delegateWrite(action) {
+        const reply = base.delegateWrite(action);
+        if (action.fields.stage !== 'tests-only') return reply;
+        const envelope = JSON.parse(reply.raw);
+        return { raw: JSON.stringify({ ...envelope, evidence: envelope.evidence[0] }) };
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.equal(relays, 1);
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
   });
   it('relaunches tests-only once when a RED test file fails to load, then continues production from attempt 2', () => {
     const fixture = setup(); let calls = 0;
@@ -443,7 +464,7 @@ describe('ordinary driver canonical contracts', () => {
     const base = policies(fixture.repo);
     const result = run(fixture, { policy: {
       delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
-      askUser: action => action.question === 'failure-disposition'
+      askUser: action => action.question === 'implementation-recovery' ? { answer: { raw: '{"status":"DONE"}' } } : action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
         : base.askUser(action),
     } });
