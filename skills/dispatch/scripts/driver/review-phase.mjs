@@ -753,7 +753,10 @@ function onAdjudicate(state, reply) {
   if (errors.length) return reemit(state, errors.join('; '));
   if (state.transient) {
     const blocking = rulings.filter(ruling => ruling.status !== 'rejected');
-    return done(state, blocking.length ? 'refused' : 'complete', blocking.length ? 'Bounded test review has verified or unresolved findings.' : 'Bounded test review claims were verified and rejected.');
+    // Only fully accepted findings are repairable test defects; unresolved ones stay terminal.
+    const repairable = blocking.length && blocking.every(ruling => ruling.status === 'accepted')
+      ? { defects: blocking.map(ruling => ({ key: ruling.key, severity: ruling.severity, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key) })) } : {};
+    return done(state, blocking.length ? 'refused' : 'complete', blocking.length ? 'Bounded test review has verified or unresolved findings.' : 'Bounded test review claims were verified and rejected.', repairable);
   }
   if (rulings.some((ruling) => ruling.status === 'needs-user')) {
     state.rulings = rulings;

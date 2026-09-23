@@ -189,16 +189,7 @@ export async function afterImplementationVerification(state) {
   const data = state.ordinary;
   if (data.step === 'red-verify') {
     const loadFailures = redLoadFailures(state);
-    // The single tests-only repair is a new ledger attempt, so production continues from attempt 2.
-    if (loadFailures.length && data.testsOnlyAttempts < 2) {
-      data.testsOnlyRepair = { defects: [loadFailureDefect(loadFailures)] };
-      data.testsOnlyAttempts++;
-      data.attempt++;
-      delete data.testsOnlyAdmitted;
-      data.write.candidate = 0;
-      data.step = 'write-pending';
-      return writeAction(state);
-    }
+    if (loadFailures.length && data.testsOnlyAttempts < 2) return relaunchTestsOnly(state, [loadFailureDefect(loadFailures)]);
     const defects = [...(loadFailures.length ? [loadFailureDefect(loadFailures)] : []), ...validateRed(state, data.envelope)];
     if (defects.length) return openFailure(state, defects.join('; '));
     const redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
@@ -234,8 +225,26 @@ async function beginRiskReview(state) {
 export function continueRiskReview(state, reply) {
   return handleRiskAction(state, advanceReview(state.riskState, reply));
 }
+/** Relaunches the tests-only writer on its retained changes; each relaunch is a new ledger attempt, so production continues from it. */
+function relaunchTestsOnly(state, defects) {
+  const data = state.ordinary;
+  data.testsOnlyRepair = { defects };
+  data.testsOnlyAttempts++;
+  data.attempt++;
+  data.launch = 'tests-only';
+  for (const key of ['testsOnlyAdmitted', 'redValidated', 'riskReview']) delete data[key];
+  data.write.candidate = 0;
+  data.step = 'write-pending';
+  return writeAction(state);
+}
 function handleRiskAction(state, action) {
   if (action.action !== 'done') return { ...action, stateFile: state.stateFile };
+  // Accepted test-review findings earn one tests-only repair while a production attempt remains.
+  if (action.outcome === 'refused' && action.defects?.length && !state.ordinary.reviewRepaired && state.ordinary.attempt < 3) {
+    state.ordinary.reviewRepaired = true;
+    delete state.riskState;
+    return relaunchTestsOnly(state, action.defects.map(item => `Accepted test-review finding ${item.key} (${item.severity}, ${item.locus}): ${item.defect}`));
+  }
   if (action.outcome === 'refused' || action.outcome === 'lint-defects') return openFailure(state, action.summary);
   if (action.outcome !== 'complete') {
     state.ordinary.step = 'risk-degradation';

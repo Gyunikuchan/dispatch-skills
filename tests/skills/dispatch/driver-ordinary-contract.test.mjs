@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, runDispatch, writePlan } from './driver-harness.mjs';
+import { allProviders, codeFinding, drive, implementationOutcome, makeGitRepo, PLAN_BODY, report, runDispatch, writePlan } from './driver-harness.mjs';
 import { readLedger } from '../../../skills/dispatch/scripts/ledger.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../skills/dispatch/scripts/driver/actions.mjs';
 import { validateRedAdmission } from '../../../skills/dispatch/scripts/driver/verification.mjs';
@@ -380,6 +380,23 @@ describe('ordinary driver canonical contracts', () => {
     const evidence = JSON.parse(fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
+  });
+  it('relaunches tests-only once after an accepted test-review finding, then completes', () => {
+    const fixture = setup(); let testWaves = 0, testsWritten = false;
+    const base = policies(fixture.repo);
+    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'RED lacks a negative assertion.' });
+    const result = run(fixture, { policy: {
+      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
+      // Only the first wave after the tests-only write is the RED test review.
+      waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
+      restate: () => ({ status: 'accepted', severity: 'MUST_FIX', scope: 'in-scope', locus: finding.locus, tag: 'testability', defect: finding.defect, resolution: 'Verified against the test.' }),
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const writes = result.trace.filter(action => action.action === 'delegate-write');
+    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
+    assert.match(writes[1].fields.continuation.defects[0], /Accepted test-review finding .*negative assertion/);
+    const attempts = readLedger(result.done.ledgerPath).events.filter(event => event.type === 'implementation-attempt');
+    assert.deepEqual(attempts.map(event => [event.data.launch, event.data.attempt]), [['tests-only', 1], ['tests-only', 2], ['continuation', 2]]);
   });
   it('asks once for a verbatim envelope when the relay fails its schema, without spending a launch', () => {
     const fixture = setup(); let relays = 0;
