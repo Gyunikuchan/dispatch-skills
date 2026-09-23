@@ -380,6 +380,32 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
   });
+  it('relaunches tests-only once when a RED test file fails to load, then continues production from attempt 2', () => {
+    const fixture = setup(); let calls = 0;
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      delegateWrite(action) {
+        if (action.fields.stage === 'production') return base.delegateWrite(action);
+        calls++;
+        // First launch imports a not-yet-existing export, so the file crashes before any leaf test runs.
+        fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), calls === 1
+          ? "import assert from 'node:assert/strict';\nimport { missing } from '../src/app.js';\nassert.equal(missing, 2);\n"
+          : "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+      },
+      verify(action) {
+        const reply = base.verify(action);
+        if (fs.readFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), 'utf8').includes('missing')) for (const item of reply.results) item.identifiers = ['error:load tests/sample.test.mjs'];
+        return reply;
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const writes = result.trace.filter(action => action.action === 'delegate-write');
+    assert.equal(writes[1].fields.continuation.kind, 'admission-repair');
+    assert.match(writes[1].fields.continuation.defects[0], /failed to load/);
+    const attempts = readLedger(result.done.ledgerPath).events.filter(event => event.type === 'implementation-attempt');
+    assert.deepEqual(attempts.map(event => [event.data.launch, event.data.attempt]), [['tests-only', 1], ['tests-only', 2], ['continuation', 2]]);
+  });
   it('admits a declared pre-existing RED test whose identity matches baseline instead of a collision defect (SC4)', () => {
     const fixture = setup();
     // The baseline sample test already fails (asserts value=2 against src value=1); SC1 declares

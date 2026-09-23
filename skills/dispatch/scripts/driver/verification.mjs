@@ -45,7 +45,7 @@ export function verificationAction(state) {
     purpose: pending.purpose, commands: [command], scopes: { [command]: data.scopes[command] },
     mutationEpoch: pending.epoch, scopeHash: pending.scopeHash, criteria: data.criteria.filter(item => item.commands.includes(command)).map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null })),
   }, ['Run this exact command on the host now. Return its exit status, stable failure identifiers, diagnostic, and the emitted scopeHash/mutationEpoch. The driver captures Git state before and after each command; do not reuse delegate results.',
-    ...(pending.purpose === 'red' ? ['Report one identifier per failing leaf test using the convention `test:<full failing test name>`.'] : [])]);
+    ...(pending.purpose === 'red' ? ['Report one identifier per failing leaf test using the convention `test:<full failing test name>`; when a test file fails to load, report `error:load <test file>` instead.'] : [])]);
 }
 export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
@@ -101,6 +101,18 @@ export function completionResult(state) {
     knownRed = true;
   }
   return knownRed ? 'accepted-baseline-equivalent' : 'pass';
+}
+// Module-resolution and parse errors abort a test file before any leaf test runs.
+const LOAD_FAILURE = /ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)|does not provide an export named|SyntaxError|ERR_REQUIRE_ESM|\bfailed to load\b/i;
+/** Host RED results where a test file failed to load: a load crash, not behavioral RED. */
+export function redLoadFailures(state) {
+  const data = state.ordinary, redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
+  return data.redResults.filter(red => red.exitStatus !== 0 && redCommands.has(red.command) && (
+    red.identifiers.some(id => /^error:\s*load\b/i.test(id)) ||
+    (LOAD_FAILURE.test(String(red.diagnostic ?? '')) && red.identifiers.every(id => !id.startsWith('test:') || data.testsOnlyPaths.some(file => id.slice(5).trim().startsWith(file))))));
+}
+export function loadFailureDefect(reds) {
+  return `RED test file failed to load under ${reds.map(red => red.command).join(', ')}; a load crash is not behavioral RED. Make each test file load (import the missing production symbol dynamically inside each test, or guard it) so every leaf test runs and fails on its own assertion.`;
 }
 export function validateRedAdmission(state, envelope) {
   const data = state.ordinary, defects = [];

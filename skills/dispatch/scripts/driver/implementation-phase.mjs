@@ -7,7 +7,7 @@ import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { readRunState } from './state.mjs';
-import { beginVerification, completionResult, fingerprint, repositoryBaseline, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
+import { beginVerification, completionResult, fingerprint, repositoryBaseline, loadFailureDefect, redLoadFailures, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
 import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 function serializedEntries(state) {
@@ -57,6 +57,7 @@ function startTask(state, launch) {
     if (launch !== 'full' || existing.lastAttempt?.data.launch !== 'tests-only' || existing.lastVerification?.data.result !== 'red') throw new Error('Task already dispatched; reconstruct its canonical outcome instead of relaunching.');
     // v1 continuation keeps production Attempt 1 separate from the single tests-only launch.
     data.launch = 'continuation';
+    data.attempt = existing.lastAttempt.data.attempt;
   } else append(state, 'task-start', { taskId: data.taskId, attemptBudget: 3, paths: data.approvedPaths, preState: fingerprint(state) });
   if (launch === 'tests-only') data.testsOnlyAttempts = 1;
   data.write.candidate = 0;
@@ -181,7 +182,18 @@ export function retryOrFail(state, transition) {
 export async function afterImplementationVerification(state) {
   const data = state.ordinary;
   if (data.step === 'red-verify') {
-    const defects = validateRed(state, data.envelope);
+    const loadFailures = redLoadFailures(state);
+    // The single tests-only repair is a new ledger attempt, so production continues from attempt 2.
+    if (loadFailures.length && data.testsOnlyAttempts < 2) {
+      data.testsOnlyRepair = { defects: [loadFailureDefect(loadFailures)] };
+      data.testsOnlyAttempts++;
+      data.attempt++;
+      delete data.testsOnlyAdmitted;
+      data.write.candidate = 0;
+      data.step = 'write-pending';
+      return writeAction(state);
+    }
+    const defects = [...(loadFailures.length ? [loadFailureDefect(loadFailures)] : []), ...validateRed(state, data.envelope)];
     if (defects.length) return openFailure(state, defects.join('; '));
     const redCommands = new Set(data.redCriteria.flatMap(item => item.commands));
     const red = data.redResults.find(result => result.exitStatus !== 0 && redCommands.has(result.command));
