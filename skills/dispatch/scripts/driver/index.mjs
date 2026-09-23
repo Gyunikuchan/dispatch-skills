@@ -39,8 +39,13 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   --next                      Advance a run; requires --state
   --state <file>              State file named by the previous action's stateFile
   --input <json|@file>        Reply to the previous action (omit for launch)
+  --orchestrator <platform>   Orchestrating platform (required with --run)
+  --orchestrator-model <model> Orchestrator's own model, excluded from its platform's targets
+  --level <level>             Effort level: ${LEVELS.join('|')}
+  --level-source <source>     How the level was chosen: ${LEVEL_SOURCES.join('|')}
+  --pins <pins>               Provider names, a count, or all (comma-separated)
   --verbose                   Add report bodies and diagnostics to actions
-  -- <argument>               Review target: plan/design/walkthrough path or Git range
+  -- <argument>               Artifact path, Git range, or the ask question
 `;
 
 class UsageError extends Error {}

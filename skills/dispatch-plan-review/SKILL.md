@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Plan review alias
 
-Preserve any level, pins, and explicit `--fix` in the prefix, then forward the post-colon text to `/dispatch review plan: <argument>`, inserting the preserved prefix before `review`.
+Forward the post-colon text to `/dispatch review plan: <argument>`, inserting any level and pins before `review`; when the user supplied `--fix`, place it after `plan` (`/dispatch <prefix> review plan --fix: <argument>`).
 
 If `dispatch` is unavailable, stop with: `dispatch-plan-review requires the dispatch skill; install or enable dispatch, then retry.`
 

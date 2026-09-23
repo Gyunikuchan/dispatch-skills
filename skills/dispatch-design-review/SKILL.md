@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Design review alias
 
-Preserve any level, pins, and explicit `--fix` in the prefix, then forward the post-colon text to `/dispatch review design: <argument>`, inserting the preserved prefix before `review`.
+Forward the post-colon text to `/dispatch review design: <argument>`, inserting any level and pins before `review`; when the user supplied `--fix`, place it after `design` (`/dispatch <prefix> review design --fix: <argument>`).
 
 If `dispatch` is unavailable, stop with: `dispatch-design-review requires the dispatch skill; install or enable dispatch, then retry.`
 

@@ -1168,7 +1168,7 @@ export async function main() {
   const writeOutput = (text) => writeDispatchOutput(text, outputFile);
 
   if (options.help) {
-    printHelp();
+    await printHelp();
     process.exit(0);
   }
 
@@ -1398,7 +1398,9 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
   process.exit(envelope.complete ? 0 : 1);
 }
 
-function printHelp() {
+async function printHelp() {
+  // Lazy import keeps plain runs off the driver stack and avoids a cycle through ask-phase.
+  const { DRIVER_HELP: driverHelp } = await import('./driver/index.mjs');
   console.log(`
 Master Cascade Dispatcher
 
@@ -1442,17 +1444,7 @@ Options:
   -v, --verbose                Stream live trace to stderr (terminal only; ignored when piped)
   -h, --help                  Show this help
 
-Driver (each call prints one JSON action; see the dispatch skill):
-  --run <verb>                plan|design|review|implement; needs --orchestrator
-  --kind <kind>               Review kind plan|code|design (default: inferred from the argument)
-  --fix                       Apply accepted fixes (review is report-only by default)
-  --phases from:<phase>       Start phase for implement (rejected by review)
-  --next                      Advance a run started with --run
-  --state <file>              The stateFile named by the previous action
-  --input <json|@file>        Reply to the previous action (omit after launch)
-  --verbose                   Add report bodies and diagnostics to actions
-  -- <argument>               Review target: artifact path or Git range
-`);
+${driverHelp}`);
 }
 
 /** Parses dispatch.mjs's own `--no-config` / `--validate-only` / `--list-platforms` flags. */

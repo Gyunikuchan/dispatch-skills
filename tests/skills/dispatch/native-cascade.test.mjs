@@ -11,7 +11,7 @@ import { afterEach, describe, it } from 'node:test';
 
 import { loadSchema, validateReply } from '../../../skills/dispatch/scripts/driver/actions.mjs';
 import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, drive, makeGitRepo, parseAction, report, runDispatch, writePlan } from './driver-harness.mjs';
+import { allProviders, drive, makeGitRepo, parseAction, planFinding, report, runDispatch, writePlan } from './driver-harness.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const DISPATCH_SCRIPT = path.join(ROOT, 'skills', 'dispatch', 'scripts', 'dispatch.mjs');
@@ -141,5 +141,51 @@ describe('same-platform early fallback and the one-shot --slots step (SC2)', () 
     const parsed = JSON.parse(res.stdout);
     assert.ok(Array.isArray(parsed));
     assert.deepEqual(parsed.map((entry) => entry.slot), ['plan-review:R1:opencode:0']);
+  });
+});
+
+describe('early fallback outcome on a multi-model cascade (A-1)', () => {
+  function earlyReply(write) {
+    return (action) => {
+      const [fallback] = action.earlyFallbacks;
+      if (write) fs.writeFileSync(fallback.outputPath, write);
+      return { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true, actual: {
+        agentType: fallback.descriptor.agentType, model: fallback.descriptor.model, reasoningEffort: fallback.descriptor.reasoningEffort,
+      } }] };
+    };
+  }
+
+  it('early fallback success on a two-model cascade is final', () => {
+    const scenario = setup();
+    const seen = [];
+    const run = drive(scenario.fixture, {
+      cwd: scenario.repo.dir,
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
+      onAction: (action) => { if (action.action === 'native-fallback') seen.push(action.descriptor); },
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: earlyReply(report([planFinding({ defect: 'early-success defect.' })])),
+      },
+    });
+    assert.deepEqual(seen, [], 'a successful early fallback must not be requeued for another native hop');
+    const adjudicate = run.trace.find((action) => action.action === 'adjudicate');
+    assert.equal(adjudicate?.findings.filter((finding) => /early-success/.test(finding.defect)).length, 1,
+      'the early report is collected exactly once');
+  });
+
+  it('failed early fallback resumes at cascadePosition 1', () => {
+    const scenario = setup();
+    const seen = [];
+    drive(scenario.fixture, {
+      cwd: scenario.repo.dir,
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
+      onAction: (action) => { if (action.action === 'native-fallback') seen.push(action.descriptor); },
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: earlyReply(null),
+      },
+    });
+    assert.deepEqual(seen.map((descriptor) => [descriptor.model, descriptor.cascadePosition]), [['native-fallback-b', 1]],
+      'model[0] already ran early; the post-wave cascade resumes at model[1] exactly once');
   });
 });

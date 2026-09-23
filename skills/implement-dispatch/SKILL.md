@@ -6,6 +6,6 @@ disable-model-invocation: true
 
 # Implementation alias
 
-Forward the user's complete argument text to `/dispatch implement: <arguments>`, preserving any level, pins, and `--phases from:<phase>` prefix before the colon.
+Forward the user's argument to `/dispatch implement: <argument>`, inserting any level and pins before `implement` and any `--phases from:<phase>` after it (`/dispatch <prefix> implement --phases from:<phase>: <argument>`).
 
 If `dispatch` is unavailable, stop with: `implement-dispatch requires the dispatch skill; install or enable dispatch, then retry.`

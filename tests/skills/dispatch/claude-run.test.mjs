@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+
+import * as claudeRunModule from '../../../skills/dispatch/scripts/claude-run.mjs';
 
 import {
   READ_ONLY_ALLOWED_TOOLS,
@@ -564,5 +567,123 @@ describe('runClaude brief cleanup', () => {
     // races parallel test files).
     assert.ok(typeof result.briefFile === 'string' && path.isAbsolute(result.briefFile), 'prompt must spill');
     assert.equal(fs.existsSync(path.dirname(result.briefFile)), false, 'the spilled brief directory must be removed');
+  });
+});
+
+// SECTION: A-2 / A-6 sandbox advisory and model-not-found (probe-log fixture inline)
+
+const SANDBOX_ADVISORY = 'Sandbox disabled: sandboxing is not active on this platform.\n';
+const MODEL_404_ENVELOPE = JSON.stringify({
+  type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 404,
+  result: "There's an issue with the selected model (claude-nope). It may not exist or you may not have access to it.",
+});
+
+describe('Claude model-not-found and sandbox advisory classification (SC2)', () => {
+  it('classifies a 404 selected-model envelope beside the sandbox advisory as model-not-found', () => {
+    const classifiedFailure = classifyClaudeResult({ exitCode: 1, stderr: SANDBOX_ADVISORY, stdout: MODEL_404_ENVELOPE });
+    assert.notEqual(classifiedFailure, 'sandbox-unsupported', 'the advisory is not an unsupported-sandbox diagnostic');
+    const outcome = resolveClaudeOutcome({ envelope: parseClaudeEnvelope(MODEL_404_ENVELOPE), classifiedFailure, exitCode: 1 });
+    assert.equal(outcome.failureKind, 'model-not-found');
+  });
+
+  it('model-not-found outranks the envelope subtype on a zero-exit error envelope', () => {
+    const classifiedFailure = classifyClaudeResult({ exitCode: 0, stderr: SANDBOX_ADVISORY, stdout: MODEL_404_ENVELOPE });
+    const outcome = resolveClaudeOutcome({ envelope: parseClaudeEnvelope(MODEL_404_ENVELOPE), classifiedFailure, exitCode: 0 });
+    assert.equal(outcome.failureKind, 'model-not-found');
+  });
+});
+
+describe('Claude unsandboxed-run warning (SC3)', () => {
+  const warn = (args) => {
+    assert.equal(typeof claudeRunModule.sandboxWarning, 'function', 'claude-run exports sandboxWarning');
+    return claudeRunModule.sandboxWarning(args);
+  };
+
+  it('warns once on a successful sandboxed run with the advisory and names native Windows on win32', () => {
+    const text = warn({ sandbox: true, exitCode: 0, stderr: SANDBOX_ADVISORY, platform: 'win32' });
+    assert.equal(typeof text, 'string');
+    assert.equal(text.match(/\[dispatch\] WARNING:/g)?.length, 1, text);
+    assert.match(text, /Native Windows/);
+  });
+
+  it('warns without naming Windows on linux', () => {
+    const text = warn({ sandbox: true, exitCode: 0, stderr: SANDBOX_ADVISORY, platform: 'linux' });
+    assert.equal(text.match(/\[dispatch\] WARNING:/g)?.length, 1, String(text));
+    assert.doesNotMatch(text, /Windows/);
+  });
+
+  it('emits no warning for a failed run, an unsandboxed request, or no advisory', () => {
+    assert.ok(!warn({ sandbox: true, exitCode: 1, stderr: SANDBOX_ADVISORY, platform: 'win32' }));
+    assert.ok(!warn({ sandbox: false, exitCode: 0, stderr: SANDBOX_ADVISORY, platform: 'win32' }));
+    assert.ok(!warn({ sandbox: true, exitCode: 0, stderr: '', platform: 'win32' }));
+  });
+});
+
+describe('Claude failure precedence extensions (SC2)', () => {
+  const GENUINE_UNSUPPORTED = 'error: unknown option \'--settings\'\n';
+
+  it('genuine sandbox-unsupported outranks model-not-found', () => {
+    const classifiedFailure = classifyClaudeResult({ exitCode: 1, stderr: GENUINE_UNSUPPORTED, stdout: '' });
+    assert.equal(classifiedFailure, 'sandbox-unsupported');
+    const outcome = resolveClaudeOutcome({ envelope: parseClaudeEnvelope(MODEL_404_ENVELOPE), classifiedFailure, exitCode: 1 });
+    assert.equal(outcome.failureKind, 'sandbox-unsupported');
+    assert.equal(outcome.effectiveExitCode, 1);
+  });
+
+  it('a bare 404 envelope without selected-model text is model-not-found', () => {
+    const bare = JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, api_error_status: 404, result: 'Request failed.' });
+    const envelope = parseClaudeEnvelope(bare);
+    assert.equal(envelope.apiErrorStatus, 404);
+    const outcome = resolveClaudeOutcome({ envelope, classifiedFailure: null, exitCode: 1 });
+    assert.equal(outcome.failureKind, 'model-not-found');
+  });
+
+  it('classifyClaudeResult returns model-not-found on selected-model text', () => {
+    const text = "There's an issue with the selected model (claude-nope). It may not exist.";
+    assert.equal(classifyClaudeResult({ exitCode: 1, stderr: '', stdout: text }), 'model-not-found');
+  });
+});
+
+describe('Claude runner sandbox warning (SC3)', () => {
+  it('emits the warning once from onClose on a successful sandboxed run with the advisory', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-stub-'));
+    const stub = path.join(dir, 'stub.mjs');
+    fs.writeFileSync(stub, [
+      `process.stderr.write(${JSON.stringify(SANDBOX_ADVISORY)});`,
+      "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: 's1' }));",
+    ].join('\n'));
+    let bin;
+    if (process.platform === 'win32') {
+      bin = path.join(dir, 'claude.cmd');
+      fs.writeFileSync(bin, `@"${process.execPath}" "${stub}" %*\r\n`);
+    } else {
+      bin = path.join(dir, 'claude');
+      fs.writeFileSync(bin, `#!/bin/sh\nexec "${process.execPath}" "${stub}" "$@"\n`, { mode: 0o755 });
+    }
+    const logged = [];
+    const stderr = [];
+    const original = process.stderr.write;
+    process.stderr.write = function write(chunk, ...rest) {
+      stderr.push(String(chunk));
+      return original.call(this, chunk, ...rest);
+    };
+    let result;
+    try {
+      result = await runClaude({
+        prompt: 'Answer briefly.',
+        model: 'model-a',
+        timeout: 30,
+        sandbox: true,
+        discoverTargets: () => [{ name: 'stub', mode: 'cli', bin }],
+        createLogger: () => ({ logFile: null, write(chunk) { logged.push(String(chunk)); }, close() {} }),
+      });
+    } finally {
+      process.stderr.write = original;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    assert.equal(result.exitCode, 0, JSON.stringify(result));
+    const count = (chunks) => chunks.join('').match(/\[dispatch\] WARNING: Claude sandbox is not active/g)?.length ?? 0;
+    assert.equal(count(stderr), 1, stderr.join(''));
+    assert.equal(count(logged), 1, logged.join(''));
   });
 });

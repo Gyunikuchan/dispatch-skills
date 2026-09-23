@@ -25,7 +25,7 @@ import { formatSourceMapLine } from '../source-map.mjs';
 import { safeRenameSync } from '../common.mjs';
 import { emitAction, sanitizeReplyText } from './actions.mjs';
 import {
-  PENDING_FIX_REASON, createRunState, pruneFinishedStates, rebuildFromArtifact, unappliedFixesFromArtifact, writeRunSidecar, writeRunState,
+  PENDING_FIX_REASON, REEMITTED, createRunState, finish, reemit, pruneFinishedStates, rebuildFromArtifact, unappliedFixesFromArtifact, writeRunSidecar, writeRunState,
 } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -251,28 +251,7 @@ function kindTarget(kind, argument) {
 export function advanceReview(state, reply) {
   const handler = HANDLERS[state.pending.action];
   const action = handler(state, reply);
-  if (REEMITTED.has(action)) return action;
   return finish(state, action);
-}
-
-function finish(state, action) {
-  if (action.action === 'done') cleanupRun(state);
-  state.pending = action;
-  writeRunState(state);
-  return action;
-}
-
-function cleanupRun(state) {
-  for (const target of state.cleanup.splice(0)) fs.rmSync(target, { recursive: true, force: true });
-}
-
-// Re-emitted actions leave state untouched, so they are never written back.
-const REEMITTED = new WeakSet();
-
-function reemit(state, error) {
-  const action = { ...state.pending, error };
-  REEMITTED.add(action);
-  return action;
 }
 
 function recordReviewFailure(state, sourceKey, kind) {
@@ -502,9 +481,11 @@ function onLaunch(state, reply) {
       return launchReplyAction(state, `Early fallback metadata or failed-slot identity does not match the descriptor for ${slot}.`);
     }
     const text = fs.existsSync(fallback.outputPath) ? fs.readFileSync(fallback.outputPath, 'utf8') : '';
-    if (!text.trim()) earlyBySlot.delete(slot);
-    else fallback.text = text;
+    fallback.text = text;
   }
+  // Split early outcomes: a success is final; an empty capture is requeued exactly once below.
+  const earlySucceeded = new Map([...earlyBySlot].filter(([, fallback]) => fallback.text.trim()));
+  const earlyFailed = [...earlyBySlot.keys()].filter((slot) => !earlySucceeded.has(slot));
   const unresolvedAll = (envelope.failures ?? []).filter((failure) =>
     !earlyBySlot.has(failure.sourceKey) && !failure.substitutesFor && !envelope.targets.some((record) => record.substitutesFor === failure.sourceKey));
   // Native fallback substitutes a same-platform subagent only; other platforms' failures are recorded
@@ -514,27 +495,23 @@ function onLaunch(state, reply) {
   state.collect = {
     reports: [
       ...envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
-      ...[...earlyBySlot].map(([sourceKey, fallback]) => ({ sourceKey, text: fallback.text, fallback: true })),
+      ...[...earlySucceeded].map(([sourceKey, fallback]) => ({ sourceKey, text: fallback.text, fallback: true })),
     ],
     sourceMap,
     // The batch record's own `model` is null for an array candidate; the cascade's model list
     // always comes from the resolved policy target/reserve for this (platform, candidateIndex).
     queue: unresolved.map((failure) => cascadeSlot(state, failure, 0)),
-    fallbackTried: [...earlyBySlot.keys()],
+    fallbackTried: [...earlySucceeded.keys()],
   };
-  // A same-platform early fallback that ran model[0] and failed resumes the post-wave cascade at
-  // position 1: model[0] is not retried.
-  for (const sourceKey of earlyBySlot.keys()) {
+  // A failed early fallback already ran model[0]: a multi-model cascade resumes at position 1; a
+  // single-model cascade keeps one post-wave native retry of model[0], since the early run was a
+  // different path from the CLI dispatch that failed first.
+  for (const sourceKey of earlyFailed) {
     const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === sourceKey);
-    if (planned?.descriptor.modelCascade.length > 1) {
-      const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
-      state.collect.queue.push(cascadeSlot(state, failure, 1));
-      state.collect.fallbackTried = state.collect.fallbackTried.filter((key) => key !== sourceKey);
-      delete state.collect.sourceMap[sourceKey];
-    }
+    const failure = failuresBySlot.get(sourceKey);
+    state.collect.queue.push(cascadeSlot(state, failure, planned.descriptor.modelCascade.length > 1 ? 1 : 0));
   }
-  for (const [sourceKey, fallback] of earlyBySlot) {
-    if (state.collect.queue.some((slot) => slot.sourceKey === sourceKey)) continue; // requeued for cascade continuation above
+  for (const [sourceKey, fallback] of earlySucceeded) {
     const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
     state.collect.sourceMap[sourceKey] = {
       provider: failure?.platform ?? state.invocation.orchestrator,

@@ -38,7 +38,8 @@ These are defense-in-depth controls, not a complete secret boundary.
 - **Sandbox:** enabled by default through `--settings {"sandbox":{"enabled":true}}`. Set
   `read-delegates.claude.sandbox` to `false` or pass `--no-sandbox` only for compatibility. macOS uses
   Seatbelt; Linux/WSL2 uses Bubblewrap plus its network helper; managed settings may override a
-  local opt-out.
+  local opt-out. Native Windows is unsupported: Claude prints a "Sandbox disabled" advisory, the
+  run proceeds unsandboxed, and a successful run emits one `[dispatch] WARNING:` line (use WSL2).
 - **Compatibility:** only `enabled` is forced; `allowUnsandboxedCommands` and `failIfUnavailable`
   are not. A rejected or unavailable setting returns `sandbox-unsupported` and never retries
   unsandboxed.
@@ -122,6 +123,7 @@ candidates are exhausted.
 | `quota` | Usage/rate limit, credit balance, HTTP 429 | Cascade to the next candidate. |
 | `context-overflow` | Prompt or context length exceeded | Cascade; otherwise narrow the brief. |
 | `auth` | 401/403, missing login, invalid key | Report the non-retryable provider error; an unpinned run may continue. |
+| `model-not-found` | Claude reports a 404 or an unavailable selected model | Cascade to another configured target. |
 | `model-not-loaded` | Local backend reports no loaded model | Cascade to another configured target. |
 | `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Fail closed; upgrade or set that provider's sandbox option to `false`. |
 | `not-found` | Missing or unlaunchable binary | Cascade or inspect the provider probe. |
@@ -172,7 +174,7 @@ fallback descriptors at `cascadePosition: 0` (the target's first model). After l
 `node dispatch.mjs --slots <slotsPath>` once and inspect the failed slots it prints; start all
 matching failures as parallel native fallbacks while the wave continues, then never poll again.
 A matching failure first observed after that inspection starts the native branch at
-`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1`. Other targets may use ordered reserves before step 3; use
+`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1` (a single-model cascade retries model[0] once natively); a successful early fallback is final. Other targets may use ordered reserves before step 3; use
 each reserve at most once per wave and record `<failed target> → <reserve>: <reason>`.
 
 ## Integrity and diagnosis

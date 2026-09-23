@@ -1724,6 +1724,19 @@ describe('dispatch --validate-only CLI', () => {
     for (const flag of ['--level', '--level-source', '--pins']) assert.match(res.stdout, new RegExp(`${flag}\\b`));
   });
 
+  it('--help driver section lists ask and every DRIVER_FLAGS entry', async () => {
+    const { DRIVER_FLAGS } = await import('../../../skills/dispatch/scripts/driver/index.mjs');
+    const res = run(['--help']);
+    assert.equal(res.status, 0);
+    const start = res.stdout.indexOf('Driver (');
+    assert.ok(start >= 0, 'help has a Driver section');
+    const driver = res.stdout.slice(start).split(/\r?\n\s*\r?\n/)[0];
+    const missing = DRIVER_FLAGS.filter((flag) => !new RegExp(`${flag}(?![\\w-])`).test(driver));
+    assert.deepEqual(missing, [], `driver help omits: ${missing.join(', ')}`);
+    assert.match(driver.split(/\r?\n/).find((line) => /--run\b/.test(line)) ?? '', /\bask\b/);
+    assert.match(driver.split(/\r?\n/).find((line) => /^\s*-- <argument>/.test(line)) ?? '', /ask question/);
+  });
+
   it('rejects an empty candidate index', () => {
     const res = run(['--provider', 'claude', '--candidate-index=', 'Review this change']);
     assert.equal(res.status, 1);

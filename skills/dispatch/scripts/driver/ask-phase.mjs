@@ -9,11 +9,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { loadDispatchConfig, resolveReadDelegates } from '../config.mjs';
-import { resolveConfiguredTargets } from '../dispatch.mjs';
+import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../config.mjs';
+import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
 import { createTempFile } from '../review-preparation.mjs';
-import { emitAction, sanitizeReplyText } from './actions.mjs';
-import { createRunState, writeRunSidecar, writeRunState } from './state.mjs';
+import { emitAction } from './actions.mjs';
+import { createRunState, finish, reemit, writeRunSidecar } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SCRIPT = path.join(DISPATCH_DIR, 'scripts', 'dispatch.mjs');
@@ -30,12 +30,6 @@ function runFile(state, name, contents = '') {
   fs.writeFileSync(file, contents, { mode: 0o600 });
   state.cleanup.push(file);
   return file;
-}
-
-function finish(state, action) {
-  state.pending = action;
-  writeRunState(state);
-  return action;
 }
 
 /** Starts `--run ask`; returns the first (`launch`) action. */
@@ -57,13 +51,38 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
       outcome: 'failed', summary: 'No read delegate is configured for ask.', command: resumeCommand,
     }, ['Report the summary to the user; the run is finished.']));
   }
-  const roundId = 'ask:R1';
-  const targets = orderedTargets.map((target) => ({
-    roundId, candidateId: `ask:${target.platform}:${target.candidateIndex}`,
-    platform: target.platform, candidateIndex: target.candidateIndex,
-  }));
+  // Breadth: explicit pins, else the level's code-review target-count scalar (absent or zero -> 1);
+  // that phase's `only` filter and rounds/targets suppression never apply to ask.
+  const scalar = resolveLevelScalar(config.phases?.['code-review']?.targets, invocation.level);
+  const pins = invocation.pins
+    ? String(invocation.pins).split(',').map((pin) => pin.trim()).filter(Boolean)
+    : [String(Number.isInteger(scalar) && scalar > 0 ? scalar : 1)];
+  let wave;
+  try {
+    wave = buildPinsWave(resolved, pins, { orchestrator: invocation.orchestrator, orchestratorModel: invocation.orchestratorModel });
+  } catch (error) {
+    return finish(state, emitAction(state, 'done', { outcome: 'failed', summary: error.message, command: resumeCommand },
+      ['Report the summary to the user; the run is finished.']));
+  }
+  const toEntry = (entry) => ({
+    roundId: entry.roundId, candidateId: entry.candidateId, platform: entry.platform, candidateIndex: entry.candidateIndex,
+  });
+  // NOTE: batch files take candidateIndex entries only, so a provider pin's in-platform cascade becomes its
+  // platform's orchestrator-demoted candidates: the first as target, the rest as ordered reserves.
+  const targets = [], reserves = wave.reserves.map(toEntry);
+  for (const entry of wave.targets) {
+    if (!entry.cascade) { targets.push(toEntry(entry)); continue; }
+    const [first, ...rest] = orderedTargets.filter((target) => target.platform === entry.platform)
+      .map((target) => toEntry({ ...entry, candidateId: `${entry.roundId.split(':')[0]}:${entry.platform}:${target.candidateIndex}`, candidateIndex: target.candidateIndex }));
+    if (first) targets.push(first);
+    reserves.push(...rest);
+  }
+  if (targets.length === 0) {
+    return finish(state, emitAction(state, 'done', { outcome: 'failed', summary: 'No pinned read delegate has a launchable candidate.', command: resumeCommand },
+      ['Report the summary to the user; the run is finished.']));
+  }
   const promptFile = createTempFile('dispatch-ask-prompt-', 'prompt.md', `${invocation.argument}\n`);
-  const batchFile = createTempFile('dispatch-ask-batch-', 'batch.json', `${JSON.stringify({ targets, reserves: [] }, null, 2)}\n`);
+  const batchFile = createTempFile('dispatch-ask-batch-', 'batch.json', `${JSON.stringify({ targets, reserves }, null, 2)}\n`);
   const outputFile = createTempFile('dispatch-ask-output-', 'output.txt', '');
   state.cleanup.push(promptFile.cleanupPath, batchFile.cleanupPath, outputFile.cleanupPath);
   const argv = [
@@ -109,7 +128,7 @@ function onLaunch(state) {
   const failures = envelope.failures ?? [];
   const native = failures.filter((failure) => failure.platform === state.invocation.orchestrator);
   state.collect = {
-    claims: envelope.targets.filter((record) => record.report).map((record) => ({ sourceKey: record.sourceKey, text: record.report })),
+    claims: envelope.targets.filter((record) => record.report?.trim()).map((record) => ({ sourceKey: record.sourceKey, text: record.report.trim() })),
     failed: failures.filter((failure) => !native.includes(failure)).map((failure) => ({ sourceKey: failure.sourceKey, kind: failure.failureKind ?? 'cross-platform' })),
     queue: native.map((failure) => {
       const key = `${failure.platform}:${failure.candidateIndex}`;
@@ -159,24 +178,28 @@ function nativeFallbackAction(state) {
 
 function onNativeFallback(state, reply) {
   const current = state.collect.current;
-  if (reply.slot !== current.sourceKey) return { ...state.pending, error: `slot must be ${current.sourceKey}.` };
-  if (reply.failed) {
-    const nextPosition = current.cascadePosition + 1;
-    state.collect.queue[0] = { ...current, cascadePosition: nextPosition };
-    if (nextPosition >= current.models.length) {
-      state.collect.queue.shift();
-      state.collect.failed.push({ sourceKey: current.sourceKey, kind: reply.failed.kind });
-    }
-    return processCollected(state);
-  }
+  if (reply.slot !== current.sourceKey) return reemit(state, `slot must be ${current.sourceKey}.`);
+  if (reply.failed) return failedHop(state, current, reply.failed.kind);
   const expected = current.descriptor;
   const actual = reply.actual;
   if (!actual || actual.agentType !== expected.agentType || actual.model !== expected.model || actual.reasoningEffort !== expected.reasoningEffort) {
-    return { ...state.pending, error: `Native fallback launch metadata must match the descriptor exactly; expected ${JSON.stringify({ agentType: expected.agentType, model: expected.model, reasoningEffort: expected.reasoningEffort })}.` };
+    return reemit(state, `Native fallback launch metadata must match the descriptor exactly; expected ${JSON.stringify({ agentType: expected.agentType, model: expected.model, reasoningEffort: expected.reasoningEffort })}.`);
   }
+  const text = fs.existsSync(current.outputPath) ? fs.readFileSync(current.outputPath, 'utf8').trim() : '';
+  if (!text) return failedHop(state, current, 'empty-output');
   state.collect.queue.shift();
-  const text = fs.existsSync(current.outputPath) ? fs.readFileSync(current.outputPath, 'utf8') : '';
-  state.collect.claims.push({ sourceKey: current.sourceKey, text: sanitizeReplyText(text) });
+  state.collect.claims.push({ sourceKey: current.sourceKey, text });
+  return processCollected(state);
+}
+
+/** Advances the slot's model cascade; the source records failed only on exhaustion. */
+function failedHop(state, current, kind) {
+  const nextPosition = current.cascadePosition + 1;
+  state.collect.queue[0] = { ...current, cascadePosition: nextPosition };
+  if (nextPosition >= current.models.length) {
+    state.collect.queue.shift();
+    state.collect.failed.push({ sourceKey: current.sourceKey, kind });
+  }
   return processCollected(state);
 }
 

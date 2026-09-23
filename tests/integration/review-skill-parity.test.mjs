@@ -99,3 +99,22 @@ describe("R10 shared review frame assembly", () => {
     }
   });
 });
+
+describe("alias forwarding grammar (A-5)", () => {
+  it("review aliases place --fix after the kind and implement places --phases after the verb", () => {
+    for (const kind of ["plan", "design", "code"]) {
+      const text = read(`skills/dispatch-${kind}-review/SKILL.md`);
+      assert.ok(
+        text.includes(`/dispatch <prefix> review ${kind} --fix: <argument>`),
+        `dispatch-${kind}-review must forward --fix after \`${kind}\``,
+      );
+      assert.match(text, /level and pins before `review`/);
+    }
+    const implement = read("skills/implement-dispatch/SKILL.md");
+    assert.ok(
+      implement.includes("/dispatch <prefix> implement --phases from:<phase>: <argument>"),
+      "implement-dispatch must forward --phases after `implement`",
+    );
+    assert.match(implement, /level and pins before `implement`/);
+  });
+});

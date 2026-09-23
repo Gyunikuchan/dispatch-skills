@@ -161,3 +161,27 @@ export function unappliedFixesFromArtifact(artifactPath) {
   if (pending.length === 0 && adjacent.length === 0) return null;
   return { rounds: roundsSinceSettled(markdown, scan.rounds.length), pending, adjacent };
 }
+
+// SECTION: shared run-state transitions
+
+// Re-emitted actions leave state untouched, so they are never written back.
+export const REEMITTED = new WeakSet();
+
+/** Records the next pending action (cleaning temp files on `done`); a re-emitted action returns untouched. */
+export function finish(state, action) {
+  if (REEMITTED.has(action)) return action;
+  if (action.action === 'done') cleanupRun(state);
+  state.pending = action;
+  writeRunState(state);
+  return action;
+}
+
+export function cleanupRun(state) {
+  for (const target of state.cleanup.splice(0)) fs.rmSync(target, { recursive: true, force: true });
+}
+
+export function reemit(state, error) {
+  const action = { ...state.pending, error };
+  REEMITTED.add(action);
+  return action;
+}

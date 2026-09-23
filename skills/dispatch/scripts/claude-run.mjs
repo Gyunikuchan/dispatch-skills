@@ -493,6 +493,12 @@ async function executeOnTarget({
           exitCode,
           truncated: outcome.truncated,
         });
+        // Written here, before the caller closes the session logger.
+        const warning = sandboxWarning({ sandbox, exitCode: effectiveExitCode, stderr: outcome.stderrBuffer });
+        if (warning) {
+          process.stderr.write(warning);
+          sessionLogger.write(warning);
+        }
 
         emitCompletionBanner({
           platform: 'claude',
@@ -602,12 +608,13 @@ export function parseModeFlags(args) {
  * Classifies Claude-specific diagnostics before applying the shared failure classifier.
  *
  * @param {string} text Raw stdout and stderr
- * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-loaded'|'not-found'|'timeout'|null}
+ * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyClaudeFailure(text) {
+  if (MODEL_NOT_FOUND_PATTERN.test(text ?? '')) return 'model-not-found';
   const standardFailure = classifyFailure(text);
   if (standardFailure) return standardFailure;
-  if (isSandboxUnsupportedDiagnostic(text, { includeSettings: true })) {
+  if (isSandboxUnsupportedDiagnostic(stripSandboxAdvisory(text), { includeSettings: true })) {
     return 'sandbox-unsupported';
   }
   return null;
@@ -618,19 +625,22 @@ export function classifyClaudeFailure(text) {
  * a non-zero run may include provider details on either stream.
  *
  * @param {{ exitCode: number, stderr?: string, stdout?: string }} result
- * @returns {ReturnType<typeof classifyClaudeFailure>}
+ * @returns {'sandbox-unsupported'|'quota'|'context-overflow'|'auth'|'model-not-found'|'model-not-loaded'|'not-found'|'timeout'|null}
  */
 export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
+  // The "Sandbox disabled … not active" advisory is informational, never an unsupported-flag diagnostic.
+  const diagnostics = stripSandboxAdvisory(stderr);
   if (exitCode === 0) {
     const standardFailure = classifyFailure(stderr);
     if (standardFailure) return standardFailure;
-    return isSandboxUnsupportedDiagnostic(stderr, { includeSettings: true, strict: true })
+    return isSandboxUnsupportedDiagnostic(diagnostics, { includeSettings: true, strict: true })
       ? 'sandbox-unsupported'
       : null;
   }
+  if (MODEL_NOT_FOUND_PATTERN.test(`${stderr}\n${stdout}`)) return 'model-not-found';
   const standardFailure = classifyFailure(`${stderr}\n${stdout}`);
   if (standardFailure) return standardFailure;
-  return isSandboxUnsupportedDiagnostic(stderr, { includeSettings: true })
+  return isSandboxUnsupportedDiagnostic(diagnostics, { includeSettings: true })
     ? 'sandbox-unsupported'
     : null;
 }
@@ -640,14 +650,42 @@ export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
  * contract failures in one pure seam.
  */
 export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, exitCode, truncated = null }) {
+  const modelNotFound = envelope.apiErrorStatus === 404
+    || (envelope.isError && MODEL_NOT_FOUND_PATTERN.test(envelope.raw ?? ''))
+    || classifiedFailure === 'model-not-found';
+  // Precedence: genuine sandbox-unsupported > model-not-found > envelope subtype > other kinds > truncated.
   const failureKind =
     classifiedFailure === 'sandbox-unsupported'
       ? classifiedFailure
-      : (envelope.isError && envelope.subtype) || classifiedFailure || truncated || null;
+      : modelNotFound
+        ? 'model-not-found'
+        : (envelope.isError && envelope.subtype) || classifiedFailure || truncated || null;
   return {
     failureKind,
     effectiveExitCode: failureKind === 'sandbox-unsupported' ? 1 : exitCode,
   };
+}
+
+const MODEL_NOT_FOUND_PATTERN = /selected model|model\b[^\n]*\bnot found/i;
+const SANDBOX_ADVISORY_PATTERN = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$/gim;
+
+function stripSandboxAdvisory(text) {
+  return String(text ?? '').replace(SANDBOX_ADVISORY_PATTERN, '');
+}
+
+/** Whether Claude printed its "Sandbox disabled … not active" advisory. */
+export function claudeSandboxInactive(stderr) {
+  return /Sandbox disabled[^\n]*not active/i.test(String(stderr ?? ''));
+}
+
+/**
+ * The one-line warning for a successful run that requested the sandbox but ran unsandboxed
+ * (Claude's sandbox supports macOS, Linux, and WSL2 only), or null.
+ */
+export function sandboxWarning({ sandbox, exitCode, stderr, platform = process.platform }) {
+  if (!sandbox || exitCode !== 0 || !claudeSandboxInactive(stderr)) return null;
+  const cause = platform === 'win32' ? ' Native Windows is unsupported; use WSL2.' : '';
+  return `[dispatch] WARNING: Claude sandbox is not active; the run proceeded unsandboxed.${cause}\n`;
 }
 
 /** Whether the direct runner may print the delegate's answer to stdout. */
@@ -1095,6 +1133,8 @@ export function parseClaudeEnvelope(rawStdout) {
     sessionId: extractClaudeSessionId(rawStdout),
     isError: false,
     subtype: null,
+    apiErrorStatus: null,
+    raw: rawStdout || '',
   });
 
   const trimmed = (rawStdout || '').trim();
@@ -1124,6 +1164,8 @@ export function parseClaudeEnvelope(rawStdout) {
     sessionId: typeof envelope.session_id === 'string' ? envelope.session_id : null,
     isError: envelope.is_error === true,
     subtype: typeof envelope.subtype === 'string' ? envelope.subtype : null,
+    apiErrorStatus: Number.isInteger(envelope.api_error_status) ? envelope.api_error_status : null,
+    raw: trimmed,
   };
 }
 
