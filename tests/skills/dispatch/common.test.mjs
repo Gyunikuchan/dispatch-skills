@@ -27,6 +27,7 @@ import {
   removeBriefFile,
   sweepStaleBriefDirs,
   classifyFailure,
+  resolveFailureKind,
   isEmptyResult,
   DEFAULT_TIMEOUT_SECONDS,
   DEFAULT_MAX_BUFFER_MB,
@@ -601,6 +602,14 @@ describe('common: prompt formatting & response extraction', () => {
     assert.equal(classifyFailure('Error: No models loaded. Please load a model in LM Studio.'), 'model-not-loaded');
     assert.equal(classifyFailure('model is not loaded'), 'model-not-loaded');
     assert.equal(classifyFailure('ENOENT: no such file or directory'), 'not-found');
+  });
+
+  it('resolveFailureKind lets a runner timeout outrank text matches in partial output', () => {
+    assert.equal(resolveFailureKind(classifyFailure('Finding: add a rate limit to the API'), 'timeout'), 'timeout');
+    assert.equal(resolveFailureKind('quota', 'buffer'), 'quota');
+    assert.equal(resolveFailureKind(null, 'buffer'), 'buffer');
+    assert.equal(resolveFailureKind('auth', null), 'auth');
+    assert.equal(resolveFailureKind(null, null), null);
   });
 });
 

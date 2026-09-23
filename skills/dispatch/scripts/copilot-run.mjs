@@ -25,6 +25,7 @@ import {
   buildFormattedPrompt,
   buildMetricsAttempt,
   classifyFailure,
+  resolveFailureKind,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
@@ -403,9 +404,10 @@ async function executeOnTarget({
           truncated: outcome.truncated,
           cleanStdout,
         });
-        const failureKind =
-          classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }) ||
-          outcome.truncated;
+        const failureKind = resolveFailureKind(
+          classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }),
+          outcome.truncated,
+        );
         const effectiveExitCode = failureKind === 'sandbox-unsupported' ? 1 : exitCode;
 
         emitCompletionBanner({

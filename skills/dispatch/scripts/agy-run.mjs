@@ -25,6 +25,7 @@ import {
   buildFormattedPrompt,
   buildMetricsAttempt,
   classifyFailure,
+  resolveFailureKind,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
@@ -482,8 +483,10 @@ async function executeAgyInMode(mode, options) {
           truncated: outcome.truncated,
           cleanStdout,
         });
-        const failureKind =
-          classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || outcome.truncated;
+        const failureKind = resolveFailureKind(
+          classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`),
+          outcome.truncated,
+        );
 
         emitCompletionBanner({
           platform: 'agy',

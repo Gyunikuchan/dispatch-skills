@@ -26,6 +26,7 @@ import {
   buildFormattedPrompt,
   buildMetricsAttempt,
   classifyFailure,
+  resolveFailureKind,
   createNoTargetsError as createCliNotFoundError,
   createSessionLogger,
   createTraceWriter,
@@ -660,11 +661,13 @@ export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, 
     || classifiedFailure === 'model-not-found';
   // An API error envelope can still carry subtype 'success', which names no failure.
   const subtype = envelope.isError && envelope.subtype !== 'success' ? envelope.subtype : null;
-  // Precedence: genuine sandbox-unsupported > cli-outdated > model-not-found > envelope subtype > other kinds > truncated.
+  // Precedence: genuine sandbox-unsupported > timeout > cli-outdated > model-not-found > envelope subtype > other kinds > buffer.
   const failureKind =
     classifiedFailure === 'sandbox-unsupported'
       ? classifiedFailure
-      : cliOutdated
+      : truncated === 'timeout'
+        ? 'timeout'
+        : cliOutdated
         ? 'cli-outdated'
         : modelNotFound
           ? 'model-not-found'

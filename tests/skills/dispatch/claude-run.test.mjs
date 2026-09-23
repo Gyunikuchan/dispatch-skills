@@ -307,6 +307,15 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
           }),
           { failureKind: 'truncated', effectiveExitCode: 1 },
         );
+        assert.deepEqual(
+          resolveClaudeOutcome({
+            envelope: { isError: false },
+            classifiedFailure: 'quota',
+            exitCode: 124,
+            truncated: 'timeout',
+          }),
+          { failureKind: 'timeout', effectiveExitCode: 124 },
+        );
       });
 
       it('suppresses direct-runner output when sandbox support is unverified', () => {

@@ -2276,6 +2276,20 @@ export function classifyFailure(text) {
 }
 
 /**
+ * Settles a run's failure kind from the text classification and the runner's truncation cause.
+ * A timeout wins: the runner killed the child itself, while text matching can hit words like
+ * "rate limit" in the delegate's own partial analysis.
+ *
+ * @param {string|null} classified Result of a text classifier.
+ * @param {'timeout'|'buffer'|null} truncated
+ * @returns {string|null}
+ */
+export function resolveFailureKind(classified, truncated) {
+  if (truncated === 'timeout') return 'timeout';
+  return classified || truncated || null;
+}
+
+/**
  * Treats a delegate that exits cleanly with nothing to say as a failure: CLIs routinely
  * report quota exhaustion or a refusal on stderr and still exit 0.
  */

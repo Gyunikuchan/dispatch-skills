@@ -66,6 +66,7 @@ import {
   formatCliError,
   safeExitCode,
   classifyFailure,
+  resolveFailureKind,
   createSessionLogger,
   createTraceWriter,
   DEFAULT_MAX_BUFFER_MB,
@@ -598,8 +599,10 @@ function spawnOpencode({
         truncated,
         cleanStdout,
       });
-      let failureKind =
-        classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`) || (truncated ? truncated : null);
+      let failureKind = resolveFailureKind(
+        classifyFailure(`${outcome.stderrBuffer}\n${outcome.stdoutBuffer}`),
+        truncated,
+      );
 
       // opencode can fail with its cause only in the output stream, leaving stderr silent; surface
       // the last `Error:` line so the orchestrator sees why instead of a bare exit code.
