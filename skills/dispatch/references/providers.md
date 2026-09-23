@@ -81,7 +81,7 @@ These are defense-in-depth controls, not a complete secret boundary.
   the session log to diagnose binary or config resolution.
 - **Requires opencode CLI v2.** Argv is v2-only (`run --auto [--agent] [-m model[#effort]]
   [--format json] -- <prompt>`); `--pure` and `--variant` are never emitted, and there is no v1
-  fallback. Reasoning effort folds into the model as `model#effort` rather than a standalone flag.
+  fallback. Reasoning effort folds into the model as `model#effort` rather than a standalone flag; a `Variant unavailable` rejection reruns that model once without effort.
 - **Configuration:** read the locally available `opencode.json`/`opencode.jsonc` precedence chain,
   using v2 keys only (opencode v2 migrates v1 config files itself). Any configured
   `provider/model` is valid; with no configured model, let OpenCode select one. `-a` and `--json`

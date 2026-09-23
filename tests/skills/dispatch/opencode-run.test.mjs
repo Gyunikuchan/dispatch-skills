@@ -502,6 +502,23 @@ describe('opencode-run', () => {
       assert.equal(result.model, 'anthropic/model-b');
     });
 
+    it('retries a model once without effort when opencode reports no such variant', async () => {
+      const attempts = [];
+      const result = await runOpencode({
+        prompt: 'Review this diff',
+        model: ['opencode-go/mimo-v2.6-pro', 'opencode-go/glm-5.3-flash'],
+        effort: 'medium',
+        runSingle: async (opts) => {
+          attempts.push([opts.model, opts.effort]);
+          return opts.effort
+            ? { exitCode: 1, failureKind: null, stderr: 'Error: Variant unavailable for opencode-go/mimo-v2.6-pro: medium\n' }
+            : { exitCode: 0, failureKind: null, model: opts.model };
+        },
+      });
+      assert.deepEqual(attempts, [['opencode-go/mimo-v2.6-pro', 'medium'], ['opencode-go/mimo-v2.6-pro', null]]);
+      assert.equal(result.model, 'opencode-go/mimo-v2.6-pro');
+    });
+
     it('an array model never reaches opencode as a joined -m token', async () => {
       mock.method(http, 'get', () => {
         throw new Error('preflight must not run for a remote endpoint');

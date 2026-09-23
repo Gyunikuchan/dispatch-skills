@@ -275,7 +275,12 @@ export async function runOpencode(options = {}) {
     resolveModelsToTry(model),
     async (currentModel) => {
       try {
-        const result = await runSingle({ ...options, model: currentModel });
+        let result = await runSingle({ ...options, model: currentModel });
+        // NOTE: v2 rejects `#<effort>` for models without variants; rerun that model once at its default effort.
+        if (result.exitCode !== 0 && options.effort && /Variant unavailable/i.test(`${result.stderr ?? ''}\n${result.stdout ?? ''}`)) {
+          process.stderr.write(`[dispatch] ${currentModel} has no '${options.effort}' variant; retrying without effort.\n`);
+          result = await runSingle({ ...options, model: currentModel, effort: null });
+        }
         const input = result.formattedPromptForMetrics ?? prompt;
         metricsAttempts.push(buildMetricsAttempt({
           input,
