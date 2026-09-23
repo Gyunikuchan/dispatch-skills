@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { emitAction } from './actions.mjs';
@@ -74,7 +75,18 @@ async function consumeReview(state, action) {
   state.ordinary.phase = 'handoff';
   return handoff(state);
 }
+/** Captures the governing artifacts so a reply that throws leaves no half-applied round or evidence stub. */
+function artifactSnapshot(state) {
+  return [state.planPath, state.walkthroughPath].filter(Boolean).map(file => ({ file, content: fs.existsSync(file) ? fs.readFileSync(file) : null }));
+}
+function restoreArtifacts(snapshot) {
+  for (const { file, content } of snapshot) {
+    if (content === null) fs.rmSync(file, { force: true });
+    else if (!fs.existsSync(file) || !fs.readFileSync(file).equals(content)) fs.writeFileSync(file, content);
+  }
+}
 export async function advanceImplement(state, reply) {
+  const artifacts = artifactSnapshot(state);
   try {
     let action;
     const data = state.ordinary;
@@ -109,7 +121,8 @@ export async function advanceImplement(state, reply) {
     }
     return save(state, await action);
   } catch (error) {
-    // Invalid or stale host replies cannot advance the durable state machine.
+    // Invalid or stale host replies cannot advance the durable state machine or its artifacts.
+    restoreArtifacts(artifacts);
     return { ...state.pending, error: error.message };
   }
 }

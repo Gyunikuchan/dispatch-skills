@@ -11,6 +11,10 @@ const diagnostic = (rule, line, message, severity) => ({
   ...(severity ? { severity } : {}),
 });
 
+// Mirrors git-state.mjs normalizeTaskPath: approval rejects these, so lint fails them first.
+const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
+const excludedPathDefect = (line, value) => diagnostic('change-path-excluded', line, `Change path "${value}" is under .git/ or .scratch/; implementation never writes there.`);
+
 function sectionRanges(lines, heading) {
   return lines.flatMap((entry, index) => entry.text.trimEnd() === heading ? [{
     start: index,
@@ -77,6 +81,8 @@ export function lintPlan(source) {
     defects.push(diagnostic('success-criteria', null, 'Expected at most one Success Criteria section.'));
   }
 
+  for (const record of records) if (record.path && EXCLUDED_CHANGE_PATH.test(record.path)) defects.push(excludedPathDefect(record.line, record.path));
+
   if (criteria.length === 1) {
     const { start, end } = criteria[0];
     const ids = new Set();
@@ -115,7 +121,8 @@ export function lintPlan(source) {
         current.hasMapping = true;
         for (const value of changes[1].split(',')) {
           const normalized = normalizePlanPath(value);
-          if (!normalized.path || !approved.has(normalized.path)) {
+          if (normalized.path && EXCLUDED_CHANGE_PATH.test(normalized.path)) defects.push(excludedPathDefect(entry.line, normalized.path));
+          else if (!normalized.path || !approved.has(normalized.path)) {
             defects.push(diagnostic('criterion-change-path', entry.line, `Criterion references unknown change path "${value.trim()}".`));
           }
         }

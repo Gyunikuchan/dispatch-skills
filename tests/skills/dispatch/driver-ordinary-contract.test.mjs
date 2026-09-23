@@ -381,6 +381,27 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
   });
+  it('rolls back the plan round and walkthrough stub when a reply throws after adjudication', () => {
+    const fixture = setup(); let planWaves = 0, errored = null;
+    // An approved path that is a directory makes baseline fingerprinting throw after the round is written.
+    fs.rmSync(path.join(fixture.repo.dir, 'src/app.js'));
+    fs.mkdirSync(path.join(fixture.repo.dir, 'src/app.js'));
+    const finding = codeFinding({ locus: '§ Verification Plan', defect: 'Plan omits a negative case.' });
+    const before = fs.readFileSync(fixture.plan, 'utf8');
+    const walkthrough = fixture.plan.replace(/.md$/, '-walkthrough.md');
+    try {
+      run(fixture, { allowErrors: true, maxSteps: 40,
+      onAction(action) { if (action.error && !errored) { errored = action; throw new Error('stop'); } },
+      policy: {
+        waveResults: () => allProviders(report(++planWaves === 1 ? [finding] : [])),
+        // A rejected ruling still writes the round without needing fix paths.
+        rule: () => ({ status: 'rejected', resolution: 'Plan already names the negative case.' }),
+      } });
+    } catch (error) { if (error.message !== 'stop') throw error; }
+    assert.ok(errored, 'the adjudicate reply must fail');
+    assert.equal(fs.readFileSync(fixture.plan, 'utf8'), before);
+    assert.equal(fs.existsSync(walkthrough), false);
+  });
   it('relaunches tests-only once after an accepted test-review finding, then completes', () => {
     const fixture = setup(); let testWaves = 0, testsWritten = false;
     const base = policies(fixture.repo);

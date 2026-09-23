@@ -104,6 +104,10 @@ describe('deterministic plan lint', () => {
       '  - Notes: later',
     ))).includes('criterion-mapping'));
     assert.ok(rules(lintPlan(clean.replace('`src/a.js`, tests/a.test.js', '`src/missing.js`'))).includes('criterion-change-path'));
+    const scratch = lintPlan(clean.replace('`src/a.js`, tests/a.test.js', '`.scratch/plan/x.md`').replace('#### [MODIFY] src/a.js', '#### [MODIFY] .scratch/plan/x.md'));
+    assert.equal(rules(scratch).filter(rule => rule === 'change-path-excluded').length, 2);
+    assert.ok(!rules(scratch).includes('criterion-change-path'));
+    assert.ok(rules(lintPlan(clean.replace('#### [MODIFY] src/a.js', '#### [MODIFY] .git/config'))).includes('change-path-excluded'));
     assert.ok(rules(lintPlan(clean.replace('  - Verify: `node --test tests/a.test.js`', '  - Verify: `npm test` and `npm run lint`'))).includes('criterion-verify'));
   });
 
