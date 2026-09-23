@@ -119,8 +119,8 @@ export const DEFAULT_MAX_BUFFER_MB = 10;
 
 // Attachment caps keep `-f` from blowing the delegate's context window; the brief-file
 // path below keeps the prompt off argv when it still ends up large.
-export const MAX_ATTACHMENT_BYTES_PER_FILE = 128 * 1024;
-export const MAX_ATTACHMENT_BYTES_TOTAL = 512 * 1024;
+export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
+export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 
 /** Canonical provider keys the dispatch config's platform tables may key on. */
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];

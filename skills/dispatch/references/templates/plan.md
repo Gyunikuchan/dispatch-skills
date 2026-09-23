@@ -29,6 +29,7 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>`
   - Evidence: <red|verify|review>
+  - Pre-existing: <yes|no> <!-- optional; yes admits a red criterion whose failure already exists at baseline -->
   - Test rationale: <why retained RED is discriminating, stable, regression-bearing, proportionate, and behavioral; or why a new retained test is low-signal>
   - Review: <artifact: path; scenario: bounded inspection; pass: observable condition> <!-- required only for review -->
   - Enforcement infeasibility: <why deterministic enforcement is infeasible> <!-- required for critical review criteria -->

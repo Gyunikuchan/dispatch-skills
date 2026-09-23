@@ -275,11 +275,17 @@ function reemit(state, error) {
   return action;
 }
 
+function recordReviewFailure(state, sourceKey, kind) {
+  state.reviewFailed ??= [];
+  if (!state.reviewFailed.some((item) => item.sourceKey === sourceKey)) state.reviewFailed.push({ sourceKey, kind });
+}
+
 function done(state, outcome, summary, extra = {}) {
   return emitAction(state, 'done', {
     outcome,
     summary,
     ...(state.artifactPath ? { artifactPath: toSlash(path.relative(state.repoRoot, state.artifactPath)) } : {}),
+    ...(state.reviewFailed?.length ? { failed: state.reviewFailed } : {}),
     ...extra,
   }, ['Report the summary to the user; the run is finished.']);
 }
@@ -499,8 +505,12 @@ function onLaunch(state, reply) {
     if (!text.trim()) earlyBySlot.delete(slot);
     else fallback.text = text;
   }
-  const unresolved = (envelope.failures ?? []).filter((failure) =>
+  const unresolvedAll = (envelope.failures ?? []).filter((failure) =>
     !earlyBySlot.has(failure.sourceKey) && !failure.substitutesFor && !envelope.targets.some((record) => record.substitutesFor === failure.sourceKey));
+  // Native fallback substitutes a same-platform subagent only; other platforms' failures are recorded
+  // in run state (the resolution-log sourceMap has no failed status).
+  const unresolved = unresolvedAll.filter((failure) => failure.platform === state.invocation.orchestrator);
+  for (const failure of unresolvedAll) if (!unresolved.includes(failure)) recordReviewFailure(state, failure.sourceKey, failure.failureKind ?? 'cross-platform');
   state.collect = {
     reports: [
       ...envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
@@ -599,6 +609,7 @@ function onNativeFallback(state, reply) {
       state.collect.queue.shift();
       state.collect.fallbackTried.push(current.sourceKey);
       delete state.collect.sourceMap[current.sourceKey];
+      recordReviewFailure(state, current.sourceKey, reply.failed.kind);
     }
     return processCollected(state);
   }
@@ -643,8 +654,11 @@ function processCollected(state) {
       state.collect.reports = state.collect.reports.filter((candidate) => candidate !== report);
       const source = state.collect.sourceMap[report.sourceKey] ?? {};
       delete state.collect.sourceMap[report.sourceKey];
-      if (!report.fallback && !state.collect.fallbackTried.includes(report.sourceKey)) {
-        const [, , platform, index] = report.sourceKey.split(':');
+      const [, , platform, index] = report.sourceKey.split(':');
+      const canFallBack = !report.fallback && !state.collect.fallbackTried.includes(report.sourceKey) && platform === state.invocation.orchestrator;
+      if (!canFallBack) {
+        recordReviewFailure(state, report.sourceKey, 'invalid-report');
+      } else {
         state.collect.queue.push(cascadeSlot(state, {
           sourceKey: report.sourceKey,
           platform,

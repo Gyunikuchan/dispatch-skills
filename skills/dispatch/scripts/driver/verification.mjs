@@ -1,6 +1,6 @@
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
 import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
-import { checkRedQuality, parseIdentifiers } from '../red-quality.mjs';
+import { checkRedQuality, parseIdentifiers, stripIdentifierSpans } from '../red-quality.mjs';
 import { emitAction } from './actions.mjs';
 import { source } from './ordinary-state.mjs';
 
@@ -65,7 +65,9 @@ export function acceptVerification(state, reply) {
       }
     }
   }
-  const record = { command, exitStatus: result.exit, identifiers: result.identifiers ?? [], diagnostic: result.diagnostic ?? result.evidence,
+  // Counts only, for the review-view table; the raw test output is not persisted.
+  const counts = /\bpass\s+(\d+)[\s\S]*?\bfail\s+(\d+)/i.exec(`${result.evidence ?? ''}\n${result.diagnostic ?? ''}`);
+  const record = { command, exitStatus: result.exit, ...(counts ? { pass: Number(counts[1]), fail: Number(counts[2]) } : {}), identifiers: result.identifiers ?? [], diagnostic: result.diagnostic ?? result.evidence,
     identity: failureIdentity({ exitStatus: result.exit, identifiers: result.identifiers, diagnostic: result.diagnostic ?? result.evidence }), criterionEvidence,
     scopeHash: pending.scopeHash, mutationEpoch: pending.epoch, before: pending.before, after, changed };
   pending.results.push(record);
@@ -116,6 +118,8 @@ export function validateRedAdmission(state, envelope) {
     } else {
       if (!data.testsOnlyPaths.some(file => test.trim() === file || test.trim().startsWith(`${file}:`) || test.trim().startsWith(`${file} `))) defects.push(`${id} matrix test is outside classified test paths.`);
       if (!/\bexit\s+[1-9]\d*\b/i.test(failure) || parseIdentifiers(failure).length === 0) defects.push(`${id} expected failure lacks stable exit and identifier shape.`);
+      // ";" separates identifiers, so a segment without a prefix is a test name that contained one.
+      if (failure.split(';').slice(1).some(part => part.trim() && parseIdentifiers(part).length === 0)) defects.push(`${id} test name contains ";"; rename the test so each identifier is test:<full name> without semicolons.`);
     }
   }
   for (const criterion of data.redCriteria) if (parsedRows.filter(row => row.id === criterion.id).length !== 1) defects.push(`Exactly one primary RED-MATRIX row required for ${criterion.id}.`);
@@ -125,7 +129,9 @@ export function validateRed(state, envelope) {
   const data = state.ordinary, defects = [...validateRedAdmission(state, envelope)];
   if (!freshResults(state, 'red')) defects.push('RED host evidence is stale or changed the repository.');
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
-  if (!changed.length || changed.some(file => !data.testsOnlyPaths.includes(file))) defects.push('Tests-only mutation must change only classified approved test paths.');
+  // A declared pre-existing RED (plan "Pre-existing: yes") may already be in place; no test change is required.
+  const allPreExisting = data.redCriteria.length > 0 && data.redCriteria.every(item => item.preExisting);
+  if ((!changed.length && !allPreExisting) || changed.some(file => !data.testsOnlyPaths.includes(file))) defects.push('Tests-only mutation must change only classified approved test paths.');
   const rows = envelope.evidence.filter(item => item.startsWith('RED-MATRIX '));
   const parsedRows = rows.map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean).map(([, id, test, failure]) => ({ id, test: test.trim(), failure }));
   for (const criterion of data.redCriteria) {
@@ -137,7 +143,7 @@ export function validateRed(state, envelope) {
   for (const red of reds) {
     const baseline = data.baselineResults.find(item => item.command === red.command);
     if (!baseline) defects.push(`RED command has no baseline result: ${red.command}`);
-    else if (baseline.exitStatus !== 0 && compareFailureIdentity(baseline.identity, red.identity)) defects.push('Known-red baseline collision is not attributable RED.');
+    else if (baseline.exitStatus !== 0 && compareFailureIdentity(baseline.identity, red.identity) && !data.redCriteria.filter(item => item.commands.includes(red.command)).every(item => item.preExisting)) defects.push('Known-red baseline collision is not attributable RED; declare "Pre-existing: yes" on the criterion to adopt it.');
     defects.push(...checkRedQuality(source(state), envelope, red));
   }
   for (const criterion of data.redCriteria) {
@@ -151,7 +157,7 @@ export function validateRed(state, envelope) {
     const identifiers = [...new Set(peerRows.flatMap(item => parseIdentifiers(item.failure)))];
     const exit = /\bexit\s+(\d+)\b/i.exec(expected);
     const expectedIdentity = failureIdentity({ exitStatus: exit ? Number(exit[1]) : 1, identifiers,
-      diagnostic: expected.replace(/\bexit\s*\d+\b/i, '').replace(/\b(?:test|error|failure):[^;]+/gi, '').trim() });
+      diagnostic: stripIdentifierSpans(expected.replace(/\bexit\s*\d+\b/i, '')).trim() });
     if (!reds.some(red => criterion.commands.includes(red.command) && compareFailureIdentity(red.identity, expectedIdentity))) defects.push(`${criterion.id} has no matching stable failure in its mapped host command.`);
   }
   return [...new Set(defects)];

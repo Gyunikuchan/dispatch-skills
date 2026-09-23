@@ -21,7 +21,7 @@ describe("v0.5 RED and failure disposition", () => {
     assert.match(c, /preserves and fingerprints the tree/);
     assert.match(
       c,
-      /keep for repair, revert attributable paths, or inspect first/,
+      /keep for repair, revert attributable paths, inspect first/,
     );
     assert.match(c, /stable-failure/);
   });

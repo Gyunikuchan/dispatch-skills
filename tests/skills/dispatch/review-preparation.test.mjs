@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, it } from 'node:test';
 
 import {
@@ -112,6 +113,53 @@ describe('review preparation primitives', () => {
     const view = buildReviewView(artifact, { canonicalPath: 'plan.md', nextRound: 2 });
     assert.match(view.contents, /# Plan/);
     assert.doesNotMatch(view.contents, /schemaVersion|dispatch/);
+  });
+
+  it('plan-review prompt template states the read-only inspection bound (SC1)', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+    const template = fs.readFileSync(path.join(root, 'skills/dispatch/references/templates/review-prompt-plan.md'), 'utf8');
+    assert.match(template, /inspect(?:ing)? by reading and searching files/i,
+      'the plan-review prompt must state the read-only bound');
+    assert.match(template, /run no test or build commands/i,
+      'the plan-review prompt must forbid running test or build commands');
+  });
+
+  it('builds a code-review view with a readable verification table and no Ordinary execution evidence block (SC1)', () => {
+    const record = {
+      schemaVersion: 1,
+      ordinary: {
+        // acceptVerification's persisted record shape (driver/verification.mjs).
+        criteria: [{ id: 'SC1', commands: ['node --test tests/value.test.mjs'] }],
+        completionResults: [
+          { command: 'node --test tests/value.test.mjs', exitStatus: 0, pass: 3, fail: 0, identifiers: [], diagnostic: '', criterionEvidence: [], scopeHash: 'sha256:x', mutationEpoch: 1, changed: [] },
+        ],
+      },
+    };
+    const artifact = [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"code","slug":"sample","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}',
+      '---',
+      '# Walkthrough',
+      '',
+      '## Verification & Validation',
+      'Host verification is recorded in Ordinary execution evidence with evidence class, revision, result, and limitations.',
+      '',
+      '## Ordinary execution evidence',
+      '```json',
+      JSON.stringify(record),
+      '```',
+      '',
+      '## Review Findings & Resolutions',
+      '### Round 1',
+      '- *No actionable findings.*',
+    ].join('\n');
+    const view = buildReviewView(artifact, { canonicalPath: 'walkthrough.md', nextRound: 2, kind: 'code' });
+    assert.doesNotMatch(view.contents, /## Ordinary execution evidence/,
+      'the code-review walkthrough view must omit the ~145 KB Ordinary execution evidence JSON block');
+    assert.match(view.contents, /\|\s*Command\s*\|\s*Exit\s*\|/i,
+      'the review view must contain a readable verification table with a Command/Exit header');
+    assert.match(view.contents, /node --test tests\/value\.test\.mjs/,
+      'the rendered table must carry the actual verification command');
   });
 
   it('consumes invocation generations exactly once', () => {

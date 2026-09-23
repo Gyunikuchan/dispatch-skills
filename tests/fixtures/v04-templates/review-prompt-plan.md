@@ -27,6 +27,7 @@ been written yet.
 Inspect the supplied scope and its direct contracts. Adhere to this project's conventions: read
 `AGENTS.md` / `CLAUDE.md`, including nested ones on reviewed paths, and flag violations as
 `standards`. Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
+Inspect by reading and searching files or with read-only code-exploration tools; run no test or build commands.
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
 earlier settled sections as closed. When Scope names changed sections, raise new in-scope findings
 only there; `adjacent` findings may cite any locus. Stop at that blast radius.

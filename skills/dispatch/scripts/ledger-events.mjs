@@ -11,7 +11,7 @@ const TRANSITIONS = new Set([
 const EVENT_TYPES = new Set([
   'run-start', 'run-complete', 'task-start', 'implementation-attempt',
   'verification', 'task-complete', 'ruling', 'review', 'approval',
-  'increment-state', 'amendment', 'adjacent-fix', 'integration',
+  'increment-state', 'amendment', 'adjacent-fix', 'integration', 'manual-complete',
 ]);
 const INCREMENT_STATES = new Set([
   'pending', 'ready', 'active', 'complete', 'blocked', 'invalidated', 'reopened',
@@ -193,6 +193,19 @@ function validateData(event) {
       strings(data.verificationRefs, 'integration.data.verificationRefs');
       strings(data.reviewRefs, 'integration.data.reviewRefs');
       enumeration(data.result, [...INTEGRATION_RESULTS], 'integration.data.result');
+      break;
+    case 'manual-complete':
+      exact(data, ['reviewer', 'reason', 'redEvidence', 'criterionEvidence', 'fingerprint'], [], 'manual-complete.data');
+      string(data.reviewer, 'manual-complete.data.reviewer');
+      string(data.reason, 'manual-complete.data.reason');
+      if (data.redEvidence !== null) string(data.redEvidence, 'manual-complete.data.redEvidence');
+      if (!Array.isArray(data.criterionEvidence) || data.criterionEvidence.length === 0) throw new Error('manual-complete.data.criterionEvidence must be non-empty');
+      data.criterionEvidence.forEach((item, index) => {
+        exact(item, ['criterionId', 'evidence'], [], `manual-complete.data.criterionEvidence[${index}]`);
+        string(item.criterionId, 'manual-complete criterionId');
+        string(item.evidence, 'manual-complete evidence');
+      });
+      object(data.fingerprint, 'manual-complete.data.fingerprint');
       break;
     case 'run-complete':
       exact(data, ['result', 'evidenceRefs'], [], 'run-complete.data');

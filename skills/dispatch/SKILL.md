@@ -48,6 +48,6 @@ Load [review.md](references/review.md) for any review action, [verbs/implement.m
 
 ## Recovery and completion
 
-Run state is a cache. Resume from canonical artifacts, resolution logs, ledger events, checkpoints, and Git state; an unrecoverable in-flight wave is relaunched whole. Missing or unsettled prerequisites stop with the producing phase named. Report config, integrity, or membership errors verbatim.
+Run state is a cache. Resume from canonical artifacts, resolution logs, ledger events, checkpoints, and Git state; an unrecoverable in-flight wave is relaunched whole. Missing or unsettled prerequisites stop with the producing phase named. Report config, integrity, or membership errors verbatim. Answer `manual-complete` only on an explicit user decision.
 
-Before relocating scratch artifacts, warn that the OS may delete them and report every destination. A run completes only when every action is terminal, every finding has a ruling, required verification is fresh, settlement/checkpoint state is recorded, and retained or relocated artifacts are named.
+Before relocating scratch artifacts, warn that the OS may delete them and report every destination. A run completes only when every action is terminal, every finding has a ruling, required verification is fresh (or a user-decided `manual-complete` ledgers per-criterion evidence), settlement/checkpoint state is recorded, and retained or relocated artifacts are named.

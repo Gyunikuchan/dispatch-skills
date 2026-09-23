@@ -130,22 +130,16 @@ Use this path after `NO_DISPATCH_AVAILABLE`, a pinned non-zero result, an empty 
 runner failure. Configuration, integrity, membership, and `--no-config` errors are terminal:
 report the exact diagnostic instead.
 
-1. Identify the failed target and orchestrator platforms. The driver resolves the failed target's
-   own `model` array from `state.policy` targets/reserves by `(platform, candidateIndex)` — never
-   from a batch record, whose `model` is `null` for an array candidate — and walks it one model at
-   a time from index 0. Exclude and re-resolve a source whose cascade cannot identify a model.
+1. The driver emits native fallback only for a failed target on the orchestrator's own platform
+   (for example, opencode targets under an opencode orchestrator); other platforms' failures are
+   recorded failed with their kind. It resolves the failed target's own `model` array from
+   `state.policy` targets/reserves by `(platform, candidateIndex)` — never from a batch record,
+   whose `model` is `null` for an array candidate — and walks it one model at a time from index 0.
+   Exclude and re-resolve a source whose cascade cannot identify a model.
 2. Emit a closed descriptor containing `sourceKey`, `agentType`, `model`, `reasoningEffort`,
    `substitutesFor`, `cascadePosition` (the model's index), and `modelCascade` (the full array),
-   then pass it unchanged to the native launcher. Matching platforms use the host's native
-   read-only subagent; differing platforms use this map:
-
-   | Failed platform | Native subagent |
-   |---|---|
-   | `claude` | `Explore` |
-   | `agy` | `research` |
-   | `copilot` | `explore` |
-   | `opencode` | `explore` |
-
+   then pass it unchanged to the host's native read-only subagent. A host that cannot set reasoning
+   effort (Claude Code's Agent tool) reports the configured value and states that limitation.
    Native subagents share the orchestrator's environment. Instruct the subagent to read the generated
    prompt file in full and follow it as the authoritative instructions; pass attachment paths named by
    the action. A launcher that cannot accept the descriptor excludes and re-resolves the source; it

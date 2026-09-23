@@ -359,6 +359,35 @@ function withoutSourceMap(roundText) {
   return roundText.split('\n').filter((line) => !/^\s*[-*]\s+\*\*Sources:\*\*/.test(line)).join('\n');
 }
 
+// Walkthrough run state (~100 KB+) is driver cache, not review evidence; reviewers get a table instead.
+const EVIDENCE_BLOCK = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
+const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
+function verificationTable(record) {
+  const ordinary = record?.ordinary ?? {};
+  const criteriaFor = (command) => (ordinary.criteria ?? []).filter((item) => item.commands?.includes(command)).map((item) => item.id);
+  const rows = Object.entries(ordinary)
+    .filter(([key, value]) => /Results$/.test(key) && Array.isArray(value))
+    .flatMap(([key, results]) => results.map((result) => {
+      const criteria = result.criteria ?? criteriaFor(result.command);
+      return `| ${cell(key.replace(/Results$/, ''))} | \`${cell(result.command)}\` | ${cell(result.exitStatus ?? result.exit)} | ${cell(result.pass)} | ${cell(result.fail)} | ${cell(result.mutationEpoch)} | ${cell(criteria.join(', '))} |`;
+    }));
+  if (!rows.length) return '';
+  return ['### Host verification results', '', '| Purpose | Command | Exit | Pass | Fail | Epoch | Criteria |', '| --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n');
+}
+function withVerificationTable(body) {
+  const match = EVIDENCE_BLOCK.exec(body);
+  if (!match) return body;
+  let record = null;
+  try { record = JSON.parse(match[1]); } catch { /* malformed cache: drop the block without a table */ }
+  const stripped = body.replace(EVIDENCE_BLOCK, '\n');
+  const table = record ? verificationTable(record) : '';
+  if (!table) return stripped;
+  const section = /(\n## Verification & Validation\n[\s\S]*?)(?=\n## |$)/;
+  return section.test(stripped)
+    ? stripped.replace(section, (text) => `${text.trimEnd()}\n\n${table}\n`)
+    : `${stripped.trimEnd()}\n\n## Verification & Validation\n\n${table}\n`;
+}
+
 export function buildReviewView(markdown, { canonicalPath, nextRound }) {
   if (!Number.isSafeInteger(nextRound) || nextRound < 1) throw new Error('nextRound must be a positive integer.');
   const scan = scanResolutionLog(markdown, { strict: true });
@@ -379,7 +408,7 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
     `> Canonical artifact: ${canonicalPath}`,
     '> Apply adjudication and edits only to the canonical artifact.',
     '',
-    scan.semanticBody,
+    withVerificationTable(scan.semanticBody),
     '',
     '## Review Findings & Resolutions (bounded view)',
   ];

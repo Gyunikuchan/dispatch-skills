@@ -14,6 +14,7 @@ import {
   failureIdentity,
   mapVerificationCommandsToPaths,
   normalizeDiagnostic,
+  outcomeFirstPacket,
   parsePorcelainZ,
 } from '../../../skills/dispatch/scripts/verification-evidence.mjs';
 
@@ -239,6 +240,23 @@ describe('verification evidence', () => {
       () => captureRepositoryState(repo),
       /Unsupported Git path contains a newline; side-effect capture unavailable\./,
     );
+  });
+
+  it('reads governingOutcome.context from the plan body after JSON frontmatter, not the frontmatter itself (SC6)', () => {
+    const plan = [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"plan","slug":"sample","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}',
+      '---',
+      '# Sample plan',
+      '',
+      'This is the real context paragraph describing the change.',
+      '',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+    ].join('\n');
+    const packet = outcomeFirstPacket(plan, []);
+    assert.notEqual(packet.governingOutcome.context, '{', 'context must not be the frontmatter opening brace');
+    assert.match(packet.governingOutcome.context, /real context paragraph/);
   });
 
   it('normalizes volatile diagnostics and compares stable failure identities', () => {

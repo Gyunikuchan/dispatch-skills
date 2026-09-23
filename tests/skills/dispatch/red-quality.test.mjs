@@ -190,6 +190,40 @@ describe('red-quality checker', () => {
     assert.equal(result.status, 0, result.stderr);
   });
 
+  it('bounds the exit-1 match so exit 100 is never treated as exit 1 (SC6)', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 100 test:value',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:value',
+    ] }));
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['test:value'], diagnostic: 'failed', command: 'node --test tests/value.test.mjs' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    // SC1's row claims "exit 100", which must not be read as a bare "exit 1" match against
+    // the RED exit status of 1 — an unbounded pattern would wrongly pass this as a match.
+    assert.equal(result.status, 1, 'an exit-100 row must not satisfy an exit-1 RED result');
+    assert.doesNotMatch(result.stderr, /MODULE_NOT_FOUND|Cannot find module/);
+  });
+
+  it('flags a RED command that matches no red-mapped criterion command instead of silently passing (SC6)', () => {
+    const f = fixture();
+    fs.writeFileSync(f.evidence, JSON.stringify({ evidence: [
+      'RED-MATRIX SC1 | tests/value.test.mjs | exit 1 test:value',
+      'RED-MATRIX SC2 | tests/value.test.mjs | interruption and resume exit 1 test:value',
+    ] }));
+    // The host ran a completely unrelated command; it matches no red-mapped criterion command,
+    // so the checker must guard against silently treating this as a pass.
+    fs.writeFileSync(f.red, JSON.stringify({ exitStatus: 1, identifiers: ['test:value'], diagnostic: 'failed', command: 'node --test tests/typo-unrelated.test.mjs' }));
+    const result = run(['--plan', f.plan, '--evidence', f.evidence, '--red', f.red]);
+    assert.equal(result.status, 1, 'a RED command mapped to no red criterion must not silently pass');
+    assert.doesNotMatch(result.stderr, /MODULE_NOT_FOUND|Cannot find module/);
+    assert.match(result.stderr, /unmapped command/i);
+  });
+
+  it('drops a blank identifier (colon with only whitespace after it) from parseIdentifiers (SC6)', () => {
+    assert.deepEqual(parseIdentifiers('exit 1 test:    ; error:x'), ['error:x']);
+    assert.deepEqual(parseIdentifiers('exit 1 test:   '), []);
+  });
+
   it('reuses exported mappings and failure identity helpers', () => {
     assert.equal(typeof verificationEvidence.criterionMappings, 'function');
     assert.deepEqual(mapVerificationCommandsToPaths('## Success Criteria\n- [SC1] x.\n  - Changes: src/a.js\n  - Verify: `npm test`\n', ['npm test']), { 'npm test': ['src/a.js'] });

@@ -7,7 +7,7 @@ import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { readRunState } from './state.mjs';
-import { beginVerification, completionResult, fingerprint, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
+import { beginVerification, completionResult, fingerprint, repositoryBaseline, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
 import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 function serializedEntries(state) {
@@ -78,6 +78,8 @@ function writeHistoryLine(history) {
 function blockedWrite(state, reason) {
   const data = state.ordinary;
   data.failure = { reason, failureSnapshot: snapshot(state) };
+  ruling(state, 'failure-disposition', 'blocked-write', reason);
+  append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
   return emitAction(state, 'done', { outcome: 'failed', summary: reason, ledgerPath: state.ledgerPath, command: state.resumeCommand });
 }
 
@@ -265,11 +267,12 @@ export function openFailure(state, reason) {
 function failureQuestion(state) {
   const data = state.ordinary;
   const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart: data.taskStart?.entries ?? data.baselineSnapshot.entries, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
-  return ask(state, 'failure-disposition', 'Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}. Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open.', [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
+  return ask(state, 'failure-disposition', 'Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}. Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.', [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (answer.decision === 'manual-complete') return manualComplete(state, answer);
   if (answer.decision === 'inspect-first') return emitAction(state, 'done', { outcome: 'failed', summary: 'Inspection requested; segment remains unterminated.', ledgerPath: state.ledgerPath, command: state.resumeCommand });
   if (answer.decision === 'revert-attributable') {
     const taskStart = data.taskStart?.entries ?? data.baselineSnapshot.entries;
@@ -290,6 +293,20 @@ function resolveFailure(state, answer) {
   ruling(state, 'failure-disposition', answer.decision, answer.reason);
   append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
   return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Repair evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+}
+/** User-decided closure of a stuck run: records host evidence, reviewer, reason, and the repository fingerprint. */
+function manualComplete(state, answer) {
+  const data = state.ordinary;
+  const evidence = Array.isArray(answer.criterionEvidence) ? answer.criterionEvidence : [];
+  const missing = data.criteria.filter(criterion => !evidence.some(item => item?.criterionId === criterion.id && typeof item.evidence === 'string' && item.evidence.trim()));
+  if (!answer.reviewer?.trim() || missing.length || (data.redCriteria.length && !answer.redEvidence?.trim())) {
+    throw new Error(`manual-complete requires reviewer, reason, criterionEvidence for every criterion${missing.length ? ` (missing ${missing.map(item => item.id).join(', ')})` : ''}, and redEvidence when red criteria exist.`);
+  }
+  const criterionEvidence = data.criteria.map(criterion => ({ criterionId: criterion.id, evidence: evidence.find(item => item.criterionId === criterion.id).evidence.trim() }));
+  append(state, 'manual-complete', { reviewer: answer.reviewer.trim(), reason: answer.reason.trim(), redEvidence: data.redCriteria.length ? answer.redEvidence.trim() : null, criterionEvidence, fingerprint: repositoryBaseline(state) });
+  ruling(state, 'failure-disposition', 'manual-complete', answer.reason);
+  append(state, 'run-complete', { result: 'complete', evidenceRefs: [state.walkthroughPath, 'manual-complete'] });
+  return emitAction(state, 'done', { outcome: 'complete', summary: `Closed by manual review (${answer.reviewer.trim()}): ${answer.reason.trim()}`, ledgerPath: state.ledgerPath, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Manual completion evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
 }
 export function completeTask(state) {
   const data = state.ordinary, segment = ledgerSegment(state);

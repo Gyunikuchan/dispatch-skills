@@ -303,7 +303,7 @@ describe('scripted review paths (SC5)', () => {
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      runArgs: ['review', '--orchestrator', 'agy', '--', plan],
       policy: {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback: (action) => {
@@ -343,7 +343,7 @@ describe('scripted review paths (SC5)', () => {
     let attempts = 0;
     const run = drive(fixture, {
       cwd: repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      runArgs: ['review', '--orchestrator', 'agy', '--', plan],
       policy: {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback: (action) => {
@@ -365,15 +365,14 @@ describe('scripted review paths (SC5)', () => {
 
   it('native fallback preserves two distinct configured model and effort descriptors', () => {
     const delegates = {
-      agy: { model: 'gemini-3.7-flash', effort: 'medium' },
-      opencode: [{ model: 'openai/gpt-5', effort: 'high' }],
+      agy: [{ model: 'gemini-3.7-flash', effort: 'medium' }, { model: 'gemini-3.7-pro', effort: 'high' }],
     };
     const { fixture, repo } = setup(config({ targets: 2 }, delegates));
     const plan = writePlan(repo.dir);
     const seen = [];
     const run = drive(fixture, {
       cwd: repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      runArgs: ['review', '--orchestrator', 'agy', '--', plan],
       policy: {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback: (action) => {
@@ -389,7 +388,7 @@ describe('scripted review paths (SC5)', () => {
     });
     assert.deepEqual(seen.map(({ agentType, model, reasoningEffort }) => ({ agentType, model, reasoningEffort })), [
       { agentType: 'research', model: 'gemini-3.7-flash', reasoningEffort: 'medium' },
-      { agentType: 'explore', model: 'openai/gpt-5', reasoningEffort: 'high' },
+      { agentType: 'research', model: 'gemini-3.7-pro', reasoningEffort: 'high' },
     ]);
     assert.equal(run.done.outcome, 'complete');
   });
@@ -779,7 +778,7 @@ describe('scripted follow-ups', () => {
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      runArgs: ['review', '--orchestrator', 'agy', '--', plan],
       policy: {
         // Parses as JSON with no restatable content: an `invalid-report`, not `prose-report`.
         waveResults: () => allProviders('{"status":"BOGUS"}'),

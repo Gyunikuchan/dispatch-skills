@@ -54,6 +54,8 @@ import {
   validateEffortSpec,
   validateModelSpec,
   validateProviderSpec,
+  MAX_ATTACHMENT_BYTES_PER_FILE,
+  MAX_ATTACHMENT_BYTES_TOTAL,
 } from '../../../skills/dispatch/scripts/common.mjs';
 
 // ---------------------------------------------------------------------------
@@ -742,6 +744,11 @@ describe('common: attachments, brief files & spill', () => {
         fs.rmSync(target, { recursive: true, force: true });
       } catch {}
     }
+  });
+
+  it('raises the attachment caps to 512 KB per file and 2 MB total (SC2)', () => {
+    assert.equal(MAX_ATTACHMENT_BYTES_PER_FILE, 512 * 1024);
+    assert.equal(MAX_ATTACHMENT_BYTES_TOTAL, 2 * 1024 * 1024);
   });
 
   it('reads a small attachment whole', () => {

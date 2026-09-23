@@ -380,6 +380,94 @@ describe('ordinary driver canonical contracts', () => {
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
   });
+  it('admits a declared pre-existing RED test whose identity matches baseline instead of a collision defect (SC4)', () => {
+    const fixture = setup();
+    // The baseline sample test already fails (asserts value=2 against src value=1); SC1 declares
+    // this pre-existing so the matching tests-only RED is admitted instead of raising a collision.
+    fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
+    fixture.repo.git('add', 'tests'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'pre-existing red baseline');
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8')
+      .replace('  - Test rationale: Behavioral failure isolates the sample outcome and protects its regression.',
+        '  - Test rationale: Behavioral failure isolates the sample outcome and protects its regression.\n  - Pre-existing: yes'));
+    const base = policies(fixture.repo);
+    const result = run(fixture, { allowErrors: true, policy: {
+      askUser(action) {
+        if (action.question === 'baseline-red') return { answer: { decision: 'accept', reason: 'Pre-existing failure declared in the plan.' } };
+        // No test file changed, so the independent RED review has nothing to inspect.
+        if (action.question === 'risk-review-degradation') return { answer: { decision: 'accept', reason: 'Pre-existing RED; no changed tests to review.' } };
+        return base.askUser(action);
+      },
+      delegateWrite(action) {
+        const testsOnly = action.fields.stage === 'tests-only';
+        if (!testsOnly) return base.delegateWrite(action);
+        // The tests-only mutation leaves the same failing assertion in place: same command, same
+        // host-observed identity as the pre-existing baseline failure.
+        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+      },
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok', ledger.diagnostic);
+    assert.equal(ledger.events.some(event => event.type === 'verification' && /collision/i.test(JSON.stringify(event.data))), false,
+      'a declared pre-existing RED matching baseline must not raise a Known-red baseline collision');
+  });
+
+  it('resumes an inspect-first segment on a fresh --run instead of throwing Task already dispatched (SC4)', () => {
+    const fixture = setup();
+    const base = policies(fixture.repo);
+    const result = run(fixture, { policy: {
+      delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
+      askUser: action => action.question === 'failure-disposition'
+        ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
+        : base.askUser(action),
+    } });
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.events.some(event => event.type === 'run-complete'), false, 'inspect-first must leave the segment open, not terminal');
+    // A brand-new `--run` on the same governing plan must resume the open inspect-first segment
+    // instead of throwing "Task already dispatched; reconstruct its canonical outcome instead of relaunching."
+    const resumed = runDispatch(fixture.fixture, ['--run', 'implement', '--orchestrator', 'claude', '--', fixture.plan], { cwd: fixture.repo.dir });
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const parsed = JSON.parse(resumed.stdout);
+    assert.notEqual(parsed.outcome, 'refused', JSON.stringify(parsed));
+    assert.doesNotMatch(resumed.stderr + JSON.stringify(parsed), /Task already dispatched/);
+  });
+
+  it('production delegate-write guidance names CRITERION rows and the inspectedRevision rule (SC4)', () => {
+    const fixture = setup();
+    let production;
+    const result = run(fixture, { onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action; } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    const guidance = production.guidance.join(' ');
+    assert.match(guidance, /CRITERION\s+SC#\s*\|/, 'guidance must name the CRITERION SC# | <paths> | <behavior> envelope row format');
+    assert.match(guidance, /inspectedRevision/, 'guidance must name the inspectedRevision field');
+    assert.match(guidance, /scopeHash/, 'guidance must state that inspectedRevision equals the emitted scopeHash');
+  });
+
+  it('rejects a RED-MATRIX row whose test identifier contains a semicolon at admission (SC4)', () => {
+    const state = { ordinary: { redCriteria: [{ id: 'SC1' }], testsOnlyPaths: ['tests/sample.test.mjs'] } };
+    const defects = validateRedAdmission(state, implementationOutcome({
+      stage: 'RED_READY',
+      evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:hops A; then B'],
+    }));
+    assert.ok(defects.some(defect => /;/.test(defect) || /naming|semicolon/i.test(defect)),
+      `expected a naming diagnostic for a \`;\`-bearing test name; got ${JSON.stringify(defects)}`);
+  });
+
+  it('blockedWrite appends a terminal run-complete ledger event before done (SC4)', () => {
+    const fixture = setup();
+    const result = run(fixture, { allowErrors: true, policy: {
+      delegateWrite: () => ({ rejected: true, reason: 'Model permanently unavailable.' }),
+    } });
+    assert.equal(result.done.outcome, 'failed', JSON.stringify(result.done));
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok', ledger.diagnostic);
+    const complete = ledger.events.find(event => event.type === 'run-complete');
+    assert.ok(complete, `expected a terminal run-complete ledger event; got types ${JSON.stringify(ledger.events.map(e => e.type))}`);
+    assert.equal(complete.data.result, 'stable-failure');
+    assert.ok(Array.isArray(complete.data.evidenceRefs) && complete.data.evidenceRefs.length > 0,
+      'run-complete must carry an evidenceRefs array naming the walkthrough');
+  });
+
   it('fails closed for green tests-only verification and resolves failure before stable-failure', () => {
     const fixture = setup();
     const result = run(fixture, { policy: { delegateWrite: () => ({ envelope: implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }) }) } });

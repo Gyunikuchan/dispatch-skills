@@ -8,12 +8,14 @@ function load(file) { return file === '-' ? JSON.parse(fs.readFileSync(0, 'utf8'
 // Full identifier grammar: matches to the next `;` (or end), so names containing spaces stay whole.
 const IDENTIFIER_PATTERN = /\b(?:test|error|failure):[^;]+/g;
 export function parseIdentifiers(text) {
-  return (String(text ?? '').match(IDENTIFIER_PATTERN) ?? []).map(value => value.trim());
+  // A bare prefix (`test:` with no name) carries no identity.
+  return (String(text ?? '').match(IDENTIFIER_PATTERN) ?? []).map(value => value.trim()).filter(value => /:\s*\S/.test(value));
 }
-function stripIdentifierSpans(text) { return String(text ?? '').replace(IDENTIFIER_PATTERN, ''); }
+export function stripIdentifierSpans(text) { return String(text ?? '').replace(IDENTIFIER_PATTERN, ''); }
 function commandMatches(commandText, command) { return commandText.includes(command.replace(/^.*?node --test\s*/, '')) || command === commandText; }
 export function checkRedQuality(plan, evidence, red) {
-  const mappings = criterionMappings(plan).filter(item => item.evidence === 'red');
+  const allMappings = criterionMappings(plan);
+  const mappings = allMappings.filter(item => item.evidence === 'red');
   const commands = [...new Set(mappings.flatMap(item => item.commands))];
   const scoped = mapVerificationCommandsToPaths(plan, commands);
   const rows = (evidence.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '));
@@ -46,7 +48,17 @@ export function checkRedQuality(plan, evidence, red) {
   }
   if (!red || red.exitStatus !== 1) defects.push('RED exit status mismatch');
   const commandText = red?.command ?? '';
-  const mappedForCommand = parsedRows.filter(row => row.item.commands.some(command => commandMatches(commandText, command)) && /exit\s*1/i.test(row.expected));
+  // Aggregate or non-red commands (e.g. `npm test`) are not RED identities; a command naming a test file
+  // that no criterion maps is a mis-targeted RED run.
+  const namesTestFile = /\S+\.(?:test|spec)\.[cm]?[jt]sx?\b/.test(commandText);
+  if (namesTestFile && !allMappings.some(item => item.commands.some(command => commandMatches(commandText, command)))) defects.push(`RED result for unmapped command ${commandText}`);
+  const forCommand = parsedRows.filter(row => row.item.commands.some(command => commandMatches(commandText, command)));
+  for (const row of forCommand) {
+    // The claimed RED exit is the token immediately before the identifiers, not an earlier prose mention.
+    const exit = /\bexit\s*(\d+)\s+(?=(?:test|error|failure):)/i.exec(row.expected) ?? /\bexit\s*(\d+)\b/i.exec(row.expected);
+    if (exit && red && Number(exit[1]) !== red.exitStatus) defects.push(`${row.id} RED exit status mismatch`);
+  }
+  const mappedForCommand = forCommand.filter(row => /\bexit\s*1\b/i.test(row.expected));
   if (mappedForCommand.length) {
     const stable = failureIdentity(red ?? {});
     const expectedIds = [...new Set(mappedForCommand.flatMap(row => parseIdentifiers(row.expected)))];

@@ -342,7 +342,9 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
     try { current = captureRepositoryState(repoRoot); } catch (error) {
       return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: `Failure snapshot capture failed: ${error.message}`, requiresFlowConfirmation: true };
     }
-    if (current.available === captured.available && JSON.stringify(current.entries ?? {}) === JSON.stringify(captured.entries ?? {})) {
+    // Driver snapshots exclude `.scratch/` (plan and walkthrough evidence rewrite there on every step).
+    const unscratched = entries => Object.fromEntries(Object.entries(entries ?? {}).filter(([file]) => !file.startsWith('.scratch/')));
+    if (current.available === captured.available && JSON.stringify(unscratched(current.entries)) === JSON.stringify(unscratched(captured.entries))) {
       return { status: 'resumable', slug, governingHash: hash.hash, segment, nextAction: 'failure-disposition', requiresFlowConfirmation: true };
     }
     return { status: 'needs-reconciliation', slug, governingHash: hash.hash, diagnostic: 'Failure snapshot drifted after disposition.', requiresFlowConfirmation: true };

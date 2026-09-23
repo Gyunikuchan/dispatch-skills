@@ -11,7 +11,7 @@ import { afterEach, describe, it } from 'node:test';
 
 import { loadSchema, validateReply } from '../../../skills/dispatch/scripts/driver/actions.mjs';
 import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, drive, makeGitRepo, parseAction, runDispatch, writePlan } from './driver-harness.mjs';
+import { allProviders, drive, makeGitRepo, parseAction, report, runDispatch, writePlan } from './driver-harness.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const DISPATCH_SCRIPT = path.join(ROOT, 'skills', 'dispatch', 'scripts', 'dispatch.mjs');
@@ -58,7 +58,7 @@ describe('driver-owned per-model native cascade for a failed read target (SC1)',
     const seen = [];
     const run = drive(scenario.fixture, {
       cwd: scenario.repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', scenario.plan],
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
       policy: {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         nativeFallback(action) {
@@ -71,6 +71,39 @@ describe('driver-owned per-model native cascade for a failed read target (SC1)',
       'the cascade must hop A then B, in candidate order, and go no further');
     assert.match(JSON.stringify(run.done), /failed/i, 'the slot ends recorded failed once its own model cascade is exhausted');
     assert.ok(!seen.some((descriptor) => descriptor.model === 'native-fallback-c'), 'sibling candidate C must never be part of this slot\'s cascade');
+  });
+});
+
+describe('review-phase post-wave native fallback stays same-platform (SC3)', () => {
+  it('never emits native-fallback for a cross-platform failed target under the post-wave queue, and records it failed', () => {
+    const fixture = buildStubDispatchFixture({
+      'read-delegates': {
+        claude: { model: 'claude-opus-5', effort: 'medium' },
+        opencode: { model: 'opencode-model', effort: 'medium' },
+      },
+      phases: {
+        'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false }, only: ['claude', 'opencode'] },
+      },
+    });
+    const repo = makeGitRepo();
+    cleanup.push(fixture.cleanup, repo.cleanup);
+    const plan = writePlan(repo.dir);
+    const seenNativeFallback = [];
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      onAction: (action) => { if (action.action === 'native-fallback') seenNativeFallback.push(action); },
+      policy: {
+        // The claude-platform slot (matches the orchestrator) is clean; the opencode slot fails and is
+        // cross-platform relative to the claude orchestrator, so it must never spawn a native fallback.
+        waveResults: () => ({
+          claude: { stdout: report() },
+          opencode: { exit: 1, failureKind: 'quota' },
+        }),
+      },
+    });
+    assert.deepEqual(seenNativeFallback, [], 'a cross-platform failed target must never reach native-fallback');
+    assert.ok(run.done.failed?.some((item) => /:opencode:/.test(item.sourceKey) && item.kind === 'quota'), `the cross-platform failure must be recorded in done.failed: ${JSON.stringify(run.done)}`);
   });
 });
 
