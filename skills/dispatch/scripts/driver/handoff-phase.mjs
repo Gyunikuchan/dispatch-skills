@@ -52,8 +52,10 @@ export function handoff(state) {
     }
     append(state, 'run-complete', { result: 'complete', evidenceRefs: [relative(state, state.planPath), relative(state, state.walkthroughPath), ...(checkpoint ? [checkpoint.invocationId] : [disabled.reason])] });
   }
-  const destinations = relocateScratchPaths([state.planPath, state.walkthroughPath], { cwd: state.repoRoot });
+  // Design-run artifacts relocate together only after final integration.
+  const retained = state.designPath ? [state.planPath, state.walkthroughPath].map(file => ({ path: relative(state, file), reason: 'Design-run artifact; relocates after final integration' })) : [];
+  const destinations = state.designPath ? [] : relocateScratchPaths([state.planPath, state.walkthroughPath], { cwd: state.repoRoot });
   return emitAction(state, 'done', { outcome: 'complete', summary: 'Implementation verified and code review settled.', checkpointed: Boolean(checkpoint),
     ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { checkpoint, resumeCommand: state.resumeCommand, ledgerPath: state.ledgerPath,
-      rulings: state.ordinary.rulings ?? [], warning: 'OS temp / Storage Sense may purge the ledger and relocated artifacts.', retained: [], destinations, ...(disabled ? { reviewDisabled: disabled.reason } : {}) } });
+      rulings: state.ordinary.rulings ?? [], warning: 'OS temp / Storage Sense may purge the ledger and relocated artifacts.', retained, destinations, ...(disabled ? { reviewDisabled: disabled.reason } : {}) } });
 }

@@ -177,7 +177,7 @@ function advanceLocked(parsed) {
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
   if (state.invocation?.verb === 'ask') return advanceAsk(state, checked.value);
-  if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value);
+  if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value).then((action) => save(state, action));
   if (state.designPath) return advanceImplement(state, checked.value);
   return ['implement', 'plan'].includes(state.invocation?.verb)
     ? advanceImplement(state, checked.value)
@@ -206,7 +206,7 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
         const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
-        action = save(state, resumeDesignPath(state));
+        action = save(state, await resumeDesignPath(state));
       } else if (invocation.verb === 'ask') {
         action = await startAsk({ invocation, cwd, resumeCommand: resumeCommand(invocation) });
       } else {

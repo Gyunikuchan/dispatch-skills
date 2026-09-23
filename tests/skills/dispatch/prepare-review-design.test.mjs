@@ -124,6 +124,28 @@ describe('design review preparation', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
+  it('SC1 prepares a verb-approved design whose metadata slug omits -design', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
+    try {
+      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      fs.mkdirSync(path.dirname(design), { recursive: true });
+      const snapshot = designSnapshot(validDesign);
+      fs.writeFileSync(design, withDispatchFrontmatter(validDesign, {
+        schemaVersion: 1, kind: 'design', slug: 'platform', invocationId: 'verb-approved-design',
+        contentHash: snapshot.contentHash, sectionHashes: snapshot.sectionHashes,
+        reviewedAt: '2026-09-20T00:00:00.000Z', approvedContentHash: null, approvedAt: null,
+      }));
+      const result = prepareDesignReview({
+        action: 'prepare', artifactPath: design,
+        selector: { provider: 'claude', candidateIndex: 0 },
+      }, { repoRoot: root });
+      assert.equal(result.status, 'ready');
+      assert.equal(result.artifact.slug, 'platform');
+      for (const cleanup of result.cleanupPaths) fs.rmSync(cleanup, { recursive: true, force: true });
+      fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('reviews a metadata-less existing design without a legacy coverage decision', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {

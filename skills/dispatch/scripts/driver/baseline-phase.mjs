@@ -4,6 +4,7 @@ import { ensureLedgerNamespace } from '../ledger.mjs';
 import { repositoryRootHash } from '../resolve-artifact-paths.mjs';
 import { append, ask, ledgerSegment, relative, ruling } from './ordinary-state.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
+import { designSlug } from './design-phase.mjs';
 import { beginVerification, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
 
 export function beginBaseline(state) {
@@ -51,9 +52,14 @@ export function approve(state, reply) {
   const segment = ledgerSegment(state);
   if (segment?.approved) { state.ledgerRunId = segment.runId; return; }
   if (segment && segment.tasks.size) throw new Error('Unapproved ledger contains task activity; reconcile first.');
-  state.ledgerRunId = segment?.runId ?? crypto.randomUUID();
-  if (!segment) append(state, 'run-start', { governingPath: relative(state, state.planPath), governingHash: state.governingHash, rootSlug: state.slug, action: 'ordinary', baseline: data.baseline });
-  append(state, 'approval', { governingHash: state.governingHash, decision: 'approved', actor: 'user' });
+  const design = state.designPath && { path: relative(state, state.designPath), revision: state.designRevision };
+  // Increment segments share the driver run identity, as design segments do.
+  state.ledgerRunId = segment?.runId ?? (design ? state.runId : crypto.randomUUID());
+  if (!segment) append(state, 'run-start', design
+    ? { governingPath: design.path, governingHash: design.revision, rootSlug: designSlug(state.designPath), action: 'increment', design, baseline: data.baseline,
+      increment: { id: state.increment.id, planPath: relative(state, state.planPath), walkthroughPath: relative(state, state.walkthroughPath), planHash: state.governingHash } }
+    : { governingPath: relative(state, state.planPath), governingHash: state.governingHash, rootSlug: state.slug, action: 'ordinary', baseline: data.baseline });
+  append(state, 'approval', { governingHash: design?.revision ?? state.governingHash, decision: 'approved', actor: 'user' });
   if (data.baselineAccepted) ruling(state, 'baseline-red', 'accept', data.baselineAccepted.reason);
   data.approval = { governingHash: state.governingHash, reason: answer.reason };
 }

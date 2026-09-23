@@ -34,6 +34,10 @@ describe("v0.5 dependency direction", () => {
         text.includes(aliasRoutes[name]),
         `${name} must map to ${aliasRoutes[name]}`,
       );
+      assert.ok(
+        text.includes(`${name} requires the dispatch skill`),
+        `${name} must name the missing-dispatch diagnostic`,
+      );
       for (const other of aliases)
         if (other !== name)
           assert.doesNotMatch(text, new RegExp(`\\b${other}\\b`));

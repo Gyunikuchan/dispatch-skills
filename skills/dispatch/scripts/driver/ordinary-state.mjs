@@ -27,16 +27,19 @@ export function ledgerSegment(state, { terminal = false } = {}) {
   const read = readLedger(state.ledgerPath);
   if (read.status === 'missing') return null;
   if (read.status !== 'ok') throw new Error(read.diagnostic);
-  const segments = foldSegments(read.events).filter(segment => segment.runStart.governingPath === relative(state, state.planPath) && segment.governingHash === state.governingHash);
+  const segments = foldSegments(read.events).filter(state.designPath ? segment => ownsIncrement(state, segment) && segment.runStart.increment.planHash === state.governingHash
+    : segment => segment.runStart.governingPath === relative(state, state.planPath) && segment.governingHash === state.governingHash);
   return segments.findLast(segment => terminal || !segment.terminal) ?? null;
 }
+// Design increments bind by increment identity and approved design revision, not plan path.
+const ownsIncrement = (state, segment) => segment.runStart.action === 'increment' && segment.runStart.increment.id === state.increment?.id && segment.governingHash === state.designRevision;
 export function append(state, type, data) {
   assertBinding(state);
-  const event = { v: 1, type, runId: state.ledgerRunId, at: new Date().toISOString(), data };
+  const event = { v: state.designPath ? 2 : 1, type, runId: state.ledgerRunId, at: new Date().toISOString(), data };
   // Validate the prospective fold before the locked canonical append; appendEvent owns sequence allocation.
   const read = readLedger(state.ledgerPath);
   const folded = foldSegments(read.events);
-  if (type === 'run-start' && folded.some(segment => !segment.terminal && segment.governingHash === state.governingHash && segment.runId !== state.ledgerRunId)) throw new Error('An ordinary run already owns this governing revision; reconstruct it before approval.');
+  if (type === 'run-start' && folded.some(segment => !segment.terminal && (state.designPath ? ownsIncrement(state, segment) : segment.governingHash === state.governingHash) && segment.runId !== state.ledgerRunId)) throw new Error('An ordinary run already owns this governing revision; reconstruct it before approval.');
   const prior = read.events.findLast(item => item.runId === state.ledgerRunId && item.type === type && JSON.stringify(item.data) === JSON.stringify(data));
   if (prior && type !== 'ruling') return prior;
   foldSegments([...read.events, { ...event, seq: (read.events.at(-1)?.seq ?? 0) + 1 }]);
@@ -95,8 +98,10 @@ export function restoreEvidence(state) {
   if (segment?.approved) state.ledgerRunId = segment.runId;
   if (segment?.tasks.size && state.ordinary.step === 'approval') throw new Error('Ledger has dispatched work not present in walkthrough evidence; reconcile before continuing.');
   if (segment && !segment.terminal) {
-    const resumed = resumeOrdinary({ ledgerPath: state.ledgerPath, planPath: relative(state, state.planPath), planSource: source(state), repoRoot: state.repoRoot });
-    if (resumed.status !== 'resumable') throw new Error(resumed.diagnostic);
+    // resumeOrdinary only selects ordinary segments; increment segments were matched above.
+    const resumed = state.designPath ? { nextAction: segment.rulings.get('failure-disposition')?.state === 'open' ? 'failure-disposition' : null }
+      : resumeOrdinary({ ledgerPath: state.ledgerPath, planPath: relative(state, state.planPath), planSource: source(state), repoRoot: state.repoRoot });
+    if (resumed.status && resumed.status !== 'resumable') throw new Error(resumed.diagnostic);
     if (resumed.nextAction === 'failure-disposition') {
       state.ordinary.failure = JSON.parse(segment.rulings.get('failure-disposition').reason);
       state.ordinary.phase = 'implementation';

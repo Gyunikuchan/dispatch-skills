@@ -186,6 +186,14 @@ function resolvePair(request, repoRoot) {
     if (/-walkthrough\.md$/i.test(request.artifactPath)) walkthroughPath = request.artifactPath;
     else planPath = request.artifactPath;
   }
+  // NOTE: increment slugs are reserved for phased artifacts, so an explicit increment pair skips ordinary resolution.
+  if (walkthroughPath && !planPath && /-i\d{2}-.+-walkthrough\.md$/i.test(walkthroughPath)) {
+    planPath = walkthroughPath.replace(/-walkthrough\.md$/i, '-plan.md');
+  }
+  const explicitPair = (p) => ({ path: path.resolve(repoRoot, p), exists: fs.existsSync(path.resolve(repoRoot, p)), tier: 'explicit' });
+  if (walkthroughPath && planPath && /-i\d{2}-/i.test(path.basename(walkthroughPath))) {
+    return { slug: slugFromPath(walkthroughPath), plan: explicitPair(planPath), walkthrough: explicitPair(walkthroughPath) };
+  }
   const supplied = walkthroughPath ?? planPath;
   const derived = resolveSlug({
     explicit: request.slug ?? (supplied && slugFromPath(supplied)) ?? undefined,

@@ -120,19 +120,31 @@ export function resumeDesignPath(state) {
     const integrationWalkthrough = path.join(state.repoRoot, '.scratch', 'plan', `${date}-${designSlug(state.designPath)}-integration-walkthrough.md`);
     return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeRelocation: true }, relocateAfterPass: [state.designPath, ...incrementArtifacts, integrationWalkthrough], retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event before exact artifact relocation.', 'Next Action: final-integration.']);
   }
-  const id = resumed.nextAction?.match(/^implement:(I\d{2})$/)?.[1];
+  // An in-flight increment resumes by the folded run's active increment.
+  const id = resumed.nextAction === 'resume-increment' ? resumed.folded?.activeIncrementId : resumed.nextAction?.match(/^implement:(I\d{2})$/)?.[1];
   if (!id) return refuse(state, `Design Next Action is not an implementable increment: ${resumed.nextAction}`);
+  const from = state.invocation.phases?.slice(5);
   const paths = incrementPaths(state, id);
   state.increment = { id, ...paths, designRevision: state.governingHash };
   state.designRevision = state.governingHash;
   state.planPath = paths.planPath;
   state.walkthroughPath = paths.walkthroughPath;
-  if (fs.existsSync(paths.walkthroughPath) && fs.existsSync(paths.planPath)) {
+  // An authored plan resumes even before baseline writes its walkthrough.
+  if (fs.existsSync(paths.planPath) && from !== 'plan') {
     const planHash = governingHash(fs.readFileSync(paths.planPath, 'utf8'));
     if (planHash.status !== 'ok') return refuse(state, planHash.diagnostic);
     state.governingHash = planHash.hash;
-    if (restoreEvidence(state)) return enterPhase(state, state.ordinary.phase ?? 'implementation');
+    try {
+      const restored = restoreEvidence(state);
+      // The driver run adopts the bound increment segment's run identity.
+      if (state.ledgerRunId) state.runId = state.ledgerRunId;
+      return enterPhase(state, from ?? (restored ? state.ordinary.phase ?? 'implementation' : 'plan-review')).catch(error => refuse(state, error.message));
+    } catch (error) {
+      return refuse(state, error.message);
+    }
   }
+  if (from && from !== 'plan') return refuse(state, `${from} requires a canonical plan path; plan produces it.`);
+  state.ordinary.phase = 'plan';
   return emitAction(state, 'author', { path: paths.planPath, planPath: paths.planPath, walkthroughPath: paths.walkthroughPath, incrementId: id, template: 'plan', defects: [] }, [
     `Author the canonical plan for ledger-selected ${id}; caller selection is ignored.`,
     `Parent design revision: ${state.governingHash}. Next Action is implement:${id}.`,

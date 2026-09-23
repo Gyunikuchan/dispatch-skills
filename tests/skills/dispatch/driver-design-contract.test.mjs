@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { buildStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { makeGitRepo, runDispatch, parseAction } from './driver-harness.mjs';
+import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report, PLAN_BODY } from './driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../skills/dispatch/scripts/ledger.mjs';
 import { resolveLedgerPath } from '../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
 import { restoreEvidence } from '../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
+import { readRunState } from '../../../skills/dispatch/scripts/driver/state.mjs';
 
 const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 const RUN = '11111111-1111-4111-8111-111111111111';
@@ -62,6 +63,43 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
     assert.equal(action.planPath, path.join(repo.dir, '.scratch', 'plan', '2026-09-22-root-i01-driver-plan.md'));
     assert.equal(action.walkthroughPath, path.join(repo.dir, '.scratch', 'plan', '2026-09-22-root-i01-driver-walkthrough.md'));
     assert.ok(['author', 'launch'].includes(action.action), `expected selected-I01 entry action, got ${action.action}`);
+  }));
+
+  it('SC2 fresh increment author reply enters plan review under the design ledger', () => withFixture((fixture, repo) => {
+    const { designPath, ledgerPath } = setupLedger(repo);
+    const first = runDispatch(fixture, ['--run', 'implement', '--orchestrator', 'claude', '--', designPath], { cwd: repo.dir });
+    assert.equal(first.status, 0, `SC2 author step must succeed: ${first.stderr}`);
+    const authorAction = parseAction(first.stdout);
+    assert.equal(authorAction.action, 'author');
+    assert.equal(authorAction.incrementId, 'I01');
+    fs.writeFileSync(authorAction.planPath, PLAN_BODY);
+    const inputFile = path.join(fixture.dir, 'sc2-input.json');
+    fs.writeFileSync(inputFile, JSON.stringify({ path: authorAction.planPath }));
+    const second = runDispatch(fixture, ['--next', '--state', authorAction.stateFile, '--input', `@${inputFile}`], { cwd: repo.dir });
+    assert.equal(second.status, 0, `SC2 author reply must not error: ${second.stderr}`);
+    const nextAction = parseAction(second.stdout);
+    assert.equal(nextAction.error, undefined, `expected no reply error, got: ${nextAction.error}`);
+    assert.equal(nextAction.action, 'launch', 'expected the plan-review launch');
+    const planHash = governingHash(fs.readFileSync(authorAction.planPath, 'utf8')).hash;
+    let runState = readRunState(nextAction.stateFile);
+    assert.equal(runState.governingHash, planHash);
+    assert.equal(runState.ledgerPath, ledgerPath);
+    // Drive plan review with CLEAN stub waves until the driver leaves the review phase.
+    let action = nextAction;
+    for (let step = 0; step < 20 && readRunState(action.stateFile).ordinary.phase === 'plan-review'; step++) {
+      assert.equal(action.action, 'launch', `unexpected plan-review action: ${JSON.stringify(action)}`);
+      if (!action.replyOnly) runLaunch(fixture, action.argv, { cwd: repo.dir, results: allProviders(report()) });
+      const args = ['--next', '--state', action.stateFile];
+      if (action.earlyFallbacks) { const file = path.join(fixture.dir, `sc2-launch-${step}.json`); fs.writeFileSync(file, JSON.stringify({ earlyFallbacks: [] })); args.push('--input', `@${file}`); }
+      const res = runDispatch(fixture, args, { cwd: repo.dir });
+      assert.equal(res.status, 0, `SC2 plan review step must succeed: ${res.stderr}`);
+      action = parseAction(res.stdout);
+      assert.equal(action.error, undefined, `plan review error: ${action.error}`);
+    }
+    runState = readRunState(action.stateFile);
+    assert.ok(runState.ordinary.planReview, `plan review must settle: ${JSON.stringify(action)}`);
+    assert.equal(runState.governingHash, planHash);
+    assert.equal(runState.ledgerPath, ledgerPath);
   }));
 
   it('RED-MATRIX SC3 | refuses schemaVersion-1 evidence with wrong parent revision and increment ID', () => withFixture((fixture, repo) => { const { designPath, ledgerPath, hash } = setupLedger(repo); const walkthroughPath = designPath.replace(/\.md$/, '-walkthrough.md'); const write = (revision, incrementId) => fs.writeFileSync(walkthroughPath, ['','## Ordinary execution evidence','```json', JSON.stringify({ schemaVersion: 1, governingHash: revision, planPath: '.scratch/plan/2026-09-22-root-design.md', incrementId, ordinary: {} }), '```',''].join('\n')); write(`sha256:${'f'.repeat(64)}`, 'I01'); const base = { repoRoot: repo.dir, planPath: designPath, walkthroughPath, governingHash: hash, ledgerPath }; assert.throws(() => restoreEvidence(base), /does not bind this governing plan/i); write(hash, 'I99'); assert.throws(() => restoreEvidence({ ...base }), /increment.*ID|increment.*identity/i); }));

@@ -5,6 +5,7 @@ import { lintPlan } from '../plan-lint.mjs';
 import { readArtifact } from '../review-preparation.mjs';
 import { sanitizeSlug } from '../resolve-artifact-paths.mjs';
 import { emitAction } from './actions.mjs';
+import { governingHash } from '../ledger.mjs';
 import { bindPlan, persistEvidence, source } from './ordinary-state.mjs';
 import { advanceReview, resolveReviewLevel, startReview } from './review-phase.mjs';
 import { readRunState } from './state.mjs';
@@ -39,7 +40,7 @@ export function authorPlan(state) {
 }
 export function acceptPlan(state, reply) {
   if (path.resolve(state.repoRoot, reply.path) !== state.planPath) throw new Error('Author reply must name the requested canonical plan.');
-  bindPlan(state, reply.path);
+  rebindPlan(state, reply.path);
 }
 export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;
@@ -69,8 +70,15 @@ function forwardReview(state, action) {
 }
 export function finishPlanReview(state, action) {
   if (!['complete', 'skipped'].includes(action.outcome)) return false;
-  bindPlan(state, state.planPath);
+  rebindPlan(state, state.planPath);
   state.ordinary.planReview = requireSettledPlan(state);
   delete state.reviewState;
   return true;
+}
+// Design increments keep the design slug and ledger; only the approved plan revision changes.
+function rebindPlan(state, file) {
+  if (!state.designPath) return bindPlan(state, file);
+  const hash = governingHash(source(state));
+  if (hash.status !== 'ok') throw new Error(hash.diagnostic);
+  state.governingHash = hash.hash;
 }
