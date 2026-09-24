@@ -4,9 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
 
-Delegate work and reviews to other agent CLIs — Claude Code, Antigravity, GitHub Copilot, OpenCode — from whichever agent you already work in. Independent models plan, review, and cross-check each other; your host agent verifies every claim against the real code before accepting it, so a confident wrong answer from one model does not become a change in your tree.
-
-Delegates always run read-only. Writes happen only through your host agent's own write subagent, behind an approval gate.
+Build with more confidence by catching flawed assumptions before they become code. `dispatch-skills` brings independent agents into one development workflow for planning, implementation, and review — without leaving the agent IDE or CLI you prefer. Agents work through their native harnesses, while your host verifies their findings against the real code and carries the work forward.
 
 ## Contents
 
@@ -19,9 +17,9 @@ Delegates always run read-only. Writes happen only through your host agent's own
 
 ## Why dispatch-skills?
 
-One agent working alone carries its own blind spots all the way to your working tree: it keeps the assumption it started with, grades its own output as correct, and surfaces the design flaw only after five hundred lines exist. `dispatch-skills` splits the work into phases and puts a different model on each side of the review, while your host agent keeps the working tree and the approval gate.
+Most agent workflows ask one model to make the assumptions, do the work, and judge the result. `dispatch-skills` brings other agent platforms into the process. Your host agent keeps control of the working tree, while independent models help plan, review, and cross-check the work. Start with the agent you already use, then add other CLIs when you want another perspective.
 
-This is the full loop for a large change — a design decomposed into increments, each increment planned, reviewed, implemented, and verified before the next:
+For a large change, dispatch breaks the design into smaller increments. Each increment is planned, reviewed, implemented, and verified before the next begins:
 
 ```mermaid
 flowchart TD
@@ -44,20 +42,32 @@ flowchart TD
     Integration --> User
 ```
 
-Smaller work enters the same loop further down: `/dispatch implement:` starts at the plan, and a standalone review runs one box on its own.
+Smaller tasks can start later in the same workflow: `/dispatch implement:` begins with a plan, while a standalone review runs only the review step.
 
 ## Key differentiators
 
-| What bites you | What dispatch does about it |
+### Collaborate across agent platforms
+
+| What dispatch does | Why it matters |
 |---|---|
-| **🎲 One model's blind spot** | Route the same plan or diff across genuinely different architectures — Claude, Gemini, GPT, GLM, Qwen, local models — so one family's blind spot is another's obvious catch. |
-| **🪞 Grading its own homework** | Unpinned runs diversity-sort on purpose: every platform's first reviewer answers before any platform's second, your own host platform goes last, and your host's active model goes last within it. Reviewing with yourself takes an explicit pin. |
-| **⚖️ Confident hallucinations winning the vote** | Reviewers return *claims*, not verdicts, and must cite `file:L<line>` or `§ plan section`. Your host agent checks each claim against the real code and your `AGENTS.md` / `CLAUDE.md`. Contradicted, uncited, and speculative claims are rejected however many models agreed; a verified defect is accepted even from one. |
-| **💡 Finding the design flaw last** | A missing migration caught in a plan file costs pennies; the same flaw found after five hundred lines costs a debugging session. Design and plan review are where the one-shot success rate is won. |
-| **🛡️ A delegate editing your tree** | Delegates run in read-only mode — plan mode, a read-tool allowlist, a write-tool denylist — and the runners strip credentials from their environment and guard sensitive files. OS sandboxing (Seatbelt, Bubblewrap, the Copilot sandbox) layers on top where the platform supports it. Every edit comes from your host's own write subagent, after you approve. |
-| **🧼 A long run poisoning the session** | Subprocess logs, traces, and prompts stream to OS temp. Only dense syntheses and actionable findings enter your context window. |
-| **💰 One provider's rate limit** | Spread the load across every CLI you already pay for instead of buying a redundant top tier, and keep working in your own IDE while other models do the reading. |
-| **⚡ PR bots reviewing too late** | Review the uncommitted diff in your terminal, with an automated fix-and-verify loop, while the context that produced it is still live. |
+| **🔌 Works across native agent platforms** | Keep working in whichever supported agent IDE or CLI you prefer while drawing on models from other platforms. Each delegate uses its native harness and allowed tools. |
+| **🎲 Prioritizes independent model families** | Shared blind spots are less likely to survive review. Dispatch asks cross-platform reviewers first and leaves your host platform and active model until last. |
+
+### Improve review quality
+
+| What dispatch does | Why it matters |
+|---|---|
+| **💡 Reviews designs and plans before implementation** | Catch a missing migration in the plan instead of after hundreds of lines of code, making implementation more likely to succeed on the first pass. |
+| **⚖️ Verifies evidence instead of counting votes** | Reviewers cite `file:L<line>` or `§ plan section`, and your host checks each finding against the code and repository instructions. Unsupported or contradicted findings are rejected, while one well-supported defect is enough to act on. |
+
+### Keep operations safe and efficient
+
+| What dispatch does | Why it matters |
+|---|---|
+| **🛡️ Keeps delegates read-only** | Delegates run without credentials or access to sensitive files. Supported platforms add an OS sandbox for another layer of protection. Only your host agent can edit, and only after you approve the plan. |
+| **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in OS temp, while structured handoffs preserve cited findings and progress for the next phase. |
+| **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
+| **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |
 
 ## Install
 
@@ -65,9 +75,14 @@ Smaller work enters the same loop further down: `/dispatch implement:` starts at
 npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
-Requires Node.js `>=22` and at least one provider CLI on your `PATH`.
+Requires Node.js `>=22` and at least one supported agent CLI on your `PATH`:
 
-Nothing is enabled until you create a config: copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it, and keep the models you actually pay for. Then check what resolved:
+- Claude Code
+- Antigravity
+- GitHub Copilot
+- OpenCode
+
+Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it, then keep only the models you actually want to use. Check the resulting configuration with:
 
 ```bash
 node skills/dispatch/scripts/dispatch.mjs --doctor --level high
@@ -99,7 +114,7 @@ The four aliases exist for familiar slash commands only; `dispatch` alone does t
 /dispatch [level] [(pins)] [ask|plan|design|review|implement]: <argument>
 ```
 
-Levels `low` … `max` buy more targets, rounds, and stronger models. Pins like `(claude,agy)` or `(all)` choose which configured providers answer.
+Levels `low` … `max` use progressively more targets, review rounds, and capable models. Pins such as `(claude,agy)` or `(all)` choose which configured providers answer.
 
 Ask another model a bounded question:
 
@@ -136,7 +151,7 @@ Run the whole loop — plan, review, approval gate, implementation, code review 
 /dispatch implement --phases from:code-review: .scratch/plan/2026-09-22-csv.md
 ```
 
-For work too big for one pass, `design:` splits it into increments that implement one at a time:
+For work too big for one pass, `design:` splits it into increments and implements them one at a time:
 
 ```text
 /dispatch design: Migrate the billing state machine
