@@ -11,7 +11,7 @@ const aliasRoutes = {
   "dispatch-plan-review": "/dispatch review plan:",
   "dispatch-code-review": "/dispatch review code:",
   "dispatch-design-review": "/dispatch review design:",
-  "implement-dispatch": "/dispatch implement:",
+  "dispatch-implement": "/dispatch implement:",
 };
 const aliases = Object.keys(aliasRoutes);
 const read = (f) => fs.readFileSync(path.join(root, f), "utf8");

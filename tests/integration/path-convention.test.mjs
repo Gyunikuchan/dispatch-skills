@@ -47,7 +47,7 @@ const GUARDED = [
   'skills/dispatch-plan-review/SKILL.md',
   'skills/dispatch-code-review/SKILL.md',
   'skills/dispatch-design-review/SKILL.md',
-  'skills/implement-dispatch/SKILL.md',
+  'skills/dispatch-implement/SKILL.md',
   'skills/dispatch/references/readme/configuration.md',
   'skills/dispatch/references/readme/verbs.md',
 ];

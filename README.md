@@ -104,7 +104,7 @@ See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tabl
 | [`dispatch-plan-review`](skills/dispatch/README.md) | Alias for `/dispatch review plan:` |
 | [`dispatch-design-review`](skills/dispatch/README.md) | Alias for `/dispatch review design:` |
 | [`dispatch-code-review`](skills/dispatch/README.md) | Alias for `/dispatch review code:` |
-| [`implement-dispatch`](skills/dispatch/README.md) | Alias for `/dispatch implement:` |
+| [`dispatch-implement`](skills/dispatch/README.md) | Alias for `/dispatch implement:` |
 
 The four aliases exist for familiar slash commands only; `dispatch` alone does the work.
 

@@ -38,7 +38,7 @@ Report adjacent findings in output; keep execution strictly bounded to requested
 dispatch-plan-review ─┐
 dispatch-code-review ─┼─> dispatch ─> nothing
 dispatch-design-review┤
-implement-dispatch ───┘
+dispatch-implement ───┘
 ```
 
 Repository layout:
@@ -46,7 +46,7 @@ Repository layout:
 ```text
 skills/dispatch/          model-visible contract, config, scripts, references
 skills/*-review/          small user-invoked aliases and human manuals
-skills/implement-dispatch/ compatibility alias and human manual
+skills/dispatch-implement/ compatibility alias and human manual
 .agents/skills/           repository-development and vendored skills; none shipped
 scripts/                  repository tooling
 tests/                    mirrors source plus cross-skill integration guards

@@ -5,7 +5,7 @@
   "promptVersion": "full-markdown-v1",
   "repeats": 3,
   "instructionCodePoints": {
-    "skills/implement-dispatch/SKILL.md": 8971,
+    "skills/dispatch-implement/SKILL.md": 8971,
     "skills/dispatch/references/alignment.md": 15526,
     "skills/dispatch-plan-review/references/prompt-template.md": 6854,
     "skills/dispatch-code-review/references/prompt-template.md": 7169

@@ -68,7 +68,7 @@ describe('generate-hashes script', () => {
       .map((file) => path.relative(path.join(PROJECT_ROOT, 'skills', 'dispatch'), file).split(path.sep).join('/'));
     assert.ok(nested.some((key) => key.startsWith('references/templates/')), 'expected nested templates');
     for (const key of nested) assert.ok(key in manifest, `dispatch manifest omits ${key}`);
-    for (const skill of ['implement-dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
+    for (const skill of ['dispatch-implement', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
       assert.equal(
         fs.existsSync(path.join(PROJECT_ROOT, 'skills', skill, 'skill-hashes.json')),
         false,

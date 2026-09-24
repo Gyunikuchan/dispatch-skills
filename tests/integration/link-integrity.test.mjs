@@ -60,7 +60,7 @@ describe("alias documentation links", () => {
       "dispatch-plan-review",
       "dispatch-code-review",
       "dispatch-design-review",
-      "implement-dispatch",
+      "dispatch-implement",
     ]) {
       assert.ok(rootReadme.includes("[`" + name + "`](skills/dispatch/README.md)"));
       assert.equal(existsSync(path.join(REPO_ROOT, "skills", name, "README.md")), false);

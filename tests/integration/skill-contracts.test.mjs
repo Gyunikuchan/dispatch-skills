@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 // Anchors load-bearing phrases in agent contracts so an edit cannot silently drop a gate.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const ALIASES = ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review', 'implement-dispatch'];
+const ALIASES = ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review', 'dispatch-implement'];
 
 describe('dispatch SKILL.md', () => {
   const text = read('skills/dispatch/SKILL.md');

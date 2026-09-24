@@ -104,10 +104,10 @@ describe("review aliases preserve dispatch forwarding order", () => {
       );
       assert.match(text, /level and pins before `review`/);
     }
-    const implement = read("skills/implement-dispatch/SKILL.md");
+    const implement = read("skills/dispatch-implement/SKILL.md");
     assert.ok(
       implement.includes("/dispatch <prefix> implement --phases from:<phase>: <argument>"),
-      "implement-dispatch must forward --phases after `implement`",
+      "dispatch-implement must forward --phases after `implement`",
     );
     assert.match(implement, /level and pins before `implement`/);
   });

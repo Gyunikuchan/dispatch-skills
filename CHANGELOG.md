@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **Breaking:** the `implement-dispatch` alias is renamed `dispatch-implement`; invoke `/dispatch-implement` instead
 - Faster implementation runs: the driver runs verify gates itself and extracts failure identities, RED checks run only the new tests, an unchanged tree reuses its baseline, and the pre-production RED test review is gone (code review after production covers test quality)
 - Easier recovery: a failed task can `retry` in the same run with your ruling as context, and verify logs are kept per run
 - Plans can declare `[GENERATED]` paths with a generator command; the driver regenerates them at completion instead of asking about them
