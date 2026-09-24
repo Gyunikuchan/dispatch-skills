@@ -40,6 +40,8 @@ function readLines(file) {
 }
 
 describe('telemetry', () => {
+  // SECTION: Identity and records
+
   it('exports the shared sanitized per-user namespace', () => {
     assert.equal(userSlug({ env: { USER: 'a/b c' } }), 'a_b_c');
     assert.equal(userSlug({ env: {}, userInfo: () => ({ username: '..' }) }), 'unknown');
@@ -61,6 +63,8 @@ describe('telemetry', () => {
     assert.deepEqual(lines[0].attempts, [ATTEMPT]);
     assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /SECRET/);
   });
+
+  // SECTION: Persistence controls and security
 
   it('honors DISPATCH_TELEMETRY=0', () => {
     process.env.DISPATCH_TELEMETRY = '0';

@@ -5,7 +5,7 @@ import {
   parseRebuttal,
   parseReport,
 } from '../../../../skills/dispatch/scripts/review/parse-report.mjs';
-import { reportOutcome } from '../../../helpers/report-outcome.mjs';
+import { classifyReviewReport } from '../../../helpers/review-report-fixture.mjs';
 
 function finding(overrides = {}) {
   return {
@@ -138,7 +138,7 @@ describe('code review report parser', () => {
   });
 
   it('uses exit 3 for prose or schema-mismatched reports and exit 1 for empty ones', () => {
-    const run = (input, { rebuttalKeys } = {}) => reportOutcome('code', input, { rebuttalKeys });
+    const run = (input, { rebuttalKeys } = {}) => classifyReviewReport('code', input, { rebuttalKeys });
     const prose = run('No defects found after reviewing the scope.\n');
     assert.equal(prose.status, 3, prose.stderr);
     assert.match(prose.stderr, /"error": "prose-report"/);
@@ -188,7 +188,7 @@ describe('code review report parser', () => {
   });
 
   it('classifies an empty findings list as invalid', () => {
-    const invalid = reportOutcome('code', '{"status":"FINDINGS","findings":[]}\n');
+    const invalid = classifyReviewReport('code', '{"status":"FINDINGS","findings":[]}\n');
     assert.equal(invalid.status, 1, invalid.stderr);
     assert.match(invalid.stderr, /"error": "invalid-report"/);
   });

@@ -11,9 +11,7 @@ import {
   generateSkillHashes,
 } from '../../../../skills/dispatch/scripts/lib/integrity.mjs';
 
-// ---------------------------------------------------------------------------
 // SECTION: Skill Hash Validation
-// ---------------------------------------------------------------------------
 
 describe('common: skill hash validation', () => {
   it('hashFile matches a crypto-computed SHA-256 of the file bytes', () => {
@@ -37,72 +35,29 @@ describe('common: skill hash validation', () => {
     assert.deepEqual(result.violations, []);
   });
 
-  it('generateSkillHashes lists SKILL.md and .mjs scripts', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-hash-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      const scriptsDir = path.join(tmpDir, 'scripts');
-      fs.mkdirSync(scriptsDir);
-      fs.writeFileSync(path.join(scriptsDir, 'runner.mjs'), '// runner', 'utf8');
-
-      const manifest = generateSkillHashes(tmpDir);
-      assert.ok('SKILL.md' in manifest);
-      assert.ok('scripts/runner.mjs' in manifest);
-      assert.ok(typeof manifest['SKILL.md'] === 'string');
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('generateSkillHashes recurses into scripts/ subdirectories such as scripts/driver (plan R1-F001)', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-driver-hash-'));
+  it('generates a sorted recursive manifest for shipped files only', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-manifest-'));
     try {
       fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
       fs.mkdirSync(path.join(tmpDir, 'scripts', 'driver'), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, 'references', 'templates', 'schemas'), { recursive: true });
       fs.writeFileSync(path.join(tmpDir, 'scripts', 'dispatch.mjs'), '// entry', 'utf8');
       fs.writeFileSync(path.join(tmpDir, 'scripts', 'driver', 'index.mjs'), '// router', 'utf8');
-      fs.writeFileSync(path.join(tmpDir, 'scripts', 'driver', 'notes.txt'), 'x', 'utf8');
-      const manifest = generateSkillHashes(tmpDir);
-      assert.ok('scripts/dispatch.mjs' in manifest, 'existing flat keys are preserved');
-      assert.ok('scripts/driver/index.mjs' in manifest);
-      assert.ok(!('scripts/driver/notes.txt' in manifest));
-      assert.ok(!Object.keys(manifest).some((key) => key.includes('\\')),'forward-slash keys');
-      assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('generateSkillHashes recurses into nested references with forward-slash keys', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-nested-hash-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      fs.mkdirSync(path.join(tmpDir, 'references', 'templates', 'schemas'), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, 'scripts', 'driver', 'notes.txt'), 'excluded', 'utf8');
       fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'review-prompt.md'), '# Frame', 'utf8');
       fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'schemas', 'report-plan.json'), '{}', 'utf8');
-      fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'notes.txt'), 'x', 'utf8');
-      const manifest = generateSkillHashes(tmpDir);
-      assert.ok('references/templates/review-prompt.md' in manifest);
-      assert.ok('references/templates/schemas/report-plan.json' in manifest);
-      assert.ok(!('references/templates/notes.txt' in manifest));
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('generateSkillHashes hashes reference Markdown and JSON while excluding config files', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-reference-hash-'));
-    try {
-      fs.writeFileSync(path.join(tmpDir, 'SKILL.md'), '# Skill', 'utf8');
-      fs.mkdirSync(path.join(tmpDir, 'references'));
-      fs.writeFileSync(path.join(tmpDir, 'references', 'guide.md'), '# Guide', 'utf8');
-      fs.writeFileSync(path.join(tmpDir, 'references', 'schema.json'), '{}', 'utf8');
+      fs.writeFileSync(path.join(tmpDir, 'references', 'templates', 'notes.txt'), 'excluded', 'utf8');
       fs.writeFileSync(path.join(tmpDir, 'config.jsonc'), '{}', 'utf8');
+
       const manifest = generateSkillHashes(tmpDir);
-      assert.ok('references/guide.md' in manifest);
-      assert.ok('references/schema.json' in manifest);
-      assert.ok(!Object.keys(manifest).some((key) => key.startsWith('config')));
-      assert.deepEqual(Object.keys(manifest), [...Object.keys(manifest)].sort());
+      assert.deepEqual(Object.keys(manifest), [
+        'SKILL.md',
+        'references/templates/review-prompt.md',
+        'references/templates/schemas/report-plan.json',
+        'scripts/dispatch.mjs',
+        'scripts/driver/index.mjs',
+      ]);
+      for (const digest of Object.values(manifest)) assert.match(digest, /^[0-9a-f]{64}$/);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

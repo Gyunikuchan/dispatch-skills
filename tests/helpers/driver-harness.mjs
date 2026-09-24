@@ -1,7 +1,7 @@
 /**
  * Test support for the script driver (`dispatch.mjs --run` / `--next`).
  *
- * A scripted agent drives a stub-runner copy of the dispatch skill (see stub-dispatch.mjs)
+ * A scripted agent drives a stub-runner copy of the dispatch skill (see stub-dispatch-fixture.mjs)
  * over a throwaway Git repository. It records every argv it issues (AC1): driver calls, each
  * `launch` argv, and each host verify command.
  *
@@ -27,7 +27,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ORCHESTRATOR_ENV } from './stub-dispatch.mjs';
+import { createStubDispatchEnvironment } from './stub-dispatch-fixture.mjs';
 import { scanResolutionLog } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { materializedFingerprint } from '../../skills/dispatch/scripts/lib/git-state.mjs';
 import { captureRepositoryState } from '../../skills/dispatch/scripts/verification/evidence.mjs';
@@ -111,9 +111,8 @@ export function makeGitRepo({ dirty = false } = {}) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'driver-repo-'));
   const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
   git('init', '-q', '-b', `driver-${path.basename(dir).slice(-6).toLowerCase().replace(/[^a-z0-9]/g, 'x')}`);
-  git('config', 'user.email', 'test@example.com');
-  git('config', 'user.name', 'Test');
-  git('config', 'core.autocrlf', 'false');
+  // Persist fixture identity directly to avoid two Git processes for every scenario repository.
+  fs.appendFileSync(path.join(dir, '.git', 'config'), '[user]\n\temail = test@example.com\n\tname = Test\n[core]\n\tautocrlf = false\n');
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.mkdirSync(path.join(dir, '.scratch', 'plan'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'app.js'), 'export const value = 1;\n');
@@ -205,18 +204,6 @@ export const rebuttal = (responses) => JSON.stringify({
 
 // SECTION: process plumbing
 
-function stubEnv({ results = {}, live = {}, extra = {} } = {}, logFile = null) {
-  const env = { ...process.env };
-  for (const key of ORCHESTRATOR_ENV) delete env[key];
-  Object.assign(env, {
-    DISPATCH_TELEMETRY: '0',
-    DISPATCH_STUB_RESULTS: JSON.stringify(results),
-    DISPATCH_STUB_LIVE: JSON.stringify(live),
-    ...(logFile ? { DISPATCH_STUB_LOG: logFile } : {}),
-    ...extra,
-  });
-  return env;
-}
 
 /** Spawns the fixture's dispatch.mjs in `cwd`. */
 export function runDispatch(fixture, args, { cwd, results, live, env } = {}) {
@@ -224,7 +211,7 @@ export function runDispatch(fixture, args, { cwd, results, live, env } = {}) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd,
-    env: stubEnv({ results, live, extra: env }),
+    env: createStubDispatchEnvironment({ results, live, extra: env }),
     timeout: 60_000,
     killSignal: 'SIGKILL',
   });
@@ -250,7 +237,7 @@ export function runLaunch(fixture, argv, { cwd, results, live }) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd,
-    env: stubEnv({ results, live }, path.join(fixture.dir, 'stub-calls.jsonl')),
+    env: createStubDispatchEnvironment({ results, live, logFile: path.join(fixture.dir, 'stub-calls.jsonl') }),
     timeout: 60_000,
     killSignal: 'SIGKILL',
   });

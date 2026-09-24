@@ -20,6 +20,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// SECTION: Run paths and pure formatting helpers
+
 describe('audit-dispatch-skills shared helpers', () => {
   describe('resolveRunDirs', () => {
     it('throws when --run is missing', () => {
@@ -118,6 +120,8 @@ describe('audit-dispatch-skills shared helpers', () => {
     });
   });
 });
+
+// SECTION: Git process integration
 
 describe('audit-dispatch-skills auditGitStatus', () => {
   /** A throwaway git repo; `git status` needs no commit and no identity. */

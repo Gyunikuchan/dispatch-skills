@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
@@ -42,7 +42,7 @@ function setupLedger(repo, { amendment = null, complete = false } = {}) {
   }
   return { designPath, ledgerPath, hash };
 }
-function withFixture(test) { const fixture = buildStubDispatchFixture(config); const repo = makeGitRepo(); try { return test(fixture, repo); } finally { fixture.cleanup(); repo.cleanup(); } }
+function withFixture(test) { const fixture = createStubDispatchFixture(config); const repo = makeGitRepo(); try { return test(fixture, repo); } finally { fixture.cleanup(); repo.cleanup(); } }
 
 describe('driver design contracts (SC1–SC5, SC7)', () => {
   it('RED-MATRIX SC1 | exposes design authoring as a schema-valid durable action', () => withFixture((fixture, repo) => {

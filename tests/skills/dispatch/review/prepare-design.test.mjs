@@ -6,10 +6,10 @@ import { describe, it } from 'node:test';
 import { designSnapshot, prepareDesignReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { withDispatchFrontmatter } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 
-import { designExtras } from '../../../helpers/design-sections.mjs';
+import { requiredDesignSections } from '../../../helpers/design-document-fixture.mjs';
 
 const validDesign = `# Design
-${designExtras(['I01'])}
+${requiredDesignSections(['I01'])}
 ## Architecture & Boundaries
 A.
 

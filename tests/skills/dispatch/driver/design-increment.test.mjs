@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { drive, implementationOutcome, makeGitRepo, runDispatch, parseAction, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { foldSegments } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
@@ -32,7 +32,7 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 
 // Approved design stopped at design-approved-stop; I02 depends on I01.
 function setup() {
-  const fixture = buildStubDispatchFixture(config), repo = makeGitRepo();
+  const fixture = createStubDispatchFixture(config), repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");

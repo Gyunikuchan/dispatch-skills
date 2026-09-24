@@ -10,7 +10,7 @@ import {
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { resolveReadDelegates } from '../../../skills/dispatch/scripts/lib/config.mjs';
-import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch-fixture.mjs';
 
 /** Config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {
@@ -59,6 +59,8 @@ function entry({
     ...rest,
   };
 }
+
+// SECTION: Manifest validation and batch execution
 
 describe('dispatch batch manifest', () => {
   it('validates and derives stable source keys', () => {
@@ -340,6 +342,8 @@ describe('dispatch batch manifest', () => {
   });
 });
 
+// SECTION: Level resolution
+
 describe('dispatch batch level resolution', () => {
   it('resolves read-delegates at options.level for batch records', async () => {
     const seen = [];
@@ -373,10 +377,12 @@ describe('dispatch batch level resolution', () => {
   });
 });
 
+// SECTION: Batch CLI slot transport
+
 describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   let fixture;
   beforeEach(() => {
-    fixture = buildStubDispatchFixture(CONFIG);
+    fixture = createStubDispatchFixture(CONFIG);
   });
   afterEach(() => fixture.cleanup());
 

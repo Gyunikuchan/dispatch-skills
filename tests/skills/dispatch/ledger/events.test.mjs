@@ -30,6 +30,8 @@ const approval = (seq, governingHash = hash) => event(seq, 'approval', {
   governingHash, decision: 'approved', actor: 'user',
 });
 
+// SECTION: Canonical rows and schema validation
+
 describe('canonical ledger events', () => {
   it('sorts keys, NFC-normalizes non-path strings, and preserves path strings', () => {
     assert.equal(
@@ -60,6 +62,8 @@ describe('canonical ledger events', () => {
     assert.throws(() => canonicalJson({ value: 1.5 }), /integers only/);
   });
 });
+
+// SECTION: Ordinary segment folding and selection
 
 describe('v1 fold', () => {
   it('reconstructs a completed task and keyed rulings', () => {
@@ -187,6 +191,8 @@ describe('v1 fold', () => {
     assert.equal(selectOrdinarySegment([...first, ...second], hash), null);
   });
 });
+
+// SECTION: Phased segment state machines
 
 describe('v2 phased ledger events', () => {
   const designPath = '.scratch/plan/2026-09-20-demo-design.md';
@@ -412,6 +418,8 @@ describe('v2 phased ledger events', () => {
     assert.equal(nextDesignAction(folded).incrementId, 'I02');
   });
 
+  // SECTION: Cross-segment action derivation
+
   it('derives nextDesignAction with total precedence', () => {
     const incrementStates = new Map([['I01', 'ready']]);
     const incomplete = { incrementStates, needsReconciliation: true };
@@ -442,12 +450,7 @@ describe('v2 phased ledger events', () => {
       needsReconciliation: false, amendments: new Map(), activeIncrementId: null,
     };
     assert.equal(nextDesignAction(priorityOverridesId).incrementId, 'I02');
-  });
-});
-
-describe('nextDesignAction empty graph', () => {
-  it('never treats an empty increment map as all-complete', () => {
-    const fold = { incrementStates: new Map(), needsReconciliation: false, amendments: new Map(), activeIncrementId: null };
-    assert.equal(nextDesignAction(fold).action, 'resolve-reconciliation');
+    const emptyGraph = { incrementStates: new Map(), needsReconciliation: false, amendments: new Map(), activeIncrementId: null };
+    assert.equal(nextDesignAction(emptyGraph).action, 'resolve-reconciliation');
   });
 });

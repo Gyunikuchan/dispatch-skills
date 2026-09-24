@@ -10,6 +10,8 @@ import { extractFailureIdentifiers, testCounts } from '../../../../skills/dispat
 // NOTE: --test-reporter needs a file URL; a win32 drive path parses as a URL scheme.
 const QUIET_REPORTER = new URL('../../../../scripts/test-reporter.mjs', import.meta.url).href;
 
+// SECTION: Reporter parsing
+
 describe('failure identities from real node --test output', () => {
   let dir;
   const runSuite = (reporter) => {

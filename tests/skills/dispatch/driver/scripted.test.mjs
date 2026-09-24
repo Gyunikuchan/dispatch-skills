@@ -2,12 +2,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 
 import { evaluateConsensus } from '../../../../skills/dispatch/scripts/review/consensus.mjs';
 import { planSnapshot } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { splitDispatchFrontmatter } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import {
   PLAN_BODY,
   allProviders,
@@ -41,12 +41,19 @@ const config = (phaseOpts = {}, delegates = DELEGATES) => ({
 });
 
 const cleanups = [];
+const fixtures = new Map();
 afterEach(() => { for (const fn of cleanups.splice(0)) fn(); });
+after(() => { for (const fixture of fixtures.values()) fixture.cleanup(); });
 
 function setup(cfg, repoOpts) {
-  const fixture = buildStubDispatchFixture(cfg);
+  const key = JSON.stringify(cfg);
+  let fixture = fixtures.get(key);
+  if (!fixture) {
+    fixture = createStubDispatchFixture(cfg);
+    fixtures.set(key, fixture);
+  }
   const repo = makeGitRepo(repoOpts);
-  cleanups.push(fixture.cleanup, repo.cleanup);
+  cleanups.push(repo.cleanup);
   return { fixture, repo };
 }
 

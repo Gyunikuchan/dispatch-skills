@@ -37,6 +37,8 @@ describe('Git ledger state', () => {
   });
   afterEach(() => rmSync(repo, { recursive: true, force: true }));
 
+  // SECTION: Materialized snapshots
+
   it('snapshots file contents as Git blobs and restores them byte-exact', () => {
     const bytes = Buffer.from([0, 1, 13, 10, 255]);
     writeFileSync(path.join(repo, 'tracked.txt'), bytes);
@@ -70,6 +72,8 @@ describe('Git ledger state', () => {
     }
     assert.equal(snapshot.entries.find(entry => entry.path === 'link').mode, '120000');
   });
+
+  // SECTION: Repository boundaries and identity
 
   it('excludes scratch and ignored files from the baseline universe', () => {
     writeFileSync(path.join(repo, '.gitignore'), 'ignored.txt\n');

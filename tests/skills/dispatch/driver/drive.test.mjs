@@ -4,10 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
 import { allProviders, implementationOutcome, parseAction, report, runDispatch } from '../../../helpers/driver-harness.mjs';
-import { policies, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 
-afterEach(runCleanup);
+afterEach(cleanupOrdinaryDriverFixtures);
 
 const RED_TEST = "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { value } from '../src/app.js';\ntest('sample', () => { assert.equal(value, 2); });\n";
 
@@ -42,8 +42,8 @@ function driveToDone(fx, first, answer) {
 
 describe('--drive', () => {
   it('runs launch and verify argv itself and stops only where the host decides', () => {
-    const fx = setup();
-    const base = policies(fx.repo);
+    const fx = createOrdinaryDriverFixture();
+    const base = ordinaryDriverPolicy(fx.repo);
     const { action: first } = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]);
     assert.equal(first.action, 'launch');
     const { stops, banners } = driveToDone(fx, first, (action) => {
@@ -60,9 +60,9 @@ describe('--drive', () => {
   });
 
   it('runs a completion gate once, stops with its summary, and reruns it only after the tree changes', () => {
-    const fx = setup();
+    const fx = createOrdinaryDriverFixture();
     fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
-    const base = policies(fx.repo);
+    const base = ordinaryDriverPolicy(fx.repo);
     const { action: first } = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]);
     let gate = null;
     const { stops, banners } = driveToDone(fx, first, (action) => {
@@ -100,7 +100,7 @@ describe('--drive', () => {
   });
 
   it('rejects --drive without a state file or combined with --run', () => {
-    const fx = setup();
+    const fx = createOrdinaryDriverFixture();
     const missing = runDispatch(fx.fixture, ['--drive'], { cwd: fx.repo.dir });
     assert.equal(missing.status, 2);
     assert.match(missing.stderr, /--drive requires --state/);
@@ -111,7 +111,7 @@ describe('--drive', () => {
 
 describe('writer envelope self-check', () => {
   function pendingWrite(fx) {
-    const base = policies(fx.repo);
+    const base = ordinaryDriverPolicy(fx.repo);
     const { action: first } = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]);
     let action = first;
     while (action.action !== 'delegate-write') {
@@ -129,7 +129,7 @@ describe('writer envelope self-check', () => {
   }
 
   it('names the check command in both briefs and reports each defect the driver would reject', () => {
-    const fx = setup();
+    const fx = createOrdinaryDriverFixture();
     const action = pendingWrite(fx);
     const brief = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8'));
     assert.match(brief.selfCheck.command, /--check-envelope ENVELOPE_FILE --state /);
@@ -157,7 +157,7 @@ describe('writer envelope self-check', () => {
 
 describe('settled plan at implement start', () => {
   it('skips a new plan-review round when the settled checkpoint matches the plan', () => {
-    const fx = setup();
+    const fx = createOrdinaryDriverFixture();
     let action = step(fx, ['--run', 'plan', '--orchestrator', 'claude', '--', fx.plan]).action;
     while (action.action !== 'done') action = step(fx, ['--drive', '--state', action.stateFile]).action;
     assert.equal(action.outcome, 'complete', JSON.stringify(action));

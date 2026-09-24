@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
   buildTargets,
@@ -18,6 +18,8 @@ const SCRIPTS_DIR = path.join('skills', 'dispatch', 'scripts');
 
 /** One discovery row as `discover()` produces them. */
 const row = (provider, mode, bin, reachable = true) => ({ provider, mode, bin, reachable });
+
+// SECTION: Target selection and CLI boundaries
 
 describe('probe-dispatch: buildTargets', () => {
   it('emits one dispatch-level target per provider when --modes is off', () => {
@@ -127,14 +129,14 @@ describe('probe-dispatch: parseArgs', () => {
   });
 });
 
-describe('probe-dispatch: statusOf', () => {
-  it('classifies a reachable row as reachable', () => {
-    assert.match(statusOf(row('claude', 'cli', '/bin/claude')).toLowerCase(), /reachable/);
-  });
+// SECTION: Probe classification and safe rendering
 
-  it('classifies an unreachable row differently', () => {
-    const present = statusOf(row('claude', 'cli', '/bin/claude', false));
-    assert.notEqual(present, statusOf(row('claude', 'cli', '/bin/claude')));
+describe('probe-dispatch: statusOf', () => {
+  it('distinguishes reachable, unreachable, and missing binaries', () => {
+    assert.deepEqual(
+      [row('claude', 'cli', '/bin/claude'), row('claude', 'cli', '/bin/claude', false), row('claude', 'cli', null, false)].map(statusOf),
+      ['REACHABLE', 'UNREACHABLE', 'NOT FOUND'],
+    );
   });
 });
 
@@ -206,6 +208,8 @@ describe('probe-dispatch: classifyDenylistBehaviour', () => {
     );
   });
 });
+
+// SECTION: Summary and artifact lifecycle
 
 describe('probe-dispatch: renderSummary', () => {
   const rows = [row('claude', 'cli', '/bin/claude'), row('agy', 'antigravity-cli', null, false)];
@@ -283,45 +287,41 @@ describe('probe-dispatch: renderSummary', () => {
 });
 
 describe('probe-dispatch: drainStaging', () => {
+  let drainDir;
+
+  beforeEach(() => {
+    drainDir = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(drainDir, { recursive: true, force: true });
+  });
+
   it('moves every staged capture into the output dir and removes the staging dir', () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
-    const stageDir = path.join(base, 'stage');
-    const outDir = path.join(base, 'out');
+    const stageDir = path.join(drainDir, 'stage');
+    const outDir = path.join(drainDir, 'out');
     fs.mkdirSync(stageDir);
     fs.mkdirSync(outDir);
-    try {
-      fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
-      fs.writeFileSync(path.join(stageDir, 'claude.denylist.stderr.txt'), 'two', 'utf8');
+    fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
+    fs.writeFileSync(path.join(stageDir, 'claude.denylist.stderr.txt'), 'two', 'utf8');
 
-      drainStaging(stageDir, outDir);
+    drainStaging(stageDir, outDir);
 
-      assert.deepEqual(fs.readdirSync(outDir).sort(), ['claude.denylist.stderr.txt', 'claude.read.stdout.txt']);
-      assert.equal(fs.readFileSync(path.join(outDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
-      assert.equal(fs.existsSync(stageDir), false);
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    assert.deepEqual(fs.readdirSync(outDir).sort(), ['claude.denylist.stderr.txt', 'claude.read.stdout.txt']);
+    assert.equal(fs.readFileSync(path.join(outDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
+    assert.equal(fs.existsSync(stageDir), false);
   });
 
   it('is a no-op when nothing was staged', () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
-    try {
-      assert.doesNotThrow(() => drainStaging(path.join(base, 'absent'), base));
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    assert.doesNotThrow(() => drainStaging(path.join(drainDir, 'absent'), drainDir));
   });
 
   it('keeps the staging dir and its captures when a move fails', () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), 'probe-drain-'));
-    const stageDir = path.join(base, 'stage');
+    const stageDir = path.join(drainDir, 'stage');
     fs.mkdirSync(stageDir);
-    try {
-      fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
-      assert.throws(() => drainStaging(stageDir, path.join(base, 'missing-out')), /Captures left in/);
-      assert.equal(fs.readFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
-    } finally {
-      fs.rmSync(base, { recursive: true, force: true });
-    }
+    fs.writeFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'one', 'utf8');
+
+    assert.throws(() => drainStaging(stageDir, path.join(drainDir, 'missing-out')), /Captures left in/);
+    assert.equal(fs.readFileSync(path.join(stageDir, 'claude.read.stdout.txt'), 'utf8'), 'one');
   });
 });

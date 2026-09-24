@@ -29,6 +29,8 @@ const write = (name, contents) => {
   return file;
 };
 
+// SECTION: Markdown links and headings
+
 describe('baseline: brokenLinks', () => {
   it('reports a link to a missing file', () => {
     const file = write('a.md', 'See [the docs](./missing.md).');
@@ -87,6 +89,8 @@ describe('baseline: headingSlugs', () => {
     assert.equal(headingSlugs(write('none.md', 'just prose')).size, 0);
   });
 });
+
+// SECTION: Metrics and authored-skill discovery
 
 describe('baseline: loc', () => {
   it('counts only non-blank lines', () => {

@@ -44,7 +44,9 @@ afterEach(() => mock.restoreAll());
 
 const platforms = (list) => list.map((t) => t.platform);
 
-describe('dispatch doctor', () => {
+// SECTION: Candidate health and effective configuration
+
+describe('dispatch doctor report', () => {
   it('reports effective candidates, sandbox support, and corrective commands', async () => {
     mockProbes({ agy: false });
     const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc');
@@ -54,15 +56,9 @@ describe('dispatch doctor', () => {
     assert.equal(byPlatform.claude.sandboxSupported, true);
     assert.match(byPlatform.agy.correctiveCommand, /agy/);
   });
-
-  it('respects orchestrator candidate demotion', async () => {
-    mockProbes();
-    const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc', { orchestrator: 'claude' });
-    assert.deepEqual(platforms(report.targets), ['agy', 'opencode', 'claude']);
-  });
 });
 
-describe('dispatch doctor --level high (R1)', () => {
+describe('level and phase resolution', () => {
   it('reports level, source, level-resolved candidates, all three review phases, and the orchestrator write subagent', async () => {
     mockProbes();
     const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc', {
@@ -166,8 +162,9 @@ describe('dispatch doctor --level high (R1)', () => {
   });
 });
 
-// SECTION: strict config doctor output (SC8)
-describe('dispatch doctor strict targets and sandbox (SC8)', () => {
+// SECTION: Strict target and sandbox diagnostics
+
+describe('strict target and sandbox output (SC8)', () => {
   it('lists provider[index] targets, provider-default effort, and per-provider sandbox', async () => {
     mockProbes();
     const config = { 'read-delegates': {

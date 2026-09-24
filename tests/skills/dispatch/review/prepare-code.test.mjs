@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { prepareCodeReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
+import {
+  cleanupPreparationManifest,
+  createReviewPreparationFixture,
+  makeDirtyCodeRepository,
+} from '../../../helpers/review-preparation-fixture.mjs';
 
 const BATCH_CONFIG = {
   platforms: {
@@ -15,48 +18,12 @@ const BATCH_CONFIG = {
   },
 };
 
-const tempDirs = [];
-const CONVERSATION_ENV_KEYS = [
-  'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
-];
-let originalEnv = {};
+const fixture = createReviewPreparationFixture();
+const makeRepo = () => makeDirtyCodeRepository(fixture.makeDirectory);
+const cleanupManifest = cleanupPreparationManifest;
 
-const makeRepo = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'code-prepare-test-'));
-  tempDirs.push(dir);
-  execFileSync('git', ['init', '-q', '-b', 'feature'], { cwd: dir });
-  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
-  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
-  fs.writeFileSync(path.join(dir, 'app.js'), 'export const value = 1;\n');
-  execFileSync('git', ['add', 'app.js'], { cwd: dir });
-  execFileSync('git', ['commit', '--no-gpg-sign', '-qm', 'initial'], { cwd: dir });
-  fs.writeFileSync(path.join(dir, 'app.js'), 'export const value = 2;\n');
-  return dir;
-};
-const cleanupManifest = (manifest) => {
-  const paths = [
-    ...(manifest.cleanupPaths ?? []),
-    manifest.invocationContext?.statePath && path.dirname(manifest.invocationContext.statePath),
-  ].filter(Boolean);
-  for (const cleanup of paths) fs.rmSync(cleanup, { recursive: true, force: true });
-};
-
-beforeEach(() => {
-  originalEnv = {};
-  for (const key of CONVERSATION_ENV_KEYS) {
-    if (key in process.env) {
-      originalEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-  }
-});
-
-afterEach(() => {
-  for (const [key, val] of Object.entries(originalEnv)) {
-    process.env[key] = val;
-  }
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
+beforeEach(fixture.beforeEach);
+afterEach(fixture.afterEach);
 
 describe('code review preparation', () => {
   it('generates a missing walkthrough and prepares an orchestrated review', () => {

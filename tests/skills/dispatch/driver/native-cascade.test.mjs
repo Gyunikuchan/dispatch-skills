@@ -7,10 +7,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 
 import { loadSchema, validateReply } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { allProviders, drive, makeGitRepo, parseAction, planFinding, report, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
@@ -29,12 +29,24 @@ const CONFIG = {
 };
 
 const cleanup = [];
+const fixtures = new Map();
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
+after(() => { for (const fixture of fixtures.values()) fixture.cleanup(); });
+
+function fixtureFor(config) {
+  const key = JSON.stringify(config);
+  let fixture = fixtures.get(key);
+  if (!fixture) {
+    fixture = createStubDispatchFixture(config);
+    fixtures.set(key, fixture);
+  }
+  return fixture;
+}
 
 function setup() {
-  const fixture = buildStubDispatchFixture(CONFIG);
+  const fixture = fixtureFor(CONFIG);
   const repo = makeGitRepo();
-  cleanup.push(fixture.cleanup, repo.cleanup);
+  cleanup.push(repo.cleanup);
   const plan = writePlan(repo.dir);
   return { fixture, repo, plan };
 }
@@ -76,7 +88,7 @@ describe('driver-owned per-model native cascade for a failed read target (SC1)',
 
 describe('review-phase post-wave native fallback stays same-platform (SC3)', () => {
   it('never emits native-fallback for a cross-platform failed target under the post-wave queue, and records it failed', () => {
-    const fixture = buildStubDispatchFixture({
+    const fixture = fixtureFor({
       'read-delegates': {
         claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
         opencode: { targets: [{ low: { model: 'opencode-model', effort: 'medium' } }] },
@@ -86,7 +98,7 @@ describe('review-phase post-wave native fallback stays same-platform (SC3)', () 
       },
     });
     const repo = makeGitRepo();
-    cleanup.push(fixture.cleanup, repo.cleanup);
+    cleanup.push(repo.cleanup);
     const plan = writePlan(repo.dir);
     const seenNativeFallback = [];
     const run = drive(fixture, {
@@ -109,12 +121,12 @@ describe('review-phase post-wave native fallback stays same-platform (SC3)', () 
 
 describe('same-platform early fallback and the one-shot --slots step (SC2)', () => {
   it('launch guidance names the one-shot --slots step and carries slotsPath instead of a host timer', () => {
-    const fixture = buildStubDispatchFixture({
+    const fixture = fixtureFor({
       'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } },
       phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
     });
     const repo = makeGitRepo();
-    cleanup.push(fixture.cleanup, repo.cleanup);
+    cleanup.push(repo.cleanup);
     const plan = writePlan(repo.dir);
     const res = runDispatch(fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan], { cwd: repo.dir });
     assert.equal(res.status, 0, res.stderr);

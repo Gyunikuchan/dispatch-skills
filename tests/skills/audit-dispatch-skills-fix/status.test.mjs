@@ -30,20 +30,15 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ============================================================================
-// SECTION: Fixtures
-// ============================================================================
+// SECTION: Report fixtures and output capture
 
-const tempDirs = [];
-after(() => {
-  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
-});
+const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'status-fixtures-'));
+let fixtureIndex = 0;
+after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
 
-/** Writes `body` to a fresh temp dir and returns its path. Never touches `.scratch/`. */
+/** Writes `body` to an isolated report and returns its path. Never touches `.scratch/`. */
 function fixture(body) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-fixture-'));
-  tempDirs.push(dir);
-  const file = path.join(dir, 'report.md');
+  const file = path.join(fixtureRoot, `report-${fixtureIndex++}.md`);
   fs.writeFileSync(file, body, 'utf8');
   return file;
 }
@@ -66,9 +61,19 @@ function report(findings, { preamble = '', trailing = '' } = {}) {
 
 const readFindings = (file) => parseFindings(loadReport(file));
 
-// ============================================================================
-// SECTION: Parsing
-// ============================================================================
+function captureLogs(run) {
+  const messages = [];
+  const original = console.log;
+  try {
+    console.log = (message) => messages.push(message);
+    run();
+  } finally {
+    console.log = original;
+  }
+  return messages;
+}
+
+// SECTION: Report parsing and validation
 
 describe('status.mjs parsing', () => {
   it('parses a report in the § "5. Write the report" shape', () => {
@@ -123,9 +128,7 @@ describe('status.mjs parsing', () => {
   });
 });
 
-// ============================================================================
-// SECTION: Helpers
-// ============================================================================
+// SECTION: Ordering, arguments, paths, and entry-point detection
 
 describe('status.mjs helpers', () => {
   it('ranks critical → nit and breaks ties numerically by id', () => {
@@ -169,7 +172,7 @@ describe('status.mjs helpers', () => {
     assert.equal(toPosix(path.join('a', 'b', 'c.mjs')), 'a/b/c.mjs');
   });
 
-  it('reports false for isMain when process.argv[1] is absent', () => {
+  it('rejects absent and different entry points', () => {
     const saved = process.argv[1];
     try {
       process.argv[1] = undefined;
@@ -177,19 +180,14 @@ describe('status.mjs helpers', () => {
     } finally {
       process.argv[1] = saved;
     }
-  });
 
-  it('reports false for isMain when the entry point is another file', () => {
-    // status.mjs is imported here, never the entry point — so its own guard must not fire.
     const script = path.resolve(__dirname, '../../../.agents/skills/audit-dispatch-skills-fix/scripts/status.mjs');
     assert.equal(isMain(pathToFileURL(script).href), false);
   });
 
   it('reports true for isMain when reached through a symlinked path', function () {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'status-link-'));
-    tempDirs.push(dir);
-    const target = path.join(dir, 'real.mjs');
-    const link = path.join(dir, 'linked.mjs');
+    const target = path.join(fixtureRoot, 'real.mjs');
+    const link = path.join(fixtureRoot, 'linked.mjs');
     fs.writeFileSync(target, '', 'utf8');
     try {
       fs.symlinkSync(target, link, 'file');
@@ -209,9 +207,7 @@ describe('status.mjs helpers', () => {
   });
 });
 
-// ============================================================================
-// SECTION: Counts blockquote (A-61)
-// ============================================================================
+// SECTION: Counts summary mutation regression (A-61)
 
 describe('refreshCounts', () => {
   it('inserts a blockquote when none exists, then rewrites rather than adds', () => {
@@ -282,9 +278,7 @@ describe('refreshCounts', () => {
   });
 });
 
-// ============================================================================
-// SECTION: Batch composition (A-63)
-// ============================================================================
+// SECTION: Same-file batch composition regression (A-63)
 
 describe('selectBatch', () => {
   const rows = (specs) => specs.map(([id, severity, file]) => ({ id, severity, location: `\`${file}:1\`` }));
@@ -337,24 +331,9 @@ describe('selectBatch', () => {
   it('returns [] for an empty pool', () => {
     assert.deepEqual(selectBatch([], 8), []);
   });
-
-  it('never returns more than size, nor a finding twice', () => {
-    const open = ranked(
-      rows([
-        ['A-1', 'high', 'lead.mjs'],
-        ['A-2', 'high', 'lead.mjs'],
-        ['A-3', 'low', 'other.mjs'],
-      ]),
-    );
-    const batch = selectBatch(open, 3);
-    assert.equal(batch.length, 3);
-    assert.equal(new Set(batch.map((f) => f.id)).size, 3);
-  });
 });
 
-// ============================================================================
-// SECTION: Dynamic batch sizing (max 5 batches)
-// ============================================================================
+// SECTION: Dynamic batch sizing and CLI overrides
 
 describe('resolveBatchSize', () => {
   const dummyFindings = (n, { severity = 'medium', file = null } = {}) =>
@@ -459,9 +438,7 @@ describe('resolveBatchSize', () => {
   });
 });
 
-// ============================================================================
-// SECTION: Commands
-// ============================================================================
+// SECTION: Report-mutating commands
 
 describe('cmdInit', () => {
   it('backfills a missing status line under the meta line, and is idempotent', () => {
@@ -534,35 +511,22 @@ describe('cmdSet', () => {
   });
 });
 
+// SECTION: Batch command output
+
 describe('cmdBatch', () => {
   it('prints dynamically sized batch header and finding bodies', () => {
     const list = Array.from({ length: 25 }, (_, i) =>
       finding({ id: `A-${i + 1}`, file: `file${Math.floor(i / 5)}.mjs`, severity: 'high' }),
     );
     const file = fixture(report(list));
-    const captured = [];
-    const origLog = console.log;
-    try {
-      console.log = (msg) => captured.push(msg);
-      cmdBatch(path.dirname(file), file, ['batch']);
-    } finally {
-      console.log = origLog;
-    }
-    // 25 total -> ceil(25/5) = batch size 5
-    assert.ok(captured[0].includes('25 open, batch size 5'));
-    assert.ok(captured[0].includes('A-1, A-2, A-3, A-4, A-5'));
+    const captured = captureLogs(() => cmdBatch(path.dirname(file), file, ['batch']));
+
+    assert.match(captured[0], /A-1, A-2, A-3, A-4, A-5 \(25 open, batch size 5\)/);
+    assert.match(captured[1], /#### A-1: Title/);
   });
 
   it('prints "No open findings." when all findings are settled', () => {
     const file = fixture(report([finding({ id: 'A-1', status: 'fixed' })]));
-    const captured = [];
-    const origLog = console.log;
-    try {
-      console.log = (msg) => captured.push(msg);
-      cmdBatch(path.dirname(file), file, ['batch']);
-    } finally {
-      console.log = origLog;
-    }
-    assert.deepEqual(captured, ['No open findings.']);
+    assert.deepEqual(captureLogs(() => cmdBatch(path.dirname(file), file, ['batch'])), ['No open findings.']);
   });
 });

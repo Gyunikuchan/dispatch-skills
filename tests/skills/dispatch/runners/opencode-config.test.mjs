@@ -24,6 +24,8 @@ import {
 // Config resolution exercises every tier of opencode's own precedence order; every fixture
 // isolates its tiers from the real machine (parameterized root/homeDir/env/managedConfigDir).
 
+// SECTION: Endpoint and model resolution
+
 describe('opencode-run config resolution', () => {
   describe('isLocalEndpointHost', () => {
     it('recognizes localhost, the full 127.0.0.0/8 loopback block, ::1, and 0.0.0.0', () => {
@@ -172,6 +174,8 @@ describe('opencode-run config resolution', () => {
       assert.equal(settings.port, 443);
     });
   });
+
+  // SECTION: Configuration precedence and hardening
 
   describe('readOpencodeConfig & the 7-tier merge', () => {
     it('returns the configured model when opencode.jsonc sets one', () => {

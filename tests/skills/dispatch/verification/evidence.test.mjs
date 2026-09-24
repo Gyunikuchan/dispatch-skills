@@ -24,6 +24,8 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// SECTION: Plan evidence mapping
+
 describe('verification evidence', () => {
   it('extracts normalized paths from proposed change headings', () => {
     const plan = [
@@ -155,6 +157,8 @@ describe('verification evidence', () => {
     });
   });
 
+  // SECTION: Repository state evidence
+
   it('parses both paths in rename and copy porcelain records', () => {
     const records = parsePorcelainZ(' M src/a.js\0R  src/new.js\0src/old.js\0C  copy.js\0source.js\0?? new.txt\0');
     assert.deepEqual(records.map(({ status, paths }) => ({ status, paths })), [
@@ -234,6 +238,8 @@ describe('verification evidence', () => {
     );
   });
 
+  // SECTION: Outcome packets and failure identity
+
   it('reads governingOutcome.context from the plan body after JSON frontmatter, not the frontmatter itself (SC6)', () => {
     const plan = [
       '---',
@@ -267,6 +273,8 @@ describe('verification evidence', () => {
     assert.equal(compareFailureIdentity(first, { ...second, exitStatus: 2 }), false);
   });
 });
+
+// SECTION: Prior-finding digest
 
 describe('prior-finding digest', () => {
   it('keeps bounded entry headlines, drops source lines, and counts omissions', () => {

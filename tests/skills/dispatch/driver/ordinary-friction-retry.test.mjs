@@ -5,20 +5,20 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 import { allProviders, implementationOutcome, report } from '../../../helpers/driver-harness.mjs';
-import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
-afterEach(runCleanup);
+afterEach(cleanupOrdinaryDriverFixtures);
 
 describe('ordinary driver friction relief: retries', () => {
   const rulings = ledger => ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]);
   const stray = (fixture, file) => action => {
     if (action.fields.stage === 'production') fs.writeFileSync(path.join(fixture.repo.dir, file), 'stray\n');
-    return policies(fixture.repo).delegateWrite(action);
+    return ordinaryDriverPolicy(fixture.repo).delegateWrite(action);
   };
   it('retries in-segment after a failure, carrying the ruling to the next writer', () => {
-    const fixture = setup(); let testsOnlyWrites = 0;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture(); let testsOnlyWrites = 0;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       // The first tests-only write claims RED without changing the test, so the host observes GREEN.
       delegateWrite(action) {
         if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
@@ -41,9 +41,9 @@ describe('ordinary driver friction relief: retries', () => {
     assert.deepEqual(ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]).at(-1), ['failure-disposition', 'retry']);
   });
   it('refuses re-verify for a failure that host evidence did not raise', () => {
-    const fixture = setup(); let error = null, offered = null;
-    const base = policies(fixture.repo);
-    run(fixture, { allowErrors: true, policy: {
+    const fixture = createOrdinaryDriverFixture(); let error = null, offered = null;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    driveOrdinaryImplementation(fixture, { allowErrors: true, policy: {
       askUser(action) {
         if (action.question === 'write-scope') return { answer: { decision: 'stop', reason: 'Unexpected edit.' } };
         if (action.question !== 'failure-disposition') return base.askUser(action);
@@ -57,9 +57,9 @@ describe('ordinary driver friction relief: retries', () => {
     assert.match(error, /re-verify applies only/);
   });
   it('goes from validated RED straight to the production write at high, with no test-review wave', () => {
-    const fixture = setup(); let waves = 0, testsWritten = false, productionWritten = false;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
+    const fixture = createOrdinaryDriverFixture(); let waves = 0, testsWritten = false, productionWritten = false;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
       delegateWrite(action) {
         testsWritten ||= action.fields.stage === 'tests-only';
         productionWritten ||= action.fields.stage === 'production';
@@ -75,13 +75,13 @@ describe('ordinary driver friction relief: retries', () => {
 
 describe('driver-run verification', () => {
   it('runs every gate and plan generator on the driver, logs to the session, and extracts real failure identities', () => {
-    const fixture = setup();
+    const fixture = createOrdinaryDriverFixture();
     fs.writeFileSync(path.join(fixture.repo.dir, 'gen.mjs'), "import fs from 'node:fs';\nfs.writeFileSync('gen.txt', 'generated');\n");
     fixture.repo.git('add', 'gen.mjs'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'generator');
     fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('## Verification Plan', '#### [GENERATED] gen.txt\n\n- Command: `node gen.mjs`\n\n## Verification Plan'));
-    const base = policies(fixture.repo);
+    const base = ordinaryDriverPolicy(fixture.repo);
     const verifies = [];
-    const result = run(fixture, { onAction(action) { if (action.action === 'verify') verifies.push(action); }, policy: {
+    const result = driveOrdinaryImplementation(fixture, { onAction(action) { if (action.action === 'verify') verifies.push(action); }, policy: {
       realVerify: true,
       delegateWrite(action) {
         const testsOnly = action.fields.stage === 'tests-only';

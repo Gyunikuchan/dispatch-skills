@@ -13,6 +13,8 @@ describe('per-session temp directory', () => {
   beforeEach(() => { saved = process.env[SESSION_ENV]; delete process.env[SESSION_ENV]; });
   afterEach(() => { if (saved === undefined) delete process.env[SESSION_ENV]; else process.env[SESSION_ENV] = saved; });
 
+  // SECTION: Session lifecycle and containment
+
   it('opens one session under the dispatch temp root and keeps every temp dir inside it', () => {
     const dir = sessionDir();
     assert.equal(path.dirname(dir), sessionsRoot());
@@ -24,6 +26,8 @@ describe('per-session temp directory', () => {
     assert.ok(!isSessionDir(temp), 'a nested directory is not a session');
     assert.ok(!isSessionDir(os.tmpdir()));
   });
+
+  // SECTION: Argument propagation and retention
 
   it('passes the session to host-run argv and binds it from the flag', () => {
     const dir = openSession('flag-session');

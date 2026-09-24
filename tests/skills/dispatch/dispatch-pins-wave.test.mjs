@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch-fixture.mjs';
 
 // `code-review.only` names claude alone: an ask wave must ignore it (only never narrows ask).
 const CONFIG = {
@@ -21,7 +21,7 @@ const R8_KEYS = ['exit', 'output', 'platform', 'session', 'slot', 'status'];
 const slotKey = (target) => `ask:R1:${target.platform}:${target.candidateIndex}`;
 
 let fixture;
-before(() => { fixture = buildStubDispatchFixture(CONFIG); });
+before(() => { fixture = createStubDispatchFixture(CONFIG); });
 after(() => fixture?.cleanup());
 
 const run = (args, opts) => runStubDispatch(fixture, args, opts);
@@ -39,6 +39,8 @@ function assertR8Line(line) {
   assert.ok(['ok', 'failed'].includes(line.status));
   assert.ok(line.exit === null || Number.isInteger(line.exit));
 }
+
+// SECTION: Pin selection, fallback, and CLI conflicts
 
 describe('dispatch --pins wave (R8)', () => {
   describe('count pins', () => {
@@ -157,7 +159,7 @@ describe('dispatch --pins wave (R8)', () => {
     });
 
     it('rejects a known provider missing from read-delegates', () => {
-      const narrow = buildStubDispatchFixture({ 'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5' } }] }, agy: { targets: [{ low: { model: 'gemini-3.8-flash' } }] } } });
+      const narrow = createStubDispatchFixture({ 'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5' } }] }, agy: { targets: [{ low: { model: 'gemini-3.8-flash' } }] } } });
       try {
         const res = runStubDispatch(narrow, ['--pins', 'agy,copilot', 'Review']);
         assert.equal(res.status, 1);

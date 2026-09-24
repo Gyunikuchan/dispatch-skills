@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import fs from 'node:fs';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY } from '../../../helpers/driver-harness.mjs';
 
 const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 
 function withFixture(test) {
-  const fixture = buildStubDispatchFixture(config);
+  const fixture = createStubDispatchFixture(config);
   const repo = makeGitRepo();
   try { return test(fixture, repo); } finally { fixture.cleanup(); repo.cleanup(); }
 }

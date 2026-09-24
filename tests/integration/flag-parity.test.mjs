@@ -32,48 +32,49 @@ function tableFlags(markdown) {
   return flags;
 }
 
-/**
- * Alias groups from `--help`, e.g. `['-m', '--model']`. Docs may name either spelling, so
- * parity is checked per group rather than per spelling.
- */
-function helpFlagGroups() {
-  const res = spawnSync(process.execPath, [DISPATCH_CLI, '--help'], { encoding: 'utf8' });
-  assert.equal(res.status, 0, res.stderr);
+/** Runs a shipped CLI's help once for all assertions in this cross-component contract. */
+function cliHelp(script) {
+  const result = spawnSync(process.execPath, [script, '--help'], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Usage:/);
+  return result.stdout;
+}
+
+/** Alias groups from `--help`, e.g. `['-m', '--model']`. */
+function helpFlagGroups(output) {
   const groups = [];
-  for (const line of res.stdout.split(/\r?\n/)) {
-    const m = /^\s{2}(-[\w-]+(?:, --[a-z][a-z-]*)*)(?:,? --[a-z][a-z-]*)?\s/.exec(line);
-    if (!m) continue;
-    const spellings = [...m[1].matchAll(/--?[a-z][a-z-]*/g)].map(([f]) => f);
-    // `--help` documents itself; the skill docs have no reason to.
-    if (spellings.includes('--help')) continue;
-    if (spellings.length) groups.push(spellings);
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^\s{2}(-[\w-]+(?:, --[a-z][a-z-]*)*)(?:,? --[a-z][a-z-]*)?\s/.exec(line);
+    if (!match) continue;
+    const spellings = [...match[1].matchAll(/--?[a-z][a-z-]*/g)].map(([flag]) => flag);
+    if (!spellings.includes('--help') && spellings.length) groups.push(spellings);
   }
   return groups;
 }
 
-const HELP_GROUPS = helpFlagGroups();
-const HELP_SPELLINGS = new Set(HELP_GROUPS.flat());
+const DISPATCH_HELP = cliHelp(DISPATCH_CLI);
+const HELP_SPELLINGS = new Set(helpFlagGroups(DISPATCH_HELP).flat());
 const SKILL_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'SKILL.md'), 'utf8');
 const README_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'README.md'), 'utf8');
 
-describe('dispatch flag source of truth', () => {
-  it('--help carries the required routing flags', () => {
+// SECTION: Dispatch documentation contract
+
+describe('dispatch CLI help is the flag source of truth', () => {
+  it('carries required routing flags and scopes provider-only flags', () => {
     for (const flag of ['--level', '--level-source', '--pins', '--run', '--kind', '--fix', '--phases', '--next', '--state', '--input']) {
       assert.ok(HELP_SPELLINGS.has(flag), `--help lacks ${flag}`);
     }
+    for (const flag of ['--json', '-a']) {
+      const line = DISPATCH_HELP.split('\n').find((value) => value.includes(flag) && /provider only/i.test(value));
+      assert.ok(line, `--help does not scope ${flag}`);
+      assert.match(line, /opencode provider only/i);
+    }
   });
+
   it('agent and human docs point to --help without caching a flag table', () => {
     for (const [name, text] of [['SKILL.md', SKILL_TEXT], ['README.md', README_TEXT]]) {
       assert.match(text, /--help/);
       assert.equal(tableFlags(text).size, 0, `${name} duplicates the CLI flag table`);
-    }
-  });
-  it('--help scopes provider-only flags', () => {
-    const res = spawnSync(process.execPath, [DISPATCH_CLI, '--help'], { encoding: 'utf8' });
-    for (const flag of ['--json', '-a']) {
-      const line = res.stdout.split('\n').find((value) => value.includes(flag) && /provider only/i.test(value));
-      assert.ok(line, `--help does not scope ${flag}`);
-      assert.match(line, /opencode provider only/i);
     }
   });
 });
@@ -89,57 +90,25 @@ const RUNNERS = [
   ['runners/opencode.mjs', opencodeFlags],
 ];
 
-/** Every flag spelling a runner's `--help` prints. */
-function runnerHelpSpellings(script) {
-  const res = spawnSync(process.execPath, [path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', script), '--help'], {
-    encoding: 'utf8',
-  });
-  assert.equal(res.status, 0, res.stderr);
-  return new Set([...res.stdout.matchAll(/--?[a-z][a-z-]*/g)].map(([f]) => f));
-}
+const RUNNER_HELP = new Map(RUNNERS.map(([script]) => [
+  script,
+  cliHelp(path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', script)),
+]));
 
+// SECTION: Runner help contract
 
-describe('runner flag parity (--help vs the flags each runner accepts)', () => {
+describe('runner help matches accepted and shared flags', () => {
   for (const [script, flags] of RUNNERS) {
-    it(`${script} --help names every runner-specific flag it accepts`, () => {
-      const printed = runnerHelpSpellings(script);
-      const accepted = [...flags.valueFlags, ...flags.booleanFlags];
-      assert.deepEqual(accepted.filter((f) => !printed.has(f)), []);
-    });
-
-    it(`${script} --help names every documented common flag`, () => {
-      const printed = runnerHelpSpellings(script);
-      assert.deepEqual(DOCUMENTED_COMMON_FLAGS.filter((f) => !printed.has(f)), []);
+    it(`${script} names every accepted runner flag and documented common flag`, () => {
+      const printed = new Set([...RUNNER_HELP.get(script).matchAll(/--?[a-z][a-z-]*/g)].map(([flag]) => flag));
+      const required = [...flags.valueFlags, ...flags.booleanFlags, ...DOCUMENTED_COMMON_FLAGS];
+      assert.deepEqual(required.filter((flag) => !printed.has(flag)), []);
     });
   }
 
-  // Without this pair, a flag added to COMMON_VALUE_FLAGS later is silently undocumented —
-  // A-40's own defect, one level up.
-  it('DOCUMENTED_COMMON_FLAGS names only real common flags', () => {
-    assert.deepEqual(DOCUMENTED_COMMON_FLAGS.filter((f) => !COMMON_VALUE_FLAGS.has(f)), []);
-  });
-
-  it('every common flag is either documented or explicitly excluded', () => {
+  it('partitions real common flags into documented and explicitly excluded sets', () => {
+    assert.deepEqual(DOCUMENTED_COMMON_FLAGS.filter((flag) => !COMMON_VALUE_FLAGS.has(flag)), []);
     const accounted = new Set([...DOCUMENTED_COMMON_FLAGS, ...RUNNER_IRRELEVANT_COMMON_FLAGS]);
-    assert.deepEqual([...COMMON_VALUE_FLAGS].filter((f) => !accounted.has(f)), []);
+    assert.deepEqual([...COMMON_VALUE_FLAGS].filter((flag) => !accounted.has(flag)), []);
   });
-});
-
-// dispatch/SKILL.md Troubleshooting teaches `--help` as the diagnostic move for a misbehaving
-// script, so every shipped CLI (the entry point and the runners) must answer it.
-describe('every authored CLI answers --help', () => {
-  for (const script of [
-    ['skills', 'dispatch', 'scripts', 'dispatch.mjs'],
-    ['skills', 'dispatch', 'scripts', 'runners', 'claude.mjs'],
-    ['skills', 'dispatch', 'scripts', 'runners', 'agy.mjs'],
-    ['skills', 'dispatch', 'scripts', 'runners', 'copilot.mjs'],
-    ['skills', 'dispatch', 'scripts', 'runners', 'opencode.mjs'],
-  ]) {
-    const name = script[script.length - 1];
-    it(`${name} --help exits 0 and prints usage`, () => {
-      const res = spawnSync(process.execPath, [path.join(REPO_ROOT, ...script), '--help'], { encoding: 'utf8' });
-      assert.equal(res.status, 0, res.stderr);
-      assert.match(res.stdout, /Usage:/);
-    });
-  }
 });

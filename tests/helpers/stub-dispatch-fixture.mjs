@@ -72,7 +72,7 @@ export async function run${suffix}(options = {}) {
  * @param {object} config dispatch config written as `config.jsonc`.
  * @returns {{ dir: string, skillDir: string, script: string, cleanup: () => void }}
  */
-export function buildStubDispatchFixture(config) {
+export function createStubDispatchFixture(config) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-stub-'));
   const skillDir = path.join(dir, 'dispatch');
   fs.cpSync(DISPATCH_SKILL, skillDir, { recursive: true });
@@ -92,7 +92,7 @@ export function buildStubDispatchFixture(config) {
 }
 
 /** Orchestrator-detection variables scrubbed so the host running the tests never leaks in. */
-export const ORCHESTRATOR_ENV = [
+const ORCHESTRATOR_ENV = [
   'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
   'CLAUDECODE', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID', 'CLAUDE_CODE_ENTRYPOINT',
   'COPILOT_AGENT', 'COPILOT_CLI_SESSION_ID', 'OPENCODE_PORT', 'OPENCODE_AGENT',
@@ -100,21 +100,27 @@ export const ORCHESTRATOR_ENV = [
   'GITHUB_COPILOT_MODEL', 'OPENCODE_MODEL',
 ];
 
+/** Builds deterministic stub-runner environment without leaking the host orchestrator. */
+export function createStubDispatchEnvironment({ results = {}, live = {}, logFile, extra = {} } = {}) {
+  const env = { ...process.env };
+  for (const key of ORCHESTRATOR_ENV) delete env[key];
+  return {
+    ...env,
+    DISPATCH_TELEMETRY: '0',
+    DISPATCH_STUB_RESULTS: JSON.stringify(results),
+    DISPATCH_STUB_LIVE: JSON.stringify(live),
+    ...(logFile ? { DISPATCH_STUB_LOG: logFile } : {}),
+    ...extra,
+  };
+}
+
 /**
  * Spawns the fixture's dispatch.mjs.
  * @returns {{ status: number|null, stdout: string, stderr: string, calls: object[] }}
  */
 export function runStubDispatch(fixture, args, { results = {}, live = {}, env: extraEnv = {} } = {}) {
   const logFile = path.join(fixture.dir, `calls-${Date.now()}-${Math.random().toString(16).slice(2)}.jsonl`);
-  const env = { ...process.env };
-  for (const key of ORCHESTRATOR_ENV) delete env[key];
-  Object.assign(env, {
-    DISPATCH_TELEMETRY: '0',
-    DISPATCH_STUB_RESULTS: JSON.stringify(results),
-    DISPATCH_STUB_LIVE: JSON.stringify(live),
-    DISPATCH_STUB_LOG: logFile,
-    ...extraEnv,
-  });
+  const env = createStubDispatchEnvironment({ results, live, logFile, extra: extraEnv });
   const res = spawnSync(process.execPath, [fixture.script, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],

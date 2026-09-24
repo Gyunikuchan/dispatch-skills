@@ -24,7 +24,7 @@ import {
   validateConfig,
 } from '../../../../skills/dispatch/scripts/lib/config.mjs';
 import { resolveFlow } from '../../../../skills/dispatch/scripts/lib/resolve-flow.mjs';
-import { buildStubDispatchFixture, runStubDispatch } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture, runStubDispatch } from '../../../helpers/stub-dispatch-fixture.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const SAMPLE_CONFIG = parseJsonc(readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'config.sample.jsonc'), 'utf8'));
@@ -57,6 +57,8 @@ function withTables({ phases: phasePatches = {}, ...tables } = {}) {
 const problemsOf = (config) => validateConfig(config).join('\n');
 /** One-target read-provider wrapper around a single `low` level. */
 const wrap = (level = { model: 'm' }, extra = {}) => ({ ...extra, targets: [{ low: level }] });
+
+// SECTION: Generic config loading
 
 describe('getConfigCandidates', () => {
   it('returns the 2-path precedence list in order', () => {
@@ -103,6 +105,8 @@ describe('lib/platform.mjs does not own dispatch schema validation', () => {
     assert.equal(common.validateDispatchConfig, undefined);
   });
 });
+
+// SECTION: Schema validation
 
 describe('constants', () => {
   it('exports the five levels and three review phases in order', () => {
@@ -280,6 +284,8 @@ describe('validateConfig', () => {
   });
 });
 
+// SECTION: Level resolution
+
 describe('uniform level resolution', () => {
   describe('selectLevel', () => {
     it('picks exact, then nearest lower, then lowest higher, regardless of key order', () => {
@@ -353,6 +359,8 @@ describe('uniform level resolution', () => {
   });
 });
 
+// SECTION: Dispatch loading and shipped config
+
 // Effort is optional per level; omission means the provider default, never inheritance.
 describe('optional effort per level', () => {
   it('accepts a read-delegate level without effort', () => {
@@ -373,7 +381,7 @@ describe('optional effort per level', () => {
   });
 
   it('CLI --model without --effort is rejected, naming --effort', () => {
-    const fixture = buildStubDispatchFixture({ 'read-delegates': { claude: wrap({ model: 'claude-opus-5', effort: 'low' }) } });
+    const fixture = createStubDispatchFixture({ 'read-delegates': { claude: wrap({ model: 'claude-opus-5', effort: 'low' }) } });
     try {
       const res = runStubDispatch(fixture, ['--no-config', '--provider', 'claude', '-m', 'claude-opus-5', 'positional prompt']);
       assert.notEqual(res.status, 0, `expected rejection, got stdout: ${res.stdout}`);
@@ -455,7 +463,7 @@ describe('shipped config.sample.jsonc', () => {
   }
 });
 
-// SECTION: strict config format (SC1/SC2)
+// SECTION: Strict config format (SC1/SC2)
 describe('strict config format', () => {
   const T = (model, effort) => (effort === undefined ? { model } : { model, effort });
   const STRICT = {

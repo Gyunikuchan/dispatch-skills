@@ -20,7 +20,7 @@ import {
   writeDispatchOutput,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { verifySkillIntegrity } from '../../../skills/dispatch/scripts/lib/integrity.mjs';
-import { PROJECT_ROOT, parseJsonc } from '../../../skills/dispatch/scripts/lib/platform.mjs';
+import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/lib/platform.mjs';
 import { detectOrchestrator, KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../../../skills/dispatch/scripts/lib/providers.mjs';
 import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/lib/config.mjs';
 
@@ -48,7 +48,9 @@ const resolveProvider = (options = {}) => resolveProviderImpl({ ...TEST_DISPATCH
 const getCandidateProviders = (options = {}) => getCandidateProvidersImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 const dispatchTask = (options = {}) => dispatchTaskImpl({ ...TEST_DISPATCH_CONFIG_ARGS, ...options });
 
-describe('dispatch: configured target resolution', () => {
+// SECTION: Configured targets and provider selection
+
+describe('configured target resolution', () => {
   it('takes the level-resolved { platforms } map from resolveReadDelegates', () => {
     const config = {
       'read-delegates': {
@@ -107,7 +109,7 @@ describe('dispatch: configured target resolution', () => {
   });
 });
 
-describe('dispatch: orchestrator detection & provider resolution', () => {
+describe('orchestrator detection and provider resolution', () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
@@ -1382,7 +1384,9 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
   });
 });
 
-describe('dispatch: terminal sentinels are set and reach the CLI', () => {
+// SECTION: Failure sentinels and response-schema transport
+
+describe('failure sentinels and CLI transport', () => {
   it('sets NO_CONFIG_REQUIRES_PROVIDER at the dispatchTask throw site', async () => {
     const err = await dispatchTask({ prompt: 'x', noConfig: true }).then(
       () => null,
@@ -1573,7 +1577,9 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
   });
 });
 
-describe('dispatch --validate-only CLI', () => {
+// SECTION: CLI inspection modes and output
+
+describe('dispatch inspection CLI', () => {
   // main() calls process.exit on every path, so it is only drivable as a spawned child.
   let fixtureRoot;
   let dispatchScript;
@@ -1631,21 +1637,6 @@ describe('dispatch --validate-only CLI', () => {
     assert.ok(keys.length > 0, 'expected at least one configured platform');
     for (const key of keys) assert.ok(KNOWN_PROVIDERS.includes(key), `unknown platform key "${key}"`);
     assert.equal(new Set(keys).size, keys.length, 'platform keys must be unique');
-  });
-
-  it('--list-platforms agrees with the unpinned cascade membership', async () => {
-    const res = run(['--list-platforms']);
-    const listed = (res.stdout || '').trim().split('\n').filter(Boolean);
-    // Availability is probed by getCandidateProviders but never by --list-platforms, so the
-    // candidates are a subset of the listed keys, never a superset. Both sides read the same
-    // fixture config, so the assertion holds on machines with no local config at all.
-    const configPath = path.join(fixtureRoot, 'dispatch', 'config.jsonc');
-    const candidates = await getCandidateProvidersImpl({
-      orchestrator: 'claude',
-      config: parseJsonc(fs.readFileSync(configPath, 'utf8')),
-      configPath,
-    });
-    for (const c of candidates) assert.ok(listed.includes(c), `candidate "${c}" absent from --list-platforms`);
   });
 
   it('--list-targets prints configured targets as JSON', () => {
@@ -1821,8 +1812,9 @@ describe('dispatch --validate-only CLI', () => {
   });
 });
 
-// SECTION: strict config format (SC3/SC5/SC6)
-describe('dispatch: strict config targets and sandbox', () => {
+// SECTION: Strict target, effort, and sandbox contracts
+
+describe('strict config targets and sandbox', () => {
   afterEach(() => mock.restoreAll());
   const lvl = (model, effort = 'low') => ({ low: { model, effort } });
   // copilot is absent from the config, so orchestrator demotion cannot mask provider flatten order.

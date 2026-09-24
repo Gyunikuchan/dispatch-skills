@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import quietReporter, { formatDuration, formatFailure, formatSlowFiles } from '../../scripts/test-reporter.mjs';
 
 describe('test-reporter', () => {
+  // SECTION: Formatting helpers
+
   describe('formatDuration', () => {
     it('formats millisecond durations (< 1000ms)', () => {
       assert.equal(formatDuration(0), '0ms');
@@ -66,6 +68,8 @@ describe('test-reporter', () => {
       assert.ok(out.includes('Operator: strictEqual'));
     });
   });
+
+  // SECTION: Reporter stream
 
   describe('quietReporter generator', () => {
     it('outputs concise success summary on all tests passing', async () => {

@@ -26,6 +26,8 @@ import {
 const hostProbes = { skip: process.env.RUN_LIVE_PROVIDER_PROBES ? false : 'set RUN_LIVE_PROVIDER_PROBES=1 to run' };
 const installedProbes = { skip: hostProbes.skip || (!getCopilotCliBinary() && !getCopilotDesktopBinary() && !getCopilotVscodeBinary() ? 'no Copilot binary installed' : false) };
 
+// SECTION: Discovery, configuration, and failure classification
+
 describe('copilot-run: runner discovery, reachability & auth classification', () => {
   describe('constants & defaults', () => {
     it('omits -m/-e entirely when model/effort are null (no hardcoded default)', () => {
@@ -292,6 +294,8 @@ describe('copilot-run: runner discovery, reachability & auth classification', ()
 
 // Uncovered for the same reason as the other two loops. Copilot's rule differs from claude's:
 // auth does not cascade (see nextCopilotStep), so that asymmetry is what these pin.
+// SECTION: Provider cascade
+
 describe('runCopilot cascade loop', () => {
   const target = (name) => ({ name, mode: name });
 
@@ -434,7 +438,7 @@ describe('runCopilot cascade loop', () => {
   });
 });
 
-// SECTION: sandbox downgrade contract (SC5)
+// SECTION: Sandbox downgrade
 describe('Copilot sandbox downgrade', () => {
   const WARNING = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
   const sandboxFail = () => ({ exitCode: 1, failureKind: 'sandbox-unsupported', stdout: '', stderr: 'Unknown option: --sandbox' });

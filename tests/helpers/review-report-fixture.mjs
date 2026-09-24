@@ -5,7 +5,7 @@
 import { parseRebuttal, parseReport } from '../../skills/dispatch/scripts/review/parse-report.mjs';
 import { InvalidReviewReportError } from '../../skills/dispatch/scripts/review/report.mjs';
 
-export function reportOutcome(kind, input, { rebuttalKeys = null } = {}) {
+export function classifyReviewReport(kind, input, { rebuttalKeys = null } = {}) {
   try {
     const parsed = rebuttalKeys ? parseRebuttal(kind, input, rebuttalKeys) : parseReport(kind, input);
     return { status: 0, parsed, stderr: '' };

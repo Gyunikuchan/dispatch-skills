@@ -6,14 +6,14 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 import { implementationOutcome } from '../../../helpers/driver-harness.mjs';
-import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
-afterEach(runCleanup);
+afterEach(cleanupOrdinaryDriverFixtures);
 
 describe('ordinary driver canonical contracts: baseline and RED', () => {
   it('executes mapped host baseline, typed approval, real RED and checkpoint relocation', () => {
-    const fixture = setup();
-    const result = run(fixture);
+    const fixture = createOrdinaryDriverFixture();
+    const result = driveOrdinaryImplementation(fixture);
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.ok(result.done.handoff.checkpoint.invocationId);
     assert.equal(result.done.handoff.destinations.length, 2);
@@ -33,8 +33,8 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.equal(ledger.events.at(-1).data.result, 'complete');
   });
   it('resumes an interrupted host RED verification without repeating approval or delegation', () => {
-    const fixture = setup(); let restarted = false;
-    const result = run(fixture, { restartWhen: action => !restarted && action.action === 'verify' && action.purpose === 'red' && (restarted = true) });
+    const fixture = createOrdinaryDriverFixture(); let restarted = false;
+    const result = driveOrdinaryImplementation(fixture, { restartWhen: action => !restarted && action.action === 'verify' && action.purpose === 'red' && (restarted = true) });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.equal(result.restarts, 1);
     const ledger = readLedger(result.done.ledgerPath);
@@ -44,15 +44,15 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
   });
   it('skips RED for verify-only criteria, emits the bounded packet, and renders fresh traceability', () => {
-    const fixture = setup();
+    const fixture = createOrdinaryDriverFixture();
     fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8')
       .replace('Evidence: red', 'Evidence: verify')
       .replace('Behavioral failure isolates the sample outcome and protects its regression.', 'A retained pre-change test would add no signal beyond the mapped deterministic check.'));
     let packet;
-    const result = run(fixture, { policy: {
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       askUser(action) {
         if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } };
-        return policies(fixture.repo).askUser(action);
+        return ordinaryDriverPolicy(fixture.repo).askUser(action);
       },
       delegateWrite(action) {
         assert.equal(action.fields.stage, 'production');
@@ -62,7 +62,7 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
         return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
       },
       verify(action) {
-        const base = policies(fixture.repo).verify(action);
+        const base = ordinaryDriverPolicy(fixture.repo).verify(action);
         if (action.purpose === 'completion') base.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
         return base;
       },

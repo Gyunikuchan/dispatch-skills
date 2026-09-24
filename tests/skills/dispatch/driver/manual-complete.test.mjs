@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from '../../../helpers/driver-harness.mjs';
 
@@ -19,7 +19,7 @@ const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 
 function setup() {
-  const fixture = buildStubDispatchFixture(config), repo = makeGitRepo();
+  const fixture = createStubDispatchFixture(config), repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");

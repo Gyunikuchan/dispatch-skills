@@ -6,20 +6,20 @@ import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mj
 
 import { hashFile } from '../../../../skills/dispatch/scripts/lib/integrity.mjs';
 import { allProviders, codeFinding, report } from '../../../helpers/driver-harness.mjs';
-import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
-afterEach(runCleanup);
+afterEach(cleanupOrdinaryDriverFixtures);
 
 describe('ordinary driver friction relief: write scope and re-verify', () => {
   const rulings = ledger => ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]);
   const stray = (fixture, file) => action => {
     if (action.fields.stage === 'production') fs.writeFileSync(path.join(fixture.repo.dir, file), 'stray\n');
-    return policies(fixture.repo).delegateWrite(action);
+    return ordinaryDriverPolicy(fixture.repo).delegateWrite(action);
   };
   it('auto-approves a sibling integrity manifest and asks a ruling for other out-of-scope paths', () => {
-    const fixture = setup(); const asked = [];
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture(); const asked = [];
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       askUser(action) {
         if (action.question !== 'write-scope') return base.askUser(action);
         asked.push(action.items);
@@ -42,12 +42,12 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.deepEqual(ledger.events.find(event => event.type === 'task-complete').data.paths, ['docs/notes.md', 'src/app.js', 'src/skill-hashes.json', 'tests/sample.test.mjs']);
   });
   it('reverts ruled-out paths to their task-start state and continues', () => {
-    const fixture = setup();
+    const fixture = createOrdinaryDriverFixture();
     fs.mkdirSync(path.join(fixture.repo.dir, 'docs'));
     fs.writeFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'original\n');
     fixture.repo.git('add', 'docs'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'docs');
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       askUser: action => action.question === 'write-scope' ? { answer: { revert: ['docs/keep.md', 'docs/stray.md'], reason: 'Out of plan scope.' } } : base.askUser(action),
       delegateWrite(action) {
         if (action.fields.stage === 'production') {
@@ -62,9 +62,9 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.equal(fs.existsSync(path.join(fixture.repo.dir, 'docs/stray.md')), false);
   });
   it('routes a stale integrity manifest to the ruling and stops on a stop ruling', () => {
-    const fixture = setup(); let items;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture(); let items;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       askUser(action) {
         if (action.question !== 'write-scope') return base.askUser(action);
         items = action.items;
@@ -80,9 +80,9 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.match(result.done.summary, /outside its approved write scope: src\/skill-hashes\.json/);
   });
   it('refuses to revert a path the delegate staged', () => {
-    const fixture = setup(); const asked = []; let error = null;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { allowErrors: true, policy: {
+    const fixture = createOrdinaryDriverFixture(); const asked = []; let error = null;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { allowErrors: true, policy: {
       askUser(action) {
         if (action.question !== 'write-scope') return base.askUser(action);
         asked.push(action.items);
@@ -100,9 +100,9 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.match(error, /cannot be reverted: stray\.md/);
   });
   it('re-verifies RED when the user rules the host evidence wrong', () => {
-    const fixture = setup(); let redCalls = 0, offered = null;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture(); let redCalls = 0, offered = null;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       askUser(action) {
         if (action.question !== 'failure-disposition') return base.askUser(action);
         offered = action.text;
@@ -119,9 +119,9 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition'), [['failure-disposition', 'inspect-first'], ['failure-disposition', 're-verify']]);
   });
   it('re-verifies a failed post-review completion and returns to code review', () => {
-    const fixture = setup(); let fixed = false, postReviewCalls = 0, disposition = null, codeWaves = 0, production = false;
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture(); let fixed = false, postReviewCalls = 0, disposition = null, codeWaves = 0, production = false;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       delegateWrite(action) { production ||= action.fields.stage === 'production'; return base.delegateWrite(action); },
       waveResults: () => allProviders(report(production && ++codeWaves === 1 ? [codeFinding({ defect: 'Missing trailing comment.' })] : [])),
       fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --test tests/sample.test.mjs'] }),

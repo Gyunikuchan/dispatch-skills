@@ -24,7 +24,6 @@ describe('relocate-scratch', () => {
     tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-ws-'));
     tmpDestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-dest-'));
     fs.mkdirSync(path.join(tmpWorkspace, '.scratch', 'plan'), { recursive: true });
-    fs.mkdirSync(path.join(tmpWorkspace, '.scratch', 'audits', 'run-1-work'), { recursive: true });
   });
 
   afterEach(() => {
@@ -128,6 +127,8 @@ describe('relocate-scratch', () => {
     });
   });
 
+  // SECTION: Relocation lifecycle and fallbacks
+
   describe('relocateScratchItem', () => {
     it('relocates a scratch file successfully', () => {
       const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-plan.md');
@@ -142,6 +143,7 @@ describe('relocate-scratch', () => {
 
     it('relocates a scratch directory recursively', () => {
       const srcDir = path.join(tmpWorkspace, '.scratch', 'audits', 'run-1-work');
+      fs.mkdirSync(srcDir, { recursive: true });
       fs.writeFileSync(path.join(srcDir, 'audit-work.json'), '{"key":"val"}');
 
       const dest = relocateScratchItem(srcDir, { targetDir: tmpDestDir, cwd: tmpWorkspace });

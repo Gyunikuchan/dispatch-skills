@@ -62,9 +62,7 @@ import {
 } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
 import { sessionTempDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
-// ---------------------------------------------------------------------------
 // SECTION: Diversity sort & Model comparison
-// ---------------------------------------------------------------------------
 
 describe('common: diversitySort', () => {
   const c = (platform, model) => ({ platform, model });
@@ -166,9 +164,7 @@ describe('common: detectOrchestratorModel', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Model cascade
-// ---------------------------------------------------------------------------
 
 describe('common: resolveModelsToTry (no hardcoded default)', () => {
   it('returns [null] for null/undefined/empty so the CLI default applies', () => {
@@ -301,9 +297,7 @@ describe('common: cascadeModels', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Argument Parsing & Defaults
-// ---------------------------------------------------------------------------
 
 describe('common: argument parsing', () => {
   it('parses basic flags and positional prompt', () => {
@@ -415,9 +409,7 @@ describe('common: argument parsing', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Shared runner-flag scanner
-// ---------------------------------------------------------------------------
 
 describe('common: parseRunnerModeArgs (shared runner-flag scanner)', () => {
   it('FLAG_ALIASES and COMMON_VALUE_FLAGS stay in lockstep', () => {
@@ -466,9 +458,7 @@ describe('common: parseRunnerModeArgs (shared runner-flag scanner)', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: --prompt-file
-// ---------------------------------------------------------------------------
 
 describe('common: --prompt-file', () => {
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-prompt-file-'));
@@ -522,9 +512,7 @@ describe('common: --prompt-file', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Prompt Formatting & Response Extraction
-// ---------------------------------------------------------------------------
 
 describe('common: prompt formatting & response extraction', () => {
   it('formats safety prompt in read-only mode', () => {
@@ -626,9 +614,7 @@ describe('common: prompt formatting & response extraction', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Path & Boundary Utilities
-// ---------------------------------------------------------------------------
 
 describe('common: path & boundary utilities', () => {
   it('checks path containment correctly across platforms', () => {
@@ -746,9 +732,7 @@ describe('common: path & boundary utilities', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Attachments, Brief Files & Spill
-// ---------------------------------------------------------------------------
 
 describe('common: attachments, brief files & spill', () => {
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-attach-'));
@@ -910,9 +894,7 @@ describe('common: attachments, brief files & spill', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Brief File Cleanup
-// ---------------------------------------------------------------------------
 
 describe('common: removeBriefFile', () => {
   const leftovers = [];
@@ -989,9 +971,7 @@ describe('common: removeBriefFile', () => {
 
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Failure Classification
-// ---------------------------------------------------------------------------
 
 describe('common: failure classification', () => {
   const cases = [
@@ -1026,9 +1006,7 @@ describe('common: failure classification', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: JSONC & Module Helpers
-// ---------------------------------------------------------------------------
 
 describe('common: jsonc & module helpers', () => {
   it('stripJsonComments removes comments and trailing commas while preserving strings', () => {

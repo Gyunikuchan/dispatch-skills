@@ -17,11 +17,18 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+const entry = (fromName, toName, contents = 'payload') => {
+  const from = path.join(dir, fromName);
+  const to = path.join(dir, toName);
+  fs.writeFileSync(from, contents);
+  return { from, to };
+};
+
 describe('finalize: moveEntry', () => {
+  // SECTION: Native moves
+
   it('moves a file to the destination', () => {
-    const from = path.join(dir, 'report.md');
-    const to = path.join(dir, 'moved.md');
-    fs.writeFileSync(from, 'body');
+    const { from, to } = entry('report.md', 'moved.md', 'body');
 
     moveEntry(from, to);
 
@@ -41,42 +48,28 @@ describe('finalize: moveEntry', () => {
     assert.equal(fs.existsSync(from), false);
   });
 
-  it('falls back to copy+remove when rename fails with EXDEV', () => {
-    // The scratch dir and the OS temp dir are routinely on different volumes.
-    const from = path.join(dir, 'x.txt');
-    const to = path.join(dir, 'y.txt');
-    fs.writeFileSync(from, 'payload');
+  // SECTION: Portable fallbacks
 
-    mock.method(fs, 'renameSync', () => {
-      const err = new Error('cross-device link not permitted');
-      err.code = 'EXDEV';
-      throw err;
+  for (const code of ['EXDEV', 'EPERM', 'EBUSY']) {
+    it(`falls back to copy+remove when rename fails with ${code}`, () => {
+      const { from, to } = entry(`${code}-from.txt`, `${code}-to.txt`);
+      mock.method(fs, 'renameSync', () => {
+        const err = new Error(`rename failed with ${code}`);
+        err.code = code;
+        throw err;
+      });
+
+      moveEntry(from, to);
+
+      assert.equal(fs.readFileSync(to, 'utf8'), 'payload');
+      assert.equal(fs.existsSync(from), false);
     });
+  }
 
-    moveEntry(from, to);
-
-    assert.equal(fs.readFileSync(to, 'utf8'), 'payload');
-    assert.equal(fs.existsSync(from), false);
-  });
-
-  it('falls back on a lingering-handle EPERM as well', () => {
-    const from = path.join(dir, 'p.txt');
-    const to = path.join(dir, 'q.txt');
-    fs.writeFileSync(from, 'payload');
-
-    mock.method(fs, 'renameSync', () => {
-      const err = new Error('operation not permitted');
-      err.code = 'EPERM';
-      throw err;
-    });
-
-    moveEntry(from, to);
-    assert.equal(fs.readFileSync(to, 'utf8'), 'payload');
-  });
+  // SECTION: Failure boundaries
 
   it('rethrows an unexpected rename error rather than copying blindly', () => {
-    const from = path.join(dir, 'r.txt');
-    fs.writeFileSync(from, 'payload');
+    const { from, to } = entry('r.txt', 's.txt');
 
     mock.method(fs, 'renameSync', () => {
       const err = new Error('disk on fire');
@@ -84,6 +77,8 @@ describe('finalize: moveEntry', () => {
       throw err;
     });
 
-    assert.throws(() => moveEntry(from, path.join(dir, 's.txt')), /disk on fire/);
+    assert.throws(() => moveEntry(from, to), /disk on fire/);
+    assert.equal(fs.readFileSync(from, 'utf8'), 'payload');
+    assert.equal(fs.existsSync(to), false);
   });
 });

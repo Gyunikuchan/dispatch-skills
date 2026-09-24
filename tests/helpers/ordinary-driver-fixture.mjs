@@ -1,25 +1,29 @@
 /**
  * Shared fixture for the ordinary implement-driver contract tests, split across files so node --test
- * runs them concurrently. Each test file registers `afterEach(runCleanup)`.
+ * runs them concurrently. Each test file registers `afterEach(cleanupOrdinaryDriverFixtures)`.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { buildStubDispatchFixture } from './stub-dispatch.mjs';
+import { createStubDispatchFixture } from './stub-dispatch-fixture.mjs';
 import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from './driver-harness.mjs';
 import { loadSchema, validateAgainstSchema } from '../../skills/dispatch/scripts/driver/actions.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
-export const config = {
+const ORDINARY_DRIVER_CONFIG = {
   'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
   'write-subagents': { claude: { low: { model: ['first-model', 'second-model'], effort: 'low' } } },
   phases: Object.fromEntries(['plan-review', 'code-review'].map(key => [key, { rounds: levels, targets: levels, consensus: Object.fromEntries(Object.keys(levels).map(level => [level, false])) }])),
 };
 const cleanup = [];
-export function runCleanup() { for (const fn of cleanup.splice(0)) fn(); }
-export function setup() {
-  const fixture = buildStubDispatchFixture(config), repo = makeGitRepo();
+
+// SECTION: lifecycle
+
+export function cleanupOrdinaryDriverFixtures() { for (const fn of cleanup.splice(0)) fn(); }
+
+export function createOrdinaryDriverFixture() {
+  const fixture = createStubDispatchFixture(ORDINARY_DRIVER_CONFIG), repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");
@@ -27,7 +31,10 @@ export function setup() {
   const plan = writePlan(repo.dir, undefined, PLAN_BODY.replace('Changes: `src/app.js`', 'Changes: `src/app.js`, `tests/sample.test.mjs`').replace('#### [MODIFY] src/app.js', '#### [MODIFY] tests/sample.test.mjs\n\n- Add regression.\n\n#### [MODIFY] src/app.js'));
   return { fixture, repo, plan };
 }
-export function policies(repo, overrides = {}) {
+
+// SECTION: scripted host
+
+export function ordinaryDriverPolicy(repo, overrides = {}) {
   return {
     askUser(action) {
       if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: ['tests/sample.test.mjs'], reason: 'Approved fixture plan.' } };
@@ -50,7 +57,7 @@ export function policies(repo, overrides = {}) {
     }, ...overrides,
   };
 }
-export function run({ fixture, repo, plan }, options = {}) {
-  return drive(fixture, { cwd: repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', plan], policy: policies(repo, options.policy),
+export function driveOrdinaryImplementation({ fixture, repo, plan }, options = {}) {
+  return drive(fixture, { cwd: repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', plan], policy: ordinaryDriverPolicy(repo, options.policy),
     onAction(action) { assert.deepEqual(validateAgainstSchema(loadSchema(action.action), action), [], JSON.stringify(action)); if (!options.allowErrors) assert.equal(action.error, undefined, JSON.stringify(action)); options.onAction?.(action); }, ...Object.fromEntries(Object.entries(options).filter(([key]) => !['policy', 'onAction', 'allowErrors'].includes(key))) });
 }

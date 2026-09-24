@@ -12,7 +12,7 @@ import {
   sanitizeReplyText,
   validateReply,
 } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import {
   DRIVER_ACTIONS,
   makeGitRepo,
@@ -165,7 +165,7 @@ const CONFIG = {
 let fixture;
 let repo;
 before(() => {
-  fixture = buildStubDispatchFixture(CONFIG);
+  fixture = createStubDispatchFixture(CONFIG);
   repo = makeGitRepo();
 });
 after(() => {

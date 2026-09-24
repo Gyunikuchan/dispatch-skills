@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { incrementGraphSection, parseIncrementGraph } from '../../../../skills/dispatch/scripts/design/graph.mjs';
 import { lintDesign } from '../../../../skills/dispatch/scripts/design/lint.mjs';
-import { designExtras } from '../../../helpers/design-sections.mjs';
+import { requiredDesignSections } from '../../../helpers/design-document-fixture.mjs';
 
 const base = [
   '# D',
@@ -22,6 +22,8 @@ const base = [
 ].join('\n');
 
 describe('increment dependency graph parser', () => {
+  // SECTION: Parsing boundaries
+
   it('parses rows into id, priority, summary, prerequisites, and paths', () => {
     const parsed = parseIncrementGraph(base);
     assert.equal(parsed.valid, true);
@@ -42,19 +44,14 @@ describe('increment dependency graph parser', () => {
     assert.deepEqual(parsed.increments.map(row => row.paths), [[], []]);
   });
 
-  it('scopes row matching to the Increment Dependency Graph section', () => {
-    const withMirrorRows = `${base}\n\n## Execution Status\n<!-- machine-managed -->\n\n| ID | State | Next Action |\n| --- | --- | --- |\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
-    const parsed = parseIncrementGraph(withMirrorRows);
+  it('ignores increment-shaped rows outside the graph section', () => {
+    const withOutsideRows = `# D\n\n| I09 | 9 | stray | none | x |\n\n${base}\n\n## Execution Status\n<!-- machine-managed -->\n\n| ID | State | Next Action |\n| --- | --- | --- |\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
+    const parsed = parseIncrementGraph(withOutsideRows);
     assert.equal(parsed.valid, true);
     assert.deepEqual(parsed.increments.map(row => row.id), ['I01', 'I02']);
   });
 
-  it('ignores increment-shaped rows outside the graph section', () => {
-    const withStrayRow = `# D\n\n| I09 | 9 | stray | none | x |\n\n${base}`;
-    const parsed = parseIncrementGraph(withStrayRow);
-    assert.equal(parsed.valid, true);
-    assert.deepEqual(parsed.increments.map(row => row.id), ['I01', 'I02']);
-  });
+  // SECTION: Graph diagnostics
 
   it('reports duplicate ids', () => {
     const duplicated = base.replace('| I02 | 2 | two | I01 | b |', '| I01 | 2 | two | I01 | b |');
@@ -86,7 +83,7 @@ describe('increment dependency graph parser', () => {
   });
 
   it('stays aligned with the design lint over the same document', () => {
-    const populatedMirror = `${base}\n${designExtras(['I01', 'I02'])}\n## Execution Status\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
+    const populatedMirror = `${base}\n${requiredDesignSections(['I01', 'I02'])}\n## Execution Status\n| I01 | complete | - |\n| I02 | ready | implement I02 |\n`;
     assert.equal(lintDesign(populatedMirror).valid, true);
     assert.ok(lintDesign(populatedMirror.replace('| I02 | 2 | two | I01 | b |', '| I05 | 2 | two | I01 | b |'))
       .diagnostics.some(d => d.code === 'invalid-id-sequence'));

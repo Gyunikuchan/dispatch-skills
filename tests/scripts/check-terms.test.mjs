@@ -6,7 +6,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { findBannedTerms, parseBannedTerms } from '../../scripts/check-terms.mjs';
+import { findBannedTerms, parseBannedTerms, runCli } from '../../scripts/check-terms.mjs';
+
+// SECTION: Test support
+
+const captureCli = (args) => {
+  let stdout = '';
+  let stderr = '';
+  const stdoutWrite = process.stdout.write;
+  const stderrWrite = process.stderr.write;
+  process.stdout.write = (chunk) => { stdout += chunk; return true; };
+  process.stderr.write = (chunk) => { stderr += chunk; return true; };
+  try {
+    return { status: runCli(args), stdout, stderr };
+  } finally {
+    process.stdout.write = stdoutWrite;
+    process.stderr.write = stderrWrite;
+  }
+};
+
+// SECTION: Glossary contract
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SCRIPT = path.join(REPO_ROOT, 'scripts', 'check-terms.mjs');
@@ -35,6 +54,8 @@ describe('glossary', () => {
     assert.doesNotMatch(text, /\b(implement-dispatch|dispatch-plan-review|dispatch-code-review|dispatch-design-review)\b/);
   });
 });
+
+// SECTION: Library behavior
 
 describe('parseBannedTerms', () => {
   it('returns the banned-synonym set from the real glossary, never a glossary term or config key', () => {
@@ -72,30 +93,36 @@ describe('findBannedTerms', () => {
   });
 });
 
-describe('check-terms CLI', () => {
-  it('exits 0 on the clean fixture', () => {
-    const res = run('--glossary', GLOSSARY, CLEAN);
-    assert.equal(res.status, 0, res.stdout + res.stderr);
-  });
+// SECTION: CLI behavior
 
-  it('exits 1 listing path:line: word (use term) for the seeded prose only', () => {
-    const res = run('--glossary', GLOSSARY, SEEDED);
-    assert.equal(res.status, 1);
-    const out = `${res.stdout}${res.stderr}`;
-    const hits = out.split(/\r?\n/).filter((l) => /seeded\.md:\d+:/.test(l));
-    assert.equal(hits.length, 1, out);
+describe('check-terms CLI', () => {
+  it('reports only seeded prose and returns the clean/found exit codes', () => {
+    const clean = captureCli(['--glossary', GLOSSARY, CLEAN]);
+    assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+
+    const seeded = captureCli(['--glossary', GLOSSARY, SEEDED]);
+    assert.equal(seeded.status, 1);
+    const hits = seeded.stdout.split(/\r?\n/).filter((line) => /seeded\.md:\d+:/.test(line));
+    assert.equal(hits.length, 1, seeded.stdout + seeded.stderr);
     assert.match(hits[0], /seeded\.md:4: reviewer \(use .+\)/);
   });
 
   it('never scans the glossary itself', () => {
-    const res = run('--glossary', GLOSSARY, GLOSSARY, CLEAN);
+    const res = captureCli(['--glossary', GLOSSARY, GLOSSARY, CLEAN]);
     assert.equal(res.status, 0, res.stdout + res.stderr);
   });
 
-  it('exits 2 on a missing glossary or unknown flag, and prints Usage on --help', () => {
-    const missing = run('--glossary', path.join(os.tmpdir(), 'no-such-glossary.md'), CLEAN);
+  it('returns usage errors for a missing glossary and an unknown flag', () => {
+    const missing = captureCli(['--glossary', path.join(os.tmpdir(), 'no-such-glossary.md'), CLEAN]);
     assert.equal(missing.status, 2);
-    assert.equal(run('--bogus').status, 2);
+    assert.match(missing.stderr, /cannot read glossary/);
+
+    const unknown = captureCli(['--bogus']);
+    assert.equal(unknown.status, 2);
+    assert.match(unknown.stderr, /unknown flag --bogus/);
+  });
+
+  it('prints usage on --help through the executable entry point', () => {
     const help = run('--help');
     assert.equal(help.status, 0);
     assert.match(help.stdout, /Usage:/);

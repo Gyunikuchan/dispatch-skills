@@ -6,15 +6,15 @@ import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mj
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
 import { implementationOutcome, runDispatch } from '../../../helpers/driver-harness.mjs';
-import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
-afterEach(runCleanup);
+afterEach(cleanupOrdinaryDriverFixtures);
 
 describe('ordinary driver canonical contracts: resume and repair', () => {
   it('reconstructs review, baseline, and implementation phases from canonical artifacts after cache loss', () => {
     for (const phase of ['plan-review', 'baseline', 'implementation', 'code-review']) {
-      const fixture = setup(); let restarted = false;
-      const result = run(fixture, {
+      const fixture = createOrdinaryDriverFixture(); let restarted = false;
+      const result = driveOrdinaryImplementation(fixture, {
         onAction(action) {
           if (restarted) return;
           const cached = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
@@ -40,12 +40,12 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     }
   });
   it('keeps inspect-first unterminated after malformed tests-only outcome', () => {
-    const fixture = setup();
-    const result = run(fixture, { policy: {
+    const fixture = createOrdinaryDriverFixture();
+    const result = driveOrdinaryImplementation(fixture, { policy: {
       delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
       askUser: action => action.question === 'implementation-recovery' ? { answer: { raw: '{"status":"DONE"}' } } : action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
-        : policies(fixture.repo).askUser(action),
+        : ordinaryDriverPolicy(fixture.repo).askUser(action),
     } });
     const ledger = readLedger(result.done.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);
@@ -73,9 +73,9 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:hops A then B'] })), []);
   });
   it('restores a dispatched admission repair from walkthrough evidence without relaunching it', () => {
-    const fixture = setup(); let writes = 0, restarted = false, recoveries = 0;
-    const base = policies(fixture.repo);
-    const result = run(fixture, {
+    const fixture = createOrdinaryDriverFixture(); let writes = 0, restarted = false, recoveries = 0;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, {
       restartWhen: action => action.action === 'delegate-write' && action.fields.continuation?.kind === 'admission-repair' && !restarted && (restarted = true),
       policy: {
         delegateWrite(action) {
@@ -96,11 +96,11 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.equal(result.restarts, 1);
   });
   it('repairs a missing RED criterion without charging another attempt', () => {
-    const fixture = setup(); let calls = 0;
+    const fixture = createOrdinaryDriverFixture(); let calls = 0;
     const source = fs.readFileSync(fixture.plan, 'utf8').replace('## Proposed Changes', '- [SC2] Preserve the same RED observable.\n  - Changes: `src/app.js`, `tests/sample.test.mjs`\n  - Verify: `node --test tests/sample.test.mjs`\n  - Evidence: red\n  - Test rationale: A second mapped acceptance condition requires explicit matrix coverage.\n\n## Proposed Changes');
     fs.writeFileSync(fixture.plan, source);
-    const base = policies(fixture.repo);
-    const result = run(fixture, { policy: { delegateWrite(action) {
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, { policy: { delegateWrite(action) {
       if (action.fields.stage === 'production') {
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");

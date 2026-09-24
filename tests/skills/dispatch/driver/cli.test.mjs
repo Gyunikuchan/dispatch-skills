@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const CONFIG = {
@@ -23,7 +23,7 @@ const CONFIG = {
 let fixture;
 let repo;
 before(() => {
-  fixture = buildStubDispatchFixture(CONFIG);
+  fixture = createStubDispatchFixture(CONFIG);
   repo = makeGitRepo();
 });
 after(() => {

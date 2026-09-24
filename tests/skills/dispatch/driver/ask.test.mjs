@@ -3,9 +3,9 @@
 // carrying the collected claims. The direct runner path is retired from the SKILL.md contract.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { afterEach, describe, it } from 'node:test';
+import { after, afterEach, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { allProviders, drive, makeGitRepo, parseAction, readBatchFile, runDispatch } from '../../../helpers/driver-harness.mjs';
 
 const CONFIG = {
@@ -13,12 +13,24 @@ const CONFIG = {
 };
 
 const cleanup = [];
+const fixtures = new Map();
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
+after(() => { for (const fixture of fixtures.values()) fixture.cleanup(); });
+
+function fixtureFor(config) {
+  const key = JSON.stringify(config);
+  let fixture = fixtures.get(key);
+  if (!fixture) {
+    fixture = createStubDispatchFixture(config);
+    fixtures.set(key, fixture);
+  }
+  return fixture;
+}
 
 function setup() {
-  const fixture = buildStubDispatchFixture(CONFIG);
+  const fixture = fixtureFor(CONFIG);
   const repo = makeGitRepo();
-  cleanup.push(fixture.cleanup, repo.cleanup);
+  cleanup.push(repo.cleanup);
   return { fixture, repo };
 }
 
@@ -72,9 +84,9 @@ const platformOf = (target) => target.candidateId.split(':')[1];
 const QUESTION = ['--', 'What does the dispatch config schema require?'];
 
 function setupWith(config) {
-  const fixture = buildStubDispatchFixture(config);
+  const fixture = fixtureFor(config);
   const repo = makeGitRepo();
-  cleanup.push(fixture.cleanup, repo.cleanup);
+  cleanup.push(repo.cleanup);
   return { fixture, repo };
 }
 

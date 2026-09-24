@@ -5,10 +5,28 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
+import { runCli } from '../../scripts/generate-hashes.mjs';
 import { PROJECT_ROOT } from '../../skills/dispatch/scripts/lib/platform.mjs';
 
+const scriptPath = path.join(PROJECT_ROOT, 'scripts', 'generate-hashes.mjs');
+
+const captureCli = (args) => {
+  const stdout = [];
+  const stderr = [];
+  const log = console.log;
+  const error = console.error;
+  console.log = (...values) => stdout.push(values.join(' '));
+  console.error = (...values) => stderr.push(values.join(' '));
+  try {
+    return { status: runCli(args), stdout: stdout.join('\n'), stderr: stderr.join('\n') };
+  } finally {
+    console.log = log;
+    console.error = error;
+  }
+};
+
 describe('generate-hashes script', () => {
-  const scriptPath = path.join(PROJECT_ROOT, 'scripts', 'generate-hashes.mjs');
+  // SECTION: Manifest generation
 
   it('generates skill-hashes.json with valid SHA-256 hashes and prints summary', () => {
     // Tests never write the committed manifest; generate into a temp --out.
@@ -59,12 +77,10 @@ describe('generate-hashes script', () => {
     }
   });
 
-  it('HASHED_SKILLS names only dispatch', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch-plan-review'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
+  // SECTION: CLI validation
+
+  it('names dispatch as the only hashed skill', () => {
+    const res = captureCli(['--skill', 'dispatch-plan-review']);
     assert.equal(res.status, 2);
     assert.match(res.stderr, /hashed skills: dispatch\s*$/);
   });
@@ -91,42 +107,21 @@ describe('generate-hashes script', () => {
     }
   });
 
-  it('rejects --out combined with --check, which would narrow the drift check', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--check', '--out', 'x.json'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    assert.equal(res.status, 2);
-    assert.match(res.stderr, /--out cannot combine with --check/);
-  });
-
-  it('rejects a repeated --skill', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'dispatch', '--skill', 'dispatch'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    assert.equal(res.status, 2);
-    assert.match(res.stderr, /only once/);
-  });
-
-  it('rejects an unknown --skill', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--skill', 'bogus-skill'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
-    assert.equal(res.status, 2);
-    assert.match(res.stderr, /Unknown skill/);
+  it('rejects conflicting, repeated, and unknown arguments', () => {
+    const invalidCases = [
+      [['--check', '--out', 'x.json'], /--out cannot combine with --check/],
+      [['--skill', 'dispatch', '--skill', 'dispatch'], /only once/],
+      [['--skill', 'bogus-skill'], /Unknown skill/],
+    ];
+    for (const [args, expected] of invalidCases) {
+      const res = captureCli(args);
+      assert.equal(res.status, 2, args.join(' '));
+      assert.match(res.stderr, expected);
+    }
   });
 
   it('committed skill-hashes.json matches the skill files (--check exits 0)', () => {
-    const res = spawnSync(process.execPath, [scriptPath, '--check'], {
-      cwd: PROJECT_ROOT,
-      encoding: 'utf8',
-      timeout: 10_000,
-    });
+    const res = captureCli(['--check']);
     assert.equal(res.status, 0, `Manifest drift: ${res.stderr}`);
   });
 });

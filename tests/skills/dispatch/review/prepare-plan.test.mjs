@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
@@ -12,6 +11,10 @@ import {
 } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
+import {
+  cleanupPreparationManifest,
+  createReviewPreparationFixture,
+} from '../../../helpers/review-preparation-fixture.mjs';
 
 const BATCH_CONFIG = {
   platforms: {
@@ -19,40 +22,16 @@ const BATCH_CONFIG = {
   },
 };
 
-const tempDirs = [];
-const CONVERSATION_ENV_KEYS = [
-  'ANTIGRAVITY_AGENT', 'ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID', 'GEMINI_CLI',
-];
-let originalEnv = {};
-
+const fixture = createReviewPreparationFixture();
 const makeRepo = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-prepare-test-'));
-  tempDirs.push(dir);
+  const dir = fixture.makeDirectory('plan-prepare-test-');
   fs.mkdirSync(path.join(dir, '.scratch', 'plan'), { recursive: true });
   return dir;
 };
-const cleanManifest = (manifest) => {
-  for (const cleanup of [...(manifest.cleanupPaths ?? []), manifest.invocationContext?.statePath && path.dirname(manifest.invocationContext.statePath)].filter(Boolean)) {
-    fs.rmSync(cleanup, { recursive: true, force: true });
-  }
-};
+const cleanManifest = cleanupPreparationManifest;
 
-beforeEach(() => {
-  originalEnv = {};
-  for (const key of CONVERSATION_ENV_KEYS) {
-    if (key in process.env) {
-      originalEnv[key] = process.env[key];
-      delete process.env[key];
-    }
-  }
-});
-
-afterEach(() => {
-  for (const [key, val] of Object.entries(originalEnv)) {
-    process.env[key] = val;
-  }
-  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
-});
+beforeEach(fixture.beforeEach);
+afterEach(fixture.afterEach);
 
 const planBody = [
   '# Plan',

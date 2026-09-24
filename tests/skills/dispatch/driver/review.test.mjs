@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
 import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
@@ -133,7 +133,7 @@ describe('review level resolution (raise rule)', () => {
 describe('driver skip and inference through dispatch.mjs', () => {
   let fixture;
   before(() => {
-    fixture = buildStubDispatchFixture({
+    fixture = createStubDispatchFixture({
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
       phases: {
         'plan-review': { rounds: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, targets: ALL(1), consensus: ALL(false) },

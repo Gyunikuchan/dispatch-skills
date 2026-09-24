@@ -103,7 +103,9 @@ function scratchMentions(rel) {
   return mentions;
 }
 
-describe('artifact path convention', () => {
+// SECTION: Resolver safety and canonical output
+
+describe('artifact resolver path contract', () => {
   it('generates paths matching the canonical shapes', () => {
     const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-10', native: { orchestrator: null } });
     for (const [generated, shapes] of [
@@ -126,10 +128,12 @@ describe('artifact path convention', () => {
       /must be kebab-case/
     );
   });
+});
 
-  it('still finds every enumerated skill markdown file', () => {
-    // A subset check, not equality: deleting a guarded file must fail here, while the
-    // canonical-shape assertion below already covers any newly added skill directory.
+// SECTION: Cross-skill documentation contract
+
+describe('artifact paths stay aligned across skill documentation', () => {
+  it('discovers every guarded markdown file', () => {
     const discovered = new Set(skillMarkdownFiles());
     assert.deepEqual(GUARDED.filter(rel => !discovered.has(rel)), []);
   });

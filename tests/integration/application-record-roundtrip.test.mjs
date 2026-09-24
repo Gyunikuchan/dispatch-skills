@@ -25,14 +25,14 @@ const log = application => [
   application,
 ].join('\n');
 
-describe('application record round trip', () => {
-  it('is accepted by consensus and the review view', () => {
+describe('canonical application record consumer parity', () => {
+  it('accepts a formatted record in consensus and review preparation', () => {
     assert.equal(evaluateConsensus(log(record)).exit, 0);
     const view = buildReviewView(log(record), { canonicalPath: 'plan.md', nextRound: 2 });
     assert.match(view.contents, /application: \{"v":1/);
   });
 
-  it('is rejected consistently when malformed', () => {
+  it('rejects a malformed record in both strict consumers', () => {
     const malformed = record.replace('"state":"unapplied"', '"state":"bogus"');
     assert.equal(evaluateConsensus(log(malformed)).exit, 2);
     assert.throws(() => buildReviewView(log(malformed), { canonicalPath: 'plan.md', nextRound: 2 }), /application record/);

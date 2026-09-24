@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it, after } from 'node:test';
 
+import { withEnv, withTempDirs } from '../../../helpers/runner-fixture.mjs';
 import {
   AGY_MODES,
   AGY_MODE_PREFERENCE,
@@ -27,6 +28,8 @@ import {
   nextAgyStep,
   resolveModePlan,
 } from '../../../../skills/dispatch/scripts/runners/agy.mjs';
+
+// SECTION: Discovery, configuration, and result parsing
 
 describe('agy-run: multi-mode discovery, reachability & argument construction', () => {
   describe('constants & preference order', () => {
@@ -140,111 +143,50 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
       assert.ok(id === null || typeof id === 'string');
     });
 
-    it('scans the mode-scoped brain directory and returns the newest conversation', () => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-scan-'));
-      const originalAppData = process.env.APPDATA;
-      const originalLocalAppData = process.env.LOCALAPPDATA;
-      const originalHome = process.env.HOME;
-      const originalUserProfile = process.env.USERPROFILE;
-      try {
-        process.env.APPDATA = fixture;
-        process.env.LOCALAPPDATA = fixture;
-        process.env.HOME = fixture;
-        process.env.USERPROFILE = fixture;
-        const brainDir = process.platform === 'win32'
-          ? path.join(fixture, 'antigravity', 'brain')
-          : path.join(fixture, '.gemini', 'antigravity', 'brain');
-        fs.mkdirSync(brainDir, { recursive: true });
-        fs.mkdirSync(path.join(brainDir, 'older-conversation'));
-        fs.mkdirSync(path.join(brainDir, 'newest-conversation'));
-        fs.mkdirSync(path.join(brainDir, 'scratch'));
-        // Explicit mtimes: two mkdirs inside the same clock tick would tie and make this flaky.
-        const older = new Date(Date.now() - 600000);
-        fs.utimesSync(path.join(brainDir, 'older-conversation'), older, older);
-        const newer = new Date();
-        fs.utimesSync(path.join(brainDir, 'newest-conversation'), newer, newer);
+    // SECTION: Conversation discovery
 
-        const id = getNewestBrainConversationId(0, AGY_MODES.ANTIGRAVITY_2_0);
-        assert.equal(id, 'newest-conversation', 'the newest mtime wins and the scratch dir is skipped');
-      } finally {
-        // Conditional restore: assigning `undefined` stringifies to the literal "undefined"
-        // where the var was unset (POSIX), polluting the env for the rest of the file.
-        if (originalAppData === undefined) delete process.env.APPDATA;
-        else process.env.APPDATA = originalAppData;
-        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-        else process.env.LOCALAPPDATA = originalLocalAppData;
-        if (originalHome === undefined) delete process.env.HOME;
-        else process.env.HOME = originalHome;
-        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-        else process.env.USERPROFILE = originalUserProfile;
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    });
+    const withBrain = (prefix, run) => withTempDirs(prefix, [], ({ root }) => withEnv({
+      APPDATA: root,
+      LOCALAPPDATA: root,
+      HOME: root,
+      USERPROFILE: root,
+    }, () => {
+      const brainDir = process.platform === 'win32'
+        ? path.join(root, 'antigravity', 'brain')
+        : path.join(root, '.gemini', 'antigravity', 'brain');
+      fs.mkdirSync(brainDir, { recursive: true });
+      return run(brainDir);
+    }));
 
-    it('modifiedAfterMs filters out conversations older than the threshold', () => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-filter-'));
-      const originalAppData = process.env.APPDATA;
-      const originalLocalAppData = process.env.LOCALAPPDATA;
-      const originalHome = process.env.HOME;
-      const originalUserProfile = process.env.USERPROFILE;
-      try {
-        process.env.APPDATA = fixture;
-        process.env.LOCALAPPDATA = fixture;
-        process.env.HOME = fixture;
-        process.env.USERPROFILE = fixture;
-        const brainDir = process.platform === 'win32'
-          ? path.join(fixture, 'antigravity', 'brain')
-          : path.join(fixture, '.gemini', 'antigravity', 'brain');
-        fs.mkdirSync(brainDir, { recursive: true });
-        fs.mkdirSync(path.join(brainDir, 'stale-conversation'));
-        const stale = new Date(Date.now() - 600000);
-        fs.utimesSync(path.join(brainDir, 'stale-conversation'), stale, stale);
+    it('scans the mode-scoped brain directory and returns the newest conversation', () => withBrain('agy-brain-scan', (brainDir) => {
+      fs.mkdirSync(path.join(brainDir, 'older-conversation'));
+      fs.mkdirSync(path.join(brainDir, 'newest-conversation'));
+      fs.mkdirSync(path.join(brainDir, 'scratch'));
+      // Explicit mtimes avoid ties when both directories are created in one clock tick.
+      const older = new Date(Date.now() - 600000);
+      fs.utimesSync(path.join(brainDir, 'older-conversation'), older, older);
+      const newer = new Date();
+      fs.utimesSync(path.join(brainDir, 'newest-conversation'), newer, newer);
 
-        const id = getNewestBrainConversationId(Date.now() - 60000, AGY_MODES.ANTIGRAVITY_2_0);
-        assert.equal(id, null, 'a conversation older than the threshold is not returned');
-      } finally {
-        if (originalAppData === undefined) delete process.env.APPDATA;
-        else process.env.APPDATA = originalAppData;
-        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-        else process.env.LOCALAPPDATA = originalLocalAppData;
-        if (originalHome === undefined) delete process.env.HOME;
-        else process.env.HOME = originalHome;
-        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-        else process.env.USERPROFILE = originalUserProfile;
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    });
+      const id = getNewestBrainConversationId(0, AGY_MODES.ANTIGRAVITY_2_0);
+      assert.equal(id, 'newest-conversation', 'the newest mtime wins and the scratch dir is skipped');
+    }));
 
-    it('scans candidate directories in preference order when mode is unknown or null', () => {
-      const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'agy-brain-unknown-mode-'));
-      const originalAppData = process.env.APPDATA;
-      const originalLocalAppData = process.env.LOCALAPPDATA;
-      const originalHome = process.env.HOME;
-      const originalUserProfile = process.env.USERPROFILE;
-      try {
-        process.env.APPDATA = fixture;
-        process.env.LOCALAPPDATA = fixture;
-        process.env.HOME = fixture;
-        process.env.USERPROFILE = fixture;
-        const brainDir = process.platform === 'win32'
-          ? path.join(fixture, 'antigravity', 'brain')
-          : path.join(fixture, '.gemini', 'antigravity', 'brain');
-        fs.mkdirSync(brainDir, { recursive: true });
-        fs.mkdirSync(path.join(brainDir, 'fallback-conversation'));
+    it('modifiedAfterMs filters out conversations older than the threshold', () => withBrain('agy-brain-filter', (brainDir) => {
+      fs.mkdirSync(path.join(brainDir, 'stale-conversation'));
+      const stale = new Date(Date.now() - 600000);
+      fs.utimesSync(path.join(brainDir, 'stale-conversation'), stale, stale);
 
-        const id = getNewestBrainConversationId(0, 'unknown-mode');
-        assert.equal(id, 'fallback-conversation', 'falls back to preference order when mode is unmapped');
-      } finally {
-        if (originalAppData === undefined) delete process.env.APPDATA;
-        else process.env.APPDATA = originalAppData;
-        if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-        else process.env.LOCALAPPDATA = originalLocalAppData;
-        if (originalHome === undefined) delete process.env.HOME;
-        else process.env.HOME = originalHome;
-        if (originalUserProfile === undefined) delete process.env.USERPROFILE;
-        fs.rmSync(fixture, { recursive: true, force: true });
-      }
-    });
+      const id = getNewestBrainConversationId(Date.now() - 60000, AGY_MODES.ANTIGRAVITY_2_0);
+      assert.equal(id, null, 'a conversation older than the threshold is not returned');
+    }));
+
+    it('scans candidate directories in preference order when mode is unknown or null', () => withBrain('agy-brain-unknown-mode', (brainDir) => {
+      fs.mkdirSync(path.join(brainDir, 'fallback-conversation'));
+
+      const id = getNewestBrainConversationId(0, 'unknown-mode');
+      assert.equal(id, 'fallback-conversation', 'falls back to preference order when mode is unmapped');
+    }));
 
     it('checks mode availability and returns active modes in preference order', async () => {
       const activeModes = await getAvailableAgyModes();
@@ -516,6 +458,8 @@ describe('agy-run: multi-mode discovery, reachability & argument construction', 
 // The cascade loop was uncovered because executeAgyInMode spawns a subprocess and opens a session
 // log. runAgy takes those as seams, so these tests assert what the loop itself decides — nothing
 // about subprocess plumbing.
+// SECTION: Provider cascade
+
 describe('runAgy cascade loop', () => {
   const MODES = [AGY_MODES.ANTIGRAVITY_CLI, AGY_MODES.ANTIGRAVITY_2_0, AGY_MODES.ANTIGRAVITY_VSCODE];
 

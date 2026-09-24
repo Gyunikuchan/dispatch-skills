@@ -10,9 +10,7 @@ import {
   SAFE_ENV_WHITELIST,
 } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
 
-// ---------------------------------------------------------------------------
 // SECTION: Environment Sanitization
-// ---------------------------------------------------------------------------
 
 describe('common: environment sanitization', () => {
   it('getSanitizedEnv strips sensitive keys and preserves safe ones', () => {
@@ -78,9 +76,7 @@ describe('common: environment sanitization', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Sensitive Path Denylists
-// ---------------------------------------------------------------------------
 
 describe('common: sensitive path denylists', () => {
   it('SENSITIVE_FILE_PATTERNS and SENSITIVE_FILE_BASENAME_PATTERNS match known sensitive filenames', () => {

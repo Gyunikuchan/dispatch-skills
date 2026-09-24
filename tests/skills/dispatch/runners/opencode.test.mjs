@@ -43,9 +43,7 @@ import {
 const LOCAL_CONFIG = { model: 'lmstudio/fixture-model' };
 const LOCAL_ENDPOINT = { host: '127.0.0.1', port: 1234, pathname: '/v1', protocol: 'http:' };
 
-// ---------------------------------------------------------------------------
-// SECTION: Process Safety — sanitized environment & GPU lock
-// ---------------------------------------------------------------------------
+// SECTION: Process safety and GPU serialization
 
 describe('opencode-run', () => {
   // Binary discovery is memoized per process; reset after every test so a target cached under
@@ -1236,7 +1234,7 @@ describe('opencode-run', () => {
   });
 });
 
-// SECTION: OpenCode sandbox control (SC6)
+// SECTION: Sandbox control
 describe('OpenCode sandbox control', () => {
   afterEach(() => mock.restoreAll());
   const base = { config: {}, prompt: 'x', model: 'lmstudio/m', binary: 'opencode' };

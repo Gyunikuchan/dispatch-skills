@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 
 import {
   appendEvent,
@@ -35,28 +35,42 @@ function runStart(hash, plan = '.scratch/plan/2026-09-20-example.md') {
   };
 }
 
+function appendEvents(ledgerPath, events) {
+  for (const event of events) appendEvent(ledgerPath, event);
+}
+
 describe('ledger I/O and resume', () => {
   let tempRoot;
   let repo;
   let ledgerPath;
 
-  beforeEach(() => {
+  before(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-io-'));
     repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-repo-'));
     const git = spawnSync('git', ['init', '--quiet', '--initial-branch=work'], { cwd: repo, encoding: 'utf8' });
     assert.equal(git.status, 0);
+  });
+
+  beforeEach(() => {
+    for (const entry of fs.readdirSync(repo)) {
+      if (entry !== '.git') fs.rmSync(path.join(repo, entry), { recursive: true, force: true });
+    }
     const directory = ensureLedgerNamespace({
       tempRoot,
       repoHash: 'abcdef123456',
       env: { USER: 'test/user' },
     });
     ledgerPath = path.join(directory, 'example-ledger.md');
+    fs.rmSync(ledgerPath, { force: true });
+    fs.rmSync(`${ledgerPath}.lock`, { force: true });
   });
 
-  afterEach(() => {
+  after(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(repo, { recursive: true, force: true });
   });
+
+  // SECTION: Storage durability, repair, and locking
 
   it('creates private directories and appends sequential durable rows', () => {
     const plan = '# Plan\n\nBody\n';
@@ -215,6 +229,8 @@ describe('ledger I/O and resume', () => {
     assert.equal(fs.readFileSync(target, 'utf8'), 'do not truncate');
   });
 
+  // SECTION: Artifact identity and governing content
+
   it('derives only canonical scratch plan slugs', () => {
     assert.equal(slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2.md'), 'v0-4-phase2');
     assert.throws(() => slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2-walkthrough.md'), /must match/);
@@ -238,7 +254,7 @@ describe('ledger I/O and resume', () => {
       { v: 2, type: 'approval', runId: designRunId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
       { v: 2, type: 'run-complete', runId: designRunId, at, data: { result: 'design-approved-stop', evidenceRefs: ['design'] } },
     ];
-    for (const event of events) appendEvent(ledgerPath, event);
+    appendEvents(ledgerPath, events);
     const metadata = { approvedContentHash: hash };
     assert.equal(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata }, repoRoot: repo }).status, 'resumable');
     assert.equal(resumeDesign({ ledgerPath, planPath: designPath, planSource: { source, metadata: { approvedContentHash: state } }, repoRoot: repo }).status, 'needs-reconciliation');
@@ -264,6 +280,8 @@ describe('ledger I/O and resume', () => {
     assert.equal(governingHash('# Plan\n\n```js\nunterminated').status, 'needs-reconciliation');
   });
 
+  // SECTION: Ordinary resume and failure disposition
+
   it('resumes after RED without repeating tests-only and preserves completion after commit', () => {
     fs.writeFileSync(path.join(repo, 'done.txt'), 'done\n');
     const planPath = '.scratch/plan/2026-09-20-example.md';
@@ -281,7 +299,7 @@ describe('ledger I/O and resume', () => {
       { v: 1, type: 'implementation-attempt', runId, at, data: { taskId: 'active', attempt: 1, launch: 'tests-only', target: { platform: 'copilot' }, terminalEnvelope: {}, evidence: ['red'], transition: 'run-red' } },
       { v: 1, type: 'verification', runId, at, data: { taskId: 'active', attempt: 1, result: 'red', failureIdentity: { id: 'expected' }, commandRefs: ['test'], transition: 'continue' } },
     ];
-    for (const event of events) appendEvent(ledgerPath, event);
+    appendEvents(ledgerPath, events);
     const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
     assert.equal(resumed.status, 'resumable');
     assert.equal(resumed.nextAction, 'continuation');
@@ -303,13 +321,13 @@ describe('ledger I/O and resume', () => {
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'failed mutation\n');
     const failureSnapshot = captureRepositoryState(repo);
-    for (const event of [
+    appendEvents(ledgerPath, [
       runStart(hash, planPath),
       { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
       { v: 1, type: 'task-start', runId, at, data: { taskId: 'active', attemptBudget: 1, paths: ['active.txt'], preState: state } },
       { v: 1, type: 'implementation-attempt', runId, at, data: { taskId: 'active', attempt: 1, launch: 'full', target: { platform: 'copilot' }, terminalEnvelope: {}, evidence: ['failed'], transition: 'stop-user-ruling' } },
       { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot }), costIfWrong: 'tree state may be lost', state: 'open' } },
-    ]) appendEvent(ledgerPath, event);
+    ]);
     const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
     assert.equal(resumed.nextAction, 'failure-disposition');
     assert.equal(resumed.status, 'resumable');
@@ -320,12 +338,12 @@ describe('ledger I/O and resume', () => {
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'changed after failure\n');
-    for (const event of [
+    appendEvents(ledgerPath, [
       runStart(hash, planPath),
       { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
       { v: 1, type: 'task-start', runId, at, data: { taskId: 'active', attemptBudget: 1, paths: ['active.txt'], preState: state } },
       { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: { available: true, entries: { 'active.txt': { status: ' M', objectId: 'a'.repeat(40) } } } }), costIfWrong: 'drift', state: 'open' } },
-    ]) appendEvent(ledgerPath, event);
+    ]);
     const resumed = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
     assert.equal(resumed.status, 'needs-reconciliation');
   });
@@ -335,11 +353,11 @@ describe('ledger I/O and resume', () => {
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     const snapshot = { available: true, entries: {} };
-    for (const event of [
+    appendEvents(ledgerPath, [
       runStart(hash, planPath),
       { v: 1, type: 'approval', runId, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } },
       { v: 1, type: 'ruling', runId, at, data: { key: 'failure-disposition', decision: 'inspect-first', reason: JSON.stringify({ failureSnapshot: snapshot }), costIfWrong: 'tree state may be lost', state: 'open' } },
-    ]) appendEvent(ledgerPath, event);
+    ]);
     const inspected = resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo });
     assert.equal(inspected.nextAction, 'failure-disposition');
     assert.equal(readLedger(ledgerPath).events.at(-1).data.state, 'open');
@@ -347,6 +365,8 @@ describe('ledger I/O and resume', () => {
     appendEvent(ledgerPath, { v: 1, type: 'run-complete', runId, at, data: { result: 'stable-failure', evidenceRefs: ['failure-disposition'] } });
     assert.equal(readLedger(ledgerPath).events.at(-1).data.result, 'stable-failure');
   });
+
+  // SECTION: Phased design resume
 
   describe('design-run resume across segments', () => {
     const designPath = '.scratch/plan/2026-09-20-demo-design.md';
@@ -401,7 +421,7 @@ describe('ledger I/O and resume', () => {
         ...completedIncrement('I01', incrementRunId),
         { v: 2, type: 'run-complete', runId: incrementRunId, at, data: { result: 'complete', evidenceRefs: [] } },
       ];
-      for (const event of events) appendEvent(ledgerPath, event);
+      appendEvents(ledgerPath, events);
       const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
       assert.equal(resumed.status, 'resumable');
       assert.equal(resumed.nextAction, 'implement:I02');
@@ -416,7 +436,7 @@ describe('ledger I/O and resume', () => {
         { v: 2, type: 'implementation-attempt', runId: incrementRunId, at, data: { taskId: 'I01-task', attempt: 1, launch: 'tests-only', target: { platform: 'opencode' }, terminalEnvelope: {}, evidence: ['red'], transition: 'run-red' } },
         { v: 2, type: 'verification', runId: incrementRunId, at, data: { taskId: 'I01-task', attempt: 1, result: 'red', failureIdentity: { id: 'expected' }, commandRefs: ['test'], transition: 'continue' } },
       ];
-      for (const event of events) appendEvent(ledgerPath, event);
+      appendEvents(ledgerPath, events);
       const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
       assert.equal(resumed.status, 'resumable');
       assert.equal(resumed.nextAction, 'resume-increment');
@@ -434,7 +454,7 @@ describe('ledger I/O and resume', () => {
         ...completedIncrement('I02', secondRunId),
         { v: 2, type: 'run-complete', runId: secondRunId, at, data: { result: 'complete', evidenceRefs: [] } },
       ];
-      for (const event of events) appendEvent(ledgerPath, event);
+      appendEvents(ledgerPath, events);
       const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
       assert.equal(resumed.status, 'resumable');
       assert.equal(resumed.nextAction, 'final-integration');
@@ -454,7 +474,7 @@ describe('ledger I/O and resume', () => {
         { v: 2, type: 'amendment', runId: amendmentRunId, at, data: { amendmentId: 'A01', state: 'rejected', affectedIncrements: [] } },
         { v: 2, type: 'run-complete', runId: amendmentRunId, at, data: { result: 'complete', evidenceRefs: [] } },
       ];
-      for (const event of events) appendEvent(ledgerPath, event);
+      appendEvents(ledgerPath, events);
       const resumed = resumeDesign({ ledgerPath, planPath: designPath, planSource: { source: designBody, metadata: designMetadata }, repoRoot: repo });
       assert.equal(resumed.status, 'resumable');
       assert.equal(resumed.nextAction, 'implement:I02');

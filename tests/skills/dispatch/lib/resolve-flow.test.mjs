@@ -77,109 +77,37 @@ function withConfig({ 'read-delegates': readDelegates, 'write-subagents': writeS
 }
 
 describe('resolveFlow', () => {
-  describe('level: low', () => {
-    it('skips plan-review (rounds=0, empty targets)', () => {
+  // SECTION: Level policy matrix
+
+  it('resolves sparse phase policy, implementation, and orchestrator ordering across every level', () => {
+    const expected = {
+      low:    { plan: [0, 0, false], code: [1, 1, false] },
+      medium: { plan: [1, 1, false], code: [1, 3, false] },
+      high:   { plan: [1, 1, true],  code: [3, 3, true] },
+      xhigh:  { plan: [1, 1, true],  code: [3, 3, true] },
+      max:    { plan: [3, 3, true],  code: [3, 5, true] },
+    };
+
+    for (const [level, policy] of Object.entries(expected)) {
       const out = resolveFlow(
-        { platform: 'claude', level: 'low', implementationFields: 'model,effort' },
+        { platform: 'claude', level, implementationFields: 'model,effort' },
         LIVE_ALL,
         BASE_CONFIG,
       );
-      assert.equal(out['plan-review'].rounds, 0);
-      assert.deepEqual(out['plan-review'].targets, []);
-      assert.equal(out['plan-review'].consensus, false);
-    });
-
-    it('code-review has 1 target (first non-orchestrator), rounds=1, consensus=false', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'low' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].rounds, 1);
-      assert.equal(out['code-review'].consensus, false);
-      assert.equal(out['code-review'].targets.length, 1);
-      assert.equal(out['code-review'].targets[0].platform, 'agy');
-    });
-
-    it('implementation matches the orchestrator write-subagent entry', () => {
-      const out = resolveFlow(
-        { platform: 'claude', level: 'low', implementationFields: 'model,effort' },
-        LIVE_ALL,
-        BASE_CONFIG,
-      );
+      for (const [phase, values] of [['plan-review', policy.plan], ['code-review', policy.code]]) {
+        const [targets, rounds, consensus] = values;
+        assert.equal(out[phase].targets.length, targets, `${level} ${phase} targets`);
+        assert.equal(out[phase].rounds, rounds, `${level} ${phase} rounds`);
+        assert.equal(out[phase].consensus, consensus, `${level} ${phase} consensus`);
+      }
+      if (out['code-review'].targets.length > 0) {
+        assert.equal(out['code-review'].targets[0].platform, 'agy', `${level} prefers a non-orchestrator`);
+      }
+      if (level === 'max') assert.equal(out['code-review'].targets.at(-1).platform, 'claude');
       assert.equal(out.implementation.platform, 'claude');
       assert.equal(out.implementation.model, 'claude-opus-5');
       assert.equal(out.implementation.effort, 'medium');
-    });
-  });
-
-  describe('level: medium', () => {
-    it('plan-review: 1 target, rounds=1, consensus=false', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['plan-review'].rounds, 1);
-      assert.equal(out['plan-review'].consensus, false);
-      assert.equal(out['plan-review'].targets.length, 1);
-      assert.equal(out['plan-review'].targets[0].platform, 'agy');
-    });
-
-    it('code-review: 1 target, rounds=3, consensus=false', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].rounds, 3);
-      assert.equal(out['code-review'].consensus, false);
-      assert.equal(out['code-review'].targets.length, 1);
-    });
-  });
-
-  describe('level: high', () => {
-    it('plan-review: 1 target, rounds=1, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['plan-review'].rounds, 1);
-      assert.equal(out['plan-review'].consensus, true);
-      assert.equal(out['plan-review'].targets.length, 1);
-    });
-
-    it('code-review: all targets, rounds=3, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].rounds, 3);
-      assert.equal(out['code-review'].consensus, true);
-      // agy, opencode, and claude (orchestrator) available
-      assert.equal(out['code-review'].targets.length, 3);
-    });
-  });
-
-  describe('level: xhigh', () => {
-    it('plan-review: 1 target, rounds=1, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'xhigh' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['plan-review'].rounds, 1);
-      assert.equal(out['plan-review'].consensus, true);
-      assert.equal(out['plan-review'].targets.length, 1);
-    });
-
-    it('code-review: all targets, rounds=3, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'xhigh' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].rounds, 3);
-      assert.equal(out['code-review'].consensus, true);
-      assert.equal(out['code-review'].targets.length, 3);
-    });
-  });
-
-  describe('level: max', () => {
-    it('plan-review: all targets including self, rounds=3, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['plan-review'].rounds, 3);
-      assert.equal(out['plan-review'].consensus, true);
-      assert.equal(out['plan-review'].targets.length, 3);
-      assert.ok(out['plan-review'].targets.find(t => t.platform === 'claude'));
-    });
-
-    it('code-review: all targets including self, rounds=5, consensus=true', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].rounds, 5);
-      assert.equal(out['code-review'].consensus, true);
-      assert.equal(out['code-review'].targets.length, 3);
-      assert.ok(out['code-review'].targets.find(t => t.platform === 'claude'));
-    });
-
-    it('sorts the orchestrator last when targets includes it', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
-      assert.equal(out['code-review'].targets.at(-1).platform, 'claude');
-    });
+    }
   });
 
   describe('output shape', () => {
@@ -191,6 +119,8 @@ describe('resolveFlow', () => {
       }
     });
   });
+
+  // SECTION: Phase configuration and selection
 
   describe('design-review phase', () => {
     const DESIGN = {
@@ -323,6 +253,8 @@ describe('resolveFlow', () => {
       assert.equal(out.diagnostics.droppedPins['plan-review'], undefined);
     });
   });
+
+  // SECTION: Pins, exclusions, and liveness
 
   describe('pins', () => {
     it('overrides targets: three pins at a level whose targets is 1', () => {
@@ -907,6 +839,8 @@ describe('resolveFlow', () => {
   });
 });
 
+// SECTION: Candidate ordering and reserves
+
 describe('resolveFlow — configured-order candidates', () => {
   const ALL_UP = { claude: true, agy: true, copilot: true, opencode: true };
   const OPENCODE_MULTI = [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }, { model: 'qwen3.8-27b', effort: 'medium' }];
@@ -1057,6 +991,8 @@ describe('resolveFlow — configured-order candidates', () => {
   });
 });
 
+// SECTION: Liveness probes and normalization
+
 describe('defaultLiveness test seam', () => {
   const withEnv = async (env, fn) => {
     const saved = { DISPATCH_LIVENESS_JSON: process.env.DISPATCH_LIVENESS_JSON, DISPATCH_TEST_MODE: process.env.DISPATCH_TEST_MODE };
@@ -1152,7 +1088,7 @@ describe('RUNNER_FILES availability exports', () => {
   }
 });
 
-// SECTION: strict config format flattened targets (SC3)
+// SECTION: Strict config format flattened targets (SC3)
 describe('flattened provider targets (strict config)', () => {
   const lvl = model => ({ low: { model, effort: 'low' } });
   // The orchestrator (copilot) is absent from the config, so no demotion reorders the targets and

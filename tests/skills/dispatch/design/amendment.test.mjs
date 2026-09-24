@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 
 import {
   abortAmendment,
@@ -62,15 +62,25 @@ describe('design amendment transactions', { concurrency: false }, () => {
   function staging() {
     return path.join(path.dirname(designPath), `.${path.basename(designPath)}`);
   }
+  let suiteRoot;
   let tempRoot;
   let repo;
   let designPath;
   let ledgerPath;
-  beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-tmp-'));
-    repo = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-repo-'));
+
+  before(() => {
+    suiteRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-suite-'));
+    tempRoot = path.join(suiteRoot, 'runtime');
+    repo = path.join(suiteRoot, 'repo');
+    fs.mkdirSync(repo);
     gitInit(repo);
     repo = fs.realpathSync(repo);
+  });
+
+  beforeEach(() => {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(path.join(repo, '.scratch'), { recursive: true, force: true });
+    fs.mkdirSync(tempRoot);
     designPath = path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md');
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
@@ -91,10 +101,11 @@ describe('design amendment transactions', { concurrency: false }, () => {
     });
   });
 
-  afterEach(() => {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(repo, { recursive: true, force: true });
+  after(() => {
+    fs.rmSync(suiteRoot, { recursive: true, force: true });
   });
+
+  // SECTION: Fixture queries
 
   function governedHash(source) {
     return governingHash(source, { kind: 'design' }).hash;
@@ -111,6 +122,8 @@ describe('design amendment transactions', { concurrency: false }, () => {
       .map(parseEventLine)
       .filter(event => event.type === 'amendment');
   }
+
+  // SECTION: Transaction outcomes
 
   it('prepare→activate swaps content and approval atomically with ordered durable events', () => {
     const candidate = candidatePath(approvedDesign().replace('boundaries', 'revised boundaries'));
@@ -203,6 +216,8 @@ describe('design amendment transactions', { concurrency: false }, () => {
     assert.equal(fs.existsSync(`${staging()}.tmp`), false);
     assert.equal(fs.readFileSync(ledgerPath, 'utf8').trim().split('\n').map(parseEventLine).at(-1).data.state, 'aborted');
   });
+
+  // SECTION: Interrupted transaction recovery
 
   it('recover reports the pre-rename window for a ruling and leaves the canonical intact', () => {
     prepareAmendment({

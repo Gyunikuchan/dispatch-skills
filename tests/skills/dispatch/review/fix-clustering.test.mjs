@@ -10,6 +10,8 @@ import {
 } from '../../../../skills/dispatch/scripts/review/fix-clustering.mjs';
 
 describe('fix clustering and opt-in handling', () => {
+  // SECTION: Stable cluster identity
+
   describe('computeClusterId', () => {
     it('produces deterministic cluster ID starting with C- and 12 hex chars', () => {
       const id1 = computeClusterId({ runId: 'run-1', parentTaskId: '', findingIds: ['R1-F001', 'R1-F002'] });
@@ -29,6 +31,8 @@ describe('fix clustering and opt-in handling', () => {
       assert.notEqual(base, diffMembers);
     });
   });
+
+  // SECTION: Independence and dependency ordering
 
   describe('createIndependenceClusters', () => {
     it('groups findings with pairwise disjoint paths into single cluster', () => {
@@ -99,6 +103,8 @@ describe('fix clustering and opt-in handling', () => {
       assert.throws(() => createIndependenceClusters([], { runId: '' }), /runId must be a non-empty string/);
     });
   });
+
+  // SECTION: Failure isolation and retry budgets
 
   describe('splitFailedCluster', () => {
     it('splits a failed cluster, preserving completed work and inheriting remaining budget', () => {
@@ -219,6 +225,8 @@ describe('fix clustering and opt-in handling', () => {
     });
   });
 
+  // SECTION: Optional-scope formatting and parsing
+
   describe('formatOptInSections and parseOptInResponse', () => {
     it('returns "none" when both recommendations and outOfScope are empty', () => {
       const res = formatOptInSections({ recommendations: [], outOfScope: [] });
@@ -327,23 +335,6 @@ describe('fix clustering and opt-in handling', () => {
       assert.equal(res.items[0].alias, 'R1');
       assert.equal(res.items[1].alias, 'R2');
       assert.equal(res.items[2].alias, 'O1');
-    });
-  });
-
-  describe('splitFailedCluster budget', () => {
-    it('carries completed findings and the remaining attempt budget', () => {
-      const parsed = splitFailedCluster({
-        clusterId: 'C-parent123456',
-        findingIds: ['R1-F001', 'R1-F002'],
-        findings: [
-          { findingId: 'R1-F001', affectedPaths: ['src/a.ts'], dependsOn: [], verification: ['npm test'] },
-          { findingId: 'R1-F002', affectedPaths: ['src/b.ts'], dependsOn: [], verification: ['npm test'] },
-        ],
-        attemptBudget: 3,
-      }, { runId: 'run-1', failedFindingId: null, completedFindingIds: ['R1-F001'], attemptsConsumed: 1, maxAttempts: 3 });
-      assert.deepEqual(parsed.completedFindings, ['R1-F001']);
-      assert.equal(parsed.remainingBudget, 2);
-      assert.equal(parsed.canProceed, true);
     });
   });
 });

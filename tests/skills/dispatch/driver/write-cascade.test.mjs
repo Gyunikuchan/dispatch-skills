@@ -9,7 +9,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
 import { validateReply } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { drive, makeGitRepo, parseAction, PLAN_BODY, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
@@ -25,7 +25,7 @@ const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 
 function setup() {
-  const fixture = buildStubDispatchFixture(CONFIG);
+  const fixture = createStubDispatchFixture(CONFIG);
   const repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
   fs.mkdirSync(path.join(repo.dir, 'tests'));

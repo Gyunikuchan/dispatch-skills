@@ -19,9 +19,7 @@ import {
   runDelegateCapture,
 } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
 
-// ---------------------------------------------------------------------------
 // SECTION: Session Logging & Banners
-// ---------------------------------------------------------------------------
 
 describe('common: session logging & banners', () => {
   it('creates dedicated session log file without errors', () => {
@@ -184,9 +182,7 @@ describe('common: session logging & banners', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: Spawn & Batch Escaping
-// ---------------------------------------------------------------------------
 
 describe('common: subprocess spawning & escaping', () => {
   it('spawns a binary directly with spawnCliSync', () => {
@@ -291,9 +287,7 @@ setInterval(() => {}, 1000);`,
   );
 });
 
-// ---------------------------------------------------------------------------
 // SECTION: runDelegateCapture — shared delegate subprocess lifecycle
-// ---------------------------------------------------------------------------
 
 describe('common: runDelegateCapture (shared executor machinery)', () => {
   /**

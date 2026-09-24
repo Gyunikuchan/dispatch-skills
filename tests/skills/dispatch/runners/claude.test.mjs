@@ -31,6 +31,8 @@ import {
   testClaudeBinaryReachability,
 } from '../../../../skills/dispatch/scripts/runners/claude.mjs';
 
+// SECTION: Discovery, configuration, and result parsing
+
 describe('claude-run: runner discovery, reachability & envelope parsing', () => {
   describe('constants & tools', () => {
     it('enforces read-only allowed tools list without destructive tools', () => {
@@ -448,6 +450,8 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
 
 // Uncovered for the same reason as the agy loop. runClaude cascades in two dimensions — targets
 // outer, models inner — so the call *sequence* is the contract, not just the final result.
+// SECTION: Provider cascade and brief lifecycle
+
 describe('runClaude cascade loop', () => {
   const target = (name) => ({ name, mode: name });
 
@@ -579,7 +583,7 @@ describe('runClaude brief cleanup', () => {
   });
 });
 
-// SECTION: A-2 / A-6 sandbox advisory and model-not-found (probe-log fixture inline)
+// SECTION: Failure precedence and sandbox warnings
 
 const SANDBOX_ADVISORY = 'Sandbox disabled: sandboxing is not active on this platform.\n';
 const MODEL_404_ENVELOPE = JSON.stringify({
@@ -716,7 +720,7 @@ describe('Claude runner sandbox warning (SC3)', () => {
   });
 });
 
-// SECTION: sandbox downgrade contract (SC5)
+// SECTION: Sandbox downgrade
 describe('Claude sandbox downgrade', () => {
   const WARNING = '[dispatch] WARNING: Claude sandbox is unavailable; the run proceeded unsandboxed.';
   const sandboxFail = () => ({ exitCode: 1, failureKind: 'sandbox-unsupported', stdout: '', stderr: 'Unknown option: --settings' });

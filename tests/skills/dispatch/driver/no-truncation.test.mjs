@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { allProviders, codeFinding, drive, makeGitRepo, report } from '../../../helpers/driver-harness.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
@@ -19,7 +19,7 @@ const findings = Array.from({ length: FINDING_COUNT }, (_, index) => codeFinding
 let fixture;
 let repo;
 before(() => {
-  fixture = buildStubDispatchFixture({
+  fixture = createStubDispatchFixture({
     'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
     phases: { 'code-review': { rounds: ALL(2), targets: ALL(1), consensus: ALL(false) } },
   });

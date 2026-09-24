@@ -19,47 +19,39 @@ const examples = (template) =>
     JSON.parse(match[1].replaceAll(/<[^>]+>/g, "example")),
   );
 
-describe("R10 shared review frame assembly", () => {
+// SECTION: Shared review-kind contract
+
+describe("shared review frames match kind registries and parser schemas", () => {
   for (const kind of ["plan", "code", "design"]) {
-    it(`${kind} assembles shared prompt and rebuttal frames`, () => {
-      for (const [frame, block] of [
-        ["review-prompt.md", `review-prompt-${kind}.md`],
-        ["rebuttal.md", `rebuttal-${kind}.md`],
-      ]) {
-        const result = assembleTemplate(
-          path.join(templates, frame),
-          path.join(templates, block),
-        );
-        assert.doesNotMatch(result.template, /<<slot:/);
-        assert.ok(result.variables.length > 0);
-      }
-    });
-    it(`${kind} has a registry and parser contract`, () => {
-      assert.ok(REVIEW_KINDS[kind]);
-      assert.equal(
-        parseReport(kind, JSON.stringify({ status: "CLEAN", findings: [] }))
-          .reportKind,
-        kind,
-      );
+    it(`${kind} assembles complete frames and matches its parser schema`, () => {
       const assembled = assembleTemplate(
         path.join(templates, "review-prompt.md"),
         path.join(templates, `review-prompt-${kind}.md`),
       );
+      const rebuttal = assembleTemplate(
+        path.join(templates, "rebuttal.md"),
+        path.join(templates, `rebuttal-${kind}.md`),
+      );
+      for (const result of [assembled, rebuttal]) {
+        assert.doesNotMatch(result.template, /<<slot:/);
+        assert.ok(result.variables.length > 0);
+      }
+      assert.ok(REVIEW_KINDS[kind]);
+      assert.equal(
+        parseReport(kind, JSON.stringify({ status: "CLEAN", findings: [] })).reportKind,
+        kind,
+      );
       const finding = examples(assembled.template).find(
         (item) => item.status === "FINDINGS",
       ).findings[0];
-      const required = schema(`report-${kind}`).properties.findings.items
-        ?.required;
-      if (required)
-        assert.deepEqual(Object.keys(finding).sort(), required.sort());
-      else
-        assert.deepEqual(Object.keys(finding).sort(), [
-          "defect",
-          "locus",
-          "requiredChange",
-          "severity",
-          "tag",
-        ]);
+      const required = schema(`report-${kind}`).properties.findings.items?.required ?? [
+        "defect",
+        "locus",
+        "requiredChange",
+        "severity",
+        "tag",
+      ];
+      assert.deepEqual(Object.keys(finding).sort(), required.sort());
     });
   }
   it("keeps rebuttal examples aligned with the parser schema", () => {
@@ -100,7 +92,9 @@ describe("R10 shared review frame assembly", () => {
   });
 });
 
-describe("alias forwarding grammar (A-5)", () => {
+// SECTION: Alias isolation and forwarding
+
+describe("review aliases preserve dispatch forwarding order", () => {
   it("review aliases place --fix after the kind and implement places --phases after the verb", () => {
     for (const kind of ["plan", "design", "code"]) {
       const text = read(`skills/dispatch-${kind}-review/SKILL.md`);
