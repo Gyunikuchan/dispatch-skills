@@ -531,6 +531,19 @@ describe('scripted review paths (SC5)', () => {
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 
+  it('prose report with no findings: an empty restate ruling closes the entry', () => {
+    const { fixture, repo } = setup(config());
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'claude-code', '--', plan],
+      policy: { waveResults: firstReview('No issues found.'), restate: () => ({ empty: true }) },
+    });
+    assert.ok(run.trace.find((a) => a.action === 'adjudicate').findings.some((f) => f.restate === true));
+    assert.doesNotMatch(fs.readFileSync(plan, 'utf8'), /\[R1-F\d+\]/);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
   it('authoring-required ends in done refusing and naming the producing phase', () => {
     const { fixture, repo } = setup(config());
     const missing = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-missing.md');

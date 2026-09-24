@@ -581,7 +581,7 @@ function adjudicateAction(state) {
     'Use status needs-user only when the ruling needs a user decision.',
   ];
   if (state.adjudication.findings.some((finding) => finding.restate)) {
-    guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key.');
+    guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
   if (state.invocation.fix) guidance.push('For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}.');
   return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings }, guidance);
@@ -593,6 +593,7 @@ function onAdjudicate(state, reply) {
   const entry = reviewKind(state.kind);
   const findings = new Map(state.adjudication.findings.map((finding) => [finding.key, finding]));
   const ruled = new Set();
+  const emptyKeys = new Set();
   const errors = [];
   const rulings = [];
   for (const ruling of reply.rulings) {
@@ -605,6 +606,14 @@ function onAdjudicate(state, reply) {
       errors.push(`finding ${ruling.key} is ruled twice`);
       continue;
     }
+    if (ruling.empty) {
+      if (!finding.restate) errors.push(`${ruling.key}: empty applies only to a restate entry`);
+      else if (ruled.has(ruling.key)) errors.push(`${ruling.key}: an empty restate entry takes no other ruling`);
+      ruled.add(ruling.key);
+      emptyKeys.add(ruling.key);
+      continue;
+    }
+    if (emptyKeys.has(ruling.key)) errors.push(`${ruling.key}: an empty restate entry takes no other ruling`);
     ruled.add(ruling.key);
     const locus = normalizeLocus(entry.kind, ruling.locus);
     if (!entry.locusPattern.test(locus)) errors.push(`${ruling.key}: locus must match ${entry.locusDescription}`);

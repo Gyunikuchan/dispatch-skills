@@ -20,6 +20,7 @@ export const PROVIDER_ALIASES = {
   antigravity: 'agy',
   claude: 'claude',
   claudecode: 'claude',
+  'claude-code': 'claude',
   copilot: 'copilot',
   'github-copilot': 'copilot',
 };

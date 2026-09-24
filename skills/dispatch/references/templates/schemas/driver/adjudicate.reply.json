@@ -10,90 +10,111 @@
     "rulings": {
       "type": "array",
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "key",
-          "status",
-          "severity",
-          "scope",
-          "locus",
-          "tag",
-          "defect",
-          "resolution"
-        ],
-        "properties": {
-          "key": {
-            "type": "string",
-            "minLength": 1
-          },
-          "status": {
-            "enum": [
-              "accepted",
-              "rejected",
-              "downgraded",
-              "needs-user"
-            ]
-          },
-          "severity": {
-            "enum": [
-              "MUST",
-              "SHOULD",
-              "CONSIDER"
-            ]
-          },
-          "scope": {
-            "enum": [
-              "in-scope",
-              "adjacent"
-            ]
-          },
-          "locus": {
-            "type": "string",
-            "minLength": 1
-          },
-          "tag": {
-            "type": "string",
-            "minLength": 1
-          },
-          "defect": {
-            "type": "string",
-            "minLength": 1
-          },
-          "resolution": {
-            "type": "string",
-            "minLength": 1
-          },
-          "fix": {
+        "oneOf": [
+          {
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "affectedPaths",
-              "dependsOn",
-              "verification"
+              "key",
+              "status",
+              "severity",
+              "scope",
+              "locus",
+              "tag",
+              "defect",
+              "resolution"
             ],
             "properties": {
-              "affectedPaths": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "key": {
+                "type": "string",
+                "minLength": 1
               },
-              "dependsOn": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+              "status": {
+                "enum": [
+                  "accepted",
+                  "rejected",
+                  "downgraded",
+                  "needs-user"
+                ]
               },
-              "verification": {
-                "type": "array",
-                "items": {
-                  "type": "string"
+              "severity": {
+                "enum": [
+                  "MUST",
+                  "SHOULD",
+                  "CONSIDER"
+                ]
+              },
+              "scope": {
+                "enum": [
+                  "in-scope",
+                  "adjacent"
+                ]
+              },
+              "locus": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tag": {
+                "type": "string",
+                "minLength": 1
+              },
+              "defect": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resolution": {
+                "type": "string",
+                "minLength": 1
+              },
+              "fix": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "affectedPaths",
+                  "dependsOn",
+                  "verification"
+                ],
+                "properties": {
+                  "affectedPaths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "verification": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "empty"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1
+              },
+              "empty": {
+                "const": true
+              }
+            }
           }
-        }
+        ]
       }
     }
   }

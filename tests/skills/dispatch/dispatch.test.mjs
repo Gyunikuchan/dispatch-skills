@@ -223,6 +223,7 @@ describe('orchestrator detection and provider resolution', () => {
       assert.deepEqual(KNOWN_PROVIDERS, ['claude', 'agy', 'copilot', 'opencode']);
       assert.equal(PROVIDER_ALIASES.antigravity, 'agy');
       assert.equal(PROVIDER_ALIASES.claudecode, 'claude');
+      assert.equal(PROVIDER_ALIASES['claude-code'], 'claude');
       assert.equal(PROVIDER_ALIASES['github-copilot'], 'copilot');
     });
 
