@@ -273,7 +273,7 @@ describe('ordinary action reply forms', () => {
   });
   it('versioned schemas disclose ordinary gate payloads', () => {
     const questions = loadSchema('ask-user').properties.question.enum;
-    for (const question of ['approval', 'baseline-red', 'failure-disposition', 'implementation-recovery', 'risk-review-degradation']) assert.ok(questions.includes(question));
+    for (const question of ['approval', 'baseline-red', 'failure-disposition', 'implementation-recovery']) assert.ok(questions.includes(question));
     for (const field of ['purpose', 'scopes', 'scopeHash', 'mutationEpoch']) assert.ok(loadSchema('verify').properties[field]);
     assert.ok(loadSchema('done').properties.handoff.properties.destinations);
     assert.ok(loadSchema('delegate-write').properties.fields.required.includes('modelCascade'));

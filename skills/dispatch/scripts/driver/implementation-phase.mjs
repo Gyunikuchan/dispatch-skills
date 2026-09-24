@@ -6,11 +6,9 @@ import { verifySkillIntegrity } from '../common.mjs';
 import { currentHead, diffHash, indexFingerprint, materializedFingerprint, snapshotContent, snapshotEntries } from '../git-state.mjs';
 import { diffRepositoryState } from '../verification-evidence.mjs';
 import { emitAction } from './actions.mjs';
-import { append, ask, ledgerSegment, persistEvidence, ruling } from './ordinary-state.mjs';
-import { advanceReview, startReview } from './review-phase.mjs';
-import { readRunState } from './state.mjs';
+import { append, ask, ledgerSegment, ruling } from './ordinary-state.mjs';
 import { beginVerification, completionResult, fingerprint, repositoryBaseline, loadFailureDefect, purposeCommands, redLoadFailures, snapshot, validateRed, validateRedAdmission } from './verification.mjs';
-import { outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
+import { missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 export function beginImplementation(state) {
   const data = state.ordinary;
@@ -22,14 +20,12 @@ export function beginImplementation(state) {
   if (data.step === 'concern-ruling') return ask(state, 'implementation-concerns', 'Resolve the captured implementation concerns before accepting the outcome.', (data.envelope?.concerns ?? []).map(reason => ({ reason })));
   if (data.step === 'blocking-condition' || data.step === 'missing-context') return ask(state, data.step === 'blocking-condition' ? 'implementation-blocked' : 'implementation-context', 'Supply the changed blocking condition or missing context with {decision:"retry", reason, context}, or stop.');
   if (data.step === 'write-scope') return scopeQuestion(state);
-  if (data.step === 'risk-degradation') return ask(state, 'risk-review-degradation', 'Inspect the validated RED matrix and record an evidence-backed orchestrator-only gate, or stop.', [{ reason: data.riskFailure }]);
   if (data.step === 'write-pending') {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
     return ask(state, 'implementation-recovery', 'A write was dispatched before interruption. Return its captured raw terminal envelope. Missing evidence opens failure disposition; the driver will not duplicate the write.', [{ taskId: data.taskId, attempt: data.attempt, paths }]);
   }
   if (data.step === 'red-verify' || data.step === 'completion-verify') return beginVerification(state, data.step === 'red-verify' ? 'red' : 'completion');
-  if (data.step === 'risk-review' && !data.riskReview) return beginRiskReview(state);
-  if (data.redValidated && data.riskReview) {
+  if (data.redValidated) {
     const task = ledgerSegment(state).tasks.get('implementation');
     if (task?.lastVerification?.data.result !== 'red' || task.lastAttempt?.data.transition !== 'run-red') return openFailure(state, 'Canonical RED verification is absent.');
     if (data.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed after the validated RED gate.');
@@ -276,19 +272,14 @@ export async function afterImplementationVerification(state) {
     const transition = verificationTransition(state, 'red', 'red-gate');
     append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: purposeCommands(data, 'red'), transition: transition.action, failureIdentity: red.identity });
     data.redValidated = { scopeHash: fingerprint(state), evidence: data.envelope.evidence };
-    if (!RISK_REVIEW_LEVELS.has(state.invocation.level)) {
-      // Below high, code review after production covers test quality; the pre-production read pass is skipped.
-      data.riskReview = { outcome: 'skipped', reason: `level ${state.invocation.level} runs no pre-production RED review` };
-      return startTask(state, 'full');
-    }
-    return beginRiskReview(state);
+    // Code review after production covers test quality; no read pass gates RED.
+    return startTask(state, 'full');
   }
   let result = completionResult(state);
-  const traceRows = data.envelope?.evidence?.filter(item => typeof item === 'string' && item.startsWith('CRITERION ')) ?? [];
-  const missingTrace = data.criteria.filter(criterion => !traceRows.some(row => row.startsWith(`CRITERION ${criterion.id} |`) && criterion.paths.some(file => row.includes(file))));
-  if (missingTrace.length) {
+  const untraced = missingTrace(data.criteria, data.envelope);
+  if (untraced.length) {
     result = 'regression';
-    data.traceabilityDefects = missingTrace.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
+    data.traceabilityDefects = untraced.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
   }
   const transition = verificationTransition(state, result, 'final');
   append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: purposeCommands(data, 'completion'), transition: transition.action });
@@ -297,19 +288,6 @@ export async function afterImplementationVerification(state) {
   data.step = 'implemented';
   return null;
 }
-const RISK_REVIEW_LEVELS = new Set(['high', 'xhigh', 'max']);
-async function beginRiskReview(state) {
-  const data = state.ordinary;
-  data.step = 'risk-review';
-  persistEvidence(state);
-  // Bounded mode reuses configured transport, parser and source-attributed adjudication, but never checkpoints or writes review rounds.
-  const action = await startReview({ invocation: { ...state.invocation, verb: 'review', kind: 'code', argument: state.walkthroughPath, fix: false }, cwd: state.repoRoot, resumeCommand: state.resumeCommand, transient: true });
-  state.riskState = readRunState(action.stateFile);
-  return handleRiskAction(state, action);
-}
-export function continueRiskReview(state, reply) {
-  return handleRiskAction(state, advanceReview(state.riskState, reply));
-}
 /** Relaunches the tests-only writer on its retained changes; each relaunch is a new ledger attempt, so production continues from it. */
 function relaunchTestsOnly(state, defects) {
   const data = state.ordinary;
@@ -317,33 +295,10 @@ function relaunchTestsOnly(state, defects) {
   data.testsOnlyAttempts++;
   data.attempt++;
   data.launch = 'tests-only';
-  for (const key of ['testsOnlyAdmitted', 'redValidated', 'riskReview']) delete data[key];
+  for (const key of ['testsOnlyAdmitted', 'redValidated']) delete data[key];
   data.write.candidate = 0;
   data.step = 'write-pending';
   return writeAction(state);
-}
-function handleRiskAction(state, action) {
-  if (action.action !== 'done') return { ...action, stateFile: state.stateFile };
-  const data = state.ordinary;
-  // Accepted test-review findings earn one tests-only repair while a production attempt remains.
-  if (action.outcome === 'refused' && action.defects?.length && !data.reviewRepaired && data.attempt < 3) {
-    data.reviewRepaired = true;
-    delete state.riskState;
-    return relaunchTestsOnly(state, action.defects.map(item => `Accepted test-review finding ${item.key} (${item.severity}, ${item.locus}): ${item.defect}`));
-  }
-  // Once the repair is spent, coverage gaps travel to the production writer; other defects still stop the run.
-  const carried = action.outcome === 'complete' || (action.outcome === 'refused' && action.defects?.length && action.defects.every(item => item.severity === 'CONSIDER' || item.tag === 'test-gap'));
-  if (!carried && (action.outcome === 'refused' || action.outcome === 'lint-defects')) return openFailure(state, action.summary);
-  if (!carried) {
-    data.step = 'risk-degradation';
-    data.riskFailure = action.summary;
-    return ask(state, 'risk-review-degradation', 'Independent read review failed or was unavailable. Inspect the changed tests and RED matrix before accepting an orchestrator-only gate. Return {decision:"accept", reason} or stop.', [{ reason: action.summary }]);
-  }
-  if (data.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed during independent RED review.');
-  data.riskReview = { outcome: action.outcome, sourceMap: state.riskState.collect?.sourceMap ?? {}, summary: action.summary };
-  if (action.defects?.length) data.carriedFindings = action.defects;
-  delete state.riskState;
-  return startTask(state, 'full');
 }
 export function acceptImplementationDecision(state, reply) {
   const data = state.ordinary, answer = reply.answer;
@@ -358,13 +313,6 @@ export function acceptImplementationDecision(state, reply) {
     if (answer.decision !== 'accept') return openFailure(state, 'Implementation concerns were not accepted.');
     ruling(state, 'implementation-concerns', 'accept', answer.reason);
     return acceptWrite(state, data.pendingOutcome, { concernsResolved: true });
-  }
-  if (data.step === 'risk-degradation') {
-    if (answer.decision !== 'accept') return openFailure(state, 'Risk review degradation not accepted.');
-    if (data.redValidated.scopeHash !== fingerprint(state)) return openFailure(state, 'Tests changed during risk review degradation ruling.');
-    data.riskReview = { outcome: 'orchestrator-only', failure: data.riskFailure, evidence: answer.reason };
-    delete state.riskState;
-    return startTask(state, 'full');
   }
   if (data.step === 'blocking-condition' || data.step === 'missing-context') {
     if (answer.decision !== 'retry') return openFailure(state, 'Blocking condition unchanged.');

@@ -1128,7 +1128,7 @@ export async function main() {
   const args = process.argv.slice(2);
   const driverSeparator = args.indexOf('--');
   const head = driverSeparator === -1 ? args : args.slice(0, driverSeparator);
-  if (head.some((arg) => arg === '--run' || arg === '--next' || arg === '--verify' || arg.startsWith('--run='))) {
+  if (head.some((arg) => ['--run', '--next', '--drive', '--verify', '--check-envelope'].includes(arg) || /^--(?:run|check-envelope)=/.test(arg))) {
     const driver = await import('./driver/index.mjs');
     process.exit(await driver.runDriver(args));
   }

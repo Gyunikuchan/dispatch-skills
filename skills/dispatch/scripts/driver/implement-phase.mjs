@@ -7,7 +7,7 @@ import { assertBinding, bindPlan, ledgerSegment, refuse, restoreEvidence, save }
 import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, baselineDecision, beginBaseline } from './baseline-phase.mjs';
 import { acceptVerification, beginVerification, completionResult, fingerprint } from './verification.mjs';
-import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, continueRiskReview, openFailure } from './implementation-phase.mjs';
+import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './implementation-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 
 export async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {
@@ -25,6 +25,8 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
   }
   try {
     const restored = invocation.verb === 'implement' && restoreEvidence(state);
+    // An implement run over a plan whose settled checkpoint matches its content needs no new review round.
+    if (!from && !restored && invocation.verb === 'implement' && settledPlan(state)) return save(state, beginBaseline(state));
     const entry = from ?? (restored ? state.ordinary.phase : 'plan-review');
     return save(state, await enterPhase(state, entry));
   } catch (error) {
@@ -33,6 +35,9 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
     writeRunState(state);
     return state.pending;
   }
+}
+function settledPlan(state) {
+  try { return requireSettledPlan(state).outcome === 'complete'; } catch { return false; }
 }
 export async function enterPhase(state, phase) {
   if (phase === 'plan-review') return consumeReview(state, await beginReview(state, 'plan'));
@@ -97,8 +102,7 @@ export async function advanceImplement(state, reply) {
       action = await consumeReview(state, continueReview(state, reply));
     } else {
       assertBinding(state);
-      if (data.step === 'risk-review' && state.riskState) action = continueRiskReview(state, reply);
-      else if (state.pending.action === 'verify') {
+      if (state.pending.action === 'verify') {
         action = acceptVerification(state, reply);
         if (!action) {
           if (data.phase === 'baseline') action = baselineDecision(state);

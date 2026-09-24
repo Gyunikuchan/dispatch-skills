@@ -25,9 +25,9 @@ const VERBS = ['plan', 'design', 'review', 'implement', 'ask'];
 const LEVEL_SOURCES = ['explicit', 'classified'];
 const VALUE_FLAGS = new Set([
   '--run', '--state', '--input', '--kind', '--phases', '--orchestrator', '--orchestrator-model',
-  '--level', '--level-source', '--pins',
+  '--level', '--level-source', '--pins', '--check-envelope',
 ]);
-const BOOLEAN_FLAGS = new Set(['--next', '--fix', '--verbose', '--verify']);
+const BOOLEAN_FLAGS = new Set(['--next', '--drive', '--fix', '--verbose', '--verify']);
 
 export const DRIVER_FLAGS = [...VALUE_FLAGS, ...BOOLEAN_FLAGS];
 
@@ -37,7 +37,11 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   --fix                       Apply accepted fixes (review is report-only by default)
   --phases from:<phase>       Start phase for implement (not accepted by review)
   --next                      Advance a run; requires --state
+  --drive                     Like --next, then run each launch (no early fallbacks) and verify argv and
+                              advance until an action needs the host; prints only that action
   --verify                    Run the pending verify action's commands; requires --state
+  --check-envelope <file>     Check a write subagent's final envelope against the pending
+                              delegate-write; requires --state; exits 1 listing each defect
   --state <file>              State file named by the previous action's stateFile
   --input <json|@file>        Reply to the previous action (omit for launch)
   --orchestrator <platform>   Orchestrating platform (required with --run)
@@ -186,8 +190,8 @@ function advanceLocked(parsed) {
 }
 
 /**
- * Runs one driver step. Returns the process exit code: 0 with one JSON action on stdout, 2 with a
- * usage or state diagnostic on stderr.
+ * Runs one driver step (or a `--drive` run of steps). Returns the process exit code: 0 with one JSON
+ * action on stdout, 2 with a usage or state diagnostic on stderr.
  */
 export async function runDriver(argv, { cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr } = {}) {
   try {
@@ -200,7 +204,21 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
       stdout.write(`${JSON.stringify(runVerification(parsed.state))}\n`);
       return 0;
     }
-    if (parsed.next) {
+    if (parsed.checkEnvelope !== undefined) {
+      if (parsed.run !== undefined || parsed.next || parsed.drive || parsed.input !== undefined) throw new UsageError('--check-envelope takes only --state.');
+      if (!parsed.state) throw new UsageError('--check-envelope requires --state <file>.');
+      const { checkEnvelope } = await import('./write.mjs');
+      const result = checkEnvelope(parsed.state, parsed.checkEnvelope);
+      stdout.write(`${JSON.stringify(result)}
+`);
+      return result.ok ? 0 : 1;
+    }
+    if (parsed.drive) {
+      if (parsed.run !== undefined || parsed.next) throw new UsageError('--drive replaces --next and cannot start a run.');
+      if (!parsed.state) throw new UsageError('--drive requires --state <file>.');
+      const { drive } = await import('./drive.mjs');
+      action = await drive(parsed, { advance: (state, input) => next({ ...parsed, state, input }), stderr });
+    } else if (parsed.next) {
       if (parsed.run !== undefined) throw new UsageError('--run and --next are exclusive.');
       action = await next(parsed);
     } else {

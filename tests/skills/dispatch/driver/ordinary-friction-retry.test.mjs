@@ -4,12 +4,12 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
 
-import { allProviders, codeFinding, implementationOutcome, report } from '../../../helpers/driver-harness.mjs';
+import { allProviders, implementationOutcome, report } from '../../../helpers/driver-harness.mjs';
 import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
 
 afterEach(runCleanup);
 
-describe('ordinary driver friction relief: retries and test-review carry-over', () => {
+describe('ordinary driver friction relief: retries', () => {
   const rulings = ledger => ledger.events.filter(event => event.type === 'ruling').map(event => [event.data.key, event.data.decision]);
   const stray = (fixture, file) => action => {
     if (action.fields.stage === 'production') fs.writeFileSync(path.join(fixture.repo.dir, file), 'stray\n');
@@ -56,46 +56,20 @@ describe('ordinary driver friction relief: retries and test-review carry-over', 
     assert.doesNotMatch(offered, /"re-verify"/);
     assert.match(error, /re-verify applies only/);
   });
-  it('treats an accepted CONSIDER test-review finding as advice for the production writer', () => {
-    const fixture = setup(); let testWaves = 0, testsWritten = false;
+  it('goes from validated RED straight to the production write at high, with no test-review wave', () => {
+    const fixture = setup(); let waves = 0, testsWritten = false, productionWritten = false;
     const base = policies(fixture.repo);
-    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Could also assert the zero case.' });
     const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
-      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
-      waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
-      rule: () => ({ status: 'accepted', severity: 'CONSIDER', tag: 'test-gap' }),
+      delegateWrite(action) {
+        testsWritten ||= action.fields.stage === 'tests-only';
+        productionWritten ||= action.fields.stage === 'production';
+        return base.delegateWrite(action);
+      },
+      waveResults: () => { if (testsWritten && !productionWritten) waves++; return allProviders(report()); },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    const writes = result.trace.filter(action => action.action === 'delegate-write');
-    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'production']);
-    assert.deepEqual(JSON.parse(fs.readFileSync(writes[1].fields.promptPath, 'utf8')).packet.reviewFindings.map(item => [item.severity, item.tag]), [['CONSIDER', 'test-gap']]);
-    assert.match(writes[1].guidance.join(' '), /packet\.reviewFindings/);
-  });
-  it('carries a second-round accepted test-gap finding to the production writer instead of stopping', () => {
-    const fixture = setup(); let testWaves = 0, testsWritten = false;
-    const base = policies(fixture.repo);
-    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'No negative-path coverage.' });
-    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
-      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
-      waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
-      rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'test-gap' }),
-    } });
-    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    const writes = result.trace.filter(action => action.action === 'delegate-write');
-    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
-    assert.deepEqual(JSON.parse(fs.readFileSync(writes[2].fields.promptPath, 'utf8')).packet.reviewFindings.map(item => [item.severity, item.tag]), [['MUST', 'test-gap']]);
-  });
-  it('still stops on a second-round accepted finding that is not a coverage gap', () => {
-    const fixture = setup(); let testWaves = 0, testsWritten = false;
-    const base = policies(fixture.repo);
-    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'Assertion checks the wrong export.' });
-    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
-      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
-      waveResults: () => allProviders(report(testsWritten && ++testWaves <= 2 ? [finding] : [])),
-      rule: () => ({ status: 'accepted', severity: 'MUST', tag: 'correctness' }),
-    } });
-    assert.equal(result.done.outcome, 'stable-failure', JSON.stringify(result.done));
-    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'tests-only']);
+    assert.equal(waves, 0);
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
   });
 });
 

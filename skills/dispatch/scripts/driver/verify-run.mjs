@@ -37,12 +37,23 @@ function execute(command, { cwd, logPath }) {
   return { exit: result.status ?? (timedOut ? 124 : 1), timedOut, output };
 }
 
+/** Results this gate already recorded, when the tree has not changed since they finished. */
+function reusableRecord(state, pending) {
+  let record;
+  try { record = JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8')); } catch { return null; }
+  if (record.token !== pending.token || record.purpose !== pending.purpose || !record.final) return null;
+  return diffRepositoryState(record.final, snapshot(state)).changed.length ? null : record;
+}
+
 /** Runs the pending driver-run verification of `stateFile`; returns the summary it prints. */
 export function runVerification(stateFile) {
   bindStateSession(stateFile);
   const state = readRunState(stateFile);
   const data = state.ordinary, pending = data?.verification;
   if (state.pending?.action !== 'verify' || !pending?.token) throw new Error('No driver-run verification is pending for this state.');
+  // A re-emitted gate (e.g. a reply that lacked criterion evidence) keeps its token; an unchanged tree reuses its results.
+  const reused = reusableRecord(state, pending);
+  if (reused) return summarize(pending, reused, { reused: true });
   const logDir = path.join(path.dirname(state.stateFile), 'verify');
   fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
   const logFor = name => path.join(logDir, `${state.runId}-${pending.purpose}-${pending.token.slice(0, 8)}-${name}.log`);
@@ -80,8 +91,12 @@ export function runVerification(stateFile) {
   const temp = `${pending.resultsPath}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
   fs.renameSync(temp, pending.resultsPath);
+  return summarize(pending, record);
+}
+
+function summarize(pending, { results, generated, mutationEpoch }, extra = {}) {
   return {
-    purpose: pending.purpose, resultsPath: pending.resultsPath, mutationEpoch: epoch,
+    purpose: pending.purpose, resultsPath: pending.resultsPath, mutationEpoch, ...extra,
     results: results.map(({ command, ran, exit, timedOut, counts, identifiers, scopeHash, mutationEpoch, changed, logPath }) => ({
       command, ...(ran !== command ? { ran } : {}), exit, ...(timedOut ? { timedOut } : {}), ...(counts ?? {}),
       identifiers: identifiers.slice(0, SUMMARY_IDENTIFIERS), ...(identifiers.length > SUMMARY_IDENTIFIERS ? { moreIdentifiers: identifiers.length - SUMMARY_IDENTIFIERS } : {}),

@@ -107,6 +107,48 @@
       "type": "string",
       "minLength": 1
     },
+    "summary": {
+      "type": "object",
+      "required": [
+        "purpose",
+        "resultsPath",
+        "mutationEpoch",
+        "results"
+      ],
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resultsPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mutationEpoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reused": {
+          "const": true
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "command",
+              "exit"
+            ]
+          }
+        },
+        "generated": {
+          "type": "array"
+        },
+        "next": {
+          "type": "string"
+        }
+      }
+    },
     "substitutions": {
       "type": "object",
       "additionalProperties": {

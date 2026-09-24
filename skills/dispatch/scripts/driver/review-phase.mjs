@@ -146,7 +146,7 @@ function cleanText(text, fallback) {
 // SECTION: entry points
 
 /** Starts `--run review`; returns the first action. */
-export async function startReview({ invocation, cwd, resumeCommand, transient = false }) {
+export async function startReview({ invocation, cwd, resumeCommand }) {
   const repoRoot = gitRoot(cwd);
   const inferred = invocation.kind
     ? { kind: invocation.kind, ...(invocation.argument ? kindTarget(invocation.kind, invocation.argument) : {}) }
@@ -157,7 +157,6 @@ export async function startReview({ invocation, cwd, resumeCommand, transient = 
   const normalized = { ...invocation, kind };
   const state = createRunState({
     invocation: normalized,
-    transient,
     resumeCommand,
     repoRoot,
     kind,
@@ -191,7 +190,6 @@ export async function startReview({ invocation, cwd, resumeCommand, transient = 
   }
   state.policy = await resolvePolicy(config, levelInfo, normalized);
   state.artifactPath ??= existingWalkthrough(state);
-  if (transient) return finish(state, prepareWave(state, 'review'));
   const unapplied = normalized.fix ? unappliedFixesFromArtifact(state.artifactPath) : null;
   if (unapplied) {
     // Fixes queued in the log before the cache was lost: apply them (and re-offer the opt-in) before any new wave.
@@ -354,9 +352,6 @@ function prepareWave(state, type, rebuttal = null) {
       }, ['Repair the listed lint defects in place using the named template; reply with {"path": "<artifact path>"}.']);
     }
     return done(state, 'lint-defects', `${state.kind} lint failed; the review did not run.`, { defects: manifest.defects });
-  }
-  if (state.transient) {
-    fs.appendFileSync(manifest.promptPath, '\nBounded pre-production RED review: inspect only the changed tests and the RED matrix table under the walkthrough Verification & Validation section. Verify criterion coverage, negative assertions, test isolation, attribution to missing production behavior, and interruption/recovery coverage. Report raw claims; do not implement or certify production code.\n');
   }
   state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
   state.invocationContext = manifest.invocationContext;
@@ -658,7 +653,6 @@ function processCollected(state) {
   }
   state.adjudication = { round: state.wave.round, findings, sourceMap: state.collect.sourceMap, waveType: state.wave.type };
   if (findings.length === 0) {
-    if (state.transient) return done(state, 'complete', 'Bounded read review delivered no findings.');
     writeRound(state, []);
     return nextStep(state);
   }
@@ -713,15 +707,6 @@ function onAdjudicate(state, reply) {
     }
   }
   if (errors.length) return reemit(state, errors.join('; '));
-  if (state.transient) {
-    // An accepted CONSIDER is advice for the production writer, never a RED-gate blocker.
-    const accepted = rulings.filter(ruling => ruling.status === 'accepted');
-    const blocking = rulings.filter(ruling => ruling.status !== 'rejected' && !(ruling.status === 'accepted' && ruling.severity === 'CONSIDER'));
-    // Only fully accepted findings are repairable test defects; unresolved ones stay terminal.
-    const carried = accepted.length && blocking.every(ruling => ruling.status === 'accepted')
-      ? { defects: accepted.map(ruling => ({ key: ruling.key, severity: ruling.severity, tag: ruling.tag, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key) })) } : {};
-    return done(state, blocking.length ? 'refused' : 'complete', blocking.length ? 'Bounded test review has verified or unresolved findings.' : accepted.length ? 'Bounded test review accepted advisory findings only.' : 'Bounded test review claims were verified and rejected.', carried);
-  }
   if (rulings.some((ruling) => ruling.status === 'needs-user')) {
     state.rulings = rulings;
     return emitAction(state, 'ask-user', {

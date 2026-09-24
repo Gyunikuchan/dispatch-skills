@@ -7,11 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Faster implementation runs: the driver runs verify gates itself and extracts failure identities, RED checks run only the new tests, an unchanged tree reuses its baseline, and the pre-production RED review runs only at `high` effort and above
+- Faster implementation runs: the driver runs verify gates itself and extracts failure identities, RED checks run only the new tests, an unchanged tree reuses its baseline, and the pre-production RED test review is gone (code review after production covers test quality)
 - Easier recovery: a failed task can `retry` in the same run with your ruling as context, and verify logs are kept per run
 - Plans can declare `[GENERATED]` paths with a generator command; the driver regenerates them at completion instead of asking about them
 - Leaner walkthroughs and write briefs: task snapshots live in Git, the RED matrix renders as a table, and writers receive a hashed brief file
 - All temporary files for a run now live in one session directory under the OS temp directory
+- `--drive` advances a run until it needs you: the driver runs review waves and verify gates itself, and a re-requested gate on an unchanged tree reuses its results
+- Write subagents check their own reply with `--check-envelope` before returning, and their briefs rule out full-suite runs and shell text rewrites
+- `implement` on a plan whose review already settled starts at baseline instead of reviewing it again
 
 ## [0.5.0] - 2026-09-22
 

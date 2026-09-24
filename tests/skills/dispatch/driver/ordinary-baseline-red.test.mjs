@@ -11,7 +11,7 @@ import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driv
 afterEach(runCleanup);
 
 describe('ordinary driver canonical contracts: baseline and RED', () => {
-  it('executes mapped host baseline, typed approval, real RED, configured risk review and checkpoint relocation', () => {
+  it('executes mapped host baseline, typed approval, real RED and checkpoint relocation', () => {
     const fixture = setup();
     const result = run(fixture);
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));

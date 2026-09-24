@@ -32,23 +32,6 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     assert.equal(fs.readFileSync(fixture.plan, 'utf8'), before);
     assert.equal(fs.existsSync(walkthrough), false);
   });
-  it('relaunches tests-only once after an accepted test-review finding, then completes', () => {
-    const fixture = setup(); let testWaves = 0, testsWritten = false;
-    const base = policies(fixture.repo);
-    const finding = codeFinding({ locus: 'tests/sample.test.mjs:L3', defect: 'RED lacks a negative assertion.' });
-    const result = run(fixture, { runArgs: ['implement', '--level', 'high', '--orchestrator', 'claude', '--', fixture.plan], policy: {
-      delegateWrite(action) { testsWritten ||= action.fields.stage === 'tests-only'; return base.delegateWrite(action); },
-      // Only the first wave after the tests-only write is the RED test review.
-      waveResults: () => allProviders(report(testsWritten && ++testWaves === 1 ? [finding] : [])),
-      restate: () => ({ status: 'accepted', severity: 'MUST_FIX', scope: 'in-scope', locus: finding.locus, tag: 'testability', defect: finding.defect, resolution: 'Verified against the test.' }),
-    } });
-    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    const writes = result.trace.filter(action => action.action === 'delegate-write');
-    assert.deepEqual(writes.map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
-    assert.match(writes[1].fields.continuation.defects[0], /Accepted test-review finding .*negative assertion/);
-    const attempts = readLedger(result.done.ledgerPath).events.filter(event => event.type === 'implementation-attempt');
-    assert.deepEqual(attempts.map(event => [event.data.launch, event.data.attempt]), [['tests-only', 1], ['tests-only', 2], ['continuation', 2]]);
-  });
   it('asks once for a verbatim envelope when the relay fails its schema, without spending a launch', () => {
     const fixture = setup(); let relays = 0;
     const base = policies(fixture.repo);
@@ -108,8 +91,6 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     const result = run(fixture, { allowErrors: true, policy: {
       askUser(action) {
         if (action.question === 'baseline-red') return { answer: { decision: 'accept', reason: 'Pre-existing failure declared in the plan.' } };
-        // No test file changed, so the independent RED review has nothing to inspect.
-        if (action.question === 'risk-review-degradation') return { answer: { decision: 'accept', reason: 'Pre-existing RED; no changed tests to review.' } };
         return base.askUser(action);
       },
       delegateWrite(action) {
@@ -170,7 +151,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
       },
     });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    assert.match(production.guidance.join(' '), /CRITERIONs+SC#s*|/, 'guidance must name the CRITERION SC# | <paths> | <behavior> envelope row format');
+    assert.match(production.guidance.join(' '), /CRITERION\s+SC#\s*\|/, 'guidance must name the CRITERION SC# | <paths> | <behavior> envelope row format');
     const guidance = completion.guidance.join(' ');
     assert.match(guidance, /inspectedRevision/, 'guidance must name the inspectedRevision field');
     assert.match(guidance, /scopeHash/, 'guidance must state that inspectedRevision equals the summary scopeHash');

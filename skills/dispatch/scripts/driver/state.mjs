@@ -47,7 +47,7 @@ function writeAtomic(file, value) {
 
 /**
  * Creates a fresh run state with a new run ID. A top-level run opens its own session; a nested run
- * (bounded risk review) shares the bound session.
+ * (an implement run's plan or code review) shares the bound session.
  */
 export function createRunState(fields) {
   const runId = crypto.randomUUID();

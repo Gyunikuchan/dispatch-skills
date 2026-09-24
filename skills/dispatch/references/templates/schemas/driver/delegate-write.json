@@ -342,45 +342,6 @@
                 "redGate": {
                   "type": "string",
                   "minLength": 1
-                },
-                "reviewFindings": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "key",
-                      "severity",
-                      "tag",
-                      "locus",
-                      "defect"
-                    ],
-                    "properties": {
-                      "key": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "severity": {
-                        "enum": [
-                          "MUST",
-                          "SHOULD",
-                          "CONSIDER"
-                        ]
-                      },
-                      "tag": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "locus": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "defect": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  }
                 }
               }
             }

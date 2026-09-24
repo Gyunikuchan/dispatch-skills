@@ -78,7 +78,7 @@ describe('implement reference', () => {
     assert.match(text, /tests-only write subagent/);
     assert.match(text, /matrix row per red criterion/);
     assert.match(text, /driver observes the expected failure/);
-    assert.match(text, /At `high` and above, RED receives one bounded independent read-delegate check/);
+    assert.match(text, /No read review gates RED/);
   });
 
   it('preserves failures and requires explicit rulings', () => {

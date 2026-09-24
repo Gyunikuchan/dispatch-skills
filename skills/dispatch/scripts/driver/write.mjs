@@ -8,6 +8,8 @@ import { parseImplementationOutcome, resolveImplementationTransition } from '../
 import { emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
 import { ledgerSegment } from './ordinary-state.mjs';
 import { SKILL_ROOT } from './plan-phase.mjs';
+import { bindStateSession, readRunState } from './state.mjs';
+import { validateRedAdmission } from './verification.mjs';
 
 export function resolveWrite(state) {
   const { config } = loadDispatchConfig({ skillRoot: SKILL_ROOT });
@@ -23,6 +25,37 @@ export function resolveWrite(state) {
 function testsOnlyManifest(data) {
   return data.redCriteria.map(({ id, title, paths, commands }) => ({ id, outcome: title, approvedTestPaths: paths.filter(file => data.testsOnlyPaths.includes(file)), commands, expected: 'RED for the stated observable with a stable failure identity' }));
 }
+// SECTION: writer self-check
+// The brief names the exact `--check-envelope` command, so the writer repairs its own envelope
+// instead of spending a relay round trip on a driver rejection.
+function selfCheck(state) {
+  const quote = value => (/[\s"']/.test(value) ? JSON.stringify(value) : value);
+  return {
+    command: [process.execPath, state.dispatchScript, '--check-envelope', 'ENVELOPE_FILE', '--state', state.stateFile].map(quote).join(' '),
+    rule: 'Before returning, write your final envelope JSON to a temp file and run command with ENVELOPE_FILE replaced by its path; fix every listed defect and rerun until it prints ok:true. Return exactly the checked JSON object.',
+  };
+}
+/** Production criteria lacking a `CRITERION SC# | … <owned path> …` evidence row. */
+export function missingTrace(criteria, envelope) {
+  const rows = envelope?.evidence?.filter(item => typeof item === 'string' && item.startsWith('CRITERION ')) ?? [];
+  return criteria.filter(criterion => !rows.some(row => row.startsWith(`CRITERION ${criterion.id} |`) && criterion.paths.some(file => row.includes(file))));
+}
+/** Checks a write subagent's envelope file as acceptance would, without advancing the run. */
+export function checkEnvelope(stateFile, file) {
+  bindStateSession(stateFile);
+  const state = readRunState(stateFile);
+  if (state.pending?.action !== 'delegate-write') throw new Error('No delegate-write is pending for this state.');
+  const data = state.ordinary;
+  let envelope;
+  try { envelope = parseImplementationOutcome(fs.readFileSync(file, 'utf8')); } catch (error) { return { ok: false, errors: [error.message] }; }
+  const errors = [];
+  if (data.launch === 'tests-only') errors.push(...validateRedAdmission(state, envelope));
+  else if (['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) {
+    if (envelope.stage !== 'COMPLETE') errors.push('A production envelope reports stage COMPLETE.');
+    errors.push(...missingTrace(data.criteria, envelope).map(item => `Evidence needs a row "CRITERION ${item.id} | <one of: ${item.paths.join(', ')}> | <delivered behavior>".`));
+  }
+  return errors.length ? { ok: false, errors } : { ok: true };
+}
 function testsOnlyPrompt(state) {
   const data = state.ordinary;
   const repair = data.testsOnlyRepair;
@@ -31,7 +64,9 @@ function testsOnlyPrompt(state) {
     purpose: repair ? 'tests-only-admission-repair' : 'tests-only-red',
     manifest: testsOnlyManifest(data),
     boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
-    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling' },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS' },
+    selfCheck: selfCheck(state),
+    verification: VERIFICATION_RULES,
     ...(repair ? { admissionDefects: repair.defects } : {}),
   };
   return briefFile(state, `tests-only${repair ? '-repair' : ''}`, document);
@@ -44,6 +79,11 @@ function briefFile(state, name, document) {
   fs.writeFileSync(file, content, { mode: 0o600 });
   return { path: file, hash };
 }
+// The driver runs every gate itself, so a writer's own suite run only repeats that work inside its turns.
+const VERIFICATION_RULES = [
+  'Run only the narrowest command covering the files you changed (e.g. node --test <changed test file>); never run an aggregate suite such as npm test: the driver runs every mapped gate after you return.',
+  'Make edits with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.',
+];
 let packetSchema;
 function productionPrompt(state) {
   const data = state.ordinary;
@@ -53,12 +93,16 @@ function productionPrompt(state) {
     conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
     governingPlan: state.planPath,
     redGate: data.redGate ?? 'validated',
-    ...(data.carriedFindings?.length ? { reviewFindings: data.carriedFindings } : {}),
   };
   packetSchema ??= loadSchema('delegate-write').properties.fields.properties.packet.oneOf[1];
   const errors = validateAgainstSchema(packetSchema, packet, '$.packet');
   if (errors.length) throw new Error(`Invalid production packet: ${errors.join('; ')}`);
-  return briefFile(state, `production-a${data.attempt}`, { schemaVersion: 1, purpose: 'production', packet });
+  return briefFile(state, `production-a${data.attempt}`, {
+    schemaVersion: 1, purpose: 'production', packet,
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED', stage: 'COMPLETE', summary: 'non-empty string', evidence: 'array of strings holding one CRITERION <SC#> | <owning production path> | <delivered behavior> row per criterion', 'concerns|missingContext|blockers': 'array of non-empty strings, only with DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED respectively' },
+    selfCheck: selfCheck(state),
+    verification: VERIFICATION_RULES,
+  });
 }
 export function writeAction(state) {
   const data = state.ordinary;
@@ -89,7 +133,7 @@ export function writeAction(state) {
     evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
   } }, [
     'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Give it promptPath with promptHash, paths, criteria, and any evidence, context, continuation, or restore fields; do not restate the brief. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',
-    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict.${data.carriedFindings?.length ? ' Close packet.reviewFindings (accepted RED test-review findings) within the approved paths.' : ''} Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
+    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

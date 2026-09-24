@@ -92,7 +92,7 @@ function renderValidatedEvidence(text, ordinary) {
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
-  if (state.ordinary.checkpoint || state.reviewState?.kind === 'code' || state.riskState) return;
+  if (state.ordinary.checkpoint || state.reviewState?.kind === 'code') return;
   const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ...(state.designPath ? { designPath: relative(state, state.designPath), designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
   const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`\n`;
   const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);
