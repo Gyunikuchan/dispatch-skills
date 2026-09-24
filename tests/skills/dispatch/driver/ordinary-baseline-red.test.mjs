@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { ledgerNamespacePath, repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 
 import { implementationOutcome } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
@@ -20,6 +21,9 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.ok(result.done.handoff.destinations.every(file => fs.existsSync(file)));
     const ledger = readLedger(result.done.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);
+    // Pins where the rejected-approval case looks for a ledger.
+    assert.equal(path.dirname(result.done.ledgerPath), ledgerNamespacePath({ repoHash: repositoryRootHash(fixture.repo.dir) }));
+    assert.match(path.basename(result.done.ledgerPath), /-ledger\.md$/);
     assert.deepEqual(ledger.events.slice(0, 2).map(event => event.type), ['run-start', 'approval']);
     assert.equal(ledger.events[0].data.baseline.commit, fixture.repo.git('rev-parse', 'HEAD').toString().trim());
     assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
@@ -31,6 +35,35 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.match(testsOnly.guidance.join(' '), /Read .* fully/);
     assert.equal(result.trace.some(action => action.action === 'native-fallback'), false);
     assert.equal(ledger.events.at(-1).data.result, 'complete');
+  });
+  it('stops on a rejected approval without writing a ledger segment', () => {
+    const fixture = createOrdinaryDriverFixture();
+    const result = driveOrdinaryImplementation(fixture, { policy: {
+      ...ordinaryDriverPolicy(fixture.repo),
+      askUser(action) {
+        if (action.question === 'approval') return { answer: { decision: 'rejected', reason: 'Scope is wrong.' } };
+        return ordinaryDriverPolicy(fixture.repo).askUser(action);
+      },
+    } });
+    assert.equal(result.done.outcome, 'refused', JSON.stringify(result.done));
+    assert.match(result.done.reason, /Plan approval rejected: Scope is wrong\..*--phases from:plan/);
+    assert.equal(result.trace.some(action => action.action === 'delegate-write'), false);
+    const namespace = ledgerNamespacePath({ repoHash: repositoryRootHash(fixture.repo.dir) });
+    const ledgers = fs.existsSync(namespace) ? fs.readdirSync(namespace).filter(name => name.endsWith('-ledger.md')) : [];
+    assert.deepEqual(ledgers, [], 'rejection writes no ledger');
+  });
+  it('relays the red-criterion test-path lint warning in the approval items', () => {
+    const fixture = createOrdinaryDriverFixture();
+    fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace(/(  - Changes: [^\n]*?),\s*`?tests\/sample\.test\.mjs`?/, '$1'));
+    let approval;
+    driveOrdinaryImplementation(fixture, { allowErrors: true, policy: {
+      askUser(action) {
+        if (action.question === 'approval') { approval = action; return { answer: { decision: 'rejected', reason: 'Inspect warning only.' } }; }
+        return ordinaryDriverPolicy(fixture.repo).askUser(action);
+      },
+    } });
+    assert.ok(approval, 'reached approval');
+    assert.match(JSON.stringify(approval.items[0].warnings ?? []), /SC1 uses red evidence but its Changes line names no conventional test path/);
   });
   it('resumes an interrupted host RED verification without repeating approval or delegation', () => {
     const fixture = createOrdinaryDriverFixture(); let restarted = false;

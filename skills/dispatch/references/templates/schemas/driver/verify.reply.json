@@ -45,6 +45,7 @@
                 "minLength": 1
               },
               "inspectedRevision": {
+                "description": "The verify summary's scopeHash for the command carrying this criterion.",
                 "type": "string",
                 "minLength": 1
               },
@@ -145,6 +146,7 @@
                       "minLength": 1
                     },
                     "inspectedRevision": {
+                      "description": "The verify summary's scopeHash for the command carrying this criterion.",
                       "type": "string",
                       "minLength": 1
                     },

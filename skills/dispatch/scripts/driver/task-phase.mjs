@@ -470,6 +470,8 @@ function redRuling(state, answer) {
   }
   // A ruling answers only its criteria's missing-RED defects; any other RED-gate defect still rejects.
   const answered = new Set(['No host-observed RED.', ...redIds.flatMap(id => [`${id} exception requires an explicit evidence-backed ruling.`, `${id} has no matching stable failure in its mapped host command.`])]);
+  // A resumed run whose tests already exist changes nothing in tests-only; out-of-scope changes still reject.
+  if (!diffRepositoryState(data.taskStart, snapshot(state)).changed.length) answered.add('Tests-only mutation must change only classified approved test paths.');
   defects.push(...validateRed(state, data.envelope).filter(defect => !answered.has(defect)));
   if (defects.length) throw new Error(`red-ruling rejected: ${defects.join(' ')}`);
   const exceptions = entries.map(entry => (entry.kind === 'carry-over' ? { criterionId: entry.criterionId, kind: entry.kind, runId: entry.runId }

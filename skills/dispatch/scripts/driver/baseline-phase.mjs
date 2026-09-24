@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
-import { append, ask, ledgerSegment, relative, ruling } from './implement-state.mjs';
+import { lintPlan } from '../plan/lint.mjs';
+import { append, ask, ledgerSegment, relative, ruling, source } from './implement-state.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
@@ -48,7 +49,9 @@ export function baselineDecision(state) {
   data.phase = 'baseline';
   data.step = 'approval';
   data.approvalSnapshot = repositoryBaseline(state);
-  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.generators?.length ? { generators: data.generators } : {}) }]);
+  // Surfaced here too because a low run skips the plan review that would otherwise relay it.
+  const testPathWarnings = lintPlan(source(state)).warnings.filter(item => item.rule === 'criterion-red-test-path').map(item => item.message);
+  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence. To stop instead, return {decision:"rejected", reason}.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.generators?.length ? { generators: data.generators } : {}), ...(testPathWarnings.length ? { warnings: testPathWarnings } : {}) }]);
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;

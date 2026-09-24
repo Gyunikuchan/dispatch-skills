@@ -186,8 +186,12 @@ export async function advanceImplement(state, reply) {
         if (reply.answer?.decision === 'fix-first') { data.baselineAccepted = null; action = await consumeReview(state, await beginReview(state, 'plan')); }
         else action = acceptBaselineRuling(state, reply);
       } else if (data.step === 'approval') {
-        approve(state, reply);
-        action = await enterPhase(state, data.afterApproval ?? 'implementation');
+        // A rejection writes nothing: the plan stays unapproved and the user revises it before resuming.
+        if (reply.answer?.decision === 'rejected') action = refuse(state, `Plan approval rejected: ${String(reply.answer.reason ?? '').trim() || 'no reason given'}. Revise the plan, then resume with --phases from:plan.`);
+        else {
+          approve(state, reply);
+          action = await enterPhase(state, data.afterApproval ?? 'implementation');
+        }
       } else action = acceptImplementationDecision(state, reply);
     }
     return save(state, await action);

@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { DEFAULT_MANIFEST_NAME, skillDirInRepo } from '../lib/integrity.mjs';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { extractGeneratedPaths } from '../plan/structure.mjs';
 import { ledgerNamespacePath, repositoryRootHash } from '../artifacts/resolve-paths.mjs';
@@ -156,7 +157,10 @@ export function snapshot(state) {
   return capture;
 }
 export function fingerprint(state, paths = state.ordinary.approvedPaths) {
-  return materializedFingerprint(state.repoRoot, paths).digest;
+  // Dispatch's own manifest derives from the other paths and is rewritten before code review, so it never stales evidence.
+  const skillDir = skillDirInRepo(state.repoRoot);
+  const manifest = skillDir === null ? null : path.posix.join(skillDir, DEFAULT_MANIFEST_NAME);
+  return materializedFingerprint(state.repoRoot, manifest ? paths.filter(file => file !== manifest) : paths).digest;
 }
 export function repositoryBaseline(state) {
   const { commit, repositoryState, dirtyPaths } = baselineFingerprint(state.repoRoot);

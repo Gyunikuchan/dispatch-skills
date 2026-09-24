@@ -265,3 +265,17 @@ describe('walkthrough evidence restore', () => {
     assert.throws(() => restoreEvidence(state), /does not bind this governing plan/);
   });
 });
+
+// SECTION: Own-manifest fingerprint exclusion
+
+describe('fingerprint: dispatch integrity manifest', () => {
+  // This repository contains the skill, so the exclusion branch runs against the real manifest.
+  const repoRoot = path.resolve(import.meta.dirname, '../../../..');
+  const state = { repoRoot, ordinary: { approvedPaths: [] } };
+
+  it('ignores dispatch\'s own skill-hashes.json but not a host file of the same name', () => {
+    const base = ['skills/dispatch/SKILL.md'];
+    assert.equal(fingerprint(state, [...base, 'skills/dispatch/skill-hashes.json']), fingerprint(state, base));
+    assert.notEqual(fingerprint(state, [...base, 'src/skill-hashes.json']), fingerprint(state, base));
+  });
+});

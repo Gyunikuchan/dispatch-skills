@@ -10,7 +10,7 @@ import { sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { emitAction } from './actions.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { bindPlan, persistEvidence, source } from './implement-state.mjs';
-import { advanceReview, startReview } from './review-phase.mjs';
+import { advanceReview, regenerateRepoHashes, startReview } from './review-phase.mjs';
 import { resolveReviewLevel } from './review-policy.mjs';
 import { readRunState } from './state.mjs';
 
@@ -52,6 +52,10 @@ export function acceptPlan(state, reply) {
 export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;
   persistEvidence(state);
+  // NOTE: hashes regenerate only at the final gate, so a run editing dispatch itself fails the runner's
+  // integrity check here; approved paths are owned, and unowned drift fails by name before any launch.
+  const integrity = kind === 'code' ? regenerateRepoHashes(state.repoRoot, state.ordinary.approvedPaths) : null;
+  if (integrity) return emitAction(state, 'done', { outcome: 'failed', summary: integrity, command: state.resumeCommand });
   const action = await startReview({
     invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, argument: ['plan', 'design'].includes(kind) ? state.planPath : state.walkthroughPath },
     cwd: state.repoRoot, resumeCommand: state.resumeCommand,

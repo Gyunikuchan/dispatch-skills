@@ -105,13 +105,13 @@ function lintPlaceholders({ lines, warnings }) {
 // SECTION: Success criteria
 
 function lintCriteria(context, range) {
-  const { lines, records, defects } = context;
+  const { lines, records, defects, warnings } = context;
   const approved = new Set(records.filter(({ path: value }) => value).map(({ path: value }) => value));
   const ids = new Set();
   let current = null;
 
   const finish = () => {
-    if (current) finishCriterion(current, defects);
+    if (current) finishCriterion(current, defects, warnings);
   };
   for (const entry of lines.slice(range.start + 1, range.end)) {
     const item = /^(?:[-*+]|\d+[.)])\s+(.+)$/.exec(entry.text);
@@ -143,6 +143,7 @@ function readCriterionMapping(current, entry, approved, defects) {
   if (changes) {
     current.hasMapping = true;
     for (const value of changes[1].split(',')) lintCriterionPath(value, entry.line, approved, defects);
+    current.changePaths = [...(current.changePaths ?? []), ...changes[1].split(',').map(value => normalizePlanPath(value).path).filter(Boolean)];
   }
 
   const verify = /^ {2,}[-*+] Verify:\s*(.+)$/.exec(entry.text);
@@ -183,13 +184,16 @@ function lintCriterionPath(value, line, approved, defects) {
 }
 
 const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
+// Common test-path conventions; a heuristic, so a miss only warns (inline tests such as Rust's live in src).
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 
-function finishCriterion(current, defects) {
+function finishCriterion(current, defects, warnings) {
   if (!current.hasMapping) defects.push(diagnostic('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
   if (!current.evidence) defects.push(diagnostic('criterion-evidence', current.line, `Criterion ${current.id ?? 'without an ID'} requires exactly one Evidence mapping: red, verify, or review.`));
   else if (!ACCEPTED_EVIDENCE.includes(current.evidence)) defects.push(diagnostic('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidence}"; accepted classes are red, verify, review.`));
   if (!current.testRationale) defects.push(diagnostic('criterion-test-rationale', current.line, 'Criterion requires a concrete Test rationale describing retained RED signal or why a new retained test is low-signal.'));
   if (current.redException !== undefined && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) defects.push(diagnostic('criterion-red-exception', current.redExceptionLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
+  if (current.evidence === 'red' && current.redException === undefined && current.changePaths?.length && !current.changePaths.some(file => TEST_PATH.test(file))) warnings.push(diagnostic('criterion-red-test-path', current.line, `Criterion ${current.id ?? 'without an ID'} uses red evidence but its Changes line names no conventional test path; approval classifies tests-only paths only from red criteria's Changes lines.`, 'warning'));
   if (current.evidence !== 'review') return;
   if (!current.review) defects.push(diagnostic('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.'));
   if (current.review && !/(?:artifact|file|path)\s*:/i.test(current.review)) defects.push(diagnostic('criterion-review', current.reviewLine, 'Review must name the artifact with artifact:, file:, or path:.'));

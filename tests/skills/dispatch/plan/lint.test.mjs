@@ -184,4 +184,14 @@ describe('plan lint: RED exception field', () => {
   it('rejects a RED exception on a non-red criterion', () => {
     assert.ok(rules(lintPlan(withException('behavior-preserving', 'verify'))).includes('criterion-red-exception'));
   });
+
+  it('warns on a red criterion whose Changes line names no test path unless it declares an exception', () => {
+    const warned = plan => lintPlan(plan).warnings.map(({ rule }) => rule).includes('criterion-red-test-path');
+    const noTest = VALID_PLAN.replace('  - Changes: `src/a.js`, tests/a.test.js', '  - Changes: `src/a.js`');
+    assert.ok(warned(noTest));
+    assert.deepEqual(lintPlan(noTest).defects, []);
+    assert.ok(!warned(VALID_PLAN));
+    assert.ok(!warned(noTest.replace('  - Evidence: red', '  - Evidence: red\n  - RED exception: already-satisfied')));
+    assert.ok(!warned(noTest.replace('  - Evidence: red', '  - Evidence: verify')));
+  });
 });

@@ -21,7 +21,7 @@ import { formatApplicationRecord, formatSourceMapLine, nextFindingId, scanResolu
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
-import { integrityDiagnostic, regenerateOwnedHashes } from '../lib/integrity.mjs';
+import { integrityDiagnostic, regenerateOwnedHashes, skillDirInRepo } from '../lib/integrity.mjs';
 import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
 import {
   FOLLOW_UPS,
@@ -881,7 +881,7 @@ function onApplyFixes(state, reply) {
     const failure = defects.length ? `lint: ${defects.map((defect) => defect.rule).join(', ')}` : null;
     return settleVerification(state, () => failure);
   }
-  const integrity = regenerateFixHashes(state);
+  const integrity = regenerateRepoHashes(state.repoRoot, state.fix.active.filter((c) => !c.applyFailure).flatMap((c) => c.affectedPaths ?? []));
   if (integrity) return done(state, 'failed', integrity, { command: state.resumeCommand });
   const commands = [...new Set(state.fix.active.filter((c) => !c.applyFailure).flatMap((c) => c.verification))];
   if (commands.length === 0) return settleVerification(state, () => null);
@@ -890,16 +890,19 @@ function onApplyFixes(state, reply) {
 }
 
 /**
- * Regenerates the skill manifest when every integrity violation is an applied fix path; returns the
- * failure diagnostic otherwise. Installed skills outside the repository are never rewritten.
+ * Regenerates the skill manifest when every integrity violation is one of `ownedPaths` (repo-relative);
+ * returns the failure diagnostic otherwise. Installed skills outside the repository are never rewritten.
+ *
+ * @param {string} repoRoot
+ * @param {string[]} ownedPaths
+ * @returns {string | null}
  */
-function regenerateFixHashes(state) {
-  const real = (/** @type {string} */ value) => { try { return fs.realpathSync.native(value); } catch { return path.resolve(value); } };
-  const relative = path.relative(real(state.repoRoot), real(DISPATCH_DIR));
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
-  const edited = state.fix.active.filter((c) => !c.applyFailure).flatMap((c) => c.affectedPaths ?? [])
-    .map((value) => path.join(real(state.repoRoot), value));
-  const skillDir = path.join(real(state.repoRoot), relative);
+export function regenerateRepoHashes(repoRoot, ownedPaths) {
+  const relative = skillDirInRepo(repoRoot, DISPATCH_DIR);
+  if (relative === null) return null;
+  const root = fs.realpathSync.native(repoRoot);
+  const edited = ownedPaths.map((value) => path.join(root, value));
+  const skillDir = path.join(root, relative);
   const result = regenerateOwnedHashes(skillDir, edited);
   return result.violations.length && !result.regenerated ? integrityDiagnostic(skillDir) : null;
 }

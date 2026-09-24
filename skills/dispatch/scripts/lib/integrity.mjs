@@ -9,8 +9,24 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const DEFAULT_MANIFEST_NAME = 'skill-hashes.json';
+export const DEFAULT_MANIFEST_NAME = 'skill-hashes.json';
+/** The dispatch skill directory this module ships in. */
+export const DISPATCH_SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/**
+ * `skillDir` as a repo-relative forward-slash path, or null when it is installed outside `repoRoot`.
+ *
+ * @param {string} repoRoot
+ * @param {string} [skillDir]
+ * @returns {string | null}
+ */
+export function skillDirInRepo(repoRoot, skillDir = DISPATCH_SKILL_DIR) {
+  const real = (/** @type {string} */ value) => { try { return fs.realpathSync.native(value); } catch { return path.resolve(value); } };
+  const relative = path.relative(real(repoRoot), real(skillDir));
+  return !relative || relative.startsWith('..') || path.isAbsolute(relative) ? null : relative.split(path.sep).join('/');
+}
 const HASHED_REFERENCE_EXTENSION = /\.(?:md|json)$/;
 
 // SECTION: Hashing and verification
