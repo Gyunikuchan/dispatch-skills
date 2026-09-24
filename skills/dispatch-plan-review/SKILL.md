@@ -1,6 +1,7 @@
 ---
 name: dispatch-plan-review
 description: Use only when the user explicitly invokes `/dispatch-plan-review`.
+disable-model-invocation: true
 ---
 
 # Plan review alias

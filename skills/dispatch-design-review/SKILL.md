@@ -1,6 +1,7 @@
 ---
 name: dispatch-design-review
 description: Use only when the user explicitly invokes `/dispatch-design-review`.
+disable-model-invocation: true
 ---
 
 # Design review alias

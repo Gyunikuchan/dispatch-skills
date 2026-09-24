@@ -1,6 +1,7 @@
 ---
 name: implement-dispatch
 description: Use only when the user explicitly invokes `/implement-dispatch`.
+disable-model-invocation: true
 ---
 
 # Implementation alias

@@ -1,6 +1,7 @@
 ---
 name: dispatch-code-review
 description: Use only when the user explicitly invokes `/dispatch-code-review`.
+disable-model-invocation: true
 ---
 
 # Code review alias

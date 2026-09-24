@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: Use `/dispatch [level] [(pins)] [ask|plan|design|review|implement]: <argument>`.
+description: "Use `/dispatch [level] [(pins)] [ask|plan|design|review|implement]: <argument>`."
 ---
 
 # Dispatch
