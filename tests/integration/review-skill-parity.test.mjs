@@ -79,12 +79,12 @@ describe("R10 shared review frame assembly", () => {
     assert.match(frame, /Adhere to this project's conventions/);
     assert.match(
       frame,
-      /End your reply with one JSON object holding every finding/,
+      /Your whole reply is one JSON object holding every finding/,
     );
     for (const kind of ["plan", "code", "design"])
       assert.doesNotMatch(
         read(`skills/dispatch/references/templates/review-prompt-${kind}.md`),
-        /End your reply with one JSON object/,
+        /Your whole reply is one JSON object/,
       );
   });
   it("keeps aliases independent of prompt implementation", () => {

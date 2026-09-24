@@ -57,8 +57,8 @@ Treat the tool-turn value as one advisory target. Stop early when grounded. Exce
 named in-scope risk supported by evidence.
 
 ### Reply
-Reply once the review is complete.
-End your reply with one JSON object holding every finding. For a clean review use:
+Your whole reply is one JSON object holding every finding; the JSON is the report. If JSON cannot
+carry a finding, write that finding as plain text instead. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -68,7 +68,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"§ <Design heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Every finding needs a verifiable claim and a `§ <Design heading>` locus. Cite existing code as
-`path/to/file:L<line>` inside `defect`. Use only the tags above. Omit praise, summaries, and next
-steps.
+Every finding needs a verifiable claim at its locus. Use only the tags above.
+Cite existing code as `path/to/file:L<line>` inside `defect`.
 ````

@@ -63,8 +63,8 @@ If unspecified, target `8 + 2 × changed files`; on re-review count files change
 round only.
 
 ### Reply
-Reply once the review is complete.
-End your reply with one JSON object holding every finding. For a clean review use:
+Your whole reply is one JSON object holding every finding; the JSON is the report. If JSON cannot
+carry a finding, write that finding as plain text instead. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -74,6 +74,7 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"<relative-file>:L<line>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Every finding needs a verifiable claim: in scope, a changed-line locus; `adjacent`, its real locus.
-Use only the tags above. Omit praise, summaries, and next steps.
+Every finding needs a verifiable claim at its locus. Use only the tags above.
+Anchor every in-scope finding on a line the diff adds or changes; a finding anchored anywhere else
+is `adjacent`.
 ````
