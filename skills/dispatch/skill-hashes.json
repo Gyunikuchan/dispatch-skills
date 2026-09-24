@@ -38,7 +38,7 @@
   "references/templates/schemas/report-plan.json": "905f9591ed764866bff83bb923dd8453c14c1181ffa26b160d4a18f2c46dda1b",
   "references/templates/walkthrough.md": "70c4f4fec570f477c1e8f2db7f05817fb1a700bf68f04322033d963bda441185",
   "references/verbs/design.md": "5407b607c8115828cf7d2b6485119df301b3111169073fedc008d0f5e875c12f",
-  "references/verbs/implement.md": "461d52318b7da1cb94a1c2be0babf1ab432b59081b2ff0e0582de5439cf903ea",
+  "references/verbs/implement.md": "bea196dc17b41e35f129f71d32ec6f052b4bf4a67a0fa0c684f1c99a65d46d67",
   "scripts/artifacts/relocate-scratch.mjs": "62f4fba6402369814fd7eb33b5dc57d4b52d5d88c47f8b7d65e0e809cbc14b9e",
   "scripts/artifacts/resolve-paths.mjs": "86f0782a9db654c496bf8d0c18635d53566f569e9780803ab7c476b4c3954d19",
   "scripts/design/amendment.mjs": "29ce8d1836b4688f8d2bb5df8e0c54546121e2216352085938b3596ad4741146",
