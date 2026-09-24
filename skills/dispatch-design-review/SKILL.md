@@ -1,7 +1,6 @@
 ---
 name: dispatch-design-review
-description: Compatibility alias for reviewing a technical design.
-disable-model-invocation: true
+description: Use only when the user explicitly invokes `/dispatch-design-review`.
 ---
 
 # Design review alias

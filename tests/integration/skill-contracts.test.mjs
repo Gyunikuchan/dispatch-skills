@@ -33,7 +33,8 @@ describe('companion aliases', () => {
   for (const name of ALIASES) {
     it(`${name} stays a small mapping-only alias`, () => {
       const text = read(`skills/${name}/SKILL.md`);
-      assert.match(text, /disable-model-invocation: true/);
+      assert.doesNotMatch(text, /disable-model-invocation/);
+      assert.ok(text.includes(`description: Use only when the user explicitly invokes \`/${name}\`.`));
       assert.match(text, new RegExp(`${name} requires the dispatch skill`));
       assert.ok(text.trim().split(/\s+/).length < 100, `${name} is not a small alias`);
       assert.doesNotMatch(text, /prepare-review\.mjs|parse-report\.mjs|check-consensus\.mjs|resolve-flow\.mjs|ledger-events|task-start|run-complete/);

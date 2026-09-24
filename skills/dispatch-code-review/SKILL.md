@@ -1,7 +1,6 @@
 ---
 name: dispatch-code-review
-description: Compatibility alias for reviewing code changes.
-disable-model-invocation: true
+description: Use only when the user explicitly invokes `/dispatch-code-review`.
 ---
 
 # Code review alias

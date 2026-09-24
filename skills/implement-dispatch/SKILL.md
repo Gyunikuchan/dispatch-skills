@@ -1,7 +1,6 @@
 ---
 name: implement-dispatch
-description: Compatibility alias for the dispatch implementation workflow.
-disable-model-invocation: true
+description: Use only when the user explicitly invokes `/implement-dispatch`.
 ---
 
 # Implementation alias

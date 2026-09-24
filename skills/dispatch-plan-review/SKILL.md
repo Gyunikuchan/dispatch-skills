@@ -1,7 +1,6 @@
 ---
 name: dispatch-plan-review
-description: Compatibility alias for reviewing an implementation plan.
-disable-model-invocation: true
+description: Use only when the user explicitly invokes `/dispatch-plan-review`.
 ---
 
 # Plan review alias
