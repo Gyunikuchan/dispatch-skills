@@ -382,7 +382,7 @@ function verificationTable(record) {
       return `| ${cell(key.replace(/Results$/, ''))} | \`${cell(result.command)}\` | ${cell(result.exitStatus ?? result.exit)} | ${cell(result.pass)} | ${cell(result.fail)} | ${cell(result.mutationEpoch)} | ${cell(criteria.join(', '))} |`;
     }));
   if (!rows.length) return '';
-  return ['### Host verification results', '', '| Purpose | Command | Exit | Pass | Fail | Epoch | Criteria |', '| --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n');
+  return ['### Host verification results', '> Source: driver run-state evidence, not canonical walkthrough prose.', '', '| Purpose | Command | Exit | Pass | Fail | Epoch | Criteria |', '| --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n');
 }
 function withVerificationTable(body) {
   const match = EVIDENCE_BLOCK.exec(body);
@@ -396,6 +396,61 @@ function withVerificationTable(body) {
   return section.test(stripped)
     ? stripped.replace(section, (text) => `${text.trimEnd()}\n\n${table}\n`)
     : `${stripped.trimEnd()}\n\n## Verification & Validation\n\n${table}\n`;
+}
+
+// SECTION: projection transforms
+// Pure text rewrites applied on every round, so round-1 and re-review briefs share one shape.
+
+const DEFAULT_SCOPE_NOTE = /^- \*\*\[MODIFY\]\*\* `([^`]+)` — Approved implementation scope\.$/;
+// Collapses note-free approved-scope bullets into one line; bullets with their own note stay.
+function collapseApprovedScope(body) {
+  const lines = body.split('\n');
+  const first = lines.findIndex((line) => DEFAULT_SCOPE_NOTE.test(line));
+  if (first === -1) return body;
+  const paths = lines.filter((line) => DEFAULT_SCOPE_NOTE.test(line)).map((line) => `\`${DEFAULT_SCOPE_NOTE.exec(line)[1]}\``);
+  const kept = lines.filter((line, index) => index === first || !DEFAULT_SCOPE_NOTE.test(line));
+  kept[first] = `- **[MODIFY]** Approved implementation scope: ${paths.join(', ')}`;
+  return kept.join('\n');
+}
+
+// Drops Automated Tests bullets that repeat a Success Criteria `Verify:` command verbatim.
+function dedupeAutomatedTests(body) {
+  const verify = new Set([...body.matchAll(/^\s+- Verify: `([^`]+)`\s*$/gm)].map((match) => match[1]));
+  if (!verify.size) return body;
+  return body.replace(/(\n### Automated Tests\n)([\s\S]*?)(?=\n#{2,3} |$)/, (_, heading, section) => {
+    const lines = section.split('\n');
+    const kept = lines.filter((line) => !verify.has(/^- `([^`]+)`\s*$/.exec(line)?.[1]));
+    if (kept.length === lines.length) return `${heading}${section}`;
+    const note = '- Every Success Criteria `Verify:` command.';
+    return `${heading}${[note, ...kept.filter((line) => line.trim())].join('\n')}\n`;
+  });
+}
+
+// Groups entries sharing locus and tag (first-occurrence order); application lines stay attached.
+function groupRoundEntries(roundText) {
+  const lines = roundText.split('\n');
+  const head = [];
+  const blocks = [];
+  for (const line of lines) {
+    if (/^[-*]\s+\*\*\[/.test(line)) blocks.push([line]);
+    else if (blocks.length && /^\s+\S/.test(line)) blocks.at(-1).push(line);
+    else if (blocks.length) blocks.at(-1).push(line);
+    else head.push(line);
+  }
+  const keyOf = (block) => /\]\s+(\S+)\s+—\s+([a-z-]+):/.exec(block[0])?.slice(1).join(' ') ?? block[0];
+  const order = [...new Set(blocks.map(keyOf))];
+  return [...head, ...order.flatMap((key) => blocks.filter((block) => keyOf(block) === key).flat())].join('\n');
+}
+
+/** Repository paths named by the latest round's application records. */
+export function resolutionPaths(markdown) {
+  const round = scanResolutionLog(markdown, { strict: true }).rounds.at(-1);
+  return [...new Set((round?.entries ?? []).flatMap((entry) => entry.application?.affectedPaths ?? []))].sort();
+}
+
+/** Advisory tool-turn target: 8 + 2 × scoped files. */
+export function toolTurnTarget(paths) {
+  return String(8 + 2 * paths.length);
 }
 
 export function buildReviewView(markdown, { canonicalPath, nextRound }) {
@@ -418,13 +473,14 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
     `> Canonical artifact: ${canonicalPath}`,
     '> Apply adjudication and edits only to the canonical artifact.',
     '',
-    withVerificationTable(scan.semanticBody),
+    dedupeAutomatedTests(collapseApprovedScope(withVerificationTable(scan.semanticBody))),
     '',
     '## Review Findings & Resolutions (bounded view)',
+    '> Source: canonical resolution log, bounded to live and immediately preceding rounds.',
   ];
   if (summaries.length) parts.push('', '### Older settled rounds', '', ...summaries.map(summaryLine));
   if (live.length) parts.push('', '### Live findings from older rounds', '', ...live);
-  if (previous) parts.push('', '### Immediately preceding round', '', withoutSourceMap(previous.text));
+  if (previous?.entries.length) parts.push('', '### Immediately preceding round', '', groupRoundEntries(withoutSourceMap(previous.text)));
   return {
     contents: `${parts.join('\n').trim()}\n`,
     sourceRoundCount: scan.rounds.length,

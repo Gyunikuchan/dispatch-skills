@@ -58,8 +58,14 @@ function redMatrix(ordinary) {
     .map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean);
   if (!rows.length) return [];
   const observed = (ordinary.redResults ?? []).map(result => `\`${cell(result.ran ?? result.command)}\` exit ${result.exitStatus}${result.fail !== undefined ? `, ${result.fail} failing` : ''}`).join('; ');
+  // A shared command's failure set repeats per criterion; print each repeated set once as a label.
+  const counts = new Map();
+  for (const [, , , failure] of rows) counts.set(cell(failure), (counts.get(cell(failure)) ?? 0) + 1);
+  const labels = new Map([...counts].filter(([, count]) => count > 1).map(([failure], index) => [failure, `S${index + 1}`]));
+  const sets = [...labels].map(([failure, label]) => `- ${label}: ${failure}`);
   return ['### RED matrix', `Host RED run: ${observed || 'not recorded'}.`, '', '| Criterion | Test | Expected failure |', '| --- | --- | --- |',
-    ...rows.map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${cell(failure)} |`), ''];
+    ...rows.map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${labels.has(cell(failure)) ? `see ${labels.get(cell(failure))}` : cell(failure)} |`), '',
+    ...(sets.length ? ['Shared failure sets:', ...sets, ''] : [])];
 }
 function replaceVerification(text, lines) {
   // NOTE: a host-authored walkthrough may use CRLF; an LF-only match would silently skip the rewrite.

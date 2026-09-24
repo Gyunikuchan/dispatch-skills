@@ -375,13 +375,10 @@ function prepareDocumentReview(entry, request, {
   if (reviewMode === 'rebuttal' && !request.findingPacketPath) {
     throw new Error('rebuttal review requires findingPacketPath.');
   }
-  let reviewPath = resolved.path;
-  const cleanupPaths = [];
-  if (artifact.metadata || round > 1 || reviewMode === 'rebuttal') {
-    const view = createReviewView({ artifact: resolved.path, nextRound: round });
-    reviewPath = view.viewPath;
-    cleanupPaths.push(view.cleanupPath);
-  }
+  // Every round reads the projection, so round-1 and re-review briefs share one shape.
+  const view = createReviewView({ artifact: resolved.path, nextRound: round });
+  const reviewPath = view.viewPath;
+  const cleanupPaths = [view.cleanupPath];
   const derivedScope = reviewMode === 'rebuttal'
     ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}`
     : round === 1

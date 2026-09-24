@@ -94,6 +94,21 @@ describe('walkthrough evidence rendering', () => {
     assert.match(text, /### RED matrix/);
     assert.match(text, /\| SC1 \| `tests\/a\.test\.mjs` \| exit 1 test:a \|/);
   });
+  it('prints a failure set shared by several RED rows once and references it', () => {
+    const repo = makeGitRepo();
+    cleanup.push(repo.cleanup);
+    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
+    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', ''].join('\n'));
+    const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs:a | exit 1 test:a; test:b', 'RED-MATRIX SC2 | tests/a.test.mjs:b | exit 1 test:a; test:b', 'RED-MATRIX SC3 | tests/c.test.mjs:c | exit 1 test:c'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
+    persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
+    const text = fs.readFileSync(walkthroughPath, 'utf8');
+    assert.match(text, /\| SC1 \| `tests\/a\.test\.mjs:a` \| see S1 \|/);
+    assert.match(text, /\| SC2 \| `tests\/a\.test\.mjs:b` \| see S1 \|/);
+    assert.match(text, /\| SC3 \| `tests\/c\.test\.mjs:c` \| exit 1 test:c \|/);
+    const matrix = /### RED matrix\n[\s\S]*?(?=\n## )/.exec(text)[0];
+    assert.equal(matrix.match(/exit 1 test:a; test:b/g).length, 1);
+    assert.match(matrix, /Shared failure sets:\n- S1: exit 1 test:a; test:b/);
+  });
 });
 
 describe('walkthrough evidence restore', () => {

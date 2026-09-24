@@ -20,12 +20,15 @@ import {
   readInvocationState,
   readJsonRequest,
   requireNode22,
+  resolutionPaths,
   semanticSectionHashes,
   settledWritesMismatch,
   sha256,
   slugFromPath,
+  toolTurnTarget,
   writeArtifactMetadata,
 } from '../../../skills/dispatch/scripts/review-preparation.mjs';
+import { formatApplicationRecord } from '../../../skills/dispatch/scripts/resolution-log.mjs';
 import { generateSkillHashes } from '../../../skills/dispatch/scripts/common.mjs';
 
 const tempDirs = [];
@@ -114,6 +117,58 @@ describe('review preparation primitives', () => {
     const view = buildReviewView(artifact, { canonicalPath: 'plan.md', nextRound: 2 });
     assert.match(view.contents, /# Plan/);
     assert.doesNotMatch(view.contents, /schemaVersion|dispatch/);
+  });
+
+  describe('projection transforms', () => {
+    const sources = `- **Sources:** ${JSON.stringify({ 'code-review:R1:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } })}`;
+    const entry = (id, locus, tag) => `- **[Accepted]** [${id}] [SHOULD] [sources=code-review:R1:claude:0] ${locus} — ${tag}: x → y`;
+    const application = (findingId, affectedPaths) => formatApplicationRecord({ v: 1, findingId, state: 'applied', scope: 'in-scope', affectedPaths, dependsOn: [], verification: [], reason: 'verified' });
+    const artifact = (round = []) => [
+      '# Plan', '',
+      '## Success Criteria',
+      '- [SC1] One.', '  - Verify: `node --test a.test.mjs`', '',
+      '## Proposed Changes',
+      '- **[MODIFY]** `a.mjs` — Approved implementation scope.',
+      '- **[MODIFY]** `b.mjs` — Adds the parser.',
+      '- **[MODIFY]** `c.mjs` — Approved implementation scope.', '',
+      '## Verification Plan', '### Automated Tests', '- `node --test a.test.mjs`', '- `node --test extra.test.mjs`',
+      '### Manual Verification', '- Run doctor.', '',
+      '## Review Findings & Resolutions', ...round,
+    ].join('\n');
+    const view = (round, nextRound = 1) => buildReviewView(artifact(round), { canonicalPath: 'plan.md', nextRound }).contents;
+
+    it('collapses note-free approved-scope bullets and keeps annotated ones', () => {
+      const contents = view();
+      assert.match(contents, /- \*\*\[MODIFY\]\*\* Approved implementation scope: `a\.mjs`, `c\.mjs`/);
+      assert.match(contents, /`b\.mjs` — Adds the parser\./);
+      assert.equal(contents.match(/Approved implementation scope/g).length, 1);
+    });
+
+    it('drops Automated Tests commands that repeat a Verify line and keeps the rest', () => {
+      const contents = view();
+      const tests = /### Automated Tests\n([\s\S]*?)\n### Manual Verification/.exec(contents)[1];
+      assert.match(tests, /Every Success Criteria `Verify:` command/);
+      assert.doesNotMatch(tests, /`node --test a\.test\.mjs`/);
+      assert.match(tests, /extra\.test\.mjs/);
+      assert.match(contents, /- Run doctor\./);
+    });
+
+    it('omits an empty preceding round and groups entries sharing locus and tag', () => {
+      assert.doesNotMatch(view(['### Round 1 — 2026-09-23', sources], 2), /Immediately preceding round|### Round 1/);
+      const round = ['### Round 1 — 2026-09-23', sources,
+        entry('R1-F001', 'a.mjs:L1', 'reuse'), application('R1-F001', ['a.mjs']),
+        entry('R1-F002', 'b.mjs:L2', 'runtime'),
+        entry('R1-F003', 'a.mjs:L1', 'reuse'), application('R1-F003', ['a.mjs', 'b.mjs'])];
+      const order = [...view(round, 2).matchAll(/\[(R1-F00\d)\] \[SHOULD\]|"findingId":"(R1-F00\d)"/g)].map((match) => match[1] ?? `app:${match[2]}`);
+      assert.deepEqual(order, ['R1-F001', 'app:R1-F001', 'R1-F003', 'app:R1-F003', 'R1-F002']);
+      assert.deepEqual(resolutionPaths(artifact(round)), ['a.mjs', 'b.mjs']);
+    });
+
+    it('labels projected sources and derives the advisory turn target from scoped files', () => {
+      assert.match(view(), /## Review Findings & Resolutions \(bounded view\)\n> Source: canonical resolution log/);
+      assert.equal(toolTurnTarget([]), '8');
+      assert.equal(toolTurnTarget(['a.mjs', 'b.mjs']), '12');
+    });
   });
 
   it('shared review prompt template states the read-only inspection bound (SC1)', () => {

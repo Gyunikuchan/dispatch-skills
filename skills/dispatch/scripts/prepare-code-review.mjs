@@ -29,6 +29,8 @@ import {
   createDispatchFiles,
   createInvocationState,
   createReviewView,
+  resolutionPaths,
+  toolTurnTarget,
   FIELD_HINTS,
   readArtifact,
   readInvocationState,
@@ -496,31 +498,30 @@ export function prepareCodeReview(request, {
     throw new Error('rebuttal review requires findingPacketPath.');
   }
   const cleanupPaths = [];
-  let reviewPath = walkthroughPath;
-  if (walkthrough.metadata || round > 1 || reviewMode === 'rebuttal') {
-    const view = createReviewView({ artifact: walkthroughPath, nextRound: round });
-    reviewPath = view.viewPath;
-    cleanupPaths.push(view.cleanupPath);
-  }
+  // Every round reads the projection, so round-1 and re-review briefs share one shape.
+  const view = createReviewView({ artifact: walkthroughPath, nextRound: round });
+  const reviewPath = view.viewPath;
+  cleanupPaths.push(view.cleanupPath);
   let planReviewPath = pair.plan.exists ? path.resolve(repoRoot, pair.plan.path) : null;
   if (planReviewPath) {
     const planScan = scanResolutionLog(fs.readFileSync(planReviewPath, 'utf8'), { strict: true });
-    if (planScan.rounds.length > 0) {
-      const planView = createReviewView({
-        artifact: planReviewPath,
-        nextRound: (planScan.rounds.at(-1)?.number ?? 0) + 1,
-      });
-      planReviewPath = planView.viewPath;
-      cleanupPaths.push(planView.cleanupPath);
-    }
+    const planView = createReviewView({
+      artifact: planReviewPath,
+      nextRound: (planScan.rounds.at(-1)?.number ?? 0) + 1,
+    });
+    planReviewPath = planView.viewPath;
+    cleanupPaths.push(planView.cleanupPath);
   }
+  // Resolutions can land before the prior wave's snapshot; their application records still name the paths.
+  const scopedPaths = round === 1 ? gitSnapshot.paths
+    : reReviewPaths.length ? reReviewPaths : resolutionPaths(walkthrough.source);
   const derivedScope = reviewMode === 'rebuttal'
     ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}`
     : round === 1
       ? scopeResult.reviewScope
       : freshness.bodyOnly
         ? `Re-review round ${round} — walkthrough body changed; review full selected range (${scopeResult.reviewScope})`
-        : `Re-review round ${round} — changed paths: ${reReviewPaths.join(', ') || 'review resolutions only'}; ${scopeResult.reviewScope}`;
+        : `Re-review round ${round} — changed paths: ${scopedPaths.join(', ') || 'review resolutions only'}; ${scopeResult.reviewScope}`;
   const scope = request.reviewScope ? `${derivedScope}; ${request.reviewScope}` : derivedScope;
   let designContext = null;
   if (request.designPath !== undefined || request.incrementId !== undefined) {
@@ -556,14 +557,14 @@ export function prepareCodeReview(request, {
       'Plan Path': toManifestPath(planReviewPath, repoRoot) ?? 'None',
       'User Focus Areas': request.focus ?? 'General review',
       'Review Scope': scope,
-      'Tool Turn Budget': request.toolTurnBudget ?? 'Unspecified',
+      'Tool Turn Budget': request.toolTurnBudget ?? toolTurnTarget(scopedPaths),
     })
     : loadPrompt(REBUTTAL_FRAME, REVIEW_KINDS.code.rebuttalBlock, {
       'Walkthrough Path': toManifestPath(reviewPath, repoRoot),
       'Plan Path': toManifestPath(planReviewPath, repoRoot) ?? 'None',
       'Finding Packet Path': request.findingPacketPath,
       'Review Scope': scope,
-      'Tool Turn Budget': request.toolTurnBudget ?? 'Unspecified',
+      'Tool Turn Budget': request.toolTurnBudget ?? toolTurnTarget(scopedPaths),
     });
   const promptWithDesignContext = designContext
     ? `${prompt}\n\nApproved technical-design context (increment ${designContext.incrementId ?? 'unknown'}, revision ${designContext.revision ?? designContext.governedHash}):\n\n${designContext.excerpt}\n`
