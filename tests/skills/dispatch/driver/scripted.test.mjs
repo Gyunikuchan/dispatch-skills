@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { evaluateConsensus } from '../../../../skills/dispatch/scripts/check-consensus.mjs';
-import { planSnapshot } from '../../../../skills/dispatch/scripts/prepare-review.mjs';
-import { splitDispatchFrontmatter } from '../../../../skills/dispatch/scripts/resolution-log.mjs';
+import { evaluateConsensus } from '../../../../skills/dispatch/scripts/review/consensus.mjs';
+import { planSnapshot } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
+import { splitDispatchFrontmatter } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import {
   PLAN_BODY,

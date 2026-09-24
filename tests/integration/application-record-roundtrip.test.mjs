@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { evaluateConsensus } from '../../skills/dispatch/scripts/check-consensus.mjs';
-import { formatApplicationRecord } from '../../skills/dispatch/scripts/resolution-log.mjs';
-import { buildReviewView } from '../../skills/dispatch/scripts/review-preparation.mjs';
+import { evaluateConsensus } from '../../skills/dispatch/scripts/review/consensus.mjs';
+import { formatApplicationRecord } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { buildReviewView } from '../../skills/dispatch/scripts/review/preparation.mjs';
 
 // Every strict consumer of the resolution log must accept canonical application records
 // and reject malformed ones the same way.

@@ -16,7 +16,7 @@ Standalone review is report-only unless the user supplied `--fix`. Accepted adja
 
 Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted `MUST` findings require immediate action when fixes are enabled; unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
 
-`check-consensus.mjs` exits `0` settled, `1` live, and `2` invalid. Continue while changed artifacts/code or live disputed/pending findings remain below the cap. Checkpoint only after every source is terminal, rulings and verification are recorded, and consensus exits `0`. Verify checkpoint preview observations before committing them; drift restarts preparation.
+Consensus (`review/consensus.mjs`) evaluates to `0` settled, `1` live, and `2` invalid. Continue while changed artifacts/code or live disputed/pending findings remain below the cap. Checkpoint only after every source is terminal, rulings and verification are recorded, and consensus is `0`. Verify checkpoint preview observations before committing them; drift restarts preparation.
 
 ## Minimum walkthrough contract
 

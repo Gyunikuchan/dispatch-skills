@@ -414,7 +414,7 @@ function main() {
  * `import.meta.url === pathToFileURL(process.argv[1]).href` goes false whenever the script is
  * reached through a symlinked skills directory — and the CLI would exit 0 having done nothing.
  *
- * NOTE: mirrors `isMainModule` in the shipped dispatch skill's `common.mjs` rather than importing
+ * NOTE: mirrors `isMainModule` in the shipped dispatch skill's `lib/platform.mjs` rather than importing
  * it, for the reason recorded above `repoRoot`.
  */
 export function isMain(importMetaUrl) {

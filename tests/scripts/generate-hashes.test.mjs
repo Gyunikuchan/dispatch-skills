@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { PROJECT_ROOT } from '../../skills/dispatch/scripts/common.mjs';
+import { PROJECT_ROOT } from '../../skills/dispatch/scripts/lib/platform.mjs';
 
 describe('generate-hashes script', () => {
   const scriptPath = path.join(PROJECT_ROOT, 'scripts', 'generate-hashes.mjs');

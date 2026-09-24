@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { hashFile } from '../../../../skills/dispatch/scripts/common.mjs';
+import { hashFile } from '../../../../skills/dispatch/scripts/lib/integrity.mjs';
 import { allProviders, codeFinding, report } from '../../../helpers/driver-harness.mjs';
 import { policies, run, runCleanup, setup } from '../../../helpers/ordinary-driver.mjs';
 

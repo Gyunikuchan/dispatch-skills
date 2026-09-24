@@ -9,7 +9,7 @@ import {
   loadBatchFile,
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
-import { resolveReadDelegates } from '../../../skills/dispatch/scripts/config.mjs';
+import { resolveReadDelegates } from '../../../skills/dispatch/scripts/lib/config.mjs';
 import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
 
 /** Config: dispatchBatch takes it whole (it calls dispatchTask per slot). */

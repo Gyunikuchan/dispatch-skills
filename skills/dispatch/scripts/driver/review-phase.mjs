@@ -8,23 +8,32 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildRebuttalPackets } from '../build-rebuttal-packets.mjs';
-import { evaluateConsensus } from '../check-consensus.mjs';
-import { LEVELS, loadDispatchConfig, resolveLevelScalar } from '../config.mjs';
-import { createIndependenceClusters, formatOptInSections, parseOptInResponse } from '../fix-clustering.mjs';
-import { parseRebuttal, parseReport } from '../parse-report.mjs';
-import { prepareReview } from '../prepare-review.mjs';
-import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../resolve-artifact-paths.mjs';
-import { formatApplicationRecord, nextFindingId, scanResolutionLog, validateSourceMap } from '../resolution-log.mjs';
-import { defaultLiveness, probeCandidates, resolveFlow } from '../resolve-flow.mjs';
-import { resolveExplicitRange } from '../resolve-review-range.mjs';
-import { InvalidReviewReportError, normalizeLocus } from '../review-report.mjs';
-import { reviewKind } from '../review-kinds.mjs';
-import { formatSourceMapLine } from '../source-map.mjs';
-import { safeRenameSync } from '../common.mjs';
+import { buildRebuttalPackets } from '../review/rebuttal-packets.mjs';
+import { evaluateConsensus } from '../review/consensus.mjs';
+import { LEVELS, loadDispatchConfig, resolveLevelScalar } from '../lib/config.mjs';
+import { createIndependenceClusters, formatOptInSections, parseOptInResponse } from '../review/fix-clustering.mjs';
+import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
+import { prepareReview } from '../review/prepare.mjs';
+import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
+import { formatApplicationRecord, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
+import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
+import { resolveExplicitRange } from '../review/range.mjs';
+import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
+import { reviewKind } from '../review/kinds.mjs';
+import { safeRenameSync } from '../lib/platform.mjs';
 import { NATIVE_AGENT_TYPES, emitAction, sanitizeReplyText } from './actions.mjs';
 import {
-  PENDING_FIX_REASON, REEMITTED, createRunState, finish, gitRoot, reemit, pruneFinishedStates, rebuildFromArtifact, runFile, unappliedFixesFromArtifact, writeRunSidecar, writeRunState,
+  PENDING_FIX_REASON,
+  REEMITTED,
+  createRunState,
+  finish,
+  gitRoot,
+  reemit,
+  pruneFinishedStates,
+  rebuildFromArtifact,
+  runFile,
+  unappliedFixesFromArtifact,
+  writeRunSidecar,
 } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -91,7 +100,7 @@ function readArtifactText(state) {
 }
 
 function writeArtifactText(state, text) {
-  // Atomic like review-preparation.mjs: a crash mid-write must not corrupt the canonical artifact.
+  // Atomic like review/preparation.mjs: a crash mid-write must not corrupt the canonical artifact.
   const temp = `${state.artifactPath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temp, text);
   try {
@@ -127,7 +136,7 @@ function appendToSection(markdown, heading, title, block, placeholder) {
   return eol === '\n' ? text : text.replace(/\n/g, eol);
 }
 
-// Mirrors resolution-log.mjs application-record path rules: no absolute, drive, `..`, `./`, `//`, or backslash.
+// Mirrors review/resolution-log.mjs application-record path rules: no absolute, drive, `..`, `./`, `//`, or backslash.
 const REPO_RELATIVE = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
 
 const LOG_HEADING = /^##\s+Review Findings & Resolutions\b/;

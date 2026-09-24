@@ -17,11 +17,11 @@ import {
   PROJECT_ROOT,
   isMainModule,
   getConfigCandidates,
-} from '../skills/dispatch/scripts/common.mjs';
+} from '../skills/dispatch/scripts/lib/platform.mjs';
 import {
   validateConfig as validateDispatchConfig,
-} from '../skills/dispatch/scripts/config.mjs';
-import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/opencode-run.mjs';
+} from '../skills/dispatch/scripts/lib/config.mjs';
+import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/runners/opencode.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 

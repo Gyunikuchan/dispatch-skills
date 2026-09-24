@@ -17,7 +17,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { isMainModule, measureText } from '../../../../skills/dispatch/scripts/common.mjs';
+import { isMainModule } from '../../../../skills/dispatch/scripts/lib/platform.mjs';
+import { measureText } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
 import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
@@ -140,7 +141,7 @@ async function buildMetrics(root) {
     out.push(`| ${rel(file)} | ${loc(text)} | ${(text.match(/^\s*(?:it|test)\(/gm) ?? []).length} |`);
   }
 
-  const { verifySkillIntegrity } = await import(pathToFileURL(path.join(root, 'skills/dispatch/scripts/common.mjs')).href);
+  const { verifySkillIntegrity } = await import(pathToFileURL(path.join(root, 'skills/dispatch/scripts/lib/integrity.mjs')).href);
   const hashLines = fs.readdirSync(path.join(root, 'skills')).map((dir) => {
     const skillDir = path.join(root, 'skills', dir);
     if (!fs.existsSync(path.join(skillDir, 'skill-hashes.json'))) return `Hashes skills/${dir}: no manifest`;

@@ -8,12 +8,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../config.mjs';
+import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../lib/config.mjs';
 import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
-import { createTempFile } from '../review-preparation.mjs';
-import { sessionArgs } from '../session-temp.mjs';
+import { createTempFile } from '../review/preparation.mjs';
 import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
 import { createRunState, finish, gitRoot, reemit, runFile, writeRunSidecar } from './state.mjs';
+import { sessionArgs } from '../lib/session-temp.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SCRIPT = path.join(DISPATCH_DIR, 'scripts', 'dispatch.mjs');

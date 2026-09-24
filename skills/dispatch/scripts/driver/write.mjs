@@ -1,12 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadDispatchConfig } from '../config.mjs';
-import { currentHead } from '../git-state.mjs';
-import { resolveFlow } from '../resolve-flow.mjs';
-import { parseImplementationOutcome, resolveImplementationTransition } from '../implementation-outcome.mjs';
+import { loadDispatchConfig } from '../lib/config.mjs';
+import { currentHead } from '../lib/git-state.mjs';
+import { resolveFlow } from '../lib/resolve-flow.mjs';
+import { parseImplementationOutcome, resolveImplementationTransition } from '../verification/implementation-outcome.mjs';
 import { emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
-import { ledgerSegment } from './ordinary-state.mjs';
+import { ledgerSegment } from './implement-state.mjs';
 import { SKILL_ROOT } from './plan-phase.mjs';
 import { bindStateSession, readRunState } from './state.mjs';
 import { validateRedAdmission } from './verification.mjs';

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, describe, it } from 'node:test';
 
 import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
-import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };

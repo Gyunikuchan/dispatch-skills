@@ -28,7 +28,7 @@ These are defense-in-depth controls, not a complete secret boundary.
 
 ### Claude Code
 
-- **Direct runner:** `scripts/claude-run.mjs`; discovery order is CLI → Desktop → VS Code
+- **Direct runner:** `scripts/runners/claude.mjs`; discovery order is CLI → Desktop → VS Code
   extension. Select with `--claude-mode`/`--mode`; probe all modes with `--test-modes` (aliases:
   `--probe-modes`, `--reachability`). The probe prints the resolved executable path.
 - **Structured output:** `dispatch --response-schema-file <path>` validates a bounded JSON Schema
@@ -48,7 +48,7 @@ These are defense-in-depth controls, not a complete secret boundary.
 
 ### Antigravity 2.0 (`agy`)
 
-- **Direct runner:** `scripts/agy-run.mjs`; discovery order is Antigravity CLI → Antigravity 2.0
+- **Direct runner:** `scripts/runners/agy.mjs`; discovery order is Antigravity CLI → Antigravity 2.0
   Desktop → Antigravity VS Code extension. Select with `--agy-mode`/`--mode-variant`; probe with
   `--test-reachability` or `--test-modes`.
 - **Invocation:** headless `--print --output-format json --mode plan --dangerously-skip-permissions`.
@@ -62,7 +62,7 @@ These are defense-in-depth controls, not a complete secret boundary.
 
 ### GitHub Copilot (`copilot`)
 
-- **Direct runner:** `scripts/copilot-run.mjs`; discovery order is Standalone CLI → Desktop
+- **Direct runner:** `scripts/runners/copilot.mjs`; discovery order is Standalone CLI → Desktop
   cache/app → VS Code extension. Select with `--copilot-mode`; probe with `--test` (aliases:
   `--probe`, `--check`, `--test-modes`). The probe prints the resolved executable path.
 - **Read-only:** `--mode plan` prevents write actions.
@@ -76,7 +76,7 @@ These are defense-in-depth controls, not a complete secret boundary.
 
 ### OpenCode (`opencode`)
 
-- **Direct runner:** `scripts/opencode-run.mjs`; discovery order is OpenCode CLI → Desktop
+- **Direct runner:** `scripts/runners/opencode.mjs`; discovery order is OpenCode CLI → Desktop
   sidecar → VS Code extension bundle. There is no token-free remote API probe; use `--help` and
   the session log to diagnose binary or config resolution.
 - **Requires opencode CLI v2.** Argv is v2-only (`run --auto [--agent] [-m model[#effort]]

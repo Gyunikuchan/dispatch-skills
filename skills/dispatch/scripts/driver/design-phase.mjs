@@ -1,16 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger.mjs';
-import { parseIncrementGraph } from '../design-graph.mjs';
-import { resolveLedgerPath, sanitizeSlug } from '../resolve-artifact-paths.mjs';
-import { readArtifact, semanticSectionHashes, writeArtifactMetadata } from '../review-preparation.mjs';
-import { updateExecutionStatus } from '../design-run.mjs';
+import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger/ledger.mjs';
+import { parseIncrementGraph } from '../design/graph.mjs';
+import { resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
+import { updateExecutionStatus } from '../design/status.mjs';
 import { emitAction } from './actions.mjs';
 import { beginReview, continueReview } from './plan-phase.mjs';
 import { repositoryBaseline } from './verification.mjs';
 import { enterPhase } from './implement-phase.mjs';
-import { refuse, relative, restoreEvidence } from './ordinary-state.mjs';
+import { refuse, relative, restoreEvidence } from './implement-state.mjs';
 
 export function designSlug(file) {
   const named = designRootSlug(file);

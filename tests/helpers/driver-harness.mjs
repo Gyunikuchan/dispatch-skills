@@ -28,9 +28,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ORCHESTRATOR_ENV } from './stub-dispatch.mjs';
-import { scanResolutionLog } from '../../skills/dispatch/scripts/resolution-log.mjs';
-import { materializedFingerprint } from '../../skills/dispatch/scripts/git-state.mjs';
-import { captureRepositoryState } from '../../skills/dispatch/scripts/verification-evidence.mjs';
+import { scanResolutionLog } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { materializedFingerprint } from '../../skills/dispatch/scripts/lib/git-state.mjs';
+import { captureRepositoryState } from '../../skills/dispatch/scripts/verification/evidence.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',

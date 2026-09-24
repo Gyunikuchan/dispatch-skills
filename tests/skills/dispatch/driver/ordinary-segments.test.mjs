@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
 import { allProviders, codeFinding, implementationOutcome, report, runDispatch } from '../../../helpers/driver-harness.mjs';

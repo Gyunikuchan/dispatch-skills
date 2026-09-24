@@ -25,8 +25,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { isMainModule, terminateProcessTree } from '../../../../skills/dispatch/scripts/common.mjs';
-import { loadDispatchConfig, resolveReadDelegates } from '../../../../skills/dispatch/scripts/config.mjs';
+import {
+  isMainModule,
+  terminateProcessTree,
+} from '../../../../skills/dispatch/scripts/lib/platform.mjs';
+import { loadDispatchConfig, resolveReadDelegates } from '../../../../skills/dispatch/scripts/lib/config.mjs';
 import { moveEntry } from './finalize.mjs';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
@@ -127,7 +130,7 @@ async function probe({ opts, repoRoot, rel, scriptsDir, mods, outDir }) {
 
     try {
       const targets = buildTargets(rows, { modes: opts.modes, config, scriptsDir });
-      const ctx = { repoRoot, stageDir, fixture, timeout: opts.timeout, classifyFailure: mods.common.classifyFailure };
+      const ctx = { repoRoot, stageDir, fixture, timeout: opts.timeout, classifyFailure: mods.shared.classifyFailure };
       // `allSettled`, not `all`: `all` rejects on the first failure while sibling delegates are
       // still running, so the `finally` below would drain captures into the repo mid-flight.
       const settled = await Promise.allSettled(targets.map((t) => runTarget(t, ctx)));
@@ -471,10 +474,10 @@ export function parseArgs(argv) {
 
 async function loadDispatchModules(scriptsDir) {
   const load = (name) => import(pathToFileURL(path.join(scriptsDir, name)).href);
-  const [common, claude, agy, copilot, opencode] = await Promise.all(
-    ['common.mjs', 'claude-run.mjs', 'agy-run.mjs', 'copilot-run.mjs', 'opencode-run.mjs'].map(load),
+  const [shared, claude, agy, copilot, opencode] = await Promise.all(
+    ['runners/shared.mjs', 'runners/claude.mjs', 'runners/agy.mjs', 'runners/copilot.mjs', 'runners/opencode.mjs'].map(load),
   );
-  return { common, claude, agy, copilot, opencode };
+  return { shared, claude, agy, copilot, opencode };
 }
 
 function loadConfig(repoRoot) {

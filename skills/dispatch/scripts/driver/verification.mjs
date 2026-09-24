@@ -1,14 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ensureLedgerNamespace } from '../ledger.mjs';
-import { extractGeneratedPaths } from '../plan-structure.mjs';
-import { repositoryRootHash } from '../resolve-artifact-paths.mjs';
-import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification-evidence.mjs';
-import { baselineFingerprint, materializedFingerprint } from '../git-state.mjs';
-import { checkRedQuality, parseIdentifiers, stripIdentifierSpans } from '../red-quality.mjs';
+import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
+import { extractGeneratedPaths } from '../plan/structure.mjs';
+import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
+import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification/evidence.mjs';
+import { baselineFingerprint, materializedFingerprint } from '../lib/git-state.mjs';
+import {
+  parseIdentifiers,
+  stripIdentifierSpans,
+  checkRedQuality,
+} from '../verification/red-quality.mjs';
 import { emitAction } from './actions.mjs';
-import { source } from './ordinary-state.mjs';
+import { source } from './implement-state.mjs';
 
 export function verificationPlan(state) {
   const text = source(state);

@@ -19,10 +19,10 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 const DISPATCH_SKILL = path.join(REPO_ROOT, 'skills', 'dispatch');
 
 const RUNNERS = {
-  claude: ['claude-run.mjs', 'Claude'],
-  agy: ['agy-run.mjs', 'Agy'],
-  copilot: ['copilot-run.mjs', 'Copilot'],
-  opencode: ['opencode-run.mjs', 'Opencode'],
+  claude: ['runners/claude.mjs', 'Claude'],
+  agy: ['runners/agy.mjs', 'Agy'],
+  copilot: ['runners/copilot.mjs', 'Copilot'],
+  opencode: ['runners/opencode.mjs', 'Opencode'],
 };
 
 function stubSource(provider, suffix) {

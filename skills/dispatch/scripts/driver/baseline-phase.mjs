@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { ensureLedgerNamespace } from '../ledger.mjs';
-import { repositoryRootHash } from '../resolve-artifact-paths.mjs';
-import { append, ask, ledgerSegment, relative, ruling } from './ordinary-state.mjs';
+import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
+import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
+import { append, ask, ledgerSegment, relative, ruling } from './implement-state.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';

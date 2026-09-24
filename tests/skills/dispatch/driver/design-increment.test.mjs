@@ -6,9 +6,9 @@ import path from 'node:path';
 
 import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import { drive, implementationOutcome, makeGitRepo, runDispatch, parseAction, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
-import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
-import { foldSegments } from '../../../../skills/dispatch/scripts/ledger-events.mjs';
-import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
+import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { foldSegments } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
+import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };

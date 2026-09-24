@@ -3,9 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { assembleTemplate } from "../../skills/dispatch/scripts/fill-template.mjs";
-import { REVIEW_KINDS } from "../../skills/dispatch/scripts/review-kinds.mjs";
-import { parseReport } from "../../skills/dispatch/scripts/parse-report.mjs";
+import { assembleTemplate } from "../../skills/dispatch/scripts/review/fill-template.mjs";
+import { REVIEW_KINDS } from "../../skills/dispatch/scripts/review/kinds.mjs";
+import { parseReport } from "../../skills/dispatch/scripts/review/parse-report.mjs";
 const root = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../..",

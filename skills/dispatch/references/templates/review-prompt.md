@@ -1,7 +1,7 @@
 # Review delegate prompt (shared frame)
 
 Shared by every review kind; each `<<slot:NAME>>` line is filled from the `## NAME` section of the
-kind block `review-prompt-<kind>.md`. Preparation assembles and fills it via `fill-template.mjs`
+kind block `review-prompt-<kind>.md`. Preparation assembles and fills it via `review/fill-template.mjs`
 (`--skill <frame> --kind-block <block>`); `--list` reads the variable bullets of both files.
 
 ## Prompt template

@@ -4,10 +4,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { makeGitRepo, writePlan } from '../../../helpers/driver-harness.mjs';
-import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger.mjs';
-import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
-import { persistEvidence, restoreEvidence } from '../../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
-import { cachedBaseline, purposeCommands, redSubstitutions, storeBaseline, suiteCoverage } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
+import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { persistEvidence, restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
+import {
+  cachedBaseline,
+  redSubstitutions,
+  storeBaseline,
+  suiteCoverage,
+  purposeCommands,
+} from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
 const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });

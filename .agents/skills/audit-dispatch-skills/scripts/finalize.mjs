@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isMainModule } from '../../../../skills/dispatch/scripts/common.mjs';
+import { isMainModule } from '../../../../skills/dispatch/scripts/lib/platform.mjs';
 import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================

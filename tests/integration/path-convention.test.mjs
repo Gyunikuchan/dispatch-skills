@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { resolveArtifacts } from '../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
+import { resolveArtifacts } from '../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 

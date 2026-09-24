@@ -6,10 +6,7 @@ import { describe, it } from "node:test";
 
 // Single source of truth: the audit's baseline scanner. Keeping a second copy here is how the
 // two quietly diverged (the audit's missed directory targets and same-file anchors).
-import {
-  authoredSkillDirs,
-  brokenLinks,
-} from "../../.agents/skills/audit-dispatch-skills/scripts/baseline.mjs";
+import { authoredSkillDirs, brokenLinks } from "../../.agents/skills/audit-dispatch-skills/scripts/baseline.mjs";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),

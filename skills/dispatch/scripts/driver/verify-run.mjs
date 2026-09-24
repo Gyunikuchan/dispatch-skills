@@ -10,8 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { extractFailureIdentifiers, testCounts } from '../test-failures.mjs';
-import { diffRepositoryState } from '../verification-evidence.mjs';
+import { extractFailureIdentifiers, testCounts } from '../verification/test-failures.mjs';
+import { diffRepositoryState } from '../verification/evidence.mjs';
 import { bindStateSession, readRunState } from './state.mjs';
 import { fingerprint, snapshot } from './verification.mjs';
 

@@ -1,10 +1,10 @@
-import { evaluateConsensus } from '../check-consensus.mjs';
-import { readArtifact, semanticSectionHashes } from '../review-preparation.mjs';
-import { scanResolutionLog } from '../resolution-log.mjs';
-import { relocateScratchPaths } from '../relocate-scratch.mjs';
+import { evaluateConsensus } from '../review/consensus.mjs';
+import { readArtifact, semanticSectionHashes } from '../review/preparation.mjs';
+import { scanResolutionLog } from '../review/resolution-log.mjs';
+import { relocateScratchPaths } from '../artifacts/relocate-scratch.mjs';
 import { emitAction } from './actions.mjs';
-import { append, ledgerSegment, persistEvidence, relative } from './ordinary-state.mjs';
-import { completeTask } from './implementation-phase.mjs';
+import { append, ledgerSegment, persistEvidence, relative } from './implement-state.mjs';
+import { completeTask } from './task-phase.mjs';
 import { completionResult, fingerprint } from './verification.mjs';
 import { reviewPolicy } from './plan-phase.mjs';
 

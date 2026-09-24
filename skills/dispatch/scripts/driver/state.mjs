@@ -1,18 +1,17 @@
 /**
- * Driver run state: a cache in the run's session directory (`session-temp.mjs`, R3). Canonical
+ * Driver run state: a cache in the run's session directory (`lib/session-temp.mjs`, R3). Canonical
  * artifacts stay authoritative; a lost cache is rebuilt from the artifact's resolution log through `--run`.
  */
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { evaluateConsensus } from '../check-consensus.mjs';
-import { safeRenameSync } from '../common.mjs';
-import { scanResolutionLog } from '../resolution-log.mjs';
-import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../session-temp.mjs';
+import { evaluateConsensus } from '../review/consensus.mjs';
+import { safeRenameSync } from '../lib/platform.mjs';
+import { scanResolutionLog } from '../review/resolution-log.mjs';
+import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../lib/session-temp.mjs';
 
 /** Repository root of `cwd`, or `cwd` itself outside a work tree. */
 export function gitRoot(cwd) {

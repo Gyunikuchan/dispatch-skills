@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
-import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/common.mjs';
+import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/lib/platform.mjs';
 
 import {
   auditGitStatus,

@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isMainModule } from '../skills/dispatch/scripts/common.mjs';
+import { isMainModule } from '../skills/dispatch/scripts/lib/platform.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_GLOSSARY = path.join(REPO_ROOT, 'skills', 'dispatch', 'references', 'glossary.md');

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 
 import { drive, implementationOutcome, PLAN_BODY, runDispatch } from '../../../helpers/driver-harness.mjs';

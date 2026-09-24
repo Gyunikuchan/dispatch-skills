@@ -21,40 +21,37 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { verifySkillIntegrity } from './lib/integrity.mjs';
+import { detectBwrap, isMainModule } from './lib/platform.mjs';
+import {
+  demoteOrchestratorTargets,
+  detectOrchestrator,
+  detectOrchestratorModel,
+  diversitySort,
+  KNOWN_PROVIDERS,
+  PROVIDER_ALIASES,
+  SANDBOX_SUPPORTED_PROVIDERS,
+  validateEffortSpec,
+  validateModelSpec,
+  validateProviderSpec,
+} from './lib/providers.mjs';
 import {
   formatCliError,
   safeExitCode,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
-  detectBwrap,
-  demoteOrchestratorTargets,
-  detectOrchestrator,
-  detectOrchestratorModel,
-  isSameModel,
-  diversitySort,
   DEFAULT_TIMEOUT_SECONDS,
   isEmptyResult,
-  isMainModule,
-  KNOWN_PROVIDERS,
   parseCommonArgs,
-  PROVIDER_ALIASES,
   readStdin,
   parseRunnerModeArgs,
-  SANDBOX_SUPPORTED_PROVIDERS,
-  validateEffortSpec,
-  validateModelSpec,
-  validateProviderSpec,
-  verifySkillIntegrity,
-} from './common.mjs';
+} from './runners/shared.mjs';
 
-// Re-exported: they live in common.mjs so other modules can detect host/model
-// without importing this module (and, through it, every provider runner).
-export { detectOrchestrator, detectOrchestratorModel, isSameModel, PROVIDER_ALIASES };
-import { isOpencodeAvailable, runOpencode } from './opencode-run.mjs';
-import { isAgyAvailable, runAgy } from './agy-run.mjs';
-import { isClaudeAvailable, runClaude } from './claude-run.mjs';
-import { isCopilotAvailable, runCopilot } from './copilot-run.mjs';
-import { appendTelemetry } from './telemetry.mjs';
+import { isOpencodeAvailable, runOpencode } from './runners/opencode.mjs';
+import { isAgyAvailable, runAgy } from './runners/agy.mjs';
+import { isClaudeAvailable, runClaude } from './runners/claude.mjs';
+import { isCopilotAvailable, runCopilot } from './runners/copilot.mjs';
+import { appendTelemetry } from './lib/telemetry.mjs';
 import {
   LEVELS,
   loadDispatchConfig as loadConfigFile,
@@ -63,9 +60,9 @@ import {
   resolveLevelEntry,
   resolveReadDelegates,
   validateConfig,
-} from './config.mjs';
-import { normalizePin, parsePins, resolveFlow } from './resolve-flow.mjs';
-import { consumeSessionFlag, sessionTempDir } from './session-temp.mjs';
+} from './lib/config.mjs';
+import { normalizePin, parsePins, resolveFlow } from './lib/resolve-flow.mjs';
+import { sessionTempDir, consumeSessionFlag } from './lib/session-temp.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');

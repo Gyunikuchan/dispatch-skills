@@ -5,9 +5,9 @@ import path from 'node:path';
 
 import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
-import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger.mjs';
-import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/resolve-artifact-paths.mjs';
-import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/ordinary-state.mjs';
+import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };

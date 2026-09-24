@@ -3,11 +3,11 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { emitAction } from './actions.mjs';
 import { createRunState, writeRunSidecar, writeRunState } from './state.mjs';
-import { assertBinding, bindPlan, ledgerSegment, refuse, restoreEvidence, save } from './ordinary-state.mjs';
+import { assertBinding, bindPlan, ledgerSegment, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, baselineDecision, beginBaseline } from './baseline-phase.mjs';
 import { acceptVerification, beginVerification, completionResult, fingerprint } from './verification.mjs';
-import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './implementation-phase.mjs';
+import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 
 export async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {

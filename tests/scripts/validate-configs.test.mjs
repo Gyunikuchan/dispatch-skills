@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { PROJECT_ROOT } from '../../skills/dispatch/scripts/common.mjs';
+import { PROJECT_ROOT } from '../../skills/dispatch/scripts/lib/platform.mjs';
 import {
   findConfigFiles,
   validateConfigFile,

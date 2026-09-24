@@ -6,7 +6,6 @@ import path from 'node:path';
 import { describe, it, before, after, afterEach, mock } from 'node:test';
 
 import {
-  detectOrchestrator,
   resolveProvider as resolveProviderImpl,
   getCandidateProviders as getCandidateProvidersImpl,
   dispatchBatch,
@@ -17,17 +16,13 @@ import {
   normalizeResponseSchema,
   providerProbes,
   providerRunners,
-  PROVIDER_ALIASES,
   resolveConfiguredTargets,
   writeDispatchOutput,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
-import {
-  KNOWN_PROVIDERS,
-  PROJECT_ROOT,
-  parseJsonc,
-  verifySkillIntegrity,
-} from '../../../skills/dispatch/scripts/common.mjs';
-import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/config.mjs';
+import { verifySkillIntegrity } from '../../../skills/dispatch/scripts/lib/integrity.mjs';
+import { PROJECT_ROOT, parseJsonc } from '../../../skills/dispatch/scripts/lib/platform.mjs';
+import { detectOrchestrator, KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../../../skills/dispatch/scripts/lib/providers.mjs';
+import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/lib/config.mjs';
 
 /** Strict read-provider wrapper: one target per candidate, each a single `low` level. */
 const targetsOf = (...candidates) => ({ targets: candidates.map(candidate => ({ low: candidate })) });

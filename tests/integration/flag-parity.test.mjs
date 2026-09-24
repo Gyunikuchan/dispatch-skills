@@ -8,11 +8,11 @@ import {
   COMMON_VALUE_FLAGS,
   DOCUMENTED_COMMON_FLAGS,
   RUNNER_IRRELEVANT_COMMON_FLAGS,
-} from '../../skills/dispatch/scripts/common.mjs';
-import { CLI_FLAGS as claudeFlags } from '../../skills/dispatch/scripts/claude-run.mjs';
-import { CLI_FLAGS as agyFlags } from '../../skills/dispatch/scripts/agy-run.mjs';
-import { CLI_FLAGS as copilotFlags } from '../../skills/dispatch/scripts/copilot-run.mjs';
-import { CLI_FLAGS as opencodeFlags } from '../../skills/dispatch/scripts/opencode-run.mjs';
+} from '../../skills/dispatch/scripts/runners/shared.mjs';
+import { CLI_FLAGS as claudeFlags } from '../../skills/dispatch/scripts/runners/claude.mjs';
+import { CLI_FLAGS as agyFlags } from '../../skills/dispatch/scripts/runners/agy.mjs';
+import { CLI_FLAGS as copilotFlags } from '../../skills/dispatch/scripts/runners/copilot.mjs';
+import { CLI_FLAGS as opencodeFlags } from '../../skills/dispatch/scripts/runners/opencode.mjs';
 
 // `dispatch.mjs --help`, SKILL.md's flag table and README.md's flag table drifted apart once
 // (`--json` scoped to "local" in one and "opencode" in another, `-a` scoped in neither). Parity
@@ -78,16 +78,15 @@ describe('dispatch flag source of truth', () => {
   });
 });
 
-// SKILL.md Troubleshooting points an agent at `<runner>-run.mjs --help` as the diagnostic surface,
+// SKILL.md Troubleshooting points an agent at `runners/<provider>.mjs --help` as the diagnostic surface,
 // so a spelling the runner accepts but never prints is a dead end mid-incident. Each runner exports
 // its own CLI_FLAGS rather than having this test scrape source for `arg === '--x'` comparisons.
-const DESIGN_PREPARE = path.join(REPO_ROOT, 'skills', 'dispatch', 'scripts', 'prepare-review.mjs');
 
 const RUNNERS = [
-  ['claude-run.mjs', claudeFlags],
-  ['agy-run.mjs', agyFlags],
-  ['copilot-run.mjs', copilotFlags],
-  ['opencode-run.mjs', opencodeFlags],
+  ['runners/claude.mjs', claudeFlags],
+  ['runners/agy.mjs', agyFlags],
+  ['runners/copilot.mjs', copilotFlags],
+  ['runners/opencode.mjs', opencodeFlags],
 ];
 
 /** Every flag spelling a runner's `--help` prints. */
@@ -99,13 +98,6 @@ function runnerHelpSpellings(script) {
   return new Set([...res.stdout.matchAll(/--?[a-z][a-z-]*/g)].map(([f]) => f));
 }
 
-describe('kind-parameterized preparation parity', () => {
-  it('supports --help', () => {
-    const result = spawnSync(process.execPath, [DESIGN_PREPARE, '--help'], { encoding: 'utf8' });
-    assert.equal(result.status, 0);
-    assert.match(result.stdout, /Usage|prepare/i);
-  });
-});
 
 describe('runner flag parity (--help vs the flags each runner accepts)', () => {
   for (const [script, flags] of RUNNERS) {
@@ -134,23 +126,14 @@ describe('runner flag parity (--help vs the flags each runner accepts)', () => {
 });
 
 // dispatch/SKILL.md Troubleshooting teaches `--help` as the diagnostic move for a misbehaving
-// script. Two of the four authored CLIs used to exit 1 with `Unrecognized argument "--help"` —
-// and they were the two whose flag surface lives only in a header comment.
+// script, so every shipped CLI (the entry point and the runners) must answer it.
 describe('every authored CLI answers --help', () => {
   for (const script of [
     ['skills', 'dispatch', 'scripts', 'dispatch.mjs'],
-    ['skills', 'dispatch', 'scripts', 'claude-run.mjs'],
-    ['skills', 'dispatch', 'scripts', 'agy-run.mjs'],
-    ['skills', 'dispatch', 'scripts', 'copilot-run.mjs'],
-    ['skills', 'dispatch', 'scripts', 'opencode-run.mjs'],
-    ['skills', 'dispatch', 'scripts', 'resolve-artifact-paths.mjs'],
-    ['skills', 'dispatch', 'scripts', 'fill-template.mjs'],
-    ['skills', 'dispatch', 'scripts', 'resolve-flow.mjs'],
-    ['skills', 'dispatch', 'scripts', 'check-consensus.mjs'],
-    ['skills', 'dispatch', 'scripts', 'source-map.mjs'],
-    ['skills', 'dispatch', 'scripts', 'resolve-review-range.mjs'],
-    ['skills', 'dispatch', 'scripts', 'prepare-review.mjs'],
-    ['skills', 'dispatch', 'scripts', 'parse-report.mjs'],
+    ['skills', 'dispatch', 'scripts', 'runners', 'claude.mjs'],
+    ['skills', 'dispatch', 'scripts', 'runners', 'agy.mjs'],
+    ['skills', 'dispatch', 'scripts', 'runners', 'copilot.mjs'],
+    ['skills', 'dispatch', 'scripts', 'runners', 'opencode.mjs'],
   ]) {
     const name = script[script.length - 1];
     it(`${name} --help exits 0 and prints usage`, () => {

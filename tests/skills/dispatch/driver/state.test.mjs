@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 
 import { sanitizeReplyText } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 import { createRunState, pruneFinishedStates, readRunState, rebuildFromArtifact, writeRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
-import { sessionsRoot } from '../../../../skills/dispatch/scripts/session-temp.mjs';
+import { sessionsRoot } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 const source = (round) => `- **Sources:** {"plan-review:R${round}:agy:0":{"provider":"agy","candidateIndex":0,"model":"m","effort":null,"status":"target","session":null,"substitutesFor":null}}`;
 const entry = (round, status, severity = 'MUST') =>
@@ -111,6 +111,6 @@ describe('sanitizeReplyText', () => {
   });
 
   it('keeps code-span contents and drops only the backticks', () => {
-    assert.equal(sanitizeReplyText('Move `safeRenameSync` into `common.mjs`.'), 'Move safeRenameSync into common.mjs.');
+    assert.equal(sanitizeReplyText('Move `safeRenameSync` into `lib/common.mjs`.'), 'Move safeRenameSync into lib/common.mjs.');
   });
 });
