@@ -9,44 +9,50 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-// ==========================================================================
-// SECTION: Constants
-// ==========================================================================
+// ============================================================================
+// SECTION: Configuration
+// ============================================================================
 
 const AUDIT_PREFIX = '.scratch/audits/';
-const RUN_ID = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
+const RUN_ID_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
+const REPORT_OR_WORK_PATTERN = /(\d{4}-\d{2}-\d{2}-\d{4})-(?:audit\.md|work)$/;
 
-// ==========================================================================
-// SECTION: Paths & Run Directories
-// ==========================================================================
+// ============================================================================
+// SECTION: Run Paths
+// ============================================================================
 
+/** @returns {string} Absolute repository root. */
 export function resolveRepoRoot() {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   if (res.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
   return path.resolve(res.stdout.trim());
 }
 
-/** Converts platform path separators to forward slashes. */
-export function toPosix(p) {
-  return p.split(path.sep).join('/');
+/** @param {string} value @returns {string} Path using forward slashes. */
+export function toPosix(value) {
+  return value.split(path.sep).join('/');
 }
 
-/** Binds `root` and returns a `(p) => string` that resolves a repo-relative forward-slash path. */
+/** @param {string} root @returns {(value: string) => string} Repo-relative path formatter. */
 export function relTo(root) {
-  return (p) => toPosix(path.relative(root, p));
+  return (value) => toPosix(path.relative(root, value));
 }
 
 /**
  * Reads `--run <yyyy-mm-dd-hhmm>` and derives the run's two paths: the report that outlives the
  * run and the work directory beside it. A run id, not a directory, so both live flat in
  * `.scratch/audits/` and the report needs no nesting to be found.
+ *
+ * @param {string} root
+ * @param {string[]} argv
+ * @returns {{runId: string, reportPath: string, workDir: string, rel: (value: string) => string}}
  */
 export function resolveRunDirs(root, argv) {
   const index = argv.indexOf('--run');
   const value = index === -1 ? null : argv[index + 1];
   if (!value) throw new Error('Missing --run <yyyy-mm-dd-hhmm>');
   // A bare id keeps callers off path separators; a full report path is accepted for convenience.
-  const runId = RUN_ID.test(value) ? value : /(\d{4}-\d{2}-\d{2}-\d{4})-(?:audit\.md|work)$/.exec(toPosix(value))?.[1];
+  const runId = RUN_ID_PATTERN.test(value) ? value : REPORT_OR_WORK_PATTERN.exec(toPosix(value))?.[1];
   if (!runId) throw new Error(`--run must be a run id like 2026-09-11-1853 (got ${value})`);
   const auditsDir = path.join(root, ...AUDIT_PREFIX.split('/').filter(Boolean));
   return {
@@ -57,9 +63,9 @@ export function resolveRunDirs(root, argv) {
   };
 }
 
-// ==========================================================================
+// ============================================================================
 // SECTION: Markdown Frontmatter
-// ==========================================================================
+// ============================================================================
 
 /**
  * Parses a frontmatter `description:` field as either a single-line scalar or a YAML
@@ -100,9 +106,9 @@ export function frontmatterDescription(text) {
   return continuation.join(isFolded ? ' ' : '\n').trim();
 }
 
-// ==========================================================================
+// ============================================================================
 // SECTION: Git Status Snapshots
-// ==========================================================================
+// ============================================================================
 
 /**
  * `git status --porcelain` with every untracked file listed individually (a collapsed `?? dir/`

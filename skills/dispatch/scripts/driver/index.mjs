@@ -10,16 +10,17 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../lib/providers.mjs';
-import { LEVELS } from '../lib/config.mjs';
+import { CLASSIFIABLE_LEVELS, LEVELS, assertClassifiableLevel } from '../lib/config.mjs';
 import { KIND_NAMES } from '../review/kinds.mjs';
 import { validateReply } from './actions.mjs';
-import { createRunState } from './state.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
 import { advanceAsk, startAsk } from './ask-phase.mjs';
 import { save } from './implement-state.mjs';
-import { bindStateSession, readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
+import { bindStateSession, createRunState, readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
+
+// SECTION: CLI contract
 
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
 const VERBS = ['plan', 'design', 'review', 'implement', 'ask'];
@@ -48,7 +49,7 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   --orchestrator <platform>   Orchestrating platform (required with --run)
   --orchestrator-model <model> Orchestrator's own model, excluded from its platform's targets
   --level <level>             Effort level: ${LEVELS.join('|')}
-  --level-source <source>     How the level was chosen: ${LEVEL_SOURCES.join('|')}
+  --level-source <source>     How the level was chosen: ${LEVEL_SOURCES.join('|')} (classified: ${CLASSIFIABLE_LEVELS.join('|')})
   --pins <pins>               Provider names, a count, or all (comma-separated)
   --verbose                   Add report bodies and diagnostics to actions
   -- <argument>               Artifact path, Git range, or the ask question
@@ -108,6 +109,11 @@ function normalizeRun(parsed) {
     if (!LEVEL_SOURCES.includes(parsed.levelSource)) throw new UsageError(`--level-source must be ${LEVEL_SOURCES.join('|')}.`);
   }
   if (parsed.level !== undefined && !LEVELS.includes(parsed.level)) throw new UsageError(`--level must be one of ${LEVELS.join('|')}.`);
+  try {
+    assertClassifiableLevel(parsed.level, parsed.levelSource);
+  } catch (error) {
+    throw new UsageError(error.message);
+  }
   return {
     verb: parsed.run,
     kind: parsed.kind ?? null,
@@ -194,8 +200,8 @@ function advanceLocked(parsed) {
  * Runs one driver step (or a `--drive` run of steps). Returns the process exit code: 0 with one JSON
  * action on stdout, 2 with a usage or state diagnostic on stderr.
  *
- * @param {any} argv
- * @param {{ cwd?: string, stdout?: any, stderr?: any }} [options]
+ * @param {string[]} argv
+ * @param {{ cwd?: string, stdout?: NodeJS.WritableStream, stderr?: NodeJS.WritableStream }} [options]
  */
 export async function runDriver(argv, { cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr } = {}) {
   try {

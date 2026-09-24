@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file status.mjs
@@ -21,24 +22,46 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const STATUSES = ['open', 'fixed', 'false-positive', 'decision', 'deferred'];
-export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit'];
-const AUDIT_DIR = '.scratch/audits';
-export const COUNTS_PREFIX = '> Fix status:';
+/** @typedef {'open' | 'fixed' | 'false-positive' | 'decision' | 'deferred'} FindingStatus */
+/** @typedef {'critical' | 'high' | 'medium' | 'low' | 'nit'} FindingSeverity */
+/** @typedef {{ file: string, lines: string[], start: number, end: number }} Report */
+/**
+ * @typedef {object} Finding
+ * @property {string} id
+ * @property {string} title
+ * @property {FindingSeverity} severity
+ * @property {number | null} metaLine
+ * @property {string} location
+ * @property {FindingStatus} status
+ * @property {string} note
+ * @property {number | null} statusLine
+ * @property {number} anchor
+ * @property {string} body
+ */
+
+// SECTION: User-tunable policy
+
+export const STATUSES = /** @type {const} */ (['open', 'fixed', 'false-positive', 'decision', 'deferred']);
+export const SEVERITIES = /** @type {const} */ (['critical', 'high', 'medium', 'low', 'nit']);
 export const DEFAULT_MAX_BATCHES = 5;
-export const SEVERITY_BATCH_TARGETS = {
+export const SEVERITY_BATCH_TARGETS = Object.freeze({
   critical: 6,
   high: 8,
   medium: 12,
   low: 20,
   nit: 25,
-};
+});
 export const MAX_SAFE_BATCH_SIZE = 25;
 export const MIN_SAFE_BATCH_SIZE = 4;
 
-// ============================================================================
-// SECTION: Paths
-// ============================================================================
+const AUDIT_DIR = '.scratch/audits';
+export const COUNTS_PREFIX = '> Fix status:';
+export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--full', '--size', '--batches', '--note'];
+const REPORT_NAME_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}-audit\.md$/;
+const RUN_ID_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
+const FINDING_HEADING_PATTERN = /^#### (A-\d+):\s*(.+)$/;
+
+// SECTION: CLI and report paths
 
 /** Converts platform path separators to forward slashes. */
 export function toPosix(p) {
@@ -49,31 +72,31 @@ export function toPosix(p) {
 // Importing it would reference another skill by path — which the repo guide forbids — and would make
 // this skill fail to load wherever that one is not installed alongside it.
 function repoRoot() {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
-  if (res.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
-  return path.resolve(res.stdout.trim());
+  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
+  return path.resolve(result.stdout.trim());
 }
 
-/** Resolves `--run <yyyy-mm-dd-hhmm>` (or a report path), else the newest report in `.scratch/audits/`. */
+/** Resolves `--run <yyyy-mm-dd-hhmm>` (or a report path), else the newest report. */
 function resolveReport(root, argv) {
-  const auditDir = path.join(root, ...AUDIT_DIR.split('/'));
-  const value = flag(argv, '--run');
-  if (value) {
-    const file = /^\d{4}-\d{2}-\d{2}-\d{4}$/.test(value)
-      ? path.join(auditDir, `${value}-audit.md`)
-      : path.resolve(root, value);
-    if (!fs.existsSync(file)) throw new Error(`No audit report at ${value}`);
-    return file;
+  const auditDir = path.resolve(root, AUDIT_DIR);
+  const requestedRun = flag(argv, '--run');
+  if (requestedRun) {
+    const reportFile = RUN_ID_PATTERN.test(requestedRun)
+      ? path.join(auditDir, `${requestedRun}-audit.md`)
+      : path.resolve(root, requestedRun);
+    if (!fs.existsSync(reportFile)) throw new Error(`No audit report at ${requestedRun}`);
+    return reportFile;
   }
+
   if (!fs.existsSync(auditDir)) throw new Error(`No ${AUDIT_DIR}/ — run audit-dispatch-skills first.`);
-  // Reports are named `yyyy-mm-dd-hhmm-audit.md`, so lexical order is chronological.
-  const reports = fs.readdirSync(auditDir).filter((name) => /^\d{4}-\d{2}-\d{2}-\d{4}-audit\.md$/.test(name)).sort();
+  // Lexical order is chronological because report names begin with a fixed-width timestamp.
+  const reports = fs.readdirSync(auditDir).filter((name) => REPORT_NAME_PATTERN.test(name)).sort();
   if (reports.length === 0) throw new Error(`No <run>-audit.md under ${AUDIT_DIR}/ — run audit-dispatch-skills first.`);
-  return path.join(auditDir, reports[reports.length - 1]);
+  return path.join(auditDir, reports.at(-1));
 }
 
-export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--full', '--size', '--batches', '--note'];
-
+/** Reads a named CLI flag while rejecting absent values and other known flags as values. */
 function flag(argv, name, fallback = null) {
   const index = argv.indexOf(name);
   if (index === -1) return fallback;
@@ -84,13 +107,12 @@ function flag(argv, name, fallback = null) {
   return value;
 }
 
-// ============================================================================
-// SECTION: Report parsing
-// ============================================================================
+// SECTION: Report model
 
 /**
- * Splits the report into lines plus the half-open line range of `## 3. Findings`, so every edit
- * rewrites one line in place and the rest of the report — summary, appendix — stays byte-identical.
+ * Loads report lines and the half-open range of `## 3. Findings`.
+ * @param {string} file
+ * @returns {Report}
  */
 export function loadReport(file) {
   const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
@@ -107,44 +129,41 @@ export function loadReport(file) {
  * audit-dispatch-skills § "5. Write the report"; a report that drifts from it fails loudly.
  */
 export function parseFindings(report) {
-  const { lines, start, end } = report;
-  const heads = [];
-  for (let i = start; i < end; i += 1) {
-    const head = /^#### (A-\d+):\s*(.+)$/.exec(lines[i]);
-    if (head) heads.push({ id: head[1], title: head[2].trim(), line: i });
+  const headings = [];
+  for (let line = report.start; line < report.end; line += 1) {
+    const match = FINDING_HEADING_PATTERN.exec(report.lines[line]);
+    if (match) headings.push({ id: match[1], title: match[2].trim(), line });
   }
 
-  const findings = heads.map((head, n) => {
-    const blockEnd = n + 1 < heads.length ? heads[n + 1].line : end;
-    // A `### <Severity>` group heading sits between findings; it belongs to the next group, not this body.
-    const block = lines.slice(head.line, blockEnd);
-    while (block.length > 1 && /^(#{1,3} |-{3,}\s*$|\s*$)/.test(block[block.length - 1])) block.pop();
-    const find = (re) => {
-      for (let i = 0; i < block.length; i += 1) {
-        const match = re.exec(block[i]);
-        if (match) return { match, line: head.line + i };
+  const findings = headings.map((heading, index) => {
+    const blockEnd = headings[index + 1]?.line ?? report.end;
+    const block = report.lines.slice(heading.line, blockEnd);
+    // Severity group headings between findings belong to the next group, not the preceding body.
+    while (block.length > 1 && /^(#{1,3} |-{3,}\s*$|\s*$)/.test(block.at(-1))) block.pop();
+
+    const findLine = (pattern) => {
+      for (let offset = 0; offset < block.length; offset += 1) {
+        const match = pattern.exec(block[offset]);
+        if (match) return { match, line: heading.line + offset };
       }
       return null;
     };
-    const meta = find(/^-\s+\*\*(\w+)\*\*\s*·\s*([^·]+?)\s*·\s*([^·]+?)\s*·/);
-    const location = find(/^-\s+\*\*Location\*\*:\s*(.+)$/);
-    const status = find(/^-\s+\*\*Status\*\*:\s*([\w-]+)\s*(?:[—–-]\s*(.*))?$/);
-    const severity = meta ? meta.match[1].toLowerCase() : null;
+    const meta = findLine(/^-\s+\*\*(\w+)\*\*\s*·\s*([^·]+?)\s*·\s*([^·]+?)\s*·/);
+    const location = findLine(/^-\s+\*\*Location\*\*:\s*(.+)$/);
+    const status = findLine(/^-\s+\*\*Status\*\*:\s*([\w-]+)\s*(?:[—–-]\s*(.*))?$/);
     return {
-      id: head.id,
-      title: head.title,
-      severity,
-      metaLine: meta ? meta.line : null,
-      location: location ? location.match[1].trim() : '',
-      status: status ? status.match[1] : 'open',
-      note: status ? (status.match[2] ?? '').trim() : '',
-      statusLine: status ? status.line : null,
-      // Where a missing status line is inserted: right below the meta line, else below the heading.
-      anchor: meta ? meta.line : head.line,
+      id: heading.id,
+      title: heading.title,
+      severity: meta?.match[1].toLowerCase() ?? null,
+      metaLine: meta?.line ?? null,
+      location: location?.match[1].trim() ?? '',
+      status: status?.match[1] ?? 'open',
+      note: (status?.match[2] ?? '').trim(),
+      statusLine: status?.line ?? null,
+      anchor: meta?.line ?? heading.line,
       body: block.join('\n').trim(),
     };
   });
-
   const malformed = findings.filter((f) => f.metaLine === null || !SEVERITIES.includes(f.severity));
   if (findings.length > 0 && malformed.length > 0) {
     // Silently defaulting the severity here would demote a critical finding on a stray delimiter.
@@ -188,10 +207,9 @@ export function ranked(findings) {
   );
 }
 
-// ============================================================================
-// SECTION: Report writing
-// ============================================================================
+// SECTION: Report mutation
 
+/** Formats the canonical status line stored in each finding. */
 export function statusLine(status, note) {
   return note ? `- **Status**: ${status} — ${note}` : `- **Status**: ${status}`;
 }
@@ -211,8 +229,10 @@ export function writeReport(report, { replace = new Map(), insertAfter = new Map
 export function refreshCounts(reportFile) {
   const report = loadReport(reportFile);
   const findings = parseFindings(report);
-  const counts = Object.fromEntries(STATUSES.map((s) => [s, findings.filter((f) => f.status === s).length]));
-  const text = `${COUNTS_PREFIX} ${STATUSES.map((s) => `${s} ${counts[s]}`).join(', ')} (total ${findings.length}).`;
+  const counts = Object.fromEntries(STATUSES.map((status) => [status, 0]));
+  for (const finding of findings) counts[finding.status] += 1;
+  const summary = STATUSES.map((status) => `${status} ${counts[status]}`).join(', ');
+  const text = `${COUNTS_PREFIX} ${summary} (total ${findings.length}).`;
 
   const lines = [...report.lines];
   // Search the section preamble — heading to first `###`/`####` — not a fixed line window: prose
@@ -243,10 +263,9 @@ export function refreshCounts(reportFile) {
   return { counts, total: findings.length };
 }
 
-// ============================================================================
-// SECTION: Commands
-// ============================================================================
+// SECTION: Command handlers
 
+/** Adds missing statuses and refreshes the report summary. */
 export function cmdInit(root, reportFile) {
   const report = loadReport(reportFile);
   const findings = parseFindings(report);
@@ -307,48 +326,35 @@ export function selectBatch(open, size) {
  * to keep the cluster intact in a single dispatch rather than fragmenting same-file edits.
  */
 export function resolveBatchSize(allFindings, openFindings, argv = []) {
-  const explicitSize = flag(argv, '--size');
-  if (explicitSize !== null) {
-    const parsed = Number(explicitSize);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new Error(`Invalid --size "${explicitSize}": expected a positive integer.`);
-    }
-    return parsed;
-  }
-  const explicitBatches = flag(argv, '--batches');
-  let batches = DEFAULT_MAX_BATCHES;
-  if (explicitBatches !== null) {
-    const parsed = Number(explicitBatches);
-    if (!Number.isInteger(parsed) || parsed < 1) {
-      throw new Error(`Invalid --batches "${explicitBatches}": expected a positive integer.`);
-    }
-    batches = parsed;
-  }
+  const requestedSize = positiveIntegerFlag(argv, '--size');
+  if (requestedSize !== null) return requestedSize;
 
+  const batches = positiveIntegerFlag(argv, '--batches') ?? DEFAULT_MAX_BATCHES;
   const total = allFindings.length;
   if (total === 0 || openFindings.length === 0) return 1;
 
-  // 1. Base dynamic target to complete the report in at most `batches` (default 5) batches.
-  // Uses total findings so batch size remains stable across resumptions rather than decaying exponentially.
+  // Total findings, rather than remaining findings, keeps the target stable across resumptions.
+  const lead = openFindings[0];
   const dynamicTarget = Math.ceil(total / batches);
+  const severityTarget = SEVERITY_BATCH_TARGETS[lead.severity];
+  const minimumTarget = Math.min(MIN_SAFE_BATCH_SIZE, total);
+  let target = Math.max(minimumTarget, Math.min(dynamicTarget, severityTarget));
 
-  // 2. Severity-informed target from the lead open finding
-  const leadSeverity = openFindings[0].severity;
-  const severityTarget = SEVERITY_BATCH_TARGETS[leadSeverity];
-
-  // Bounded by severity target, with a minimum floor of MIN_SAFE_BATCH_SIZE (or total)
-  let target = Math.min(dynamicTarget, severityTarget);
-  target = Math.max(Math.min(MIN_SAFE_BATCH_SIZE, total), target);
-
-  // 3. Lead-cluster expansion: if the lead file holds a cluster (>= 2), keep the cluster intact
-  // rather than slicing same-file edits across multiple dispatches
-  const leadFile = primaryFile(openFindings[0].location);
-  const leadClusterSize = openFindings.filter((f) => primaryFile(f.location) === leadFile).length;
-  if (leadClusterSize >= 2) {
-    target = Math.max(target, Math.min(leadClusterSize, MAX_SAFE_BATCH_SIZE));
-  }
-
+  const leadFile = primaryFile(lead.location);
+  const leadClusterSize = openFindings.filter((finding) => primaryFile(finding.location) === leadFile).length;
+  if (leadClusterSize >= 2) target = Math.max(target, leadClusterSize);
   return Math.min(target, MAX_SAFE_BATCH_SIZE);
+}
+
+/** Parses a positive-integer flag without silently accepting numeric coercions. */
+function positiveIntegerFlag(argv, name) {
+  const value = flag(argv, name);
+  if (value === null) return null;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Invalid ${name} "${value}": expected a positive integer.`);
+  }
+  return parsed;
 }
 
 /**
@@ -396,20 +402,27 @@ export function cmdSet(root, reportFile, argv) {
   console.log(`${id} -> ${status}. Remaining open: ${counts.open}.`);
 }
 
+// SECTION: Main flow
+
+const COMMANDS = Object.freeze({
+  init: cmdInit,
+  list: cmdList,
+  batch: cmdBatch,
+  set: cmdSet,
+});
+
 function main() {
   const root = repoRoot();
   const argv = process.argv.slice(2);
   const reportFile = resolveReport(root, argv);
-  const command = argv[0];
-  if (command === 'init') return cmdInit(root, reportFile);
-  if (command === 'list') return cmdList(root, reportFile, argv);
-  if (command === 'batch') return cmdBatch(root, reportFile, argv);
-  if (command === 'set') return cmdSet(root, reportFile, argv);
-  throw new Error('Usage: status.mjs <init|list|batch|set> [...]');
+  const command = COMMANDS[argv[0]];
+  if (!command) throw new Error('Usage: status.mjs <init|list|batch|set> [...]');
+  command(root, reportFile, argv);
 }
 
 /**
- * Whether this module is the process entry point, so importing it for tests does not run the CLI.
+ * Reports whether this module is the process entry point.
+ * Importing it for tests must not run the CLI.
  * Compares realpaths, not URLs: Node resolves symlinks when computing a module's URL, so a plain
  * `import.meta.url === pathToFileURL(process.argv[1]).href` goes false whenever the script is
  * reached through a symlinked skills directory — and the CLI would exit 0 having done nothing.

@@ -22,6 +22,9 @@ import {
 } from './verification.mjs';
 import { missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
+// SECTION: Task entry and write cascade
+
+/** Enters or reconstructs the implementation task at its canonical next gate. */
 export function beginImplementation(state) {
   const data = state.ordinary;
   if (!ledgerSegment(state)?.approved) throw new Error('Implementation requires recorded approval.');
@@ -123,7 +126,7 @@ function advanceWriteCascade(state, reply) {
   return blockedWrite(state, `Configured write model cascade exhausted. Models tried: ${writeHistoryLine(data.writeHistory)}.`);
 }
 
-// SECTION: write-scope rulings
+// SECTION: Write-scope rulings
 const MANIFEST = 'skill-hashes.json';
 /** Auto-approves dispatch's skill integrity manifest only as the nearest manifest above an approved
  * path, and only when it verifies against the current files and hashes that approved path. */
@@ -317,6 +320,10 @@ function relaunchTestsOnly(state, defects) {
   data.step = 'write-pending';
   return writeAction(state);
 }
+
+// SECTION: Host decisions and completion
+
+/** Applies the pending typed implementation decision. */
 export function acceptImplementationDecision(state, reply) {
   const data = state.ordinary, answer = reply.answer;
   if (data.step === 'failure-disposition') return resolveFailure(state, answer);

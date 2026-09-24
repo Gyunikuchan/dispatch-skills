@@ -5,6 +5,8 @@ import path from 'node:path';
 import { scanResolutionLog } from './resolution-log.mjs';
 import { sessionTempDir } from '../lib/session-temp.mjs';
 
+// SECTION: Context validation
+
 const VERDICTS = new Set(['reject', 'downgrade', 'disputed']);
 
 function exactFields(value, fields) {
@@ -50,6 +52,9 @@ function validateContext(value, unsettledKeys) {
   return contexts;
 }
 
+// SECTION: Packet construction
+
+/** @param {string} markdown @param {Record<string, any>} context */
 export function buildRebuttalPackets(markdown, context) {
   const scan = scanResolutionLog(markdown, { strict: true });
   const unsettledKeys = new Set(scan.unsettledItems.map((finding) => finding.key));
@@ -87,6 +92,7 @@ export function buildRebuttalPackets(markdown, context) {
   }));
 }
 
+/** @param {{ artifact: string, context: string }} input */
 export function writeRebuttalPackets({ artifact, context }) {
   const markdown = fs.readFileSync(artifact, 'utf8');
   const contextValue = JSON.parse(fs.readFileSync(context === '-' ? 0 : context, 'utf8'));

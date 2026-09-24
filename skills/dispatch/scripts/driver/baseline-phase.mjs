@@ -8,6 +8,9 @@ import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
 
+// SECTION: Baseline phase
+
+/** Enters baseline verification after requiring a settled governing plan. */
 export function beginBaseline(state) {
   state.ordinary.planReview = requireSettledPlan(state);
   Object.assign(state.ordinary, verificationPlan(state), { phase: 'baseline', step: 'baseline-verify', mutationEpoch: 0 });
@@ -29,6 +32,10 @@ export function beginBaseline(state) {
   }
   return beginVerification(state, 'baseline');
 }
+
+// SECTION: Baseline decisions
+
+/** Emits the baseline ruling or approval gate implied by captured results. */
 export function baselineDecision(state) {
   const data = state.ordinary;
   const problematic = data.baselineResults.filter(result => result.exitStatus !== 0 || result.changed.length);

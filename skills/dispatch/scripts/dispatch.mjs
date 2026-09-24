@@ -54,7 +54,9 @@ import { isClaudeAvailable, runClaude } from './runners/claude.mjs';
 import { isCopilotAvailable, runCopilot } from './runners/copilot.mjs';
 import { appendTelemetry } from './lib/telemetry.mjs';
 import {
+  CLASSIFIABLE_LEVELS,
   LEVELS,
+  assertClassifiableLevel,
   loadDispatchConfig as loadConfigFile,
   effectiveSandbox,
   normalizeProviderKey,
@@ -68,9 +70,7 @@ import { sessionTempDir, consumeSessionFlag } from './lib/session-temp.mjs';
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 
-// ============================================================================
-// SECTION: Types
-// ============================================================================
+// SECTION: Public contracts
 
 /** @typedef {'opencode'|'agy'|'claude'|'copilot'} Provider */
 
@@ -113,9 +113,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {'timeout'|'buffer'|null} truncated
  */
 
-// ============================================================================
-// SECTION: Constants (tweak these)
-// ============================================================================
+// SECTION: Configuration constants
 
 /** Probes reachability for each provider, indirected so tests can mock individual entries. */
 export const providerProbes = {
@@ -146,11 +144,269 @@ const BATCH_ENTRY_FIELDS = new Set([
   'effort',
 ]);
 
+export const ASK_ROUND_ID = 'ask:R1';
+const DISPATCH_VALUE_FLAGS = [
+  '--response-schema-file',
+  '--batch-file',
+  '--output-file',
+  '--level',
+  '--level-source',
+  '--pins',
+  '--slots-file',
+];
+const LEVEL_SOURCES = ['explicit', 'classified'];
+const INSPECTION_FLAGS = ['--validate-only', '--list-platforms', '--list-targets', '--doctor'];
+const DRIVER_FLAGS = new Set(['--run', '--next', '--drive', '--verify', '--check-envelope']);
+const PROVIDER_CORRECTIVE_COMMANDS = {
+  claude: 'claude auth login',
+  agy: 'agy --help',
+  copilot: 'gh auth login',
+  opencode: 'opencode auth login',
+};
+
+
+// SECTION: Main flow
+
+/** Routes driver, inspection, wave, and single-dispatch modes from the process arguments. */
+export async function main() {
+  // Driver entry points are flags, not subcommands, so a prompt starting with "run" stays a prompt.
+  // Checked before importing so plain `ask` runs never load the driver's review stack.
+  // Host-run argv carries its session explicitly: a fresh shell does not inherit the driver's env.
+  process.argv = [...process.argv.slice(0, 2), ...consumeSessionFlag(process.argv.slice(2))];
+  const args = process.argv.slice(2);
+  const driverSeparator = args.indexOf('--');
+  const head = driverSeparator === -1 ? args : args.slice(0, driverSeparator);
+  if (head.some((arg) => DRIVER_FLAGS.has(arg) || /^--(?:run|check-envelope)=/.test(arg))) {
+    const driver = await import('./driver/index.mjs');
+    process.exit(await driver.runDriver(args));
+  }
+  const slotsIndex = head.indexOf('--slots');
+  if (slotsIndex !== -1) {
+    if (head.length > 2) {
+      console.error('Error: --slots is a read-only inspection mode and cannot be combined with other flags.');
+      process.exit(1);
+    }
+    const slotsFile = head[slotsIndex + 1];
+    if (!slotsFile) {
+      console.error('Error: --slots requires a file path.');
+      process.exit(1);
+    }
+    console.log(JSON.stringify(readFailedSlots(slotsFile)));
+    process.exit(0);
+  }
+  const options = parseCommonArgs(process.argv, {
+    booleanFlags: ['--no-config', ...INSPECTION_FLAGS],
+    valueFlags: DISPATCH_VALUE_FLAGS,
+  });
+  const { noConfig, validateOnly, listPlatforms, listTargets, doctor } = parseDispatchFlags(process.argv);
+  const { values: dispatchValues } = parseRunnerModeArgs(process.argv.slice(2), {
+    valueFlags: DISPATCH_VALUE_FLAGS,
+    aliases: {
+      '--response-schema-file': 'responseSchemaFile',
+      '--batch-file': 'batchFile',
+      '--output-file': 'outputFile',
+      '--level': 'level',
+      '--level-source': 'levelSource',
+      '--pins': 'pins',
+      '--slots-file': 'slotsFile',
+    },
+  });
+  const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
+  const batchFile = dispatchValues.batchFile ?? null;
+  const outputFile = dispatchValues.outputFile ?? null;
+  const rawLevel = dispatchValues.level ?? null;
+  const rawLevelSource = dispatchValues.levelSource ?? null;
+  const rawPins = dispatchValues.pins ?? null;
+  const slotsFile = dispatchValues.slotsFile ?? null;
+  // NOTE: parseRunnerModeArgs maps an empty value to null, so presence is read from argv; an empty
+  // list must not fall through to a plain cascade or silently widen to an `all` wave.
+  const optionArgs = process.argv.slice(2);
+  const separator = optionArgs.indexOf('--');
+  const pinsGiven = (separator === -1 ? optionArgs : optionArgs.slice(0, separator)).some((arg) => arg === '--pins' || arg.startsWith('--pins='));
+  const writeOutput = (text) => writeDispatchOutput(text, outputFile);
+
+  if (options.help) {
+    await printHelp();
+    process.exit(0);
+  }
+
+  if ([validateOnly, listPlatforms, listTargets, doctor].filter(Boolean).length > 1) {
+    console.error('Error: --validate-only, --list-platforms, --list-targets, and --doctor are separate inspection modes; run one at a time.');
+    process.exit(1);
+  }
+
+  if (validateOnly || listPlatforms || listTargets || doctor) {
+    const mode = validateOnly ? '--validate-only' : listPlatforms ? '--list-platforms' : listTargets ? '--list-targets' : '--doctor';
+    const purpose = validateOnly
+      ? 'checks the dispatch config schema alone'
+      : listPlatforms
+        ? 'prints the effective config\'s platform keys alone'
+        : listTargets
+          ? 'prints the effective config\'s ordered targets'
+          : 'reports the effective config, candidates, phases, and provider health';
+    // Refuse the combination rather than silently ignoring flags the user believes were honored.
+    // Every mode accepts --level; --doctor and --list-targets also take the orchestrator pair,
+    // and only --doctor reports a level source.
+    let ignored = collectRunFlags(options, noConfig);
+    if (responseSchemaFile) ignored.push('--response-schema-file');
+    if (batchFile) ignored.push('--batch-file');
+    if (outputFile) ignored.push('--output-file');
+    if (pinsGiven) ignored.push('--pins');
+    if (rawLevelSource !== null && !doctor) ignored.push('--level-source');
+    if (listTargets || doctor) {
+      ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
+    }
+    if (ignored.length > 0) {
+      console.error(`Error: ${mode} ${purpose} and cannot be combined with: ${ignored.join(', ')}`);
+      process.exit(1);
+    }
+    let levelArgs;
+    try {
+      levelArgs = resolveLevelArgs(rawLevel, doctor ? rawLevelSource : null);
+    } catch (err) {
+      console.error(`Error: ${err.message}`);
+      process.exit(1);
+    }
+
+    const loaded = loadValidConfigOrExit();
+    const resolved = resolveReadDelegates(loaded.config, levelArgs.level);
+    if (listPlatforms) {
+      // Config order, one key per line, so named pins can validate membership without parsing JSON.
+      // Availability is deliberately not probed: membership is a config fact, and liveness is the
+      // fallback gate's job per dispatch.
+      console.log(Object.keys(resolved.platforms).join('\n'));
+      return;
+    }
+    if (listTargets) {
+      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
+      console.log(JSON.stringify(resolveConfiguredTargets(resolved, orchestrator, orchestratorModel), null, 2));
+      return;
+    }
+    if (doctor) {
+      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
+      const report = await buildDoctorReport(loaded.config, loaded.path, { ...levelArgs, orchestrator, orchestratorModel });
+      console.log(formatDoctorReport(report));
+      return;
+    }
+    console.log('Config is valid.');
+    return;
+  }
+
+  let levelArgs;
+  try {
+    levelArgs = resolveLevelArgs(rawLevel, rawLevelSource);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+  if (pinsGiven && !(rawPins ?? '').split(',').some((pin) => pin.trim())) {
+    console.error('Error: --pins requires provider keys, a count, or "all".');
+    process.exit(1);
+  }
+  if (rawPins !== null) {
+    // A wave resolves its own targets, so every flag that selects or overrides a candidate conflicts.
+    const conflicts = [];
+    if (options.provider !== null) conflicts.push('--provider');
+    if (options.candidateIndex !== null) conflicts.push('--candidate-index');
+    if (batchFile) conflicts.push('--batch-file');
+    if (noConfig) conflicts.push('--no-config');
+    if (options.model !== null) conflicts.push('--model');
+    if (options.effort !== null) conflicts.push('--effort');
+    if (conflicts.length > 0) {
+      console.error(`Error: --pins cannot be combined with: ${conflicts.join(', ')}`);
+      process.exit(1);
+    }
+  }
+  if (options.model !== null && options.effort === null) {
+    console.error('Error: --model requires --effort.');
+    process.exit(1);
+  }
+
+  if (slotsFile && !batchFile && rawPins === null) {
+    console.error('Error: --slots-file requires --batch-file or --pins.');
+    process.exit(1);
+  }
+
+  const pipedStdin = await readStdin();
+  let finalPrompt = options.prompt.trim();
+  if (pipedStdin) {
+    finalPrompt = finalPrompt ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}` : pipedStdin;
+  }
+
+  if (!finalPrompt) {
+    console.error('Error: No prompt provided. Use --help for usage.');
+    process.exit(1);
+  }
+
+  process.stderr.write(`[dispatch] level=${levelArgs.level} source=${levelArgs.levelSource}\n`);
+  const startedAt = Date.now();
+  let result;
+  try {
+    if (batchFile || rawPins !== null) {
+      await runWave({
+        options,
+        noConfig,
+        batchFile,
+        rawPins,
+        level: levelArgs.level,
+        prompt: finalPrompt,
+        responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
+        promptFile: pipedStdin ? null : options.promptFile,
+        outputFile,
+        slotsFile,
+      });
+      return;
+    }
+    result = await dispatchTask({
+      ...options,
+      prompt: finalPrompt,
+      level: levelArgs.level,
+      responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
+      noConfig,
+      orchestratorModel: options.orchestratorModel ?? undefined,
+      // Piped input was appended above, so the file alone no longer reproduces the attempt's brief;
+      // the fallback guidance then cites the prompt generically instead of a partial file.
+      promptFile: pipedStdin ? null : options.promptFile,
+    });
+  } catch (err) {
+    appendTelemetry({ error: err, startedAt });
+    console.error(formatCliError(err));
+    const exitCode = safeExitCode(err);
+    process.exit(exitCode);
+    return;
+  }
+
+  if (result.stdout) {
+    writeOutput(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
+  }
+
+  if (result.truncated) {
+    console.warn(
+      `\n[dispatch] WARNING: Output truncated (${result.truncated}). Full trace: ${result.logFile}\n`,
+    );
+  }
+
+
+  appendTelemetry({ result, startedAt });
+  process.exit(result.exitCode ?? 0);
+}
+
+/** Returns the stable identity used to correlate a wave slot across artifacts. */
 function sourceKeyFor(entry) {
   const candidateIndex = entry.candidateIndex ?? Number(entry.candidateId.split(':').at(-1));
   return `${entry.roundId}:${entry.platform}:${candidateIndex}`;
 }
 
+/**
+ * Validates one untrusted batch slot and records its uniqueness constraints.
+ *
+ * @param {Record<string, any>} entry
+ * @param {string} where JSON-path-like location used in diagnostics.
+ * @param {{ platforms: Record<string, Record<string, any> | Record<string, any>[]> }} config
+ * @param {Set<string>} sourceKeys
+ * @param {Set<string>} tuples
+ * @returns {Record<string, any>}
+ */
 function validateBatchEntry(entry, where, config, sourceKeys, tuples) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${where} must be an object.`);
@@ -271,7 +527,11 @@ export function loadBatchFile(file, config) {
   return { targets, reserves, path: realFile };
 }
 
-// Source-map records need a single model/effort string; a cascade list has none, so it records null.
+/**
+ * Returns the scalar spec a source-map record can represent; cascade lists have no single value.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
 function singleSpec(value) {
   return typeof value === 'string' ? value : null;
 }
@@ -309,7 +569,7 @@ function batchRecord(entry, status, result = null, error = null, substitutesFor 
   };
 }
 
-/** `sandboxDowngraded`/`warnings` only when present, so an intact sandbox adds no keys. */
+/** Returns only present sandbox downgrade metadata, so intact runs add no envelope keys. */
 function downgradeFields(source) {
   const fields = {};
   if (source?.sandboxDowngraded === true) fields.sandboxDowngraded = true;
@@ -317,6 +577,7 @@ function downgradeFields(source) {
   return fields;
 }
 
+/** Runs one wave slot and normalizes thrown and returned failures into one outcome. */
 async function runBatchEntry(entry, options, config, resolved, substitutesFor = null) {
   let result;
   let error;
@@ -406,11 +667,7 @@ export async function dispatchBatch(batch, options, config) {
   };
 }
 
-// ============================================================================
-// SECTION: --pins wave (R8)
-// ============================================================================
-
-export const ASK_ROUND_ID = 'ask:R1';
+// SECTION: Wave planning and execution
 
 /**
  * Builds the `ask` wave for `--pins` over level-resolved read delegates. Named pins: one
@@ -493,16 +750,7 @@ function readFailedSlots(file) {
   return text.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line)).filter((record) => record.status !== 'ok');
 }
 
-const PROVIDER_CORRECTIVE_COMMANDS = {
-  claude: 'claude auth login',
-  agy: 'agy --help',
-  copilot: 'gh auth login',
-  opencode: 'opencode auth login',
-};
-
-// ============================================================================
-// SECTION: --doctor
-// ============================================================================
+// SECTION: Diagnostics and schemas
 
 /**
  * Builds the `--doctor` report: level-resolved read-delegate candidates and health, the review
@@ -637,9 +885,7 @@ export function loadResponseSchema(file) {
   return normalizeResponseSchema(parsed, '--response-schema-file');
 }
 
-// ============================================================================
-// SECTION: Main API — dispatchTask()
-// ============================================================================
+// SECTION: Dispatch API
 
 /**
  * Dispatches the prompt to candidate providers with automatic fallback passes.
@@ -1066,9 +1312,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned, hostPlat
   throw err;
 }
 
-// ============================================================================
-// SECTION: CLI Entry Point
-// ============================================================================
+// SECTION: CLI support
 
 /**
  * Writes the report to `outputFile` (keeping a background task's output to banners) or stdout.
@@ -1095,9 +1339,6 @@ export function writeDispatchOutput(text, outputFile, { stdout = process.stdout,
   stdout.write(text);
 }
 
-const DISPATCH_VALUE_FLAGS = ['--response-schema-file', '--batch-file', '--output-file', '--level', '--level-source', '--pins', '--slots-file'];
-const LEVEL_SOURCES = ['explicit', 'classified'];
-
 /**
  * Resolves `--level`/`--level-source` into `{ level, levelSource }`: an omitted level is `medium`
  * from source `default`; an explicit level without a source is `explicit`.
@@ -1112,6 +1353,7 @@ function resolveLevelArgs(rawLevel, rawSource) {
   if (rawLevel !== null && !LEVELS.includes(rawLevel)) {
     throw new Error(`Unknown level "${rawLevel}". Valid levels: ${LEVELS.join(', ')}`);
   }
+  assertClassifiableLevel(rawLevel, rawSource);
   if (rawLevel === null) return { level: 'medium', levelSource: 'default' };
   return { level: rawLevel, levelSource: rawSource ?? 'explicit' };
 }
@@ -1133,228 +1375,7 @@ function loadValidConfigOrExit() {
   return loaded;
 }
 
-export async function main() {
-  // Driver entry points are flags, not subcommands, so a prompt starting with "run" stays a prompt.
-  // Checked before importing so plain `ask` runs never load the driver's review stack.
-  // Host-run argv carries its session explicitly: a fresh shell does not inherit the driver's env.
-  process.argv = [...process.argv.slice(0, 2), ...consumeSessionFlag(process.argv.slice(2))];
-  const args = process.argv.slice(2);
-  const driverSeparator = args.indexOf('--');
-  const head = driverSeparator === -1 ? args : args.slice(0, driverSeparator);
-  if (head.some((arg) => ['--run', '--next', '--drive', '--verify', '--check-envelope'].includes(arg) || /^--(?:run|check-envelope)=/.test(arg))) {
-    const driver = await import('./driver/index.mjs');
-    process.exit(await driver.runDriver(args));
-  }
-  const slotsIndex = head.indexOf('--slots');
-  if (slotsIndex !== -1) {
-    if (head.length > 2) {
-      console.error('Error: --slots is a read-only inspection mode and cannot be combined with other flags.');
-      process.exit(1);
-    }
-    const slotsFile = head[slotsIndex + 1];
-    if (!slotsFile) {
-      console.error('Error: --slots requires a file path.');
-      process.exit(1);
-    }
-    console.log(JSON.stringify(readFailedSlots(slotsFile)));
-    process.exit(0);
-  }
-  const options = parseCommonArgs(process.argv, {
-    booleanFlags: ['--no-config', '--validate-only', '--list-platforms', '--list-targets', '--doctor'],
-    valueFlags: DISPATCH_VALUE_FLAGS,
-  });
-  const { noConfig, validateOnly, listPlatforms, listTargets, doctor } = parseDispatchFlags(process.argv);
-  const { values: dispatchValues } = parseRunnerModeArgs(process.argv.slice(2), {
-    valueFlags: DISPATCH_VALUE_FLAGS,
-    aliases: {
-      '--response-schema-file': 'responseSchemaFile',
-      '--batch-file': 'batchFile',
-      '--output-file': 'outputFile',
-      '--level': 'level',
-      '--level-source': 'levelSource',
-      '--pins': 'pins',
-      '--slots-file': 'slotsFile',
-    },
-  });
-  const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
-  const batchFile = dispatchValues.batchFile ?? null;
-  const outputFile = dispatchValues.outputFile ?? null;
-  const rawLevel = dispatchValues.level ?? null;
-  const rawLevelSource = dispatchValues.levelSource ?? null;
-  const rawPins = dispatchValues.pins ?? null;
-  const slotsFile = dispatchValues.slotsFile ?? null;
-  // NOTE: parseRunnerModeArgs maps an empty value to null, so presence is read from argv; an empty
-  // list must not fall through to a plain cascade or silently widen to an `all` wave.
-  const optionArgs = process.argv.slice(2);
-  const separator = optionArgs.indexOf('--');
-  const pinsGiven = (separator === -1 ? optionArgs : optionArgs.slice(0, separator)).some((arg) => arg === '--pins' || arg.startsWith('--pins='));
-  const writeOutput = (text) => writeDispatchOutput(text, outputFile);
 
-  if (options.help) {
-    await printHelp();
-    process.exit(0);
-  }
-
-  if ([validateOnly, listPlatforms, listTargets, doctor].filter(Boolean).length > 1) {
-    console.error('Error: --validate-only, --list-platforms, --list-targets, and --doctor are separate inspection modes; run one at a time.');
-    process.exit(1);
-  }
-
-  if (validateOnly || listPlatforms || listTargets || doctor) {
-    const mode = validateOnly ? '--validate-only' : listPlatforms ? '--list-platforms' : listTargets ? '--list-targets' : '--doctor';
-    const purpose = validateOnly
-      ? 'checks the dispatch config schema alone'
-      : listPlatforms
-        ? 'prints the effective config\'s platform keys alone'
-        : listTargets
-          ? 'prints the effective config\'s ordered targets'
-          : 'reports the effective config, candidates, phases, and provider health';
-    // Refuse the combination rather than silently ignoring flags the user believes were honored.
-    // Every mode accepts --level; --doctor and --list-targets also take the orchestrator pair,
-    // and only --doctor reports a level source.
-    let ignored = collectRunFlags(options, noConfig);
-    if (responseSchemaFile) ignored.push('--response-schema-file');
-    if (batchFile) ignored.push('--batch-file');
-    if (outputFile) ignored.push('--output-file');
-    if (pinsGiven) ignored.push('--pins');
-    if (rawLevelSource !== null && !doctor) ignored.push('--level-source');
-    if (listTargets || doctor) {
-      ignored = ignored.filter(flag => flag !== '--orchestrator' && flag !== '--orchestrator-model');
-    }
-    if (ignored.length > 0) {
-      console.error(`Error: ${mode} ${purpose} and cannot be combined with: ${ignored.join(', ')}`);
-      process.exit(1);
-    }
-    let levelArgs;
-    try {
-      levelArgs = resolveLevelArgs(rawLevel, doctor ? rawLevelSource : null);
-    } catch (err) {
-      console.error(`Error: ${err.message}`);
-      process.exit(1);
-    }
-
-    const loaded = loadValidConfigOrExit();
-    const resolved = resolveReadDelegates(loaded.config, levelArgs.level);
-    if (listPlatforms) {
-      // Config order, one key per line, so named pins can validate membership without parsing JSON.
-      // Availability is deliberately not probed: membership is a config fact, and liveness is the
-      // fallback gate's job per dispatch.
-      console.log(Object.keys(resolved.platforms).join('\n'));
-      return;
-    }
-    if (listTargets) {
-      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
-      console.log(JSON.stringify(resolveConfiguredTargets(resolved, orchestrator, orchestratorModel), null, 2));
-      return;
-    }
-    if (doctor) {
-      const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
-      const report = await buildDoctorReport(loaded.config, loaded.path, { ...levelArgs, orchestrator, orchestratorModel });
-      console.log(formatDoctorReport(report));
-      return;
-    }
-    console.log('Config is valid.');
-    return;
-  }
-
-  let levelArgs;
-  try {
-    levelArgs = resolveLevelArgs(rawLevel, rawLevelSource);
-  } catch (err) {
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
-  }
-  if (pinsGiven && !(rawPins ?? '').split(',').some((pin) => pin.trim())) {
-    console.error('Error: --pins requires provider keys, a count, or "all".');
-    process.exit(1);
-  }
-  if (rawPins !== null) {
-    // A wave resolves its own targets, so every flag that selects or overrides a candidate conflicts.
-    const conflicts = [];
-    if (options.provider !== null) conflicts.push('--provider');
-    if (options.candidateIndex !== null) conflicts.push('--candidate-index');
-    if (batchFile) conflicts.push('--batch-file');
-    if (noConfig) conflicts.push('--no-config');
-    if (options.model !== null) conflicts.push('--model');
-    if (options.effort !== null) conflicts.push('--effort');
-    if (conflicts.length > 0) {
-      console.error(`Error: --pins cannot be combined with: ${conflicts.join(', ')}`);
-      process.exit(1);
-    }
-  }
-  if (options.model !== null && options.effort === null) {
-    console.error('Error: --model requires --effort.');
-    process.exit(1);
-  }
-
-  if (slotsFile && !batchFile && rawPins === null) {
-    console.error('Error: --slots-file requires --batch-file or --pins.');
-    process.exit(1);
-  }
-
-  const pipedStdin = await readStdin();
-  let finalPrompt = options.prompt.trim();
-  if (pipedStdin) {
-    finalPrompt = finalPrompt ? `${finalPrompt}\n\n[Piped Input]:\n${pipedStdin}` : pipedStdin;
-  }
-
-  if (!finalPrompt) {
-    console.error('Error: No prompt provided. Use --help for usage.');
-    process.exit(1);
-  }
-
-  process.stderr.write(`[dispatch] level=${levelArgs.level} source=${levelArgs.levelSource}\n`);
-  const startedAt = Date.now();
-  let result;
-  try {
-    if (batchFile || rawPins !== null) {
-      await runWave({
-        options,
-        noConfig,
-        batchFile,
-        rawPins,
-        level: levelArgs.level,
-        prompt: finalPrompt,
-        responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
-        promptFile: pipedStdin ? null : options.promptFile,
-        outputFile,
-        slotsFile,
-      });
-      return;
-    }
-    result = await dispatchTask({
-      ...options,
-      prompt: finalPrompt,
-      level: levelArgs.level,
-      responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
-      noConfig,
-      orchestratorModel: options.orchestratorModel ?? undefined,
-      // Piped input was appended above, so the file alone no longer reproduces the attempt's brief;
-      // the fallback guidance then cites the prompt generically instead of a partial file.
-      promptFile: pipedStdin ? null : options.promptFile,
-    });
-  } catch (err) {
-    appendTelemetry({ error: err, startedAt });
-    console.error(formatCliError(err));
-    const exitCode = safeExitCode(err);
-    process.exit(exitCode);
-    return;
-  }
-
-  if (result.stdout) {
-    writeOutput(result.stdout.endsWith('\n') ? result.stdout : `${result.stdout}\n`);
-  }
-
-  if (result.truncated) {
-    console.warn(
-      `\n[dispatch] WARNING: Output truncated (${result.truncated}). Full trace: ${result.logFile}\n`,
-    );
-  }
-
-
-  appendTelemetry({ result, startedAt });
-  process.exit(result.exitCode ?? 0);
-}
 
 /**
  * Runs a `--batch-file` or `--pins` wave: one R8 JSON line per launched slot on stdout, each
@@ -1523,9 +1544,7 @@ export function resolveConfiguredTargets(config, orchestrator = null, orchestrat
   return demoteOrchestratorTargets(targets, orchestrator, orchestratorModel);
 }
 
-// ============================================================================
-// SECTION: Provider Resolution
-// ============================================================================
+// SECTION: Provider resolution
 
 /**
  * Returns an ordered array of viable candidate providers based on the preference cascade:
@@ -1661,9 +1680,7 @@ export async function executeProvider(provider, runnerOptions) {
   return await runner(runnerOptions);
 }
 
-// ============================================================================
-// SECTION: Module Execution Guard
-// ============================================================================
+// SECTION: Process entry point
 
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {

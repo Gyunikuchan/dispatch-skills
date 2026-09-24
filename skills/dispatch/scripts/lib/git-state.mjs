@@ -7,35 +7,49 @@ import { TextDecoder } from 'node:util';
 
 import { canonicalJson, sha256 } from '../ledger/events.mjs';
 
-const decoder = new TextDecoder('utf-8', { fatal: true });
-const EMPTY = Buffer.alloc(0);
+/** @typedef {{ path: string, mode: string, content: Buffer, worktreeAbsent: boolean, submoduleHead: string|null }} MaterializedEntry */
+/** @typedef {{ path: string, pathBytes: Buffer, mode: string, objectId: string, stage: number, flags: string }} IndexEntry */
+
+const GIT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const BLOB_MODES = new Set(['100644', '100755', '120000']);
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
+const EMPTY_BUFFER = Buffer.alloc(0);
+
+// SECTION: Git plumbing
 
 /**
- * @param {any} repoRoot
- * @param {any} args
- * @param {{ input?: any }} [options]
+ * Runs Git with byte-preserving input and output.
+ *
+ * @param {string} repoRoot
+ * @param {string[]} args
+ * @param {{ input?: NodeJS.ArrayBufferView }} [options]
+ * @returns {Buffer}
  */
 function git(repoRoot, args, { input } = {}) {
   const result = spawnSync('git', args, {
     cwd: repoRoot,
     encoding: null,
     input,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: GIT_MAX_BUFFER_BYTES,
   });
   if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} failed: ${Buffer.from(result.stderr ?? EMPTY).toString('utf8').trim()}`);
+    throw new Error(
+      `git ${args.join(' ')} failed: ${Buffer.from(result.stderr ?? EMPTY_BUFFER).toString('utf8').trim()}`,
+    );
   }
-  return Buffer.from(result.stdout ?? EMPTY);
+  return Buffer.from(result.stdout ?? EMPTY_BUFFER);
 }
 
+/** @param {Buffer} bytes @returns {string} */
 export function decodeGitPath(bytes) {
   try {
-    return decoder.decode(bytes);
+    return UTF8_DECODER.decode(bytes);
   } catch {
     throw new Error(`Unsupported non-UTF-8 Git path: ${bytes.toString('hex')}`);
   }
 }
 
+/** @param {Buffer} buffer @returns {Buffer[]} */
 function nulRecords(buffer) {
   const records = [];
   let start = 0;
@@ -48,6 +62,9 @@ function nulRecords(buffer) {
   return records;
 }
 
+// SECTION: Repository paths and record hashing
+
+/** @param {string} value @returns {string} */
 export function normalizeTaskPath(value) {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\\') || path.posix.isAbsolute(value)) {
     throw new Error(`Invalid repository-relative task path "${value}"`);
@@ -60,14 +77,17 @@ export function normalizeTaskPath(value) {
   return normalized.replace(/^\.\//, '');
 }
 
+/** @param {string} value @returns {Buffer} */
 function pathBytes(value) {
   return Buffer.from(value, 'utf8');
 }
 
+/** @param {{ path: string }} left @param {{ path: string }} right */
 function compareBytes(left, right) {
   return Buffer.compare(pathBytes(left.path), pathBytes(right.path));
 }
 
+/** @param {Array<Buffer|string|number>} parts @returns {Buffer} */
 function frame(parts) {
   const output = [];
   for (const part of parts) {
@@ -79,12 +99,16 @@ function frame(parts) {
   return Buffer.concat(output);
 }
 
+/** @param {Array<Array<Buffer|string|number>>} records @returns {string} */
 export function hashRecords(records) {
   const hash = crypto.createHash('sha256');
   for (const record of records) hash.update(frame(record));
   return `sha256:${hash.digest('hex')}`;
 }
 
+// SECTION: Index and materialized state
+
+/** @param {string} repoRoot @returns {IndexEntry[]} */
 function indexEntries(repoRoot) {
   const flags = new Map();
   for (const record of nulRecords(git(repoRoot, ['ls-files', '-v', '-z']))) {
@@ -109,6 +133,7 @@ function indexEntries(repoRoot) {
   return entries.sort((a, b) => Buffer.compare(a.pathBytes, b.pathBytes) || a.stage - b.stage);
 }
 
+/** @param {string} repoRoot */
 export function indexFingerprint(repoRoot) {
   const entries = indexEntries(repoRoot);
   const records = entries.map(entry => [
@@ -121,6 +146,12 @@ function stageZeroByPath(repoRoot) {
   return new Map(indexEntries(repoRoot).filter(entry => entry.stage === 0).map(entry => [entry.path, entry]));
 }
 
+/**
+ * @param {string} repoRoot
+ * @param {string} relativePath
+ * @param {IndexEntry|undefined} indexEntry
+ * @returns {MaterializedEntry}
+ */
 function worktreeRecord(repoRoot, relativePath, indexEntry) {
   const absolute = path.join(repoRoot, ...relativePath.split('/'));
   let stat;
@@ -134,7 +165,13 @@ function worktreeRecord(repoRoot, relativePath, indexEntry) {
         worktreeAbsent: true, submoduleHead: null,
       };
     }
-    return { path: relativePath, mode: 'absent', content: EMPTY, worktreeAbsent: false, submoduleHead: null };
+    return {
+      path: relativePath,
+      mode: 'absent',
+      content: EMPTY_BUFFER,
+      worktreeAbsent: false,
+      submoduleHead: null,
+    };
   }
   if (stat.isSymbolicLink()) {
     return {
@@ -161,6 +198,7 @@ function worktreeRecord(repoRoot, relativePath, indexEntry) {
   };
 }
 
+/** @param {string} repoRoot @param {string[]} paths */
 export function materializedFingerprint(repoRoot, paths) {
   const normalized = [...new Set(paths.map(normalizeTaskPath))];
   const index = stageZeroByPath(repoRoot);
@@ -191,16 +229,23 @@ function parseStatusPaths(buffer) {
   ).sort((a, b) => Buffer.compare(pathBytes(a), pathBytes(b)));
 }
 
+// SECTION: Baseline and diff fingerprints
+
+/** @param {string} repoRoot @returns {string[]} */
 export function dirtyPaths(repoRoot) {
   return parseStatusPaths(git(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']));
 }
 
+/** @param {string} repoRoot @returns {string} */
 export function currentHead(repoRoot) {
   const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });
   if (head.status === 0) return head.stdout.trim();
-  return git(repoRoot, ['hash-object', '-t', 'tree', '--stdin'], { input: EMPTY }).toString('ascii').trim();
+  return git(repoRoot, ['hash-object', '-t', 'tree', '--stdin'], { input: EMPTY_BUFFER })
+    .toString('ascii')
+    .trim();
 }
 
+/** @param {string} repoRoot */
 export function baselineFingerprint(repoRoot) {
   const paths = dirtyPaths(repoRoot);
   const materialized = materializedFingerprint(repoRoot, paths);
@@ -218,6 +263,7 @@ export function baselineFingerprint(repoRoot) {
   };
 }
 
+/** @param {MaterializedEntry[]} beforeEntries @param {MaterializedEntry[]} afterEntries */
 export function diffHash(beforeEntries, afterEntries) {
   return sha256(canonicalJson({
     before: beforeEntries.map(entry => ({
@@ -231,15 +277,19 @@ export function diffHash(beforeEntries, afterEntries) {
   }));
 }
 
-// SECTION: task-start snapshots
-// File contents go to the object database, not run evidence: evidence keeps only object IDs.
-const BLOB_MODES = new Set(['100644', '100755', '120000']);
+// SECTION: Task-start snapshots
+
+// Snapshot blobs stay in Git's object database so run evidence only carries object IDs.
 
 /** Materialized entries with blob-backed contents: `{ path, mode, objectId | content(base64), worktreeAbsent, submoduleHead }`. */
 export function snapshotEntries(repoRoot, paths) {
-  return materializedFingerprint(repoRoot, paths).entries.map(({ content, ...entry }) => (BLOB_MODES.has(entry.mode)
-    ? { ...entry, objectId: git(repoRoot, ['hash-object', '-w', '--no-filters', '--stdin'], { input: content }).toString('ascii').trim() }
-    : { ...entry, content: content.toString('base64') }));
+  return materializedFingerprint(repoRoot, paths).entries.map(({ content, ...entry }) => {
+    if (!BLOB_MODES.has(entry.mode)) return { ...entry, content: content.toString('base64') };
+    const objectId = git(repoRoot, ['hash-object', '-w', '--no-filters', '--stdin'], { input: content })
+      .toString('ascii')
+      .trim();
+    return { ...entry, objectId };
+  });
 }
 
 /** Contents of a snapshot entry (non-blob entries carry base64 `content`). */

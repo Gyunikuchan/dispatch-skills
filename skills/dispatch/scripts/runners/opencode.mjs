@@ -151,7 +151,7 @@ import {
 /**
  * @typedef {object} RunOpencodeOptions
  * @property {boolean} [sandbox]
- * @property {Function} [runSingle] Test seam.
+ * @property {typeof runOpencodeSingle} [runSingle] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string|string[]|null} [model] Overrides opencode.jsonc's configured model; a list is tried in order.
@@ -190,10 +190,13 @@ import {
  * @property {string|null} failureKind
  * @property {string} [formattedPromptForMetrics]
  * @property {boolean} [sandboxDowngraded]
+ * @property {Record<string, any>} [usage]
+ * @property {ReturnType<typeof buildMetricsAttempt>[]} [metricsAttempts]
+ * @property {number} [effectiveAttempt]
  */
 
 // ============================================================================
-// SECTION: Constants (tweak these)
+// SECTION: Provider-Tweakable Constants
 // ============================================================================
 
 export const DEFAULT_FALLBACK_AGENT = 'plan';
@@ -244,7 +247,7 @@ export const LM_STUDIO_NO_LOADED_MODEL_WARNING =
   "LM Studio reports no loaded model; JIT loading may be off — run 'lms load <model>'";
 
 // ============================================================================
-// SECTION: Main API — runOpencode()
+// SECTION: Primary API
 // ============================================================================
 
 /**

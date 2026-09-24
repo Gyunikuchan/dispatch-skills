@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 
-import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-phase.mjs';
+import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
 import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
 
@@ -79,10 +79,13 @@ describe('review level resolution (raise rule)', () => {
     assert.equal(result.raised, true);
   });
 
-  it('never lowers an enabled classified level', () => {
-    const result = resolveReviewLevel({ config: config(highOnly), kind: 'plan', level: 'max', levelSource: 'classified' });
-    assert.equal(result.level, 'max');
+  it('does not escalate a classified level beyond high', () => {
+    const elevatedOnly = { rounds: { low: 0, medium: 0, high: 0, xhigh: 2, max: 2 }, targets: ALL(1), consensus: ALL(false) };
+    const result = resolveReviewLevel({ config: config(elevatedOnly), kind: 'plan', level: 'high', levelSource: 'classified' });
+    assert.equal(result.level, 'high');
     assert.equal(result.raised, false);
+    assert.match(result.skipped.reason, /explicit user selection/);
+    assert.match(result.skipped.reason, /stops at "high"/);
   });
 
   it('skips rather than demotes a classified level with no enabled level above it', () => {
@@ -151,6 +154,15 @@ describe('driver skip and inference through dispatch.mjs', () => {
     assert.match(action.reason, /medium/);
     assert.match(action.reason, /plan-review/);
     assert.equal(fs.readFileSync(plan, 'utf8').includes('### Round'), false, 'nothing was reviewed');
+  });
+
+  it('rejects a classified xhigh or max level before starting a run', () => {
+    const plan = writePlan(repo.dir, '2026-09-22-elevated.md');
+    for (const level of ['xhigh', 'max']) {
+      const res = run(['--run', 'review', '--level', level, '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
+      assert.equal(res.status, 2);
+      assert.match(res.stderr, /require explicit user selection/);
+    }
   });
 
   it('raises a classified level and launches instead of skipping', () => {

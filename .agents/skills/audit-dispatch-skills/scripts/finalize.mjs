@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isMainModule } from '../../../../skills/dispatch/scripts/lib/platform.mjs';
-import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
+import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
 // SECTION: Main
@@ -35,24 +35,13 @@ function main() {
     ? diffStatus(fs.readFileSync(baselinePath, 'utf8'), auditGitStatus(root) ?? '')
     : null;
 
-  let destination = null;
-  if (fs.existsSync(workDir)) {
-    destination = fs.mkdtempSync(path.join(os.tmpdir(), `audit-dispatch-skills-${runId}-`));
-    for (const name of fs.readdirSync(workDir)) moveEntry(path.join(workDir, name), path.join(destination, name));
-    fs.rmSync(workDir, { recursive: true, force: true });
-  }
-
-  const integrity =
-    changes === null
-      ? 'unknown (no baseline snapshot)'
-      : changes.length === 0
-        ? 'unchanged'
-        : `CHANGED during the audit:\n\n\`\`\`\n${changes.join('\n')}\n\`\`\``;
+  const destination = relocateWorkDir(workDir, runId);
+  const integrity = formatIntegrity(changes);
   const footer = [
     '',
     '---',
     '',
-    `Run artifacts (baseline, findings, probe captures): ${destination ? `\`${destination.split(path.sep).join('/')}\`` : 'none'}`,
+    `Run artifacts (baseline, findings, probe captures): ${destination ? `\`${toPosix(destination)}\`` : 'none'}`,
     '',
     `Repo integrity: ${integrity}`,
     '',
@@ -63,9 +52,29 @@ function main() {
 }
 
 // ============================================================================
-// SECTION: Utilities
+// SECTION: Artifact Relocation
 // ============================================================================
 
+/** @param {string} workDir @param {string} runId @returns {string|null} */
+function relocateWorkDir(workDir, runId) {
+  if (!fs.existsSync(workDir)) return null;
+
+  const destination = fs.mkdtempSync(path.join(os.tmpdir(), `audit-dispatch-skills-${runId}-`));
+  for (const name of fs.readdirSync(workDir)) {
+    moveEntry(path.join(workDir, name), path.join(destination, name));
+  }
+  fs.rmSync(workDir, { recursive: true, force: true });
+  return destination;
+}
+
+/** @param {string[]|null} changes @returns {string} */
+function formatIntegrity(changes) {
+  if (changes === null) return 'unknown (no baseline snapshot)';
+  if (changes.length === 0) return 'unchanged';
+  return `CHANGED during the audit:\n\n\`\`\`\n${changes.join('\n')}\n\`\`\``;
+}
+
+/** @param {string} from @param {string} to */
 export function moveEntry(from, to) {
   try {
     fs.renameSync(from, to);
@@ -77,7 +86,11 @@ export function moveEntry(from, to) {
   }
 }
 
-// Guarded so moveEntry can be imported and unit-tested without finalizing a run.
+// ============================================================================
+// SECTION: CLI Entry
+// ============================================================================
+
+// Guarded so helpers can be imported without finalizing a run.
 if (isMainModule(import.meta.url)) {
   try {
     main();

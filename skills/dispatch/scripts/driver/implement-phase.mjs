@@ -11,6 +11,12 @@ import { acceptVerification, beginVerification, completionResult, fingerprint } 
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 
+// SECTION: Phase entry
+
+/**
+ * Creates or reconstructs an ordinary implementation run and emits its first action.
+ * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string, dispatchScript: string }} options
+ */
 export async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {
   const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
   const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });

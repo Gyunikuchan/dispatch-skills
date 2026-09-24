@@ -23,6 +23,14 @@ import {
 
 /** Policy and model tiers, lowest first. */
 export const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const CLASSIFIABLE_LEVELS = ['low', 'medium', 'high'];
+
+/** Rejects explicit-only tiers when the caller classified the level automatically. */
+export function assertClassifiableLevel(level, source) {
+  if (source === 'classified' && !CLASSIFIABLE_LEVELS.includes(level)) {
+    throw new Error(`Classified levels must be one of ${CLASSIFIABLE_LEVELS.join(', ')}; xhigh and max require explicit user selection.`);
+  }
+}
 
 /** Review phases the `phases` table may configure, in workflow order. */
 export const REVIEW_PHASES = ['plan-review', 'design-review', 'code-review'];
@@ -44,9 +52,7 @@ export function normalizeProviderKey(key) {
   return PROVIDER_ALIASES[String(key).toLowerCase()] ?? key;
 }
 
-// ============================================================================
 // SECTION: Level resolution
-// ============================================================================
 
 /**
  * Picks which defined level applies: exact → nearest defined below → lowest defined above.
@@ -156,9 +162,7 @@ export function phaseMembers(config, phase) {
   return keys.filter(key => allowed.has(key));
 }
 
-// ============================================================================
 // SECTION: Validation
-// ============================================================================
 
 /** Object key order is ignored; array order (alias fallback) is significant. */
 export function canonicalJson(value) {
@@ -396,9 +400,7 @@ export function validateConfig(config) {
   return problems;
 }
 
-// ============================================================================
 // SECTION: Loading
-// ============================================================================
 
 /**
  * Loads the dispatch config (first of `config.local.jsonc`, `config.jsonc`), normalizing absent optional

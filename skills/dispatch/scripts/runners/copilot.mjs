@@ -81,9 +81,9 @@ import {
 
 /**
  * @typedef {object} RunCopilotOptions
- * @property {Function} [execute] Test seam.
- * @property {Function} [discoverTargets] Test seam.
- * @property {Function} [createLogger] Test seam.
+ * @property {typeof executeOnTarget} [execute] Test seam.
+ * @property {typeof findViableTargets} [discoverTargets] Test seam.
+ * @property {typeof createSessionLogger} [createLogger] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string} [model]
@@ -110,11 +110,16 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
+ * @property {Record<string, any>} [usage]
+ * @property {ReturnType<typeof buildMetricsAttempt>[]} [metricsAttempts]
+ * @property {number} [effectiveAttempt]
  */
 
 // ============================================================================
-// SECTION: Constants (tweak these)
+// SECTION: Provider-Tweakable Constants
 // ============================================================================
+
+export const COPILOT_DOWNGRADE_WARNING = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
 
 /**
  * Execution modes in cascade preference order: Standalone Copilot CLI > GitHub Copilot Desktop > VS Code Extension.
@@ -122,17 +127,15 @@ import {
  * (resolution, probing, execution) iterates this instead of redeclaring the list.
  * @type {ModeDefinition[]}
  */
-const MODE_DEFINITIONS = [
+export const MODE_DEFINITIONS = [
   { mode: 'cli', name: 'Standalone Copilot CLI', fn: () => getCopilotCliBinary() },
   { mode: 'desktop', name: 'GitHub Copilot Desktop', fn: () => getCopilotDesktopBinary() },
   { mode: 'vscode', name: 'Copilot VS Code Extension', fn: () => getCopilotVscodeBinary() },
 ];
 
 // ============================================================================
-// SECTION: Main API — runCopilot()
+// SECTION: Primary API
 // ============================================================================
-
-export const COPILOT_DOWNGRADE_WARNING = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
 
 /**
  * Runs a prompt through GitHub Copilot using the preferred mode (cli > desktop > vscode).

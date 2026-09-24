@@ -11,6 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { lintDesign } from '../design/lint.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 
+// SECTION: Shared kind data
+
 const TEMPLATES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'references', 'templates');
 const template = (name) => path.join(TEMPLATES_DIR, name);
 
@@ -41,7 +43,9 @@ const DESIGN_TAGS = new Set([
   'adjacent',
 ]);
 
-/** Common checkpoint metadata; design additionally carries approval forward while content is unchanged. */
+// SECTION: Metadata policies
+
+/** Builds common checkpoint metadata; design adds approval continuity separately. */
 function documentMetadata(kind) {
   return ({ slug, invocationId, snapshot, now }) => ({
     schemaVersion: 1,
@@ -62,6 +66,8 @@ function designMetadata({ slug, invocationId, snapshot, previous, now }) {
     approvedAt: approvalMatches ? previous.approvedAt : null,
   };
 }
+
+// SECTION: Kind registry
 
 export const REVIEW_KINDS = Object.freeze({
   plan: Object.freeze({

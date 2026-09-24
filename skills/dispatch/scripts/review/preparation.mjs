@@ -13,6 +13,8 @@ import {
   withDispatchFrontmatter,
 } from './resolution-log.mjs';
 
+// SECTION: Request validation and shared values
+
 const METADATA_KEYS = new Set([
   'schemaVersion',
   'kind',
@@ -134,7 +136,7 @@ export function changedKeys(previous = {}, current = {}) {
     .sort();
 }
 
-// SECTION: checkpoint diagnostics
+// SECTION: Checkpoint diagnostics
 // Checkpoint is the last write of a settled run, so a rejection must name the delta and the one
 // legal recovery. Observed state is authoritative: the caller corrects its declaration, never the
 // repository. The `do not match observed` head is load-bearing for existing callers and tests.
@@ -162,7 +164,9 @@ export function checkpointDriftRemedy(detail) {
 }
 
 /**
- * @param {any} metadata
+ * Validates persisted dispatch metadata for the expected artifact identity.
+ *
+ * @param {Record<string, any> | null} metadata
  * @param {{ kind?: any, slug?: any }} [options]
  */
 export function validateDispatchMetadata(metadata, { kind = null, slug = null } = {}) {
@@ -254,6 +258,9 @@ export function validateDispatchMetadata(metadata, { kind = null, slug = null } 
   return metadata;
 }
 
+// SECTION: Artifact metadata
+
+/** @param {string} file @param {Record<string, any>} [expected] */
 export function readArtifact(file, expected = {}) {
   const resolved = path.resolve(file);
   const source = fs.readFileSync(resolved, 'utf8');
@@ -268,9 +275,9 @@ export function readArtifact(file, expected = {}) {
 }
 
 /**
- * @param {any} file
- * @param {any} metadata
- * @param {{ expectedDocumentHash?: any }} [options]
+ * @param {string} file
+ * @param {Record<string, any>} metadata
+ * @param {{ expectedDocumentHash?: string | null }} [options]
  */
 export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = null } = {}) {
   const resolved = path.resolve(file);
@@ -353,7 +360,7 @@ function withVerificationTable(body) {
     : `${stripped.trimEnd()}\n\n## Verification & Validation\n\n${table}\n`;
 }
 
-// SECTION: projection transforms
+// SECTION: Review projection
 // Pure text rewrites applied on every round, so round-1 and re-review briefs share one shape.
 
 const DEFAULT_SCOPE_NOTE = /^- \*\*\[MODIFY\]\*\* `([^`]+)` — Approved implementation scope\.$/;
@@ -443,6 +450,9 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
   };
 }
 
+// SECTION: Temporary review artifacts
+
+/** @param {string} prefix @param {string} filename @param {string} contents */
 export function createTempFile(prefix, filename, contents) {
   const dir = sessionTempDir(prefix);
   const file = path.join(dir, filename);
@@ -462,6 +472,8 @@ export function createReviewView({ artifact, nextRound }) {
   );
   return { ...built, viewPath: written.path, cleanupPath: written.cleanupPath };
 }
+
+// SECTION: Invocation state
 
 function contextFor(state) {
   return {
@@ -610,6 +622,8 @@ export function completeInvocationState(context) {
 /** Fence-aware removal of one `## <section>` block: a fenced `## <section>` heading inside a
  *  code fence never starts a section. A fenced `## ` line inside the excluded section fails
  *  closed: a stray fence pairing with a later one would otherwise hide governed sections. */
+// SECTION: Semantic snapshots
+
 function stripExcludedSection(body, section) {
   const lines = body.split('\n');
   const out = [];
@@ -636,8 +650,8 @@ function stripExcludedSection(body, section) {
 }
 
 /**
- * @param {any} source
- * @param {{ excludedSections?: any[] }} [options]
+ * @param {string} source
+ * @param {{ excludedSections?: string[] }} [options]
  */
 export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
   let body = scanResolutionLog(source, { strict: true }).semanticBody;
@@ -681,8 +695,8 @@ export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
  *  content per section (each heading plus its first lines) and pairs the excerpt with the
  *  explicit approved revision and the recomputed governed hash.
  *
- * @param {any} source
- * @param {{ revision?: any, maxChars?: number, maxLinesPerSection?: number }} [options]
+ * @param {string} source
+ * @param {{ revision?: string | null, maxChars?: number, maxLinesPerSection?: number }} [options]
  */
 export function governingDesignExcerpt(source, { revision = null, maxChars = 4000, maxLinesPerSection = 12 } = {}) {
   const { contentHash } = semanticSectionHashes(source, { excludedSections: ['Execution Status'] });
@@ -717,6 +731,8 @@ export function governingDesignExcerpt(source, { revision = null, maxChars = 400
   if (excerpt.length > maxChars) excerpt = `${excerpt.slice(0, maxChars)}…`;
   return { revision, governedHash: contentHash, excerpt };
 }
+
+// SECTION: Dispatch files
 
 export function createDispatchFiles({
   prompt,

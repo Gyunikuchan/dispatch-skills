@@ -8,12 +8,21 @@ import { appendEvent, governingHash, readLedger } from '../ledger/ledger.mjs';
 import { foldEvents, foldDesignRun } from '../ledger/events.mjs';
 import { parseIncrementGraph } from './graph.mjs';
 
+const LIVE_AMENDMENT_STATES = new Set(['proposed', 'reviewed', 'prepared']);
+const INVALIDATABLE_INCREMENT_STATES = new Set(['pending', 'ready', 'active', 'reopened']);
+const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
+const GIT_TIMEOUT_MS = 5_000;
+
+// SECTION: Paths, durability, and ledger access
+
+/** @param {string} absolute */
 function repoRootOf(absolute) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: path.dirname(absolute), encoding: 'utf8', timeout: 5000 });
+  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: path.dirname(absolute), encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
   return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : process.cwd();
 }
 
 // Ledger paths are repository-relative regardless of the caller's cwd.
+/** @param {string} value */
 function canonicalPath(value) {
   const absolute = path.resolve(String(value));
   const relative = path.relative(repoRootOf(absolute), absolute);
@@ -66,12 +75,16 @@ function nextSeq(read) {
   return read.events.at(-1)?.seq ?? 0;
 }
 
+/** @param {string} pathValue */
 function fsyncFile(pathValue) {
   const fd = fs.openSync(pathValue, fs.constants.O_WRONLY);
   try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
-// Makes created/renamed directory entries durable. NOTE: win32 cannot open a directory for fsync.
+/**
+ * Makes created or renamed directory entries durable where supported.
+ * @param {string} dirPath
+ */
 export function fsyncDir(dirPath) {
   if (process.platform === 'win32') return;
   const fd = fs.openSync(dirPath, 'r');
@@ -79,7 +92,7 @@ export function fsyncDir(dirPath) {
 }
 
 function candidateWithApprovalMetadata(source, approvedContentHash) {
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(source);
+  const frontmatter = FRONTMATTER_PATTERN.exec(source);
   if (!frontmatter) return null;
   let parsed;
   try { parsed = JSON.parse(frontmatter[1].replace(/\r\n/g, '\n')); } catch { return null; }
@@ -91,8 +104,11 @@ function candidateWithApprovalMetadata(source, approvedContentHash) {
   return `---\n${JSON.stringify(parsed, null, 2)}\n---\n${rest}`;
 }
 
-/** Refuses a no-op amendment, records the proposal/review history plus the write-ahead
- *  `prepared` event, then stages `.bak` and `.tmp` beside the canonical design. */
+// SECTION: Amendment transaction
+
+/**
+ * Validates and durably stages an amendment after recording its write-ahead events.
+ */
 export function prepareAmendment({
   designPath,
   candidatePath,
@@ -129,11 +145,11 @@ export function prepareAmendment({
     if (event.type !== 'amendment') continue;
     latestStates.set(event.data.amendmentId, event.data.state);
   }
-  const live = [...latestStates.entries()].find(([, state]) => ['proposed', 'reviewed', 'prepared'].includes(state));
+  const live = [...latestStates.entries()].find(([, state]) => LIVE_AMENDMENT_STATES.has(state));
   if (live) {
     throw new Error(`Amendment prepare refused: amendment "${live[0]}" is still ${live[1]}; settle it first`);
   }
-  let seq = nextSeqOf(read);
+  let seq = nextSeq(read);
   const preparedData = {
     amendmentId,
     baseRevision,
@@ -152,10 +168,6 @@ export function prepareAmendment({
   fsyncFile(backup);
   fsyncDir(path.dirname(designPath));
   return { ...preparedData, state: 'prepared' };
-}
-
-function nextSeqOf(read) {
-  return read.events.at(-1)?.seq ?? 0;
 }
 
 function amendmentEvent({ ledgerPath, seq, data }) {
@@ -205,7 +217,7 @@ export function activateAmendment({ designPath, ledgerPath, amendmentId }) {
   const read2 = foldState(ledgerPath);
   amendmentEvent({
     ledgerPath,
-    seq: nextSeqOf(read2) + 1,
+    seq: nextSeq(read2) + 1,
     data: { amendmentId, state: 'activated', baseRevision, candidateHash, affectedIncrements: prepared.data.affectedIncrements },
   });
   recordIncrementInvalidation({
@@ -265,7 +277,7 @@ function missingInvalidations(read, amendmentData) {
   return (amendmentData.affectedIncrements ?? []).filter(incrementId => {
     if (recorded.has(incrementId)) return false;
     const current = states.get(incrementId) ?? 'pending';
-    return ['pending', 'ready', 'active', 'reopened'].includes(current);
+    return INVALIDATABLE_INCREMENT_STATES.has(current);
   });
 }
 
@@ -274,10 +286,10 @@ function missingInvalidations(read, amendmentData) {
  *  already-invalidated increments are skipped (the orchestrator rules on reopening completed
  *  ones; non-in-flight states are not legal sources for ->invalidated). */
 function recordIncrementInvalidation({ ledgerPath, incrementStates, amendmentId, affectedIncrements, dependents = [] }) {
-  let seq = nextSeqOf(foldState(ledgerPath));
+  let seq = nextSeq(foldState(ledgerPath));
   for (const incrementId of [...affectedIncrements, ...dependents]) {
     const current = incrementStates?.get?.(incrementId) ?? 'pending';
-    if (!['pending', 'ready', 'active', 'reopened'].includes(current)) continue;
+    if (!INVALIDATABLE_INCREMENT_STATES.has(current)) continue;
     phasedEvent({
       ledgerPath,
       seq: ++seq,
@@ -296,7 +308,7 @@ function terminalAmendment({ designPath, ledgerPath, amendmentId, state }) {
   const staging = stagingPaths(designPath);
   const read = foldState(ledgerPath);
   const live = latestAmendment(read.events, amendmentId);
-  if (!live || !['proposed', 'reviewed', 'prepared'].includes(live.data.state)) {
+  if (!live || !LIVE_AMENDMENT_STATES.has(live.data.state)) {
     throw new Error(`Amendment "${amendmentId}" has no pre-activation amendment event to ${state}`);
   }
   // Post-rename window: the candidate is already canonical, so only recovery may settle it.
@@ -306,7 +318,7 @@ function terminalAmendment({ designPath, ledgerPath, amendmentId, state }) {
   }
   amendmentEvent({
     ledgerPath,
-    seq: nextSeqOf(read) + 1,
+    seq: nextSeq(read) + 1,
     data: {
       amendmentId, state,
       affectedIncrements: live.data.affectedIncrements ?? [],
@@ -329,8 +341,11 @@ export function abortAmendment({ designPath, ledgerPath, amendmentId }) {
   return terminalAmendment({ designPath, ledgerPath, amendmentId, state: 'aborted' });
 }
 
-/** Startup recovery. The crash window is discriminated by staging-file presence; hashes
- *  corroborate: prepared with canonical == candidateHash is the post-rename window. */
+// SECTION: Crash recovery
+
+/**
+ * Recovers amendment crash windows using staging-file presence corroborated by hashes.
+ */
 export function recoverAmendment({ designPath, ledgerPath }) {
   const staging = stagingPaths(designPath);
   const stagedExists = fs.existsSync(staging.candidate) || fs.existsSync(staging.backup);
@@ -380,7 +395,7 @@ export function recoverAmendment({ designPath, ledgerPath }) {
     const read2 = foldState(ledgerPath);
     amendmentEvent({
       ledgerPath,
-      seq: nextSeqOf(read2) + 1,
+      seq: nextSeq(read2) + 1,
       data: { amendmentId, state: 'activated', baseRevision, candidateHash, affectedIncrements: lastAmendment.data.affectedIncrements },
     });
     recordIncrementInvalidation({

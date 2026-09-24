@@ -26,10 +26,21 @@ import {
   validateConfig,
 } from './config.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
+const LIB_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const PHASE_KNOBS = ['rounds', 'targets', 'consensus'];
 const IMPLEMENTATION_FIELDS = ['model', 'effort'];
+const LIVENESS_ENV_VAR = 'DISPATCH_LIVENESS_JSON';
+const TEST_MODE_ENV_VAR = 'DISPATCH_TEST_MODE';
+
+/** Provider runner modules, relative to scripts/. */
+export const RUNNER_FILES = {
+  claude: 'runners/claude.mjs',
+  agy: 'runners/agy.mjs',
+  copilot: 'runners/copilot.mjs',
+  opencode: 'runners/opencode.mjs',
+};
+
+// SECTION: Input normalization
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -140,33 +151,9 @@ function canonicalTable(table) {
   return Object.fromEntries(Object.entries(table ?? {}).map(([key, value]) => [normalizePin(key), value]));
 }
 
-// ============================================================================
-// SECTION: Liveness
-// ============================================================================
+// SECTION: Provider liveness
 
-export const RUNNER_FILES = {
-  claude: 'runners/claude.mjs',
-  agy: 'runners/agy.mjs',
-  copilot: 'runners/copilot.mjs',
-  opencode: 'runners/opencode.mjs',
-};
-
-/**
- * Test-only override: a JSON object of `{ provider: boolean }` replacing the real probes.
- *
- * Each real probe spawns a provider CLI and waits on it, so a CLI test suite that exercises a
- * dozen argument combinations spends most of its runtime re-discovering the same binaries — and
- * its assertions then depend on what happens to be installed on the machine running it.
- */
-const LIVENESS_ENV_VAR = 'DISPATCH_LIVENESS_JSON';
-
-/**
- * Explicit opt-in that arms the liveness seam above.
- *
- * A dedicated variable rather than `NODE_ENV=test`: ambient signals set by unrelated tooling are
- * exactly how an inherited payload silently replaces real probing in a production run.
- */
-const TEST_MODE_ENV_VAR = 'DISPATCH_TEST_MODE';
+// A dedicated test gate prevents ambient NODE_ENV values from replacing production probes.
 
 /**
  * Probes which providers are reachable.
@@ -204,7 +191,7 @@ export async function defaultLiveness(only) {
   await Promise.all(
     keys.map(async (key) => {
       try {
-        const mod = await import(pathToFileURL(path.join(__dirname, '..', RUNNER_FILES[key])).href);
+        const mod = await import(pathToFileURL(path.join(LIB_DIRECTORY, '..', RUNNER_FILES[key])).href);
         const fnName = `is${key.charAt(0).toUpperCase()}${key.slice(1)}Available`;
         results[key] = !!(await mod[fnName]?.());
       } catch {
@@ -294,9 +281,7 @@ function assertKnownPins(pins, reviewKeys) {
   }
 }
 
-// ============================================================================
-// SECTION: Core resolution
-// ============================================================================
+// SECTION: Flow resolution
 
 /**
  * Resolves the flow plan.

@@ -19,7 +19,12 @@ import { userSlug } from './telemetry.mjs';
 
 export const SESSION_ENV = 'DISPATCH_SESSION_DIR';
 export const SESSION_FLAG = '--session-dir';
-const SESSIONS = 'sessions';
+
+const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
+const SESSIONS_DIRECTORY = 'sessions';
+
+// SECTION: Roots and validation
 
 /**
  * `<realpath(os.tmpdir())>/dispatch-skills-<user>`: the single dispatch temp root.
@@ -31,7 +36,7 @@ export function dispatchTempRoot({ env = process.env } = {}) {
 }
 
 export function sessionsRoot(options) {
-  return path.join(dispatchTempRoot(options), SESSIONS);
+  return path.join(dispatchTempRoot(options), SESSIONS_DIRECTORY);
 }
 
 /** True when `dir` resolves to a direct child of the sessions root. */
@@ -39,7 +44,7 @@ export function isSessionDir(dir) {
   if (typeof dir !== 'string' || !dir) return false;
   let real;
   try { real = fs.realpathSync(dir); } catch { real = path.resolve(dir); }
-  return path.dirname(real) === sessionsRoot() && /^[A-Za-z0-9._-]+$/.test(path.basename(real));
+  return path.dirname(real) === sessionsRoot() && SESSION_ID_PATTERN.test(path.basename(real));
 }
 
 function makeDir(dir) {
@@ -48,9 +53,11 @@ function makeDir(dir) {
   return fs.realpathSync(dir);
 }
 
+// SECTION: Session lifecycle
+
 /** Creates (or reuses) the session named `id` and binds it to this process and its children. */
 export function openSession(id = `${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}`) {
-  if (!/^[A-Za-z0-9._-]+$/.test(id)) throw new Error(`Invalid session id "${id}".`);
+  if (!SESSION_ID_PATTERN.test(id)) throw new Error(`Invalid session id "${id}".`);
   const dir = makeDir(path.join(sessionsRoot(), id));
   process.env[SESSION_ENV] = dir;
   pruneSessions();
@@ -79,6 +86,8 @@ export function sessionTempDir(prefix) {
   return dir;
 }
 
+// SECTION: Argument propagation
+
 /** Removes `--session-dir <dir>` from argv, binding it; returns the remaining argv. */
 export function consumeSessionFlag(args) {
   const out = [];
@@ -97,13 +106,14 @@ export function sessionArgs() {
   return [SESSION_FLAG, sessionDir()];
 }
 
+// SECTION: Retention
+
 /**
- * Removes sessions untouched for `maxAgeMs` (newest mtime of the directory and its direct
- * entries), never the bound one; best-effort.
+ * Best-effort removal of unbound sessions untouched for `maxAgeMs`.
  *
- * @param {{ maxAgeMs?: number, now?: any }} [options]
+ * @param {{ maxAgeMs?: number, now?: number }} [options]
  */
-export function pruneSessions({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
+export function pruneSessions({ maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now() } = {}) {
   let root;
   try { root = sessionsRoot(); } catch { return; }
   let names;

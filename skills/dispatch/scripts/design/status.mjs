@@ -6,12 +6,23 @@ import { parseIncrementGraph } from './graph.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { fsyncDir } from './amendment.mjs';
 
-/** Highest-priority increment that is ready to implement: its state is 'ready' or 'pending'
- *  (never started), every prerequisite is complete, and it is not blocked/invalidated/complete. */
+const SELECTABLE_STATES = new Set(['ready', 'pending']);
+const CURRENT_STATES = new Set(['active', 'reopened']);
+const STATUS_HEADING_PATTERN = /^##\s+Execution Status\s*$/;
+const SECTION_HEADING_PATTERN = /^##\s/;
+const FENCE_PATTERN = /^ {0,3}(`{3,}|~{3,})/;
+
+// SECTION: Increment selection and rendering
+
+/**
+ * Selects the highest-priority unstarted increment whose prerequisites are complete.
+ * @param {Array<{id: string, priority?: number, prerequisites?: string[]}>} increments
+ * @param {Map<string, string>} states
+ */
 export function selectReadyIncrement(increments, states) {
   const byId = new Map((increments ?? []).map(increment => [increment.id, increment]));
   const candidates = [...states.entries()]
-    .filter(([, state]) => state === 'ready' || state === 'pending')
+    .filter(([, state]) => SELECTABLE_STATES.has(state))
     .map(([id]) => id)
     .sort((left, right) => {
       const leftPriority = byId.get(left)?.priority ?? Number(left.slice(1));
@@ -28,8 +39,13 @@ export function selectReadyIncrement(increments, states) {
   return null;
 }
 
-/** Renders the machine-managed `## Execution Status` section body: increment rows grouped
- *  by state plus exactly one explicit `Next Action` line. */
+/**
+ * Renders increment rows grouped by state and one explicit `Next Action`.
+ * @param {Array<{id: string, summary?: string}>} increments
+ * @param {Map<string, string>} states
+ * @param {string} nextAction
+ * @returns {string}
+ */
 export function renderExecutionStatus(increments, states, nextAction) {
   const rows = (increments ?? []).map(increment => ({
     ...increment,
@@ -37,7 +53,7 @@ export function renderExecutionStatus(increments, states, nextAction) {
   }));
   const grouped = {
     Completed: rows.filter(row => row.state === 'complete'),
-    Current: rows.filter(row => ['active', 'reopened'].includes(row.state)),
+    Current: rows.filter(row => CURRENT_STATES.has(row.state)),
     Ready: rows.filter(row => row.state === 'ready'),
     Blocked: rows.filter(row => row.state === 'blocked'),
     Invalidated: rows.filter(row => row.state === 'invalidated'),
@@ -55,18 +71,20 @@ export function renderExecutionStatus(increments, states, nextAction) {
   return lines.join('\n');
 }
 
-/** Fence-aware section boundary helpers shared by the status splice. */
+// SECTION: Status section splicing
+
+/** @param {string[]} lines */
 function scanFencedHeadings(lines) {
   const headings = [];
   let fence = null;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    const marker = FENCE_PATTERN.exec(line);
     if (marker) {
       if (!fence) fence = marker[1];
       else if (marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = null;
     }
-    if (!fence && /^##\s/.test(line)) headings.push(index);
+    if (!fence && SECTION_HEADING_PATTERN.test(line)) headings.push(index);
   }
   return { headings, unclosed: fence !== null };
 }
@@ -81,7 +99,7 @@ export function applyExecutionStatus(source, renderedStatus) {
   const { headings, unclosed } = scanFencedHeadings(lines);
   // An unclosed fence would extend the splice to EOF and delete governed sections; fail closed.
   if (unclosed) throw new Error('Design contains an unclosed code fence; repair it before the status update.');
-  const start = headings.findIndex(index => /^##\s+Execution Status\s*$/.test(lines[index]));
+  const start = headings.findIndex(index => STATUS_HEADING_PATTERN.test(lines[index]));
   if (start === -1) {
     const heading = newline === '\r\n' ? renderedStatus.split('\n').join('\r\n') : renderedStatus;
     return `${sourceText.replace(/\s+$/, '')}\n\n## Execution Status${newline}${heading}`;

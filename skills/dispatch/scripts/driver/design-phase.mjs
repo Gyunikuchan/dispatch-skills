@@ -13,6 +13,9 @@ import { repositoryBaseline } from './verification.mjs';
 import { enterPhase } from './implement-phase.mjs';
 import { refuse, relative, restoreEvidence } from './implement-state.mjs';
 
+// SECTION: Design identity
+
+/** Returns the stable artifact slug used by design-ledger and increment paths. */
 export function designSlug(file) {
   const named = designRootSlug(file);
   if (named) return named;
@@ -29,6 +32,9 @@ export function incrementPaths(state, id) {
   };
 }
 
+// SECTION: Design phase
+
+/** Starts canonical technical-design authoring. */
 export function startDesign(state) {
   const argument = state.invocation.argument;
   state.designPath = argument.endsWith('-design.md')

@@ -90,7 +90,7 @@ Dispatch tries aliases in order when one fails. They do not create extra review 
 
 ## Levels and model selection
 
-A level map may define any subset of `low`, `medium`, `high`, `xhigh`, and `max`. Dispatch resolves the requested level to the nearest configured lower level, or the lowest higher level when none is lower.
+A level map may define any subset of `low`, `medium`, `high`, `xhigh`, and `max`. Dispatch resolves the requested level to the nearest configured lower level, or the lowest higher level when none is lower. Automatic classification selects only `low`, `medium`, or `high`; `xhigh` and `max` require an explicit level in the invocation.
 
 For example, with only `medium` and `max` configured:
 

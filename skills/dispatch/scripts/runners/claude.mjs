@@ -80,9 +80,9 @@ import {
 
 /**
  * @typedef {object} RunClaudeOptions
- * @property {Function} [execute] Test seam.
- * @property {Function} [discoverTargets] Test seam.
- * @property {Function} [createLogger] Test seam.
+ * @property {typeof executeOnTarget} [execute] Test seam.
+ * @property {typeof findViableTargets} [discoverTargets] Test seam.
+ * @property {typeof createSessionLogger} [createLogger] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string|string[]} [model] Model id, comma-separated list, or array — tried in order.
@@ -111,10 +111,13 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
+ * @property {Record<string, any>} [usage]
+ * @property {ReturnType<typeof buildMetricsAttempt>[]} [metricsAttempts]
+ * @property {number} [effectiveAttempt]
  */
 
 // ============================================================================
-// SECTION: Constants (tweak these)
+// SECTION: Provider-Tweakable Constants
 // ============================================================================
 
 /**
@@ -178,7 +181,7 @@ export const MODE_DEFINITIONS = [
 ];
 
 // ============================================================================
-// SECTION: Main API — runClaude()
+// SECTION: Primary API
 // ============================================================================
 
 /**

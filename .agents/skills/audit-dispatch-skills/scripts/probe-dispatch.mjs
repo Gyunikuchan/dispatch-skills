@@ -57,12 +57,13 @@ import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
  */
 
 // ============================================================================
-// SECTION: Configurable Constants
+// SECTION: Configuration
 // ============================================================================
 
 const DEFAULT_TIMEOUT_SECONDS = 300;
-// Grace on top of the runner's own -t so its timeout path (partial output, banner) can fire first.
-const KILL_GRACE_MS = 60_000;
+const KILL_GRACE_MS = 60_000; // Lets the runner emit its own timeout diagnostics first.
+const LOG_TAIL_CHARACTERS = 8_000;
+const TABLE_CELL_CHARACTERS = 160;
 const PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
 const RUNNER_MODE_FLAG = { claude: '--claude-mode', agy: '--agy-mode', copilot: '--copilot-mode' };
 
@@ -203,6 +204,7 @@ async function discover({ claude, agy, copilot, opencode }, providers = PROVIDER
   return rows;
 }
 
+/** @param {ModeRow} row @returns {'NOT FOUND'|'REACHABLE'|'UNREACHABLE'} */
 export function statusOf(row) {
   if (!row.bin) return 'NOT FOUND';
   return row.reachable ? 'REACHABLE' : 'UNREACHABLE';
@@ -297,7 +299,7 @@ async function runTarget(target, { repoRoot, stageDir, fixture, timeout, classif
   const logOf = (res) => /\| Log: (.+)$/m.exec(res.stderr)?.[1]?.trim() ?? null;
   const logs = { read: logOf(read), denylist: logOf(deny) };
   // Runner notices paraphrase the cause; the session log carries the CLI's own error text.
-  const tailOf = (file) => (file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').slice(-8000) : '');
+  const tailOf = (file) => (file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').slice(-LOG_TAIL_CHARACTERS) : '');
   const logTail = tailOf(logs.read);
   // A cause living only in the denylist run's log was unreachable while only the read log was read.
   const denyFailed = !checks.denylist || deny.code !== 0;
@@ -433,8 +435,9 @@ export function renderSummary({ rows, live, fixture, config, opts }) {
   return `${lines.join('\n')}\n`;
 }
 
+/** @param {unknown} text @returns {string} Markdown-safe table cell. */
 export function cell(text) {
-  return String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').slice(0, 160);
+  return String(text).replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').slice(0, TABLE_CELL_CHARACTERS);
 }
 
 // ============================================================================
@@ -506,7 +509,11 @@ function spawnCapture(command, args, { cwd, killAfterMs }) {
   });
 }
 
-// Guarded so buildTargets/parseArgs can be imported and unit-tested without probing real CLIs.
+// ============================================================================
+// SECTION: CLI Entry
+// ============================================================================
+
+// Guarded so helpers can be imported without probing real CLIs.
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`[probe] ${err.stack || err.message}\n`);

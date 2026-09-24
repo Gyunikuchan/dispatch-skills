@@ -48,6 +48,8 @@ import {
   resolveReviewScope,
 } from './range.mjs';
 
+// SECTION: Code review configuration
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DISPATCH_DIR = path.resolve(__dirname, '..', '..');
 const REQUEST_KEYS = [
@@ -59,6 +61,8 @@ const REQUEST_KEYS = [
   'settlement', 'settledWrites', 'designPath', 'designRevision', 'incrementId',
   'allowedPaths', 'baseRevision',
 ];
+
+// SECTION: Shared preparation helpers
 
 function toManifestPath(file, repoRoot) {
   if (!file) return null;
@@ -96,6 +100,8 @@ function sourceKeys(roundId, targets = []) {
     return `${roundId}:${platform}:${index}`;
   });
 }
+
+// SECTION: Request validation
 
 function validateRequest(request) {
   assertObjectKeys(request, REQUEST_KEYS, 'code review request', FIELD_HINTS);
@@ -177,6 +183,8 @@ function validateTargets(entries, roundId, label) {
     sources.add(source);
   }
 }
+
+// SECTION: Artifact and prompt resolution
 
 function resolvePair(request, repoRoot) {
   let walkthroughPath = request.walkthroughPath;
@@ -273,6 +281,8 @@ function metadataFor({ slug, invocationId, artifactSnapshot, gitSnapshot, now })
     reviewedAt: now.toISOString(),
   };
 }
+
+// SECTION: Checkpointing
 
 function validateSettlement(state, request) {
   const settlement = request.settlement;
@@ -399,9 +409,13 @@ function checkpoint(request, { now }) {
 }
 
 /**
- * @param {any} request
- * @param {{ repoRoot?: string, now?: any }} [options]
+ * Prepares or checkpoints one code review.
+ *
+ * @param {Record<string, any>} request
+ * @param {{ repoRoot?: string, now?: Date }} [options]
  */
+// SECTION: Public preparation API
+
 export function prepareCodeReview(request, {
   repoRoot = process.cwd(),
   now = new Date(),

@@ -19,7 +19,12 @@ import { sessionArgs } from '../lib/session-temp.mjs';
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DISPATCH_SCRIPT = path.join(DISPATCH_DIR, 'scripts', 'dispatch.mjs');
 
-/** Starts `--run ask`; returns the first (`launch`) action. */
+// SECTION: Phase entry
+
+/**
+ * Starts `--run ask`; returns the first (`launch`) action.
+ * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string }} options
+ */
 export async function startAsk({ invocation, cwd, resumeCommand }) {
   const repoRoot = gitRoot(cwd);
   const { config } = loadDispatchConfig({ skillRoot: DISPATCH_DIR });

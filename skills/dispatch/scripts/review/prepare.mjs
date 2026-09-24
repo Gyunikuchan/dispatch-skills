@@ -42,6 +42,8 @@ import { prepareCodeReview } from './prepare-code.mjs';
 
 export { prepareCodeReview };
 
+// SECTION: Document review configuration
+
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOCUMENT_REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'date', 'orchestrator',
@@ -51,6 +53,8 @@ const DOCUMENT_REQUEST_KEYS = [
   'invocationContext', 'settlement', 'settledWrites',
 ];
 const DESIGN_CONTEXT_KEYS = ['designPath', 'designRevision', 'incrementId'];
+
+// SECTION: Shared preparation helpers
 
 function toManifestPath(file, repoRoot) {
   const relative = path.relative(repoRoot, file);
@@ -88,6 +92,8 @@ function sourceKeys(roundId, targets = []) {
     return `${roundId}:${platform}:${index}`;
   });
 }
+
+// SECTION: Request validation
 
 function validateRequest(entry, request) {
   const allowed = entry.acceptsDesignContext ? [...DOCUMENT_REQUEST_KEYS, ...DESIGN_CONTEXT_KEYS] : DOCUMENT_REQUEST_KEYS;
@@ -165,6 +171,8 @@ function validateTargets(kindEntry, entries, roundId, label) {
   }
 }
 
+// SECTION: Artifact and prompt resolution
+
 function resolveDocument(entry, request, repoRoot) {
   if (request.artifactPath) {
     const absolute = path.resolve(repoRoot, request.artifactPath);
@@ -200,6 +208,8 @@ function loadPrompt(framePath, kindPath, values) {
   const { variables, template } = assembleTemplate(framePath, kindPath);
   return fillTemplate(template, variables, values);
 }
+
+// SECTION: Checkpointing
 
 function validateSettlement(state, request) {
   const settlement = request.settlement;
@@ -284,6 +294,8 @@ function checkpoint(entry, request, { now }) {
   };
 }
 
+// SECTION: Optional design context
+
 function resolveDesignContext(request, repoRoot) {
   if (request.designPath === undefined && request.incrementId === undefined) return null;
   if (!request.designPath || request.incrementId === undefined) {
@@ -313,10 +325,12 @@ function resolveDesignContext(request, repoRoot) {
 }
 
 /**
- * @param {any} entry
- * @param {any} request
- * @param {{ repoRoot?: string, now?: any, nativeRoots?: any }} [options]
+ * @param {Record<string, any>} entry
+ * @param {Record<string, any>} request
+ * @param {{ repoRoot?: string, now?: Date, nativeRoots?: string[] }} [options]
  */
+// SECTION: Document preparation
+
 function prepareDocumentReview(entry, request, {
   repoRoot = process.cwd(),
   now = new Date(),
@@ -481,10 +495,14 @@ function prepareDocumentReview(entry, request, {
   };
 }
 
+// SECTION: Public preparation API
+
+/** @param {Record<string, any>} request @param {Record<string, any>} [opts] */
 export function preparePlanReview(request, opts) {
   return prepareDocumentReview(REVIEW_KINDS.plan, request, opts);
 }
 
+/** @param {Record<string, any>} request @param {Record<string, any>} [opts] */
 export function prepareDesignReview(request, opts) {
   return prepareDocumentReview(REVIEW_KINDS.design, request, opts);
 }

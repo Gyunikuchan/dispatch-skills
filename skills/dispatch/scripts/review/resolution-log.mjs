@@ -1,6 +1,8 @@
 // @ts-check
 import crypto from 'node:crypto';
 
+// SECTION: Grammar
+
 const SECTION_HEADING = /^##\s+Review Findings & Resolutions\b/i;
 const H2 = /^##\s+/;
 const ROUND = /^###\s+Round\s+(\d+)\b/i;
@@ -35,6 +37,9 @@ function digest(text) {
   return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+// SECTION: Dispatch frontmatter
+
+/** @param {string} markdown */
 export function splitDispatchFrontmatter(markdown) {
   const rawSource = String(markdown ?? '');
   const opener = /^(---)\r?\n/.exec(rawSource);
@@ -74,10 +79,13 @@ export function splitDispatchFrontmatter(markdown) {
   };
 }
 
+/** @param {string} markdown @param {Record<string, any>} metadata */
 export function withDispatchFrontmatter(markdown, metadata) {
   const { body } = splitDispatchFrontmatter(markdown);
   return `---\n${JSON.stringify({ dispatch: metadata }, null, 2)}\n---\n${body}`;
 }
+
+// SECTION: Source maps and application records
 
 function parseSourceMap(line, { strict, roundNumber }) {
   const match = SOURCE_MAP.exec(line);
@@ -222,6 +230,8 @@ export function formatApplicationRecord(record) {
   };
   return `  - application: ${JSON.stringify(canonical)}`;
 }
+
+// SECTION: Resolution-log scanning
 
 function fenceTransition(line, fence) {
   const match = FENCE.exec(line);
@@ -412,7 +422,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
 }
 
 /**
- * @param {any} markdown
+ * @param {string} markdown
  * @param {{ strict?: boolean }} [options]
  */
 export function scanResolutionLog(markdown, { strict = true } = {}) {
@@ -466,6 +476,9 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
   };
 }
 
+// SECTION: Public queries
+
+/** @param {string} markdown */
 export function findUnsettledResolutionLines(markdown) {
   return scanResolutionLog(markdown, { strict: false }).unsettled;
 }

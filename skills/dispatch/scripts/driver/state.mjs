@@ -14,6 +14,8 @@ import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
 import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../lib/session-temp.mjs';
 
+// SECTION: State storage
+
 /** Repository root of `cwd`, or `cwd` itself outside a work tree. */
 export function gitRoot(cwd) {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
@@ -113,7 +115,7 @@ function roundsSinceSettled(markdown, total) {
  * Removes sessions untouched for `maxAgeMs`, finished or abandoned (an in-flight wave relaunches
  * whole via the sidecar anyway); best-effort.
  *
- * @param {{ maxAgeMs?: number, now?: any }} [options]
+ * @param {{ maxAgeMs?: number, now?: number }} [options]
  */
 export function pruneFinishedStates({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
   pruneSessions({ maxAgeMs, now });
@@ -173,7 +175,7 @@ export function unappliedFixesFromArtifact(artifactPath) {
   return { rounds: roundsSinceSettled(markdown, scan.rounds.length), pending, adjacent };
 }
 
-// SECTION: shared run-state transitions
+// SECTION: Shared transitions
 
 // Re-emitted actions leave state untouched, so they are never written back.
 export const REEMITTED = new WeakSet();

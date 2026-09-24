@@ -8,9 +8,7 @@
  */
 
 
-// ============================================================================
-// SECTION: Configurable Constants
-// ============================================================================
+// SECTION: Provider registry
 
 /** Canonical provider keys the dispatch config's platform tables may key on. */
 export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
@@ -99,9 +97,7 @@ export function validateProviderSpec(provider, where = 'provider') {
 /** Providers whose `read-delegates.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
 export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot', 'opencode'];
 
-// ============================================================================
-// SECTION: Utilities & CLI Lifecycle
-// ============================================================================
+// SECTION: Candidate ordering
 
 /**
  * Stable first-occurrence partition shared by the ordering helpers below: items whose
@@ -214,9 +210,7 @@ export function demoteOrchestratorTargets(
   ];
 }
 
-// ============================================================================
-// SECTION: Orchestrator Detection
-// ============================================================================
+// SECTION: Orchestrator detection
 
 /**
  * Detects the orchestrator runtime from environment variables.

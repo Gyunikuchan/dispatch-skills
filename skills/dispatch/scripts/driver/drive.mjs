@@ -15,6 +15,8 @@ import { runVerification } from './verify-run.mjs';
 // Guards a driver bug from looping forever; a real run stops for judgment far sooner.
 const MAX_STEPS = 50;
 
+// SECTION: Mechanical actions
+
 const elapsed = (start) => {
   const seconds = Math.round((Date.now() - start) / 1000);
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`;

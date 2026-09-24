@@ -15,6 +15,9 @@ import {
 import { emitAction } from './actions.mjs';
 import { source } from './implement-state.mjs';
 
+// SECTION: Verification policy
+
+/** Derives approved paths, criteria, commands, coverage, and evidence classes from the plan. */
 export function verificationPlan(state) {
   const text = source(state);
   const approvedPaths = extractApprovedPathSet(text);
@@ -34,7 +37,7 @@ export function verificationPlan(state) {
     reviewCriteria: criteria.filter(item => item.evidence === 'review'),
   };
 }
-// SECTION: aggregate suite coverage
+// SECTION: Aggregate suite coverage
 // `npm test` (or `npm run test`) covers a `node --test <files>` command when every file matches a
 // glob in package.json's `test` script; completion then runs the suite once instead of both.
 const SUITE_COMMAND = /^npm\s+(?:run\s+)?test$|^npm\s+t$/;
@@ -130,7 +133,7 @@ export function repositoryBaseline(state) {
   const { commit, repositoryState, dirtyPaths } = baselineFingerprint(state.repoRoot);
   return { commit, repositoryState, dirtyPaths };
 }
-// SECTION: driver-run verification
+// SECTION: Driver-run verification
 // The driver executes plan-approved commands itself (`dispatch.mjs --verify`), capturing Git
 // state around each one and extracting failure identities from its log; the host only runs that
 // argv and, at completion, supplies judgment evidence for verify/review criteria.
@@ -210,7 +213,7 @@ export function acceptVerification(state, reply) {
   if (pending.purpose === 'baseline') storeBaseline(state, records);
   return null;
 }
-// SECTION: baseline reuse
+// SECTION: Baseline reuse
 // A baseline is a function of the tree, commands, and runtime: an identical repository state
 // (HEAD, index, dirty-path contents) within a day reuses it instead of rerunning the suite.
 const BASELINE_TTL_MS = 24 * 60 * 60 * 1000;

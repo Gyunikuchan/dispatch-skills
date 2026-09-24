@@ -1,5 +1,7 @@
 // @ts-check
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { evaluateConsensus } from '../review/consensus.mjs';
 import { loadDispatchConfig } from '../lib/config.mjs';
 import { lintPlan } from '../plan/lint.mjs';
@@ -8,11 +10,15 @@ import { sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { emitAction } from './actions.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { bindPlan, persistEvidence, source } from './implement-state.mjs';
-import { advanceReview, resolveReviewLevel, startReview } from './review-phase.mjs';
+import { advanceReview, startReview } from './review-phase.mjs';
+import { resolveReviewLevel } from './review-policy.mjs';
 import { readRunState } from './state.mjs';
-import { fileURLToPath } from 'node:url';
 
 export const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+// SECTION: Plan policy and checkpoint
+
+/** Resolves the configured review policy for a governing artifact kind. */
 export function reviewPolicy(state, kind) {
   const { config } = loadDispatchConfig({ skillRoot: SKILL_ROOT });
   return resolveReviewLevel({ config, kind, level: state.invocation.level, levelSource: state.invocation.levelSource });

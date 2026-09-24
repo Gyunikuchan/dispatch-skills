@@ -11,20 +11,58 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import {
   parseJsonc,
   PROJECT_ROOT,
   isMainModule,
   getConfigCandidates,
 } from '../skills/dispatch/scripts/lib/platform.mjs';
-import {
-  validateConfig as validateDispatchConfig,
-} from '../skills/dispatch/scripts/lib/config.mjs';
+import { validateConfig as validateDispatchConfig } from '../skills/dispatch/scripts/lib/config.mjs';
 import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/runners/opencode.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DISPATCH_LOCATIONS = [
+  path.join('skills', 'dispatch'),
+  path.join('.agents', 'skills', 'dispatch'),
+  path.join('.claude', 'skills', 'dispatch'),
+];
+const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review'];
+const SKILL_LOCATIONS = ['skills', path.join('.agents', 'skills'), path.join('.claude', 'skills')];
+const OPENCODE_LOCATIONS = [
+  'opencode.jsonc',
+  'opencode.json',
+  path.join('.opencode', 'opencode.jsonc'),
+  path.join('.opencode', 'opencode.json'),
+];
+const HELP = 'Usage: node validate-configs.mjs [--project-root <path>] [--quiet] [file1 file2 ...]\n' +
+  'Validates all found dispatch-related config files.\n';
+
+/** @typedef {'dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} ConfigType */
+/** @typedef {{ path: string, type: ConfigType }} ConfigEntry */
+
+// SECTION: Discovery
+
+/**
+ * Adds an existing regular file once, resolving aliases through its real path.
+ *
+ * @param {ConfigEntry[]} found
+ * @param {Set<string>} seenPaths
+ * @param {string | undefined} filePath
+ * @param {ConfigType} type
+ */
+function addExistingFile(found, seenPaths, filePath, type) {
+  if (!filePath) return;
+  const resolved = path.resolve(filePath);
+  let identity = resolved;
+  try {
+    identity = fs.realpathSync(resolved);
+  } catch {}
+  if (seenPaths.has(identity) || !fs.existsSync(resolved)) return;
+  try {
+    if (!fs.statSync(resolved).isFile()) return;
+    seenPaths.add(identity);
+    found.push({ path: resolved, type });
+  } catch {}
+}
 
 /**
  * Discovers candidate config files across dispatch skills for a given project root.
@@ -34,41 +72,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * @returns {Array<{ path: string, type: 'dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc' }>}
  */
 export function findConfigFiles(projectRoot = PROJECT_ROOT) {
+  /** @type {ConfigEntry[]} */
   const found = [];
   const seenPaths = new Set();
+  /** @param {string | undefined} filePath @param {ConfigType} type */
+  const add = (filePath, type) => addExistingFile(found, seenPaths, filePath, type);
 
-  function addIfFound(filePath, type) {
-    if (!filePath) return;
-    const resolved = path.resolve(filePath);
-    // Keyed on the real path so a symlinked or case-variant alias of one file is validated once.
-    let identity = resolved;
-    try {
-      identity = fs.realpathSync(resolved);
-    } catch {}
-    if (!seenPaths.has(identity) && fs.existsSync(resolved)) {
-      try {
-        if (fs.statSync(resolved).isFile()) {
-          seenPaths.add(identity);
-          found.push({ path: resolved, type });
-        }
-      } catch {}
-    }
+  for (const relativeRoot of DISPATCH_LOCATIONS) {
+    const skillRoot = path.join(projectRoot, relativeRoot);
+    for (const candidate of getConfigCandidates({ skillRoot })) add(candidate, 'dispatch');
+    add(path.join(skillRoot, 'config.sample.jsonc'), 'dispatch');
   }
 
-  // 1. dispatch configs across standard skill locations
-  const dispatchSkillRoots = [
-    path.join(projectRoot, 'skills', 'dispatch'),
-    path.join(projectRoot, '.agents', 'skills', 'dispatch'),
-    path.join(projectRoot, '.claude', 'skills', 'dispatch'),
-  ];
-  for (const skillRoot of dispatchSkillRoots) {
-    for (const candidate of getConfigCandidates({ skillRoot })) {
-      addIfFound(candidate, 'dispatch');
-    }
-    addIfFound(path.join(skillRoot, 'config.sample.jsonc'), 'dispatch');
-  }
-
-  // 2. OpenCode configs
   const isDefaultProjectRoot = path.resolve(projectRoot) === path.resolve(PROJECT_ROOT);
   const opencodeCandidates = resolveOpencodeConfigSources({
     projectRoot,
@@ -81,34 +96,30 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
       (isDefaultProjectRoot && candidate === process.env.OPENCODE_CONFIG) ||
       candidate.startsWith(projectRoot)
     ) {
-      addIfFound(candidate, 'opencode');
+      add(candidate, 'opencode');
     }
   }
 
-  addIfFound(path.join(projectRoot, 'opencode.jsonc'), 'opencode');
-  addIfFound(path.join(projectRoot, 'opencode.json'), 'opencode');
-  addIfFound(path.join(projectRoot, '.opencode', 'opencode.jsonc'), 'opencode');
-  addIfFound(path.join(projectRoot, '.opencode', 'opencode.json'), 'opencode');
+  for (const relativePath of OPENCODE_LOCATIONS) add(path.join(projectRoot, relativePath), 'opencode');
 
-  // 3. Skill hash manifests, for every skill that ships one (same order as HASHED_SKILLS in
-  // scripts/generate-hashes.mjs)
-  for (const skill of ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) {
-    for (const base of ['skills', path.join('.agents', 'skills'), path.join('.claude', 'skills')]) {
-      addIfFound(path.join(projectRoot, base, skill, 'skill-hashes.json'), 'skill-hashes');
+  for (const skill of HASHED_SKILLS) {
+    for (const base of SKILL_LOCATIONS) {
+      add(path.join(projectRoot, base, skill, 'skill-hashes.json'), 'skill-hashes');
     }
   }
 
-  // 4. Skills lockfile
-  addIfFound(path.join(projectRoot, 'skills-lock.json'), 'skills-lock');
+  add(path.join(projectRoot, 'skills-lock.json'), 'skills-lock');
 
   return found;
 }
+
+// SECTION: Validation
 
 /**
  * Validates a single configuration file based on its type.
  *
  * @param {string} filePath
- * @param {'dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} type
+ * @param {ConfigType} [type='jsonc']
  * @returns {{ valid: boolean, problems: string[] }}
  */
 export function validateConfigFile(filePath, type = 'jsonc') {
@@ -242,6 +253,8 @@ export function validateAllConfigs(options = {}) {
   return { valid, results };
 }
 
+// SECTION: Main flow
+
 /**
  * CLI execution entrypoint.
  *
@@ -256,10 +269,7 @@ export function runCli(argv = process.argv.slice(2)) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help' || arg === '-h') {
-      process.stdout.write(
-        'Usage: node validate-configs.mjs [--project-root <path>] [--quiet] [file1 file2 ...]\n' +
-        'Validates all found dispatch-related config files.\n'
-      );
+      process.stdout.write(HELP);
       return 0;
     } else if (arg === '--quiet' || arg === '-q') {
       quiet = true;

@@ -12,6 +12,9 @@ import { SKILL_ROOT } from './plan-phase.mjs';
 import { bindStateSession, readRunState } from './state.mjs';
 import { validateRedAdmission } from './verification.mjs';
 
+// SECTION: Write target and validation
+
+/** Resolves the configured write model cascade and escalation policy. */
 export function resolveWrite(state) {
   const { config } = loadDispatchConfig({ skillRoot: SKILL_ROOT });
   const flow = resolveFlow({ platform: state.invocation.orchestrator, level: state.invocation.level, implementationFields: 'model,effort' }, {}, config);
@@ -105,6 +108,9 @@ function productionPrompt(state) {
     verification: VERIFICATION_RULES,
   });
 }
+// SECTION: Delegation action
+
+/** Emits the next tests-only or production write delegation. */
 export function writeAction(state) {
   const data = state.ordinary;
   const segment = ledgerSegment(state);

@@ -8,10 +8,13 @@
 
 import path from 'node:path';
 
+// SECTION: Reporter grammar
+
 const DURATION = /\s+\(\d+(?:\.\d+)?m?s\)\s*$/;
 const TEST_FILE = /\.(?:[cm]?[jt]s|tsx?)$/;
 const ANSI = /\u001b\[[0-9;]*m/g;
 
+/** @param {string} name @param {string | null} repoRoot */
 function leafIdentifier(name, repoRoot) {
   const trimmed = name.trim();
   // A file-level failure is named after the file: the file never reached its own tests.
@@ -23,6 +26,7 @@ function leafIdentifier(name, repoRoot) {
 }
 
 // Spec reporter: the trailing "failing tests:" section lists leaves only, each after "test at <loc>".
+/** @param {string[]} lines */
 function specFailingSection(lines) {
   const start = lines.findIndex(line => /^✖ failing tests:\s*$/.test(line));
   if (start === -1) return null;
@@ -37,6 +41,7 @@ function specFailingSection(lines) {
 }
 
 // Quiet reporter: "✖ <name>" immediately followed by "  Location: <file:line:col>".
+/** @param {string[]} lines */
 function quietFailures(lines) {
   const names = [];
   for (let index = 0; index < lines.length - 1; index++) {
@@ -47,6 +52,7 @@ function quietFailures(lines) {
 }
 
 // TAP (names escape `\` and `#`): "not ok N - <name>" whose YAML block does not mark a parent (subtestsFailed).
+/** @param {string[]} lines */
 function tapFailures(lines) {
   const names = [];
   for (let index = 0; index < lines.length; index++) {
@@ -63,6 +69,7 @@ function tapFailures(lines) {
 }
 
 // Spec reporter without a failing-tests section: "✖ name (dur)" lines minus suites ("▶ name").
+/** @param {string[]} lines */
 function specInline(lines) {
   const suites = new Set(lines.map(line => /^\s*▶ (.+)$/.exec(line)?.[1].trim()).filter(Boolean));
   return lines.map(line => /^\s*✖ (.+\(\d+(?:\.\d+)?m?s\))\s*$/.exec(line)?.[1].replace(DURATION, '').trim())
@@ -72,9 +79,11 @@ function specInline(lines) {
 /**
  * Sorted unique failure identifiers found in `output`; empty when none are recognizable.
  *
- * @param {any} output
- * @param {{ repoRoot?: any }} [options]
+ * @param {unknown} output
+ * @param {{ repoRoot?: string | null }} [options]
  */
+// SECTION: Public API
+
 export function extractFailureIdentifiers(output, { repoRoot = null } = {}) {
   const lines = String(output ?? '').replace(ANSI, '').split(/\r?\n/);
   const names = specFailingSection(lines) ?? [];
@@ -84,7 +93,7 @@ export function extractFailureIdentifiers(output, { repoRoot = null } = {}) {
   return [...new Set(names.map(name => leafIdentifier(name, repoRoot)))].sort();
 }
 
-/** Pass/fail counts from the spec, TAP, or quiet reporter summary; null when absent. */
+/** Pass/fail counts from the spec, TAP, or quiet reporter summary; null when absent. @param {unknown} output */
 export function testCounts(output) {
   const text = String(output ?? '').replace(ANSI, '');
   const quietFail = /✖ (\d+) of (\d+) test\(s\) failed \((\d+) passed/.exec(text);

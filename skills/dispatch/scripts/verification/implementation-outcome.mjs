@@ -1,5 +1,7 @@
 // @ts-check
 
+// SECTION: Outcome policy
+
 const STATUSES = new Set(['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']);
 const STAGES = new Set(['RED_READY', 'COMPLETE']);
 const VERIFICATION_RESULTS = new Set([
@@ -8,6 +10,7 @@ const VERIFICATION_RESULTS = new Set([
   'accepted-baseline-equivalent',
   'regression',
 ]);
+const RETRY_LIMITS = Object.freeze({ self: 2, delegate: 3 });
 const COMMON_FIELDS = new Set([
   'schemaVersion',
   'status',
@@ -19,6 +22,7 @@ const COMMON_FIELDS = new Set([
   'blockers',
 ]);
 
+/** @param {unknown} value @param {string} field */
 function requireString(value, field) {
   if (typeof value !== 'string' || value.trim() === '') {
     throw new Error(`${field} must be a non-empty string`);
@@ -26,8 +30,8 @@ function requireString(value, field) {
 }
 
 /**
- * @param {any} value
- * @param {any} field
+ * @param {unknown} value
+ * @param {string} field
  * @param {{ nonEmpty?: boolean }} [options]
  */
 function requireStringArray(value, field, { nonEmpty = false } = {}) {
@@ -39,6 +43,7 @@ function requireStringArray(value, field, { nonEmpty = false } = {}) {
   }
 }
 
+/** @param {any} value */
 function validateEnvelope(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('terminal envelope must be a JSON object');
@@ -75,7 +80,10 @@ function validateEnvelope(value) {
   return value;
 }
 
+// SECTION: Envelope parsing
+
 // JSON.parse keeps the last duplicate silently; scan object key tokens per nesting level instead.
+/** @param {string} source */
 function hasDuplicateKeys(source) {
   const stack = [];
   for (const [token, string, colon] of source.matchAll(/("(?:[^"\\]|\\.)*")(\s*:)?|[{}[\]]/g)) {
@@ -91,6 +99,7 @@ function hasDuplicateKeys(source) {
   return false;
 }
 
+/** @param {string} text */
 export function parseImplementationOutcome(text) {
   if (typeof text !== 'string' || text.trim() === '') {
     throw new Error('missing terminal envelope');
@@ -123,14 +132,17 @@ export function parseImplementationOutcome(text) {
   return validateEnvelope(parsed);
 }
 
+// SECTION: Transition policy
+
+/** @param {{ attempt: number, targetKind: string, escalation?: any }} options */
 function retryTransition({ attempt, targetKind, escalation }) {
   if (targetKind === 'self') {
-    return attempt < 2
+    return attempt < RETRY_LIMITS.self
       ? { action: 'replace', consumesAttempt: true }
       : { action: 'stop-user-ruling', consumesAttempt: true };
   }
   if (attempt < 2) return { action: 'replace', consumesAttempt: true };
-  if (attempt >= 3) {
+  if (attempt >= RETRY_LIMITS.delegate) {
     return { action: 'stop-user-ruling', consumesAttempt: true };
   }
   if (!escalation || !['available', 'exhausted'].includes(escalation.status)) {
@@ -149,7 +161,7 @@ function retryTransition({ attempt, targetKind, escalation }) {
 }
 
 /**
- * @param {{ terminalEnvelope?: any, launch: string, attempt: number, targetKind: string, resumable?: boolean, contextContinuationUsed?: boolean, escalation?: any, verificationResult?: any, verificationKind?: string, continuationOf?: string, concernsResolved?: boolean }} options
+ * @param {{ terminalEnvelope?: any, launch: string, attempt: number, targetKind: string, resumable?: boolean, contextContinuationUsed?: boolean, escalation?: any, verificationResult?: string, verificationKind?: string, continuationOf?: string, concernsResolved?: boolean }} options
  */
 export function resolveImplementationTransition({
   terminalEnvelope,
@@ -206,7 +218,7 @@ export function resolveImplementationTransition({
   if (!validStage) return retryTransition({ attempt, targetKind, escalation });
 
   if (envelope.status === 'BLOCKED') {
-    if ((targetKind === 'self' && attempt >= 2) || (targetKind === 'delegate' && attempt >= 3)) {
+    if (attempt >= RETRY_LIMITS[targetKind]) {
       return { action: 'stop-user-ruling', consumesAttempt: true };
     }
     return { action: 'change-blocking-condition', consumesAttempt: true };

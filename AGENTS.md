@@ -59,12 +59,13 @@ tests/                    mirrors source plus cross-skill integration guards
 
 ## Documentation Standards
 
-Differentiate human documentation, agent execution contracts, and maintainer notes:
+Classify each document by audience; keep each fact in one class:
 
-- **Human Documentation (`README.md`, `skills/*/README.md`)**: Optimized for human users (*Is this something the user needs to know?*).
+- **Human documentation**: Help users understand and operate the skills.
   - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
-  - **Skill Manuals (`skills/*/README.md`)**: Purpose, concepts, prerequisites, realistic invocation examples, configuration, and troubleshooting.
-- **Agent Contracts (`skills/*/SKILL.md`, operational `references/*.md`)**: Governed by `writing-for-agents`. Focus strictly on operational context, decision paths, and checkable execution bounds. Hold word count net-neutral or lower; grow it only when the task requires it, reaching first for rewording, leading words, or disclosure. Maintainer notes belong in `docs/<skill>-notes.md` (not shipped).
+  - **Dispatch documentation (`skills/dispatch/README.md` and its disclosed references)**: Purpose, concepts, prerequisites, realistic invocations, configuration, troubleshooting; write human guidance for users and cover referenced paths with path-convention guards.
+- **Agent contracts — apply `writing-for-agents` when editing** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep word count net-neutral or lower; expand only after exhausting rewording, leading words, and disclosure.
+- **Maintainer notes** (`docs/<skill>-notes.md`): Record implementation context that users and executing agents do not need; these files are not shipped.
 
 ## Authoring & Cross-Platform Standards
 

@@ -44,27 +44,44 @@ import { detectOrchestrator } from '../lib/providers.mjs';
 import { AGY_MODE_DATA_DIRS } from '../runners/agy.mjs';
 import { userSlug } from '../lib/telemetry.mjs';
 
-export const SCRATCH_DIR = '.scratch/plan';
+/** @typedef {'plan'|'walkthrough'|'design'|'increment-plan'|'increment-walkthrough'|'integration-walkthrough'} ArtifactKind */
+/** @typedef {'native'|'scratch-existing'|'temp-existing'|'scratch-new'} ArtifactTier */
+/** @typedef {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} NativeOptions */
+/** @typedef {{ tier: ArtifactTier, path: string, exists: boolean, scratchOnly?: boolean }} ResolvedArtifact */
 
+export const SCRATCH_DIR = '.scratch/plan';
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-export const PHASED_KINDS = Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']);
+export const PHASED_KINDS = /** @type {readonly ArtifactKind[]} */ (Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']));
 export const RESERVED_SLUG_PATTERN = /(?:-design|-integration(?:-walkthrough)?|-i\d{2}-.+)$/;
-export function isReservedOrdinarySlug(slug) {
-  return typeof slug === 'string' && RESERVED_SLUG_PATTERN.test(slug);
-}
 
-/** Antigravity conversation ids are opaque tokens; this rejects anything that could
- *  traverse out of the brain dir (e.g. `../`) when interpolated into a path.join. */
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
-
 const PROTECTED_BRANCHES = new Set(['main', 'master', 'develop', 'trunk', 'head']);
 const BRANCH_PREFIX_PATTERN = /^(feature|feat|fix|bugfix|hotfix|chore|refactor|release)\//;
 const MAX_SLUG_LENGTH = 60;
+const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
+const NATIVE_FILENAME = Object.freeze({
+  plan: 'implementation_plan.md',
+  walkthrough: 'walkthrough.md',
+  design: 'technical_design.md',
+});
+const INCREMENT_ARTIFACT_PATTERN = /^\.scratch\/plan\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
 
-// ============================================================================
-// SECTION: Date helpers
-// ============================================================================
+/** Env vars carrying conversation/session identity, scoped to the detected orchestrator. */
+const CONVERSATION_ID_ENV_VARS = Object.freeze({
+  agy: ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID'],
+  claude: ['CLAUDE_CODE_SESSION_ID'],
+  copilot: ['COPILOT_CLI_SESSION_ID'],
+  // OpenCode exposes no documented identity env var to tool subprocesses.
+  opencode: [],
+});
+
+// SECTION: Public validation and path APIs
+
+/** @param {unknown} slug */
+export function isReservedOrdinarySlug(slug) {
+  return typeof slug === 'string' && RESERVED_SLUG_PATTERN.test(slug);
+}
 
 /** Local calendar date as `yyyy-mm-dd` — the filename should match the user's day. */
 export function localDate(now = new Date()) {
@@ -78,15 +95,14 @@ export function isValidDate(value) {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
 }
 
-// ============================================================================
-// SECTION: Scratch path template (single source of truth for the canonical shape)
-// ============================================================================
-
 /**
- * @param {string} date - yyyy-mm-dd
- * @param {string} slug - kebab-case
- * @param {string} [kind]
- * @returns {any} path map for `plan`/`walkthrough`, else the single path for `kind`
+ * Builds canonical scratch paths. The default returns the ordinary plan/walkthrough map;
+ * an explicit phased kind returns only that kind's path.
+ *
+ * @param {string} date - Calendar date as `yyyy-mm-dd`.
+ * @param {string} slug - Kebab-case artifact identity.
+ * @param {ArtifactKind} [kind]
+ * @returns {Record<ArtifactKind, string>|string}
  */
 export function buildScratchPaths(date, slug, kind = 'plan') {
   const paths = {
@@ -164,9 +180,7 @@ export function relocatedArtifactsPath({ projectRoot = PROJECT_ROOT, tempRoot = 
   return path.join(ledgerNamespacePath({ tempRoot, repoHash, env }), 'relocated');
 }
 
-// ============================================================================
 // SECTION: Slug derivation
-// ============================================================================
 
 /**
  * Kebab-cases arbitrary text: lowercase, non-alphanumeric runs become a single
@@ -222,24 +236,6 @@ export function getCurrentBranch(cwd = PROJECT_ROOT) {
 }
 
 /**
- * Env vars that carry a conversation (preferred) or session id for each orchestrator,
- * in preference order — checked only for the orchestrator actually detected, so a stray
- * env var from another tool never leaks into the derived key.
- */
-const CONVERSATION_ID_ENV_VARS = {
-  agy: ['ANTIGRAVITY_CONVERSATION_ID', 'ANTIGRAVITY_SESSION_ID'],
-  // Verified equal to the conversation id; CLAUDE_CODE_HOST_SESSION_ID is the desktop
-  // wrapper's own id and is not used here.
-  claude: ['CLAUDE_CODE_SESSION_ID'],
-  copilot: ['COPILOT_CLI_SESSION_ID'],
-  // OpenCode exposes no documented conversation/session id env var to tool subprocesses
-  // (checked against `opencode --help` / `opencode run --help` and references/providers.md) —
-  // deriving a conversation-slug key for it is not possible; callers fall through to the
-  // existing hard error when branch derivation also fails.
-  opencode: [],
-};
-
-/**
  * Derives a `conversation-<8 chars>` slug fallback key from the active orchestrator's own
  * conversation/session id env var. Used only when both `--slug` and branch derivation have
  * failed (protected branch / detached HEAD).
@@ -285,9 +281,7 @@ export function resolveSlug({ explicit, branch = getCurrentBranch(), orchestrato
   return { slug: null, slugSource: null };
 }
 
-// ============================================================================
-// SECTION: Discovery: native tier
-// ============================================================================
+// SECTION: Native artifact discovery
 
 /**
  * Known platform-native artifact locations, newest-file-wins across all of them.
@@ -313,12 +307,13 @@ export function defaultNativeCandidateRoots({ platform = process.platform, env =
   return roots;
 }
 
-const NATIVE_FILENAME = { plan: 'implementation_plan.md', walkthrough: 'walkthrough.md', design: 'technical_design.md' };
-
 /**
- * @param {any} file
- * @param {string} [kind]
- * @param {{ roots?: any }} [options]
+ * Tests whether a path has the exact native filename under a configured platform root.
+ *
+ * @param {string} file
+ * @param {'plan'|'walkthrough'|'design'} [kind]
+ * @param {{ roots?: string[] }} [options]
+ * @returns {boolean}
  */
 export function isNativeArtifactPath(file, kind = 'plan', { roots = defaultNativeCandidateRoots() } = {}) {
   const absolute = path.resolve(file);
@@ -328,9 +323,6 @@ export function isNativeArtifactPath(file, kind = 'plan', { roots = defaultNativ
     return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
   });
 }
-
-/** Platforms with a known, discoverable native artifact. */
-const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
 
 /**
  * Resolves the current native artifact, scoped to the running session.
@@ -525,8 +517,6 @@ export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir()) {
 /** Canonical increment artifact path:
  *  `.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
  *  Returns `{date, designRootSlug, incrementId, incrementSlug, kind}` or null. */
-const INCREMENT_ARTIFACT_PATTERN = /^\.scratch\/plan\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
-
 export function parseIncrementArtifactPath(value) {
   const normalized = String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '');
   const match = INCREMENT_ARTIFACT_PATTERN.exec(normalized);
@@ -588,14 +578,14 @@ function phasedRootSlug(candidateSlug) {
  * Resolves one artifact kind: native tier, then existing scratch, then existing
  * temp artifact (this repository's relocated scratch), then the deterministic scratch-new path.
  *
- * @param {string} kind
- * @param {{ slug?: string, date?: string, projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
- * @returns {{ tier: 'native'|'scratch-existing'|'temp-existing'|'scratch-new', path: string, exists: boolean, scratchOnly?: boolean }}
+ * @param {ArtifactKind} kind
+ * @param {{ slug?: string, date?: string, projectRoot?: string, tempRoot?: string, native?: NativeOptions }} options
+ * @returns {ResolvedArtifact}
  */
 export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), native: nativeOptions = {} } = {}) {
   if (PHASED_KINDS.includes(kind)) {
     const resolvedDate = date ?? localDate();
-    const canonical = buildScratchPaths(resolvedDate, slug, kind);
+    const canonical = /** @type {string} */ (buildScratchPaths(resolvedDate, slug, kind));
     assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate);
     const absolute = path.resolve(projectRoot, canonical);
     if (existsSync(absolute)) {
@@ -620,13 +610,14 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
   const existingTemp = findExistingTempArtifact(kind, slug, relocatedArtifactsPath({ projectRoot, tempRoot }));
   if (existingTemp) return { tier: 'temp-existing', path: existingTemp, exists: true };
 
-  return { tier: 'scratch-new', path: buildScratchPaths(date ?? localDate(), slug)[kind], exists: false };
+  const paths = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(date ?? localDate(), slug));
+  return { tier: 'scratch-new', path: paths[kind], exists: false };
 }
 
 /**
  * Resolves plan and/or walkthrough artifact paths together.
  *
- * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: string[], projectRoot?: string, tempRoot?: string, repositoryRoot?: string|null, ledger?: Record<string, any>, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
+ * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: ArtifactKind[], projectRoot?: string, tempRoot?: string, repositoryRoot?: string|null, ledger?: Record<string, any>, native?: NativeOptions }} options
  * @returns {{ slug: string, date: string, plan?: Record<string, any>, walkthrough?: Record<string, any> }}
  */
 export function resolveArtifacts({
@@ -644,7 +635,7 @@ export function resolveArtifacts({
   if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
   }
-  if (['plan', 'walkthrough'].some(kind => kinds.includes(kind)) && isReservedOrdinarySlug(slug)) {
+  if ((kinds.includes('plan') || kinds.includes('walkthrough')) && isReservedOrdinarySlug(slug)) {
     throw new Error(`Slug "${slug}" is reserved for phased artifacts; choose a non-reserved ordinary slug.`);
   }
   if (kinds.some(kind => ['design', 'integration-walkthrough'].includes(kind)) && isReservedOrdinarySlug(slug)) {

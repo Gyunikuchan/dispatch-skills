@@ -4,14 +4,16 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+// SECTION: Git and path primitives
+
 const EXCLUDED_SEGMENTS = new Set([
   '.scratch', 'node_modules', 'vendor', 'vendors', 'dist', 'build', 'coverage', '.next',
 ]);
 const GENERATED_NAMES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']);
 
 /**
- * @param {any} repoRoot
- * @param {any} args
+ * @param {string} repoRoot
+ * @param {string[]} args
  * @param {{ allowFailure?: boolean }} [options]
  */
 function git(repoRoot, args, { allowFailure = false } = {}) {
@@ -88,6 +90,9 @@ function resolveRangeShas(repoRoot, range) {
   throw new Error(`Range base "${left}" is neither a commit nor a tree.`);
 }
 
+// SECTION: Snapshot capture
+
+/** @param {{ repoRoot?: string, scope: Record<string, any>, includeWorkingTree?: string[] }} input */
 export function captureReviewSnapshot({ repoRoot = process.cwd(), scope, includeWorkingTree = [] }) {
   repoRoot = path.resolve(repoRoot);
   if (!scope?.reviewable) throw new Error('A reviewable scope is required to capture a snapshot.');
@@ -168,6 +173,9 @@ function verifyCommit(repoRoot, revision) {
   return result.stdout.trim();
 }
 
+// SECTION: Range resolution
+
+/** @param {string} repoRoot @param {string} expression */
 export function resolveExplicitRange(repoRoot, expression) {
   const tripleCount = (expression.match(/\.\.\./g) ?? []).length;
   const withoutTriple = expression.replace(/\.\.\./g, '');
@@ -242,7 +250,9 @@ function emptyOwnedIntersection(message) {
   };
 }
 
-/** @param {{ repoRoot?: string, explicitRange?: any, allowedPaths?: any, baseRevision?: any }} [options] */
+// SECTION: Scope selection
+
+/** @param {{ repoRoot?: string, explicitRange?: string | null, allowedPaths?: string[] | null, baseRevision?: string | null }} [options] */
 export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = null, allowedPaths = null, baseRevision = null } = {}) {
   repoRoot = path.resolve(repoRoot);
   if (explicitRange && baseRevision) throw new Error('Pass either an explicit range or a base revision, not both.');

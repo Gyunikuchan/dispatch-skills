@@ -9,6 +9,10 @@ import { emitAction } from './actions.mjs';
 import { writeRunState } from './state.mjs';
 
 const MARKER = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
+
+// SECTION: Governing artifact binding
+
+/** Returns a repository-relative, slash-normalized artifact path. */
 export const relative = (state, file) => path.relative(state.repoRoot, file).split(path.sep).join('/');
 export const source = state => fs.readFileSync(state.planPath, 'utf8');
 export function bindPlan(state, file) {
@@ -94,6 +98,9 @@ function renderValidatedEvidence(text, ordinary) {
   text = text.replace(/## Outcome Traceability\r?\n[\s\S]*?\r?\n## Key Deviations/, () => `## Outcome Traceability\n${trace.join('\n')}\n\n## Key Deviations`);
   return replaceVerification(text, [...matrix, '### Manual Verification', manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.']);
 }
+// SECTION: Durable evidence
+
+/** Persists reconstructable ordinary evidence in the canonical walkthrough. */
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.

@@ -6,8 +6,16 @@ import path from 'node:path';
 const MAX_BYTES = 1024 * 1024;
 const FILE_NAME = 'telemetry.jsonl';
 const ROTATED_NAME = 'telemetry.1.jsonl';
+const TELEMETRY_ENV = 'DISPATCH_TELEMETRY';
 
-/** @param {{ env?: NodeJS.ProcessEnv, userInfo?: any }} [options] */
+// SECTION: Paths and identity
+
+/**
+ * Returns a filesystem-safe per-user slug.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv, userInfo?: () => { username?: string } }} [options]
+ * @returns {string}
+ */
 export function userSlug({ env = process.env, userInfo = () => os.userInfo() } = {}) {
   let name = env.USER || env.USERNAME || '';
   if (!name) {
@@ -18,19 +26,25 @@ export function userSlug({ env = process.env, userInfo = () => os.userInfo() } =
   return safe === '' || safe === '.' || safe === '..' ? 'unknown' : safe;
 }
 
-/** @param {{ dir?: any }} [options] */
+/**
+ * Resolves the cross-session telemetry file.
+ *
+ * @param {{ dir?: string }} [options]
+ * @returns {string}
+ */
 export function telemetryPath({ dir } = {}) {
-  // Cross-session aggregate under the single dispatch temp root.
   const base = dir ?? path.join(os.tmpdir(), `dispatch-skills-${userSlug()}`, 'telemetry');
   return path.join(base, FILE_NAME);
 }
 
-// Shared tmp is attacker-reachable on POSIX; refuse dirs another user could have planted or can write.
-// NOTE: win32 %TEMP% is per-user by default, so directory ACLs are not inspected there.
+// SECTION: Secure persistence
+
+/** Shared POSIX temp is attacker-reachable, so accept only private directories owned by this user. */
 function safeDirectory(dir) {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(dir);
   if (stat.isSymbolicLink() || !stat.isDirectory()) return false;
+  // Windows temp is per-user and POSIX mode bits do not represent its ACLs.
   if (process.platform !== 'win32') {
     if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return false;
     if ((stat.mode & 0o022) !== 0) return false;
@@ -42,6 +56,7 @@ function buildRecord({ result, error, startedAt }) {
   const attempts =
     Array.isArray(result?.metricsAttempts) ? result.metricsAttempts :
       Array.isArray(error?.metricsAttempts) ? error.metricsAttempts : [];
+  // Failed runs have no effective result, so only successful results infer the final attempt.
   const effectiveAttempt =
     Number.isSafeInteger(result?.effectiveAttempt) ? result.effectiveAttempt :
       attempts.length > 0 && result ? attempts.length - 1 : null;
@@ -62,9 +77,9 @@ function buildRecord({ result, error, startedAt }) {
  */
 export function appendTelemetry({ result = null, error = null, startedAt, dir } = {}) {
   try {
-    if (process.env.DISPATCH_TELEMETRY === '0') return;
+    if (process.env[TELEMETRY_ENV] === '0') return;
     const record = buildRecord({ result, error, startedAt });
-    // Only provider attempts count; usage/config/integrity errors never reached a provider.
+    // Usage, configuration, and integrity failures never reached a provider attempt.
     if (record.attempts.length === 0) return;
     const file = telemetryPath({ dir });
     const base = path.dirname(file);
@@ -72,7 +87,7 @@ export function appendTelemetry({ result = null, error = null, startedAt, dir } 
     let existing = null;
     try { existing = fs.lstatSync(file); } catch { existing = null; }
     if (existing && !existing.isFile()) return;
-    // NOTE: rotation can drop a concurrent append; acceptable for content-free best-effort data.
+    // NOTE: Best-effort telemetry accepts a concurrent append lost during rotation.
     if (existing && existing.size >= MAX_BYTES) fs.renameSync(file, path.join(base, ROTATED_NAME));
     const line = `${JSON.stringify(record)}\n`;
     // O_NOFOLLOW (POSIX) closes the lstat-to-open symlink swap; fstat rejects anything but a regular file.

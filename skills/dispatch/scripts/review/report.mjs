@@ -1,5 +1,7 @@
 // @ts-check
 
+// SECTION: Report contracts
+
 const SEVERITIES = new Set(['MUST', 'SHOULD', 'CONSIDER']);
 const SUMMARY_STATUSES = new Set(['CLEAN', 'FINDINGS']);
 const REPORT_FIELDS = ['findings', 'status'];
@@ -8,7 +10,9 @@ const REBUTTAL_FIELDS = ['responses'];
 const RESPONSE_FIELDS = ['evidence', 'key', 'type', 'verdict'];
 const REBUTTAL_VERDICTS = new Set(['CONFIRM', 'REBUT', 'INTENT-DISPUTE']);
 
+/** Invalid structured report plus field-level diagnostics. */
 export class InvalidReviewReportError extends Error {
+  /** @param {Record<string, any>[]} diagnostics @param {{ prose?: boolean }} [options] */
   constructor(diagnostics, { prose = false } = {}) {
     super('Invalid delegate report.');
     this.name = 'InvalidReviewReportError';
@@ -29,6 +33,8 @@ function nonEmptyString(value) {
 function diagnostic(index, field, message) {
   return { index, field, message };
 }
+
+// SECTION: Locus normalization
 
 // Evidence is prose cited as written, so it accepts the same variants normalizeLocus rewrites; a
 // bare `:<line>` needs a path-like token (a `/` or a file extension) so times and ratios never count;
@@ -65,20 +71,13 @@ function hasReviewContent(value) {
     (value.status === 'CLEAN' && Array.isArray(value.findings) && value.findings.length === 0);
 }
 
-function parsesToContainer(text) {
-  try {
-    const value = JSON.parse(text);
-    return Boolean(value) && typeof value === 'object';
-  } catch {
-    return false;
-  }
-}
-
 function isContainerText(text) {
   return (text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'));
 }
 
 // String-aware so brackets inside JSON strings never close the container early.
+// SECTION: JSON extraction
+
 function balancedContainerEnd(text, start) {
   let depth = 0;
   let inString = false;
@@ -134,6 +133,8 @@ function outsideText(raw, json) {
   return at === -1 ? '' : (raw.slice(0, at) + raw.slice(at + json.length)).replace(/```(?:json)?/gi, '');
 }
 
+// SECTION: Structured parsing
+
 function parseJsonReport(text) {
   // A whole-text parse first keeps a pretty-printed bare array intact; extraction would split it
   // into its line-initial element objects.
@@ -157,6 +158,7 @@ function parseJsonReport(text) {
   }
 }
 
+/** @param {string} text @param {{ kind: string, tags: Set<string>, locusPattern: RegExp, locusDescription: string }} contract */
 export function parseReviewReport(text, { kind, tags, locusPattern, locusDescription }) {
   const diagnostics = [];
   const { value, surrounded, outside } = parseJsonReport(text);
@@ -258,6 +260,7 @@ export function parseReviewReport(text, { kind, tags, locusPattern, locusDescrip
   };
 }
 
+/** @param {string} text @param {{ kind: string, expectedKeys: string[] }} contract */
 export function parseRebuttalReport(text, { kind, expectedKeys }) {
   const diagnostics = [];
   const { value, surrounded } = parseJsonReport(text);

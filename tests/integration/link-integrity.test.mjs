@@ -54,20 +54,16 @@ describe("link integrity guard (authored markdown)", () => {
 });
 
 describe("alias documentation links", () => {
-  it("root catalog links every alias manual and each alias manual names dispatch", () => {
+  it("routes every alias catalog entry to the central dispatch manual", () => {
     const rootReadme = readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
-    const routes = {
-      "dispatch-plan-review": /\/dispatch .*review plan:/,
-      "dispatch-code-review": /\/dispatch .*review code/,
-      "dispatch-design-review": /\/dispatch .*review design:/,
-      "implement-dispatch": /\/dispatch .*implement:/,
-    };
-    for (const [name, route] of Object.entries(routes)) {
-      assert.match(rootReadme, new RegExp(`skills/${name}/README\\.md`));
-      assert.match(
-        readFileSync(path.join(REPO_ROOT, "skills", name, "README.md"), "utf8"),
-        route,
-      );
+    for (const name of [
+      "dispatch-plan-review",
+      "dispatch-code-review",
+      "dispatch-design-review",
+      "implement-dispatch",
+    ]) {
+      assert.ok(rootReadme.includes("[`" + name + "`](skills/dispatch/README.md)"));
+      assert.equal(existsSync(path.join(REPO_ROOT, "skills", name, "README.md")), false);
     }
   });
 });

@@ -1,6 +1,11 @@
 // @ts-check
 import crypto from 'node:crypto';
 
+/** @typedef {'pending'|'ready'|'active'|'complete'|'blocked'|'invalidated'|'reopened'} IncrementState */
+/** @typedef {{ incrementStates?: Map<string, IncrementState>, amendments?: Map<string, any> }} FoldContext */
+
+// SECTION: Ledger schema constants
+
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const OBJECT_ID = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,7 +35,19 @@ const CLUSTER_ID = /^C-[0-9a-f]{12}$/;
 const RUN_COMPLETE_RESULTS = new Set(['complete', 'stable-failure', 'aborted', 'design-approved-stop']);
 const INTEGRATION_RESULTS = new Set(['pass', 'accepted-baseline-equivalent', 'regression']);
 const PATH_PATTERN = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\).+$/;
+const PATH_KEYS = new Set([
+  'path', 'paths', 'dirtyPaths', 'governingPath', 'planPath', 'walkthroughPath',
+  'targetPath', 'replacementPath',
+]);
+const PHASED_ACTIONS = new Set(['increment', 'integration']);
+const INCREMENT_LEGAL_TRANSITIONS = new Set([
+  'pending->ready', 'ready->active', 'active->complete',
+  'complete->reopened', 'reopened->active', 'blocked->ready',
+]);
 
+// SECTION: Canonical JSON
+
+/** Compares Unicode code points without locale-dependent collation. */
 function compareCodePoints(left, right) {
   const a = [...left];
   const b = [...right];
@@ -41,8 +58,7 @@ function compareCodePoints(left, right) {
   return a.length - b.length;
 }
 
-const PATH_KEYS = new Set(['path', 'paths', 'dirtyPaths', 'governingPath', 'planPath', 'walkthroughPath', 'targetPath', 'replacementPath']);
-
+/** @param {unknown} value */
 function canonicalize(value, location = '$', pathValue = false) {
   if (typeof value === 'string') return pathValue ? value : value.normalize('NFC');
   if (value === null || typeof value === 'boolean') return value;
@@ -60,13 +76,17 @@ function canonicalize(value, location = '$', pathValue = false) {
   );
 }
 
+/** Returns the byte-stable JSON representation used by ledger rows and fingerprints. */
 export function canonicalJson(value) {
   return JSON.stringify(canonicalize(value));
 }
 
+/** Returns the repository's tagged SHA-256 representation. */
 export function sha256(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
+
+// SECTION: Event validation
 
 function object(value, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -279,6 +299,7 @@ function validateData(event) {
   }
 }
 
+/** Validates one event against its versioned schema and returns it unchanged. */
 export function validateEvent(event) {
   exact(event, ['v', 'seq', 'type', 'runId', 'at', 'data'], [], 'event');
   if (![1, 2].includes(event.v)) throw new Error(`Unknown ledger version ${event.v}`);
@@ -293,11 +314,15 @@ export function validateEvent(event) {
   return event;
 }
 
+// SECTION: Row serialization
+
+/** Serializes one validated event as a newline-terminated Markdown ledger row. */
 export function serializeEvent(event) {
   validateEvent(event);
   return `- event: ${canonicalJson(event)}\n`;
 }
 
+/** Parses one row and rejects JSON that is valid but not byte-canonical. */
 export function parseEventLine(line) {
   if (!line.startsWith('- event: ')) throw new Error('Malformed ledger line');
   let event;
@@ -308,12 +333,20 @@ export function parseEventLine(line) {
   return event;
 }
 
+// SECTION: Segment folding
+
 function taskFor(state, taskId) {
   const task = state.tasks.get(taskId);
   if (!task) throw new Error(`Task "${taskId}" has not started`);
   return task;
 }
 
+/**
+ * Folds a single run segment into resumable state.
+ *
+ * @param {any[]} events
+ * @param {FoldContext} [context] - State carried across phased segments.
+ */
 export function foldEvents(events, context = {}) {
   const state = {
     runId: null, version: undefined, terminal: false, needsReconciliation: false, completedTasks: new Map(),
@@ -528,32 +561,21 @@ function tasksForUnitsComplete(tasks) {
   return tasks.length > 0 && tasks.every(task => task.complete);
 }
 
-const INCREMENT_LEGAL = new Set([
-  'pending->ready', 'ready->active', 'active->complete',
-  'complete->reopened', 'reopened->active', 'blocked->ready',
-]);
-
 function incrementTransitionLegal(prior, next) {
   const unfinished = ['pending', 'ready', 'active', 'reopened', 'blocked'];
   if (unfinished.includes(prior) && (next === 'blocked' || next === 'invalidated')) return true;
   if (prior === 'invalidated' && next === 'pending') return true;
-  return INCREMENT_LEGAL.has(`${prior}->${next}`);
+  return INCREMENT_LEGAL_TRANSITIONS.has(`${prior}->${next}`);
 }
 
+/** Folds each run-start-delimited segment independently. */
 export function foldSegments(events) {
-  const segments = [];
-  let current = [];
-  for (const event of events) {
-    if (event.type === 'run-start' && current.length) {
-      segments.push(foldEvents(current));
-      current = [];
-    }
-    current.push(event);
-  }
-  if (current.length) segments.push(foldEvents(current));
-  return segments;
+  return splitRawSegments(events).map(segment => foldEvents(segment));
 }
 
+// SECTION: Segment selection
+
+/** Selects the newest matching unterminated ordinary segment. */
 export function selectOrdinarySegment(events, governingHash) {
   const segments = foldSegments(events);
   for (let index = segments.length - 1; index >= 0; index--) {
@@ -563,6 +585,7 @@ export function selectOrdinarySegment(events, governingHash) {
   return null;
 }
 
+/** Selects the newest approved design segment or unresolved repair segment. */
 export function selectDesignSegment(events, governingHash) {
   const segments = foldSegments(events);
   for (let index = segments.length - 1; index >= 0; index--) {
@@ -607,7 +630,7 @@ function splitRawSegments(events) {
   return segments;
 }
 
-const PHASED_ACTIONS = new Set(['increment', 'integration']);
+// SECTION: Cross-segment design runs
 
 /** Cross-segment design-run fold: merges every valid segment for the matching design identity
  *  (normalized design path + root slug) across approved revisions, carrying increment states,
@@ -647,9 +670,9 @@ export function foldDesignRun(events) {
     amendments = folded.amendments;
   }
   if (designSegments.length === 0 && incrementSegments.length === 0) return null;
-  let completedTasks = new Map();
+  const completedTasks = new Map();
   let needsReconciliation = false;
-  let rulings = new Map();
+  const rulings = new Map();
   let integrationPassed = false;
   let latestUnterminated = null;
   let activeIncrementId = null;

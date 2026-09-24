@@ -73,10 +73,10 @@ import {
 /**
  * @typedef {object} RunAgyOptions
  * @property {string} prompt
- * @property {Function} [execute] Test seam.
- * @property {Function} [getAvailableModes] Test seam.
- * @property {Function} [getBinary] Test seam.
- * @property {Function} [createLogger] Test seam.
+ * @property {typeof executeAgyInMode} [execute] Test seam.
+ * @property {typeof getAvailableAgyModes} [getAvailableModes] Test seam.
+ * @property {typeof getAgyBinary} [getBinary] Test seam.
+ * @property {typeof createSessionLogger} [createLogger] Test seam.
  * @property {string[]} [files]
  * @property {string} [model]
  * @property {string} [effort]
@@ -101,10 +101,13 @@ import {
  * @property {string|null} sessionLink
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
+ * @property {Record<string, any>} [usage]
+ * @property {ReturnType<typeof buildMetricsAttempt>[]} [metricsAttempts]
+ * @property {number} [effectiveAttempt]
  */
 
 // ============================================================================
-// SECTION: Constants (tweak these)
+// SECTION: Provider-Tweakable Constants
 // ============================================================================
 
 export const AGY_MODES = /** @type {const} */ ({
@@ -119,7 +122,7 @@ export const AGY_MODES = /** @type {const} */ ({
  * (resolution, probing, execution) iterates this instead of redeclaring the list.
  * @type {ModeDefinition[]}
  */
-export const MODE_DEFINITIONS = [
+const MODE_DEFINITIONS = [
   { mode: AGY_MODES.ANTIGRAVITY_CLI, name: 'Antigravity CLI (agy)', dataDir: 'antigravity-cli', fn: () => getAgyCliBinary() },
   { mode: AGY_MODES.ANTIGRAVITY_2_0, name: 'Antigravity 2.0 (agy)', dataDir: 'antigravity', fn: () => getAgy20Binary() },
   { mode: AGY_MODES.ANTIGRAVITY_VSCODE, name: 'Antigravity VS Code Extension (agy)', dataDir: 'antigravity-ide', fn: () => getAgyVSCodeBinary() },
@@ -131,7 +134,7 @@ export const AGY_MODE_DATA_DIRS = Object.fromEntries(MODE_DEFINITIONS.map((m) =>
 export const AGY_MODE_LABELS = Object.fromEntries(MODE_DEFINITIONS.map((m) => [m.mode, m.name]));
 
 // ============================================================================
-// SECTION: Main API — runAgy()
+// SECTION: Primary API
 // ============================================================================
 
 /**

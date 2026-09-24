@@ -11,6 +11,13 @@ import {
 
 export { extractApprovedPathSet };
 
+const DIGEST_ENTRY_CHARS = 240;
+const DIGEST_TOTAL_CHARS = 4000;
+const MAX_DIAGNOSTIC_CHARS = 4000;
+
+// SECTION: Plan evidence
+
+/** @param {string} source */
 export function criterionMappings(source) {
   const lines = structuralLines(source);
   const mappings = [];
@@ -37,9 +44,7 @@ export function criterionMappings(source) {
   return mappings;
 }
 
-// Plan-review findings are already folded into the plan; the writer needs only their headlines.
-const DIGEST_ENTRY_CHARS = 240;
-const DIGEST_TOTAL_CHARS = 4000;
+/** Plan-review headlines bounded for the implementation packet. @param {string} log */
 export function findingDigest(log) {
   const entries = log.split('\n').filter(line => /^[-*]\s+\*\*\[/.test(line) && !/^[-*]\s+\*\*Sources:\*\*/.test(line))
     .map(line => (line.length > DIGEST_ENTRY_CHARS ? `${line.slice(0, DIGEST_ENTRY_CHARS - 1)}…` : line));
@@ -55,6 +60,10 @@ export function findingDigest(log) {
   return [...kept, ...(omitted ? [`… ${omitted} more in the governing plan's Review Findings & Resolutions.`] : [])].join('\n');
 }
 
+/**
+ * @param {string} source
+ * @param {ReturnType<typeof criterionMappings>} criteria
+ */
 export function outcomeFirstPacket(source, criteria) {
   const lines = structuralLines(source);
   const titleIndex = lines.findIndex(({ text }) => /^#\s+/.test(text));
@@ -80,6 +89,11 @@ export function outcomeFirstPacket(source, criteria) {
   };
 }
 
+/**
+ * @param {string} source
+ * @param {string[]} commands
+ * @param {string[]} [approvedPaths]
+ */
 export function mapVerificationCommandsToPaths(source, commands, approvedPaths = extractApprovedPathSet(source)) {
   const lines = structuralLines(source);
   const mappings = [];
@@ -116,6 +130,9 @@ export function mapVerificationCommandsToPaths(source, commands, approvedPaths =
   }));
 }
 
+// SECTION: Repository state
+
+/** @param {string} source */
 export function parsePorcelainZ(source) {
   const fields = source.split('\0');
   if (fields.at(-1) === '') fields.pop();
@@ -137,9 +154,9 @@ export function parsePorcelainZ(source) {
 }
 
 /**
- * @param {any} repoRoot
- * @param {any} args
- * @param {{ encoding?: BufferEncoding, input?: any }} [options]
+ * @param {string} repoRoot
+ * @param {string[]} args
+ * @param {{ encoding?: BufferEncoding, input?: string }} [options]
  */
 function runGit(repoRoot, args, { encoding = 'utf8', input } = {}) {
   const result = spawnSync('git', ['-C', repoRoot, ...args], { encoding, input });
@@ -150,6 +167,7 @@ function runGit(repoRoot, args, { encoding = 'utf8', input } = {}) {
   return result.stdout;
 }
 
+/** @param {string} repoRoot */
 export function captureRepositoryState(repoRoot) {
   const root = path.resolve(repoRoot);
   const inside = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
@@ -182,6 +200,10 @@ export function captureRepositoryState(repoRoot) {
   return { available: true, entries };
 }
 
+/**
+ * @param {{ available?: boolean, reason?: string, entries?: Record<string, unknown> }} before
+ * @param {{ available?: boolean, reason?: string, entries?: Record<string, unknown> }} after
+ */
 export function diffRepositoryState(before, after) {
   if (!before.available && before.available !== undefined) throw new Error(before.reason);
   if (!after.available && after.available !== undefined) throw new Error(after.reason);
@@ -196,10 +218,12 @@ export function diffRepositoryState(before, after) {
 }
 
 /**
- * @param {any} value
+ * @param {unknown} value
  * @param {{ maxLength?: number }} [options]
  */
-export function normalizeDiagnostic(value, { maxLength = 4000 } = {}) {
+// SECTION: Failure identity
+
+export function normalizeDiagnostic(value, { maxLength = MAX_DIAGNOSTIC_CHARS } = {}) {
   return String(value)
     .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
     .replace(/\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|seconds?)\b/gi, '<duration>')
@@ -209,6 +233,7 @@ export function normalizeDiagnostic(value, { maxLength = 4000 } = {}) {
     .slice(0, maxLength);
 }
 
+/** @param {{ exitStatus?: number, identifiers?: unknown[], diagnostic?: unknown }} failure */
 export function failureIdentity({ exitStatus, identifiers = [], diagnostic = '' }) {
   return {
     exitStatus,
@@ -217,6 +242,10 @@ export function failureIdentity({ exitStatus, identifiers = [], diagnostic = '' 
   };
 }
 
+/**
+ * @param {ReturnType<typeof failureIdentity>} left
+ * @param {ReturnType<typeof failureIdentity>} right
+ */
 export function compareFailureIdentity(left, right) {
   if (left.exitStatus !== right.exitStatus) return false;
   if (left.identifiers.length > 0 || right.identifiers.length > 0) {

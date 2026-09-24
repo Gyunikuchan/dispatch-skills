@@ -16,9 +16,7 @@ import fs from 'node:fs';
 
 const DEFAULT_SECTION = 'Prompt template';
 
-// ============================================================================
 // SECTION: Extraction
-// ============================================================================
 
 /**
  * Extracts the declared variable names and template body for one `#### <section>` block.
@@ -45,8 +43,6 @@ export function extractTemplate(markdown, section = DEFAULT_SECTION) {
     throw new Error(`Section "${section}" not found`);
   }
 
-  // Declared variables: backtick-quoted `<Name>` at the start of a bullet, collected from the
-  // heading down to the fence opener.
   const varBulletPattern = /^-\s+`<([^>]+)>`/;
   const variables = [];
 
@@ -71,8 +67,7 @@ export function extractTemplate(markdown, section = DEFAULT_SECTION) {
     throw new Error(`No fenced block found under section "${section}"`);
   }
 
-  // Closing fence: same character, length >= opener's — so an inner 3-backtick example fence
-  // nested inside a 4-backtick outer fence doesn't prematurely close the block.
+  // The closer must match the marker and may be longer, preserving nested shorter fences.
   const closePattern = new RegExp(`^${fenceChar}{${fenceLen},}\\s*$`);
   let fenceCloseIndex = -1;
   for (let i = fenceOpenIndex + 1; i < lines.length; i++) {
@@ -89,9 +84,7 @@ export function extractTemplate(markdown, section = DEFAULT_SECTION) {
   return { variables, template };
 }
 
-// ============================================================================
-// SECTION: Assembly (frame + kind block)
-// ============================================================================
+// SECTION: Frame assembly
 
 const SLOT_PATTERN = /<<slot:([A-Za-z0-9_-]+)>>/g;
 
@@ -155,7 +148,7 @@ export function assembleTemplate(framePath, kindPath, section = DEFAULT_SECTION)
   if (unused.length > 0) {
     throw new Error(`Kind block ${kindPath} declares section(s) with no frame slot: ${unused.join(', ')}`);
   }
-  // An empty section drops its whole slot line rather than leaving a blank one behind.
+  // Empty sections remove their slot line so assembly adds no phantom whitespace.
   const template = frame.template
     .replace(/^[ \t]*<<slot:([A-Za-z0-9_-]+)>>[ \t]*\n/gm, (line, name) => (kind.sections.get(name) ? line : ''))
     .replace(SLOT_PATTERN, (_, name) => kind.sections.get(name));
@@ -163,9 +156,7 @@ export function assembleTemplate(framePath, kindPath, section = DEFAULT_SECTION)
   return { variables, template };
 }
 
-// ============================================================================
 // SECTION: Substitution
-// ============================================================================
 
 /**
  * Fills declared placeholders in `template` with `values`. Single-pass over declared names

@@ -23,6 +23,7 @@ import { isMainModule } from '../skills/dispatch/scripts/lib/platform.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_GLOSSARY = path.join(REPO_ROOT, 'skills', 'dispatch', 'references', 'glossary.md');
+const MARKDOWN_EXTENSION = '.md';
 
 const USAGE = `Usage: node scripts/check-terms.mjs [--glossary <path>] [paths...]
 
@@ -31,7 +32,9 @@ skills/<skill>/SKILL.md and skills/<skill>/references/**/*.md except the glossar
 Exit 0 clean, 1 banned synonyms found, 2 usage or glossary error.
 `;
 
-/** Splits a markdown table row into trimmed cells (outer pipes dropped). */
+// SECTION: Glossary parsing
+
+/** @param {string} line @returns {string[]} */
 function tableCells(line) {
   return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
 }
@@ -65,6 +68,9 @@ export function parseBannedTerms(text) {
   return banned;
 }
 
+// SECTION: Prose scanning
+
+/** @param {string} text @returns {string} */
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -99,7 +105,9 @@ export function findBannedTerms(text, banned) {
   return hits;
 }
 
-/** Default scan set: each skill's SKILL.md and references markdown. */
+// SECTION: Target discovery
+
+/** @returns {string[]} */
 function defaultPaths() {
   const skillsDir = path.join(REPO_ROOT, 'skills');
   const files = [];
@@ -107,7 +115,7 @@ function defaultPaths() {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.name.endsWith('.md')) files.push(full);
+      else if (entry.name.endsWith(MARKDOWN_EXTENSION)) files.push(full);
     }
   };
   for (const skill of fs.readdirSync(skillsDir, { withFileTypes: true })) {
@@ -119,6 +127,8 @@ function defaultPaths() {
   }
   return files;
 }
+
+// SECTION: Main flow
 
 /**
  * CLI entry point.

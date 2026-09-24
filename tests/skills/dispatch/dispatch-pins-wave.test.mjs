@@ -185,6 +185,15 @@ describe('dispatch --pins wave (R8)', () => {
       assert.deepEqual(high.calls.map((c) => c.model), ['gemini-3.8-flash']);
     });
 
+    it('rejects classified xhigh and max levels', () => {
+      for (const level of ['xhigh', 'max']) {
+        const res = run(['--pins', 'agy', '--level', level, '--level-source', 'classified', '--orchestrator', 'claude', 'Review']);
+        assert.equal(res.status, 1);
+        assert.match(res.stderr, /require explicit user selection/);
+        assert.equal(res.calls.length, 0);
+      }
+    });
+
     it('writes one [dispatch] level/source stderr line per run', () => {
       const cases = [
         [['--level', 'high'], 'level=high source=explicit'],

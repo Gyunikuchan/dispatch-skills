@@ -45,13 +45,11 @@ const GUARDED = [
   'skills/dispatch/SKILL.md',
   'skills/dispatch/README.md',
   'skills/dispatch-plan-review/SKILL.md',
-  'skills/dispatch-plan-review/README.md',
   'skills/dispatch-code-review/SKILL.md',
-  'skills/dispatch-code-review/README.md',
   'skills/dispatch-design-review/SKILL.md',
-  'skills/dispatch-design-review/README.md',
   'skills/implement-dispatch/SKILL.md',
-  'skills/implement-dispatch/README.md',
+  'skills/dispatch/references/readme/configuration.md',
+  'skills/dispatch/references/readme/verbs.md',
 ];
 
 /**
@@ -70,21 +68,21 @@ function trimTrailing(token) {
 
 function skillMarkdownFiles() {
   const skillsDir = path.join(REPO_ROOT, 'skills');
-  return readdirSync(skillsDir, { withFileTypes: true })
+  const topLevel = readdirSync(skillsDir, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-    .flatMap(entry =>
-      // Forward slashes, so the result compares against GUARDED on every platform.
-      ['SKILL.md', 'README.md']
-        .map(name => `skills/${entry.name}/${name}`)
-        .filter(rel => {
-          try {
-            readFileSync(path.join(REPO_ROOT, rel), 'utf8');
-            return true;
-          } catch {
-            return false;
-          }
-        })
-    );
+    .flatMap(entry => ['SKILL.md', 'README.md'].map(name => `skills/${entry.name}/${name}`));
+  const disclosedHumanReferences = [
+    'skills/dispatch/references/readme/configuration.md',
+    'skills/dispatch/references/readme/verbs.md',
+  ];
+  return [...topLevel, ...disclosedHumanReferences].filter(rel => {
+    try {
+      readFileSync(path.join(REPO_ROOT, rel), 'utf8');
+      return true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** Every `.scratch/plan/` mention in a file, as `{ rel, line, token }`. */

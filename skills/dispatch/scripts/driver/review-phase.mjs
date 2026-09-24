@@ -11,18 +11,27 @@ import { fileURLToPath } from 'node:url';
 
 import { buildRebuttalPackets } from '../review/rebuttal-packets.mjs';
 import { evaluateConsensus } from '../review/consensus.mjs';
-import { LEVELS, loadDispatchConfig, resolveLevelScalar } from '../lib/config.mjs';
+import { loadDispatchConfig } from '../lib/config.mjs';
+import { inferReviewKind, resolveReviewLevel } from './review-policy.mjs';
 import { createIndependenceClusters, formatOptInSections, parseOptInResponse } from '../review/fix-clustering.mjs';
 import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
 import { prepareReview } from '../review/prepare.mjs';
 import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
 import { formatApplicationRecord, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
-import { resolveExplicitRange } from '../review/range.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
-import { safeRenameSync } from '../lib/platform.mjs';
-import { NATIVE_AGENT_TYPES, emitAction, sanitizeReplyText } from './actions.mjs';
+import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
+import {
+  FOLLOW_UPS,
+  LOG_HEADING,
+  REPO_RELATIVE,
+  appendToSection,
+  cleanText,
+  readArtifactText,
+  setEntryStatus,
+  writeArtifactText,
+} from './review-artifact.mjs';
 import {
   PENDING_FIX_REASON,
   REEMITTED,
@@ -39,126 +48,10 @@ import {
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-// SECTION: kind and level
-
-/**
- * Review kind inference, design order 1–6.
- *
- * @param {any} argument
- * @param {{ cwd?: string }} [options]
- */
-export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
-  if (!argument) return { kind: 'code', range: null };
-  const normalized = String(argument).replace(/\\/g, '/');
-  if (/-design\.md$/i.test(normalized)) return { kind: 'design', artifactPath: argument };
-  if (/-walkthrough\.md$/i.test(normalized)) return { kind: 'code', walkthroughPath: argument };
-  if (/\.md$/i.test(normalized)) return { kind: 'plan', artifactPath: argument };
-  try {
-    resolveExplicitRange(gitRoot(cwd), argument);
-    return { kind: 'code', range: argument };
-  } catch {
-    throw new Error(
-      `Cannot review "${argument}": pass a plan (*.md), design (*-design.md), or walkthrough (*-walkthrough.md) path, ` +
-      'a Git revision or range, or no argument for uncommitted changes.',
-    );
-  }
-}
-
-function phaseEnabled(policy, level) {
-  const rounds = resolveLevelScalar(policy.rounds, level) ?? 0;
-  const targets = resolveLevelScalar(policy.targets, level);
-  return rounds > 0 && targets !== 0;
-}
-
-/**
- * Applies the raise rule: `classified`/`default` levels rise to the lowest level enabling the
- * `<kind>-review` phase; an explicit level is honored and may skip it.
- */
-export function resolveReviewLevel({ config, kind, level = 'medium', levelSource = 'default' }) {
-  const phase = `${kind}-review`;
-  const policy = config?.phases?.[phase];
-  const base = { level, levelSource, raised: false, skipped: null, phase, configured: true };
-  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return { ...base, configured: false };
-  const enabled = LEVELS.filter((candidate) => phaseEnabled(policy, candidate));
-  if (enabled.length === 0) {
-    return { ...base, skipped: { reason: `phases['${phase}'] disables ${phase} at every level (rounds or targets is 0).` } };
-  }
-  if (enabled.includes(level)) return base;
-  if (levelSource === 'explicit') {
-    return { ...base, skipped: { reason: `${phase} is disabled at explicit level "${level}" by phases['${phase}'] (rounds or targets is 0).` } };
-  }
-  const index = LEVELS.indexOf(level);
-  const raisedTo = enabled.find((candidate) => LEVELS.indexOf(candidate) > index);
-  // Never demote a classified level: with no enabled level above it, skip with a reason.
-  if (!raisedTo) {
-    return { ...base, skipped: { reason: `${phase} is disabled at "${level}" and every higher level by phases['${phase}'].` } };
-  }
-  return { ...base, level: raisedTo, raised: true };
-}
-
-// SECTION: helpers
-
 const today = () => new Date().toISOString().slice(0, 10);
 const toSlash = (value) => value.split(path.sep).join('/');
 
-function readArtifactText(state) {
-  return fs.readFileSync(state.artifactPath, 'utf8');
-}
-
-function writeArtifactText(state, text) {
-  // Atomic like review/preparation.mjs: a crash mid-write must not corrupt the canonical artifact.
-  const temp = `${state.artifactPath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(temp, text);
-  try {
-    safeRenameSync(temp, state.artifactPath);
-  } finally {
-    fs.rmSync(temp, { force: true });
-  }
-}
-
-function section(lines, heading) {
-  const start = lines.findIndex((line) => heading.test(line));
-  if (start === -1) return null;
-  let end = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
-  if (end === -1) end = lines.length;
-  return { start, end };
-}
-
-/** Appends `block` lines at the end of an H2 section, creating it at the end when absent. */
-function appendToSection(markdown, heading, title, block, placeholder) {
-  const eol = markdown.includes('\r\n') ? '\r\n' : '\n';
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
-  let range = section(lines, heading);
-  if (!range) {
-    while (lines.length && lines.at(-1) === '') lines.pop();
-    lines.push('', title, '');
-    range = { start: lines.length - 2, end: lines.length };
-  }
-  const body = lines.slice(range.start + 1, range.end).filter((line) => !placeholder.test(line));
-  while (body.length && body.at(-1).trim() === '') body.pop();
-  const next = [...lines.slice(0, range.start + 1), ...body, ...(body.length ? [''] : []), ...block, ...(range.end < lines.length ? [''] : []), ...lines.slice(range.end)];
-  let text = next.join('\n');
-  if (!text.endsWith('\n')) text += '\n';
-  return eol === '\n' ? text : text.replace(/\n/g, eol);
-}
-
-// Mirrors review/resolution-log.mjs application-record path rules: no absolute, drive, `..`, `./`, `//`, or backslash.
-const REPO_RELATIVE = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
-
-const LOG_HEADING = /^##\s+Review Findings & Resolutions\b/;
-const FOLLOW_UPS = /^##\s+Follow-ups\s*$/;
-
-function setEntryStatus(markdown, id, label) {
-  const escaped = id.replace(/[-]/g, '\\-');
-  return markdown.replace(new RegExp(`^(\\s*[-*]\\s+\\*\\*\\[)[^\\]]+(\\]\\*\\*\\s+\\[${escaped}\\])`, 'm'), `$1${label}$2`);
-}
-
-function cleanText(text, fallback) {
-  const clean = sanitizeReplyText(text);
-  return clean || fallback;
-}
-
-// SECTION: entry points
+// SECTION: Phase entry
 
 /**
  * Starts `--run review`; returns the first action.

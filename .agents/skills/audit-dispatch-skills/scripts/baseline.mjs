@@ -22,11 +22,18 @@ import { measureText } from '../../../../skills/dispatch/scripts/runners/shared.
 import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
-// SECTION: Configurable Constants
+// SECTION: Configuration
 // ============================================================================
 
 const SKIP_DIRS = new Set(['node_modules', '.git', '.scratch', 'worktrees']);
 const TEST_TIMEOUT_MS = 10 * 60 * 1000;
+const TEST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+const TEST_GLOB = 'tests/**/*.test.mjs';
+const COVERAGE_INCLUDES = [
+  'skills/**/*.mjs',
+  'scripts/**/*.mjs',
+  '.agents/skills/audit-dispatch-skills/**/*.mjs',
+];
 
 // ============================================================================
 // SECTION: Main
@@ -83,14 +90,12 @@ function runTests(root) {
     [
       '--test',
       '--experimental-test-coverage',
-      // Scoped: some tests execute installed CLIs whose JS would otherwise flood the report.
-      '--test-coverage-include=skills/**/*.mjs',
-      '--test-coverage-include=scripts/**/*.mjs',
-      '--test-coverage-include=.agents/skills/audit-dispatch-skills/**/*.mjs',
+      // Installed CLIs spawned by tests would otherwise flood the coverage report.
+      ...COVERAGE_INCLUDES.map((pattern) => `--test-coverage-include=${pattern}`),
       '--test-reporter=spec',
-      'tests/**/*.test.mjs',
+      TEST_GLOB,
     ],
-    { cwd: root, encoding: 'utf8', timeout: TEST_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 },
+    { cwd: root, encoding: 'utf8', timeout: TEST_TIMEOUT_MS, maxBuffer: TEST_MAX_BUFFER_BYTES },
   );
   const output = `${res.stdout ?? ''}${res.stderr ?? ''}`;
   const count = (label) => new RegExp(`^ℹ ${label} (\\d+)`, 'm').exec(output)?.[1] ?? '?';
@@ -247,7 +252,11 @@ export function loc(text) {
   return text.split('\n').filter((l) => l.trim()).length;
 }
 
-// Guarded so the helpers above can be imported and unit-tested without running a full baseline.
+// ============================================================================
+// SECTION: CLI Entry
+// ============================================================================
+
+// Guarded so helpers can be imported without running a full baseline.
 if (isMainModule(import.meta.url)) {
   main().catch((err) => {
     process.stderr.write(`[baseline] ${err.stack || err.message}\n`);

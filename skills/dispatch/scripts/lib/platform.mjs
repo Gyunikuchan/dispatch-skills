@@ -13,9 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// ============================================================================
-// SECTION: Configurable Constants
-// ============================================================================
+// SECTION: Public data shapes
 
 /**
  * @typedef {object} CommonArgs
@@ -112,9 +110,7 @@ export function detectBwrap() {
   return check.status === 0 && Boolean(check.stdout.trim());
 }
 
-// ============================================================================
-// SECTION: Subprocess Spawning & Batch Escaping
-// ============================================================================
+// SECTION: Subprocess spawning and batch escaping
 
 // The double quote is itself escaped: cmd.exe ignores ^ inside a quoted span,
 // so quoting an argument literally would neuter every other escape in it.
@@ -247,9 +243,7 @@ export function terminateProcessTree(child) {
   }
 }
 
-// ============================================================================
-// SECTION: Skill Hash Validation
-// ============================================================================
+// SECTION: Atomic filesystem operations
 
 /**
  * Renames `src` over `dest` atomically where the platform allows.
@@ -268,9 +262,7 @@ export function safeRenameSync(src, dest) {
   }
 }
 
-// ============================================================================
-// SECTION: Path & Executable Discovery
-// ============================================================================
+// SECTION: Path and executable discovery
 
 /**
  * Expands a leading `~` (followed by end-of-string, `/`, or `\`) to the user's home
@@ -349,7 +341,6 @@ export function findBinary(binName, extraCandidates = [], { pathFirst = true } =
   const lookupCmd = process.platform === 'win32' ? 'where.exe' : 'which';
 
   const fromPath = () => {
-    // Check system PATH, one name at a time, in order.
     for (const name of names) {
       try {
         const res = spawnSync(lookupCmd, [name], { encoding: 'utf8' });
@@ -440,18 +431,16 @@ export function isExecutableFile(targetPath) {
     const stat = fs.statSync(targetPath);
     if (!stat.isFile()) return false;
 
-    // [OS: macOS / Linux] Check executable bit
     if (process.platform !== 'win32') {
       try {
         fs.accessSync(targetPath, fs.constants.X_OK);
         return true;
       } catch {
-        // Fallback for sandboxes or network shares where accessSync(X_OK) errs
+        // Network shares and sandboxes can reject accessSync despite executable mode bits.
         return (stat.mode & 0o111) !== 0;
       }
     }
 
-    // [OS: Windows] Regular file presence is sufficient
     return true;
   } catch {
     return false;
@@ -488,9 +477,7 @@ export function existsAny(...paths) {
   return paths.filter(Boolean).some((p) => fs.existsSync(p));
 }
 
-// ============================================================================
-// SECTION: Utilities & CLI Lifecycle
-// ============================================================================
+// SECTION: JSONC parsing
 
 /**
  * Strips single-line and multi-line comments and trailing commas from JSON/JSONC
@@ -524,7 +511,7 @@ export function stripJsonComments(jsonString) {
     if (insideMultiComment) {
       if (char === '*' && nextChar === '/') {
         insideMultiComment = false;
-        i++; // skip /
+        i++;
       }
       continue;
     }
@@ -548,12 +535,11 @@ export function stripJsonComments(jsonString) {
       result += char;
     } else if (char === '/' && nextChar === '/') {
       insideSingleComment = true;
-      i++; // skip next slash
+      i++;
     } else if (char === '/' && nextChar === '*') {
       insideMultiComment = true;
-      i++; // skip next star
+      i++;
     } else if (char === ',') {
-      // Check if this comma is trailing (followed only by whitespace or comments before } or ])
       let j = i + 1;
       let isTrailing = false;
       while (j < jsonString.length) {
@@ -599,15 +585,12 @@ export function parseJsonc(text) {
   return JSON.parse(stripJsonComments(text));
 }
 
-// ============================================================================
-// SECTION: Skill Config Loading
-// ============================================================================
+// SECTION: Config loading and module lifecycle
 
 /**
- * Builds the 2-path config precedence list:
- * skill-root override (local, then shared).
+ * Builds config precedence: local override, then shared config.
  *
- * @param {{ skillRoot?: string }|string} params
+ * @param {{ skillRoot: string }|string} params
  * @returns {string[]}
  */
 export function getConfigCandidates(params) {

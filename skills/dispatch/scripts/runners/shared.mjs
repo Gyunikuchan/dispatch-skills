@@ -14,7 +14,7 @@ import { isSessionDir, sessionDir, sessionTempDir } from '../lib/session-temp.mj
 import { PROJECT_ROOT, getAllowedBoundaryRoots, isBatchLauncher, isPathInside, spawnCliSync, terminateProcessTree } from '../lib/platform.mjs';
 
 // ============================================================================
-// SECTION: Configurable Constants
+// SECTION: Provider-Tweakable Constants
 // ============================================================================
 
 // 30 minutes, sized for long analysis runs. This exceeds the ~600s ceiling agent harnesses
@@ -508,7 +508,10 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
 }
 
 /**
- * Reads piped stdin if available (supporting text and JSON hook payloads).
+ * Reads piped stdin if available, accepting text and JSON hook payloads.
+ * @param {number} [initialTimeoutMs]
+ * @param {number} [debounceMs]
+ * @returns {Promise<string|null>}
  */
 export async function readStdin(initialTimeoutMs = 200, debounceMs = 150) {
   if (process.stdin.isTTY) return null;

@@ -22,13 +22,21 @@ import {
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { captureRepositoryState } from '../verification/evidence.mjs';
 
+/** @typedef {{ platform?: NodeJS.Platform, uid?: number }} OwnershipOptions */
+/** @typedef {{ tempRoot?: string, repoHash?: string, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, uid?: number }} LedgerNamespaceOptions */
+
+// SECTION: Artifact identity
+
 export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 export const CANONICAL_DESIGN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
+
+/** Returns a canonical design artifact's root slug, or null for invalid/reserved paths. */
 export function designRootSlug(planPath) {
   const match = CANONICAL_DESIGN.exec(String(planPath).replaceAll('\\', '/').replace(/^\.\//, ''));
   return match && !isReservedOrdinarySlug(match[1]) ? match[1] : null;
 }
 
+/** Returns a canonical ordinary plan slug and rejects phased artifact identities. */
 export function slugFromPlanPath(planPath) {
   const normalized = planPath.replaceAll('\\', '/').replace(/^\.\//, '');
   const match = CANONICAL_PLAN.exec(normalized);
@@ -41,10 +49,9 @@ export function slugFromPlanPath(planPath) {
   return match[1];
 }
 
-/**
- * @param {any} directory
- * @param {{ platform?: NodeJS.Platform, uid?: any }} [options]
- */
+// SECTION: Private ledger storage
+
+/** @param {string} directory @param {OwnershipOptions} [options] */
 function inspectDirectory(directory, { platform = process.platform, uid = process.getuid?.() } = {}) {
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe ledger directory: ${directory}`);
@@ -67,7 +74,10 @@ function ensurePrivateChild(parent, name, options) {
   return child;
 }
 
-/** @param {{ tempRoot?: string, repoHash?: any, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, uid?: any }} [options] */
+/**
+ * Creates and validates the private, per-repository durable ledger namespace.
+ * @param {LedgerNamespaceOptions} [options]
+ */
 export function ensureLedgerNamespace({
   tempRoot = os.tmpdir(),
   repoHash,
@@ -99,10 +109,7 @@ function validateLedgerParents(ledgerPath, options = {}) {
   }
 }
 
-/**
- * @param {any} ledgerPath
- * @param {{ platform?: NodeJS.Platform, uid?: any }} [options]
- */
+/** @param {string} ledgerPath @param {OwnershipOptions} [options] */
 function inspectLedgerFile(ledgerPath, { platform = process.platform, uid = process.getuid?.() } = {}) {
   let stat;
   try { stat = fs.lstatSync(ledgerPath); } catch (error) {
@@ -116,6 +123,9 @@ function inspectLedgerFile(ledgerPath, { platform = process.platform, uid = proc
   }
 }
 
+// SECTION: Ledger reads
+
+/** Reads without mutation, preserving torn bytes for explicit reconciliation. */
 export function readLedger(ledgerPath) {
   let bytes;
   try { bytes = fs.readFileSync(ledgerPath); } catch (error) {
@@ -167,6 +177,8 @@ export function readLedger(ledgerPath) {
   return { status: 'ok', events, tornBytes };
 }
 
+// SECTION: Exclusive locking
+
 function lockPath(ledgerPath) {
   return `${ledgerPath}.lock`;
 }
@@ -203,8 +215,8 @@ function releaseLock(target) {
 }
 
 /**
- * @param {any} ledgerPath
- * @param {{ kill?: any }} [options]
+ * Removes a lock only after its recorded process is proven absent.
+ * @param {string} ledgerPath @param {{ kill?: typeof process.kill }} [options]
  */
 export function breakStaleLock(ledgerPath, { kill = process.kill } = {}) {
   validateLedgerParents(ledgerPath);
@@ -225,6 +237,9 @@ export function breakStaleLock(ledgerPath, { kill = process.kill } = {}) {
   return true;
 }
 
+// SECTION: Durable mutations
+
+/** Truncates an interrupted append and records an open reconciliation ruling. */
 export function repairTornTail(ledgerPath) {
   validateLedgerParents(ledgerPath);
   inspectLedgerFile(ledgerPath);
@@ -283,6 +298,7 @@ export function repairTornTail(ledgerPath) {
   }
 }
 
+/** Appends one validated sequential event under the ledger's exclusive lock. */
 export function appendEvent(ledgerPath, event) {
   validateLedgerParents(ledgerPath);
   inspectLedgerFile(ledgerPath);
@@ -316,9 +332,11 @@ export function appendEvent(ledgerPath, event) {
   }
 }
 
+// SECTION: Resume APIs
+
 /**
- * @param {any} planSource
- * @param {{ kind?: string }} [options]
+ * Computes the semantic governing hash, excluding mutable design execution status.
+ * @param {string} planSource @param {{ kind?: 'plan'|'design' }} [options]
  */
 export function governingHash(planSource, { kind = 'plan' } = {}) {
   try {
@@ -333,6 +351,7 @@ export function governingHash(planSource, { kind = 'plan' } = {}) {
   }
 }
 
+/** Reconstructs an ordinary run and verifies completed-task materialization. */
 export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
   const designMatch = CANONICAL_DESIGN.exec(planPath.replaceAll('\\', '/').replace(/^\.\//, ''));
   if (designMatch) return resumeDesign({ ledgerPath, planPath, planSource, repoRoot });
@@ -400,6 +419,7 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
   };
 }
 
+/** Reconstructs legacy or phased design execution and returns its next action. */
 export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
   const artifact = typeof planSource === 'string'
     ? { source: planSource, metadata: null }
@@ -535,6 +555,8 @@ function formatNextAction(action) {
     default: return action.action;
   }
 }
+
+// SECTION: CLI
 
 function help() {
   console.log(`Usage:

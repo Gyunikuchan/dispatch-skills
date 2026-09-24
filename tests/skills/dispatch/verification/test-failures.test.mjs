@@ -33,13 +33,27 @@ describe('failure identities from real node --test output', () => {
   });
   after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  for (const reporter of ['spec', 'tap', QUIET_REPORTER]) {
+  for (const reporter of ['spec', 'tap']) {
     it(`extracts leaf and load failures from the ${path.basename(reporter)} reporter`, () => {
       const output = runSuite(reporter);
       assert.deepEqual(extractFailureIdentifiers(output, { repoRoot: dir }), ['error:load tests/broken.test.mjs', 'test:fails # hash', 'test:top fails']);
       assert.deepEqual(testCounts(output), { pass: 1, fail: 3 });
     });
   }
+
+  it('extracts the exact failure from the fail-fast reporter', () => {
+    const file = path.join(dir, 'single-failure.test.mjs');
+    fs.writeFileSync(file, "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('only failure', () => assert.fail('boom'));\n");
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ['--test', `--test-reporter=${QUIET_REPORTER}`, file], {
+      cwd: dir,
+      encoding: 'utf8',
+      env,
+    });
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.deepEqual(extractFailureIdentifiers(output, { repoRoot: dir }), ['test:only failure']);
+    assert.equal(testCounts(output), null);
+  });
 
   it('returns no identifiers or counts for unrecognized output', () => {
     assert.deepEqual(extractFailureIdentifiers('make: *** [all] Error 1'), []);

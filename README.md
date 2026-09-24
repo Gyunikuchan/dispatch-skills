@@ -101,10 +101,10 @@ See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tabl
 | Skill | Use it for |
 |---|---|
 | [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. Model- and user-invoked. |
-| [`dispatch-plan-review`](skills/dispatch-plan-review/README.md) | Alias for `/dispatch review plan:` |
-| [`dispatch-design-review`](skills/dispatch-design-review/README.md) | Alias for `/dispatch review design:` |
-| [`dispatch-code-review`](skills/dispatch-code-review/README.md) | Alias for `/dispatch review code:` |
-| [`implement-dispatch`](skills/implement-dispatch/README.md) | Alias for `/dispatch implement:` |
+| [`dispatch-plan-review`](skills/dispatch/README.md) | Alias for `/dispatch review plan:` |
+| [`dispatch-design-review`](skills/dispatch/README.md) | Alias for `/dispatch review design:` |
+| [`dispatch-code-review`](skills/dispatch/README.md) | Alias for `/dispatch review code:` |
+| [`implement-dispatch`](skills/dispatch/README.md) | Alias for `/dispatch implement:` |
 
 The four aliases exist for familiar slash commands only; `dispatch` alone does the work.
 

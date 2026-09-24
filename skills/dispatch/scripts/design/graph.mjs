@@ -1,7 +1,16 @@
 // @ts-check
-const GRAPH_HEADING = 'Increment Dependency Graph';
 
-/** Splits a source into lines between the graph heading and the next unfenced `^## ` heading. */
+const GRAPH_HEADING_PATTERN = /^##\s+Increment Dependency Graph\s*$/;
+const SECTION_HEADING_PATTERN = /^##\s/;
+const INCREMENT_ROW_PATTERN = /^\|\s*(I\d{2})\s*\|/;
+
+// SECTION: Markdown section parsing
+
+/**
+ * Returns lines inside the unfenced increment graph section.
+ * @param {string} source
+ * @returns {string[]}
+ */
 export function incrementGraphSection(source) {
   const lines = String(source).split(/\r?\n/);
   // Fence-aware so fenced example headings never bound the section.
@@ -16,9 +25,9 @@ export function incrementGraphSection(source) {
       unfenced.push(!fence);
     }
   }
-  const start = lines.findIndex((line, index) => unfenced[index] && /^##\s+Increment Dependency Graph\s*$/.test(line));
+  const start = lines.findIndex((line, index) => unfenced[index] && GRAPH_HEADING_PATTERN.test(line));
   if (start === -1) return [];
-  const end = lines.findIndex((line, index) => index > start && unfenced[index] && /^##\s/.test(line));
+  const end = lines.findIndex((line, index) => index > start && unfenced[index] && SECTION_HEADING_PATTERN.test(line));
   return lines.slice(start + 1, end === -1 ? lines.length : end);
 }
 
@@ -35,12 +44,7 @@ function prerequisiteList(value) {
     .filter(item => item !== 'none');
 }
 
-function pathList(value) {
-  return String(value)
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
-}
+// SECTION: Graph parsing and validation
 
 /**
  * Parses `| I<nn> | <priority> | <summary> | <prerequisites> | <paths> |` rows from the
@@ -53,7 +57,7 @@ export function parseIncrementGraph(source) {
   const rows = [];
   const ids = new Set();
   for (const line of sectionLines) {
-    const match = /^\|\s*(I\d{2})\s*\|/.exec(line);
+    const match = INCREMENT_ROW_PATTERN.exec(line);
     if (!match) continue;
     const columns = splitColumns(line);
     const id = columns[0];

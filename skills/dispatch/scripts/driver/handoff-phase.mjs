@@ -9,6 +9,9 @@ import { completeTask } from './task-phase.mjs';
 import { completionResult, fingerprint } from './verification.mjs';
 import { reviewPolicy } from './plan-phase.mjs';
 
+// SECTION: Handoff preconditions
+
+/** Requires canonical completion evidence for the current implementation scope. */
 export function requireImplementation(state) {
   const data = state.ordinary;
   const segment = ledgerSegment(state) ?? ledgerSegment(state, { terminal: true });
@@ -31,6 +34,10 @@ export function finishCodeReview(state, action) {
   state.ordinary.codeReview = { outcome: 'complete' };
   return true;
 }
+
+// SECTION: Terminal handoff
+
+/** Settles the ledger and emits the successful terminal handoff. */
 export function handoff(state) {
   requireImplementation(state);
   persistEvidence(state);

@@ -10,12 +10,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-// ============================================================================
-// SECTION: Skill Hash Validation
-// ============================================================================
+const DEFAULT_MANIFEST_NAME = 'skill-hashes.json';
+const HASHED_REFERENCE_EXTENSION = /\.(?:md|json)$/;
+
+// SECTION: Hashing and verification
 
 /**
- * Computes SHA-256 hash of a file's contents.
+ * Computes a file's SHA-256 digest.
+ *
+ * @param {string} filePath
+ * @returns {string}
  */
 export function hashFile(filePath) {
   const content = fs.readFileSync(filePath);
@@ -29,7 +33,7 @@ export function hashFile(filePath) {
  * @param {string} skillDir - Root directory of the skill
  * @param {string} [manifestName='skill-hashes.json'] - Name of the hash manifest file
  */
-export function verifySkillIntegrity(skillDir, manifestName = 'skill-hashes.json') {
+export function verifySkillIntegrity(skillDir, manifestName = DEFAULT_MANIFEST_NAME) {
   const manifestPath = path.join(skillDir, manifestName);
   if (!fs.existsSync(manifestPath)) {
     process.stderr.write(
@@ -62,41 +66,42 @@ export function verifySkillIntegrity(skillDir, manifestName = 'skill-hashes.json
   return { valid: violations.length === 0, violations, missing: false };
 }
 
+// SECTION: Manifest generation
+
 /**
- * Generates a hash manifest for all tracked files in a skill directory: SKILL.md, every .mjs
- * under scripts/, and every .md/.json under references/ (recursively). Config
- * files (`config*.jsonc`) are never hashed — they're user-edited/dynamic by design, not part of the skill's integrity surface.
- * Entries are sorted alphabetically for a stable, diff-friendly manifest.
+ * Generates a stable manifest for SKILL.md, recursive script modules, and recursive Markdown/JSON
+ * references. Config files remain outside the integrity surface because users edit
+ * them at runtime.
+ *
+ * @param {string} skillDir
+ * @returns {Record<string, string>}
  */
 export function generateSkillHashes(skillDir) {
   const entries = {};
   const skillMd = path.join(skillDir, 'SKILL.md');
-  if (fs.existsSync(skillMd)) {
-    entries['SKILL.md'] = hashFile(skillMd);
-  }
+  if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashFile(skillMd);
 
   const scriptsDir = path.join(skillDir, 'scripts');
   if (fs.existsSync(scriptsDir)) {
-    // Recursive so script subdirectories (scripts/driver/**) stay integrity-checked.
     for (const entry of fs.readdirSync(scriptsDir, { recursive: true })) {
-      const rel = `scripts/${String(entry).split(path.sep).join('/')}`;
-      if (rel.endsWith('.mjs') && fs.statSync(path.join(skillDir, rel)).isFile()) entries[rel] = hashFile(path.join(skillDir, rel));
+      const relativePath = `scripts/${String(entry).split(path.sep).join('/')}`;
+      const absolutePath = path.join(skillDir, relativePath);
+      if (relativePath.endsWith('.mjs') && fs.statSync(absolutePath).isFile()) {
+        entries[relativePath] = hashFile(absolutePath);
+      }
     }
   }
 
   const referencesDir = path.join(skillDir, 'references');
   if (fs.existsSync(referencesDir)) {
-    // Recursive so nested templates (references/templates/**) stay integrity-checked.
     for (const entry of fs.readdirSync(referencesDir, { recursive: true })) {
-      const rel = `references/${String(entry).split(path.sep).join('/')}`;
-      const abs = path.join(skillDir, rel);
-      if (/\.(?:md|json)$/.test(rel) && fs.statSync(abs).isFile()) entries[rel] = hashFile(abs);
+      const relativePath = `references/${String(entry).split(path.sep).join('/')}`;
+      const absolutePath = path.join(skillDir, relativePath);
+      if (HASHED_REFERENCE_EXTENSION.test(relativePath) && fs.statSync(absolutePath).isFile()) {
+        entries[relativePath] = hashFile(absolutePath);
+      }
     }
   }
 
-  const manifest = {};
-  for (const key of Object.keys(entries).sort()) {
-    manifest[key] = entries[key];
-  }
-  return manifest;
+  return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key]]));
 }

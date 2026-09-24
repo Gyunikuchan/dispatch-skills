@@ -17,6 +17,8 @@ import { bindStateSession, readRunState } from './state.mjs';
 import { fingerprint, snapshot } from './verification.mjs';
 
 // A single command beyond this is treated as hung; its partial log stays for inspection.
+// SECTION: Execution policy
+
 const COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DIAGNOSTIC_TAIL = 2000;
 const SUMMARY_IDENTIFIERS = 20;

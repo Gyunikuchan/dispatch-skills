@@ -7,11 +7,13 @@
 
 import { scanResolutionLog } from './resolution-log.mjs';
 
+// SECTION: Consensus gate
+
 /**
  * Runs the gate's strict scan; preparation's checkpoint-preview shares it so both agree.
  *
  * @param {string} markdown
- * @returns {{ exit: 0|1|2, unsettled: string[], unsettledItems: Record<string, any>[], error?: string }}
+ * @returns {{ exit: 0 | 1 | 2, unsettled: string[], unsettledItems: Record<string, unknown>[], error?: string }}
  */
 export function evaluateConsensus(markdown) {
   let scan;

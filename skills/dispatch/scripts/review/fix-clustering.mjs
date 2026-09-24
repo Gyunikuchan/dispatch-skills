@@ -1,9 +1,15 @@
 // @ts-check
 import crypto from 'node:crypto';
 
+const DEFAULT_MAX_ATTEMPTS = 3;
+
+// SECTION: Cluster construction
+
 /**
- * Computes deterministic cluster ID: `C-` + first 12 hex characters of SHA-256 over
- * `<runId>|<parentTaskId or ''>|<sorted member finding IDs joined by ','>`
+ * Computes a deterministic cluster ID from its run, parent, and sorted finding IDs.
+ *
+ * @param {{ runId: string, parentTaskId?: string, findingIds?: string[] }} input
+ * @returns {string}
  */
 export function computeClusterId({ runId, parentTaskId = '', findingIds = [] }) {
   if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
@@ -17,17 +23,18 @@ export function computeClusterId({ runId, parentTaskId = '', findingIds = [] }) 
 
 /**
  * Normalizes finding input into standard structure.
+ * @param {Record<string, any>} finding
  */
-function normalizeFinding(f) {
-  const id = f.findingId || f.id;
+function normalizeFinding(finding) {
+  const id = finding.findingId || finding.id;
   if (!id || typeof id !== 'string') {
     throw new Error('Finding must have a valid findingId or id');
   }
-  const affectedPaths = Array.isArray(f.affectedPaths) ? [...f.affectedPaths] : (f.paths ? [...f.paths] : []);
-  const dependsOn = Array.isArray(f.dependsOn) ? [...f.dependsOn] : [];
-  const verification = Array.isArray(f.verification) ? [...f.verification] : [];
+  const affectedPaths = Array.isArray(finding.affectedPaths) ? [...finding.affectedPaths] : (finding.paths ? [...finding.paths] : []);
+  const dependsOn = Array.isArray(finding.dependsOn) ? [...finding.dependsOn] : [];
+  const verification = Array.isArray(finding.verification) ? [...finding.verification] : [];
   return {
-    ...f,
+    ...finding,
     findingId: id,
     affectedPaths: [...new Set(affectedPaths)].sort(),
     dependsOn: [...new Set(dependsOn)].sort(),
@@ -38,6 +45,7 @@ function normalizeFinding(f) {
 /**
  * Computes transitive dependency closure for findingId across findingMap.
  */
+/** @param {string} findingId @param {Map<string, any>} findingMap @param {Set<string>} [visited] */
 function getTransitiveClosure(findingId, findingMap, visited = new Set()) {
   if (visited.has(findingId)) return visited;
   visited.add(findingId);
@@ -81,10 +89,11 @@ function hasClusterConflict(clusterFindings, finding, findingMap) {
  * - No declared ordering/interface/verification dependencies (transitive closure aware).
  * - Deterministic cluster IDs and union verification commands.
  *
- * @param {any} findings
- * @param {{ runId?: any, maxAttempts?: number }} [options]
+ * @param {Record<string, any>[]} findings
+ * @param {{ runId?: string, maxAttempts?: number }} [options]
+ * @returns {Record<string, any>[]}
  */
-export function createIndependenceClusters(findings, { runId, maxAttempts = 3 } = {}) {
+export function createIndependenceClusters(findings, { runId, maxAttempts = DEFAULT_MAX_ATTEMPTS } = {}) {
   if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
     throw new Error('runId must be a non-empty string');
   }
@@ -119,9 +128,7 @@ export function createIndependenceClusters(findings, { runId, maxAttempts = 3 } 
     (() => { throw new Error('finding dependencies contain a cycle'); })();
 }
 
-/**
- * Builds clusters with `dependsOnClusters` and returns them in dependency order, or null on a cycle.
- */
+/** Builds clusters in dependency order, or returns null for a cycle. */
 function orderClusters(groups, findingMap, runId, maxAttempts) {
   const clusters = groups.map((group) => {
     const memberIds = group.map((f) => f.findingId).sort();
@@ -167,15 +174,15 @@ function orderClusters(groups, findingMap, runId, maxAttempts) {
  * - Descendant attempt numbers continue the parent's; none exceeds maxAttempts.
  * - Sets parentTaskId to the failed cluster's ID.
  *
- * @param {any} cluster
- * @param {{ completedFindingIds?: any[], failedFindingId?: any, attemptsConsumed?: number, runId?: any, maxAttempts?: number }} [options]
+ * @param {Record<string, any>} cluster
+ * @param {{ completedFindingIds?: string[], failedFindingId?: string | null, attemptsConsumed?: number, runId?: string, maxAttempts?: number }} [options]
  */
 export function splitFailedCluster(cluster, {
   completedFindingIds = [],
   failedFindingId = null,
   attemptsConsumed = 1,
   runId,
-  maxAttempts = 3,
+  maxAttempts = DEFAULT_MAX_ATTEMPTS,
 } = {}) {
   if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
     throw new Error('runId must be a non-empty string');
@@ -223,14 +230,13 @@ export function splitFailedCluster(cluster, {
       }
     }
   } else {
-    // Attempt standard regrouping
     const candidateClusters = createIndependenceClusters(remainingFindings, { runId, maxAttempts: remainingBudget });
     if (
       remainingFindings.length > 1 &&
       candidateClusters.length === 1 &&
       candidateClusters[0].findingIds.length === remainingFindings.length
     ) {
-      // Must strictly reduce cluster size: fall back to singletons
+      // Splitting must reduce the failed unit or retries cannot make progress.
       subGroups = remainingFindings.map((f) => [f]);
     } else {
       subGroups = candidateClusters.map((c) => c.findings);
@@ -264,6 +270,8 @@ export function splitFailedCluster(cluster, {
     canProceed: descendantClusters.length > 0 && remainingBudget > 0,
   };
 }
+
+// SECTION: Optional scope
 
 /**
  * Formats user-facing opt-in sections for recommended follow-ups and out-of-scope / adjacent items.
@@ -381,7 +389,6 @@ export function parseOptInResponse(response, { aliases = {}, items = [] }) {
   const includedAliases = new Set();
   const excludedAliases = new Set();
 
-  // Initialize with defaults
   for (const [alias, item] of aliasMap.entries()) {
     if (item.defaultIncluded) {
       includedAliases.add(alias);
