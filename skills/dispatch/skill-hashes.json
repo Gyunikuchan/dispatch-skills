@@ -1,5 +1,5 @@
 {
-  "SKILL.md": "8867520a724469d55131730a40e274b0ab6e55e0cb779ca55fb200f392aa73c9",
+  "SKILL.md": "3f876a429c4fe065a4d4e9d3550793859d27df2ec5c5c1fa7c68e75e8bc0c42c",
   "references/glossary.md": "63a6aaa0407a5b4ce15882f45a6f9b49d9df54a8143a1c77046368a5b0f3ef08",
   "references/providers.md": "3972448a3bf475b6ee654141bccfcf39fa7ed2d42e6ee4d64d5519948344163f",
   "references/review.md": "37d1ea878e03317ee2b7b4a38ef6a588141eab48dc48d7dcd0d53e8c1606c144",
@@ -52,9 +52,9 @@
   "scripts/driver/handoff-phase.mjs": "3be4eb070b31a3f20c3a6cb561838c63bfc2bcdfd89410b962f18f56ff6c3739",
   "scripts/driver/implement-phase.mjs": "4a6bf1cd7a2c0dc5153e60a0d49a9063a256b5e850d0c56fada61da3da0faf8f",
   "scripts/driver/implement-state.mjs": "f5213c656e236532cda8efccc4a10155d7941d42d69fcee5f8be12a034463d35",
-  "scripts/driver/index.mjs": "38eec8b0cb59b7c34ae4fe6d65c2bb0a9aeeb0717d2a18b3153ce92253f51806",
+  "scripts/driver/index.mjs": "dcd14a2ff0cee34e419b84c8fde52eeaa54ac722ac415b988156f2c8f23b65ff",
   "scripts/driver/plan-phase.mjs": "8f6f6d10229ad5ab7bcc1932dbcd81912c77fd9e648075f1808e8dfaf1b5995e",
-  "scripts/driver/review-phase.mjs": "6df6bffc7f927765516069088316c98234e1dbb4579a16241039a6e6b24d73ea",
+  "scripts/driver/review-phase.mjs": "7a4ec5fc167d9488ceeded9b0a57eb2160c9fd6c31382a29ad5b02b5255e8cac",
   "scripts/driver/state.mjs": "947a8694e4e75128ad9d38cd94ae944679fd47c39728bce08bf3392c8e50c791",
   "scripts/driver/task-phase.mjs": "98980fa4df06d7f0e3d9bf5c9173ef17315ead54ab490b431003132f4b202e22",
   "scripts/driver/verification.mjs": "40e40a13f62d477a29def1aed68a19c1f0f5ac4409507309703d1740c55695b6",

@@ -144,7 +144,7 @@ function readInput(raw) {
   try {
     return JSON.parse(text);
   } catch (err) {
-    throw new UsageError(`--input is not valid JSON: ${err.message}`);
+    throw new UsageError(`--input is not valid JSON (pass inline JSON or @<file>): ${err.message}`);
   }
 }
 

@@ -347,7 +347,7 @@ function prepareWave(state, type, rebuttal = null) {
       question: 'inputs',
       text: 'No walkthrough exists for these changes. Provide a one-line summary and the verification command you ran with its result.',
       missing: manifest.missing,
-    }, ['Answer with {"summary": "...", "verification": {"command": "...", "result": "..."}}.']);
+    }, ['Answer with {"answer": {"summary": "...", "verification": {"command": "...", "result": "..."}}}.']);
   }
   if (manifest.status === 'decision-required') {
     const artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
