@@ -1,53 +1,171 @@
-# dispatch
+# Dispatch
 
-`dispatch` is the single model-visible entry for read-only delegation and the plan, design, review, and implementation driver.
+Bring independent agent perspectives into planning, implementation, and review without leaving your preferred agent CLI. `dispatch` keeps external delegates read-only, verifies their claims against the repository, and leaves production changes under your approval.
 
-## Invocation
+## Contents
 
-```text
-/dispatch [level] [(pins)] [verb-clause]: [argument]
+- [How dispatch works](#how-dispatch-works)
+- [Before you start](#before-you-start)
+- [Choose a verb](#choose-a-verb)
+- [Command anatomy](#command-anatomy)
+- [Common workflows](#common-workflows)
+- [Configure routing](#configure-routing)
+- [Safety and artifacts](#safety-and-artifacts)
+- [Troubleshooting](#troubleshooting)
+
+## How dispatch works
+
+Your host agent remains the orchestrator. It asks configured delegates for independent analysis, checks their evidence, and decides what moves forward. During implementation, only the host's native write subagent edits production files—and only after approval.
+
+```mermaid
+flowchart LR
+    You(["👤 You"]) --> Host["🎯 Host agent"]
+    Host --> Delegates["🔎 Read-only delegates"]
+    Delegates --> Claims["📋 Cited claims"]
+    Claims --> Verify["⚖️ Host verification"]
+    Verify --> Gate{"🛑 Approve?"}
+    Gate -->|Revise| Delegates
+    Gate -->|Proceed| Writer["💻 Native write subagent"]
+    Writer --> Tests["✅ Verify + review"]
+    Tests --> You
 ```
 
-Verbs are `ask` (default), `plan`, `design`, `review [plan|design|code] [--fix]`, and `implement [--phases from:<phase>]`. The colon is required when an argument follows. Standalone review is report-only; add `--fix` explicitly to apply accepted safe findings. `implement: <ask>` starts at planning, while artifact paths resume from their canonical state.
+Use one verb for a focused question or standalone review, or let `implement` run the approval-gated delivery loop.
 
-Examples:
+## Before you start
 
-```text
-/dispatch (all): inspect the cache invalidation flow
-/dispatch high plan: introduce tenant-scoped API keys
-/dispatch review design: .scratch/plan/2026-09-22-api-keys-design.md
-/dispatch review code --fix: main..HEAD
-/dispatch implement: introduce tenant-scoped API keys
+You need:
+
+- Node.js `>=22`
+- At least one supported agent CLI on `PATH`: Claude Code, Antigravity, GitHub Copilot, or OpenCode
+- An active dispatch configuration
+
+From this directory, create a config and check it:
+
+```bash
+cp config.sample.jsonc config.jsonc
+# Keep only providers and models available to you.
+node scripts/dispatch.mjs --validate-only
+node scripts/dispatch.mjs --doctor --level high
 ```
 
-## Configuration
+> [!NOTE]
+> `config.sample.jsonc` is an example, not a built-in default. Dispatch does nothing until you create `config.jsonc` or `config.local.jsonc`.
 
-Copy `config.sample.jsonc` to `config.jsonc` or `config.local.jsonc`. First match wins; files are not merged.
+For installation instructions, see the [repository README](../../README.md). For a guided setup and tuning reference, see [Configure dispatch](references/readme/configuration.md).
 
-- `read-delegates`: each provider is `{ "sandbox"?, "targets": [levelMap, ...] }`. Every target is an independent dispatch target and review voice (`provider[index]`); phase target counts, `"all"`, reserves, and consensus count targets, not providers.
-- `write-subagents`: one level map per host platform.
-- `phases`: targets, rounds, consensus, and optional provider membership filters.
+## Choose a verb
 
-A level map keys any of `low`…`max` to `{ "model", "effort"? }`; the nearest configured level is used as-is, with no inheritance. A `model` array is an alias cascade within one target. Omit `effort` for models that reject it; the provider default applies.
+| Verb | Use it when… | Result |
+|---|---|---|
+| `ask` | You have a focused repository question | Verified, attributed analysis; no edits |
+| `plan` | A change fits one coherent delivery unit | A reviewed implementation plan |
+| `design` | Work crosses boundaries or needs multiple increments | A reviewed design and ordered increments |
+| `review` | A plan, design, diff, or branch already exists | Settled findings; report-only by default |
+| `implement` | You want a requirement or artifact carried through delivery | Approval-gated edits, verification, review, and handoff |
 
-Sandbox is provider-wide for Claude, Copilot, and OpenCode and defaults to `true`. When isolation is unavailable, the run proceeds unsandboxed with a stderr warning and `sandboxDowngraded` in structured output. See [config.sample.jsonc](config.sample.jsonc).
+Read [Dispatch verbs](references/readme/verbs.md) for decision guidance, each verb's flow, artifact behavior, and more examples.
 
-Validate with `node scripts/dispatch.mjs --validate-only` and inspect effective routing with `node scripts/dispatch.mjs --doctor --orchestrator <platform>`.
+## Command anatomy
 
-## Operation
+```text
+/dispatch [level] [(pins)] [verb-clause]: <argument>
+```
 
-The ask path launches configured read delegates directly. Driver verbs emit one compact, versioned JSON action at a time; the host returns schema-valid action results until `done`. Canonical artifacts and Git state make phases independently resumable. Read delegates cannot write. Production edits remain approval-gated and use native write subagents; standalone review fixes require explicit `--fix`.
+```text
+/dispatch high (claude,agy) review code: main..HEAD
+          ─┬─  ─────┬─────  ─────┬─────  ────┬────
+         level      pins          verb       argument
+```
 
-Implementation gates run on the driver: the `verify` action's argv executes the plan's approved commands (and `[GENERATED]` generators at completion), logs each run, and extracts failure identities, so the host never parses test output. An unchanged tree reuses its baseline for a day.
+- **Level**: `low`, `medium`, `high`, `xhigh`, or `max`. Your config decides the models, breadth, and review policy behind each level.
+- **Pins**: provider names, a target count such as `(3)`, or `(all)`.
+- **Verb**: `ask` (the default), `plan`, `design`, `review [plan|design|code] [--fix]`, or `implement [--phases from:<phase>]`.
+- **Argument**: a question, requirement, artifact path, or Git range. The colon is required when an argument follows.
 
-Temporary files for one run live in a single session directory, `<os temp>/dispatch-skills-<user>/sessions/<id>/` (run state, write briefs, verify logs and results, prompts, slot output); sessions untouched for a day are pruned. Ledgers, baseline caches, telemetry, and locks outlive sessions under `dispatch-skills-<user>/`. Plans and walkthroughs stay in `.scratch/plan/`.
+Use `node scripts/dispatch.mjs --help` for the exhaustive, current CLI flag reference.
 
-Use `node scripts/dispatch.mjs --help` for all flags and current usage. Provider-specific setup and fallback behavior are in [references/providers.md](references/providers.md).
+## Common workflows
+
+### Ask several providers to investigate
+
+```text
+/dispatch high (all): Could concurrent refreshes issue two valid tokens?
+```
+
+Use a bounded question and name the relevant behavior or code area. Dispatch returns claims for your host to verify; delegates do not edit files.
+
+### Review the current work and apply safe fixes
+
+```text
+/dispatch review code --fix
+```
+
+> [!NOTE]
+> Reviews are report-only unless you add `--fix`. With no range, a dirty tree means staged, unstaged, and untracked changes only; use `main..HEAD` when committed branch work should be included.
+
+### Plan and deliver a contained change
+
+```text
+/dispatch implement: Add idempotency keys to webhook delivery
+```
+
+This starts at planning, reviews the plan, asks for approval, establishes a test baseline, delegates implementation, verifies approved checks, and reviews the resulting code.
+
+### Design a cross-cutting migration
+
+```text
+/dispatch max (all) design: Migrate billing from mutable balances to a ledger
+```
+
+Design is for work that should be delivered in dependency-aware increments. One invocation implements one selected increment; the handoff provides the resume command for the next.
+
+### Resume from an existing artifact
+
+```text
+/dispatch implement: .scratch/plan/2026-09-24-webhooks-plan.md
+/dispatch implement --phases from:code-review: .scratch/plan/2026-09-24-webhooks-plan.md
+```
+
+> [!NOTE]
+> Resume controls never bypass prerequisites. Dispatch stops and names the missing producing phase when the artifact, approval, or recorded state is incomplete.
+
+## Configure routing
+
+The active configuration has three parts:
+
+| Section | Controls |
+|---|---|
+| `read-delegates` | Read-only targets used for questions and reviews |
+| `write-subagents` | Native writer used by each host platform during implementation |
+| `phases` | Target count, rounds, consensus, and optional provider filters for each review type |
+
+`config.local.jsonc` takes priority over `config.jsonc`; they are complete alternatives and are not merged. Every entry in a provider's `targets` array is an independent review voice. Model arrays are fallback aliases within one target, not extra voices.
+
+See [Configure dispatch](references/readme/configuration.md) for level resolution, pins, phase policies, sandbox settings, and diagnostics. Provider installation and failure details live in the [provider reference](references/providers.md).
+
+## Safety and artifacts
+
+- Read delegates run with credentials stripped and provider-specific read-only controls.
+- Production edits require approval and use a configured native write subagent.
+- Verification runs the commands approved in the plan; review fixes are verified and reviewed again.
+- Plans, designs, and walkthroughs live in `.scratch/plan/` so interrupted work can resume.
+- Noisy prompts, logs, and run state stay in the OS temporary directory.
+- Dispatch never commits, pushes, or opens a pull request.
+
+> [!NOTE]
+> When OS sandboxing is unavailable, dispatch continues with read-only controls, prints a `[dispatch] WARNING:`, and records `sandboxDowngraded`. Read the [provider reference](references/providers.md) before relying on sandbox isolation.
 
 ## Troubleshooting
 
-- **No candidates:** create the single dispatch config, then run `--doctor`.
-- **Missing prerequisite:** resume from the named producing phase or restore its canonical artifact.
-- **Provider failure:** preserve the reported source identity and use the emitted native-fallback action.
-- **Gate failure:** open the `logPath` named in the verify results under the session directory; a failure disposition of `retry` continues the same segment with your ruling as writer context.
-- **Unsettled review:** resume from its resolution log; never manufacture settlement metadata.
+| Problem | Next step |
+|---|---|
+| No candidates are available | Run `node scripts/dispatch.mjs --doctor --level <level>` and check `read-delegates` |
+| A model or phase is unexpected | Inspect the active file, requested level, pins, and `--doctor` output |
+| Implementation cannot start | Configure `write-subagents` for the host platform |
+| A prerequisite is missing | Resume from the producing phase named in the diagnostic |
+| A verification gate failed | Open the reported `logPath`; dispatch preserves the working tree for a recorded recovery decision |
+| Review reached its round cap | Follow the prompt to rule on remaining findings or resume from the resolution log |
+| A provider failed | Use the probe and failure guidance in the [provider reference](references/providers.md) |
+
+For complete configuration diagnostics, see [Validate and diagnose](references/readme/configuration.md#validate-and-diagnose).

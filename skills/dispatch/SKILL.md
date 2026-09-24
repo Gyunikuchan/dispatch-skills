@@ -27,7 +27,7 @@ Pins select configured candidates or breadth. Use `node <skill-path>/scripts/dis
 
 For `ask`, `plan`, `design`, `review`, or `implement`:
 
-1. Start `node <skill-path>/scripts/dispatch.mjs --run <verb> [driver flags] --orchestrator <platform> [-- <argument>]`. A written level becomes `--level <level> --level-source explicit`; otherwise classify one and pass `--level-source classified`. `(a,b)`, `(3)`, or `(all)` becomes `--pins a,b`, `--pins 3`, or `--pins all`.
+1. Start `node <skill-path>/scripts/dispatch.mjs --run <verb> [driver flags] --orchestrator <platform> [-- <argument>]`. A user-written level becomes `--level <level> --level-source explicit`; otherwise classify `low`, `medium`, or `high` and pass `--level-source classified`. Reserve `xhigh` and `max` for explicit user selection. `(a,b)`, `(3)`, or `(all)` becomes `--pins a,b`, `--pins 3`, or `--pins all`.
 2. Read its single JSON action and preserve `stateFile`. Advance with `--drive --state <file> [--input <json|@file>]` as one background command: it sends any schema-valid reply, runs `launch` and `verify` argv itself, and prints the next action needing you.
 3. Execute the closed action exactly: `ask-user`, `author`, `launch`, `native-fallback`, `adjudicate`, `apply-fixes`, `delegate-write`, `verify`, or `done`. A `verify` carrying `summary` already ran; reply with only `criterionEvidence`.
 4. Continue until `done`. Follow any re-emitted action; never invent state.
