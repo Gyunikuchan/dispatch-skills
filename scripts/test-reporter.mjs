@@ -3,13 +3,17 @@
  * @file test-reporter.mjs
  * @description Quiet test reporter for Node.js test runner (node --test).
  * Silences all passing test output to preserve agent context windows.
- * Outputs concise summary on success, or full actionable diagnostics on failure.
+ * Outputs a concise summary on success, or the first actionable failure before exiting immediately.
  * Names the slowest files when one crosses SLOW_FILE_MS, since one serial file bounds the wall time.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 
 const SLOW_FILE_MS = 10_000;
+const SLOW_FILE_LIMIT = 3;
+
+// SECTION: Formatting
 
 /**
  * Format duration in milliseconds to human-readable string.
@@ -85,20 +89,25 @@ export function formatFailure(eventData, projectRoot = process.cwd()) {
  * @returns {string}
  */
 export function formatSlowFiles(fileDurations, projectRoot = process.cwd()) {
-  const slowest = [...fileDurations].sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const slowest = [...fileDurations].sort((a, b) => b[1] - a[1]).slice(0, SLOW_FILE_LIMIT);
   if (!slowest.length || slowest[0][1] < SLOW_FILE_MS) return '';
   const entries = slowest.map(([file, ms]) => `${path.relative(projectRoot, file).replace(/\\/g, '/')} ${formatDuration(ms)}`);
   return `  Slowest files: ${entries.join(', ')}
 `;
 }
 
+// SECTION: Reporter flow
+
 /**
  * Node.js test reporter generator.
  *
  * @param {AsyncIterable<Record<string, any>>} source Stream of test events
+ * @param {{ stderr?: NodeJS.WritableStream, exit?: (code: number) => void }} [options]
  * @returns {AsyncGenerator<string>}
  */
-export default async function* quietReporter(source) {
+export default async function* quietReporter(source, options = {}) {
+  const stderr = options.stderr ?? process.stderr;
+  const exit = options.exit ?? process.exit;
   let totalTests = 0;
   let passedTests = 0;
   let failedTests = 0;
@@ -138,9 +147,11 @@ export default async function* quietReporter(source) {
 
         // Only record if it's an actual test failure or a direct suite/hook error
         if (!isSubtestFailure) {
-          failedTests++;
-          totalTests++;
-          failures.push(data);
+          const output = `\n--- Test Failure (fail-fast) ---\n\n${formatFailure(data)}\n`;
+          if (stderr === process.stderr) fs.writeSync(process.stderr.fd, output);
+          else stderr.write(output);
+          exit(1);
+          return;
         }
         break;
       }
@@ -171,7 +182,6 @@ export default async function* quietReporter(source) {
     }
   }
 
-  // If there are failures, output full details
   if (failures.length > 0) {
     yield '\n--- Test Failures ---\n\n';
     for (const fail of failures) {
@@ -181,7 +191,6 @@ export default async function* quietReporter(source) {
     const fileCountStr = files.size > 0 ? ` across ${files.size} file(s)` : '';
     yield `✖ ${failedTests} of ${totalTests} test(s) failed (${passedTests} passed, ${formatDuration(totalDurationMs)}${fileCountStr})\n`;
   } else {
-    // Clean, quiet summary on success
     const skippedStr = skippedTests > 0 ? `, ${skippedTests} skipped` : '';
     const todoStr = todoTests > 0 ? `, ${todoTests} todo` : '';
     const fileCountStr = files.size > 0 ? ` across ${files.size} file(s)` : '';

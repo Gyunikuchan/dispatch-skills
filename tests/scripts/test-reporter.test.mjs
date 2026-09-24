@@ -96,7 +96,8 @@ describe('test-reporter', () => {
       assert.ok(output.startsWith('✔ All 2 test(s) passed (110ms across 2 file(s), 1 skipped)'));
     });
 
-    it('outputs failure details and failure summary when tests fail', async () => {
+    it('prints the first failure and exits without consuming later events', async () => {
+      let consumedLaterEvent = false;
       async function* mockEvents() {
         yield {
           type: 'test:fail',
@@ -113,24 +114,22 @@ describe('test-reporter', () => {
             },
           },
         };
-        yield {
-          type: 'test:summary',
-          data: {
-            counts: { passed: 0, failed: 1, tests: 1, topLevel: 1 },
-            duration_ms: 45,
-          },
-        };
+        consumedLaterEvent = true;
+        yield { type: 'test:pass', data: { name: 'later test', file: '/repo/test2.mjs', details: { type: 'test' } } };
       }
 
-      const chunks = [];
-      for await (const chunk of quietReporter(mockEvents())) {
-        chunks.push(chunk);
+      let output = '';
+      let exitCode;
+      const stderr = { write: (chunk) => { output += chunk; return true; } };
+      for await (const chunk of quietReporter(mockEvents(), { stderr, exit: (code) => { exitCode = code; } })) {
+        output += chunk;
       }
-      const output = chunks.join('');
 
-      assert.ok(output.includes('--- Test Failures ---'));
-      assert.ok(output.includes('✖ broken test'));
-      assert.ok(output.includes('✖ 1 of 1 test(s) failed (0 passed, 45ms across 1 file(s))'));
+      assert.equal(exitCode, 1);
+      assert.equal(consumedLaterEvent, false);
+      assert.match(output, /--- Test Failure \(fail-fast\) ---/);
+      assert.match(output, /✖ broken test/);
+      assert.match(output, /Error: assertion failed/);
     });
 
     it('names the slowest files by summed top-level duration once one crosses 10s', async () => {
