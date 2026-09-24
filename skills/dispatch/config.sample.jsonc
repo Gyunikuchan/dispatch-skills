@@ -1,44 +1,28 @@
 /**
- * Sample — copy to config.jsonc or config.local.jsonc beside this skill; there is no shipped
- * runtime default. Overrides are whole-file replacements: config.local.jsonc, then config.jsonc.
- * Run `node scripts/dispatch.mjs --doctor --level <level>` to inspect the selected config,
- * resolved targets, phase policy, write subagents, and provider health.
+ * Copy to config.jsonc or config.local.jsonc beside this skill. No default is shipped;
+ * config.local.jsonc takes priority. Check settings with
+ * `node scripts/dispatch.mjs --doctor --level <level>`.
  *
- * Three tables:
- * - "read-delegates" (required): the one target table for asks and every review. Each provider
- *   maps to `{ "sandbox"?: boolean, "targets": [levelMap, ...] }`. Every target is an independent
- *   dispatch target identified as `provider[index]`; phase `targets` counts, `"all"`, reserves, and
- *   consensus count targets, not providers. Missing providers are not cascade members.
- * - "write-subagents" (optional): native write subagents, selected by the host platform; never
- *   dispatched. Each entry is one level map. A missing entry fails the implement flow.
- * - "phases" (optional): review policy for plan-review and code-review. Design reviews share the
- *   plan-review policy while retaining their own review identity. Each configured phase needs
- *   `targets` (non-negative integer or "all"), `rounds`, and `consensus` level maps, plus an
- *   optional `only` provider list (it includes every target beneath each provider). An absent
- *   policy leaves both plan and design reviews unconfigured; standalone reviews use one target
- *   for one round with host-final rulings.
- *
- * A level map keys any non-empty subset of low, medium, high, xhigh, max to
- * `{ "model": string | string[], "effort"?: string }`. Resolution is exact, nearest lower,
- * otherwise lowest higher, and the selected level is used as-is: no field inheritance. With
- * `{ medium: A, max: B }`: `high` -> A (nearest lower), `low` -> A (lowest higher).
- * A `model` array is an alias cascade tried in order within one target on any failure; duplicate
- * aliases and structurally identical targets are rejected. Omit `effort` for models that reject
- * effort options: no effort flag is passed and the provider default applies. Effort values are
- * provider-defined: agy uses low/medium/high, Claude also accepts xhigh, and OpenCode receives the
- * value as the model variant (`model#effort`). CLI model/effort overrides win.
- * `rounds: 0` or an unpinned `targets: 0` disables that phase at that level.
- *
- * Sandbox is provider-wide (claude, copilot, opencode; never agy) and defaults to true; false opts
- * out. Claude and Copilot use their CLI sandbox; OpenCode uses Linux Bubblewrap. When isolation is
- * unavailable, the run proceeds unsandboxed with a warning on stderr and `sandboxDowngraded` in
- * structured output.
+ * Model references:
+ * - claude: https://platform.claude.com/docs/en/models/overview
+ * - agy: https://antigravity.google/docs/models/
+ * - copilot: https://docs.github.com/en/copilot/reference/ai-models/supported-models
+ * - opencode (zen): https://opencode.ai/zen/v1/models
+ * - opencode (go): https://opencode.ai/zen/go/v1/models
  */
 {
+  // Required for asks and reviews. Keep only providers you use.
+  // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
+      // Optional for Claude, Copilot, OpenCode; defaults to true. False opts out.
+      // If unavailable, dispatch warns and runs without a sandbox.
       "sandbox": true,
       "targets": [
+        // Set only the levels you need: low, medium, high, xhigh, max.
+        // Missing level? Use the nearest lower, or the lowest higher.
+        // Here, medium through xhigh use low. Entries do not inherit fields.
+        // Effort is optional; CLI model/effort overrides win.
         {
           "low": { "model": "claude-opus-5-5", "effort": "low" },
           "max": { "model": "claude-fable-5-1", "effort": "low" },
@@ -49,12 +33,12 @@
       "targets": [
         {
           "low": { "model": "gemini-3.7-flash", "effort": "medium" },
-          // No effort: the provider default applies.
+          // No effort uses the provider default. agy accepts low/medium/high.
           "high": { "model": "gemini-3.8-flash" },
         },
       ],
     },
-    // Two copilot targets: two independent review voices under one provider.
+    // Multiple targets under one provider are separate voices, not fallback models.
     "copilot": {
       "sandbox": true,
       "targets": [
@@ -63,6 +47,7 @@
           "high": { "model": "gpt-6-astra", "effort": "low" },
           "max": { "model": "gpt-6-astra", "effort": "medium" },
         },
+        // Model arrays try each name in order if the previous one fails.
         {
           "low": { "model": ["gpt-5.6-sol", "bedrock.gpt-5.6-sol"], "effort": "medium" },
           "max": { "model": ["gpt-5.6-sol", "bedrock.gpt-5.6-sol"], "effort": "high" },
@@ -70,14 +55,15 @@
       ],
     },
     "opencode": {
+      // OpenCode uses effort as the model variant (model#effort).
       "targets": [
         { "low": { "model": "opencode-go/glm-5.3-flash", "effort": "max" } },
         { "low": { "model": "lmstudio/qwen3.8-27b-ridge", "effort": "medium" } },
       ],
     },
   },
-  // Implementation runs against an already-reviewed plan, so it is the cheaper half of the run:
-  // spend the reasoning budget on review, not here.
+  // Optional: implementation models used by your host, separate from review targets.
+  // Add your host here to use the implement flow.
   "write-subagents": {
     "claude": {
       "low": { "model": "claude-sonnet-5", "effort": "medium" },
@@ -95,12 +81,19 @@
       "low": { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
     },
   },
+  // Optional: set review size, rounds, and consensus by level.
+  // Without a phase policy, standalone reviews use one target and one round.
   "phases": {
+    // Also used for design reviews.
     "plan-review": {
+      // Number of review voices (not providers); "all" uses every eligible target.
+      // 0 disables this level unless targets are pinned on the CLI.
       "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
+      // Max review rounds; 0 disables this level.
       "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
+      // Require agreement between voices? False leaves the final call to the host.
       "consensus": { "low": false, "medium": true },
-      // Shared with design review.
+      // Optional: use only these providers (all their targets).
       "only": ["claude", "agy", "copilot"],
     },
     "code-review": {
