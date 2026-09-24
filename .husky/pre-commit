@@ -18,3 +18,6 @@ fi
 
 # Validate all found dispatch config files.
 node scripts/validate-configs.mjs
+
+# Type-check shipped and tooling scripts (tsconfig.json: checkJs).
+npx --no-install tsc -p .
