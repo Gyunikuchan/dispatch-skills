@@ -460,8 +460,8 @@ function nativeFallbackAction(state) {
   };
   state.collect.current = { ...slot, outputPath, descriptor };
   return emitAction(state, 'native-fallback', { slot: slot.sourceKey, promptPath: state.wave.promptPath, outputPath, descriptor }, [
-    'Launch the named read-only native agent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; never use launcher defaults.',
-    'Tell the native agent: Read promptPath in full and follow it as the authoritative instructions.',
+    'Launch the named read-only native subagent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; never use launcher defaults.',
+    'Tell the native subagent: Read promptPath in full and follow it as the authoritative instructions.',
     'If the launcher cannot accept the configured model or effort, do not launch: re-resolve or exclude this source.',
     'Write its final reply verbatim to outputPath, then report the actual launch metadata with the captured reply, or a {kind, reason} failure.',
   ]);

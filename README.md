@@ -64,7 +64,7 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 
 | What dispatch does | Why it matters |
 |---|---|
-| **🛡️ Keeps delegates read-only** | Delegates run without credentials or access to sensitive files. Supported platforms add an OS sandbox for another layer of protection. Only your host agent can edit, and only after you approve the plan. |
+| **🛡️ Keeps read delegates read-only** | Read delegates run without credentials or access to sensitive files. Supported platforms add an OS sandbox for another layer of protection. After plan approval, production edits go through the host's native write agent/subagent. |
 | **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in OS temp, while structured handoffs preserve cited findings and progress for the next phase. |
 | **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
 | **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |
