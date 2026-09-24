@@ -49,7 +49,7 @@ export async function advanceDesign(state, reply) {
     if (!['complete', 'skipped'].includes(action.outcome)) return action;
     delete state.reviewState;
     state.ordinary.step = 'design-approval';
-    return emitAction(state, 'ask-user', { question: 'approval', text: 'Approve this settled technical design at its current revision.', items: [{ governingHash: state.governingHash }] }, ['Return an approved decision bound to the displayed governingHash.']);
+    return emitAction(state, 'ask-user', { question: 'approval', text: 'Approve this settled technical design at its current revision.', items: [{ governingHash: state.governingHash }] }, ['Relay the question; answer with {"answer": {"decision": "approved", "governingHash": "<displayed hash>"}}.']);
   }
   if (state.ordinary.step === 'design-author') {
     if (path.resolve(state.repoRoot, reply.path) !== state.designPath) throw new Error('Author reply must name the requested canonical design.');

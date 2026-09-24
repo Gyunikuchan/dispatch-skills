@@ -1054,7 +1054,7 @@ function optInAction(state) {
     question: 'opt-in',
     text: sections.text,
     items: sections.items,
-  }, ['Relay the list; answer with the user\'s choice text (for example "include O1", "all", or "none").']);
+  }, ['Relay the list; answer with {"answer": "<the user\'s choice text>"} (for example "include O1", "all", or "none").']);
 }
 
 function onOptIn(state, reply) {

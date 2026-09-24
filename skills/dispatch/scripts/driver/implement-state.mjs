@@ -160,5 +160,5 @@ export function refuse(state, reason, nextAction = null) {
   return emitAction(state, 'done', { outcome: 'refused', summary: reason, reason, command: state.resumeCommand, ...(nextAction ? { nextAction } : {}) });
 }
 export function ask(state, question, text, items = []) {
-  return emitAction(state, 'ask-user', { question, text, items }, ['Relay the typed decision to the user and return its exact keyed answer.']);
+  return emitAction(state, 'ask-user', { question, text, items }, ['Relay the typed decision to the user; reply {"answer": <the shape the text names>}.']);
 }
