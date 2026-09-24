@@ -30,6 +30,7 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
   - Verify: `<command>` <!-- narrowest feedback command (red: never the aggregate suite); append [FINAL] to a broad or slow proof run only at required gates -->
   - Evidence: <red|verify|review>
   - Pre-existing: <yes|no> <!-- optional; yes admits a red criterion whose failure already exists at baseline -->
+  - RED exception: <behavior-preserving|already-satisfied> <!-- optional red; permits a driver-verified no-failing-state ruling -->
   - Test rationale: <why retained RED is discriminating, stable, regression-bearing, proportionate, and behavioral; or why a new retained test is low-signal>
   - Review: <artifact: path; scenario: bounded inspection; pass: observable condition> <!-- required only for review -->
   - Enforcement infeasibility: <why deterministic enforcement is infeasible> <!-- required for critical review criteria -->

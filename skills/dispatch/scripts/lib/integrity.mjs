@@ -105,3 +105,62 @@ export function generateSkillHashes(skillDir) {
 
   return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key]]));
 }
+
+// SECTION: Diagnostics and owned regeneration
+
+const toForward = (/** @type {string} */ value) => value.split(path.sep).join('/');
+
+/**
+ * Hashed-surface violations: manifest mismatches plus generated entries the manifest does not list,
+ * so an unexplained added file counts too.
+ *
+ * @param {string} skillDir
+ * @returns {{ missing: boolean, corrupt: boolean, violations: string[] }}
+ */
+function hashedViolations(skillDir) {
+  const manifestPath = path.join(skillDir, DEFAULT_MANIFEST_NAME);
+  if (!fs.existsSync(manifestPath)) return { missing: true, corrupt: false, violations: [] };
+  /** @type {Record<string, string>} */
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) throw new Error('not an object');
+  } catch {
+    return { missing: false, corrupt: true, violations: [DEFAULT_MANIFEST_NAME] };
+  }
+  const generated = generateSkillHashes(skillDir);
+  const keys = new Set([...Object.keys(manifest), ...Object.keys(generated)]);
+  const violations = [...keys].filter((key) => manifest[key] !== generated[key]).sort();
+  return { missing: false, corrupt: false, violations };
+}
+
+/**
+ * Operator-facing integrity failure, or null when intact (a missing manifest stays a warning elsewhere).
+ *
+ * @param {string} skillDir
+ * @returns {string | null}
+ */
+export function integrityDiagnostic(skillDir) {
+  const { violations } = hashedViolations(skillDir);
+  return violations.length
+    ? `Skill integrity check failed for ${violations.join(', ')}; run npm run hashes if these edits are intended.`
+    : null;
+}
+
+/**
+ * Rewrites the manifest only when every violation is an edited path; a corrupt manifest never regenerates.
+ *
+ * @param {string} skillDir
+ * @param {string[]} editedAbsolutePaths
+ * @returns {{ regenerated: boolean, violations: string[] }}
+ */
+export function regenerateOwnedHashes(skillDir, editedAbsolutePaths) {
+  const { corrupt, violations } = hashedViolations(skillDir);
+  if (!violations.length) return { regenerated: false, violations: [] };
+  if (corrupt) return { regenerated: false, violations };
+  const edited = new Set(editedAbsolutePaths.map((value) => toForward(path.resolve(skillDir, value))));
+  const owned = violations.every((relative) => edited.has(toForward(path.resolve(skillDir, relative))));
+  if (!owned) return { regenerated: false, violations };
+  fs.writeFileSync(path.join(skillDir, DEFAULT_MANIFEST_NAME), `${JSON.stringify(generateSkillHashes(skillDir), null, 2)}\n`, 'utf8');
+  return { regenerated: true, violations };
+}

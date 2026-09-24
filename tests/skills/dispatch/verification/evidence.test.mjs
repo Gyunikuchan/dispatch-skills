@@ -318,3 +318,33 @@ describe('prior-finding digest', () => {
     assert.equal(findingDigest('z'.repeat(5000)).length, 4000);
   });
 });
+
+// SECTION: RED exception parsing (SC5)
+
+describe('criterionMappings: RED exception', () => {
+  const plan = (line) => [
+    '## Success Criteria',
+    '- [SC1] Behavior-preserving refactor.',
+    '  - Changes: src/a.js',
+    '  - Verify: `node --test tests/a.test.js`',
+    '  - Evidence: red',
+    ...(line ? [line] : []),
+    '## Proposed Changes',
+    '#### [MODIFY] src/a.js',
+  ].join('\n');
+
+  it('exposes redException null when the field is absent', () => {
+    const [criterion] = criterionMappings(plan(null));
+    assert.ok(Object.hasOwn(criterion, 'redException'));
+    assert.equal(criterion.redException, null);
+  });
+
+  it('parses valid RED exception classes, lowercased', () => {
+    assert.equal(criterionMappings(plan('  - RED exception: behavior-preserving'))[0].redException, 'behavior-preserving');
+    assert.equal(criterionMappings(plan('  - RED exception: Already-Satisfied'))[0].redException, 'already-satisfied');
+  });
+
+  it('exposes an unknown RED exception value for lint to reject', () => {
+    assert.equal(criterionMappings(plan('  - RED exception: flaky'))[0].redException, 'flaky');
+  });
+});

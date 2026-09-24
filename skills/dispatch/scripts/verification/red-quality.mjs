@@ -82,7 +82,7 @@ export function checkRedQuality(plan, evidence, red) {
       continue;
     }
 
-    parsedRows.push({ id: criterion, item, expected });
+    parsedRows.push({ id: criterion, item, test, expected });
     const paths = scopedPaths[item.commands[0]] ?? [];
     const scopeText = `${test} ${item.commands.join(' ')}`;
     const commandScope = item.commands.some(command =>
@@ -123,9 +123,14 @@ export function checkRedQuality(plan, evidence, red) {
     defects.push(`RED result for unmapped command ${commandText}`);
   }
 
-  const commandRows = parsedRows.filter(row =>
-    row.item.commands.some(command => commandMatches(commandText, command))
-  );
+  // A row naming a test file speaks only for the command that runs that file, so a criterion mapped to
+  // several commands is not matched against failures from a file its row never cited.
+  const namedFileCommand = TEST_FILE_PATTERN.test(commandText);
+  const commandRows = parsedRows.filter(row => {
+    if (!row.item.commands.some(command => commandMatches(commandText, command))) return false;
+    const file = TEST_FILE_PATTERN.exec(row.test)?.[0];
+    return !file || !namedFileCommand || commandText.includes(file);
+  });
   for (const row of commandRows) {
     // Prefer the exit immediately before identifiers because prose may mention another exit first.
     const exit = EXIT_BEFORE_IDENTITY_PATTERN.exec(row.expected) ?? EXIT_PATTERN.exec(row.expected);

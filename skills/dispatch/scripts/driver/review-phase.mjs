@@ -21,6 +21,7 @@ import { formatApplicationRecord, formatSourceMapLine, nextFindingId, scanResolu
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
+import { integrityDiagnostic, regenerateOwnedHashes } from '../lib/integrity.mjs';
 import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
 import {
   FOLLOW_UPS,
@@ -351,6 +352,9 @@ function onLaunch(state, reply) {
     envelope = null;
   }
   if (!envelope || !Array.isArray(envelope.targets)) {
+    // A relaunch would fail the same integrity check, so report the remedy instead.
+    const integrity = integrityDiagnostic(DISPATCH_DIR);
+    if (integrity) return done(state, 'failed', integrity, { command: state.resumeCommand });
     if (!state.wave.retried) {
       state.wave.retried = true;
       return launchAction(state, 'The wave envelope is missing: relaunch argv and wait for the process to exit before --next.');
@@ -877,10 +881,27 @@ function onApplyFixes(state, reply) {
     const failure = defects.length ? `lint: ${defects.map((defect) => defect.rule).join(', ')}` : null;
     return settleVerification(state, () => failure);
   }
+  const integrity = regenerateFixHashes(state);
+  if (integrity) return done(state, 'failed', integrity, { command: state.resumeCommand });
   const commands = [...new Set(state.fix.active.filter((c) => !c.applyFailure).flatMap((c) => c.verification))];
   if (commands.length === 0) return settleVerification(state, () => null);
   state.fix.commands = commands;
   return emitAction(state, 'verify', { commands }, ['Run each command from the repository root; reply with its exit code and concise evidence.']);
+}
+
+/**
+ * Regenerates the skill manifest when every integrity violation is an applied fix path; returns the
+ * failure diagnostic otherwise. Installed skills outside the repository are never rewritten.
+ */
+function regenerateFixHashes(state) {
+  const real = (/** @type {string} */ value) => { try { return fs.realpathSync.native(value); } catch { return path.resolve(value); } };
+  const relative = path.relative(real(state.repoRoot), real(DISPATCH_DIR));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  const edited = state.fix.active.filter((c) => !c.applyFailure).flatMap((c) => c.affectedPaths ?? [])
+    .map((value) => path.join(real(state.repoRoot), value));
+  const skillDir = path.join(real(state.repoRoot), relative);
+  const result = regenerateOwnedHashes(skillDir, edited);
+  return result.violations.length && !result.regenerated ? integrityDiagnostic(skillDir) : null;
 }
 
 function onVerify(state, reply) {

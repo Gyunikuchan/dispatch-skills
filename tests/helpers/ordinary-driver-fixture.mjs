@@ -93,3 +93,34 @@ export function driveOrdinaryImplementation({ fixture, repo, plan }, options = {
   return drive(fixture, { cwd: repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', plan], policy: ordinaryDriverPolicy(repo, options.policy),
     onAction(action) { assert.deepEqual(validateAgainstSchema(loadSchema(action.action), action), [], JSON.stringify(action)); if (!options.allowErrors) assert.equal(action.error, undefined, JSON.stringify(action)); options.onAction?.(action); }, ...Object.fromEntries(Object.entries(options).filter(([key]) => !['policy', 'onAction', 'allowErrors'].includes(key))) });
 }
+
+// SECTION: gate-tier fixtures (split across ordinary-gate-tiers*.test.mjs)
+
+export const LINT_CRITERION = '- [SC3] Test file stays lint-clean.\n  - Changes: `tests/sample.test.mjs`\n  - Verify: `node scripts/lint.mjs`\n  - Evidence: verify\n  - Test rationale: A deterministic lint check needs no dedicated pre-change failure.\n\n';
+
+/**
+ * Tier fixture: SC1 red (sample), SC2 all-[FINAL] verify, optionally SC3 verify (lint) scoped to the test file only.
+ * @param {{ lint?: boolean, finalCommand?: boolean, codeReview?: boolean }} [options]
+ */
+export function tierFixture({ lint = false, ...options } = {}) {
+  const fixture = createOrdinaryDriverFixture({ finalCommand: true, ...options });
+  if (lint) fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('## Proposed Changes', `${LINT_CRITERION}## Proposed Changes`));
+  return fixture;
+}
+
+/** Base policy whose production outcome cites every plan criterion and whose verify replies carry judged evidence. */
+export function tierPolicy(fixture, overrides = {}) {
+  const base = ordinaryDriverPolicy(fixture.repo);
+  const ids = [...fs.readFileSync(fixture.plan, 'utf8').matchAll(/^- \[(SC\d+)\]/gm)].map(match => match[1]);
+  return {
+    ...base,
+    delegateWrite(action) {
+      if (action.fields.stage === 'tests-only') return base.delegateWrite(action);
+      fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+      return { raw: JSON.stringify(implementationOutcome({ evidence: ids.map(id => `CRITERION ${id} | delivered value=2 | ${id === 'SC3' ? 'tests/sample.test.mjs' : 'src/app.js'}`) })) };
+    },
+    // Drop the base reply's single scopeHash so each simulated record carries its own command's scope hash.
+    verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...result }) => result) })),
+    ...overrides,
+  };
+}

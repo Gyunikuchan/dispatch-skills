@@ -165,3 +165,23 @@ We reimplement latership and refill in bulk.`);
     assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 17/i);
   });
 });
+
+// SECTION: RED exception field (SC5)
+
+describe('plan lint: RED exception field', () => {
+  const withException = (value, evidence = 'red') => VALID_PLAN
+    .replace('  - Evidence: red', `  - Evidence: ${evidence}\n  - RED exception: ${value}`);
+
+  it('accepts a declared RED exception class on a red criterion', () => {
+    assert.deepEqual(lintPlan(withException('behavior-preserving')), { defects: [], warnings: [] });
+    assert.deepEqual(lintPlan(withException('already-satisfied')), { defects: [], warnings: [] });
+  });
+
+  it('rejects an unknown RED exception class', () => {
+    assert.ok(rules(lintPlan(withException('flaky'))).includes('criterion-red-exception'));
+  });
+
+  it('rejects a RED exception on a non-red criterion', () => {
+    assert.ok(rules(lintPlan(withException('behavior-preserving', 'verify'))).includes('criterion-red-exception'));
+  });
+});

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { emitAction } from './actions.mjs';
-import { createRunState, writeRunSidecar, writeRunState } from './state.mjs';
+import { createRunState, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { writeCheckpoint } from './review-phase.mjs';
 import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
@@ -23,8 +23,12 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
   const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });
   writeRunSidecar(state, invocation);
   const from = invocation.phases?.slice(5);
-  if (invocation.argument?.endsWith('.md')) bindPlan(state, path.resolve(cwd, invocation.argument));
-  else if (from && from !== 'plan') return save(state, refuse(state, `${from} requires a canonical plan path; plan produces it.`));
+  if (invocation.argument?.endsWith('.md')) {
+    const fromCwd = path.resolve(cwd, invocation.argument);
+    // A repository-relative resume argument run from a subdirectory resolves against the root.
+    bindPlan(state, fs.existsSync(fromCwd) ? fromCwd : path.resolve(repoRoot, invocation.argument));
+    bindResume(state);
+  } else if (from && from !== 'plan') return save(state, refuse(state, `${from} requires a canonical plan path; plan produces it.`));
   if (!state.planPath) return save(state, authorPlan(state));
   if (from === 'plan') {
     const prior = ledgerSegment(state);
@@ -32,17 +36,29 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
     return save(state, authorPlan(state));
   }
   try {
-    const restored = invocation.verb === 'implement' && restoreEvidence(state);
-    // An implement run over a plan whose settled checkpoint matches its content needs no new review round.
-    if (!from && !restored && invocation.verb === 'implement' && settledPlan(state)) return save(state, await passGate(state, beginBaseline(state)));
-    const entry = from ?? (restored ? state.ordinary.phase : 'plan-review');
-    return save(state, await enterPhase(state, entry));
+    if (!from) return save(state, await enterBoundPlan(state));
+    if (invocation.verb === 'implement') restoreEvidence(state);
+    return save(state, await enterPhase(state, from));
   } catch (error) {
     // Refusal must not overwrite the canonical evidence that failed reconstruction.
     state.pending = refuse(state, error.message);
     writeRunState(state);
     return state.pending;
   }
+}
+/** Once a plan is bound, the run resumes by its repository-relative path at its recorded phase. */
+function bindResume(state) {
+  state.invocation = { ...state.invocation, argument: path.relative(state.repoRoot, state.planPath).split(path.sep).join('/'), phases: null };
+  state.resumeCommand = resumeCommand(state.invocation);
+  writeRunSidecar(state, state.invocation);
+}
+/** Implement entry over a bound plan: restored evidence resumes its phase; a settled plan passes to baseline; otherwise plan review. */
+async function enterBoundPlan(state) {
+  const implement = state.invocation.verb === 'implement';
+  const restored = implement && restoreEvidence(state);
+  // An implement run over a plan whose settled checkpoint matches its content needs no new review round.
+  if (!restored && implement && settledPlan(state)) return passGate(state, beginBaseline(state));
+  return enterPhase(state, restored ? state.ordinary.phase : 'plan-review');
 }
 function settledPlan(state) {
   try { return requireSettledPlan(state).outcome === 'complete'; } catch { return false; }
@@ -146,7 +162,8 @@ export async function advanceImplement(state, reply) {
     const data = state.ordinary;
     if (data.phase === 'plan') {
       acceptPlan(state, reply);
-      action = await consumeReview(state, await beginReview(state, 'plan'));
+      bindResume(state);
+      action = await enterBoundPlan(state);
     } else if (state.reviewState && !['final-verify', 'failure-disposition'].includes(data.step)) {
       action = await consumeReview(state, continueReview(state, reply));
     } else {

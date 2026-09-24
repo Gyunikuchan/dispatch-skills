@@ -170,6 +170,8 @@ function readCriterionMapping(current, entry, approved, defects) {
     current.review = review[1].trim();
     current.reviewLine = entry.line;
   }
+  const redException = /^ {2,}[-*+] RED exception:\s*(.*)$/i.exec(entry.text);
+  if (redException) { current.redException = redException[1].trim().toLowerCase(); current.redExceptionLine = entry.line; }
   const enforcement = /^ {2,}[-*+] Enforcement infeasibility:\s*(.*)$/.exec(entry.text);
   if (enforcement) current.enforcementRationale = enforcement[1].trim();
 }
@@ -180,11 +182,14 @@ function lintCriterionPath(value, line, approved, defects) {
   else if (!normalized.path || !approved.has(normalized.path)) defects.push(diagnostic('criterion-change-path', line, `Criterion references unknown change path "${value.trim()}".`));
 }
 
+const RED_EXCEPTIONS = ['behavior-preserving', 'already-satisfied'];
+
 function finishCriterion(current, defects) {
   if (!current.hasMapping) defects.push(diagnostic('criterion-mapping', current.line, 'Criterion requires Changes or Verify mapping.'));
   if (!current.evidence) defects.push(diagnostic('criterion-evidence', current.line, `Criterion ${current.id ?? 'without an ID'} requires exactly one Evidence mapping: red, verify, or review.`));
   else if (!ACCEPTED_EVIDENCE.includes(current.evidence)) defects.push(diagnostic('criterion-evidence', current.evidenceLine, `Unknown Evidence class "${current.evidence}"; accepted classes are red, verify, review.`));
   if (!current.testRationale) defects.push(diagnostic('criterion-test-rationale', current.line, 'Criterion requires a concrete Test rationale describing retained RED signal or why a new retained test is low-signal.'));
+  if (current.redException !== undefined && (!RED_EXCEPTIONS.includes(current.redException) || current.evidence !== 'red')) defects.push(diagnostic('criterion-red-exception', current.redExceptionLine, `RED exception must be ${RED_EXCEPTIONS.join(' or ')} on an Evidence: red criterion.`));
   if (current.evidence !== 'review') return;
   if (!current.review) defects.push(diagnostic('criterion-review', current.line, 'Review evidence requires Review: <artifact>; scenario: <scenario>; pass: <observable condition>.'));
   if (current.review && !/(?:artifact|file|path)\s*:/i.test(current.review)) defects.push(diagnostic('criterion-review', current.reviewLine, 'Review must name the artifact with artifact:, file:, or path:.'));

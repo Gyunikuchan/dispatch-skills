@@ -6,6 +6,8 @@ import { failureAttribution } from '../verification/failure-attribution.mjs';
 import { verifySkillIntegrity } from '../lib/integrity.mjs';
 import { currentHead, diffHash, indexFingerprint, materializedFingerprint, snapshotContent, snapshotEntries } from '../lib/git-state.mjs';
 import { diffRepositoryState } from '../verification/evidence.mjs';
+import { readLedger } from '../ledger/ledger.mjs';
+import { foldSegments } from '../ledger/events.mjs';
 import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, ruling } from './implement-state.mjs';
 import {
@@ -358,13 +360,15 @@ function failureQuestion(state) {
   const data = state.ordinary;
   const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart: data.taskStart?.entries ?? data.baselineSnapshot.entries, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
   const reverify = data.failure.verification ? ` Only when the host evidence itself was wrong: {decision:"re-verify", reason} reruns the ${data.failure.verification.purpose} verification on the unchanged tree.` : '';
+  const redRuling = redRulingOffered(state) ? ' When RED cannot fail on this tree: {decision:"red-ruling", reason, rulings:[one per red criterion: {criterionId, kind:"carry-over", runId} citing one earlier segment of this plan that recorded RED, or {criterionId, kind:"no-failing-state", locus:"<repo path>[:line]", reason} where the plan declares its RED exception]}; the driver verifies each entry.' : '';
   const retry = retryable(state) ? ' To continue this segment instead: {decision:"retry", reason, context} keeps the tree and relaunches the writer (tests-only before a validated RED gate, production after) with context carrying the ruling, consuming one attempt.' : '';
-  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify}${retry} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
+  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify}${redRuling}${retry} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry', 'red-ruling'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
   if (answer.decision === 'manual-complete') return manualComplete(state, answer);
+  if (answer.decision === 'red-ruling') return redRuling(state, answer);
   if (answer.decision === 'retry') return retryFailure(state, answer);
   if (answer.decision === 're-verify') return reverify(state, answer);
   if (answer.decision === 'inspect-first') return emitAction(state, 'done', { outcome: 'failed', summary: 'Inspection requested; segment remains unterminated.', ledgerPath: state.ledgerPath, command: state.resumeCommand });
@@ -387,6 +391,98 @@ function resolveFailure(state, answer) {
   ruling(state, 'failure-disposition', answer.decision, answer.reason);
   append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
   return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Repair evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+}
+// SECTION: RED rulings
+
+/** Offered only at the RED verification gate of the recorded tests-only attempt, before RED validates. */
+function redRulingOffered(state) {
+  const data = state.ordinary;
+  if (!data.redCriteria?.length || data.redValidated || data.failure?.verification?.purpose !== 'red') return false;
+  const attempt = data.taskId ? ledgerSegment(state)?.tasks.get(data.taskId)?.lastAttempt?.data : null;
+  return Boolean(attempt && attempt.launch === 'tests-only' && attempt.transition === 'run-red' && attempt.attempt === data.attempt);
+}
+const RED_ROW = /^RED-MATRIX\s+(SC\d+)\s*\|/;
+const rowFor = (id) => (/** @type {unknown} */ row) => typeof row === 'string' && RED_ROW.exec(row)?.[1] === id;
+/** Checks a carry-over entry against its cited segment; returns the cited RED evidence, or null after pushing defects. */
+function carryOverEvidence(state, entry, defects) {
+  const data = state.ordinary, planPath = path.relative(state.repoRoot, state.planPath).split(path.sep).join('/');
+  const read = readLedger(state.ledgerPath);
+  const events = read.status === 'ok' ? read.events : [];
+  const segment = foldSegments(events).find(item => item.runId === entry.runId);
+  if (!segment || segment.runStart?.governingPath !== planPath) {
+    defects.push(`${entry.criterionId}: runId ${entry.runId} names no earlier ledger segment of this plan.`);
+    return null;
+  }
+  const own = events.filter(event => event.runId === entry.runId);
+  const attemptIndex = own.findLastIndex(event => event.type === 'implementation-attempt' && (event.data.terminalEnvelope?.evidence ?? []).some(rowFor(entry.criterionId)));
+  // The driver appends a red verification only after validateRed accepted the whole matrix.
+  const red = attemptIndex >= 0 ? own.slice(attemptIndex + 1).find(event => event.type === 'verification' && event.data.result === 'red') : null;
+  if (!red) {
+    defects.push(`${entry.criterionId}: runId ${entry.runId} recorded no RED verification after an attempt carrying its RED-MATRIX row.`);
+    return null;
+  }
+  const commands = data.redCriteria.find(item => item.id === entry.criterionId)?.commands ?? [];
+  if (!commands.length || !commands.every(command => data.redResults?.some(result => result.command === command && result.exitStatus === 0))) {
+    defects.push(`${entry.criterionId}: carry-over requires every mapped command to pass in fresh RED results.`);
+  }
+  return { rows: own[attemptIndex].data.terminalEnvelope.evidence.filter(rowFor(entry.criterionId)), failureIdentity: red.data.failureIdentity };
+}
+function checkLocus(state, entry, defects) {
+  const criterion = state.ordinary.redCriteria.find(item => item.id === entry.criterionId);
+  if (!['behavior-preserving', 'already-satisfied'].includes(criterion?.redException)) defects.push(`${entry.criterionId}: no-failing-state requires the plan criterion to declare RED exception: behavior-preserving|already-satisfied.`);
+  if (typeof entry.reason !== 'string' || !entry.reason.trim()) defects.push(`${entry.criterionId}: no-failing-state requires a reason.`);
+  const match = /^(.+?)(?::(\d+))?$/.exec(typeof entry.locus === 'string' ? entry.locus.trim() : '');
+  const file = match?.[1] ?? '', absolute = path.resolve(state.repoRoot, file), inside = path.relative(state.repoRoot, absolute);
+  if (!file || path.isAbsolute(file) || file.split(/[\\/]/).includes('..') || !inside || inside.startsWith('..') || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+    defects.push(`${entry.criterionId}: locus must name an existing repository-relative file.`);
+    return;
+  }
+  if (match?.[2] !== undefined) {
+    const line = Number(match[2]), count = fs.readFileSync(absolute, 'utf8').split('\n').length;
+    if (line < 1 || line > count) defects.push(`${entry.criterionId}: locus line ${line} is outside ${file} (${count} lines).`);
+  }
+}
+/** Accepts a driver-verified RED exception, records canonical RED, and continues to production. */
+function redRuling(state, answer) {
+  const data = state.ordinary;
+  if (!redRulingOffered(state)) throw new Error('red-ruling applies only at the RED verification gate before RED validates.');
+  const entries = Array.isArray(answer.rulings) ? answer.rulings : [];
+  const defects = [];
+  if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) defects.push('The tree changed after the failure; a ruling applies to the unchanged tree only.');
+  const redIds = data.redCriteria.map(item => item.id), ids = entries.map(entry => entry?.criterionId);
+  const missing = redIds.filter(id => !ids.includes(id)), unknown = ids.filter(id => !redIds.includes(id));
+  const duplicate = [...new Set(ids.filter((id, index) => redIds.includes(id) && ids.indexOf(id) !== index))];
+  if (missing.length) defects.push(`Missing ruling for ${missing.join(', ')}.`);
+  if (unknown.length) defects.push(`Unknown criterion ${unknown.join(', ')}.`);
+  if (duplicate.length) defects.push(`Duplicate ruling for ${duplicate.join(', ')}.`);
+  const carried = entries.filter(entry => entry?.kind === 'carry-over');
+  const runIds = [...new Set(carried.map(entry => entry.runId))];
+  // The canonical red verification holds exactly one failureIdentity.
+  if (runIds.length > 1) defects.push(`Carry-over entries must cite one runId; got ${runIds.join(', ')}.`);
+  const evidence = [];
+  let identity = null;
+  for (const entry of entries) {
+    if (entry?.kind === 'carry-over') {
+      const cited = carryOverEvidence(state, entry, defects);
+      if (cited) { evidence.push(...cited.rows); identity = cited.failureIdentity; }
+    } else if (entry?.kind === 'no-failing-state') checkLocus(state, entry, defects);
+    else defects.push(`${entry?.criterionId ?? 'entry'}: kind must be carry-over or no-failing-state.`);
+  }
+  // A ruling answers only its criteria's missing-RED defects; any other RED-gate defect still rejects.
+  const answered = new Set(['No host-observed RED.', ...redIds.flatMap(id => [`${id} exception requires an explicit evidence-backed ruling.`, `${id} has no matching stable failure in its mapped host command.`])]);
+  defects.push(...validateRed(state, data.envelope).filter(defect => !answered.has(defect)));
+  if (defects.length) throw new Error(`red-ruling rejected: ${defects.join(' ')}`);
+  const exceptions = entries.map(entry => (entry.kind === 'carry-over' ? { criterionId: entry.criterionId, kind: entry.kind, runId: entry.runId }
+    : { criterionId: entry.criterionId, kind: entry.kind, locus: entry.locus.trim(), reason: entry.reason.trim() }));
+  // Resolving the failure first keeps a resume after acceptance from reopening it.
+  ruling(state, 'red-exception', 'accepted', JSON.stringify(exceptions));
+  ruling(state, 'failure-disposition', 'red-ruling', answer.reason);
+  const failureIdentity = carried.length === entries.length && identity ? identity
+    : { exitStatus: 0, identifiers: [], diagnostic: `red-exception: ${redIds.join(', ')}` };
+  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result: 'red', commandRefs: purposeCommands(data, 'red'), transition: 'run-red', failureIdentity });
+  data.redValidated = { scopeHash: fingerprint(state), evidence, exceptions };
+  delete data.failure;
+  return startTask(state, 'full');
 }
 /** A failure inside the task, with an attempt left and implementation not yet complete, can continue in-segment. */
 function retryable(state) {

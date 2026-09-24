@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { evaluateConsensus } from '../review/consensus.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
@@ -80,6 +81,24 @@ export function readRunState(stateFile) {
     throw Object.assign(new Error(`Driver state ${stateFile} is missing or unreadable.`), { code: 'STATE_UNREADABLE' });
   }
   return state;
+}
+
+// Hosted here so implement-phase can rebind it without importing index.mjs (an import cycle).
+const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
+const quote = (value) => (/[\s"']/.test(value) ? JSON.stringify(value) : value);
+
+/** The exact `--run` command that resumes (or relaunches) a recorded invocation. */
+export function resumeCommand(invocation) {
+  const parts = ['node', quote(DISPATCH_SCRIPT), '--run', invocation.verb];
+  if (invocation.kind) parts.push('--kind', invocation.kind);
+  if (invocation.fix) parts.push('--fix');
+  if (invocation.phases) parts.push('--phases', invocation.phases);
+  if (invocation.levelSource !== 'default') parts.push('--level', invocation.level, '--level-source', invocation.levelSource);
+  if (invocation.pins) parts.push('--pins', quote(invocation.pins));
+  parts.push('--orchestrator', invocation.orchestrator);
+  if (invocation.orchestratorModel) parts.push('--orchestrator-model', quote(invocation.orchestratorModel));
+  if (invocation.argument) parts.push('--', quote(invocation.argument));
+  return parts.join(' ');
 }
 
 export function writeRunState(state) {

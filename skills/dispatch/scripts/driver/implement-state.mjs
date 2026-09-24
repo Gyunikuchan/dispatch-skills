@@ -65,7 +65,17 @@ const cell = value => String(value ?? '').replace(/\|/g, '\\|').replace(/\s+/g, 
 function redMatrix(ordinary) {
   const rows = (ordinary.redValidated?.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '))
     .map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean);
-  if (!rows.length) return [];
+  const exceptions = ordinary.redValidated?.exceptions ?? [];
+  if (!rows.length && !exceptions.length) return [];
+  // An accepted RED ruling renders one row per criterion; a missed join prints a placeholder so save and resume stay usable.
+  const ruled = new Set(exceptions.map(item => item.criterionId));
+  const exceptionRow = (item) => {
+    const cited = rows.find(([, id]) => id === item.criterionId);
+    const redException = (ordinary.criteria ?? []).find(criterion => criterion.id === item.criterionId)?.redException;
+    if (item.kind === 'carry-over' && cited) return `| ${item.criterionId} | carried over from ${cell(item.runId)}: ${cell(cited[2])} | ${cell(cited[3])} |`;
+    if (item.kind === 'no-failing-state' && redException) return `| ${item.criterionId} | N/A — ${cell(item.locus)} | exception (${cell(redException)}): ${cell(item.reason)} |`;
+    return `| ${item.criterionId} | exception evidence missing | — |`;
+  };
   const observed = (ordinary.redResults ?? []).map(result => `\`${cell(result.ran ?? result.command)}\` exit ${result.exitStatus}${result.fail !== undefined ? `, ${result.fail} failing` : ''}`).join('; ');
   // A shared command's failure set repeats per criterion; print each repeated set once as a label.
   const counts = new Map();
@@ -73,7 +83,8 @@ function redMatrix(ordinary) {
   const labels = new Map([...counts].filter(([, count]) => count > 1).map(([failure], index) => [failure, `S${index + 1}`]));
   const sets = [...labels].map(([failure, label]) => `- ${label}: ${failure}`);
   return ['### RED matrix', `Host RED run: ${observed || 'not recorded'}.`, '', '| Criterion | Test | Expected failure |', '| --- | --- | --- |',
-    ...rows.map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${labels.has(cell(failure)) ? `see ${labels.get(cell(failure))}` : cell(failure)} |`), '',
+    ...rows.filter(([, id]) => !ruled.has(id)).map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${labels.has(cell(failure)) ? `see ${labels.get(cell(failure))}` : cell(failure)} |`),
+    ...exceptions.map(exceptionRow), '',
     ...(sets.length ? ['Shared failure sets:', ...sets, ''] : [])];
 }
 function replaceVerification(text, lines) {

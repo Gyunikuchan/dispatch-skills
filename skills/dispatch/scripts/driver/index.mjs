@@ -18,7 +18,9 @@ import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
 import { advanceAsk, startAsk } from './ask-phase.mjs';
 import { save } from './implement-state.mjs';
-import { bindStateSession, createRunState, readRunSidecar, readRunState, writeRunSidecar } from './state.mjs';
+import { bindStateSession, createRunState, readRunSidecar, readRunState, resumeCommand, writeRunSidecar } from './state.mjs';
+
+export { resumeCommand };
 
 // SECTION: CLI contract
 
@@ -127,22 +129,6 @@ function normalizeRun(parsed) {
     pins: parsed.pins ?? null,
     verbose: parsed.verbose,
   };
-}
-
-const quote = (value) => (/[\s"']/.test(value) ? JSON.stringify(value) : value);
-
-/** The exact `--run` command that resumes (or relaunches) a recorded invocation. */
-export function resumeCommand(invocation) {
-  const parts = ['node', quote(DISPATCH_SCRIPT), '--run', invocation.verb];
-  if (invocation.kind) parts.push('--kind', invocation.kind);
-  if (invocation.fix) parts.push('--fix');
-  if (invocation.phases) parts.push('--phases', invocation.phases);
-  if (invocation.levelSource !== 'default') parts.push('--level', invocation.level, '--level-source', invocation.levelSource);
-  if (invocation.pins) parts.push('--pins', quote(invocation.pins));
-  parts.push('--orchestrator', invocation.orchestrator);
-  if (invocation.orchestratorModel) parts.push('--orchestrator-model', quote(invocation.orchestratorModel));
-  if (invocation.argument) parts.push('--', quote(invocation.argument));
-  return parts.join(' ');
 }
 
 function readInput(raw) {

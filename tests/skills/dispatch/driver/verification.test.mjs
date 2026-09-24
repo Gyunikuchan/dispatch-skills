@@ -100,6 +100,33 @@ describe('gate tiers', () => {
     fs.writeFileSync(path.join(state.repoRoot, 'tests/a.test.mjs'), '// changed\n');
     assert.deepEqual(gateCommands(state, 'scoped'), [A, B, LINT], 'a changed scope reruns the command');
   });
+  // Replaces the end-to-end defer cases: an all-[FINAL] verify criterion is deferred at scoped gates unless a gate command carries it.
+  const SLOW = 'node scripts/slow.mjs', OTHER = 'node --test tests/other.test.mjs';
+  const deferData = (overrides = {}) => ({ finalOnly: [SLOW], coverage: {}, criteria: [
+    { id: 'SC1', evidence: 'red', commands: [A] },
+    { id: 'SC2', evidence: 'verify', commands: [SLOW] },
+    { id: 'SC3', evidence: 'verify', commands: [LINT] },
+  ], ...overrides });
+  for (const [name, data, commands, expected] of [
+    ['an all-[FINAL] verify criterion is deferred at a scoped gate', deferData(), [A, LINT], ['SC2']],
+    ['a red criterion mapped only to [FINAL] commands is never deferred', deferData({ finalOnly: [SLOW, A] }), [LINT], ['SC2']],
+    ['a criterion with any non-[FINAL] command is not deferred', deferData({ criteria: [{ id: 'SC2', evidence: 'verify', commands: [SLOW, LINT] }] }), [LINT], []],
+    ['a criterion carried by a scoped suite is not deferred', deferData({ finalOnly: [OTHER], coverage: { [OTHER]: SUITE }, criteria: [{ id: 'SC2', evidence: 'verify', commands: [OTHER] }] }), [SUITE], []],
+    ['a criterion carried directly by a gate command is not deferred', deferData(), [SLOW], []],
+  ]) {
+    it(`deferredCriteria: ${name}`, async () => {
+      const { deferredCriteria } = await import('../../../../skills/dispatch/scripts/driver/verification.mjs');
+      assert.deepEqual(deferredCriteria(data, commands).map(item => item.id), expected);
+    });
+  }
+  it('gateCommands: scoped gates exclude [FINAL] commands that the final gate runs', async () => {
+    const { gateCommands } = await import('../../../../skills/dispatch/scripts/driver/verification.mjs');
+    const state = gateState();
+    for (const [purpose, expected] of [['scoped', [B, LINT]], ['final', [B, SUITE, LINT]]]) {
+      assert.equal(gateCommands(state, purpose).includes(SUITE), expected.includes(SUITE), purpose);
+      assert.deepEqual(gateCommands(state, purpose), expected, purpose);
+    }
+  });
   it('the final gate runs every uncovered command lacking an epoch- and scope-fresh record', async () => {
     const { gateCommands } = await import('../../../../skills/dispatch/scripts/driver/verification.mjs');
     const state = gateState();

@@ -94,6 +94,25 @@ describe('observed RED result', () => {
     assert.match(defects({ red: { exitStatus: 2 } }).join('; '), /exit status mismatch/i);
   });
 
+  it('matches a multi-command criterion row only against the command running its cited file', () => {
+    const other = 'node --test tests/driver.test.mjs';
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Two-layer behavior.',
+      '  - Changes: src/value.js, tests/value.test.mjs, tests/driver.test.mjs',
+      `  - Verify: \`${COMMAND}\``,
+      `  - Verify: \`${other}\``,
+      '  - Evidence: red',
+      '  - Test rationale: Helper and driver layers each fail on the missing contract.',
+      '## Proposed Changes',
+      '#### [MODIFY] src/value.js',
+    ].join('\n');
+    const rows = ['RED-MATRIX SC1 | tests/value.test.mjs:helper case | exit 1 test:helper case'];
+    assert.deepEqual(defects({ plan, rows, red: { identifiers: ['test:helper case'] } }), []);
+    assert.deepEqual(defects({ plan, rows, red: { command: other, identifiers: ['test:driver case'] } }), []);
+    assert.match(defects({ plan, rows, red: { identifiers: ['test:unrelated case'] } }).join('; '), /identity mismatch/i);
+  });
+
   it('ignores aggregate commands that map to no RED criterion', () => {
     assert.deepEqual(defects({ red: {
       command: 'npm test',
