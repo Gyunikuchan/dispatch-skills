@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY } from '../../../helpers/driver-harness.mjs';
 
-const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
+const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 
 function withFixture(test) {
   const fixture = createStubDispatchFixture(config);

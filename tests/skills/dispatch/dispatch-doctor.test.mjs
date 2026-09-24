@@ -19,7 +19,6 @@ const CONFIG = {
   },
   phases: {
     'plan-review': { rounds: { low: 0, medium: 2, high: 3 }, targets: { low: 0, medium: 1, high: 2 }, consensus: { low: false, medium: true } },
-    'design-review': { rounds: { medium: 2 }, targets: { medium: 1 }, consensus: { medium: true } },
     'code-review': { rounds: { low: 1, medium: 3 }, targets: { low: 1, high: 'all' }, consensus: { low: false, medium: true } },
   },
 };
@@ -82,7 +81,11 @@ describe('level and phase resolution', () => {
     );
     assert.deepEqual(
       [platforms(phase('design-review').targets), platforms(phase('design-review').reserves), phase('design-review').rounds, phase('design-review').consensus],
-      [['agy'], ['opencode', 'claude'], 2, true],
+      [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds, phase('plan-review').consensus],
+    );
+    assert.deepEqual(
+      phase('design-review').targets.map(target => target.candidateId),
+      phase('plan-review').targets.map(target => target.candidateId.replace('plan-review:', 'design-review:')),
     );
     assert.deepEqual(
       [platforms(phase('code-review').targets), platforms(phase('code-review').reserves), phase('code-review').rounds, phase('code-review').consensus],
@@ -100,7 +103,7 @@ describe('level and phase resolution', () => {
     assert.match(text, /level=high/);
     assert.match(text, /source=explicit/);
     assert.match(text, /agy\[0\] model=gemini-3\.8-flash/);
-    for (const [name, rounds] of [['plan-review', 3], ['design-review', 2], ['code-review', 3]]) {
+    for (const [name, rounds] of [['plan-review', 3], ['design-review', 3], ['code-review', 3]]) {
       const line = text.split('\n').find((l) => l.trim().startsWith(`${name}:`));
       assert.ok(line, `${name} line present`);
       assert.match(line, new RegExp(`rounds=${rounds}`));

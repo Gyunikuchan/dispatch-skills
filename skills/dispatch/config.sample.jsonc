@@ -11,10 +11,12 @@
  *   consensus count targets, not providers. Missing providers are not cascade members.
  * - "write-subagents" (optional): native write subagents, selected by the host platform; never
  *   dispatched. Each entry is one level map. A missing entry fails the implement flow.
- * - "phases" (optional): review policy for plan-review, design-review, code-review. Each present
- *   phase needs `targets` (non-negative integer or "all"), `rounds`, and `consensus` level maps,
- *   plus an optional `only` provider list (it includes every target beneath each provider). An
- *   absent phase runs one target for one round with host-final rulings.
+ * - "phases" (optional): review policy for plan-review and code-review. Design reviews share the
+ *   plan-review policy while retaining their own review identity. Each configured phase needs
+ *   `targets` (non-negative integer or "all"), `rounds`, and `consensus` level maps, plus an
+ *   optional `only` provider list (it includes every target beneath each provider). An absent
+ *   policy leaves both plan and design reviews unconfigured; standalone reviews use one target
+ *   for one round with host-final rulings.
  *
  * A level map keys any non-empty subset of low, medium, high, xhigh, max to
  * `{ "model": string | string[], "effort"?: string }`. Resolution is exact, nearest lower,
@@ -98,12 +100,7 @@
       "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
       "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
       "consensus": { "low": false, "medium": true },
-    },
-    // `only` keeps design review on hosted models.
-    "design-review": {
-      "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
-      "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
-      "consensus": { "low": false, "medium": true },
+      // Shared with design review.
       "only": ["claude", "agy", "copilot"],
     },
     "code-review": {

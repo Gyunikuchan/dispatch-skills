@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { buildRebuttalPackets } from '../review/rebuttal-packets.mjs';
 import { evaluateConsensus } from '../review/consensus.mjs';
-import { loadDispatchConfig } from '../lib/config.mjs';
+import { loadDispatchConfig, policyPhase } from '../lib/config.mjs';
 import { inferReviewKind, resolveReviewLevel } from './review-policy.mjs';
 import { createIndependenceClusters, formatOptInSections, parseOptInResponse } from '../review/fix-clustering.mjs';
 import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
@@ -172,9 +172,10 @@ async function resolvePolicy(config, levelInfo, invocation) {
   const phase = levelInfo.phase;
   // An unconfigured phase falls back to one target through resolveFlow's own ordering (orchestrator
   // demotion and liveness filter included), one round, host-final rulings.
+  const policyKey = policyPhase(phase);
   const effective = levelInfo.configured
     ? config
-    : { ...config, phases: { ...(config.phases ?? {}), [phase]: { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false } } } };
+    : { ...config, phases: { ...(config.phases ?? {}), [policyKey]: { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false } } } };
   const pins = invocation.pins ? invocation.pins.split(',').map((pin) => pin.trim()).filter(Boolean) : undefined;
   const options = {
     platform: invocation.orchestrator,

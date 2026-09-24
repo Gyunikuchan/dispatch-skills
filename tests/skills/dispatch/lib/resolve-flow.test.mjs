@@ -40,7 +40,7 @@ const WRITE_SUBAGENTS = {
   copilot: { low: { model: 'gpt-5.6-luna', effort: 'max' } },
 };
 
-/** Config: design-review is deliberately absent, so it resolves as disabled. */
+/** Config: design-review shares plan-review policy while retaining its own flow identity. */
 const BASE_CONFIG = {
   'read-delegates': READ_DELEGATES,
   'write-subagents': WRITE_SUBAGENTS,
@@ -129,18 +129,20 @@ describe('resolveFlow', () => {
       consensus: { low: false, medium: true },
     };
 
-    it('resolves design-review from phases.design-review like the other review phases', () => {
-      const config = withConfig({ 'design-review': DESIGN });
+    it('uses plan-review policy while retaining design-review candidate identity', () => {
+      const config = withConfig({ 'plan-review': DESIGN });
       const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, config);
+      assert.equal(out['plan-review'].rounds, 4);
       assert.equal(out['design-review'].rounds, 4);
       assert.equal(out['design-review'].consensus, true);
       assert.deepEqual(out['design-review'].targets.map(t => t.platform), ['agy', 'opencode']);
       assert.deepEqual(out['design-review'].reserves.map(t => t.platform), ['claude']);
       assert.equal(out['design-review'].targets[0].candidateId, 'design-review:agy:0');
+      assert.deepEqual(out['design-review'].targets.map(t => t.candidateId), out['plan-review'].targets.map(t => t.candidateId.replace('plan-review:', 'design-review:')));
     });
 
     it('applies level fallbacks to design-review knobs', () => {
-      const config = withConfig({ 'design-review': DESIGN });
+      const config = withConfig({ 'plan-review': DESIGN });
       const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, config);
       assert.equal(out['design-review'].rounds, 1);
       assert.equal(out['design-review'].targets.length, 1);
@@ -148,15 +150,19 @@ describe('resolveFlow', () => {
     });
 
     it('applies named pins to design-review', () => {
-      const config = withConfig({ 'design-review': DESIGN });
+      const config = withConfig({ 'plan-review': DESIGN });
       const out = resolveFlow({ platform: 'claude', level: 'low', pins: ['opencode'] }, LIVE_ALL, config);
       assert.deepEqual(out['design-review'].targets.map(t => t.platform), ['opencode']);
     });
   });
 
   describe('missing phase is disabled', () => {
-    it('resolves an absent phases.<phase> as off (rounds 0, no targets, no reserves) and marks it not configured', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, BASE_CONFIG);
+    it('resolves an absent plan-review policy as off for both identities', () => {
+      const config = { ...BASE_CONFIG, phases: { 'code-review': BASE_CONFIG.phases['code-review'] } };
+      const out = resolveFlow({ platform: 'claude', level: 'max' }, LIVE_ALL, config);
+      assert.equal(out['plan-review'].rounds, 0);
+      assert.deepEqual(out['plan-review'].targets, []);
+      assert.equal(out['plan-review'].configured, false);
       assert.equal(out['design-review'].rounds, 0);
       assert.deepEqual(out['design-review'].targets, []);
       assert.deepEqual(out['design-review'].reserves, []);
@@ -165,7 +171,10 @@ describe('resolveFlow', () => {
     });
 
     it('keeps an absent phase off even under an all pin', () => {
-      const out = resolveFlow({ platform: 'claude', level: 'max', pins: ['all'] }, LIVE_ALL, BASE_CONFIG);
+      const config = { ...BASE_CONFIG, phases: { 'code-review': BASE_CONFIG.phases['code-review'] } };
+      const out = resolveFlow({ platform: 'claude', level: 'max', pins: ['all'] }, LIVE_ALL, config);
+      assert.equal(out['plan-review'].rounds, 0);
+      assert.deepEqual(out['plan-review'].targets, []);
       assert.equal(out['design-review'].rounds, 0);
       assert.deepEqual(out['design-review'].targets, []);
     });

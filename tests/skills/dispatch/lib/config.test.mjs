@@ -20,6 +20,8 @@ import {
   resolveLevelScalar,
   resolveReadDelegates,
   REVIEW_PHASES,
+  CONFIGURABLE_PHASES,
+  policyPhase,
   selectLevel,
   validateConfig,
 } from '../../../../skills/dispatch/scripts/lib/config.mjs';
@@ -41,8 +43,7 @@ const VALID = {
     copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
   },
   phases: {
-    'plan-review': { rounds: { low: 0, medium: 2 }, targets: { low: 0, medium: 1 }, consensus: { low: false, medium: true } },
-    'design-review': { rounds: { medium: 2 }, targets: { medium: 1 }, consensus: { medium: true }, only: ['claude', 'antigravity'] },
+    'plan-review': { rounds: { low: 0, medium: 2 }, targets: { low: 0, medium: 1 }, consensus: { low: false, medium: true }, only: ['claude', 'antigravity'] },
     'code-review': { rounds: { low: 1 }, targets: { low: 1, max: 'all' }, consensus: { low: false } },
   },
 };
@@ -109,15 +110,24 @@ describe('lib/platform.mjs does not own dispatch schema validation', () => {
 // SECTION: Schema validation
 
 describe('constants', () => {
-  it('exports the five levels and three review phases in order', () => {
+  it('exports review identities separately from configurable policy phases', () => {
     assert.deepEqual([...LEVELS], ['low', 'medium', 'high', 'xhigh', 'max']);
     assert.deepEqual([...REVIEW_PHASES], ['plan-review', 'design-review', 'code-review']);
+    assert.deepEqual([...CONFIGURABLE_PHASES], ['plan-review', 'code-review']);
+    assert.equal(policyPhase('design-review'), 'plan-review');
+    assert.equal(policyPhase('plan-review'), 'plan-review');
+    assert.equal(policyPhase('code-review'), 'code-review');
   });
 });
 
 describe('validateConfig', () => {
   it('accepts a full three-table config', () => {
     assert.deepEqual(validateConfig(VALID), []);
+  });
+
+  it('rejects the obsolete design-review policy key', () => {
+    const config = { ...VALID, phases: { ...VALID.phases, 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
+    assert.match(problemsOf(config), /unrecognized phase "design-review"\. Valid phases: plan-review, code-review/);
   });
 
   it('accepts an ask-only config (read-delegates alone)', () => {
@@ -349,7 +359,7 @@ describe('uniform level resolution', () => {
   });
 
   describe('phaseMembers', () => {
-    it('filters read-delegate keys by only, keeping read-delegate order', () => {
+    it('uses plan-review membership for design-review, keeping read-delegate order', () => {
       assert.deepEqual(phaseMembers(VALID, 'design-review'), ['claude', 'agy']);
     });
 
@@ -432,11 +442,12 @@ describe('shipped config.sample.jsonc', () => {
 
   it('is a three-table config that validates with no problems', () => {
     assert.deepEqual(Object.keys(SAMPLE_CONFIG).sort(), ['phases', 'read-delegates', 'write-subagents']);
+    assert.deepEqual(Object.keys(SAMPLE_CONFIG.phases), [...CONFIGURABLE_PHASES]);
     assert.deepEqual(validateConfig(SAMPLE_CONFIG), []);
   });
 
-  it('configures all three review phases, an only example, a multi-target provider, a model cascade, and an effort-less level', () => {
-    for (const phase of REVIEW_PHASES) assert.ok(SAMPLE_CONFIG.phases[phase], phase);
+  it('configures both policy phases, an only example, a multi-target provider, a model cascade, and an effort-less level', () => {
+    for (const phase of CONFIGURABLE_PHASES) assert.ok(SAMPLE_CONFIG.phases[phase], phase);
     assert.ok(Object.values(SAMPLE_CONFIG.phases).some((phase) => Array.isArray(phase.only)));
     const wrappers = Object.values(SAMPLE_CONFIG['read-delegates']);
     assert.ok(wrappers.every((wrapper) => Array.isArray(wrapper.targets)));

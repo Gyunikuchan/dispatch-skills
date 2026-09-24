@@ -15,7 +15,7 @@ const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const config = {
   'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
   'write-subagents': { claude: { low: { model: ['first-model'], effort: 'low' } } },
-  phases: Object.fromEntries(['plan-review', 'code-review', 'design-review'].map(key => [key, { rounds: levels, targets: levels, consensus: Object.fromEntries(Object.keys(levels).map(level => [level, false])) }])),
+  phases: Object.fromEntries(['plan-review', 'code-review'].map(key => [key, { rounds: levels, targets: levels, consensus: Object.fromEntries(Object.keys(levels).map(level => [level, false])) }])),
 };
 const RUN = '11111111-1111-4111-8111-111111111111';
 const at = '2026-09-22T00:00:00.000Z';

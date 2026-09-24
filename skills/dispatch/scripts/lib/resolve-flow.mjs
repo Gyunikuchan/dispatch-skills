@@ -16,9 +16,10 @@ import {
   diversitySort,
 } from './providers.mjs';
 import {
+  CONFIGURABLE_PHASES,
   LEVELS,
-  REVIEW_PHASES,
   phaseMembers,
+  policyPhase,
   resolveLevelEntry,
   resolveLevelScalar,
   resolveTargets,
@@ -224,13 +225,13 @@ export function probeCandidates(opts, config) {
 
 /**
  * Canonical keys pins and exclusions validate against: the union of `phaseMembers` over every
- * phase present in `phases` (every read-delegate key when the table is absent or empty),
- * independent of level.
+ * configurable phase present in `phases` (every read-delegate key when the table is absent or
+ * empty), independent of level.
  * @param {Record<string, any>} config
  * @returns {Set<string>}
  */
 export function reviewPhaseKeys(config) {
-  const present = REVIEW_PHASES.filter(phase => isPlainObject(config?.phases?.[phase]));
+  const present = CONFIGURABLE_PHASES.filter(phase => isPlainObject(config?.phases?.[phase]));
   if (present.length === 0) {
     return new Set(Object.keys(config?.['read-delegates'] ?? {}).map(normalizePin));
   }
@@ -394,7 +395,7 @@ export function resolveFlow(options, liveness, config) {
   }
 
   function buildReviewPhase(phase) {
-    const policy = config.phases?.[phase];
+    const policy = config.phases?.[policyPhase(phase)];
     // An absent phase is off at every level; no pin revives it.
     if (!isPlainObject(policy)) {
       return { targets: [], reserves: [], rounds: 0, consensus: false, configured: false };

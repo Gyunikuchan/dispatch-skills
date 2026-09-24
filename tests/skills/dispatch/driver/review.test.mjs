@@ -110,20 +110,22 @@ describe('review level resolution (raise rule)', () => {
     assert.equal(resolveReviewLevel({ config: config(phase), kind: 'plan', level: 'low', levelSource: 'classified' }).level, 'high');
   });
 
-  it('skips a phase disabled at every level regardless of source', () => {
+  it('uses shared plan-review policy for design review escalation and disablement', () => {
     const off = { rounds: ALL(0), targets: ALL(1), consensus: ALL(false) };
     for (const levelSource of ['classified', 'default', 'explicit']) {
-      const result = resolveReviewLevel({ config: config(off), kind: 'plan', level: 'medium', levelSource });
+      const result = resolveReviewLevel({ config: config(off), kind: 'design', level: 'medium', levelSource });
       assert.ok(result.skipped, levelSource);
-      assert.match(result.skipped.reason, /plan-review/);
+      assert.match(result.skipped.reason, /design-review/);
+      assert.match(result.skipped.reason, /phases\['plan-review'\]/);
     }
   });
 
-  it('maps each kind to its <kind>-review phase and reports configured:false when absent', () => {
+  it('maps review identity separately from shared policy key and reports configured:false when absent', () => {
     const cfg = { 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
     assert.equal(resolveReviewLevel({ config: cfg, kind: 'code', level: 'medium', levelSource: 'default' }).phase, 'code-review');
     const design = resolveReviewLevel({ config: cfg, kind: 'design', level: 'medium', levelSource: 'default' });
     assert.equal(design.phase, 'design-review');
+    assert.equal(design.policyKey, 'plan-review');
     assert.equal(design.configured, false);
     assert.equal(design.skipped, null, 'an unconfigured phase falls back instead of skipping');
     assert.equal(design.level, 'medium');
@@ -137,7 +139,6 @@ describe('driver skip and inference through dispatch.mjs', () => {
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
       phases: {
         'plan-review': { rounds: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, targets: ALL(1), consensus: ALL(false) },
-        'design-review': { rounds: ALL(0), targets: ALL(1), consensus: ALL(false) },
       },
     });
   });
@@ -175,13 +176,38 @@ describe('driver skip and inference through dispatch.mjs', () => {
     assert.equal(sidecar.kind, 'plan', 'kind inferred from *.md');
   });
 
-  it('skips a design review disabled at every level (inferred from *-design.md)', () => {
+  it('uses the one-target fallback for a design review when plan policy is absent', () => {
+    const fallbackFixture = createStubDispatchFixture({
+      'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
+    });
+    try {
+      const design = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-fallback-design.md');
+      fs.writeFileSync(design, '# Design\n');
+      const result = runDispatch(fallbackFixture, ['--run', 'review', '--orchestrator', 'claude', '--', design], { cwd: repo.dir });
+      assert.equal(result.status, 0, result.stderr);
+      const action = parseAction(result.stdout);
+      assert.equal(action.action, 'done');
+      assert.equal(action.outcome, 'lint-defects');
+      assert.match(action.summary, /[Ll]int/);
+      const state = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+      assert.equal(state.policy.configured, false);
+      assert.equal(state.policy.rounds, 1);
+      assert.equal(state.policy.consensus, false);
+      assert.equal(state.policy.targets.length, 1);
+      assert.match(state.policy.targets[0].candidateId, /^design-review:/);
+    } finally {
+      fallbackFixture.cleanup();
+    }
+  });
+
+  it('skips a design review disabled at the explicit level (inferred from *-design.md)', () => {
     const design = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-off-design.md');
     fs.writeFileSync(design, '# Design\n');
-    const action = parseAction(run(['--run', 'review', '--orchestrator', 'claude', '--', design]).stdout);
+    const action = parseAction(run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', design]).stdout);
     assert.equal(action.action, 'done');
     assert.equal(action.outcome, 'skipped');
     assert.match(action.reason, /design-review/);
+    assert.match(action.reason, /phases\['plan-review'\]/);
   });
 
   it('fails an argument that is neither markdown nor a Git revision with exit 2', () => {

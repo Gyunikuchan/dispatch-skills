@@ -32,8 +32,18 @@ export function assertClassifiableLevel(level, source) {
   }
 }
 
-/** Review phases the `phases` table may configure, in workflow order. */
+/** Review identities emitted by the resolver, in workflow order. */
 export const REVIEW_PHASES = ['plan-review', 'design-review', 'code-review'];
+/** Review phases accepted as keys in the `phases` policy table. */
+export const CONFIGURABLE_PHASES = ['plan-review', 'code-review'];
+
+/** Shared policy key for review identities that use another phase's settings.
+ * @param {string} phase
+ * @returns {string}
+ */
+export function policyPhase(phase) {
+  return phase === 'design-review' ? 'plan-review' : phase;
+}
 
 export const TABLES = ['read-delegates', 'write-subagents', 'phases'];
 const PHASE_KNOBS = ['targets', 'rounds', 'consensus'];
@@ -156,7 +166,7 @@ export function resolveReadDelegates(config, level) {
  */
 export function phaseMembers(config, phase) {
   const keys = Object.keys(config?.['read-delegates'] ?? {}).map(normalizeProviderKey);
-  const only = config?.phases?.[phase]?.only;
+  const only = config?.phases?.[policyPhase(phase)]?.only;
   if (!Array.isArray(only)) return keys;
   const allowed = new Set(only.map(normalizeProviderKey));
   return keys.filter(key => allowed.has(key));
@@ -325,8 +335,8 @@ function validatePhases(phases, readKeys, problems) {
   }
   for (const [phase, policy] of Object.entries(phases)) {
     const where = `phases.${phase}`;
-    if (!REVIEW_PHASES.includes(phase)) {
-      problems.push(`phases has unrecognized phase "${phase}". Valid phases: ${REVIEW_PHASES.join(', ')} (${DIFF_HINT}).`);
+    if (!CONFIGURABLE_PHASES.includes(phase)) {
+      problems.push(`phases has unrecognized phase "${phase}". Valid phases: ${CONFIGURABLE_PHASES.join(', ')} (${DIFF_HINT}).`);
       continue;
     }
     if (!isPlainObject(policy)) {

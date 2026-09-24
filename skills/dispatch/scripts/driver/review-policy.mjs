@@ -1,5 +1,5 @@
 // @ts-check
-import { CLASSIFIABLE_LEVELS, LEVELS, resolveLevelScalar } from '../lib/config.mjs';
+import { CLASSIFIABLE_LEVELS, LEVELS, policyPhase, resolveLevelScalar } from '../lib/config.mjs';
 import { resolveExplicitRange } from '../review/range.mjs';
 import { gitRoot } from './state.mjs';
 
@@ -36,16 +36,17 @@ export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
  */
 export function resolveReviewLevel({ config, kind, level = 'medium', levelSource = 'default' }) {
   const phase = `${kind}-review`;
-  const policy = config?.phases?.[phase];
-  const base = { level, levelSource, raised: false, skipped: null, phase, configured: true };
+  const policyKey = policyPhase(phase);
+  const policy = config?.phases?.[policyKey];
+  const base = { level, levelSource, raised: false, skipped: null, phase, policyKey, configured: true };
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) return { ...base, configured: false };
   const enabled = LEVELS.filter((candidate) => phaseEnabled(policy, candidate));
   if (enabled.length === 0) {
-    return { ...base, skipped: { reason: `phases['${phase}'] disables ${phase} at every level (rounds or targets is 0).` } };
+    return { ...base, skipped: { reason: `phases['${policyKey}'] disables ${phase} at every level (rounds or targets is 0).` } };
   }
   if (enabled.includes(level)) return base;
   if (levelSource === 'explicit') {
-    return { ...base, skipped: { reason: `${phase} is disabled at explicit level "${level}" by phases['${phase}'] (rounds or targets is 0).` } };
+    return { ...base, skipped: { reason: `${phase} is disabled at explicit level "${level}" by phases['${policyKey}'] (rounds or targets is 0).` } };
   }
   const index = LEVELS.indexOf(level);
   const raisedTo = enabled.find((candidate) => CLASSIFIABLE_LEVELS.includes(candidate) && LEVELS.indexOf(candidate) > index);
@@ -53,7 +54,7 @@ export function resolveReviewLevel({ config, kind, level = 'medium', levelSource
     const elevated = enabled.find((candidate) => !CLASSIFIABLE_LEVELS.includes(candidate) && LEVELS.indexOf(candidate) > index);
     const reason = elevated
       ? `${phase} requires explicit user selection of "${elevated}" or higher; automatic escalation stops at "high".`
-      : `${phase} is disabled at "${level}" and every higher level by phases['${phase}'].`;
+      : `${phase} is disabled at "${level}" and every higher level by phases['${policyKey}'].`;
     return { ...base, skipped: { reason } };
   }
   return { ...base, level: raisedTo, raised: true };

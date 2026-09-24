@@ -1,65 +1,32 @@
 # Configure dispatch
 
-Configuration connects `dispatch` to the agent CLIs and models you want to use. Start with one dependable read delegate; add review breadth and a native write subagent only when you need them.
+Start with one available read delegate. Add review breadth and a native write subagent when you need them.
 
-## Contents
+## Get started
 
-- [Configuration at a glance](#configuration-at-a-glance)
-- [Create your configuration](#create-your-configuration)
-- [Read delegates](#read-delegates)
-- [Levels and model selection](#levels-and-model-selection)
-- [Pins and target breadth](#pins-and-target-breadth)
-- [Write subagents](#write-subagents)
-- [Review phase policy](#review-phase-policy)
-- [Sandboxing](#sandboxing)
-- [Validate and diagnose](#validate-and-diagnose)
-
-## Configuration at a glance
-
-```mermaid
-flowchart LR
-    Command["/dispatch high (all) review code"] --> Config["Active config"]
-    Config --> Level["Resolve level"]
-    Config --> Targets["Select read targets"]
-    Config --> Phases["Apply review policy"]
-    Level --> Run["Dispatch run"]
-    Targets --> Run
-    Phases --> Run
-    Config --> Writer["Native write subagent"]
-    Writer -->|Implementation only| Run
-```
-
-The active file supplies three independent tables:
-
-| Table | Purpose | Required? |
-|---|---|---|
-| `read-delegates` | Models used for questions and all review types | Yes |
-| `write-subagents` | Native writer selected by the host during implementation | For implementation |
-| `phases` | Target count, rounds, consensus, and optional provider filters per review phase | No |
-
-## Create your configuration
-
-From `skills/dispatch/`, copy `config.sample.jsonc` to one of these untracked files:
+From `skills/dispatch/`, copy the sample, replace its example models with ones available to you,
+and check the result:
 
 ```bash
 cp config.sample.jsonc config.jsonc
-```
-
-Keep only providers and models available to you, then inspect the result:
-
-```bash
 node scripts/dispatch.mjs --validate-only
 node scripts/dispatch.mjs --doctor --level high
 ```
 
-`config.local.jsonc` has priority over `config.jsonc`; the files are whole alternatives and are not merged. This makes a local override predictable: copy the complete configuration you want active.
+The sample describes the schema; it is **not** a runtime default. Dispatch needs an active
+`config.jsonc` or `config.local.jsonc`. If both exist, `config.local.jsonc` wins outright—the two
+files are alternatives, not merged layers.
 
-> [!NOTE]
-> The sample demonstrates the schema; it is not a runtime default. Dispatch remains unconfigured until you create an active config file.
+| Table | What it controls | Required? |
+|---|---|---|
+| `read-delegates` | Models for questions and reviews | Yes |
+| `write-subagents` | Host-native writer for implementation | For implementation |
+| `phases` | Review target counts, rounds, consensus, and provider filters | No |
 
 ## Read delegates
 
-Each provider contains a `targets` array. Every entry is an independent analysis or review voice—even when two targets use the same provider.
+Each provider's `targets` array lists independent analysis or review voices. Two targets under
+one provider count as two voices.
 
 ```jsonc
 {
@@ -77,55 +44,38 @@ Each provider contains a `targets` array. Every entry is an independent analysis
 }
 ```
 
-Use model identifiers accepted by the installed provider CLI. A model array defines an availability cascade within the same target:
-
-```jsonc
-"high": {
-  "model": ["preferred-model", "fallback-alias"],
-  "effort": "high"
-}
-```
-
-Dispatch tries aliases in order when one fails. They do not create extra review voices.
+Use model identifiers accepted by the installed provider CLI. For fallback *within* a single
+voice, set `model` to an ordered array such as `["preferred-model", "fallback-alias"]`.
+Dispatch tries the next alias when one fails; aliases are not additional review voices.
 
 ## Levels and model selection
 
-A level map may define any subset of `low`, `medium`, `high`, `xhigh`, and `max`. Dispatch resolves the requested level to the nearest configured lower level, or the lowest higher level when none is lower. Automatic classification selects only `low`, `medium`, or `high`; `xhigh` and `max` require an explicit level in the invocation.
+Configure only the levels where settings change: `low`, `medium`, `high`, `xhigh`, or `max`.
+Dispatch uses an exact match, otherwise the nearest configured lower level, otherwise the lowest
+higher level. For a map with just `medium` and `max`, requests from `low` through `xhigh` use
+`medium`; only `max` uses `max`. The selected entry stands alone—fields do not inherit between
+levels. If a model rejects effort options, omit `effort` to use the provider default.
 
-For example, with only `medium` and `max` configured:
-
-| Requested | Selected |
-|---|---|
-| `low` | `medium` |
-| `medium` | `medium` |
-| `high` | `medium` |
-| `xhigh` | `medium` |
-| `max` | `max` |
-
-The selected object is used as-is: fields do not inherit between levels. Omit `effort` when a model rejects effort options; its provider default then applies.
-
-> [!NOTE]
-> A level is a routing policy, not a universal model-quality label. Its actual models, target counts, review rounds, and consensus behavior come from your active configuration.
+Automatic classification chooses `low`, `medium`, or `high`; users must request `xhigh` or `max`
+explicitly. Levels are routing choices, not universal model-quality labels: the active config
+determines the actual models, breadth, rounds, and consensus.
 
 ## Pins and target breadth
 
-Pins override ordinary target selection for one invocation:
+Pins change target selection for one invocation:
 
-```text
-/dispatch (claude,agy): compare both retry implementations
-/dispatch high (3) review code: main..HEAD
-/dispatch max (all) design: migrate the authorization model
-```
+| Pin | Selects | Example |
+|---|---|---|
+| Provider names | All configured targets under those providers | `/dispatch (claude,agy): compare both retry implementations` |
+| Count | That many targets in dispatch order | `/dispatch high (3) review code: main..HEAD` |
+| `(all)` | Every eligible configured target | `/dispatch max (all) design: migrate the authorization model` |
 
-- Provider names select the configured targets beneath those providers.
-- A number selects that many targets in dispatch order.
-- `(all)` selects every eligible configured target.
-
-Target counts refer to independent targets, not provider count. Two entries under `copilot.targets`, for example, count as two.
+A count is of independent targets, not providers.
 
 ## Write subagents
 
-Implementation uses the host platform's native subagent for production edits. Configure one level map per host you plan to implement from:
+Implementation needs a write subagent for the orchestrating host. Add one level map per host
+you implement from:
 
 ```jsonc
 {
@@ -138,18 +88,21 @@ Implementation uses the host platform's native subagent for production edits. Co
 }
 ```
 
-The writer is separate from `read-delegates`: read delegates remain read-only, while production writing remains approval-gated and native to the orchestrating host. A missing host entry prevents implementation but does not prevent questions or reviews.
+Read delegates remain read-only; production edits require approval and use the host's native
+subagent. A missing writer entry blocks implementation, not questions or reviews.
 
 ## Review phase policy
 
-The optional `phases` table tunes `plan-review`, `design-review`, and `code-review` independently:
+`phases` accepts two policy keys: `plan-review` and `code-review`. Technical design reviews keep
+their own `design-review` flow identity but use **all** `plan-review` settings. Changing its target
+count, rounds, consensus, or `only` list changes both plan and design reviews.
 
 ```jsonc
 {
   "phases": {
-    "code-review": {
-      "targets": { "low": 1, "medium": 2, "max": "all" },
-      "rounds": { "low": 1, "medium": 3, "max": 5 },
+    "plan-review": {
+      "targets": { "low": 0, "medium": 1 },
+      "rounds": { "low": 0, "medium": 2 },
       "consensus": { "low": false, "medium": true },
       "only": ["claude", "copilot"]
     }
@@ -157,52 +110,39 @@ The optional `phases` table tunes `plan-review`, `design-review`, and `code-revi
 }
 ```
 
-| Setting | Meaning |
-|---|---|
-| `targets` | Number of eligible review targets, or `"all"` |
-| `rounds` | Maximum review/rebuttal rounds |
-| `consensus` | Whether the phase seeks settlement across read delegates |
-| `only` | Optional provider allowlist for that phase |
+`targets` selects a number of eligible review voices or `"all"`; `rounds` caps review/rebuttal
+waves; `consensus` controls multi-voice settlement; and optional `only` limits providers for the
+phase. An absent `plan-review` policy leaves plan and design review unconfigured in the resolved
+flow; standalone reviews default to one target, one round, and host-final rulings. `rounds: 0`
+disables a phase at that level; unpinned `targets: 0` also disables it.
 
-An absent phase uses one target for one round with the host making final rulings. At a level, `rounds: 0` disables the phase; an unpinned `targets: 0` also disables it.
-
-Use broader settings where defects are expensive, and smaller settings for routine work. A practical starting point is one or two read delegates for plans and code, then increase breadth after observing your latency and provider limits.
+If you have a `phases.design-review` entry, move its settings to `phases.plan-review` and reconcile
+any differences with existing plan settings. The old key is rejected; simply adding both keys does
+not work. Start with one or two read delegates for routine reviews and increase breadth where
+review failures warrant the latency.
 
 ## Sandboxing
 
-Sandboxing is provider-wide for Claude, Copilot, and OpenCode and defaults to `true`. Set `sandbox: false` only when compatibility requires it.
+For Claude, Copilot, and OpenCode, provider-wide `sandbox` defaults to `true`; use `false` only
+when necessary for compatibility. If isolation is unavailable, dispatch proceeds with read-only
+controls, prints a warning, and sets `sandboxDowngraded` in structured output. Antigravity has no
+OS sandbox; plan mode provides its write boundary.
 
-When the requested sandbox is unavailable, dispatch continues with the provider's read-only controls, prints a warning, and marks structured output with `sandboxDowngraded`. Antigravity does not provide an OS sandbox; plan mode supplies its write boundary.
-
-> [!NOTE]
-> Read-only controls and credential stripping are defense in depth, not a complete secret boundary. Keep sensitive files out of delegated scope and review downgrade warnings before relying on isolation.
-
-Provider installation, sandbox mechanics, probes, and failure behavior are documented in [the provider reference](../providers.md).
+Read-only controls and credential stripping are defense in depth, **not** a complete secret
+boundary. Keep sensitive files out of delegated scope and heed downgrade warnings. See the
+[provider reference](../providers.md) for installation, sandbox mechanics, probes, and failures.
 
 ## Validate and diagnose
 
-Use the smallest command that answers your question:
-
-```bash
-# Check syntax and schema only
-node scripts/dispatch.mjs --validate-only
-
-# See resolved targets, phase policy, writers, and provider health
-node scripts/dispatch.mjs --doctor --level high
-
-# Inspect target order as JSON
-node scripts/dispatch.mjs --list-targets --level high
-
-# View the complete current CLI reference
-node scripts/dispatch.mjs --help
-```
-
-Common diagnoses:
+From `skills/dispatch/`, run `node scripts/dispatch.mjs --validate-only` to check the schema,
+or `node scripts/dispatch.mjs --doctor --level high` for resolved models, phases, writers, and
+provider health. For target order as JSON, use `--list-targets --level high`; for all flags, use
+`--help`.
 
 | Symptom | Check |
 |---|---|
-| No candidates | Confirm the active config contains `read-delegates`, then run `--doctor` |
-| Unexpected model | Inspect level resolution and command-line overrides in `--doctor` |
-| Implementation cannot start | Add `write-subagents.<host>` for the orchestrating platform |
-| A review is too broad or too narrow | Inspect the matching `phases` entry and any command pins |
-| Provider cannot launch | Follow its probe and failure guidance in [the provider reference](../providers.md) |
+| No candidates | Is `read-delegates` populated in the active config? |
+| Unexpected model | Check level resolution and CLI overrides with `--doctor` |
+| Implementation cannot start | Is `write-subagents.<host>` configured? |
+| Wrong review breadth | Check the applicable `phases` policy and invocation pins |
+| Provider cannot launch | Consult the [provider reference](../providers.md) |

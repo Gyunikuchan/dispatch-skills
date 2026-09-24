@@ -2,91 +2,72 @@
 
 - **Status**: Accepted; implemented in v0.5.0
 - **Date**: 2026-09-24
-- **Specification**: `.scratch/plan/2026-09-22-strict-config-format-design.md` (supersedes the
-  streamline design's `R1 — Unified config` candidate shapes)
+- **Original specification**: `.scratch/plan/2026-09-22-strict-config-format-design.md`
+  (supersedes the streamline design's `R1 — Unified config` candidate shapes; this scratch
+  artifact may have been relocated to OS temp)
 
 ## Context
 
-`skills/dispatch/config.jsonc` accepted several permissive shapes: flat `model`/`effort` beside
-level maps, bare candidate objects or arrays under a read provider, and sandbox flags at mixed
-depths. The same array syntax could mean either independent dispatch targets or same-target model
-fallbacks, and target counting in selection and consensus depended on which shape was used. The
-active config uses only a small subset of these forms. Some models also reject effort options
-entirely, so a mandatory effort cannot express them.
+The previous config allowed flat `model`/`effort` fields, bare read-provider candidates, and
+sandbox flags at different depths. An array could mean either independent review voices or model
+fallbacks within one voice, making selection and consensus counts shape-dependent. It also required
+`effort`, although some models reject an effort option.
 
-## Decision
+## Decision and reasons
 
-Adopt one strict, intentionally breaking config contract. The root keeps exactly `read-delegates`,
-`write-subagents`, and `phases`; phase policy is unchanged.
+Adopt one strict, intentionally breaking contract with three root tables: `read-delegates`,
+`write-subagents`, and `phases`. Other shapes fail exhaustive schema validation with a pointer to
+`config.sample.jsonc`; there is no automatic migration or special migration diagnostic. The active
+config used only a small subset of the permissive shapes, so compatibility would preserve ambiguity
+without serving current use.
 
-```jsonc
-{
-  "read-delegates": {
-    "copilot": {
-      "sandbox": true, // optional; claude/copilot/opencode only; defaults to true
-      "targets": [
-        { "low": { "model": "gemini-3.7-flash", "effort": "medium" } },
-        {
-          "low": { "model": ["gpt-5.6-luna", "bedrock.gpt-5.6-luna"], "effort": "max" },
-          "max": { "model": "no-effort-model" }, // effort omitted
-        },
-      ],
-    },
-  },
-  "write-subagents": {
-    "claude": { "low": { "model": "bedrock.claude-sonnet-5", "effort": "medium" } },
-  },
-}
-```
+### Read delegates and models
 
-1. **Read-provider wrapper**: every read provider is `{ sandbox?, targets: [...] }`; `targets` is
-   non-empty and each element is a level map. `sandbox` is rejected for `agy`.
-2. **Level maps**: only keys `low`, `medium`, `high`, `xhigh`, `max`; non-empty; sparse. Resolution
-   is exact, then nearest lower, then lowest higher, with no field inheritance between levels.
-3. **Level configuration**: `{ model, effort? }` and nothing else. `model` is a nonblank string or a
-   non-empty, duplicate-free, ordered string array. `effort`, when present, is a nonblank
-   provider-defined string; when omitted, no effort flag is passed and the CLI/model default applies.
-4. **Model arrays are alias cascades**: aliases are tried in order within one target, on every
-   failure class, before dispatch advances to another target.
-5. **Targets are independent voices**: identity is `<provider>[<index>]`; providers flatten in
-   declaration order, then target order, for counts, `all`, reserves, completion, and consensus.
-   `only` stays provider-scoped. Structurally identical targets under one provider are rejected.
-6. **Sandbox is provider-wide**, defaults to `true`, and `false` opts out. When isolation is
-   unavailable, dispatch runs unsandboxed and always emits a stderr and structured downgrade warning.
-   OpenCode's Bubblewrap use follows the effective sandbox value.
-7. **Write subagents** are a bare level map: no `targets`, no `sandbox`.
-8. **CLI `--model`/`--effort` overrides** keep working, including `--effort` on a level that omits
-   effort.
-9. **No migration path**: other shapes fail validation with generic, exhaustive schema errors that
-   point to `config.sample.jsonc`.
+- Each provider is `{ sandbox?, targets: [...] }`. The non-empty `targets` array contains level
+  maps, one per independent voice. Voices have positional identity `<provider>[<index>]`; provider
+  declaration order, then target order, determines counts, `all`, reserves, completion, and
+  consensus. `only` selects providers, not individual targets. Names would add schema without
+  changing selection; structurally identical targets are rejected.
+- Level maps are non-empty and sparse, with keys drawn from `low`, `medium`, `high`, `xhigh`, and
+  `max`. Resolution uses the exact level, otherwise the nearest lower, otherwise the lowest higher.
+  Each selected entry allows only `{ model, effort? }` and stands alone: inheriting a field could
+  reintroduce an effort option to a model that rejects it. Sparse maps mark only transition points.
+- `model` is a nonblank string or an ordered, non-empty array of distinct nonblank aliases. An array
+  is a cascade *within one voice*, not extra votes: try aliases in order on every failure,
+  including authentication failures (aliases may use different endpoints or credentials). Duplicate
+  aliases and structurally identical targets would repeat indistinguishable calls; target comparison
+  ignores object-key order but respects alias order.
+- Optional `effort` is a nonblank, provider-defined string. Omission passes no effort flag and uses
+  the CLI/model default; `null` or blank is rejected so omission has one unambiguous form. CLI
+  `--model`/`--effort` overrides still work, even for a level without configured effort: strict
+  persisted config should not remove one-run control.
 
-## Rationale
+### Sandbox and writers
 
-| Decision | Rationale |
-|---|---|
-| Reject other shapes outright. | The goal is a tight contract, not support for forms the active config does not use. |
-| One wrapper for every read provider. | Gives sandbox a single home and removes array-versus-object semantic branches. |
-| Name the array `targets`; positional identity. | Elements are independent dispatch units; config order already provides stable identity, so names would be unused schema. |
-| Optional `effort`. | Some models reject effort options; requiring it would make them unconfigurable, and a placeholder value would be sent to the CLI. |
-| Reject `null`/blank effort instead of treating it as omission. | One way to say "no effort" keeps the schema unambiguous and catches half-edited config. |
-| No field inheritance across levels. | Inheritance obscures the resolved pair and could re-add effort to a model that rejects it. |
-| Keep sparse level fallback. | The active config defines only transition points, not all five levels. |
-| Keep string and array model forms. | Both are in use; arrays encode immediate alias fallback explicitly. |
-| Advance aliases on every failure, including auth. | Aliases may route through different API keys or endpoints. |
-| Reject duplicate aliases and duplicate targets. | They add indistinguishable calls; target comparison ignores object-key order but keeps model-array order, since only fallback order has semantics. |
-| Count every target independently. | Multiple targets under one provider were intended as separate review voices. |
-| Sandbox defaults to true and degrades with a warning. | Isolation is the secure default; availability was chosen over fail-closed, provided the downgrade is always visible and machine-readable. |
-| No sandbox for write subagents. | Native implementation subagents need workspace writes and have no target cascade. |
-| Retain CLI overrides. | Persisted-schema strictness should not remove one-run operator control. |
-| Generic schema errors. | A migration-specific diagnostic surface was not wanted for an intentionally breaking contract. |
+`sandbox` lives on the provider wrapper, defaults to `true`, and can be set to `false`; it is
+accepted for Claude, Copilot, and OpenCode, but not `agy`. If isolation is unavailable, the run
+continues unsandboxed with both stderr and structured downgrade warnings. This favors availability
+while making the security downgrade visible. OpenCode's Bubblewrap follows the effective sandbox
+value.
+
+Write subagents instead use a bare level map—no `targets` or `sandbox`—because native implementation
+subagents need workspace writes and do not have independent review voices.
+
+### Review policy
+
+`phases` accepts `plan-review` and `code-review` only. Technical design reviews use the same
+`plan-review` target count, rounds, consensus, and provider allowlist, but retain distinct
+`design-review` flow and candidate identities. Both artifacts need the same configurable review
+policy without collapsing their review records.
 
 ## Consequences
 
-- Existing user configs must be migrated by hand: wrap read providers, move sandbox to the wrapper,
-  convert candidates to level maps, move flat model/effort into levels, and keep model arrays inside
-  levels.
-- Validation, target flattening, selection, retry, consensus, runner alias fallback, sandbox
-  reporting, doctor output, docs, and tests change together in one release.
-- Runners must omit the effort flag when a resolved level has no `effort`.
+- Existing configs require manual conversion: wrap read providers, place sandbox on the wrapper,
+  convert candidates to level maps, move flat model/effort fields into levels, and keep model alias
+  arrays inside a level.
+- `phases.design-review` is rejected; move its settings to `phases.plan-review`. The shared policy
+  then also applies to plan reviews, including any provider filter.
+- Runners omit the effort flag when the selected level omits `effort`. Validation, selection,
+  retries, consensus, sandbox reporting, doctor output, docs, and tests reflect the strict shape.
 - Out of scope: per-target names, indexed `only` selectors, per-target/per-level sandbox,
   provider-specific effort enums, and automatic detection of which models accept effort.

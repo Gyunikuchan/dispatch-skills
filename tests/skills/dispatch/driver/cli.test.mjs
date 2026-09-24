@@ -16,7 +16,6 @@ const CONFIG = {
   phases: {
     'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },
     'code-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },
-    'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },
   },
 };
 

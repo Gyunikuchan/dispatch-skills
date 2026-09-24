@@ -37,7 +37,7 @@ const DELEGATES = {
 };
 const config = (phaseOpts = {}, delegates = DELEGATES) => ({
   'read-delegates': delegates,
-  phases: { 'plan-review': phase(phaseOpts), 'design-review': phase(phaseOpts), 'code-review': phase(phaseOpts) },
+  phases: { 'plan-review': phase(phaseOpts), 'code-review': phase(phaseOpts) },
 });
 
 const cleanups = [];
