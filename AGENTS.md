@@ -4,9 +4,10 @@ Agent skills for cross-agent CLI delegation and review. Single source of truth f
 
 ## Product North Star & Core Pillars
 
-Deliver high-confidence cross-agent delegation and review with minimal token overhead and zero human babysitting.
+Deliver high-confidence collaborative development workflows across native agent harnesses, catching flawed assumptions before they become code — with minimal token overhead and zero human babysitting.
 
 - **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens verifying claims rather than guessing; optimize context hygiene and token density before raw speed.
+- **Native Harness Collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs between them.
 - **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; have scripts emit mode- or state-specific instructions at the branch point rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
 - **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for orchestrators or native subagents. Runner harnesses sanitize outputs.
