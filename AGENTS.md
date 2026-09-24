@@ -64,12 +64,12 @@ Classify each document by audience; keep each fact in one class:
 - **Human documentation**: Help users understand and operate the skills.
   - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
   - **Dispatch documentation (`skills/dispatch/README.md` and its disclosed references)**: Purpose, concepts, prerequisites, realistic invocations, configuration, troubleshooting; write human guidance for users and cover referenced paths with path-convention guards.
-- **Agent contracts — apply `writing-for-agents` when editing** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep word count net-neutral or lower; expand only after exhausting rewording, leading words, and disclosure.
+- **Agent contracts** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep word count net-neutral or lower; expand only after exhausting rewording, leading words, and disclosure.
 - **Maintainer notes** (`docs/<skill>-notes.md`): Record implementation context that users and executing agents do not need; these files are not shipped.
 
 ## Authoring & Cross-Platform Standards
 
-Format skills as Markdown with YAML frontmatter (`name`, `description`). Apply `writing-for-agents` when editing Markdown documents (`AGENTS.md`, `SKILL.md`, reference docs).
+Format skills as Markdown with YAML frontmatter (`name`, `description`). When touching agent-read prose (agent contracts or prompt/instruction strings in code), always apply `writing-for-agents` and single-source each instruction: reference, or restructure the flow around, its existing home instead of restating it.
 
 Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
 
