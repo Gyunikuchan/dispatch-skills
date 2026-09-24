@@ -53,7 +53,7 @@ tests/                    mirrors source plus cross-skill integration guards
 
 - Reference skills by name or sibling-relative `<skills-dir>` paths, never a host-specific installation path.
 - Aliases require `dispatch`, map arguments to one verb, and provide a named missing-dependency diagnostic.
-- `dispatch` names no alias; the marked v0.4 config rejection probe is the only sibling exception.
+- `dispatch` names no alias.
 - Shared review behavior lives in `skills/dispatch/references/review.md`.
 
 ## Documentation Standards

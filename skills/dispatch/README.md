@@ -28,11 +28,11 @@ Copy `config.sample.jsonc` to `config.jsonc` or `config.local.jsonc`. First matc
 - `write-subagents`: one level map per host platform.
 - `phases`: targets, rounds, consensus, and optional provider membership filters.
 
-A level map keys any of `low`…`max` to `{ "model", "effort"? }`; the nearest configured level is used as-is, with no inheritance. A `model` array is an alias cascade within one target. Omit `effort` for models that reject it; the provider default applies. Old flat or candidate-array shapes are rejected.
+A level map keys any of `low`…`max` to `{ "model", "effort"? }`; the nearest configured level is used as-is, with no inheritance. A `model` array is an alias cascade within one target. Omit `effort` for models that reject it; the provider default applies.
 
 Sandbox is provider-wide for Claude, Copilot, and OpenCode and defaults to `true`. When isolation is unavailable, the run proceeds unsandboxed with a stderr warning and `sandboxDowngraded` in structured output. See [config.sample.jsonc](config.sample.jsonc).
 
-Validate with `node scripts/dispatch.mjs --validate-only` and inspect effective routing with `node scripts/dispatch.mjs --doctor --orchestrator <platform>`. v0.4 config keys are rejected with a migration diagnostic.
+Validate with `node scripts/dispatch.mjs --validate-only` and inspect effective routing with `node scripts/dispatch.mjs --doctor --orchestrator <platform>`.
 
 ## Operation
 
@@ -47,7 +47,6 @@ Use `node scripts/dispatch.mjs --help` for all flags and current usage. Provider
 ## Troubleshooting
 
 - **No candidates:** create the single dispatch config, then run `--doctor`.
-- **v0.4 schema diagnostic:** migrate using the [release field map](https://github.com/Gyunikuchan/dispatch-skills/blob/main/docs/v0.5.0-release-notes.md#configuration-field-map).
 - **Missing prerequisite:** resume from the named producing phase or restore its canonical artifact.
 - **Provider failure:** preserve the reported source identity and use the emitted native-fallback action.
 - **Gate failure:** open the `logPath` named in the verify results under the session directory; a failure disposition of `retry` continues the same segment with your ruling as writer context.

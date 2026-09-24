@@ -1359,7 +1359,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       );
     });
 
-    it('rejects a v0.4 injected config (top-level platforms) with INVALID_DISPATCH_CONFIG', async () => {
+    it('rejects an injected config with an unknown top-level key as INVALID_DISPATCH_CONFIG', async () => {
       clearOrchestratorEnv();
       await assert.rejects(
         dispatchTask({ prompt: 'Test', config: { platforms: { agy: targetsOf({ model: 'agy-model' }) } }, configPath: 'old.jsonc' }),
@@ -1706,24 +1706,22 @@ describe('dispatch --validate-only CLI', () => {
     }
   });
 
-  it('rejects a v0.4 dispatch config with the key-map diagnostic', () => {
-    const legacyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cli-legacy-'));
+  it('rejects an unknown top-level config key with the schema diagnostic', () => {
+    const invalidRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-cli-invalid-'));
     try {
-      const legacyDir = path.join(legacyRoot, 'dispatch');
-      fs.cpSync(path.join(fixtureRoot, 'dispatch'), legacyDir, { recursive: true });
-      fs.writeFileSync(path.join(legacyDir, 'config.jsonc'), JSON.stringify({ platforms: { claude: targetsOf({ model: 'claude-model' }) } }));
-      const res = cp.spawnSync(process.execPath, [path.join(legacyDir, 'scripts', 'dispatch.mjs'), '--validate-only'], {
+      const invalidDir = path.join(invalidRoot, 'dispatch');
+      fs.cpSync(path.join(fixtureRoot, 'dispatch'), invalidDir, { recursive: true });
+      fs.writeFileSync(path.join(invalidDir, 'config.jsonc'), JSON.stringify({ platforms: { claude: targetsOf({ model: 'claude-model' }) } }));
+      const res = cp.spawnSync(process.execPath, [path.join(invalidDir, 'scripts', 'dispatch.mjs'), '--validate-only'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
         cwd: PROJECT_ROOT,
         env: { ...process.env, DISPATCH_TELEMETRY: '0' },
       });
       assert.equal(res.status, 1);
-      assert.match(res.stderr || '', /maxRounds\s*(→|->)\s*rounds/);
-      assert.match(res.stderr || '', /the retired implement config/);
-      assert.doesNotMatch(res.stderr || '', /implement-dispatch/);
+      assert.match(res.stderr || '', /Unrecognized top-level key "platforms"/);
     } finally {
-      fs.rmSync(legacyRoot, { recursive: true, force: true });
+      fs.rmSync(invalidRoot, { recursive: true, force: true });
     }
   });
 

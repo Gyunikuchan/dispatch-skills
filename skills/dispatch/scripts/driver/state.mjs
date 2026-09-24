@@ -14,9 +14,6 @@ import { safeRenameSync } from '../common.mjs';
 import { scanResolutionLog } from '../resolution-log.mjs';
 import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../session-temp.mjs';
 
-// Pre-session state directory, pruned only.
-const LEGACY_STATE_DIR = 'dispatch-driver';
-
 /** Repository root of `cwd`, or `cwd` itself outside a work tree. */
 export function gitRoot(cwd) {
   const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
@@ -114,23 +111,10 @@ function roundsSinceSettled(markdown, total) {
 
 /**
  * Removes sessions untouched for `maxAgeMs`, finished or abandoned (an in-flight wave relaunches
- * whole via the sidecar anyway), plus pre-session state files; best-effort.
+ * whole via the sidecar anyway); best-effort.
  */
 export function pruneFinishedStates({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
   pruneSessions({ maxAgeMs, now });
-  const dir = path.join(fs.realpathSync(os.tmpdir()), LEGACY_STATE_DIR);
-  if (!fs.existsSync(dir)) return;
-  for (const name of fs.readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue;
-    const file = path.join(dir, name);
-    try {
-      if (now - fs.statSync(file).mtimeMs < maxAgeMs) continue;
-      fs.rmSync(file, { force: true });
-      if (!name.endsWith('.run.json')) fs.rmSync(sidecarPathFor(file), { force: true });
-    } catch {
-      // NOTE: pruning never blocks a run.
-    }
-  }
 }
 
 /**

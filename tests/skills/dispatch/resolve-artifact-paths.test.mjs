@@ -494,10 +494,10 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
 
   it('rejects a metadata-less canonical design occupant', () => {
     const design = path.join(projectRoot, '.scratch', 'plan', '2026-09-11-platform-design.md');
-    writeFileSync(design, '# legacy ordinary plan');
+    writeFileSync(design, '# ordinary plan');
     assert.throws(() => resolveArtifactPath('design', {
       slug: 'platform', date: '2026-09-11', projectRoot,
-    }), /metadata-less legacy artifact/);
+    }), /metadata-less artifact/);
   });
 
   it('resolveArtifactPath falls back to scratch-new when nothing exists', () => {

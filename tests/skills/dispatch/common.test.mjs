@@ -25,7 +25,6 @@ import {
   preparePromptForArgv,
   createBriefFile,
   removeBriefFile,
-  sweepStaleBriefDirs,
   classifyFailure,
   resolveFailureKind,
   isEmptyResult,
@@ -58,6 +57,7 @@ import {
   MAX_ATTACHMENT_BYTES_PER_FILE,
   MAX_ATTACHMENT_BYTES_TOTAL,
 } from '../../../skills/dispatch/scripts/common.mjs';
+import { sessionTempDir } from '../../../skills/dispatch/scripts/session-temp.mjs';
 
 // ---------------------------------------------------------------------------
 // SECTION: Diversity sort & Model comparison
@@ -336,12 +336,6 @@ describe('common: argument parsing', () => {
     assert.equal(opts.provider, 'agy');
     assert.equal(opts.verbose, true);
     assert.equal(opts.json, true);
-  });
-
-  it('accepts backward-compat flags silently', () => {
-    const opts = parseCommonArgs(['node', 'dispatch.mjs', '--allow-write', '-i', '-w', 'prompt']);
-    assert.equal(opts.prompt, 'prompt');
-    assert.equal(opts.verbose, false);
   });
 
   it('parses equals-separated flags', () => {
@@ -917,10 +911,10 @@ describe('common: attachments, brief files & spill', () => {
 // SECTION: Brief File Cleanup
 // ---------------------------------------------------------------------------
 
-describe('common: removeBriefFile & sweepStaleBriefDirs', () => {
+describe('common: removeBriefFile', () => {
   const leftovers = [];
   const makeBriefDir = (providerName = 'claude') => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `dispatch-brief-${providerName}-`));
+    const dir = sessionTempDir(`dispatch-brief-${providerName}-`);
     leftovers.push(dir);
     const briefFile = path.join(dir, 'brief.md');
     fs.writeFileSync(briefFile, 'body', 'utf8');
@@ -961,7 +955,7 @@ describe('common: removeBriefFile & sweepStaleBriefDirs', () => {
     assert.equal(fs.existsSync(dir), true);
   });
 
-  it('refuses a brief directory outside the OS temp dir', () => {
+  it('refuses a brief directory outside a session directory', () => {
     const outerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-outside-'));
     leftovers.push(outerRoot);
     const dir = path.join(outerRoot, 'dispatch-brief-claude-fake');
@@ -990,51 +984,6 @@ describe('common: removeBriefFile & sweepStaleBriefDirs', () => {
     }
   });
 
-  it('sweepStaleBriefDirs removes an old directory and keeps a fresh one', () => {
-    const { dir: staleDir, briefFile: staleBrief } = makeBriefDir('agy');
-    const { dir: freshDir } = makeBriefDir('agy');
-    const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
-    fs.utimesSync(staleDir, oldTime, oldTime);
-
-    sweepStaleBriefDirs({ maxAgeMs: 24 * 60 * 60 * 1000 });
-
-    assert.equal(fs.existsSync(staleDir), false, 'directory older than maxAgeMs must be swept');
-    assert.equal(fs.existsSync(freshDir), true, 'fresh directory must be left alone');
-    void staleBrief;
-  });
-
-  it('sweepStaleBriefDirs skips a symlinked directory', (t) => {
-    const { dir: realDir } = makeBriefDir('claude');
-    const linkDir = path.join(os.tmpdir(), `dispatch-brief-claude-sweep-link-${process.pid}`);
-    try {
-      fs.symlinkSync(realDir, linkDir, 'junction');
-    } catch (err) {
-      if (err.code === 'EPERM') return t.skip('symlink creation needs elevated rights here');
-      throw err;
-    }
-    leftovers.push(linkDir);
-    try {
-      const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
-      // Junction time-setting is platform-dependent; a fresh link is age-skipped anyway.
-      try { fs.lutimesSync(linkDir, oldTime, oldTime); } catch {}
-      sweepStaleBriefDirs({ maxAgeMs: 24 * 60 * 60 * 1000 });
-      assert.equal(fs.existsSync(realDir), true, 'the real directory behind the symlink must survive');
-    } finally {
-      try { fs.rmSync(linkDir, { recursive: true, force: true }); } catch {}
-    }
-  });
-
-  it('createBriefFile sweeps stale directories before creating a new one', () => {
-    const { dir: staleDir } = makeBriefDir('copilot');
-    const oldTime = new Date(Date.now() - 25 * 60 * 60 * 1000);
-    fs.utimesSync(staleDir, oldTime, oldTime);
-
-    const { briefFile } = createBriefFile('fresh body', 'copilot');
-    leftovers.push(path.dirname(briefFile));
-
-    assert.equal(fs.existsSync(staleDir), false, 'stale dir must be swept by createBriefFile');
-    assert.ok(fs.existsSync(briefFile));
-  });
 });
 
 // ---------------------------------------------------------------------------

@@ -46,7 +46,7 @@ describe('Git ledger state', () => {
     assert.equal(entry.content, undefined, 'blob entries carry no inline content');
     assert.deepEqual(snapshotContent(repo, entry), bytes);
     assert.equal(absent.mode, 'absent');
-    assert.deepEqual(snapshotContent(repo, { content: Buffer.from('legacy').toString('base64') }), Buffer.from('legacy'));
+    assert.deepEqual(snapshotContent(repo, { content: Buffer.from('non-blob').toString('base64') }), Buffer.from('non-blob'));
   });
 
   it('captures dirty tracked, untracked, binary, mode, symlink, deletion, and rename state', () => {

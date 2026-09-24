@@ -57,7 +57,7 @@ const SKILL_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'SKIL
 const README_TEXT = readFileSync(path.join(REPO_ROOT, 'skills', 'dispatch', 'README.md'), 'utf8');
 
 describe('dispatch flag source of truth', () => {
-  it('--help carries the required v0.5 routing flags', () => {
+  it('--help carries the required routing flags', () => {
     for (const flag of ['--level', '--level-source', '--pins', '--run', '--kind', '--fix', '--phases', '--next', '--state', '--input']) {
       assert.ok(HELP_SPELLINGS.has(flag), `--help lacks ${flag}`);
     }

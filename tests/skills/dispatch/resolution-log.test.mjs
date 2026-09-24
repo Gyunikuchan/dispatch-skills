@@ -178,17 +178,15 @@ describe('resolution log scanner', () => {
   });
 
   it('strictly rejects non-enriched resolution bullets and tolerant parsing skips them', () => {
-    const legacy = [
+    const bare = [
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 4 — Claude and Copilot, 2026-09-17',
       '- **[Disputed]** § A — tag (CONSIDER): x → y',
     ].join('\n');
-    assert.throws(() => scanResolutionLog(legacy));
-    const tolerant = scanResolutionLog(legacy, { strict: false });
+    assert.throws(() => scanResolutionLog(bare));
+    const tolerant = scanResolutionLog(bare, { strict: false });
     assert.deepEqual(tolerant.unsettledItems, []);
-    assert.ok(!JSON.stringify(tolerant).includes('legacy:'));
-    assert.ok(!JSON.stringify(tolerant).includes('ACTIONABLE'));
   });
 
   it('strictly rejects an enriched bullet with an unknown status label and tolerant parsing skips it', () => {
@@ -201,17 +199,6 @@ describe('resolution log scanner', () => {
     ].join('\n');
     assert.throws(() => scanResolutionLog(unknown));
     assert.deepEqual(scanResolutionLog(unknown, { strict: false }).unsettledItems, []);
-  });
-
-  it('rejects the retired ACTIONABLE severity in enriched prefixes', () => {
-    const actionable = [
-      '# Plan',
-      '## Review Findings & Resolutions',
-      '### Round 1',
-      roundSources(1),
-      '- **[Disputed]** [R1-F001] [ACTIONABLE] [sources=plan-review:R1:claude:0] § A — tag: x → y',
-    ].join('\n');
-    assert.throws(() => scanResolutionLog(actionable));
   });
 
   it('keeps pre-Phase 2 enriched-looking source keys readable without a source map', () => {
@@ -404,20 +391,5 @@ describe('resolution log scanner', () => {
       () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
       /normalized repository-relative slash path/,
     );
-  });
-});
-
-describe('R7 legacy removal', () => {
-  it('no shipped skill file names ACTIONABLE or synthesizes legacy: keys', async () => {
-    const fs = await import('node:fs');
-    const path = await import('node:path');
-    const skillsDir = path.resolve(import.meta.dirname, '../../../skills');
-    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
-      entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
-    const offenders = walk(skillsDir)
-      .filter((file) => /\.(md|mjs|json)$/.test(file))
-      .filter((file) => /\bACTIONABLE\b|legacy:/.test(fs.readFileSync(file, 'utf8')))
-      .map((file) => path.relative(skillsDir, file).split(path.sep).join('/'));
-    assert.deepEqual(offenders, []);
   });
 });

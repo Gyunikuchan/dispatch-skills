@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made standalone reviews report-only by default; accepted fixes require explicit `--fix`.
 - Consolidated provider candidates, native write subagents, and phase policy into one dispatch config.
 - Added shipped-contract terminology enforcement and made CLI `--help` the flag source of truth.
-- **Breaking:** v0.4 configs and operational skill interfaces are retired. See the [v0.5.0 migration and decision notes](docs/v0.5.0-release-notes.md).
+- **Breaking:** v0.4 configs and operational skill interfaces are retired.
 
 ## [0.4.0] - 2026-09-21
 

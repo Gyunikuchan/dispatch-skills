@@ -30,17 +30,15 @@ plain prose. Code spans and fenced blocks are exempt.
 
 ## Ordinary phase inputs and outputs
 
-v0.4 origin in parentheses.
-
 | Phase | Requires | Produces |
 |---|---|---|
 | `plan` | ask | plan artifact |
-| `plan-review` | plan | settled plan resolution log (plan review) |
-| `baseline` | settled plan | walkthrough with baseline verify records and recorded approval (baseline verification + approval) |
-| `implementation` | approved baseline | code edits, implementation outcome, ledger events (implementation) |
-| `code-review` | walkthrough + edits | settled code resolution log and checkpoint (code review) |
-| `handoff` | settled code review | Execution Status, handoff summary, scratch relocation (handoff) |
+| `plan-review` | plan | settled plan resolution log |
+| `baseline` | settled plan | walkthrough with baseline verify records and recorded approval |
+| `implementation` | approved baseline | code edits, implementation outcome, ledger events |
+| `code-review` | walkthrough + edits | settled code resolution log and checkpoint |
+| `handoff` | settled code review | Execution Status, handoff summary, scratch relocation |
 
-The **RED gate** (v0.4's tests-only step) is a gate inside `implementation`: failing tests are
+The **RED gate** is a gate inside `implementation`: failing tests are
 written and confirmed before production edits. Phase and increment are distinct on purpose: a
 phase is *how* work proceeds, an increment is *what* part of a design is delivered.

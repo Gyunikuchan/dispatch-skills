@@ -1,4 +1,4 @@
-// SC3 (v0.5.0 native-fallback model cascade): write cascade advances on `rejected` and on the new
+// SC3 (native-fallback model cascade): write cascade advances on `rejected` and on the new
 // `failed:{kind,reason}` reply form, never incrementing `attempt` on a transport hop, carries a
 // `continuation` note naming the failed model and kind, emits `restore` only when the partial diff
 // leaves the approved set, treats terminal kinds (e.g. `sandbox-unsupported`) as immediately

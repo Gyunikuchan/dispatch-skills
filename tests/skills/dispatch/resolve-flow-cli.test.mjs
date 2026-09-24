@@ -60,9 +60,6 @@ function buildFixture({ prefix = 'resolve-flow-', config = FULL_CONFIG, manifest
 /** Runs a fixture's resolver under the renamed liveness seam. */
 function runFixtureScript(skillDir, args = [], { liveness = ALL_LIVE, realProbes = false, env: extraEnv = {} } = {}) {
   const env = { ...process.env, ...extraEnv };
-  // The v0.4 variable names must no longer arm the seam.
-  delete env.IMPLEMENT_DISPATCH_LIVENESS_JSON;
-  delete env.IMPLEMENT_DISPATCH_TEST_MODE;
   if (realProbes) {
     delete env.DISPATCH_LIVENESS_JSON;
     delete env.DISPATCH_TEST_MODE;
@@ -354,7 +351,7 @@ describe('resolve-flow CLI (dispatch/scripts)', () => {
   });
 });
 
-describe('resolve-flow CLI: invalid and v0.4 config', () => {
+describe('resolve-flow CLI: invalid config', () => {
   const INVALID = JSON.stringify({ 'read-delegates': {}, phases: { 'code-review': { bogusKey: 1 } } });
 
   it('--validate-only and the run path exit 1 for an invalid config', () => {
@@ -362,52 +359,6 @@ describe('resolve-flow CLI: invalid and v0.4 config', () => {
       const { status, stderr } = withFixture({ config: INVALID }, args);
       assert.equal(status, 1, args.join(' '));
       assert.match(stderr, /Invalid config|unrecognized key|at least one platform/i);
-    }
-  });
-
-  const V04_REVIEW = JSON.stringify({
-    'plan-review': { maxRounds: { low: 1 }, targetCount: { low: 1 }, consensus: { low: false }, platforms: { claude: {} } },
-    implementation: { platforms: { claude: { model: 'm' } } },
-    'code-review': { maxRounds: { low: 1 }, targetCount: { low: 1 }, consensus: { low: false }, platforms: { claude: {} } },
-  });
-
-  const V04_DISPATCH = JSON.stringify({ platforms: { claude: { model: 'm' } } });
-
-  function assertKeyMap(stderr) {
-    assert.match(stderr, /targetCount\s*(→|->)\s*targets/);
-    assert.match(stderr, /maxRounds\s*(→|->)\s*rounds/);
-    assert.match(stderr, /implementation\s*(→|->)\s*write-subagents/);
-    assert.match(stderr, /read-delegates/);
-    assert.match(stderr, /the retired implement config/);
-    assert.doesNotMatch(stderr, /implement-dispatch/);
-  }
-
-  it('rejects a v0.4 review-section config with the key-map diagnostic', () => {
-    for (const args of [['--validate-only'], ['--platform', 'claude']]) {
-      const { status, stdout, stderr } = withFixture({ config: V04_REVIEW }, args);
-      assert.equal(status, 1, args.join(' '));
-      assert.equal(stdout, '');
-      assertKeyMap(stderr);
-    }
-  });
-
-  it('rejects a v0.4 dispatch config with top-level platforms', () => {
-    const { status, stderr } = withFixture({ config: V04_DISPATCH }, ['--validate-only']);
-    assert.equal(status, 1);
-    assertKeyMap(stderr);
-  });
-
-  it('rejects a valid v0.5 config when a sibling retired implement config exists', () => {
-    const fixture = buildFixture();
-    try {
-      const sibling = path.join(fixture.dir, 'implement-dispatch');
-      fs.mkdirSync(sibling, { recursive: true });
-      fs.writeFileSync(path.join(sibling, 'config.local.jsonc'), V04_REVIEW);
-      const { status, stderr } = runFixtureScript(fixture.skillDir, ['--validate-only']);
-      assert.equal(status, 1);
-      assert.match(stderr, /targetCount\s*(→|->)\s*targets/);
-    } finally {
-      fs.rmSync(fixture.dir, { recursive: true, force: true });
     }
   });
 });

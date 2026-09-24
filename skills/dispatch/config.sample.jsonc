@@ -31,10 +31,6 @@
  * out. Claude and Copilot use their CLI sandbox; OpenCode uses Linux Bubblewrap. When isolation is
  * unavailable, the run proceeds unsandboxed with a warning on stderr and `sandboxDowngraded` in
  * structured output.
- *
- * v0.4 configs are rejected. Key map: top-level platforms -> read-delegates; per-section platforms
- * -> only (membership) plus read-delegates (models); targetCount -> targets; maxRounds -> rounds;
- * implementation -> write-subagents; the retired implement config moves into this file.
  */
 {
   "read-delegates": {

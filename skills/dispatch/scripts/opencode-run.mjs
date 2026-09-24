@@ -225,11 +225,8 @@ export const OPENCODE_EXTRA_ENV_ALLOWLIST = new Set([
   'OPENCODE_PORT',
 ]);
 
-// NOTE: GPU lockfile name is pinned to this legacy value — os.tmpdir() is machine-global and
-// older installed copies of this skill in other repos still contend on the same file.
-// Renaming it would silently break mutual exclusion between old and new copies, defeating
-// the VRAM-thrashing prevention the lock exists to provide.
-export const GPU_LOCK_FILE_NAME = 'agent_dispatch_local_llm.lock';
+// NOTE: os.tmpdir() is machine-global, so every repo's copy of this skill contends on one lock.
+export const GPU_LOCK_FILE_NAME = 'dispatch-local-llm.lock';
 export const GPU_LOCK_STALE_MS = 360000;
 export const GPU_LOCK_MAX_WAIT_MS = 15000;
 export const GPU_LOCK_POLL_MS = 500;

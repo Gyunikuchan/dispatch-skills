@@ -395,7 +395,7 @@ function assertKnownPins(pins, reviewKeys) {
  *           tolerateMissingImplementationModel?: boolean,
  *           livenessSource?: 'env-override' | 'probe' }} options
  * @param {Record<string, boolean>} liveness - map of platform key → available
- * @param {object} config                    - parsed v0.5 config object
+ * @param {object} config                    - parsed config object
  * @returns {object} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {

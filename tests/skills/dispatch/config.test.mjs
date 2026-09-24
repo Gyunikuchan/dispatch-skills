@@ -13,7 +13,6 @@ import {
 } from '../../../skills/dispatch/scripts/common.mjs';
 import * as common from '../../../skills/dispatch/scripts/common.mjs';
 import {
-  detectLegacyConfig,
   LEVELS,
   loadDispatchConfig,
   phaseMembers,
@@ -58,17 +57,6 @@ function withTables({ phases: phasePatches = {}, ...tables } = {}) {
 const problemsOf = (config) => validateConfig(config).join('\n');
 /** One-target read-provider wrapper around a single `low` level. */
 const wrap = (level = { model: 'm' }, extra = {}) => ({ ...extra, targets: [{ low: level }] });
-
-/** The v0.4 → v0.5 key-map diagnostic, never naming the retired skill. */
-function assertKeyMap(text) {
-  assert.match(text, /targetCount\s*(→|->)\s*targets/);
-  assert.match(text, /maxRounds\s*(→|->)\s*rounds/);
-  assert.match(text, /platforms\s*(→|->)\s*only/);
-  assert.match(text, /implementation\s*(→|->)\s*write-subagents/);
-  assert.match(text, /platforms\s*(→|->)\s*read-delegates/);
-  assert.match(text, /the retired implement config/);
-  assert.doesNotMatch(text, /implement-dispatch/);
-}
 
 describe('getConfigCandidates', () => {
   it('returns the 2-path precedence list in order', () => {
@@ -123,7 +111,7 @@ describe('constants', () => {
   });
 });
 
-describe('validateConfig (v0.5 schema)', () => {
+describe('validateConfig', () => {
   it('accepts a full three-table config', () => {
     assert.deepEqual(validateConfig(VALID), []);
   });
@@ -148,12 +136,6 @@ describe('validateConfig (v0.5 schema)', () => {
 
   it('rejects unknown top-level keys', () => {
     assert.match(problemsOf({ ...VALID, extra: 1 }), /Unrecognized top-level key "extra"/);
-  });
-
-  it('rejects every v0.4 top-level key', () => {
-    for (const key of ['platforms', 'plan-review', 'code-review', 'design-review', 'implementation']) {
-      assert.ok(validateConfig({ ...VALID, [key]: {} }).length > 0, key);
-    }
   });
 
   describe('read-delegates', () => {
@@ -259,7 +241,7 @@ describe('validateConfig (v0.5 schema)', () => {
       assert.match(problemsOf(config), /phases\.code-review.*missing required knob "rounds"/);
     });
 
-    it('rejects v0.4 knob names inside a phase', () => {
+    it('rejects unknown knob names inside a phase', () => {
       assert.match(problemsOf(withTables({ phases: { 'code-review': { maxRounds: { low: 1 } } } })), /unrecognized key "maxRounds"/);
       assert.match(problemsOf(withTables({ phases: { 'code-review': { platforms: {} } } })), /unrecognized key "platforms"/);
     });
@@ -402,7 +384,7 @@ describe('optional effort per level', () => {
   });
 });
 
-describe('detectLegacyConfig and loadDispatchConfig', () => {
+describe('loadDispatchConfig', () => {
   let root;
   let skillRoot;
   beforeEach(() => {
@@ -411,29 +393,6 @@ describe('detectLegacyConfig and loadDispatchConfig', () => {
     mkdirSync(skillRoot);
   });
   afterEach(() => { rmSync(root, { recursive: true, force: true }); });
-
-  it('returns null for a v0.5 config with no sibling retired config', () => {
-    assert.equal(detectLegacyConfig(VALID, { skillRoot }), null);
-  });
-
-  for (const key of ['platforms', 'plan-review', 'code-review', 'design-review', 'implementation']) {
-    it(`detects top-level "${key}" with the key-map diagnostic`, () => {
-      const detected = detectLegacyConfig({ [key]: {} }, { skillRoot });
-      assert.ok(detected, key);
-      assert.ok(Array.isArray(detected.reasons) && detected.reasons.length > 0);
-      assertKeyMap(detected.message);
-    });
-  }
-
-  for (const name of ['config.jsonc', 'config.local.jsonc']) {
-    it(`detects a sibling retired implement ${name}`, () => {
-      mkdirSync(path.join(root, 'implement-dispatch'));
-      writeFileSync(path.join(root, 'implement-dispatch', name), '{}');
-      const detected = detectLegacyConfig(VALID, { skillRoot });
-      assert.ok(detected);
-      assert.match(detected.message, /targetCount\s*(→|->)\s*targets/);
-    });
-  }
 
   it('loadDispatchConfig prefers config.local.jsonc and normalizes absent optional tables', () => {
     writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify(VALID));
@@ -445,22 +404,6 @@ describe('detectLegacyConfig and loadDispatchConfig', () => {
     assert.deepEqual(loaded.config.phases, {});
   });
 
-  it('loadDispatchConfig throws the key-map diagnostic for a v0.4 dispatch config', () => {
-    writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify({ platforms: { claude: {} } }));
-    assert.throws(() => loadDispatchConfig({ skillRoot }), (err) => {
-      assert.equal(err.code, 'LEGACY_DISPATCH_CONFIG');
-      assertKeyMap(err.message);
-      return true;
-    });
-  });
-
-  it('loadDispatchConfig throws for a sibling retired implement config', () => {
-    writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify(VALID));
-    mkdirSync(path.join(root, 'implement-dispatch'));
-    writeFileSync(path.join(root, 'implement-dispatch', 'config.jsonc'), '{}');
-    assert.throws(() => loadDispatchConfig({ skillRoot }), (err) => err.code === 'LEGACY_DISPATCH_CONFIG');
-  });
-
   it('loadDispatchConfig names config.sample.jsonc when no config exists', () => {
     assert.throws(() => loadDispatchConfig({ skillRoot }), /Config file not found[\s\S]*config\.sample\.jsonc/);
   });
@@ -470,7 +413,7 @@ describe('shipped config.sample.jsonc', () => {
   // Liveness stub: claude is the orchestrator, copilot dead.
   const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 
-  /** Shipped v0.4 review policy carried into v0.5 `phases` (rounds/consensus per level). */
+  /** Shipped review policy in `phases` (rounds/consensus per level). */
   const LEVEL_PARITY = {
     low: { 'plan-review': { rounds: 0, consensus: false }, 'code-review': { rounds: 1, consensus: false } },
     medium: { 'plan-review': { rounds: 2, consensus: true }, 'code-review': { rounds: 3, consensus: true } },
@@ -479,10 +422,9 @@ describe('shipped config.sample.jsonc', () => {
     max: { 'plan-review': { rounds: 5, consensus: true }, 'code-review': { rounds: 5, consensus: true } },
   };
 
-  it('is a v0.5 three-table config that validates with no problems', () => {
+  it('is a three-table config that validates with no problems', () => {
     assert.deepEqual(Object.keys(SAMPLE_CONFIG).sort(), ['phases', 'read-delegates', 'write-subagents']);
     assert.deepEqual(validateConfig(SAMPLE_CONFIG), []);
-    assert.equal(detectLegacyConfig(SAMPLE_CONFIG, { skillRoot: path.join(REPO_ROOT, 'skills', 'dispatch') }), null);
   });
 
   it('configures all three review phases, an only example, a multi-target provider, a model cascade, and an effort-less level', () => {

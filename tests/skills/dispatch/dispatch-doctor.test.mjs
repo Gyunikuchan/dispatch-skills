@@ -44,7 +44,7 @@ afterEach(() => mock.restoreAll());
 
 const platforms = (list) => list.map((t) => t.platform);
 
-describe('dispatch doctor (v0.4 behaviour carried over)', () => {
+describe('dispatch doctor', () => {
   it('reports effective candidates, sandbox support, and corrective commands', async () => {
     mockProbes({ agy: false });
     const report = await buildDoctorReport(CONFIG, '/tmp/config.jsonc');

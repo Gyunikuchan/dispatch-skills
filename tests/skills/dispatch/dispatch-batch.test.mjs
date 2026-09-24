@@ -12,7 +12,7 @@ import {
 import { resolveReadDelegates } from '../../../skills/dispatch/scripts/config.mjs';
 import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch.mjs';
 
-/** v0.5 config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
+/** Config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {
   'read-delegates': {
     claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'low' }, high: { model: 'claude-opus-5', effort: 'high' } }] },
@@ -100,7 +100,7 @@ describe('dispatch batch manifest', () => {
     );
   });
 
-  it('rejects duplicate source keys and legacy metricsFile fields', () => {
+  it('rejects duplicate source keys and unsupported fields', () => {
     assert.throws(
       () => loadBatchFile(writeBatch({
         targets: [

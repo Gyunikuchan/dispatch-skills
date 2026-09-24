@@ -116,7 +116,7 @@ describe('design review preparation', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('rejects legacy decision and artifactOwned request fields as unsupported', () => {
+  it('rejects unsupported request fields', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
       assert.throws(() => prepareDesignReview({ action: 'prepare', slug: 'platform', decision: 'as-is' }, { repoRoot: root }), /unsupported field "decision"/);
@@ -146,7 +146,7 @@ describe('design review preparation', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('reviews a metadata-less existing design without a legacy coverage decision', () => {
+  it('reviews a metadata-less existing design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
       const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
@@ -154,9 +154,8 @@ describe('design review preparation', () => {
       fs.writeFileSync(design, validDesign);
       const result = prepareDesignReview({ action: 'prepare', artifactPath: design, slug: 'platform', requirement: 'other' }, { repoRoot: root });
       try {
-        assert.notEqual(result.decision, 'legacy-design-coverage');
         assert.equal(result.status, 'ready');
-        assert.equal(result.freshness.status, 'legacy');
+        assert.equal(result.freshness.status, 'untracked');
       } finally {
         for (const cleanup of result.cleanupPaths ?? []) fs.rmSync(cleanup, { recursive: true, force: true });
         if (result.invocationContext) fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });

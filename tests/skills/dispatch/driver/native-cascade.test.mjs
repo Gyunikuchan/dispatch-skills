@@ -1,4 +1,4 @@
-// SC1, SC2 (v0.5.0 native-fallback model cascade): the driver owns a per-model native cascade for a
+// SC1, SC2 (native-fallback model cascade): the driver owns a per-model native cascade for a
 // failed read target's own candidate `model` array, and the launch step names a one-shot `--slots`
 // check instead of a host timer.
 import assert from 'node:assert/strict';

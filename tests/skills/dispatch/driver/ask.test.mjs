@@ -1,4 +1,4 @@
-// SC4 (v0.5.0 native-fallback model cascade): `ask` routes through the driver's own verb —
+// SC4 (native-fallback model cascade): `ask` routes through the driver's own verb —
 // `--run ask` emits `launch`, a wave failure hops to native-fallback, and completion emits `done`
 // carrying the collected claims. The direct runner path is retired from the SKILL.md contract.
 import assert from 'node:assert/strict';

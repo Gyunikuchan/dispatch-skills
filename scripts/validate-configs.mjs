@@ -19,8 +19,6 @@ import {
   getConfigCandidates,
 } from '../skills/dispatch/scripts/common.mjs';
 import {
-  detectLegacyConfig,
-  formatLegacyDiagnostic,
   validateConfig as validateDispatchConfig,
 } from '../skills/dispatch/scripts/config.mjs';
 import { resolveOpencodeConfigSources } from '../skills/dispatch/scripts/opencode-run.mjs';
@@ -32,7 +30,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * Returns only those files that actually exist on disk.
  *
  * @param {string} [projectRoot=PROJECT_ROOT]
- * @returns {Array<{ path: string, type: 'dispatch' | 'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc' }>}
+ * @returns {Array<{ path: string, type: 'dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc' }>}
  */
 export function findConfigFiles(projectRoot = PROJECT_ROOT) {
   const found = [];
@@ -67,19 +65,6 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
       addIfFound(candidate, 'dispatch');
     }
     addIfFound(path.join(skillRoot, 'config.sample.jsonc'), 'dispatch');
-  }
-
-  // 1b. Retired v0.4 implement-dispatch configs: any found is reported invalid, since the dispatch
-  // loader rejects every run while one sits beside it.
-  const implementDispatchRoots = [
-    path.join(projectRoot, 'skills', 'implement-dispatch'),
-    path.join(projectRoot, '.agents', 'skills', 'implement-dispatch'),
-    path.join(projectRoot, '.claude', 'skills', 'implement-dispatch'),
-  ];
-  for (const skillRoot of implementDispatchRoots) {
-    for (const candidate of getConfigCandidates({ skillRoot })) {
-      addIfFound(candidate, 'implement-dispatch');
-    }
   }
 
   // 2. OpenCode configs
@@ -122,7 +107,7 @@ export function findConfigFiles(projectRoot = PROJECT_ROOT) {
  * Validates a single configuration file based on its type.
  *
  * @param {string} filePath
- * @param {'dispatch' | 'implement-dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} type
+ * @param {'dispatch' | 'opencode' | 'skill-hashes' | 'skills-lock' | 'jsonc'} type
  * @returns {{ valid: boolean, problems: string[] }}
  */
 export function validateConfigFile(filePath, type = 'jsonc') {
@@ -148,13 +133,7 @@ export function validateConfigFile(filePath, type = 'jsonc') {
 
   switch (type) {
     case 'dispatch': {
-      // A v0.4 config gets the key-map diagnostic alone rather than a list of unknown keys.
-      const legacy = detectLegacyConfig(parsed);
-      problems.push(...(legacy ? [legacy.message] : validateDispatchConfig(parsed)));
-      break;
-    }
-    case 'implement-dispatch': {
-      problems.push(formatLegacyDiagnostic([`retired implement-dispatch config: ${filePath}`]));
+      problems.push(...validateDispatchConfig(parsed));
       break;
     }
     case 'opencode': {
@@ -229,12 +208,9 @@ export function validateAllConfigs(options = {}) {
       const absPath = path.resolve(projectRoot, filePath);
       const normalized = filePath.replace(/\\/g, '/');
       let type = 'jsonc';
-      if (normalized.includes('implement-dispatch')) {
-        type = 'implement-dispatch';
-      } else if (normalized.includes('dispatch/config')) {
-        // Checked before the generic 'opencode' substring match below and after
-        // 'implement-dispatch' above, since "skills/dispatch/config*.jsonc" would
-        // otherwise fall through unclassified.
+      if (/(^|\/)dispatch\/config/.test(normalized)) {
+        // Checked before the generic 'opencode' substring match below, since
+        // "skills/dispatch/config*.jsonc" would otherwise fall through unclassified.
         type = 'dispatch';
       } else if (normalized.includes('opencode')) {
         type = 'opencode';

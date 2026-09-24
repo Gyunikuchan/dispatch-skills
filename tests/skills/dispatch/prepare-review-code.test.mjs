@@ -259,14 +259,13 @@ describe('code review preparation', () => {
     assert.equal(fs.existsSync(path.join(repo, manifest.artifact.canonicalPath)), false);
   });
 
-  it('reviews an existing metadata-less walkthrough without a legacy coverage decision', () => {
+  it('reviews an existing metadata-less walkthrough', () => {
     const repo = makeRepo();
     const dir = path.join(repo, '.scratch', 'plan');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, '2026-09-17-feature-walkthrough.md'), '# Walkthrough — Old\n');
     const manifest = prepareCodeReview({ summary: 'New work' }, { repoRoot: repo });
     try {
-      assert.notEqual(manifest.decision, 'legacy-walkthrough-coverage');
       assert.equal('choices' in manifest, false);
       assert.ok(manifest.status === 'ready' || manifest.decision === 'walkthrough-inputs', JSON.stringify(manifest));
     } finally {
@@ -274,7 +273,7 @@ describe('code review preparation', () => {
     }
   });
 
-  it('rejects legacy decision and artifactOwned request fields as unsupported', () => {
+  it('rejects unsupported request fields', () => {
     const repo = makeRepo();
     assert.throws(() => prepareCodeReview({ slug: 'feature', decision: 'overwrite' }, { repoRoot: repo }), /unsupported field "decision"/);
     assert.throws(() => prepareCodeReview({ slug: 'feature', ['artifact' + 'Owned']: true }, { repoRoot: repo }), /unsupported field "artifactOwned"/);

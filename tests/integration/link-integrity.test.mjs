@@ -56,7 +56,7 @@ describe("link integrity guard (authored markdown)", () => {
   });
 });
 
-describe("v0.5 alias documentation links", () => {
+describe("alias documentation links", () => {
   it("root catalog links every alias manual and each alias manual names dispatch", () => {
     const rootReadme = readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
     const routes = {
@@ -72,26 +72,5 @@ describe("v0.5 alias documentation links", () => {
         route,
       );
     }
-  });
-});
-
-describe("retired reference names (v0.5 I02)", () => {
-  it("no authored markdown or docs still names alignment.md or walkthrough-contract.md", () => {
-    const files = [
-      ...SCAN_FILES,
-      ...walkMarkdown(path.join(REPO_ROOT, "docs")),
-    ].filter((f) => existsSync(f));
-    const offenders = files.flatMap((file) =>
-      readFileSync(file, "utf8")
-        .split("\n")
-        .flatMap((line, index) =>
-          /\balignment\.md\b|\bwalkthrough-contract\.md\b/.test(line)
-            ? [
-                `${path.relative(REPO_ROOT, file).split(path.sep).join("/")}:L${index + 1}`,
-              ]
-            : [],
-        ),
-    );
-    assert.deepEqual(offenders, []);
   });
 });

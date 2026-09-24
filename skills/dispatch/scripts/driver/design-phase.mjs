@@ -92,7 +92,7 @@ export function resumeDesignPath(state) {
   state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot });
   const resumed = resumeDesign({ ledgerPath: state.ledgerPath, planPath: relative(state, state.designPath), planSource: designSource, repoRoot: state.repoRoot });
   if (resumed.status !== 'resumable') {
-    // Legacy reconstruction is eligible only when a valid ledger already proves an approved design stop.
+    // Increment selection is eligible only when a valid ledger already proves an approved design stop.
     const read = readLedger(state.ledgerPath);
     if (read.status !== 'ok') return refuse(state, resumed.diagnostic ?? read.diagnostic);
     const events = read.events.filter(event => event.v === 2);

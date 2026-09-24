@@ -98,7 +98,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  *   pinned provider. Zero-based; incompatible with model/effort overrides and `noConfig`.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
- * @property {object} [config] Injected v0.5 config object (bypasses loading config from disk).
+ * @property {object} [config] Injected config object (bypasses loading config from disk).
  * @property {string} [configPath] Display path for the injected config.
  * @property {string} [level] Level at which `read-delegates` resolve (default `medium`).
  */
@@ -357,7 +357,7 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
  *
  * @param {{ targets: object[], reserves: object[] }} batch
  * @param {object} options dispatchTask options plus `level` and optional `onSlot`
- * @param {object} config v0.5 dispatch config (each slot calls dispatchTask with it)
+ * @param {object} config dispatch config (each slot calls dispatchTask with it)
  * @returns {Promise<{ targets: object[], failures: object[], logDir: string|null, complete: boolean }>}
  */
 export async function dispatchBatch(batch, options, config) {
@@ -509,7 +509,7 @@ const PROVIDER_CORRECTIVE_COMMANDS = {
  * phases resolved with probe results as liveness, and write subagents (the orchestrator's entry
  * when given, else every entry). Orchestrator detection is the caller's job.
  *
- * @param {object} config validated v0.5 config
+ * @param {object} config validated config
  * @param {string} configPath
  * @param {{ level?: string, levelSource?: string, orchestrator?: string|null, orchestratorModel?: string|null }} [options]
  */
@@ -910,12 +910,12 @@ function nativeFallbackGuidance({ hostPlatform = null, failedPlatforms = [], pro
   return lines.join('\n');
 }
 
-/** Loads the dispatch config; a v0.4 config throws the key-map diagnostic. */
+/** Loads the dispatch config. */
 function loadDispatchConfig() {
   return loadConfigFile({ skillRoot: SKILL_DIR });
 }
 
-/** Throws `INVALID_DISPATCH_CONFIG` listing every v0.5 schema problem. */
+/** Throws `INVALID_DISPATCH_CONFIG` listing every schema problem. */
 function assertValidConfig(config, configPath) {
   const problems = validateConfig(config);
   if (problems.length === 0) return;
@@ -1528,7 +1528,7 @@ export function resolveConfiguredTargets(config, orchestrator = null, orchestrat
  * @param {string|null} [params.explicitProvider]
  * @param {string|null} [params.orchestrator]
  * @param {boolean} [params.noConfig] Skip config entirely; only valid alongside `explicitProvider`.
- * @param {object|null} [params.config] Pre-loaded v0.5 dispatch config; loaded fresh when omitted
+ * @param {object|null} [params.config] Pre-loaded dispatch config; loaded fresh when omitted
  *   (and `noConfig` is false) so direct callers/tests need not load it themselves.
  * @param {string|null} [params.configPath] Path `config` was loaded from, for error messages.
  * @param {Set<Provider>|null} [params.allowedProviders] Restrict providers before probing.

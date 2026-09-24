@@ -47,7 +47,7 @@ user aliases ──> dispatch ──> provider CLIs (read-only)
                        └────> native write subagent (approval-gated)
 ```
 
-The driver emits one versioned JSON action at a time. It owns phase order, preparation, rounds, consensus, ledgers, checkpoints, and recovery; the host verifies findings and executes actions. See [v0.5.0 release notes](docs/v0.5.0-release-notes.md) for breaking config migration.
+The driver emits one versioned JSON action at a time. It owns phase order, preparation, rounds, consensus, ledgers, checkpoints, and recovery; the host verifies findings and executes actions.
 
 ## License
 

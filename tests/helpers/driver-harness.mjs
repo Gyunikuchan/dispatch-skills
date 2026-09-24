@@ -1,5 +1,5 @@
 /**
- * Test support for the v0.5 script driver (`dispatch.mjs --run` / `--next`).
+ * Test support for the script driver (`dispatch.mjs --run` / `--next`).
  *
  * A scripted agent drives a stub-runner copy of the dispatch skill (see stub-dispatch.mjs)
  * over a throwaway Git repository. It records every argv it issues (AC1): driver calls, each

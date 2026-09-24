@@ -101,7 +101,7 @@ describe('plan review preparation', () => {
     assert.deepEqual(manifest.cleanupPaths, []);
     assert.equal('promptPath' in manifest, false);
     assert.equal('dispatch' in manifest, false);
-    assert.equal(manifest.freshness.status, 'legacy');
+    assert.equal(manifest.freshness.status, 'untracked');
     assert.ok(manifest.defects.some(({ rule }) => rule === 'proposed-changes'));
   });
 
@@ -161,18 +161,18 @@ describe('plan review preparation', () => {
     }
   });
 
-  it('reviews a metadata-less existing plan as-is without a legacy coverage decision', () => {
+  it('reviews a metadata-less existing plan as-is', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-legacy.md');
-    fs.writeFileSync(plan, '# Legacy\n');
-    const manifest = preparePlanReview({ slug: 'legacy', requirement: 'Use the existing plan' }, { repoRoot: repo });
+    const plan = path.join(repo, '.scratch/plan/2026-09-17-existing.md');
+    fs.writeFileSync(plan, '# Existing\n');
+    const manifest = preparePlanReview({ slug: 'existing', requirement: 'Use the existing plan' }, { repoRoot: repo });
     assert.equal(manifest.status, 'decision-required');
     assert.equal(manifest.decision, 'plan-lint');
     assert.equal('choices' in manifest, false);
-    assert.equal(manifest.freshness.status, 'legacy');
+    assert.equal(manifest.freshness.status, 'untracked');
   });
 
-  it('rejects legacy decision and artifactOwned request fields as unsupported', () => {
+  it('rejects unsupported request fields', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
@@ -183,11 +183,11 @@ describe('plan review preparation', () => {
   it('includes every lint warning in full and rebuttal prompt scope', () => {
     const repo = makeRepo();
     const plan = path.join(repo, '.scratch/plan/2026-09-17-warning.md');
-    const legacy = planBody
+    const warned = planBody
       .replace(/## Success Criteria[\s\S]*?(?=## Proposed Changes)/, '')
       .replace('- `node --test tests/sample.test.mjs`', '- None: no compatible runner')
       .replace('- First.', '- First. TBD');
-    fs.writeFileSync(plan, legacy);
+    fs.writeFileSync(plan, warned);
     const packet = path.join(repo, 'findings.json');
     fs.writeFileSync(packet, '{}');
 
@@ -230,7 +230,7 @@ describe('plan review preparation', () => {
     }, { repoRoot: repo });
     try {
       assert.equal(manifest.status, 'ready');
-      assert.equal(manifest.freshness.status, 'legacy');
+      assert.equal(manifest.freshness.status, 'untracked');
       assert.ok(Array.isArray(manifest.dispatch.argv));
       assert.ok(manifest.dispatch.argv.includes('--batch-file'));
       assert.equal(manifest.roundId, 'plan-review:R1');
@@ -529,7 +529,7 @@ describe('plan review preparation', () => {
     }, { repoRoot: repo });
     try {
       assert.equal(manifest.status, 'ready');
-      assert.equal(manifest.freshness.status, 'legacy');
+      assert.equal(manifest.freshness.status, 'untracked');
     } finally {
       cleanManifest(manifest);
     }

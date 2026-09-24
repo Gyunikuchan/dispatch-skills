@@ -70,14 +70,14 @@ describe('rebuttal packet builder', () => {
     assert.equal(Object.hasOwn(packets[0].packet, 'source'), false);
   });
 
-  it('rejects non-enriched legacy bullets instead of synthesizing legacy keys', () => {
-    const legacy = [
+  it('rejects non-enriched bullets', () => {
+    const bare = [
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 3 — Claude and Copilot, 2026-09-17',
       '- **[Disputed]** § A — intent: x → y',
     ].join('\n');
-    assert.throws(() => buildRebuttalPackets(legacy, { findings: [] }));
+    assert.throws(() => buildRebuttalPackets(bare, { findings: [] }));
   });
 
   it('rejects incomplete or unknown context keys', () => {

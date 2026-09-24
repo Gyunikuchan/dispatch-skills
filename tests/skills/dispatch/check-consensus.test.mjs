@@ -210,9 +210,8 @@ describe('check-consensus CLI', () => {
       }],
     });
 
-    const legacy = runOn(doc('- **[Disputed]** § A — tag: x → y'), ['--json']);
-    assert.equal(legacy.status, 2, 'non-enriched bullets are rejected by the strict gate');
-    assert.doesNotMatch(legacy.stdout, /ACTIONABLE/);
+    const bare = runOn(doc('- **[Disputed]** § A — tag: x → y'), ['--json']);
+    assert.equal(bare.status, 2, 'non-enriched bullets are rejected by the strict gate');
   });
 
   it('uses exit 2 for malformed enriched state in JSON mode', () => {

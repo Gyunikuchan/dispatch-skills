@@ -2,7 +2,7 @@
 
 - **Status**: Accepted; implemented in v0.5.0
 - **Date**: 2026-09-24
-- **Specification**: `.scratch/plan/2026-09-22-strict-config-format-design.md` (supersedes the v0.5
+- **Specification**: `.scratch/plan/2026-09-22-strict-config-format-design.md` (supersedes the
   streamline design's `R1 — Unified config` candidate shapes)
 
 ## Context
@@ -57,14 +57,14 @@ Adopt one strict, intentionally breaking config contract. The root keeps exactly
 7. **Write subagents** are a bare level map: no `targets`, no `sandbox`.
 8. **CLI `--model`/`--effort` overrides** keep working, including `--effort` on a level that omits
    effort.
-9. **No migration path**: legacy shapes fail validation with generic, exhaustive schema errors that
+9. **No migration path**: other shapes fail validation with generic, exhaustive schema errors that
    point to `config.sample.jsonc`.
 
 ## Rationale
 
 | Decision | Rationale |
 |---|---|
-| Break legacy shapes immediately. | The goal is a tight contract, not support for forms the active config does not use. |
+| Reject other shapes outright. | The goal is a tight contract, not support for forms the active config does not use. |
 | One wrapper for every read provider. | Gives sandbox a single home and removes array-versus-object semantic branches. |
 | Name the array `targets`; positional identity. | Elements are independent dispatch units; config order already provides stable identity, so names would be unused schema. |
 | Optional `effort`. | Some models reject effort options; requiring it would make them unconfigurable, and a placeholder value would be sent to the CLI. |

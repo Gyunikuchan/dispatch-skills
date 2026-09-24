@@ -69,7 +69,7 @@ export async function run${suffix}(options = {}) {
  * Builds the fixture. The integrity manifest is removed (the stubs would otherwise fail it), so a
  * spawned run only warns about the missing manifest.
  *
- * @param {object} config v0.5 dispatch config written as `config.jsonc`.
+ * @param {object} config dispatch config written as `config.jsonc`.
  * @returns {{ dir: string, skillDir: string, script: string, cleanup: () => void }}
  */
 export function buildStubDispatchFixture(config) {

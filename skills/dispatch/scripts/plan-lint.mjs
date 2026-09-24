@@ -77,7 +77,7 @@ export function lintPlan(source) {
   }
 
   if (criteria.length === 0) {
-    warnings.push(diagnostic('missing-success-criteria', null, 'Legacy plan has no Success Criteria section.', 'warning'));
+    warnings.push(diagnostic('missing-success-criteria', null, 'Plan has no Success Criteria section.', 'warning'));
   } else if (criteria.length > 1) {
     defects.push(diagnostic('success-criteria', null, 'Expected at most one Success Criteria section.'));
   }

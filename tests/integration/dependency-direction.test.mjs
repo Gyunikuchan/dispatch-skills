@@ -26,7 +26,7 @@ function files(dir) {
     .filter((f) => /\.(?:md|mjs|jsonc?)$/.test(f));
 }
 
-describe("v0.5 dependency direction", () => {
+describe("dependency direction", () => {
   it("aliases point to dispatch and no other companion", () => {
     for (const name of aliases) {
       const text = read(`skills/${name}/SKILL.md`);
@@ -43,29 +43,19 @@ describe("v0.5 dependency direction", () => {
           assert.doesNotMatch(text, new RegExp(`\\b${other}\\b`));
     }
   });
-  it("dispatch points to no alias except the marked legacy config probe", () => {
+  it("dispatch points to no alias", () => {
     const offenders = [];
     for (const file of files(path.join(root, "skills/dispatch"))) {
       const lines = fs.readFileSync(file, "utf8").split("\n");
       lines.forEach((line, i) => {
         for (const alias of aliases) {
           if (!line.includes(alias)) continue;
-          if (
-            alias === "implement-dispatch" &&
-            line.includes("v0.4 config probe")
-          )
-            continue;
           offenders.push(`${path.relative(root, file)}:${i + 1}`);
         }
       });
     }
     assert.deepEqual(offenders, []);
   });
-  it("legacy config probe remains explicit", () =>
-    assert.match(
-      read("skills/dispatch/scripts/config.mjs"),
-      /v0\.4 config probe.*implement-dispatch|implement-dispatch.*v0\.4 config probe/,
-    ));
   it("shipped markdown avoids host-specific install paths", () => {
     const offenders = files(path.join(root, "skills"))
       .filter((f) => f.endsWith(".md"))

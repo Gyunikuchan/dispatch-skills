@@ -83,17 +83,16 @@ describe('validate-configs', () => {
       }
     });
 
-    it('discovers newly added config files in skills/implement-dispatch or project root', () => {
+    it('discovers newly added config files in skills/dispatch or project root', () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-find-'));
       try {
-        const implDir = path.join(tempDir, 'skills', 'implement-dispatch', 'scripts');
-        mkdirSync(implDir, { recursive: true });
-        writeFileSync(path.join(tempDir, 'skills', 'implement-dispatch', 'config.local.jsonc'), '{}', 'utf8');
+        mkdirSync(path.join(tempDir, 'skills', 'dispatch'), { recursive: true });
+        writeFileSync(path.join(tempDir, 'skills', 'dispatch', 'config.local.jsonc'), '{}', 'utf8');
         writeFileSync(path.join(tempDir, 'opencode.jsonc'), '{}', 'utf8');
 
         const found = findConfigFiles(tempDir);
         const relPaths = found.map(f => path.relative(tempDir, f.path).replace(/\\/g, '/'));
-        assert.ok(relPaths.includes('skills/implement-dispatch/config.local.jsonc'));
+        assert.ok(relPaths.includes('skills/dispatch/config.local.jsonc'));
         assert.ok(relPaths.includes('opencode.jsonc'));
       } finally {
         rmSync(tempDir, { recursive: true, force: true });
@@ -116,34 +115,19 @@ describe('validate-configs', () => {
       }
     });
 
-    it('discovers the shipped config samples and no retired config.default.jsonc', () => {
+    it('discovers the shipped config sample', () => {
       const found = findConfigFiles(PROJECT_ROOT);
       const match = found.find(
         f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/dispatch/config.sample.jsonc'
       );
       assert.ok(match, 'expected skills/dispatch/config.sample.jsonc to be discovered');
       assert.equal(match.type, 'dispatch');
-      assert.equal(
-        found.some(f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/implement-dispatch/config.sample.jsonc'),
-        false,
-        'the retired implement config sample is gone',
-      );
-      assert.equal(
-        found.some(f => path.relative(PROJECT_ROOT, f.path).replace(/\\/g, '/') === 'skills/implement-dispatch/skill-hashes.json'),
-        false,
-        'skill-hash discovery drops implement-dispatch',
-      );
-      assert.equal(
-        found.some(f => f.path.replace(/\\/g, '/').endsWith('config.default.jsonc')),
-        false,
-        'the retired config.default.jsonc name must not be discovered',
-      );
     });
   });
 
   describe('validateConfigFile', () => {
     it('reports missing file', () => {
-      const res = validateConfigFile('/path/that/does/not/exist.jsonc', 'implement-dispatch');
+      const res = validateConfigFile('/path/that/does/not/exist.jsonc', 'jsonc');
       assert.equal(res.valid, false);
       assert.match(res.problems[0], /File not found/);
     });
@@ -153,7 +137,7 @@ describe('validate-configs', () => {
       try {
         const badFile = path.join(tempDir, 'bad.jsonc');
         writeFileSync(badFile, '{ "broken": /* unterminated comment', 'utf8');
-        const res = validateConfigFile(badFile, 'implement-dispatch');
+        const res = validateConfigFile(badFile, 'jsonc');
         assert.equal(res.valid, false);
         assert.match(res.problems[0], /Syntax error/);
       } finally {
@@ -175,7 +159,7 @@ describe('validate-configs', () => {
         }
       });
 
-      it('accepts a v0.5 ask-only config', () => {
+      it('accepts an ask-only config', () => {
         const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-dispatch-'));
         try {
           const file = path.join(tempDir, 'config.jsonc');
@@ -188,14 +172,14 @@ describe('validate-configs', () => {
         }
       });
 
-      it('rejects a v0.4 dispatch config (top-level platforms) with the key-map diagnostic', () => {
+      it('rejects an unrecognized top-level key', () => {
         const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-dispatch-'));
         try {
           const file = path.join(tempDir, 'config.jsonc');
           writeFileSync(file, JSON.stringify({ platforms: { claude: {} } }), 'utf8');
           const res = validateConfigFile(file, 'dispatch');
           assert.equal(res.valid, false);
-          assert.match(res.problems.join(' '), /maxRounds\s*(→|->)\s*rounds/);
+          assert.match(res.problems.join(' '), /Unrecognized top-level key "platforms"/);
         } finally {
           rmSync(tempDir, { recursive: true, force: true });
         }
@@ -206,38 +190,6 @@ describe('validate-configs', () => {
         const res = validateConfigFile(validPath, 'dispatch');
         assert.equal(res.valid, true);
         assert.deepEqual(res.problems, []);
-      });
-    });
-
-    describe('retired implement-dispatch configs', () => {
-      it('reports any implement-dispatch config as v0.4 with the key-map diagnostic', () => {
-        const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-impl-'));
-        try {
-          const file = path.join(tempDir, 'config.jsonc');
-          writeFileSync(file, JSON.stringify({ 'plan-review': {}, implementation: {}, 'code-review': {} }), 'utf8');
-          const res = validateConfigFile(file, 'implement-dispatch');
-          assert.equal(res.valid, false);
-          const text = res.problems.join(' ');
-          assert.match(text, /targetCount\s*(→|->)\s*targets/);
-          assert.match(text, /implementation\s*(→|->)\s*write-subagents/);
-        } finally {
-          rmSync(tempDir, { recursive: true, force: true });
-        }
-      });
-
-      it('flags a workspace whose skills/implement-dispatch still carries a config', () => {
-        const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-impl-ws-'));
-        try {
-          mkdirSync(path.join(tempDir, 'skills', 'implement-dispatch'), { recursive: true });
-          writeFileSync(path.join(tempDir, 'skills', 'implement-dispatch', 'config.jsonc'), '{}', 'utf8');
-          const { valid, results } = validateAllConfigs({ projectRoot: tempDir });
-          assert.equal(valid, false);
-          const impl = results.find(r => r.relativePath.replace(/\\/g, '/') === 'skills/implement-dispatch/config.jsonc');
-          assert.ok(impl, 'the retired config is discovered');
-          assert.equal(impl.valid, false);
-        } finally {
-          rmSync(tempDir, { recursive: true, force: true });
-        }
       });
     });
 
@@ -338,9 +290,8 @@ describe('validate-configs', () => {
     it('returns 1 when encountering an invalid config file', () => {
       const tempDir = mkdtempSync(path.join(os.tmpdir(), 'val-conf-cli-'));
       try {
-        const implDir = path.join(tempDir, 'skills', 'implement-dispatch', 'scripts');
-        mkdirSync(implDir, { recursive: true });
-        writeFileSync(path.join(tempDir, 'skills', 'implement-dispatch', 'config.local.jsonc'), '{ invalid json', 'utf8');
+        mkdirSync(path.join(tempDir, 'skills', 'dispatch'), { recursive: true });
+        writeFileSync(path.join(tempDir, 'skills', 'dispatch', 'config.local.jsonc'), '{ invalid json', 'utf8');
 
         const code = runCli(['--project-root', tempDir, '--quiet']);
         assert.equal(code, 1);

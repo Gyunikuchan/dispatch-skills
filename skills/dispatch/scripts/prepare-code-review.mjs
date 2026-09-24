@@ -485,7 +485,7 @@ export function prepareCodeReview(request, {
     ? changedKeys(priorState.snapshot.git.pathHashes, gitSnapshot.pathHashes)
     : changedPaths;
   const freshness = {
-    status: !persisted ? 'legacy' : contentChanged || gitChanged ? 'changed' : 'current',
+    status: !persisted ? 'untracked' : contentChanged || gitChanged ? 'changed' : 'current',
     changedPaths,
     bodyOnly: contentChanged && !gitChanged && changedPaths.length === 0,
   };

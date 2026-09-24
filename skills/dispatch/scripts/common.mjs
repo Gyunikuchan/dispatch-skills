@@ -518,16 +518,9 @@ export const COMMON_VALUE_FLAGS = new Set([
   '--max-buffer', '--orchestrator', '--orchestrator-model', '--provider', '--candidate-index',
 ]);
 
-// Removed modes (write, interactive, watch-terminal) stay accepted silently so old invocations don't break.
-export const LEGACY_SILENT_FLAGS = new Set([
-  '--allow-write', '--write', '--read-only', '-i', '--interactive', '-w', '--watch',
-  '--watch-terminal', '--headless', '--no-watch', '--no-terminal',
-]);
-
 // Common flags every runner's `--help` must name. Not all of COMMON_VALUE_FLAGS belongs here:
 // `--orchestrator` / `--provider` are dispatch.mjs's cascade controls and mean nothing to a runner
-// invoked directly, `-a`/`--agent` is opencode-only, and LEGACY_SILENT_FLAGS are accepted precisely
-// so old invocations keep working — documenting them would advertise what we removed. Additions to
+// invoked directly, and `-a`/`--agent` is opencode-only. Additions to
 // COMMON_VALUE_FLAGS must land in this list or in RUNNER_IRRELEVANT_COMMON_FLAGS; the flag-parity
 // test fails on a flag that is in neither.
 export const DOCUMENTED_COMMON_FLAGS = [
@@ -653,8 +646,6 @@ export function parseCommonArgs(argv, { booleanFlags = [], valueFlags = [] } = {
       i++;
     } else if (arg === '-h' || arg === '--help') {
       options.help = true;
-    } else if (LEGACY_SILENT_FLAGS.has(arg)) {
-      // Accepted silently for backward compatibility (see LEGACY_SILENT_FLAGS).
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '-v' || arg === '--verbose') {
@@ -1312,8 +1303,6 @@ export function getArgvByteLimit() {
  * preventing TOCTOU races on shared systems.
  */
 export function createBriefFile(prompt, providerName) {
-  sweepStaleBriefDirs();
-
   const briefDir = sessionTempDir(`dispatch-brief-${providerName}-`);
 
   const briefFile = path.join(briefDir, 'brief.md');
@@ -1334,8 +1323,8 @@ export function createBriefFile(prompt, providerName) {
  *
  * Security: refuses anything that isn't demonstrably one of our own brief directories —
  * absolute path, `dispatch-brief-` basename, a real (non-symlink) directory whose realpath's
- * parent is a session directory (or, for legacy briefs, the OS temp dir) — so a crafted or symlinked path can never cause
- * deletion outside temp. Best-effort: errors are swallowed because on Windows a lingering
+ * parent is a session directory — so a crafted or symlinked path can never cause deletion
+ * outside temp. Best-effort: errors are swallowed because on Windows a lingering
  * delegate process may still hold the file open.
  *
  * @param {string|null|undefined} briefFile Absolute path to `.../dispatch-brief-<provider>-XXXX/brief.md`.
@@ -1352,8 +1341,7 @@ export function removeBriefFile(briefFile) {
 
     const realDir = fs.realpathSync(dir);
     const realParent = fs.realpathSync(path.dirname(realDir));
-    // Session briefs live in a session directory; legacy briefs sat directly in OS temp.
-    if (!isSessionDir(realParent) && realParent !== fs.realpathSync(os.tmpdir())) return;
+    if (!isSessionDir(realParent)) return;
 
     // NOTE: retries ride out transient Windows AV/indexer locks (EBUSY/EPERM) on the fresh brief.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -1362,34 +1350,6 @@ export function removeBriefFile(briefFile) {
   }
 }
 
-/**
- * Stale-sweep backstop: removes `dispatch-brief-*` directories older than `maxAgeMs`, covering
- * crashed/killed runners whose `finally` never ran. Called from `createBriefFile` before each
- * new brief is written. Age-gated so directories from concurrent in-flight runs are never touched.
- *
- * @param {{ maxAgeMs?: number, now?: number }} [opts]
- */
-export function sweepStaleBriefDirs({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
-  let entries;
-  try {
-    entries = fs.readdirSync(os.tmpdir());
-  } catch {
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.startsWith('dispatch-brief-')) continue;
-    const dir = path.join(os.tmpdir(), entry);
-    try {
-      const stat = fs.lstatSync(dir);
-      if (!stat.isDirectory()) continue;
-      if (now - stat.mtimeMs < maxAgeMs) continue;
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Per-entry errors (permission, already removed, race) are swallowed and skipped.
-    }
-  }
-}
 
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;

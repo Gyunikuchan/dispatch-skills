@@ -40,7 +40,7 @@ const WRITE_SUBAGENTS = {
   copilot: { low: { model: 'gpt-5.6-luna', effort: 'max' } },
 };
 
-/** v0.5 config: design-review is deliberately absent, so it resolves as disabled. */
+/** Config: design-review is deliberately absent, so it resolves as disabled. */
 const BASE_CONFIG = {
   'read-delegates': READ_DELEGATES,
   'write-subagents': WRITE_SUBAGENTS,
@@ -183,12 +183,11 @@ describe('resolveFlow', () => {
   });
 
   describe('output shape', () => {
-    it('emits rounds, never the v0.4 maxRounds key, for every review phase', () => {
+    it('emits rounds for every review phase', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
       for (const phase of ['plan-review', 'design-review', 'code-review']) {
         assert.ok(out[phase], `${phase} section present`);
         assert.equal(typeof out[phase].rounds, 'number', `${phase}.rounds`);
-        assert.equal(out[phase].maxRounds, undefined, `${phase}.maxRounds`);
       }
     });
   });

@@ -352,7 +352,7 @@ function prepareDocumentReview(entry, request, {
       status: 'decision-required',
       decision: entry.lintDecision,
       artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
-      freshness: { status: persisted ? 'changed' : 'legacy', changedSections: [] },
+      freshness: { status: persisted ? 'changed' : 'untracked', changedSections: [] },
       defects: lint.defects,
       cleanupPaths: [],
     };
@@ -365,7 +365,7 @@ function prepareDocumentReview(entry, request, {
     ? changedKeys(priorSnapshot.sectionHashes, snapshot.sectionHashes)
     : changedSections;
   const freshness = {
-    status: !persisted ? 'legacy' : changedSections.length || persisted.contentHash !== snapshot.contentHash ? 'changed' : 'current',
+    status: !persisted ? 'untracked' : changedSections.length || persisted.contentHash !== snapshot.contentHash ? 'changed' : 'current',
     changedSections,
   };
   const scan = scanResolutionLog(artifact.source, { strict: true });

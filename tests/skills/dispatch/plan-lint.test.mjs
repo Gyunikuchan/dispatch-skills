@@ -136,10 +136,10 @@ describe('deterministic plan lint', () => {
   });
 
   it('does not mistake Changes bullets in action blocks for success criteria', () => {
-    const legacy = clean
+    const noCriteria = clean
       .replace(/## Success Criteria[\s\S]*?(?=## Proposed Changes)/, '')
       .replace('#### [MODIFY] src/a.js', '#### [MODIFY] src/a.js\n- Changes: missing.js');
-    const result = lintPlan(legacy);
+    const result = lintPlan(noCriteria);
     assert.deepEqual(result.defects, []);
     assert.ok(result.warnings.some(({ rule }) => rule === 'missing-success-criteria'));
   });

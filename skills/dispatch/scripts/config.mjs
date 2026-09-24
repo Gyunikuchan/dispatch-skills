@@ -1,5 +1,5 @@
 /**
- * Unified dispatch config: schema validation, v0.4 rejection, and level resolution.
+ * Unified dispatch config: schema validation and level resolution.
  *
  * One config (`config.local.jsonc`, else `config.jsonc`) holds three tables:
  * - `read-delegates`  provider → `{ sandbox?, targets: [levelMap, ...] }` (required)
@@ -8,11 +8,8 @@
  *
  * A level map maps levels to `{ model, effort? }`. Every level-keyed value resolves the same way:
  * exact → nearest lower → lowest higher, with no field inheritance across levels.
- * Pure except `detectLegacyConfig`/`loadDispatchConfig`, which probe the filesystem.
+ * Pure except `loadDispatchConfig`, which reads the filesystem.
  */
-
-import fs from 'node:fs';
-import path from 'node:path';
 
 import {
   KNOWN_PROVIDERS,
@@ -31,19 +28,7 @@ export const REVIEW_PHASES = ['plan-review', 'design-review', 'code-review'];
 
 export const TABLES = ['read-delegates', 'write-subagents', 'phases'];
 const PHASE_KNOBS = ['targets', 'rounds', 'consensus'];
-const LEGACY_TOP_LEVEL_KEYS = ['platforms', 'plan-review', 'code-review', 'design-review', 'implementation'];
 const DIFF_HINT = 'diff against config.sample.jsonc';
-
-export const LEGACY_CONFIG_CODE = 'LEGACY_DISPATCH_CONFIG';
-
-const LEGACY_SIBLING_DIR = 'implement-dispatch'; // v0.4 config probe: retired sibling config directory
-
-/** The v0.4 → v0.5 key map; shipped text names the retired config generically. */
-const LEGACY_KEY_MAP =
-  'Key map: top-level platforms → read-delegates; per-section platforms → only (membership) plus ' +
-  'read-delegates (models); targetCount → targets; maxRounds → rounds; consensus → consensus; ' +
-  'implementation → write-subagents; the retired implement config is replaced by the phases and ' +
-  `write-subagents tables here (${DIFF_HINT}).`;
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -375,7 +360,7 @@ function validateOnly(where, only, readKeys, problems) {
 }
 
 /**
- * Validates a parsed config against the v0.5 schema, reporting every problem in one pass.
+ * Validates a parsed config against the schema, reporting every problem in one pass.
  *
  * @param {object} config
  * @returns {string[]} problem descriptions, empty when valid
@@ -387,8 +372,7 @@ export function validateConfig(config) {
   const problems = [];
   for (const key of Object.keys(config)) {
     if (TABLES.includes(key)) continue;
-    const legacy = LEGACY_TOP_LEVEL_KEYS.includes(key) ? ' (a v0.4 key; see the v0.4 key map)' : '';
-    problems.push(`Unrecognized top-level key "${key}"${legacy}. Valid tables: ${TABLES.join(', ')} (${DIFF_HINT}).`);
+    problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${DIFF_HINT}).`);
   }
 
   let readKeys = [];
@@ -412,55 +396,18 @@ export function validateConfig(config) {
 }
 
 // ============================================================================
-// SECTION: Loading and v0.4 rejection
+// SECTION: Loading
 // ============================================================================
 
 /**
- * Detects a v0.4 config: a legacy top-level key, or a retired sibling implement config on disk.
- *
- * @param {object} config
- * @param {{ skillRoot?: string }} [options]
- * @returns {null | { reasons: string[], message: string }}
- */
-export function detectLegacyConfig(config, { skillRoot } = {}) {
-  const reasons = [];
-  if (isPlainObject(config)) {
-    const legacyKeys = LEGACY_TOP_LEVEL_KEYS.filter(key => config[key] !== undefined);
-    if (legacyKeys.length > 0) reasons.push(`top-level v0.4 key(s): ${legacyKeys.join(', ')}`);
-  }
-  if (skillRoot) {
-    const siblingDir = path.join(path.dirname(path.resolve(skillRoot)), LEGACY_SIBLING_DIR);
-    for (const name of ['config.jsonc', 'config.local.jsonc']) {
-      const candidate = path.join(siblingDir, name);
-      if (fs.existsSync(candidate)) reasons.push(`the retired implement config exists: ${candidate}`);
-    }
-  }
-  if (reasons.length === 0) return null;
-  return { reasons, message: formatLegacyDiagnostic(reasons) };
-}
-
-/** The v0.4 rejection diagnostic for the given reasons, naming the key map. */
-export function formatLegacyDiagnostic(reasons) {
-  return `v0.4 dispatch config detected (${reasons.join('; ')}). v0.5 reads one dispatch config with ` +
-    `the tables ${TABLES.join(', ')}; migrate and delete the retired file(s). ${LEGACY_KEY_MAP}`;
-}
-
-/**
- * Loads the dispatch config (first of `config.local.jsonc`, `config.jsonc`), rejecting v0.4
- * configs and normalizing absent optional tables to empty maps. Schema validation is the
- * caller's job (`validateConfig`).
+ * Loads the dispatch config (first of `config.local.jsonc`, `config.jsonc`), normalizing absent optional
+ * tables to empty maps. Schema validation is the caller's job (`validateConfig`).
  *
  * @param {{ skillRoot: string }} options
  * @returns {{ config: object, path: string }}
  */
 export function loadDispatchConfig({ skillRoot } = {}) {
   const loaded = loadSkillConfig({ skillRoot });
-  const legacy = detectLegacyConfig(loaded.config, { skillRoot });
-  if (legacy) {
-    const err = new Error(`${legacy.message} (loaded ${loaded.path})`);
-    err.code = LEGACY_CONFIG_CODE;
-    throw err;
-  }
   const config = isPlainObject(loaded.config)
     ? { ...loaded.config, 'write-subagents': loaded.config['write-subagents'] ?? {}, phases: loaded.config.phases ?? {} }
     : loaded.config;

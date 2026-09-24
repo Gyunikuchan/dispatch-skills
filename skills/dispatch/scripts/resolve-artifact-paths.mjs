@@ -583,7 +583,7 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
       const source = fs.readFileSync(absolute, 'utf8');
       const metadataKind = /^---\n\{\s*"dispatch"\s*:\s*\{[\s\S]*?"kind"\s*:\s*"([^"]+)"/m.exec(source)?.[1] ?? null;
       if (!metadataKind) {
-        throw new Error(`Canonical ${kind} path is occupied by a metadata-less legacy artifact; relocate it or choose a non-colliding slug.`);
+        throw new Error(`Canonical ${kind} path is occupied by a metadata-less artifact; relocate it or choose a non-colliding slug.`);
       }
       if (metadataKind !== kind) {
         throw new Error(`Canonical ${kind} path is occupied by metadata kind "${metadataKind}"; choose a non-colliding slug.`);

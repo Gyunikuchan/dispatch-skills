@@ -236,7 +236,7 @@ export function snapshotEntries(repoRoot, paths) {
     : { ...entry, content: content.toString('base64') }));
 }
 
-/** Contents of a snapshot entry (legacy entries carry base64 `content`). */
+/** Contents of a snapshot entry (non-blob entries carry base64 `content`). */
 export function snapshotContent(repoRoot, entry) {
   if (entry.objectId) return git(repoRoot, ['cat-file', 'blob', entry.objectId]);
   return Buffer.from(entry.content ?? '', 'base64');
