@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file platform.mjs
  * @description Cross-platform process, path, and executable primitives: CLI spawning and batch escaping,
@@ -79,7 +80,7 @@ import { fileURLToPath } from 'node:url';
  * @typedef {object} CliInvocation
  * @property {string} command
  * @property {string[]} args
- * @property {object} options
+ * @property {Record<string, any>} options
  */
 
 /**
@@ -606,8 +607,7 @@ export function parseJsonc(text) {
  * Builds the 2-path config precedence list:
  * skill-root override (local, then shared).
  *
- * @param {object|string} params
- * @param {string} [params.skillRoot]
+ * @param {{ skillRoot?: string }|string} params
  * @returns {string[]}
  */
 export function getConfigCandidates(params) {
@@ -622,9 +622,8 @@ export function getConfigCandidates(params) {
  * Loads a skill config wholly from the first candidate that exists (no merging across
  * tiers), in the precedence order from {@link getConfigCandidates}.
  *
- * @param {object} params
- * @param {string} params.skillRoot
- * @returns {{ config: object, path: string }}
+ * @param {{ skillRoot?: string }} [params]
+ * @returns {{ config: Record<string, any>, path: string }}
  */
 export function loadSkillConfig({ skillRoot } = {}) {
   const candidates = getConfigCandidates({ skillRoot });

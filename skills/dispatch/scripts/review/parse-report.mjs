@@ -1,3 +1,4 @@
+// @ts-check
 import { parseRebuttalReport, parseReviewReport } from './report.mjs';
 import { reviewKind } from './kinds.mjs';
 

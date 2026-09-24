@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file integrity.mjs
  * @description Skill integrity manifest: file hashing, `skill-hashes.json` generation, and verification.

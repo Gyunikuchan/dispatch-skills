@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Driver-owned verification runner (`dispatch.mjs --verify --state <file>`). Executes the pending
  * gate's plan-approved commands on the host, one after another, capturing Git state around each,
@@ -94,6 +95,11 @@ export function runVerification(stateFile) {
   return summarize(pending, record);
 }
 
+/**
+ * @param {Record<string, any>} pending
+ * @param {Record<string, any>} record
+ * @param {{ reused?: boolean }} [extra]
+ */
 function summarize(pending, { results, generated, mutationEpoch }, extra = {}) {
   return {
     purpose: pending.purpose, resultsPath: pending.resultsPath, mutationEpoch, ...extra,

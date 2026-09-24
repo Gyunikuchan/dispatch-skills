@@ -1,3 +1,4 @@
+// @ts-check
 import path from 'node:path';
 import { evaluateConsensus } from '../review/consensus.mjs';
 import { loadDispatchConfig } from '../lib/config.mjs';

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Drive loop (`dispatch.mjs --drive --state <file> [--input <json>]`): executes the host-side actions
  * the driver fully specifies — a `launch` with no early fallbacks and every driver-run `verify` — and
@@ -55,6 +56,9 @@ function verify(action, stderr) {
 /**
  * Returns the stopping action. `advance(stateFile, input)` is the `--next` transition; with `input`
  * undefined the drive starts from the pending action instead of replying to it.
+ *
+ * @param {{ state?: string, input?: any } & Record<string, any>} options
+ * @param {{ advance: (state: string, input: any) => any, stderr: NodeJS.WritableStream }} deps
  */
 export async function drive({ state: stateFile, input }, { advance, stderr }) {
   let action;

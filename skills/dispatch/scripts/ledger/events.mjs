@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
@@ -86,6 +87,11 @@ function strings(value, label) {
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) throw new Error(`${label} must be a string array`);
 }
 
+/**
+ * @param {any} value
+ * @param {any} label
+ * @param {{ allowScratch?: boolean }} [options]
+ */
 function repositoryPath(value, label, { allowScratch = false } = {}) {
   string(value, label);
   if (!PATH_PATTERN.test(value) || value.startsWith('./') || value.includes('//')) {

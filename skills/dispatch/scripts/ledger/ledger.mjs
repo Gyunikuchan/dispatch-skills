@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -40,6 +41,10 @@ export function slugFromPlanPath(planPath) {
   return match[1];
 }
 
+/**
+ * @param {any} directory
+ * @param {{ platform?: NodeJS.Platform, uid?: any }} [options]
+ */
 function inspectDirectory(directory, { platform = process.platform, uid = process.getuid?.() } = {}) {
   const stat = fs.lstatSync(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe ledger directory: ${directory}`);
@@ -62,6 +67,7 @@ function ensurePrivateChild(parent, name, options) {
   return child;
 }
 
+/** @param {{ tempRoot?: string, repoHash?: any, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, uid?: any }} [options] */
 export function ensureLedgerNamespace({
   tempRoot = os.tmpdir(),
   repoHash,
@@ -93,6 +99,10 @@ function validateLedgerParents(ledgerPath, options = {}) {
   }
 }
 
+/**
+ * @param {any} ledgerPath
+ * @param {{ platform?: NodeJS.Platform, uid?: any }} [options]
+ */
 function inspectLedgerFile(ledgerPath, { platform = process.platform, uid = process.getuid?.() } = {}) {
   let stat;
   try { stat = fs.lstatSync(ledgerPath); } catch (error) {
@@ -192,6 +202,10 @@ function releaseLock(target) {
   fs.unlinkSync(target);
 }
 
+/**
+ * @param {any} ledgerPath
+ * @param {{ kill?: any }} [options]
+ */
 export function breakStaleLock(ledgerPath, { kill = process.kill } = {}) {
   validateLedgerParents(ledgerPath);
   const target = lockPath(ledgerPath);
@@ -302,6 +316,10 @@ export function appendEvent(ledgerPath, event) {
   }
 }
 
+/**
+ * @param {any} planSource
+ * @param {{ kind?: string }} [options]
+ */
 export function governingHash(planSource, { kind = 'plan' } = {}) {
   try {
     return {

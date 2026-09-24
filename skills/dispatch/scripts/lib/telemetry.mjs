@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ const MAX_BYTES = 1024 * 1024;
 const FILE_NAME = 'telemetry.jsonl';
 const ROTATED_NAME = 'telemetry.1.jsonl';
 
+/** @param {{ env?: NodeJS.ProcessEnv, userInfo?: any }} [options] */
 export function userSlug({ env = process.env, userInfo = () => os.userInfo() } = {}) {
   let name = env.USER || env.USERNAME || '';
   if (!name) {
@@ -16,6 +18,7 @@ export function userSlug({ env = process.env, userInfo = () => os.userInfo() } =
   return safe === '' || safe === '.' || safe === '..' ? 'unknown' : safe;
 }
 
+/** @param {{ dir?: any }} [options] */
 export function telemetryPath({ dir } = {}) {
   // Cross-session aggregate under the single dispatch temp root.
   const base = dir ?? path.join(os.tmpdir(), `dispatch-skills-${userSlug()}`, 'telemetry');
@@ -52,7 +55,11 @@ function buildRecord({ result, error, startedAt }) {
   };
 }
 
-/** Best-effort, content-free, fully silent: never writes stderr or throws. */
+/**
+ * Best-effort, content-free, fully silent: never writes stderr or throws.
+ *
+ * @param {{ result?: any, error?: any, startedAt?: any, dir?: any }} [options]
+ */
 export function appendTelemetry({ result = null, error = null, startedAt, dir } = {}) {
   try {
     if (process.env.DISPATCH_TELEMETRY === '0') return;

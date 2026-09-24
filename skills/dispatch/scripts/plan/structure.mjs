@@ -1,3 +1,4 @@
+// @ts-check
 import path from 'node:path';
 
 const ACTION_HEADING = /^####\s+\[(NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/;

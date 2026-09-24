@@ -1,3 +1,4 @@
+// @ts-check
 
 const STATUSES = new Set(['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED']);
 const STAGES = new Set(['RED_READY', 'COMPLETE']);
@@ -24,6 +25,11 @@ function requireString(value, field) {
   }
 }
 
+/**
+ * @param {any} value
+ * @param {any} field
+ * @param {{ nonEmpty?: boolean }} [options]
+ */
 function requireStringArray(value, field, { nonEmpty = false } = {}) {
   if (!Array.isArray(value) || value.some(item => typeof item !== 'string' || item.trim() === '')) {
     throw new Error(`${field} must be an array of non-empty strings`);
@@ -142,6 +148,9 @@ function retryTransition({ attempt, targetKind, escalation }) {
   return { action: 'escalate', consumesAttempt: true, target };
 }
 
+/**
+ * @param {{ terminalEnvelope?: any, launch: string, attempt: number, targetKind: string, resumable?: boolean, contextContinuationUsed?: boolean, escalation?: any, verificationResult?: any, verificationKind?: string, continuationOf?: string, concernsResolved?: boolean }} options
+ */
 export function resolveImplementationTransition({
   terminalEnvelope,
   launch,

@@ -1,3 +1,4 @@
+// @ts-check
 import { criterionMappings, mapVerificationCommandsToPaths, compareFailureIdentity, failureIdentity, normalizeDiagnostic } from './evidence.mjs';
 
 // Full identifier grammar: matches to the next `;` (or end), so names containing spaces stay whole.

@@ -1,3 +1,4 @@
+// @ts-check
 const GRAPH_HEADING = 'Increment Dependency Graph';
 
 /** Splits a source into lines between the graph heading and the next unfenced `^## ` heading. */

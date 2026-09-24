@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file runners/agy.mjs
@@ -72,6 +73,10 @@ import {
 /**
  * @typedef {object} RunAgyOptions
  * @property {string} prompt
+ * @property {Function} [execute] Test seam.
+ * @property {Function} [getAvailableModes] Test seam.
+ * @property {Function} [getBinary] Test seam.
+ * @property {Function} [createLogger] Test seam.
  * @property {string[]} [files]
  * @property {string} [model]
  * @property {string} [effort]
@@ -102,11 +107,11 @@ import {
 // SECTION: Constants (tweak these)
 // ============================================================================
 
-export const AGY_MODES = {
+export const AGY_MODES = /** @type {const} */ ({
   ANTIGRAVITY_CLI: 'antigravity-cli',
   ANTIGRAVITY_2_0: 'antigravity-2.0',
   ANTIGRAVITY_VSCODE: 'antigravity-vscode',
-};
+});
 
 /**
  * Execution modes in cascade preference order: CLI > Antigravity 2.0 (Desktop) > VS Code Extension.
@@ -137,7 +142,7 @@ export const AGY_MODE_LABELS = Object.fromEntries(MODE_DEFINITIONS.map((m) => [m
  * @param {RunAgyOptions} [options={}]
  * @returns {Promise<RunAgyResult>}
  */
-export async function runAgy(options = {}) {
+export async function runAgy(options = /** @type {RunAgyOptions} */ ({})) {
   const {
     prompt,
     files = [],
@@ -265,6 +270,7 @@ export async function runAgy(options = {}) {
     if (lastResult) return lastResult;
     if (lastError) throw lastError;
 
+    /** @type {Error & Record<string, any>} */
     const err = new Error('No Antigravity mode was able to execute the request.');
     err.code = 1;
     throw err;
@@ -315,7 +321,7 @@ export function resolveModePlan({ requestedMode = null, availableModes = [] } = 
  * extracted — it stays inline, since its logic is a single `hasNextMode` branch). Success is
  * exit 0 with non-empty stdout; a token/subscription issue with another mode available cascades,
  * otherwise the result is returned as-is (covers a clean non-cascading failure).
- * @param {{ result: object, hasNextMode: boolean }} args
+ * @param {{ result: Record<string, any>, hasNextMode: boolean }} args
  * @returns {'return'|'next-mode'}
  */
 export function nextAgyStep({ result, hasNextMode }) {
@@ -543,7 +549,7 @@ export async function main() {
   }
 
   try {
-    const res = await runAgy({ ...options, prompt: finalPrompt });
+    const res = await runAgy(/** @type {RunAgyOptions} */ ({ ...options, prompt: finalPrompt }));
     if (res.stdout) {
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
     }

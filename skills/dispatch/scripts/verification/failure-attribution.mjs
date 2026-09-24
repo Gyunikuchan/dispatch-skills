@@ -1,3 +1,4 @@
+// @ts-check
 function sameState(left, right) {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }

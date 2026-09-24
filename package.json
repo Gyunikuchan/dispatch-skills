@@ -37,10 +37,13 @@
   "scripts": {
     "prepare": "husky",
     "hashes": "node scripts/generate-hashes.mjs",
-    "test": "node scripts/generate-hashes.mjs --check && node scripts/check-terms.mjs && node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs \"tests/{integration,scripts,skills}/**/*.test.mjs\"",
+    "typecheck": "tsc -p .",
+    "test": "npm run typecheck && node scripts/generate-hashes.mjs --check && node scripts/check-terms.mjs && node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs \"tests/{integration,scripts,skills}/**/*.test.mjs\"",
     "validate:configs": "node scripts/validate-configs.mjs"
   },
   "devDependencies": {
-    "husky": "^9.1.7"
+    "@types/node": "^22.20.4",
+    "husky": "^9.1.7",
+    "typescript": "^7.0.2"
   }
 }

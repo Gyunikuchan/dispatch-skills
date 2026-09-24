@@ -1,3 +1,4 @@
+// @ts-check
 
 const SEVERITIES = new Set(['MUST', 'SHOULD', 'CONSIDER']);
 const SUMMARY_STATUSES = new Set(['CLEAN', 'FINDINGS']);

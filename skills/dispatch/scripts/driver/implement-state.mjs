@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import { appendEvent, governingHash, readLedger, resumeOrdinary, slugFromPlanPath } from '../ledger/ledger.mjs';
@@ -23,6 +24,10 @@ export function bindPlan(state, file) {
 export function assertBinding(state) {
   if (governingHash(source(state)).hash !== state.governingHash) throw new Error('Plan changed: return to plan-review and approval.');
 }
+/**
+ * @param {any} state
+ * @param {{ terminal?: boolean }} [options]
+ */
 export function ledgerSegment(state, { terminal = false } = {}) {
   const read = readLedger(state.ledgerPath);
   if (read.status === 'missing') return null;
@@ -124,6 +129,7 @@ export function restoreEvidence(state) {
   if (segment?.tasks.size && state.ordinary.step === 'approval') throw new Error('Ledger has dispatched work not present in walkthrough evidence; reconcile before continuing.');
   if (segment && !segment.terminal) {
     // resumeOrdinary only selects ordinary segments; increment segments were matched above.
+    /** @type {Record<string, any>} */
     const resumed = state.designPath ? { nextAction: segment.rulings.get('failure-disposition')?.state === 'open' ? 'failure-disposition' : null }
       : resumeOrdinary({ ledgerPath: state.ledgerPath, planPath: relative(state, state.planPath), planSource: source(state), repoRoot: state.repoRoot });
     if (resumed.status && resumed.status !== 'resumable') throw new Error(resumed.diagnostic);

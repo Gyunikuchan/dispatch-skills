@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * `--run ask`: the driver's own ask flow. Resolves level-configured read delegates as one wave,
  * launches it, cascades a per-model native fallback on any failed slot (the same driver-owned

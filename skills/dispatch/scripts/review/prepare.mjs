@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Review preparation for every kind: `--kind plan|design` run the shared document path below,
  * `--kind code` delegates to `review/prepare-code.mjs`. Per-kind differences come from the
@@ -311,6 +312,11 @@ function resolveDesignContext(request, repoRoot) {
   };
 }
 
+/**
+ * @param {any} entry
+ * @param {any} request
+ * @param {{ repoRoot?: string, now?: any, nativeRoots?: any }} [options]
+ */
 function prepareDocumentReview(entry, request, {
   repoRoot = process.cwd(),
   now = new Date(),
@@ -483,7 +489,14 @@ export function prepareDesignReview(request, opts) {
   return prepareDocumentReview(REVIEW_KINDS.design, request, opts);
 }
 
-/** Prepares one review of `kind` (`plan|code|design`). */
+/**
+ * Prepares one review of `kind` (`plan|code|design`).
+ *
+ * @param {string} kind
+ * @param {Record<string, any>} request
+ * @param {Record<string, any>} [opts]
+ * @returns {Record<string, any>}
+ */
 export function prepareReview(kind, request, opts) {
   const entry = reviewKind(kind);
   return entry.kind === 'code' ? prepareCodeReview(request, opts) : prepareDocumentReview(entry, request, opts);

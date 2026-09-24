@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -135,6 +136,11 @@ export function parsePorcelainZ(source) {
   return records;
 }
 
+/**
+ * @param {any} repoRoot
+ * @param {any} args
+ * @param {{ encoding?: BufferEncoding, input?: any }} [options]
+ */
 function runGit(repoRoot, args, { encoding = 'utf8', input } = {}) {
   const result = spawnSync('git', ['-C', repoRoot, ...args], { encoding, input });
   if (result.error) throw result.error;
@@ -189,6 +195,10 @@ export function diffRepositoryState(before, after) {
   };
 }
 
+/**
+ * @param {any} value
+ * @param {{ maxLength?: number }} [options]
+ */
 export function normalizeDiagnostic(value, { maxLength = 4000 } = {}) {
   return String(value)
     .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')

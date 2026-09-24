@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -90,6 +91,7 @@ export function resumeDesignPath(state) {
   if (designHash.status !== 'ok') return refuse(state, designHash.diagnostic);
   state.governingHash = designHash.hash;
   state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot });
+  /** @type {Record<string, any>} */
   const resumed = resumeDesign({ ledgerPath: state.ledgerPath, planPath: relative(state, state.designPath), planSource: designSource, repoRoot: state.repoRoot });
   if (resumed.status !== 'resumable') {
     // Increment selection is eligible only when a valid ledger already proves an approved design stop.

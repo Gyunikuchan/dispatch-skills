@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Standalone review phase (`--run review`): a state machine over the closed action set. It reuses
  * the review modules in-process (preparation, parsing, source maps, rebuttal packets, consensus,
@@ -40,7 +41,12 @@ const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 
 // SECTION: kind and level
 
-/** Review kind inference, design order 1–6. */
+/**
+ * Review kind inference, design order 1–6.
+ *
+ * @param {any} argument
+ * @param {{ cwd?: string }} [options]
+ */
 export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
   if (!argument) return { kind: 'code', range: null };
   const normalized = String(argument).replace(/\\/g, '/');
@@ -154,15 +160,21 @@ function cleanText(text, fallback) {
 
 // SECTION: entry points
 
-/** Starts `--run review`; returns the first action. */
+/**
+ * Starts `--run review`; returns the first action.
+ *
+ * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string, dispatchScript?: string }} options
+ */
 export async function startReview({ invocation, cwd, resumeCommand }) {
   const repoRoot = gitRoot(cwd);
+  /** @type {Record<string, any>} */
   const inferred = invocation.kind
     ? { kind: invocation.kind, ...(invocation.argument ? kindTarget(invocation.kind, invocation.argument) : {}) }
     : inferReviewKind(invocation.argument, { cwd });
   const kind = inferred.kind;
   const { config } = loadDispatchConfig({ skillRoot: DISPATCH_DIR });
   const levelInfo = resolveReviewLevel({ config, kind, level: invocation.level, levelSource: invocation.levelSource });
+  /** @type {Record<string, any>} */
   const normalized = { ...invocation, kind };
   const state = createRunState({
     invocation: normalized,

@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -160,6 +161,10 @@ export function checkpointDriftRemedy(detail) {
   return `${detail} Rerun preparation; the prior checkpoint is retained.`;
 }
 
+/**
+ * @param {any} metadata
+ * @param {{ kind?: any, slug?: any }} [options]
+ */
 export function validateDispatchMetadata(metadata, { kind = null, slug = null } = {}) {
   if (metadata === null) return null;
   assertObjectKeys(metadata, [...METADATA_KEYS], 'dispatch metadata');
@@ -262,6 +267,11 @@ export function readArtifact(file, expected = {}) {
   };
 }
 
+/**
+ * @param {any} file
+ * @param {any} metadata
+ * @param {{ expectedDocumentHash?: any }} [options]
+ */
 export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = null } = {}) {
   const resolved = path.resolve(file);
   // Cross-session lock: concurrent sessions may checkpoint the same artifact.
@@ -463,6 +473,10 @@ function contextFor(state) {
   };
 }
 
+/**
+ * @param {any} state
+ * @param {{ exclusive?: boolean }} [options]
+ */
 function writeState(state, { exclusive = false } = {}) {
   const temp = `${state.statePath}.${crypto.randomUUID()}.tmp`;
   fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
@@ -621,6 +635,10 @@ function stripExcludedSection(body, section) {
   return out.join('\n');
 }
 
+/**
+ * @param {any} source
+ * @param {{ excludedSections?: any[] }} [options]
+ */
 export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
   let body = scanResolutionLog(source, { strict: true }).semanticBody;
   for (const section of excludedSections) {
@@ -661,7 +679,11 @@ export function semanticSectionHashes(source, { excludedSections = [] } = {}) {
 /** Shared governed-design excerpt: strips the dispatch frontmatter, the resolution log, and
  *  `## Execution Status` (fence-aware at both boundaries), then bounds the remaining governed
  *  content per section (each heading plus its first lines) and pairs the excerpt with the
- *  explicit approved revision and the recomputed governed hash. */
+ *  explicit approved revision and the recomputed governed hash.
+ *
+ * @param {any} source
+ * @param {{ revision?: any, maxChars?: number, maxLinesPerSection?: number }} [options]
+ */
 export function governingDesignExcerpt(source, { revision = null, maxChars = 4000, maxLinesPerSection = 12 } = {}) {
   const { contentHash } = semanticSectionHashes(source, { excludedSections: ['Execution Status'] });
   const semantic = scanResolutionLog(source, { strict: false }).semanticBody;

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * @file validate-configs.mjs
  * @description Validates all dispatch-related configuration files in the repository/project.

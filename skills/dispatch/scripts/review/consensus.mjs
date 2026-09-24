@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Consensus gate for a plan or walkthrough: settled (exit 0) when `## Review Findings & Resolutions`
  * holds no `[Disputed]` or `[Rejected — pending confirmation]` line, or the section is absent; live
@@ -10,7 +11,7 @@ import { scanResolutionLog } from './resolution-log.mjs';
  * Runs the gate's strict scan; preparation's checkpoint-preview shares it so both agree.
  *
  * @param {string} markdown
- * @returns {{ exit: 0|1|2, unsettled: string[], unsettledItems: object[], error?: string }}
+ * @returns {{ exit: 0|1|2, unsettled: string[], unsettledItems: Record<string, any>[], error?: string }}
  */
 export function evaluateConsensus(markdown) {
   let scan;

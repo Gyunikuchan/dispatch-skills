@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -221,7 +222,12 @@ function baselineKey(state) {
   const key = { repository: repositoryBaseline(state), commands, scopes: commands.map(command => data.scopes[command]), node: process.version, platform: process.platform };
   return `sha256:${crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex')}`;
 }
-/** Cached baseline results for the current tree, or null. */
+/**
+ * Cached baseline results for the current tree, or null.
+ *
+ * @param {any} state
+ * @param {{ now?: any }} [options]
+ */
 export function cachedBaseline(state, { now = Date.now() } = {}) {
   try {
     const cache = JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8'));

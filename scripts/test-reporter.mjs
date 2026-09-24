@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file test-reporter.mjs
  * @description Quiet test reporter for Node.js test runner (node --test).
@@ -26,7 +27,7 @@ export function formatDuration(ms = 0) {
 /**
  * Formats a failure event into a clear, actionable string for display.
  *
- * @param {object} eventData
+ * @param {Record<string, any>} eventData
  * @param {string} [projectRoot=process.cwd()]
  * @returns {string}
  */
@@ -94,7 +95,7 @@ export function formatSlowFiles(fileDurations, projectRoot = process.cwd()) {
 /**
  * Node.js test reporter generator.
  *
- * @param {AsyncIterable<object>} source Stream of test events
+ * @param {AsyncIterable<Record<string, any>>} source Stream of test events
  * @returns {AsyncGenerator<string>}
  */
 export default async function* quietReporter(source) {

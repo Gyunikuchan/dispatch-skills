@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Unified dispatch config: schema validation and level resolution.
  *
@@ -70,7 +71,7 @@ export function selectLevel(definedLevels, level) {
  *
  * @param {Record<string, unknown>} knob
  * @param {string} level
- * @returns {unknown | undefined}
+ * @returns {any}
  */
 export function resolveLevelScalar(knob, level) {
   if (!isPlainObject(knob)) return undefined;
@@ -88,7 +89,7 @@ export function selectedLevelKey(entry, level) {
  * Resolves a level map (write-subagent entry or read target) to a copy of its selected level
  * configuration; no field inheritance, so an omitted `effort` stays omitted.
  *
- * @param {object} entry
+ * @param {Record<string, any>} entry
  * @param {string} level
  * @returns {{ model?: string | string[], effort?: string }}
  */
@@ -110,7 +111,7 @@ export function effectiveSandbox(wrapper, canonical) {
 /**
  * Resolves a read-provider wrapper to one candidate per target, in declaration order.
  *
- * @param {{ sandbox?: boolean, targets?: object[] }} wrapper
+ * @param {{ sandbox?: boolean, targets?: Record<string, any>[] }} wrapper
  * @param {string} level
  * @param {string} canonical
  * @returns {Array<{ model?: string | string[], effort?: string, sandbox?: boolean }>}
@@ -127,9 +128,9 @@ export function resolveTargets(wrapper, level, canonical) {
 /**
  * Level-resolved read delegates, canonical keys in config order.
  *
- * @param {object} config
+ * @param {Record<string, any>} config
  * @param {string} level
- * @returns {{ platforms: Record<string, object[]> }}
+ * @returns {{ platforms: Record<string, Record<string, any>[]> }}
  */
 export function resolveReadDelegates(config, level) {
   const platforms = {};
@@ -143,7 +144,7 @@ export function resolveReadDelegates(config, level) {
 /**
  * Canonical read-delegate keys a phase may target: filtered by its `only`, in read-delegate order.
  *
- * @param {object} config
+ * @param {Record<string, any>} config
  * @param {string} phase
  * @returns {string[]}
  */
@@ -362,7 +363,7 @@ function validateOnly(where, only, readKeys, problems) {
 /**
  * Validates a parsed config against the schema, reporting every problem in one pass.
  *
- * @param {object} config
+ * @param {Record<string, any>} config
  * @returns {string[]} problem descriptions, empty when valid
  */
 export function validateConfig(config) {
@@ -403,8 +404,8 @@ export function validateConfig(config) {
  * Loads the dispatch config (first of `config.local.jsonc`, `config.jsonc`), normalizing absent optional
  * tables to empty maps. Schema validation is the caller's job (`validateConfig`).
  *
- * @param {{ skillRoot: string }} options
- * @returns {{ config: object, path: string }}
+ * @param {{ skillRoot?: string }} [options]
+ * @returns {{ config: Record<string, any>, path: string }}
  */
 export function loadDispatchConfig({ skillRoot } = {}) {
   const loaded = loadSkillConfig({ skillRoot });

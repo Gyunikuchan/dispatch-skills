@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Extracts, assembles, and fills the `#### Prompt template` fenced block of a review template — a
  * shared frame under `references/templates/`, optionally assembled with a per-kind block.

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Code-kind review preparation (range selection, walkthrough pairing, Git snapshots). Imported by
  * `review/prepare.mjs --kind code`; not a CLI.
@@ -397,6 +398,10 @@ function checkpoint(request, { now }) {
   };
 }
 
+/**
+ * @param {any} request
+ * @param {{ repoRoot?: string, now?: any }} [options]
+ */
 export function prepareCodeReview(request, {
   repoRoot = process.cwd(),
   now = new Date(),

@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Driver action set (R3): the closed, versioned actions the driver emits, their reply schemas,
  * a small JSON-schema subset validator, and the sanitizer applied to reply text before any

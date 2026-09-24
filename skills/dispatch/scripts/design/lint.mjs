@@ -1,3 +1,4 @@
+// @ts-check
 import { parseIncrementGraph } from './graph.mjs';
 const REQUIRED = ['Context & Intent','Goals & Requirements','Architecture & Boundaries','Alternatives & Decisions','Risks, Security & Operations','Increment Dependency Graph','Increment Details','Final Integration'];
 const INCREMENT_FIELDS = ['Outcome','Scope','Non-scope','Observable behavior','Affected contracts','Validation','Rollback boundary','Parallel safety'];

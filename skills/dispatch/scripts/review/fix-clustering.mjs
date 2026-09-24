@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 
 /**
@@ -79,6 +80,9 @@ function hasClusterConflict(clusterFindings, finding, findingMap) {
  * - Pairwise disjoint affected paths (no file overlap, keep same-file findings separate).
  * - No declared ordering/interface/verification dependencies (transitive closure aware).
  * - Deterministic cluster IDs and union verification commands.
+ *
+ * @param {any} findings
+ * @param {{ runId?: any, maxAttempts?: number }} [options]
  */
 export function createIndependenceClusters(findings, { runId, maxAttempts = 3 } = {}) {
   if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
@@ -162,6 +166,9 @@ function orderClusters(groups, findingMap, runId, maxAttempts) {
  * - Descendants inherit parent attempt lineage and share the remaining budget.
  * - Descendant attempt numbers continue the parent's; none exceeds maxAttempts.
  * - Sets parentTaskId to the failed cluster's ID.
+ *
+ * @param {any} cluster
+ * @param {{ completedFindingIds?: any[], failedFindingId?: any, attemptsConsumed?: number, runId?: any, maxAttempts?: number }} [options]
  */
 export function splitFailedCluster(cluster, {
   completedFindingIds = [],

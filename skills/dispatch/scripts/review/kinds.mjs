@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Single registry of review kinds: everything preparation and parsing vary by kind (tags, locus
  * rules, template and schema paths, lint, checkpoint metadata) lives here so the shared

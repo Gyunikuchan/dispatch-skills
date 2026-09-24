@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Resolves plan/walkthrough artifact paths deterministically, so the review-flow skills (see
  * `references/review.md`) — run together or independently — converge on the same on-disk
@@ -84,7 +85,8 @@ export function isValidDate(value) {
 /**
  * @param {string} date - yyyy-mm-dd
  * @param {string} slug - kebab-case
- * @returns {{ plan: string, walkthrough: string }}
+ * @param {string} [kind]
+ * @returns {any} path map for `plan`/`walkthrough`, else the single path for `kind`
  */
 export function buildScratchPaths(date, slug, kind = 'plan') {
   const paths = {
@@ -99,6 +101,10 @@ export function buildScratchPaths(date, slug, kind = 'plan') {
   return kind === 'plan' || kind === 'walkthrough' ? paths : paths[kind];
 }
 
+/**
+ * @param {string} root
+ * @param {{ platform?: NodeJS.Platform, realpath?: (p: string) => string }} [options]
+ */
 export function canonicalRepositoryRoot(
   root,
   { platform = process.platform, realpath = fs.realpathSync.native } = {},
@@ -123,6 +129,9 @@ export function getRepositoryRoot(cwd = PROJECT_ROOT) {
   return root || null;
 }
 
+/**
+ * @param {{ slug?: string, slugSource?: string|null, repositoryRoot?: string|null, platform?: NodeJS.Platform, tempRoot?: string, env?: NodeJS.ProcessEnv, realpath?: (p: string) => string }} [options]
+ */
 export function resolveLedgerPath({
   slug,
   slugSource,
@@ -137,6 +146,7 @@ export function resolveLedgerPath({
   return path.join(ledgerNamespacePath({ tempRoot, repoHash, env }), `${slug}-ledger.md`);
 }
 
+/** @param {{ tempRoot?: string, repoHash?: string, env?: NodeJS.ProcessEnv }} [options] */
 export function ledgerNamespacePath({ tempRoot = os.tmpdir(), repoHash, env = process.env } = {}) {
   if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
   return path.join(tempRoot, `dispatch-skills-${userSlug({ env })}`, repoHash);
@@ -146,6 +156,8 @@ export function ledgerNamespacePath({ tempRoot = os.tmpdir(), repoHash, env = pr
  * Repo-scoped home of relocated scratch artifacts: `<ledger namespace>/relocated/`, keyed by the
  * project's Git root (the project root itself outside Git) so another repository's same-slug
  * artifact never resolves here.
+ *
+ * @param {{ projectRoot?: any, tempRoot?: string, env?: NodeJS.ProcessEnv }} [options]
  */
 export function relocatedArtifactsPath({ projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), env = process.env } = {}) {
   const repoHash = repositoryRootHash(getRepositoryRoot(projectRoot) ?? projectRoot);
@@ -282,6 +294,8 @@ export function resolveSlug({ explicit, branch = getCurrentBranch(), orchestrato
  * Covers every Antigravity execution mode's own data dir (`AGY_MODE_DATA_DIRS`:
  * 2.0, VS Code extension, CLI) — each keeps its own `brain/` directory. Extend
  * this list as more platforms grow a discoverable native artifact.
+ *
+ * @param {{ platform?: NodeJS.Platform, env?: NodeJS.ProcessEnv }} [options]
  */
 export function defaultNativeCandidateRoots({ platform = process.platform, env = process.env } = {}) {
   const homeDir = os.homedir();
@@ -301,6 +315,11 @@ export function defaultNativeCandidateRoots({ platform = process.platform, env =
 
 const NATIVE_FILENAME = { plan: 'implementation_plan.md', walkthrough: 'walkthrough.md', design: 'technical_design.md' };
 
+/**
+ * @param {any} file
+ * @param {string} [kind]
+ * @param {{ roots?: any }} [options]
+ */
 export function isNativeArtifactPath(file, kind = 'plan', { roots = defaultNativeCandidateRoots() } = {}) {
   const absolute = path.resolve(file);
   if (path.basename(absolute) !== NATIVE_FILENAME[kind]) return false;
@@ -332,7 +351,7 @@ const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
  * platform directories; they default to `defaultNativeCandidateRoots()`,
  * `detectOrchestrator()`, and `process.env.ANTIGRAVITY_CONVERSATION_ID`.
  *
- * @param {'plan'|'walkthrough'} kind
+ * @param {string} kind
  * @param {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} [options]
  * @returns {string|null} absolute path
  */
@@ -399,7 +418,7 @@ function findNativeArtifact(kind, options = {}) {
  * (a review can run the day after planning), newest-file-wins if more than
  * one date matches. Returns a repo-relative posix path, or null.
  *
- * @param {'plan'|'walkthrough'} kind
+ * @param {string} kind
  * @param {string} slug
  * @param {string} projectRoot
  * @returns {string|null}
@@ -457,7 +476,7 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
  * (e.g. relocated from .scratch/plan/ during a prior run or step in this session),
  * newest-file-wins if more than one date matches. Returns an absolute posix path, or null.
  *
- * @param {'plan'|'walkthrough'} kind
+ * @param {string} kind
  * @param {string} slug
  * @param {string} [tempRoot]
  * @returns {string|null}
@@ -569,9 +588,9 @@ function phasedRootSlug(candidateSlug) {
  * Resolves one artifact kind: native tier, then existing scratch, then existing
  * temp artifact (this repository's relocated scratch), then the deterministic scratch-new path.
  *
- * @param {'plan'|'walkthrough'} kind
- * @param {{ slug: string, date: string, projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
- * @returns {{ tier: 'native'|'scratch-existing'|'temp-existing'|'scratch-new', path: string, exists: boolean }}
+ * @param {string} kind
+ * @param {{ slug?: string, date?: string, projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
+ * @returns {{ tier: 'native'|'scratch-existing'|'temp-existing'|'scratch-new', path: string, exists: boolean, scratchOnly?: boolean }}
  */
 export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), native: nativeOptions = {} } = {}) {
   if (PHASED_KINDS.includes(kind)) {
@@ -607,8 +626,8 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
 /**
  * Resolves plan and/or walkthrough artifact paths together.
  *
- * @param {{ slug: string, date?: string, kinds?: ('plan'|'walkthrough')[], projectRoot?: string, tempRoot?: string, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
- * @returns {{ slug: string, date: string, plan?: object, walkthrough?: object }}
+ * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: string[], projectRoot?: string, tempRoot?: string, repositoryRoot?: string|null, ledger?: Record<string, any>, native?: { roots?: string[], orchestrator?: string|null, conversationId?: string|null } }} options
+ * @returns {{ slug: string, date: string, plan?: Record<string, any>, walkthrough?: Record<string, any> }}
  */
 export function resolveArtifacts({
   slug,

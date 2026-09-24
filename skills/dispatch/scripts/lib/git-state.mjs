@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -9,6 +10,11 @@ import { canonicalJson, sha256 } from '../ledger/events.mjs';
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const EMPTY = Buffer.alloc(0);
 
+/**
+ * @param {any} repoRoot
+ * @param {any} args
+ * @param {{ input?: any }} [options]
+ */
 function git(repoRoot, args, { input } = {}) {
   const result = spawnSync('git', args, {
     cwd: repoRoot,

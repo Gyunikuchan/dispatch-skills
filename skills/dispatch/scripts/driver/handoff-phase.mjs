@@ -1,3 +1,4 @@
+// @ts-check
 import { evaluateConsensus } from '../review/consensus.mjs';
 import { readArtifact, semanticSectionHashes } from '../review/preparation.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';

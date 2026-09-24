@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -8,6 +9,11 @@ const EXCLUDED_SEGMENTS = new Set([
 ]);
 const GENERATED_NAMES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']);
 
+/**
+ * @param {any} repoRoot
+ * @param {any} args
+ * @param {{ allowFailure?: boolean }} [options]
+ */
 function git(repoRoot, args, { allowFailure = false } = {}) {
   const result = spawnSync('git', args, { cwd: repoRoot, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
   if (!allowFailure && result.status !== 0) {
@@ -47,6 +53,7 @@ export function currentPaths(repoRoot) {
   }))].filter((file) => isReviewablePath(file, repoRoot)).sort();
 }
 
+/** @param {Array<string|Buffer>} chunks */
 function digest(chunks) {
   const hash = crypto.createHash('sha256');
   for (const chunk of chunks) hash.update(chunk);
@@ -133,6 +140,7 @@ export function captureReviewSnapshot({ repoRoot = process.cwd(), scope, include
         ? digest([git(repoRoot, ['diff', '--binary', 'HEAD', '--', file]).stdout])
         : digest([readWorkingPath(file)]);
     } else {
+      /** @type {Array<string|Buffer>} */
       const chunks = [git(repoRoot, ['diff', '--binary', scope.range, '--', file]).stdout];
       if (includeWorkingTree.includes(file)) {
         chunks.push(diffsAgainstHead(file)
@@ -234,6 +242,7 @@ function emptyOwnedIntersection(message) {
   };
 }
 
+/** @param {{ repoRoot?: string, explicitRange?: any, allowedPaths?: any, baseRevision?: any }} [options] */
 export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = null, allowedPaths = null, baseRevision = null } = {}) {
   repoRoot = path.resolve(repoRoot);
   if (explicitRange && baseRevision) throw new Error('Pass either an explicit range or a base revision, not both.');

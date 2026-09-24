@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file artifacts/relocate-scratch.mjs
  * @description Cross-platform utility for relocating scratch artifacts (.scratch/) to this
@@ -140,7 +141,7 @@ function ensureRelocatedDir({ cwd, tempRoot }) {
 /**
  * Relocates multiple paths.
  * @param {string[]} paths
- * @param {object} [options]
+ * @param {Record<string, any>} [options]
  * @returns {string[]} Destination paths of relocated items.
  */
 export function relocateScratchPaths(paths, options = {}) {

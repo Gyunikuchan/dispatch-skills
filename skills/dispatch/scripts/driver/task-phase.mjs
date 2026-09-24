@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -185,6 +186,11 @@ function ruleScope(state, answer) {
   data.step = 'write-pending';
   return acceptWrite(state, reply);
 }
+/**
+ * @param {any} state
+ * @param {any} reply
+ * @param {{ concernsResolved?: boolean }} [options]
+ */
 export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const data = state.ordinary;
   if (reply.rejected || reply.failed) return advanceWriteCascade(state, reply);

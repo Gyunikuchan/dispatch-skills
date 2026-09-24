@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file dispatch.mjs
@@ -75,7 +76,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 
 /**
  * @typedef {object} DispatchTaskOptions
- * @property {string} prompt
+ * @property {string} [prompt] Required; validated at runtime.
+ * @property {string|null} [promptFile] Message-only source path of `prompt`, cited in native-fallback guidance.
  * @property {string[]} [files]
  * @property {string|string[]} [model]
  * @property {string} [effort]
@@ -85,7 +87,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [json] Structured JSON output (opencode provider only).
- * @property {object|null} [responseSchema] Native response schema. Currently supported by Claude.
+ * @property {Record<string, any>|null} [responseSchema] Native response schema. Currently supported by Claude.
  * @property {boolean} [verbose]
  * @property {string|null} [orchestrator] Explicit orchestrator override; skips detection.
  * @property {string|null} [orchestratorModel] Explicit orchestrator model override; skips detection.
@@ -95,7 +97,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  *   pinned provider. Zero-based; incompatible with model/effort overrides and `noConfig`.
  * @property {boolean} [noConfig] Ignore the dispatch config entirely (model, effort, cascade
  *   membership); requires `provider`.
- * @property {object} [config] Injected config object (bypasses loading config from disk).
+ * @property {Record<string, any>} [config] Injected config object (bypasses loading config from disk).
  * @property {string} [configPath] Display path for the injected config.
  * @property {string} [level] Level at which `read-delegates` resolve (default `medium`).
  */
@@ -131,6 +133,7 @@ export const providerRunners = {
   copilot: runCopilot,
 };
 
+/** @type {Set<Provider>} */
 export const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
 const MAX_RESPONSE_SCHEMA_BYTES = 64 * 1024;
 const MAX_BATCH_FILE_BYTES = 64 * 1024;
@@ -221,7 +224,7 @@ function validateBatchEntry(entry, where, config, sourceKeys, tuples) {
  * Loads and validates a caller-resolved batch manifest.
  *
  * @param {string} file Absolute path under the OS temp directory.
- * @param {{ platforms: Record<string, object | object[]> }} config Level-resolved read delegates
+ * @param {{ platforms: Record<string, Record<string, any> | Record<string, any>[]> }} config Level-resolved read delegates
  *   (from `resolveReadDelegates`), which candidate indexes are checked against.
  */
 export function loadBatchFile(file, config) {
@@ -352,10 +355,10 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
  * targets. `options.onSlot(record, exit)` fires as each launched slot terminates; reserve outcomes
  * follow the failed target they replace.
  *
- * @param {{ targets: object[], reserves: object[] }} batch
- * @param {object} options dispatchTask options plus `level` and optional `onSlot`
- * @param {object} config dispatch config (each slot calls dispatchTask with it)
- * @returns {Promise<{ targets: object[], failures: object[], logDir: string|null, complete: boolean }>}
+ * @param {{ targets: Record<string, any>[], reserves: Record<string, any>[] }} batch
+ * @param {Record<string, any>} options dispatchTask options plus `level` and optional `onSlot`
+ * @param {Record<string, any>} config dispatch config (each slot calls dispatchTask with it)
+ * @returns {Promise<{ targets: Record<string, any>[], failures: Record<string, any>[], logDir: string|null, complete: boolean }>}
  */
 export async function dispatchBatch(batch, options, config) {
   const { onSlot = null, ...taskOptions } = options;
@@ -415,10 +418,10 @@ export const ASK_ROUND_ID = 'ask:R1';
  * platform and with no reserves. Count `n`: the first `n` targets in `--list-targets` order, the
  * rest ordered reserves. `all`: every target, no reserves. `phases.<phase>.only` never applies.
  *
- * @param {{ platforms: Record<string, object[]> }} resolved
+ * @param {{ platforms: Record<string, Record<string, any>[]> }} resolved
  * @param {string[]} rawPins comma-split `--pins` values
  * @param {{ orchestrator?: string|null, orchestratorModel?: string|null }} [context]
- * @returns {{ targets: object[], reserves: object[], clamped: { requested: number, resolved: number } | null }}
+ * @returns {{ targets: Record<string, any>[], reserves: Record<string, any>[], clamped: { requested: number, resolved: number } | null }}
  */
 export function buildPinsWave(resolved, rawPins, { orchestrator = null, orchestratorModel = null } = {}) {
   const { keys, count } = parsePins(rawPins);
@@ -506,7 +509,7 @@ const PROVIDER_CORRECTIVE_COMMANDS = {
  * phases resolved with probe results as liveness, and write subagents (the orchestrator's entry
  * when given, else every entry). Orchestrator detection is the caller's job.
  *
- * @param {object} config validated config
+ * @param {Record<string, any>} config validated config
  * @param {string} configPath
  * @param {{ level?: string, levelSource?: string, orchestrator?: string|null, orchestratorModel?: string|null }} [options]
  */
@@ -688,6 +691,7 @@ export async function dispatchTask(options = {}) {
   }
 
   if (noConfig && !provider) {
+    /** @type {Error & Record<string, any>} */
     const err = new Error('--no-config ignores cascade membership entirely and requires --provider.');
     err.code = 'NO_CONFIG_REQUIRES_PROVIDER';
     throw err;
@@ -755,6 +759,7 @@ export async function dispatchTask(options = {}) {
       const message = provider
         ? `Provider "${normalizeOrchestrator(provider)}" does not support native response schema transport.`
         : 'No available provider supports native response schema transport.';
+      /** @type {Error & Record<string, any>} */
       const err = new Error(message);
       err.code = 'RESPONSE_SCHEMA_UNSUPPORTED';
       throw err;
@@ -762,6 +767,7 @@ export async function dispatchTask(options = {}) {
   }
 
   if (candidates.length === 0) {
+    /** @type {Error & Record<string, any>} */
     const err = new Error(
       'No alternative dispatch agent available.\n' +
         '- Neither alternative platforms nor the orchestrator platform were found and ready.\n' +
@@ -783,6 +789,7 @@ export async function dispatchTask(options = {}) {
     if (candidateIndex !== null) {
       const selected = entries[candidateIndex];
       if (!selected) {
+        /** @type {Error & Record<string, any>} */
         const err = new Error(
           `Configured candidate index ${candidateIndex} is out of range for provider "${candidateProvider}".`,
         );
@@ -869,6 +876,8 @@ export async function dispatchTask(options = {}) {
  * sees only this message, so it has to name the actor and the brief: hosts that expose no named
  * read-only agent type otherwise read "subagent fallback" as permission to answer inline from a
  * paraphrased prompt. Mirrors `references/providers.md` § Native fallback.
+ *
+ * @param {{ hostPlatform?: any, failedPlatforms?: any[], promptFile?: any, files?: any[] }} [options]
  */
 function nativeFallbackGuidance({ hostPlatform = null, failedPlatforms = [], promptFile = null, files = [] } = {}) {
   const hostSubagent = `${hostPlatform ? `${hostPlatform}'s` : "the host platform's"} own native subagent` +
@@ -916,6 +925,7 @@ function loadDispatchConfig() {
 function assertValidConfig(config, configPath) {
   const problems = validateConfig(config);
   if (problems.length === 0) return;
+  /** @type {Error & Record<string, any>} */
   const err = new Error(`Invalid dispatch config (${configPath}):\n- ${problems.join('\n- ')}`);
   err.code = 'INVALID_DISPATCH_CONFIG';
   throw err;
@@ -931,6 +941,7 @@ function assertSkillIntegrity() {
       '\n' +
       `[dispatch] This may indicate tampering. Aborting dispatch.\n`,
   );
+  /** @type {Error & Record<string, any>} */
   const err = new Error('Skill file integrity verification failed');
   err.code = 'INTEGRITY_VIOLATION';
   throw err;
@@ -942,7 +953,7 @@ function assertSkillIntegrity() {
  * empty run is still worth returning if nothing better follows: without `bestPartial`, a 9-minute
  * analysis that timed out one step short was discarded outright.
  * @param {Array<{ provider: Provider, model: string|null, effort: string|null, label: string }>} targetCandidates
- * @param {(candidate: { provider: Provider, model: string|null, effort: string|null, label: string }) => object} runnerOptionsFor
+ * @param {(candidate: { provider: Provider, model: string|null, effort: string|null, label: string }) => Record<string, any>} runnerOptionsFor
  * @param {{ pinned: boolean, hostPlatform?: Provider|null, promptFile?: string|null, files?: string[] }} cascadeOptions
  * @returns {Promise<DispatchTaskResult>}
  */
@@ -1042,6 +1053,7 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned, hostPlat
     return withMetrics(bestPartial.result, bestPartial.effectiveAttempt);
   }
 
+  /** @type {Error & Record<string, any>} */
   const err = new Error(
     'All candidate dispatch agents failed execution:\n' +
       attemptFailures.map((f) => `  - ${f}`).join('\n') +
@@ -1060,6 +1072,10 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned, hostPlat
 
 /**
  * Writes the report to `outputFile` (keeping a background task's output to banners) or stdout.
+ *
+ * @param {any} text
+ * @param {any} outputFile
+ * @param {{ stdout?: any, stderr?: any }} [options]
  */
 export function writeDispatchOutput(text, outputFile, { stdout = process.stdout, stderr = process.stderr } = {}) {
   if (outputFile) {
@@ -1489,7 +1505,7 @@ function collectRunFlags(options, noConfig) {
  * Expands level-resolved platform entries into the stable target order used by count and `all`
  * pins (and `--list-targets`).
  *
- * @param {{ platforms: Record<string, object[]> }} config from `resolveReadDelegates`
+ * @param {{ platforms: Record<string, Record<string, any>[]> }} config from `resolveReadDelegates`
  */
 export function resolveConfiguredTargets(config, orchestrator = null, orchestratorModel = null) {
   const targets = [];
@@ -1554,6 +1570,7 @@ export async function getCandidateProviders(params = {}) {
   if (explicitProvider) {
     const resolved = resolveExplicitProvider(explicitProvider);
     if (configuredKeys && !configuredKeys.includes(resolved)) {
+      /** @type {Error & Record<string, any>} */
       const err = new Error(`platform "${resolved}" is not configured in ${configPath}`);
       err.code = 'PLATFORM_NOT_CONFIGURED';
       throw err;
@@ -1599,9 +1616,14 @@ function normalizeOrchestrator(name) {
   return PROVIDER_ALIASES[String(name).toLowerCase()] ?? name;
 }
 
-/** Normalizes a user-supplied `--provider` value to a canonical {@link Provider} name. */
+/**
+ * Normalizes a user-supplied `--provider` value to a canonical {@link Provider} name.
+ *
+ * @param {string} explicitProvider
+ * @returns {Provider}
+ */
 function resolveExplicitProvider(explicitProvider) {
-  return validateProviderSpec(explicitProvider, '--provider');
+  return /** @type {Provider} */ (validateProviderSpec(explicitProvider, '--provider'));
 }
 
 /** Checks reachability of one provider via {@link providerProbes}. */
@@ -1617,7 +1639,7 @@ async function isProviderAvailable(name) {
 
 /**
  * Resolves the primary target provider using the preference cascade.
- * @param {object} [params]
+ * @param {Record<string, any>} [params]
  * @returns {Promise<Provider|null>}
  */
 export async function resolveProvider(params = {}) {

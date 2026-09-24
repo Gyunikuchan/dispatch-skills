@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 /**
  * @file check-terms.mjs
  * @description Fails on the glossary's banned synonyms in shipped contracts and templates.

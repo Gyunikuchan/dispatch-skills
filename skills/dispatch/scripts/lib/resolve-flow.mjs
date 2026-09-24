@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Resolves the review and implementation flow plan from the dispatch config: plan-review,
  * design-review, and code-review targets filtered from `read-delegates` by each phase's `only`, the
@@ -131,7 +132,7 @@ export function parsePins(rawPins) {
     }
     return { keys: undefined, count };
   }
-  return { keys: rawPins, count: undefined };
+  return { keys: trimmed, count: undefined };
 }
 
 /** Canonical-keyed copy of a platform table (validation accepts alias keys). */
@@ -238,7 +239,7 @@ export function probeCandidates(opts, config) {
  * Canonical keys pins and exclusions validate against: the union of `phaseMembers` over every
  * phase present in `phases` (every read-delegate key when the table is absent or empty),
  * independent of level.
- * @param {object} config
+ * @param {Record<string, any>} config
  * @returns {Set<string>}
  */
 export function reviewPhaseKeys(config) {
@@ -307,8 +308,8 @@ function assertKnownPins(pins, reviewKeys) {
  *           tolerateMissingImplementationModel?: boolean,
  *           livenessSource?: 'env-override' | 'probe' }} options
  * @param {Record<string, boolean>} liveness - map of platform key → available
- * @param {object} config                    - parsed config object
- * @returns {object} flow plan JSON
+ * @param {Record<string, any>} config                    - parsed config object
+ * @returns {Record<string, any>} flow plan JSON
  */
 export function resolveFlow(options, liveness, config) {
   const { level = 'medium', pins: rawPins, orchestratorModel = null } = options;

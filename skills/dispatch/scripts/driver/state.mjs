@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Driver run state: a cache in the run's session directory (`lib/session-temp.mjs`, R3). Canonical
  * artifacts stay authoritative; a lost cache is rebuilt from the artifact's resolution log through `--run`.
@@ -111,6 +112,8 @@ function roundsSinceSettled(markdown, total) {
 /**
  * Removes sessions untouched for `maxAgeMs`, finished or abandoned (an in-flight wave relaunches
  * whole via the sidecar anyway); best-effort.
+ *
+ * @param {{ maxAgeMs?: number, now?: any }} [options]
  */
 export function pruneFinishedStates({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
   pruneSessions({ maxAgeMs, now });

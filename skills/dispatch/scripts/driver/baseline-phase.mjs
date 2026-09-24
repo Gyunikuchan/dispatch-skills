@@ -1,3 +1,4 @@
+// @ts-check
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file runners/claude.mjs
@@ -79,12 +80,15 @@ import {
 
 /**
  * @typedef {object} RunClaudeOptions
+ * @property {Function} [execute] Test seam.
+ * @property {Function} [discoverTargets] Test seam.
+ * @property {Function} [createLogger] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string|string[]} [model] Model id, comma-separated list, or array — tried in order.
  * @property {string} [effort]
  * @property {boolean} [sandbox] Enable Claude's native OS-level Bash sandbox (default true).
- * @property {object|null} [responseSchema] JSON Schema enforced by Claude's structured output.
+ * @property {Record<string, any>|null} [responseSchema] JSON Schema enforced by Claude's structured output.
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
  * @property {boolean} [verbose]
@@ -185,7 +189,7 @@ export const MODE_DEFINITIONS = [
  * @param {RunClaudeOptions} options
  * @returns {Promise<RunClaudeResult>}
  */
-export async function runClaude(options = {}) {
+export async function runClaude(options = /** @type {RunClaudeOptions} */ ({})) {
   const {
     prompt,
     files = [],
@@ -355,7 +359,7 @@ export async function runClaude(options = {}) {
  * Byte length of every argument `buildClaudeArgs` adds around the prompt, plus a separator per
  * argument. Used to reserve room against the batch-launcher command-line ceiling.
  *
- * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean, responseSchema?: Record<string, any>|null }} [opts]
  * @returns {number}
  */
 export function claudeFixedArgBytes({ model, effort, sandbox = true, responseSchema = null } = {}) {
@@ -371,7 +375,7 @@ export function claudeFixedArgBytes({ model, effort, sandbox = true, responseSch
  * `--settings` JSON enables Claude's native OS-level Bash sandbox by default, layering
  * defense in depth on top of the structural read-only controls above.
  * @param {string} argvPrompt
- * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean, responseSchema?: object|null }} [opts]
+ * @param {{ model?: string|null, effort?: string|null, sandbox?: boolean, responseSchema?: Record<string, any>|null }} [opts]
  * @returns {string[]}
  */
 export function buildClaudeArgs(argvPrompt, { model, effort, sandbox = true, responseSchema = null } = {}) {
@@ -393,7 +397,7 @@ export function buildClaudeArgs(argvPrompt, { model, effort, sandbox = true, res
  * the `catch (err)` path (mutually exclusive: pass `error` OR `result`, never both).
  * `runClaude`'s loop delegates here so the cascade logic is unit-testable without
  * spawning the real CLI; the stderr notices stay in the loop, unchanged.
- * @param {{ result: object|null, error: Error|null, isLastModel: boolean, isLastTarget: boolean, pinned: boolean }} args
+ * @param {{ result: Record<string, any>|null, error: Error|null, isLastModel: boolean, isLastTarget: boolean, pinned: boolean }} args
  * @returns {'return'|'throw'|'next-model'|'next-target'}
  */
 export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinned }) {
@@ -603,7 +607,7 @@ export async function main() {
   try {
     const res = await runClaude({
       ...options,
-      claudeMode: requestedMode,
+      claudeMode: /** @type {ClaudeMode|null} */ (requestedMode),
       sandbox,
       prompt: finalPrompt,
     });
@@ -674,6 +678,8 @@ export function classifyClaudeResult({ exitCode, stderr = '', stdout = '' }) {
 /**
  * Applies Claude's error-envelope precedence and the fail-closed exit status for sandbox
  * contract failures in one pure seam.
+ *
+ * @param {{ envelope?: Record<string, any>, classifiedFailure?: string|null, exitCode: number|null, truncated?: string|null }} options
  */
 export function resolveClaudeOutcome({ envelope = {}, classifiedFailure = null, exitCode, truncated = null }) {
   const cliOutdated = envelope.apiErrorCode === 'claude_code_version_too_old'

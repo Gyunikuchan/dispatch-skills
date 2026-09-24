@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file providers.mjs
  * @description Provider registry and orchestrator awareness: provider/model/effort spec validation,
@@ -126,7 +127,7 @@ function partitionFirstSeen(items, keyOf) {
  * Stable partition putting each key's first occurrence ahead of every repeat, so a platform
  * configured with several models cannot crowd other platforms out of the front of the order.
  *
- * @template T
+ * @template {Record<string, any>} T
  * @param {T[]} candidates
  * @param {(candidate: T) => unknown} [key]
  * @returns {T[]} a new array; the input is not mutated
@@ -179,7 +180,7 @@ export function isSameModel(candidateModel, orchestratorModel) {
  * Preserves configured target order while moving the orchestrator platform behind alternatives
  * and exact orchestrator platform/model matches to the end.
  *
- * @template T
+ * @template {Record<string, any>} T
  * @param {T[]} candidates
  * @param {string|null|undefined} orchestrator
  * @param {string|null|undefined} orchestratorModel

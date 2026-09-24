@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file runners/copilot.mjs
@@ -80,6 +81,9 @@ import {
 
 /**
  * @typedef {object} RunCopilotOptions
+ * @property {Function} [execute] Test seam.
+ * @property {Function} [discoverTargets] Test seam.
+ * @property {Function} [createLogger] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string} [model]
@@ -139,7 +143,7 @@ export const COPILOT_DOWNGRADE_WARNING = '[dispatch] WARNING: Copilot sandbox is
  * @param {RunCopilotOptions} options
  * @returns {Promise<RunCopilotResult>}
  */
-export async function runCopilot(options = {}) {
+export async function runCopilot(options = /** @type {RunCopilotOptions} */ ({})) {
   const {
     prompt,
     files = [],
@@ -328,7 +332,7 @@ function findViableTargets(copilotMode) {
  * `catch (err)` path (mutually exclusive: pass `error` OR `result`, never both). `runCopilot`'s
  * loop delegates here so the cascade logic is unit-testable without spawning the real CLI;
  * the stderr notices stay in the loop, unchanged.
- * @param {{ result: object|null, error: Error|null, canCascade: boolean }} args
+ * @param {{ result: Record<string, any>|null, error: Error|null, canCascade: boolean }} args
  * @returns {'return'|'throw'|'next-target'}
  */
 export function nextCopilotStep({ result, error, canCascade }) {
@@ -671,6 +675,7 @@ export function testCopilotReachability(binary) {
  * }}
  */
 export function probeCopilotModes(preferredMode = 'auto') {
+  /** @type {any} */
   const result = { preferred: resolveCopilotTarget(preferredMode) };
   for (const { mode, fn } of MODE_DEFINITIONS) {
     const binary = fn();

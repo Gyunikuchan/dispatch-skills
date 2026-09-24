@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Deterministic failure identities from test-runner output, so verification never depends on an
  * orchestrator re-reading logs. Recognizes the Node test runner's spec and TAP reporters and the
@@ -68,7 +69,12 @@ function specInline(lines) {
     .filter(name => name && !suites.has(name));
 }
 
-/** Sorted unique failure identifiers found in `output`; empty when none are recognizable. */
+/**
+ * Sorted unique failure identifiers found in `output`; empty when none are recognizable.
+ *
+ * @param {any} output
+ * @param {{ repoRoot?: any }} [options]
+ */
 export function extractFailureIdentifiers(output, { repoRoot = null } = {}) {
   const lines = String(output ?? '').replace(ANSI, '').split(/\r?\n/);
   const names = specFailingSection(lines) ?? [];

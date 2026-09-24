@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Driver entry router (R3): `dispatch.mjs --run <verb> …` and `--next --state <file> [--input <json>]`
  * each print exactly one compact JSON action. Holds no phase logic; phase modules own that.
@@ -192,6 +193,9 @@ function advanceLocked(parsed) {
 /**
  * Runs one driver step (or a `--drive` run of steps). Returns the process exit code: 0 with one JSON
  * action on stdout, 2 with a usage or state diagnostic on stderr.
+ *
+ * @param {any} argv
+ * @param {{ cwd?: string, stdout?: any, stderr?: any }} [options]
  */
 export async function runDriver(argv, { cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr } = {}) {
   try {

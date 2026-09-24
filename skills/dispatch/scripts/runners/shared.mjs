@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @file shared.mjs
  * @description Shared runner scaffolding: argument parsing, env sanitization, prompt/attachment budgeting,
@@ -631,10 +632,10 @@ export function parseRunnerModeArgs(args, { valueFlags = [], booleanFlags = [], 
  * copilot keeps its own variant (no existence check, `stdout||stderr` version, 5s).
  *
  * @param {object} opts
- * @param {string} bin Candidate binary path.
- * @param {string[]} args Probe argv (e.g. `['--version']`).
- * @param {number} [timeoutMs=3000] Kill probe after this long.
- * @param {Record<string, string>} [env] Optional spawn env (agy's per-mode data dir).
+ * @param {string} opts.bin Candidate binary path.
+ * @param {string[]} opts.args Probe argv (e.g. `['--version']`).
+ * @param {number} [opts.timeoutMs=3000] Kill probe after this long.
+ * @param {Record<string, string>|null} [opts.env] Optional spawn env (agy's per-mode data dir).
  * @returns {{ reachable: boolean, version: string|null, error: string|null }}
  */
 export function probeCliReachability({ bin, args, timeoutMs = 3000, env = null }) {
@@ -688,6 +689,7 @@ export function extractSessionIdFromOutput(text, resumePrefix) {
  * @returns {Error}
  */
 export function createNoTargetsError(headline, failureKind = null) {
+  /** @type {Error & Record<string, any>} */
   const err = new Error(headline);
   err.code = 'CLI_NOT_FOUND';
   if (failureKind) err.failureKind = failureKind;
@@ -711,15 +713,15 @@ export function createNoTargetsError(headline, failureKind = null) {
  *   replaced, since stderr is where CLIs report their failure cause and capping it would truncate
  *   the very diagnostics the callers classify on; a hostile stderr flood grows memory without
  *   limit, an accepted exemption rather than a regression this consolidation introduced.
- * @param {SessionLogger|null} [opts.sessionLogger] Every captured chunk is appended to it.
+ * @param {import('../lib/platform.mjs').SessionLogger|null} [opts.sessionLogger] Every captured chunk is appended to it.
  * @param {((chunk: string|Buffer) => void)|null} [opts.trace] Verbose trace sink.
  * @param {((stream: 'stdout'|'stderr', chunk: Buffer) => void)|null} [opts.onChunk]
  *   Arrival-ordered hook for stream-interleaved diagnostics (opencode's log tail).
- * @param {(outcome: DelegateCaptureOutcome) => object|Promise<object>} opts.onClose
+ * @param {(outcome: DelegateCaptureOutcome) => object|Promise<Record<string, any>>} opts.onClose
  *   Assembles the run result from the captured state.
- * @param {(err: Error, captured: { stdoutBuffer: string, stderrBuffer: string }) => void} [opts.onFail]
+ * @param {(err: Error & Record<string, any>, captured: { stdoutBuffer: string, stderrBuffer: string }) => void} [opts.onFail]
  *   Annotates a spawn failure before it is rethrown (helper sets `err.code = 1`, `err.stderr`).
- * @returns {Promise<object>} Whatever `onClose` resolves to.
+ * @returns {Promise<any>} Whatever `onClose` resolves to.
  *
  * @typedef {object} DelegateCaptureOutcome
  * @property {number|null} code
@@ -788,6 +790,7 @@ export function runDelegateCapture({
       clearTimeout(timer);
 
       const truncated = isTimedOut ? 'timeout' : isBufferExceeded ? 'buffer' : null;
+      /** @type {DelegateCaptureOutcome} */
       const outcome = {
         code,
         signal,
@@ -805,7 +808,7 @@ export function runDelegateCapture({
       }
     });
 
-    child.on('error', (err) => {
+    child.on('error', (/** @type {Error & Record<string, any>} */ err) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -1155,6 +1158,8 @@ export function safeExitCode(err) {
  *
  * Must be emitted BEFORE spawning the delegate: the log path it names is the orchestrator's
  * only handle for monitoring a run in flight. Keys keep a stable order so callers can parse them.
+ *
+ * @param {{ platform: string, mode?: string|null, model?: string|string[]|null, effort?: string|null, logFile?: string|null, host?: string|null }} fields
  */
 export function emitInitBanner({ platform, mode, model, effort, logFile, host }) {
   const parts = ['[dispatch] start', `platform=${platform}`];
@@ -1169,6 +1174,8 @@ export function emitInitBanner({ platform, mode, model, effort, logFile, host })
 
 /**
  * Emits the post-run footer carrying details only known after the delegate exits.
+ *
+ * @param {{ platform: string, exitCode: number|null, truncated?: string|null, sessionId?: string|null, resumeCommand?: string|null }} fields
  */
 export function emitCompletionBanner({ platform, exitCode, truncated, sessionId, resumeCommand }) {
   const parts = ['[dispatch] done', `platform=${platform}`, `exit=${exitCode}`];

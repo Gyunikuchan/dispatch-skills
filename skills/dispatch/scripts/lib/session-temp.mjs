@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Per-session OS-temp root. Every run-scoped temp artifact (driver state, prompts, packets, slot
  * reports, runner logs, verification logs) lives under one directory:
@@ -20,7 +21,11 @@ export const SESSION_ENV = 'DISPATCH_SESSION_DIR';
 export const SESSION_FLAG = '--session-dir';
 const SESSIONS = 'sessions';
 
-/** `<realpath(os.tmpdir())>/dispatch-skills-<user>`: the single dispatch temp root. */
+/**
+ * `<realpath(os.tmpdir())>/dispatch-skills-<user>`: the single dispatch temp root.
+ *
+ * @param {{ env?: NodeJS.ProcessEnv }} [options]
+ */
 export function dispatchTempRoot({ env = process.env } = {}) {
   return path.join(fs.realpathSync(os.tmpdir()), `dispatch-skills-${userSlug({ env })}`);
 }
@@ -95,6 +100,8 @@ export function sessionArgs() {
 /**
  * Removes sessions untouched for `maxAgeMs` (newest mtime of the directory and its direct
  * entries), never the bound one; best-effort.
+ *
+ * @param {{ maxAgeMs?: number, now?: any }} [options]
  */
 export function pruneSessions({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date.now() } = {}) {
   let root;

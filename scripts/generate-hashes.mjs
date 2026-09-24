@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * Generates skill-hashes.json for `dispatch`, the only skill that ships one — covering SKILL.md,

@@ -1,3 +1,4 @@
+// @ts-check
 import crypto from 'node:crypto';
 
 const SECTION_HEADING = /^##\s+Review Findings & Resolutions\b/i;
@@ -410,6 +411,10 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   return rounds;
 }
 
+/**
+ * @param {any} markdown
+ * @param {{ strict?: boolean }} [options]
+ */
 export function scanResolutionLog(markdown, { strict = true } = {}) {
   const document = splitDispatchFrontmatter(markdown);
   const normalized = normalize(document.body);

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @ts-check
 
 /**
  * @file runners/opencode.mjs
@@ -149,6 +150,8 @@ import {
 
 /**
  * @typedef {object} RunOpencodeOptions
+ * @property {boolean} [sandbox]
+ * @property {Function} [runSingle] Test seam.
  * @property {string} prompt
  * @property {string[]} [files]
  * @property {string|string[]|null} [model] Overrides opencode.jsonc's configured model; a list is tried in order.
@@ -185,6 +188,8 @@ import {
  *   is known.
  * @property {'timeout'|'buffer'|null} truncated
  * @property {string|null} failureKind
+ * @property {string} [formattedPromptForMetrics]
+ * @property {boolean} [sandboxDowngraded]
  */
 
 // ============================================================================
@@ -256,7 +261,7 @@ export const LM_STUDIO_NO_LOADED_MODEL_WARNING =
  * @param {RunOpencodeOptions} options
  * @returns {Promise<RunOpencodeResult>}
  */
-export async function runOpencode(options = {}) {
+export async function runOpencode(options = /** @type {RunOpencodeOptions} */ ({})) {
   const {
     prompt = '',
     model = null,
@@ -333,7 +338,7 @@ export async function runOpencode(options = {}) {
  * @param {RunOpencodeOptions} options
  * @returns {Promise<RunOpencodeResult>}
  */
-async function runOpencodeSingle(options = {}) {
+async function runOpencodeSingle(options = /** @type {RunOpencodeOptions} */ ({})) {
   const {
     prompt = '',
     files = [],
@@ -397,6 +402,7 @@ async function runOpencodeSingle(options = {}) {
         `LM Studio local server is not reachable at ${endpoint.protocol}//${endpoint.host}:${endpoint.port}.\n` +
         `Please ensure LM Studio is running and the local server is started.`;
       failLogger(sessionLogger, offlineMessage);
+      /** @type {Error & Record<string, any>} */
       const err = new Error(offlineMessage);
       err.code = 'SERVER_OFFLINE';
       throw err;
@@ -429,9 +435,10 @@ async function runOpencodeSingle(options = {}) {
   let briefFile = null;
   // Hoisted so a throw after buildCommand still reports the unsandboxed attempt.
   let sandboxDowngraded = false;
+  let formattedPrompt;
   try {
     // Step 5: format prompt with attachments (inlines context files with nonce delimiters and byte caps).
-    const formattedPrompt = buildFormattedPrompt(prompt, files);
+    formattedPrompt = buildFormattedPrompt(prompt, files);
 
     // Step 6: prompt-budget check — ~3.5 chars/token, loose estimate to catch gross overruns.
     // Fail before spawning rather than letting the model report a context overflow.
@@ -439,6 +446,7 @@ async function runOpencodeSingle(options = {}) {
       (settings.contextLimit - settings.outputLimit) * CHARS_PER_TOKEN_ESTIMATE,
     );
     if (formattedPrompt.length > promptBudgetChars) {
+      /** @type {Error & Record<string, any>} */
       const err = new Error(
         `Prompt is ${formattedPrompt.length} chars, over the ~${promptBudgetChars} char budget for a ` +
           `${settings.contextLimit}-token context reserving ${settings.outputLimit} tokens for output. ` +
@@ -454,7 +462,8 @@ async function runOpencodeSingle(options = {}) {
     const effectiveAgent = agent || resolveDefaultAgent(rawConfig);
     const built = buildCommand({
       prompt: formattedPrompt,
-      model: effectiveModel,
+      // runOpencode fans a model list out to single-model runs.
+      model: /** @type {string} */ (effectiveModel),
       agent: effectiveAgent,
       effort,
       json,
@@ -500,7 +509,7 @@ async function runOpencodeSingle(options = {}) {
     // resolution) would otherwise strand both the lockfile and the log file handle.
     releaseOnce();
     failLogger(sessionLogger, err?.message ?? String(err));
-    if (typeof formattedPrompt !== 'undefined') err.formattedPromptForMetrics = formattedPrompt;
+    if (formattedPrompt !== undefined) err.formattedPromptForMetrics = formattedPrompt;
     if (sandboxDowngraded && err && typeof err === 'object') err.sandboxDowngraded = true;
     throw err;
   } finally {
@@ -702,9 +711,9 @@ export async function isOpencodeAvailable(settings = resolveOpencodeSettings()) 
  * (base then overlay), and any other value type is overridden by `overlay`. Approximates
  * opencode's own `mergeConfigConcatArrays` without a schema — sufficient for this config's
  * actual shape (`model`, `providers.<name>.*`, `agent.<name>.*`, `compaction`).
- * @param {object|null} base
- * @param {object|null} overlay
- * @returns {object|null}
+ * @param {Record<string, any>|null} base
+ * @param {Record<string, any>|null} overlay
+ * @returns {Record<string, any>|null}
  */
 export function mergeConfigDeep(base, overlay) {
   if (!base) return overlay ?? null;
@@ -741,7 +750,7 @@ export function mergeConfigDeep(base, overlay) {
  * best-effort, matching this file's existing security posture (`SENSITIVE_FILE_PATTERNS`, the
  * same denylist `buildFormattedPrompt` applies when inlining `-f` attachments).
  * @param {string} filePath
- * @returns {object|null}
+ * @returns {Record<string, any>|null}
  */
 export function loadConfigFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) return null;
@@ -868,7 +877,7 @@ export function resolveOpencodeConfigSources({ projectRoot, homeDir, env }) {
  * @param {string} [options.homeDir]
  * @param {string} [options.managedConfigDir] Overrides {@link resolveManagedConfigDir}'s result —
  *   lets tests isolate the managed tier from the real machine's admin-managed config dir.
- * @returns {object|null}
+ * @returns {Record<string, any>|null}
  */
 export function readOpencodeConfig(
   projectRoot = PROJECT_ROOT,
@@ -899,7 +908,7 @@ export function readOpencodeConfig(
  * Resolves the default agent identifier from opencode config or fallback.
  * Checks for a configured `plan` agent, then an agent with `mode === 'primary'`,
  * then the first declared agent, falling back to {@link DEFAULT_FALLBACK_AGENT} ('plan').
- * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @param {Record<string, any>|null} [config] Pre-parsed opencode config; defaults to a fresh read.
  * @returns {string}
  */
 export function resolveDefaultAgent(config = readOpencodeConfig()) {
@@ -925,7 +934,7 @@ export function resolveDefaultAgent(config = readOpencodeConfig()) {
  * Resolves the default model identifier from opencode config. Returns `null` when
  * `opencode.jsonc` sets no model anywhere — dispatch no longer assumes LM Studio in
  * that case; opencode's own CLI default applies instead (no `-m` flag is passed).
- * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @param {Record<string, any>|null} [config] Pre-parsed opencode config; defaults to a fresh read.
  * @returns {string|null}
  */
 export function resolveDefaultModel(config = readOpencodeConfig()) {
@@ -980,7 +989,7 @@ export function isLocalEndpointHost(host) {
  * `openrouter`), this script has no way to know that provider's real endpoint and must not guess
  * `127.0.0.1`, so `host`/`port`/`pathname` stay `null` and `isLocal` is `false`.
  *
- * @param {object|null} [config] Pre-parsed opencode config; defaults to a fresh read.
+ * @param {Record<string, any>|null} [config] Pre-parsed opencode config; defaults to a fresh read.
  * @returns {OpencodeSettings}
  */
 export function resolveOpencodeSettings(config = readOpencodeConfig()) {
@@ -1729,14 +1738,14 @@ export function buildBwrapArgs({
  *   is resolvable; dropped with a stderr note when it is not (opencode v2 has no standalone
  *   effort flag to fall back to).
  * @param {boolean} [params.json]
- * @param {object|null} [params.config] Config `runOpencode` already parsed; passing it keeps the
+ * @param {Record<string, any>|null} [params.config] Config `runOpencode` already parsed; passing it keeps the
  *   single parse threaded through, instead of re-reading and re-merging the tiers from disk here.
  * @param {string|null} [params.binary] Pre-resolved delegate binary (the discovered target's
  *   absolute path, threaded from `runOpencodeSingle`); falls back to {@link resolveOpencodeBinary}
  *   when omitted.
  * @param {boolean} [params.sandbox] Effective sandbox; `false` bypasses bwrap even when installed.
  * @param {boolean} [params.hasBwrap] Bubblewrap availability; probed on Linux when omitted (test seam).
- * @returns {{ command: string, args: string[], engineType: string, briefFile: string|null, sandboxDowngraded?: true }}
+ * @returns {{ command: string, args: string[], engineType: string, briefFile: string|null, sandboxDowngraded?: boolean }}
  */
 export function buildCommand({
   prompt = '',
