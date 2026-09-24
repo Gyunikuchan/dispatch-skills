@@ -63,7 +63,7 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
       },
       verify(action) {
         const base = ordinaryDriverPolicy(fixture.repo).verify(action);
-        if (action.purpose === 'completion') base.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
+        if (action.purpose === 'scoped') base.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
         return base;
       },
     } });

@@ -583,7 +583,7 @@ function adjudicateAction(state) {
   if (state.adjudication.findings.some((finding) => finding.restate)) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
-  if (state.invocation.fix) guidance.push('For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}.');
+  if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
   return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings }, guidance);
 }
 
@@ -827,10 +827,12 @@ function nextStep(state) {
     return prepareWave(state, 'review');
   }
   if (state.invocation.fix && !state.optInOffered && state.adjacent.length > 0) return optInAction(state);
-  return checkpoint(state);
+  return state.invocation.implementation ? settle(state) : checkpoint(state);
 }
 
 // SECTION: fixes
+
+const NARROWEST_CHECK = 'Run at most the narrowest check for the touched locus; the driver runs the gates.';
 
 function applyFixesAction(state, findings) {
   const clusters = createIndependenceClusters(findings.map((finding) => ({
@@ -850,13 +852,14 @@ function applyFixesAction(state, findings) {
     clusters: state.fix.active.map(({ clusterId, findingIds, affectedPaths, verification }) => ({ clusterId, findingIds, affectedPaths, verification })),
   }, [
     'Edit inline (no subagent) to resolve each cluster, touching only its affectedPaths; reply with each cluster status.',
+    NARROWEST_CHECK,
   ]);
 }
 
 function reapplyAction(state) {
   return emitAction(state, 'apply-fixes', {
     clusters: state.fix.active.map(({ clusterId, findingIds, affectedPaths, verification }) => ({ clusterId, findingIds, affectedPaths, verification })),
-  }, ['Verification failed for these clusters; fix them again and reply with each cluster status.']);
+  }, ['Verification failed for these clusters; fix them again and reply with each cluster status.', NARROWEST_CHECK]);
 }
 
 function onApplyFixes(state, reply) {
@@ -997,6 +1000,22 @@ function onOptIn(state, reply) {
 }
 
 // SECTION: checkpoint
+
+/** An implementation code review defers its checkpoint until the implement driver's final gate renders evidence. */
+function settle(state) {
+  const preview = prepareReview(state.kind, { action: 'checkpoint-preview', invocationContext: state.invocationContext }, { repoRoot: state.repoRoot });
+  if (preview.settlement.consensusExit !== 0) return done(state, 'failed', 'Consensus did not settle before checkpoint.');
+  // The checkpoint still needs the invocation state, so its cleanup waits for writeCheckpoint.
+  state.deferredCleanup = state.cleanup.splice(0);
+  return done(state, 'complete', 'Review settled; checkpoint deferred to the final verification gate.', { checkpointed: false });
+}
+
+/** Records the deferred checkpoint of a settled implementation code review. */
+export function writeCheckpoint(state) {
+  state.cleanup.push(...(state.deferredCleanup ?? []).filter(item => !state.cleanup.includes(item)));
+  delete state.deferredCleanup;
+  return finish(state, checkpoint(state));
+}
 
 function checkpoint(state) {
   try {

@@ -57,7 +57,7 @@ describe('--drive', () => {
       ['approval', 'write:tests-only', 'write:production', 'done']);
     assert.equal(stops.at(-1).outcome, 'complete', JSON.stringify(stops.at(-1)));
     assert.match(banners, /\[dispatch drive\] launch review R1: exit 0/);
-    assert.deepEqual([...banners.matchAll(/\[dispatch drive\] verify (\w+)/g)].map(match => match[1]), ['baseline', 'red', 'completion']);
+    assert.deepEqual([...banners.matchAll(/\[dispatch drive\] verify (\w+)/g)].map(match => match[1]), ['baseline', 'red', 'scoped']);
   });
 
   it('runs a completion gate once, stops with its summary, and reruns it only after the tree changes', () => {
@@ -76,14 +76,14 @@ describe('--drive', () => {
       }
       if (action.action === 'verify') {
         gate = action;
-        assert.equal(action.purpose, 'completion');
+        assert.equal(action.purpose, 'scoped');
         assert.match(action.guidance[0], /already ran argv; do not rerun it/);
         assert.deepEqual(validateAgainstSchema(loadSchema('verify'), action), []);
         // A reply without evidence re-emits the same gate; the runner then reuses its results.
         const rejected = step(fx, ['--drive', '--state', action.stateFile]);
         assert.equal(rejected.action.action, 'verify');
         assert.equal(rejected.action.summary.reused, true);
-        assert.match(rejected.stderr, /verify completion: 1 command\(s\), 0 nonzero, reused unchanged-tree results/);
+        assert.match(rejected.stderr, /verify scoped: 1 command\(s\), 0 nonzero, reused unchanged-tree results/);
         // An approved-path edit after the run invalidates those results, so the same gate runs again.
         fs.writeFileSync(path.join(fx.repo.dir, 'src/app.js'), 'export const value = 2; // edited\n');
         const rerun = step(fx, ['--drive', '--state', action.stateFile]);
@@ -97,7 +97,7 @@ describe('--drive', () => {
     });
     assert.ok(gate, `drive stopped at the completion gate: ${JSON.stringify(stops.map(stop => [stop.action, stop.question, stop.outcome, stop.summary, stop.error]))}`);
     assert.equal(stops.at(-1).outcome, 'complete', JSON.stringify(stops.at(-1)));
-    assert.equal([...banners.matchAll(/verify completion/g)].length, 1, 'the evidence reply advanced without rerunning the gate');
+    assert.equal([...banners.matchAll(/verify scoped/g)].length, 1, 'the evidence reply advanced without rerunning the gate');
   });
 
   it('auto-approves an explicit low run with a clean baseline and no red criteria, recording the driver as actor', () => {

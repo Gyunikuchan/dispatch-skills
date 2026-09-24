@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { extractGeneratedPaths } from '../plan/structure.mjs';
-import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
+import { ledgerNamespacePath, repositoryRootHash } from '../artifacts/resolve-paths.mjs';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification/evidence.mjs';
-import { baselineFingerprint, materializedFingerprint } from '../lib/git-state.mjs';
+import { baselineFingerprint, contentTreeId, materializedFingerprint } from '../lib/git-state.mjs';
 import {
   parseIdentifiers,
   stripIdentifierSpans,
@@ -30,6 +30,8 @@ export function verificationPlan(state) {
   for (const [covered, suite] of Object.entries(coverage)) scopes[suite] = [...new Set([...scopes[suite], ...scopes[covered]])].sort();
   return {
     approvedPaths, commands, scopes, coverage, criteria,
+    // A command marked [FINAL] on any criterion runs only at required gates.
+    finalOnly: [...new Set(criteria.flatMap(item => item.finalCommands ?? []))],
     generators: extractGeneratedPaths(text).filter(item => item.path && item.command).map(({ path: file, command }) => ({ path: file, command })),
     packet: outcomeFirstPacket(text, criteria),
     redCriteria: criteria.filter(item => item.evidence === 'red'),
@@ -108,13 +110,40 @@ export function redSubstitutions(state) {
   }
   return out;
 }
-/** Commands each gate runs: RED runs only red-mapped commands; completion drops suite-covered commands; baseline records both. */
+/**
+ * Candidate commands per gate: RED runs red-mapped commands; baseline runs red-mapped and uncovered
+ * commands; scoped runs every non-[FINAL] command (covered narrow commands run themselves); final
+ * runs uncovered commands (suite coverage replaces covered ones).
+ */
 export function purposeCommands(data, purpose) {
   const red = new Set((data.redCriteria ?? []).flatMap(item => item.commands));
   const uncovered = data.commands.filter(command => !data.coverage?.[command]);
   if (purpose === 'red') return data.commands.filter(command => red.has(command));
   if (purpose === 'baseline') return data.commands.filter(command => red.has(command) || uncovered.includes(command));
+  if (purpose === 'scoped') return data.commands.filter(command => !(data.finalOnly ?? []).includes(command));
   return uncovered;
+}
+/**
+ * A command's latest scoped/final record is unchanged since it ran: scope-fresh, and epoch-fresh when `epoch`.
+ *
+ * @param {any} state
+ * @param {string} command
+ * @param {{ epoch?: boolean, passing?: boolean }} [options]
+ */
+function freshRecord(state, command, { epoch = false, passing = false } = {}) {
+  const data = state.ordinary, record = data.completionResults?.find(item => item.command === command);
+  return Boolean(record && !record.changed?.length && (!passing || record.exitStatus === 0)
+    && (!epoch || record.mutationEpoch === (data.mutationEpoch ?? 0)) && record.scopeHash === fingerprint(state, data.scopes[command]));
+}
+/** Commands a gate runs: scoped and final skip commands whose latest record is still fresh; baseline skips cached hits. */
+export function gateCommands(state, purpose) {
+  const data = state.ordinary, candidates = purposeCommands(data, purpose);
+  // A failed record reruns at scoped gates: an unchanged failure must not pass by being skipped.
+  if (purpose === 'scoped') return candidates.filter(command => !freshRecord(state, command, { passing: true }));
+  // Generators run first at the final gate and may advance the epoch, so every command reruns.
+  if (purpose === 'final') return data.generators?.length ? candidates : candidates.filter(command => !freshRecord(state, command, { epoch: true }));
+  if (purpose === 'baseline') return candidates.filter(command => !(data.baselineResults ?? []).some(item => item.command === command));
+  return candidates;
 }
 /** Criteria whose evidence a command carries, including those of commands its suite replaces. */
 function commandCriteria(data, command) {
@@ -140,9 +169,9 @@ export function repositoryBaseline(state) {
 export function beginVerification(state, purpose) {
   const data = state.ordinary, token = crypto.randomUUID();
   data.verification = {
-    purpose, token, commands: purposeCommands(data, purpose),
+    purpose, token, commands: gateCommands(state, purpose),
     substitutions: purpose === 'red' ? redSubstitutions(state) : {},
-    generators: purpose === 'completion' ? data.generators ?? [] : [],
+    generators: purpose === 'final' ? data.generators ?? [] : [],
     resultsPath: path.join(path.dirname(state.stateFile), `${state.runId}-verify-${purpose}-${token.slice(0, 8)}.json`),
   };
   return verificationAction(state);
@@ -151,21 +180,29 @@ export function beginVerification(state, purpose) {
 function judgedCriteria(data, commands) {
   return data.criteria.filter(item => item.evidence !== 'red' && commands.some(command => commandCriteria(data, command).includes(item)));
 }
+const JUDGED = new Set(['scoped', 'final']);
+/** Non-red criteria carried only by `[FINAL]` commands and by none of the gate's commands: scoped gates defer them to the final gate. */
+export function deferredCriteria(data, commands = []) {
+  const finalOnly = data.finalOnly ?? [], carried = new Set(commands.flatMap(command => commandCriteria(data, command)));
+  return (data.criteria ?? []).filter(item => item.evidence !== 'red' && item.commands.length > 0 && item.commands.every(command => finalOnly.includes(command)) && !carried.has(item));
+}
 export function verificationAction(state) {
   const data = state.ordinary, pending = data.verification;
-  // NOTE: a host-run verification pending from before driver-run gates restarts on this gate's commands.
-  if (!pending.token) return beginVerification(state, pending.purpose);
+  // NOTE: a host-run verification pending from before driver-run gates restarts on this gate's commands; a legacy completion gate restarts as scoped.
+  if (!pending.token || pending.purpose === 'completion') return beginVerification(state, pending.purpose === 'completion' ? 'scoped' : pending.purpose);
   pending.before = snapshot(state);
   pending.epoch = data.mutationEpoch ?? 0;
-  const judged = pending.purpose === 'completion' ? judgedCriteria(data, pending.commands) : [];
+  const judged = JUDGED.has(pending.purpose) ? judgedCriteria(data, pending.commands) : [];
   const substitutions = Object.keys(pending.substitutions ?? {}).length ? { substitutions: pending.substitutions } : {};
   const generators = pending.generators.length ? { generators: [...new Set(pending.generators.map(item => item.command))] } : {};
   const criteria = pending.commands.flatMap(command => commandCriteria(data, command)).filter((item, index, all) => all.indexOf(item) === index);
+  const deferred = pending.purpose === 'scoped' ? deferredCriteria(data, pending.commands).map(item => item.id) : [];
   return emitAction(state, 'verify', {
     purpose: pending.purpose, commands: pending.commands.map(command => pending.substitutions?.[command] ?? command), ...substitutions, ...generators,
     argv: [process.execPath, state.dispatchScript, '--verify', '--state', state.stateFile], resultsPath: pending.resultsPath,
     scopes: Object.fromEntries(pending.commands.map(command => [command, data.scopes[command]])), mutationEpoch: pending.epoch,
     criteria: criteria.map(item => ({ id: item.id, evidenceClass: item.evidence, review: item.review ?? null, commands: pending.commands.filter(command => commandCriteria(data, command).includes(item)) })),
+    ...(deferred.length ? { deferred } : {}),
   }, [
     'Run argv once as one background command and wait for it to exit: it runs every listed command on the host, logs each to the session directory, and extracts failure identities. Do not run the commands yourself.',
     judged.length
@@ -195,10 +232,12 @@ export function acceptVerification(state, reply) {
     };
   });
   if (drift.length && records.length) records.at(-1).changed = [...new Set([...records.at(-1).changed, ...drift])];
-  if (pending.purpose === 'completion') {
+  if (JUDGED.has(pending.purpose)) {
     for (const criterion of judgedCriteria(data, pending.commands)) {
       const evidence = criterionEvidence.find(item => item.criterionId === criterion.id);
       const carriers = records.filter(record => commandCriteria(data, record.command).includes(criterion));
+      // A criterion whose every carrier failed is already a failed gate; judgment evidence adds nothing.
+      if (!evidence && carriers.every(record => record.exitStatus !== 0)) continue;
       if (!evidence || evidence.evidenceClass !== criterion.evidence || !evidence.reviewer?.trim() || !evidence.scenario?.trim() || !evidence.observableResult?.trim() || !evidence.limitations?.trim()
         || !carriers.some(record => evidence.inspectedRevision === record.scopeHash && evidence.mutationEpoch === record.mutationEpoch)) {
         throw new Error(`Completion requires fresh structured ${criterion.evidence} evidence for ${criterion.id}.`);
@@ -208,41 +247,66 @@ export function acceptVerification(state, reply) {
   data.generatorDefects = (file.generated ?? []).flatMap(item => (item.exit !== 0 ? [`Generator \`${item.command}\` exited ${item.exit}; log: ${item.logPath}`]
     : item.outside.length ? [`Generator \`${item.command}\` changed undeclared paths: ${item.outside.join(', ')}`] : []));
   data.mutationEpoch = file.mutationEpoch + (drift.length ? 1 : 0);
-  data[`${pending.purpose}Results`] = records;
+  data.lastGate = { purpose: pending.purpose, commands: pending.commands };
   delete data.verification;
-  if (pending.purpose === 'baseline') storeBaseline(state, records);
+  if (JUDGED.has(pending.purpose)) {
+    // Latest record per command: skipped commands keep their earlier records.
+    data.completionResults = [...(data.completionResults ?? []).filter(item => !pending.commands.includes(item.command)), ...records];
+    if (pending.purpose === 'final' && completionResult(state) !== 'regression') {
+      const finalCommands = purposeCommands(data, 'final');
+      storeBaseline(state, data.completionResults.filter(item => finalCommands.includes(item.command)));
+    }
+  } else if (pending.purpose === 'baseline') {
+    // A partial cache reuse merges the fresh misses into the cached hits.
+    data.baselineResults = [...(data.baselineResults ?? []).filter(item => !pending.commands.includes(item.command)), ...records];
+    storeBaseline(state, records);
+  } else data[`${pending.purpose}Results`] = records;
   return null;
 }
 // SECTION: Baseline reuse
-// A baseline is a function of the tree, commands, and runtime: an identical repository state
-// (HEAD, index, dirty-path contents) within a day reuses it instead of rerunning the suite.
+// A command's baseline result is a function of the working-tree content (excluding .scratch/), the
+// command, and the runtime: a cached entry within a day is reused instead of rerunning it. One
+// repository-wide file lets a passing final gate seed the next plan's baseline.
 const BASELINE_TTL_MS = 24 * 60 * 60 * 1000;
 function baselineCachePath(state) {
-  return state.ledgerPath.replace(/-ledger\.md$/, '-baseline.json');
+  return path.join(ledgerNamespacePath({ repoHash: repositoryRootHash(state.repoRoot) }), 'baseline-cache.json');
 }
-function baselineKey(state) {
-  const data = state.ordinary, commands = purposeCommands(data, 'baseline');
-  const key = { repository: repositoryBaseline(state), commands, scopes: commands.map(command => data.scopes[command]), node: process.version, platform: process.platform };
-  return `sha256:${crypto.createHash('sha256').update(JSON.stringify(key)).digest('hex')}`;
+function entryKey(tree, command) {
+  return `sha256:${crypto.createHash('sha256').update(JSON.stringify({ tree, command, node: process.version, platform: process.platform })).digest('hex')}`;
+}
+function readCache(state) {
+  try {
+    const cache = JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8'));
+    return cache.v === 2 && cache.entries && typeof cache.entries === 'object' ? cache.entries : {};
+  } catch { return {}; }
 }
 /**
- * Cached baseline results for the current tree, or null.
+ * Cached baseline records for the current content (`hits`) and the baseline commands left to run (`misses`).
  *
  * @param {any} state
  * @param {{ now?: any }} [options]
  */
 export function cachedBaseline(state, { now = Date.now() } = {}) {
-  try {
-    const cache = JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8'));
-    if (cache.v !== 1 || cache.key !== baselineKey(state) || !(now - Date.parse(cache.capturedAt) <= BASELINE_TTL_MS)) return null;
-    return cache;
-  } catch { return null; }
+  const commands = purposeCommands(state.ordinary, 'baseline'), tree = contentTreeId(state.repoRoot);
+  const entries = tree ? readCache(state) : {}, hits = [], misses = [];
+  for (const command of commands) {
+    const entry = tree ? entries[entryKey(tree, command)] : null;
+    if (entry?.result?.command === command && now - Date.parse(entry.capturedAt) <= BASELINE_TTL_MS) hits.push(entry.result);
+    else misses.push(command);
+  }
+  return { hits, misses };
 }
 export function storeBaseline(state, results) {
   try {
+    // NOTE: without a content key (Git failure) the cache is disabled.
+    const tree = contentTreeId(state.repoRoot);
+    if (!tree || !results.length) return;
     ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
+    const now = Date.now(), capturedAt = new Date(now).toISOString();
+    const entries = Object.fromEntries(Object.entries(readCache(state)).filter(([, entry]) => now - Date.parse(entry.capturedAt) <= BASELINE_TTL_MS));
+    for (const result of results) entries[entryKey(tree, result.command)] = { capturedAt, result };
     const file = baselineCachePath(state), temp = `${file}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temp, `${JSON.stringify({ v: 1, key: baselineKey(state), capturedAt: new Date().toISOString(), results })}\n`, { mode: 0o600 });
+    fs.writeFileSync(temp, `${JSON.stringify({ v: 2, entries })}\n`, { mode: 0o600 });
     fs.renameSync(temp, file);
   } catch {
     // NOTE: the cache only saves time; a failed write reruns the baseline next segment.
@@ -256,22 +320,46 @@ export function freshResults(state, purpose) {
       result.scopeHash === fingerprint(state, data.scopes[command]);
   });
 }
-export function completionResult(state) {
-  if (!freshResults(state, 'completion')) return 'regression';
-  const data = state.ordinary;
-  if (data.generatorDefects?.length) return 'regression';
-  for (const criterion of data.criteria.filter(item => item.evidence !== 'red')) {
-    const evidence = data.completionResults.flatMap(item => item.criterionEvidence ?? []).find(item => item.criterionId === criterion.id);
-    if (!evidence || evidence.evidenceClass !== criterion.evidence || evidence.mutationEpoch !== (data.mutationEpoch ?? 0)) return 'regression';
-  }
+/** Judged evidence for a criterion recorded at the current mutation epoch. */
+export function currentEvidence(data, criterionId) {
+  const epoch = data.mutationEpoch ?? 0;
+  return (data.completionResults ?? []).flatMap(item => item.criterionEvidence ?? [])
+    .find(item => item.criterionId === criterionId && item.mutationEpoch === epoch) ?? null;
+}
+/** A failure passes only as the accepted baseline identity. */
+function recordsOutcome(data, records) {
   let knownRed = false;
-  for (const result of state.ordinary.completionResults) {
+  for (const result of records) {
     if (result.exitStatus === 0) continue;
-    const baseline = state.ordinary.baselineResults.find(item => item.command === result.command);
-    if (!baseline || !state.ordinary.baselineAccepted || !compareFailureIdentity(baseline.identity, result.identity)) return 'regression';
+    const baseline = data.baselineResults?.find(item => item.command === result.command);
+    if (!baseline || !data.baselineAccepted || !compareFailureIdentity(baseline.identity, result.identity)) return 'regression';
     knownRed = true;
   }
   return knownRed ? 'accepted-baseline-equivalent' : 'pass';
+}
+/** Final-gate outcome: every final-tier command fresh at the current epoch and judged evidence for every non-red criterion. */
+export function completionResult(state) {
+  const data = state.ordinary, commands = purposeCommands(data, 'final');
+  if (!commands.every(command => freshRecord(state, command, { epoch: true })) || data.generatorDefects?.length) return 'regression';
+  for (const criterion of data.criteria.filter(item => item.evidence !== 'red')) {
+    const evidence = currentEvidence(data, criterion.id);
+    if (!evidence || evidence.evidenceClass !== criterion.evidence) return 'regression';
+  }
+  return recordsOutcome(data, data.completionResults.filter(item => commands.includes(item.command)));
+}
+/**
+ * Scoped-gate outcome: every non-[FINAL] command has a scope-fresh record and every non-red criterion
+ * they carry has judged evidence; criteria carried only by [FINAL] commands are deferred to the final gate.
+ */
+export function scopedResult(state) {
+  const data = state.ordinary, commands = purposeCommands(data, 'scoped');
+  if (!commands.every(command => freshRecord(state, command)) || data.generatorDefects?.length) return 'regression';
+  const records = (data.completionResults ?? []).filter(item => commands.includes(item.command));
+  for (const criterion of judgedCriteria(data, commands)) {
+    const evidence = records.flatMap(item => item.criterionEvidence ?? []).find(item => item.criterionId === criterion.id);
+    if (!evidence || evidence.evidenceClass !== criterion.evidence) return 'regression';
+  }
+  return recordsOutcome(data, records);
 }
 // Module-resolution and parse errors abort a test file before any leaf test runs.
 const LOAD_FAILURE = /ERR_MODULE_NOT_FOUND|Cannot find (?:module|package)|does not provide an export named|SyntaxError|ERR_REQUIRE_ESM|\bfailed to load\b/i;

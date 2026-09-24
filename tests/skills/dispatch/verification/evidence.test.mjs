@@ -8,6 +8,7 @@ import { afterEach, describe, it } from 'node:test';
 import {
   compareFailureIdentity,
   captureRepositoryState,
+  criterionMappings,
   diffRepositoryState,
   extractApprovedPathSet,
   failureIdentity,
@@ -138,6 +139,32 @@ describe('verification evidence', () => {
     assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test', 'npm test --'], approved), {
       'npm test': ['src/a.js'],
       'npm test --': approved,
+    });
+  });
+
+  it('parses a [FINAL] Verify suffix into the command and finalCommands', () => {
+    const plan = [
+      '## Success Criteria',
+      '- [SC1] Final-only suite.',
+      '  - Changes: src/a.js',
+      '  - Verify: `npm test` [FINAL]',
+      '  - Evidence: verify',
+      '- [SC2] Narrow check.',
+      '  - Changes: tests/a.test.js',
+      '  - Verify: `node --test tests/a.test.js`',
+      '  - Evidence: red',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+      '#### [NEW] tests/a.test.js',
+    ].join('\n');
+    const [final, narrow] = criterionMappings(plan);
+    assert.deepEqual(final.commands, ['npm test']);
+    assert.deepEqual(final.finalCommands, ['npm test']);
+    assert.deepEqual(narrow.commands, ['node --test tests/a.test.js']);
+    assert.deepEqual(narrow.finalCommands, []);
+    assert.deepEqual(mapVerificationCommandsToPaths(plan, ['npm test', 'node --test tests/a.test.js'], extractApprovedPathSet(plan)), {
+      'npm test': ['src/a.js'],
+      'node --test tests/a.test.js': ['tests/a.test.js'],
     });
   });
 

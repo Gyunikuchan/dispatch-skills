@@ -89,7 +89,9 @@ function renderValidatedEvidence(text, ordinary) {
   const trace = ordinary.criteria.map(criterion => {
     const row = ordinary.envelope?.evidence?.find(item => typeof item === 'string' && item.startsWith(`CRITERION ${criterion.id} |`));
     const parts = row?.split('|').map(item => item.trim()) ?? [];
-    const evidence = records.find(item => item.criterionId === criterion.id);
+    // Evidence at the current epoch; an earlier record for the same criterion is stale.
+    const evidence = records.find(item => item.criterionId === criterion.id && item.mutationEpoch === (ordinary.mutationEpoch ?? 0));
+    if (row && !evidence && criterion.evidence !== 'red' && criterion.commands.length && criterion.commands.every(command => (ordinary.finalOnly ?? []).includes(command))) return `- [${criterion.id}] Deferred to final gate — production path: \`${parts[2]}\`.`;
     if (!row || (criterion.evidence !== 'red' && !evidence)) return `- [${criterion.id}] Pending — missing validated ${criterion.evidence} evidence.`;
     const fresh = evidence ? `${evidence.evidenceClass}; ${evidence.reviewer}; ${evidence.scenario}; revision ${evidence.inspectedRevision}; ${evidence.observableResult}; limitations: ${evidence.limitations}` : `red; mutation epoch ${ordinary.mutationEpoch}`;
     return `- [${criterion.id}] ${parts[1]} — production path: \`${parts[2]}\`; evidence: ${fresh}.`;
@@ -104,7 +106,8 @@ function renderValidatedEvidence(text, ordinary) {
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
-  if (state.ordinary.checkpoint || state.reviewState?.kind === 'code') return;
+  // A passed final gate renders its evidence before the deferred code-review checkpoint is recorded.
+  if (state.ordinary.checkpoint || (state.reviewState?.kind === 'code' && !(state.ordinary.step === 'final-verify' && state.ordinary.finalVerified))) return;
   const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ...(state.designPath ? { designPath: relative(state, state.designPath), designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
   const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`\n`;
   const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);

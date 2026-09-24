@@ -6,18 +6,24 @@ import { relocateScratchPaths } from '../artifacts/relocate-scratch.mjs';
 import { emitAction } from './actions.mjs';
 import { append, ledgerSegment, persistEvidence, relative } from './implement-state.mjs';
 import { completeTask } from './task-phase.mjs';
-import { completionResult, fingerprint } from './verification.mjs';
+import { completionResult, fingerprint, scopedResult } from './verification.mjs';
 import { reviewPolicy } from './plan-phase.mjs';
 
 // SECTION: Handoff preconditions
 
-/** Requires canonical completion evidence for the current implementation scope. */
-export function requireImplementation(state) {
+/**
+ * Requires canonical completion evidence for the current implementation scope: scoped gates suffice
+ * to enter code review (deferred criteria allowed); handoff requires the strict final gate.
+ *
+ * @param {any} state
+ * @param {'code-review' | 'handoff'} [mode]
+ */
+export function requireImplementation(state, mode = 'code-review') {
   const data = state.ordinary;
   const segment = ledgerSegment(state) ?? ledgerSegment(state, { terminal: true });
   const task = segment?.tasks.get('implementation');
   if (!segment?.approved || !data.implementationComplete || task?.lastVerification?.data.transition !== 'complete' || task.lastAttempt?.data.terminalEnvelope?.stage !== 'COMPLETE') throw new Error('code-review requires approved implementation outcome and canonical complete verification; implementation produces them.');
-  if (data.implementationComplete.scopeHash !== fingerprint(state) || completionResult(state) === 'regression') throw new Error('Implementation verification is missing or stale; resume implementation verification.');
+  if (data.implementationComplete.scopeHash !== fingerprint(state) || (mode === 'handoff' ? completionResult(state) : scopedResult(state)) === 'regression') throw new Error('Implementation verification is missing or stale; resume implementation verification.');
 }
 export function codeCheckpoint(state) {
   const artifact = readArtifact(state.walkthroughPath, { kind: 'code' });
@@ -39,7 +45,7 @@ export function finishCodeReview(state, action) {
 
 /** Settles the ledger and emits the successful terminal handoff. */
 export function handoff(state) {
-  requireImplementation(state);
+  requireImplementation(state, 'handoff');
   persistEvidence(state);
   const walkthrough = readArtifact(state.walkthroughPath, { kind: 'code' }).source;
   for (const criterion of state.ordinary.criteria) {

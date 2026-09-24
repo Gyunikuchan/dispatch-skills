@@ -118,6 +118,12 @@ describe('deterministic plan lint', () => {
     assert.ok(rules(lintPlan(VALID_PLAN.replace('  - Verify: `node --test tests/a.test.js`', '  - Verify: `npm test` and `npm run lint`'))).includes('criterion-verify'));
   });
 
+  it('accepts a [FINAL] suffix after the Verify command', () => {
+    const final = lintPlan(VALID_PLAN.replace('  - Verify: `node --test tests/a.test.js`', '  - Verify: `node --test tests/a.test.js` [FINAL]'));
+    assert.ok(!rules(final).includes('criterion-verify'), JSON.stringify(final.defects));
+    assert.ok(rules(lintPlan(VALID_PLAN.replace('  - Verify: `node --test tests/a.test.js`', '  - Verify: `node --test tests/a.test.js` [SLOW]'))).includes('criterion-verify'));
+  });
+
   it('validates evidence classes, rationales, review scenarios, and critical review enforcement', () => {
     assert.ok(rules(lintPlan(VALID_PLAN.replace('  - Evidence: red\n', ''))).includes('criterion-evidence'));
     assert.ok(rules(lintPlan(VALID_PLAN.replace('Evidence: red', 'Evidence: maybe'))).includes('criterion-evidence'));

@@ -136,12 +136,12 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
         return { answer: { decision: 're-verify', reason: 'The host ran the command against a stale checkout.' } };
       },
       verify(action) {
-        if (fixed && action.purpose === 'completion' && ++postReviewCalls === 1) return { results: action.commands.map(command => ({ command, exit: 1, evidence: 'pass 0 fail 1', identifiers: ['test:sample'], diagnostic: 'stale checkout', scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
+        if (fixed && action.purpose === 'scoped' && ++postReviewCalls === 1) return { results: action.commands.map(command => ({ command, exit: 1, evidence: 'pass 0 fail 1', identifiers: ['test:sample'], diagnostic: 'stale checkout', scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
         return base.verify(action);
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    assert.match(disposition, /rerun the completion verification|reruns the completion verification/);
+    assert.match(disposition, /reruns the scoped verification/);
     assert.equal(postReviewCalls, 2);
     assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition').map(([, decision]) => decision), ['inspect-first', 're-verify']);
   });

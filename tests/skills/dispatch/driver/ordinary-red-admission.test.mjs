@@ -27,7 +27,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
       },
       verify(action) {
         const reply = ordinaryDriverPolicy(fixture.repo).verify(action);
-        if (action.purpose !== 'completion') return reply;
+        if (action.purpose !== 'scoped') return reply;
         completionReplies++;
         if (completionReplies === 1) return reply;
         reply.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'mapped check', inspectedRevision: completionReplies === 2 ? 'sha256:stale' : action.scopeHash, observableResult: 'value=2', limitations: 'mapped scope only', mutationEpoch: action.mutationEpoch }];
@@ -36,7 +36,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
     } });
     assert.equal(result.done.outcome, 'complete');
     assert.equal(completionReplies, 3);
-    const rejected = result.trace.filter(action => action.action === 'verify' && action.purpose === 'completion' && action.error);
+    const rejected = result.trace.filter(action => action.action === 'verify' && action.purpose === 'scoped' && action.error);
     assert.equal(rejected.length, 2);
     assert.match(rejected[0].error, /fresh structured verify evidence/);
     assert.match(rejected[1].error, /fresh structured verify evidence/);
@@ -64,7 +64,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
         if (!action.commands.includes('npm test')) return base;
         const scopeHash = action.scopeHashes['npm test'];
         base.results = base.results.map(item => item.command !== 'npm test' ? item : { command: 'npm test', exit: 0, evidence: 'ok', identifiers: [], diagnostic: '', scopeHash, mutationEpoch: action.mutationEpoch,
-          ...(action.purpose === 'completion' ? { criterionEvidence: [{ criterionId: 'SC2', evidenceClass: 'verify', reviewer: 'host', scenario: 'run the aggregate suite', inspectedRevision: scopeHash, observableResult: 'suite green', limitations: 'covers mapped aggregate only', mutationEpoch: action.mutationEpoch }] } : {}) });
+          ...(['scoped', 'final'].includes(action.purpose) ? { criterionEvidence: [{ criterionId: 'SC2', evidenceClass: 'verify', reviewer: 'host', scenario: 'run the aggregate suite', inspectedRevision: scopeHash, observableResult: 'suite green', limitations: 'covers mapped aggregate only', mutationEpoch: action.mutationEpoch }] } : {}) });
         return base;
       },
     } });

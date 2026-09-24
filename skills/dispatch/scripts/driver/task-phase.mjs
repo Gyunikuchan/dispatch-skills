@@ -10,12 +10,12 @@ import { emitAction } from './actions.mjs';
 import { append, ask, ledgerSegment, ruling } from './implement-state.mjs';
 import {
   beginVerification,
-  completionResult,
   fingerprint,
   repositoryBaseline,
   loadFailureDefect,
   purposeCommands,
   redLoadFailures,
+  scopedResult,
   snapshot,
   validateRedAdmission,
   validateRed,
@@ -39,7 +39,7 @@ export function beginImplementation(state) {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
     return ask(state, 'implementation-recovery', 'A write was dispatched before interruption. Return its captured raw terminal envelope. Missing evidence opens failure disposition; the driver will not duplicate the write.', [{ taskId: data.taskId, attempt: data.attempt, paths }]);
   }
-  if (data.step === 'red-verify' || data.step === 'completion-verify') return beginVerification(state, data.step === 'red-verify' ? 'red' : 'completion');
+  if (data.step === 'red-verify' || data.step === 'completion-verify') return beginVerification(state, data.step === 'red-verify' ? 'red' : 'scoped');
   if (data.redValidated) {
     const task = ledgerSegment(state).tasks.get('implementation');
     if (task?.lastVerification?.data.result !== 'red' || task.lastAttempt?.data.transition !== 'run-red') return openFailure(state, 'Canonical RED verification is absent.');
@@ -250,7 +250,7 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   if (parsed.parseError) data.outcomeError = parsed.parseError;
   if (['run-red', 'verify'].includes(parsed.transition.action)) {
     data.step = parsed.transition.action === 'run-red' ? 'red-verify' : 'completion-verify';
-    return beginVerification(state, parsed.transition.action === 'run-red' ? 'red' : 'completion');
+    return beginVerification(state, parsed.transition.action === 'run-red' ? 'red' : 'scoped');
   }
   if (data.launch === 'tests-only') return openFailure(state, parsed.parseError ?? `Tests-only outcome: ${parsed.transition.action}`);
   if (parsed.envelope?.status === 'NEEDS_CONTEXT') {
@@ -295,14 +295,14 @@ export async function afterImplementationVerification(state) {
     // Code review after production covers test quality; no read pass gates RED.
     return startTask(state, 'full');
   }
-  let result = completionResult(state);
+  let result = scopedResult(state);
   const untraced = missingTrace(data.criteria, data.envelope);
   if (untraced.length) {
     result = 'regression';
     data.traceabilityDefects = untraced.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
   }
   const transition = verificationTransition(state, result, 'final');
-  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: purposeCommands(data, 'completion'), transition: transition.action });
+  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.lastGate?.commands ?? [], transition: transition.action });
   if (transition.action !== 'complete') return retryOrFail(state, transition);
   data.implementationComplete = { result, scopeHash: fingerprint(state), envelope: data.envelope };
   data.step = 'implemented';
@@ -420,7 +420,9 @@ function reverify(state, answer) {
   if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) throw new Error('The tree changed after the failure; re-verify reruns unchanged work only.');
   ruling(state, 'failure-disposition', 're-verify', answer.reason);
   delete data.failure;
-  delete data[`${verification.purpose}Results`];
+  // Merged scoped/final records of the rerun gate's commands must not count as fresh.
+  if (['scoped', 'final'].includes(verification.purpose)) data.completionResults = (data.completionResults ?? []).filter(item => !(data.lastGate?.commands ?? []).includes(item.command));
+  else delete data[`${verification.purpose}Results`];
   data.step = verification.step;
   return beginVerification(state, verification.purpose);
 }

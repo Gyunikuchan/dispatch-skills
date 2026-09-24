@@ -6,7 +6,7 @@ import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mj
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
 import { implementationOutcome, runDispatch } from '../../../helpers/driver-harness.mjs';
-import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy, withCriterionEvidence } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
 
@@ -38,6 +38,33 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
       assert.equal(events.filter(event => event.type === 'approval').length, 1, phase);
       assert.equal(events.filter(event => event.type === 'task-start').length, 1, phase);
     }
+  });
+  it('resumes at code review after only scoped gates, deferring [FINAL] evidence to the final gate', () => {
+    const fixture = createOrdinaryDriverFixture({ finalCommand: true }); let restarted = false;
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, {
+      policy: {
+        delegateWrite(action) {
+          if (action.fields.stage === 'tests-only') return base.delegateWrite(action);
+          fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
+          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js', 'CRITERION SC2 | delivered value=2 | src/app.js'] })) };
+        },
+        verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...item }) => item) })),
+      },
+      onAction(action) {
+        if (restarted || JSON.parse(fs.readFileSync(action.stateFile, 'utf8')).ordinary?.phase !== 'code-review') return;
+        restarted = true;
+        fs.rmSync(action.stateFile);
+        const reply = runDispatch(fixture.fixture, ['--run', 'implement', '--phases', 'from:code-review', '--orchestrator', 'claude', '--', fixture.plan], { cwd: fixture.repo.dir });
+        assert.equal(reply.status, 0, reply.stderr);
+        const resumed = JSON.parse(reply.stdout);
+        assert.notEqual(resumed.outcome, 'refused', JSON.stringify(resumed));
+        Object.assign(action, resumed);
+      },
+    });
+    assert.ok(restarted);
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.equal(result.trace.filter(action => action.action === 'verify').at(-1).purpose, 'final');
   });
   it('keeps inspect-first unterminated after malformed tests-only outcome', () => {
     const fixture = createOrdinaryDriverFixture();

@@ -6,7 +6,8 @@ import { after, before, describe, it } from 'node:test';
 
 import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, drive, makeGitRepo, parseAction, report, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 
@@ -214,5 +215,65 @@ describe('driver skip and inference through dispatch.mjs', () => {
     const res = run(['--run', 'review', '--orchestrator', 'claude', '--', 'not-a-ref-or-markdown']);
     assert.equal(res.status, 2);
     assert.match(res.stderr, /\.md/);
+  });
+});
+
+describe('fix verification guidance (narrowest check)', () => {
+  const guidanceOf = (trace, name) => trace.filter((action) => action.action === name).flatMap((action) => action.guidance).join('\n');
+  const applyEdit = (repoDir) => (action) => {
+    fs.appendFileSync(path.join(repoDir, 'src', 'app.js'), '// fixed\n');
+    return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+  };
+
+  it('standalone --fix review guidance names the narrowest check without forbidding aggregate suites', () => {
+    const fixture = createStubDispatchFixture({
+      'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
+      phases: { 'code-review': { rounds: ALL(2), targets: ALL(1), consensus: ALL(false) } },
+    });
+    const local = makeGitRepo({ dirty: true });
+    try {
+      const run = drive(fixture, {
+        cwd: local.dir,
+        runArgs: ['review', '--kind', 'code', '--fix', '--orchestrator', 'claude'],
+        policy: {
+          waveResults: (action) => allProviders(report(action.wave.type === 'review' && action.wave.round === 1 ? [codeFinding()] : [])),
+          fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --version'] }),
+          applyFixes: applyEdit(local.dir),
+        },
+      });
+      const adjudicate = guidanceOf(run.trace, 'adjudicate'), applyFixes = guidanceOf(run.trace, 'apply-fixes');
+      assert.match(adjudicate, /narrowest/i);
+      assert.doesNotMatch(adjudicate, /aggregate suite/i);
+      assert.match(applyFixes, /narrowest/i);
+    } finally {
+      local.cleanup();
+      fixture.cleanup();
+    }
+  });
+
+  it('implementation-run code review guidance forbids aggregate suites in fix.verification', () => {
+    const ordinary = createOrdinaryDriverFixture();
+    try {
+      let production = false, codeWaves = 0;
+      const result = driveOrdinaryImplementation(ordinary, { policy: {
+        delegateWrite(action) {
+          production ||= action.fields.stage === 'production';
+          const testsOnly = action.fields.stage === 'tests-only';
+          fs.writeFileSync(path.join(ordinary.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
+            ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
+          return { raw: JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: testsOnly ? 'RED_READY' : 'COMPLETE', summary: 'fixture', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | delivered value=2 | src/app.js'] }) };
+        },
+        waveResults: () => allProviders(report(production && ++codeWaves === 1 ? [codeFinding({ defect: 'Missing trailing comment.' })] : [])),
+        fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --test tests/sample.test.mjs'] }),
+        applyFixes: applyEdit(ordinary.repo.dir),
+      } });
+      const adjudicate = guidanceOf(result.trace, 'adjudicate'), applyFixes = guidanceOf(result.trace, 'apply-fixes');
+      assert.ok(adjudicate, 'code review adjudicated a finding');
+      assert.match(adjudicate, /narrowest/i);
+      assert.match(adjudicate, /aggregate suite/i);
+      assert.match(applyFixes, /narrowest/i);
+    } finally {
+      cleanupOrdinaryDriverFixtures();
+    }
   });
 });

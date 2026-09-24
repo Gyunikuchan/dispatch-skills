@@ -17,6 +17,9 @@ const MAX_DIAGNOSTIC_CHARS = 4000;
 
 // SECTION: Plan evidence
 
+// `[FINAL]` marks a command run only at required gates (baseline, RED, final).
+const VERIFY_LINE = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*(\[FINAL\])?\s*$/;
+
 /** @param {string} source */
 export function criterionMappings(source) {
   const lines = structuralLines(source);
@@ -28,13 +31,13 @@ export function criterionMappings(source) {
     if (!inCriteria) continue;
     const criterion = /^(?:[-*+]|\d+[.)])\s+\[(SC[1-9]\d*)\]\s*(.*)$/.exec(text);
     if (criterion) {
-      current = { id: criterion[1], title: criterion[2], text: criterion[2], paths: [], commands: [], evidence: null, testRationale: null, review: null, enforcementRationale: null, preExisting: false };
+      current = { id: criterion[1], title: criterion[2], text: criterion[2], paths: [], commands: [], finalCommands: [], evidence: null, testRationale: null, review: null, enforcementRationale: null, preExisting: false };
       mappings.push(current);
       continue;
     }
     if (!current) continue;
     const changes = /^ {2,}[-*+] Changes:\s*(.+)$/.exec(text); if (changes) current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
-    const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*$/.exec(text); if (verify) current.commands.push(verify[1].trim());
+    const verify = VERIFY_LINE.exec(text); if (verify) { current.commands.push(verify[1].trim()); if (verify[2]) current.finalCommands.push(verify[1].trim()); }
     const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(text); if (evidence) current.evidence = evidence[1].toLowerCase();
     const preExisting = /^ {2,}[-*+] Pre-existing:\s*(yes|no)\s*$/i.exec(text); if (preExisting) current.preExisting = preExisting[1].toLowerCase() === 'yes';
     const rationale = /^ {2,}[-*+] Test rationale:\s*(.+)$/.exec(text); if (rationale) current.testRationale = rationale[1].trim();
@@ -116,7 +119,7 @@ export function mapVerificationCommandsToPaths(source, commands, approvedPaths =
     if (changes) {
       current.paths = changes[1].split(',').map(value => normalizePlanPath(value).path);
     }
-    const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`\s*$/.exec(text);
+    const verify = VERIFY_LINE.exec(text);
     if (verify) current.commands.push(verify[1].trim());
   }
   return Object.fromEntries(commands.map((command) => {

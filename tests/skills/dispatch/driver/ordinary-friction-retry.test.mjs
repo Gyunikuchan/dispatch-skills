@@ -93,14 +93,14 @@ describe('driver-run verification', () => {
       askUser: base.askUser,
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    assert.deepEqual(verifies.map(action => action.purpose), ['baseline', 'red', 'completion']);
+    assert.deepEqual(verifies.map(action => action.purpose), ['baseline', 'red', 'scoped', 'final']);
     for (const action of verifies) {
       assert.deepEqual(action.argv.slice(-3, -1), ['--verify', '--state']);
       const record = JSON.parse(fs.readFileSync(action.resultsPath, 'utf8'));
       assert.equal(record.purpose, action.purpose);
       for (const item of record.results) assert.ok(fs.existsSync(item.logPath) && /[\\/]sessions[\\/]/.test(item.logPath), item.logPath);
     }
-    const completion = JSON.parse(fs.readFileSync(verifies[2].resultsPath, 'utf8'));
+    const completion = JSON.parse(fs.readFileSync(verifies[3].resultsPath, 'utf8'));
     assert.deepEqual(completion.generated.map(item => [item.exit, item.changed, item.outside]), [[0, ['gen.txt'], []]]);
     assert.equal(fs.readFileSync(path.join(fixture.repo.dir, 'gen.txt'), 'utf8'), 'generated');
     const red = JSON.parse(fs.readFileSync(verifies[1].resultsPath, 'utf8')).results[0];

@@ -44,7 +44,7 @@ Load [review.md](references/review.md) for any review action, [verbs/implement.m
 - The driver writes canonical artifacts, ledgers, checkpoints, and session-temp run state, and runs only plan-approved commands; it never edits production code.
 - `delegate-write` uses the configured native write subagent. Production writes require recorded approval.
 - `apply-fixes` is allowed inside an approved implementation run, or in standalone review only when the user supplied `--fix`.
-- Run host verification after every production mutation. Preserve unrelated work and leave Git publication to the user.
+- Run the emitted `verify` after every production mutation. Preserve unrelated work; leave Git publication to the user.
 
 ## Recovery and completion
 

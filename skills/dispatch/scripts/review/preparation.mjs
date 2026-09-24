@@ -377,7 +377,7 @@ function collapseApprovedScope(body) {
 
 // Drops Automated Tests bullets that repeat a Success Criteria `Verify:` command verbatim.
 function dedupeAutomatedTests(body) {
-  const verify = new Set([...body.matchAll(/^\s+- Verify: `([^`]+)`\s*$/gm)].map((match) => match[1]));
+  const verify = new Set([...body.matchAll(/^\s+- Verify: `([^`]+)`\s*(?:\[FINAL\]\s*)?$/gm)].map((match) => match[1]));
   if (!verify.size) return body;
   return body.replace(/(\n### Automated Tests\n)([\s\S]*?)(?=\n#{2,3} |$)/, (_, heading, section) => {
     const lines = section.split('\n');

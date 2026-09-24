@@ -4,10 +4,11 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { emitAction } from './actions.mjs';
 import { createRunState, writeRunSidecar, writeRunState } from './state.mjs';
-import { assertBinding, bindPlan, ledgerSegment, refuse, restoreEvidence, save } from './implement-state.mjs';
+import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
+import { writeCheckpoint } from './review-phase.mjs';
 import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBaseline } from './baseline-phase.mjs';
-import { acceptVerification, beginVerification, completionResult, fingerprint } from './verification.mjs';
+import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, scopedResult } from './verification.mjs';
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 
@@ -66,6 +67,7 @@ export async function enterPhase(state, phase) {
     return beginImplementation(state);
   }
   requireImplementation(state);
+  if (phase === 'code-review' && state.ordinary.step === 'final-verify') return beginVerification(state, 'final');
   if (phase === 'code-review') return consumeReview(state, await beginReview(state, 'code'));
   if (phase === 'handoff') return handoff(state);
   return refuse(state, `Unknown ordinary phase ${phase}.`);
@@ -84,14 +86,47 @@ async function consumeReview(state, action) {
     if (state.invocation.verb === 'plan') return emitAction(state, 'done', { outcome: 'complete', summary: 'Plan authored and plan review settled; baseline has not started.', artifactPath: state.planPath, checkpointed: action.checkpointed ?? false });
     return passGate(state, beginBaseline(state));
   }
-  if (!finishCodeReview(state, action)) return action;
-  delete state.reviewState;
-  if (completionResult(state) === 'regression') {
-    delete state.ordinary.checkpoint;
-    state.ordinary.step = 'post-review-verify';
-    return beginVerification(state, 'completion');
+  // An implementation code review settles without its checkpoint; the final gate precedes it.
+  // NOTE: the done schema has no settled field; an implementation review's complete, uncheckpointed outcome is its settlement.
+  if (!(action.outcome === 'complete' && action.checkpointed === false && state.reviewState?.invocation?.implementation)) {
+    if (!finishCodeReview(state, action)) return action;
+    delete state.reviewState;
   }
-  state.ordinary.phase = 'handoff';
+  const data = state.ordinary;
+  if (scopedResult(state) === 'regression') {
+    // Accepted fixes changed scope: verify them, then review again.
+    delete state.reviewState;
+    delete data.checkpoint;
+    data.step = 'post-review-verify';
+    return beginVerification(state, 'scoped');
+  }
+  data.step = 'final-verify';
+  data.finalVerified = false;
+  // Every final-tier record is already fresh: the final gate has nothing to run.
+  if (!gateCommands(state, 'final').length && !data.generators?.length) return afterFinalVerification(state);
+  return beginVerification(state, 'final');
+}
+/** Renders final evidence, records the deferred code-review checkpoint, and hands off. */
+async function afterFinalVerification(state) {
+  const data = state.ordinary;
+  if (completionResult(state) === 'regression') return openFailure(state, 'Final verification failed or is stale.', { purpose: 'final', step: 'final-verify' });
+  // Generators may rewrite [GENERATED] paths at the final gate.
+  data.implementationComplete.scopeHash = fingerprint(state);
+  data.finalVerified = true;
+  if (!state.reviewState) {
+    if (data.checkpoint || data.codeReview?.outcome === 'skipped') { data.phase = 'handoff'; return handoff(state); }
+    // NOTE: a resumed run lost its settled review state; review again to reach the checkpoint.
+    return consumeReview(state, await beginReview(state, 'code'));
+  }
+  persistEvidence(state);
+  const action = writeCheckpoint(state.reviewState);
+  if (!finishCodeReview(state, action)) {
+    // A drifted checkpoint restarts a review wave inside the retained review.
+    if (action.action !== 'done') data.step = 'code-review';
+    return { ...action, stateFile: state.stateFile };
+  }
+  delete state.reviewState;
+  data.phase = 'handoff';
   return handoff(state);
 }
 /** Captures the governing artifacts so a reply that throws leaves no half-applied round or evidence stub. */
@@ -112,7 +147,7 @@ export async function advanceImplement(state, reply) {
     if (data.phase === 'plan') {
       acceptPlan(state, reply);
       action = await consumeReview(state, await beginReview(state, 'plan'));
-    } else if (state.reviewState) {
+    } else if (state.reviewState && !['final-verify', 'failure-disposition'].includes(data.step)) {
       action = await consumeReview(state, continueReview(state, reply));
     } else {
       assertBinding(state);
@@ -120,8 +155,9 @@ export async function advanceImplement(state, reply) {
         action = acceptVerification(state, reply);
         if (!action) {
           if (data.phase === 'baseline') action = passGate(state, baselineDecision(state));
+          else if (data.step === 'final-verify') action = await afterFinalVerification(state);
           else if (data.step === 'post-review-verify') {
-            if (completionResult(state) === 'regression') action = openFailure(state, 'Final post-review verification failed or is stale.', { purpose: 'completion', step: 'post-review-verify' });
+            if (scopedResult(state) === 'regression') action = openFailure(state, 'Post-review verification failed or is stale.', { purpose: 'scoped', step: 'post-review-verify' });
             else { data.implementationComplete.scopeHash = fingerprint(state); action = await consumeReview(state, await beginReview(state, 'code')); }
           } else {
             action = await afterImplementationVerification(state);

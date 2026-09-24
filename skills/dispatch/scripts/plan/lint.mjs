@@ -148,7 +148,7 @@ function readCriterionMapping(current, entry, approved, defects) {
   const verify = /^ {2,}[-*+] Verify:\s*(.+)$/.exec(entry.text);
   if (verify) {
     current.hasMapping = true;
-    if (!/^`[^`]+`\s*$/.test(verify[1])) defects.push(diagnostic('criterion-verify', entry.line, 'Verify requires exactly one inline-code command.'));
+    if (!/^`[^`]+`\s*(?:\[FINAL\]\s*)?$/.test(verify[1])) defects.push(diagnostic('criterion-verify', entry.line, 'Verify requires exactly one inline-code command, optionally followed by [FINAL].'));
   }
 
   const evidence = /^ {2,}[-*+] Evidence:\s*(\S+)\s*$/.exec(entry.text);

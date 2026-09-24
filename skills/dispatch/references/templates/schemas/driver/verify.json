@@ -167,7 +167,8 @@
       "enum": [
         "baseline",
         "red",
-        "completion"
+        "scoped",
+        "final"
       ]
     },
     "scopes": {
@@ -186,6 +187,13 @@
     },
     "mutationEpoch": {
       "type": "integer"
+    },
+    "deferred": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^SC[1-9][0-9]*$"
+      }
     },
     "criteria": {
       "type": "array",

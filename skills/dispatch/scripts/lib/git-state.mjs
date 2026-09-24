@@ -1,6 +1,7 @@
 // @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { TextDecoder } from 'node:util';
@@ -243,6 +244,36 @@ export function currentHead(repoRoot) {
   return git(repoRoot, ['hash-object', '-t', 'tree', '--stdin'], { input: EMPTY_BUFFER })
     .toString('ascii')
     .trim();
+}
+
+/**
+ * Tree id of the working-tree content excluding `.scratch/`, or null when Git fails. A temporary
+ * index seeded from the real one keeps commits and scratch edits from changing the id.
+ *
+ * @param {string} repoRoot
+ * @returns {string | null}
+ */
+export function contentTreeId(repoRoot) {
+  let dir;
+  try {
+    const gitDir = git(repoRoot, ['rev-parse', '--git-path', 'index']).toString('utf8').trim();
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-tree-'));
+    const index = path.join(dir, 'index');
+    const real = path.resolve(repoRoot, gitDir);
+    if (fs.existsSync(real)) fs.copyFileSync(real, index);
+    const env = { ...process.env, GIT_INDEX_FILE: index };
+    const run = (/** @type {string[]} */ args) => {
+      const result = spawnSync('git', args, { cwd: repoRoot, env, encoding: 'utf8', maxBuffer: GIT_MAX_BUFFER_BYTES });
+      if (result.status !== 0) throw new Error(`git ${args[0]} failed`);
+      return result.stdout.trim();
+    };
+    run(['add', '-A', '--', '.', ':(exclude).scratch']);
+    return run(['write-tree']) || null;
+  } catch {
+    return null;
+  } finally {
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** @param {string} repoRoot */

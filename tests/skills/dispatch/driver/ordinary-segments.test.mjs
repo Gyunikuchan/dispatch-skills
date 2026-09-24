@@ -135,7 +135,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     let production, completion;
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, {
-      onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action; if (action.action === 'verify' && action.purpose === 'completion') completion ??= action; },
+      onAction(action) { if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action; if (action.action === 'verify' && action.purpose === 'scoped') completion ??= action; },
       policy: {
         delegateWrite(action) {
           fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
@@ -145,7 +145,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
         askUser(action) { return action.question === 'approval' ? { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } } : base.askUser(action); },
         verify(action) {
           const reply = base.verify(action);
-          if (action.purpose === 'completion') reply.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
+          if (action.purpose === 'scoped') reply.results[0].criterionEvidence = [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'execute mapped sample check', inspectedRevision: action.scopeHash, observableResult: 'value=2 observed', limitations: 'covers mapped sample only', mutationEpoch: action.mutationEpoch }];
           return reply;
         },
       },

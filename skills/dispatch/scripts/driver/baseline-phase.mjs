@@ -23,13 +23,15 @@ export function beginBaseline(state) {
     '## Outcome Traceability', ...state.ordinary.criteria.map(item => `- [${item.id}] Pending — evidence: ${item.evidence}; production path: pending implementation.`), '',
     '## Key Deviations', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '', '## Follow-ups', 'None.', '',
   ].join('\n'));
+  // Identical content reuses cached per-command results; the baseline runs only the misses.
   const cached = cachedBaseline(state);
-  if (cached) {
-    // An identical tree reuses its recorded baseline instead of rerunning every command.
-    state.ordinary.baselineResults = cached.results;
-    state.ordinary.baselineReused = cached.capturedAt;
-    return baselineDecision(state);
+  delete state.ordinary.baselineResults;
+  delete state.ordinary.baselineReused;
+  if (cached.hits.length) {
+    state.ordinary.baselineResults = cached.hits;
+    state.ordinary.baselineReused = cached.hits.length;
   }
+  if (!cached.misses.length) return baselineDecision(state);
   return beginVerification(state, 'baseline');
 }
 

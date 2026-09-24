@@ -136,6 +136,13 @@ describe('review preparation primitives', () => {
       assert.match(contents, /- Run doctor\./);
     });
 
+    it('drops an Automated Tests command that repeats a [FINAL] Verify line', () => {
+      const contents = buildReviewView(artifact().replace('  - Verify: `node --test a.test.mjs`', '  - Verify: `node --test a.test.mjs` [FINAL]'), { canonicalPath: 'plan.md', nextRound: 1 }).contents;
+      const tests = /### Automated Tests\n([\s\S]*?)\n### Manual Verification/.exec(contents)[1];
+      assert.match(tests, /Every Success Criteria `Verify:` command/);
+      assert.doesNotMatch(tests, /`node --test a\.test\.mjs`/);
+    });
+
     it('omits an empty preceding round and groups entries sharing locus and tag', () => {
       assert.doesNotMatch(view(['### Round 1 — 2026-09-23', sources], 2), /Immediately preceding round|### Round 1/);
       const round = ['### Round 1 — 2026-09-23', sources,

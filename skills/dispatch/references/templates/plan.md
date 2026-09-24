@@ -27,7 +27,7 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
 ## Success Criteria
 - [SC#] Checkable outcome.
   - Changes: <relative-path>[, <relative-path>...]
-  - Verify: `<command>` <!-- red: the narrowest command running the new test, never the aggregate suite -->
+  - Verify: `<command>` <!-- narrowest feedback command (red: never the aggregate suite); append [FINAL] to a broad or slow proof run only at required gates -->
   - Evidence: <red|verify|review>
   - Pre-existing: <yes|no> <!-- optional; yes admits a red criterion whose failure already exists at baseline -->
   - Test rationale: <why retained RED is discriminating, stable, regression-bearing, proportionate, and behavioral; or why a new retained test is low-signal>

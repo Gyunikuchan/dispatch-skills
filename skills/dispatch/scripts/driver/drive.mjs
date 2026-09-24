@@ -29,7 +29,7 @@ function mechanical(action) {
 
 /** Completion evidence for verify/review criteria is host judgment, so the drive stops after running it. */
 function needsEvidence(action) {
-  return action.purpose === 'completion' && (action.criteria ?? []).some(item => item.evidenceClass !== 'red');
+  return ['scoped', 'final'].includes(action.purpose) &&(action.criteria ?? []).some(item => item.evidenceClass !== 'red');
 }
 
 function launch(action, stderr) {

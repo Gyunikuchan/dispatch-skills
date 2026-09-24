@@ -22,14 +22,46 @@ const cleanup = [];
 
 export function cleanupOrdinaryDriverFixtures() { for (const fn of cleanup.splice(0)) fn(); }
 
-export function createOrdinaryDriverFixture() {
-  const fixture = createStubDispatchFixture(ORDINARY_DRIVER_CONFIG), repo = makeGitRepo();
+/** Plan criterion whose only command is marked `[FINAL]`: its verify evidence is deferred to the final gate. */
+export const FINAL_COMMAND = 'node scripts/slow.mjs';
+const FINAL_CRITERION = `- [SC2] Aggregate proof.\n  - Changes: \`src/app.js\`\n  - Verify: \`${FINAL_COMMAND}\` [FINAL]\n  - Evidence: verify\n  - Test rationale: The slow deterministic proof needs no dedicated pre-change failure.\n\n`;
+
+/**
+ * @param {{ finalCommand?: boolean, codeReview?: boolean }} [options] finalCommand adds SC2 mapped to a
+ * `[FINAL]` command (with a passing scripts/slow.mjs); codeReview: false disables the code-review phase.
+ */
+export function createOrdinaryDriverFixture({ finalCommand = false, codeReview = true } = {}) {
+  const config = codeReview ? ORDINARY_DRIVER_CONFIG : { ...ORDINARY_DRIVER_CONFIG, phases: { ...ORDINARY_DRIVER_CONFIG.phases,
+    'code-review': { ...ORDINARY_DRIVER_CONFIG.phases['code-review'], rounds: Object.fromEntries(Object.keys(levels).map(level => [level, 0])) } } };
+  const fixture = createStubDispatchFixture(config), repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");
   repo.git('add', 'tests'); repo.git('commit', '--no-gpg-sign', '-qm', 'baseline tests');
-  const plan = writePlan(repo.dir, undefined, PLAN_BODY.replace('Changes: `src/app.js`', 'Changes: `src/app.js`, `tests/sample.test.mjs`').replace('#### [MODIFY] src/app.js', '#### [MODIFY] tests/sample.test.mjs\n\n- Add regression.\n\n#### [MODIFY] src/app.js'));
+  let body = PLAN_BODY.replace('Changes: `src/app.js`', 'Changes: `src/app.js`, `tests/sample.test.mjs`').replace('#### [MODIFY] src/app.js', '#### [MODIFY] tests/sample.test.mjs\n\n- Add regression.\n\n#### [MODIFY] src/app.js');
+  if (finalCommand) {
+    fs.mkdirSync(path.join(repo.dir, 'scripts'));
+    fs.writeFileSync(path.join(repo.dir, 'scripts/slow.mjs'), 'process.exit(0);\n');
+    repo.git('add', 'scripts'); repo.git('commit', '--no-gpg-sign', '-qm', 'slow proof');
+    body = body.replace('## Proposed Changes', `${FINAL_CRITERION}## Proposed Changes`);
+  }
+  const plan = writePlan(repo.dir, undefined, body);
   return { fixture, repo, plan };
+}
+
+/** Wraps a verify policy so its reply carries structured evidence for every judged (non-red) criterion of the gate. */
+export function withCriterionEvidence(verify) {
+  return (action, ctx) => {
+    const reply = verify(action, ctx) ?? {};
+    const criterionEvidence = (action.criteria ?? []).filter(item => item.evidenceClass !== 'red' && item.commands.length).map(item => {
+      // Cite what the runner stored: a real run's summary, else the simulated reply's own scopeHash, else the per-command hash.
+      const ran = ctx?.lastVerify?.results?.find(result => result.command === item.commands[0]);
+      return { criterionId: item.id, evidenceClass: item.evidenceClass, reviewer: 'host', scenario: `ran ${item.commands[0]}`,
+        inspectedRevision: ran?.scopeHash ?? reply.results?.find(result => result.command === item.commands[0])?.scopeHash ?? action.scopeHashes?.[item.commands[0]] ?? action.scopeHash,
+        observableResult: 'passed', limitations: 'fixture scope only', mutationEpoch: ran?.mutationEpoch ?? action.mutationEpoch };
+    });
+    return criterionEvidence.length ? { ...reply, criterionEvidence } : reply;
+  };
 }
 
 // SECTION: scripted host
