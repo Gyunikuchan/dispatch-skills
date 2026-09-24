@@ -54,7 +54,16 @@ export function acceptBaselineRuling(state, reply) {
   state.ordinary.baselineAccepted = { reason: answer.reason };
   return baselineDecision(state);
 }
-export function approve(state, reply) {
+/**
+ * Answers the approval gate without asking when the user typed `low` and it has nothing to rule on:
+ * clean baseline, no red criteria, not a design increment.
+ */
+export function autoApproval(state) {
+  const { invocation, ordinary: data } = state;
+  if (invocation.level !== 'low' || invocation.levelSource !== 'explicit' || state.designPath || data.baselineAccepted || data.redCriteria.length) return null;
+  return { answer: { decision: 'approved', governingHash: state.governingHash, testPaths: [], reason: 'Auto-approved: explicit low level, clean baseline, no red criteria.' } };
+}
+export function approve(state, reply, actor = 'user') {
   const answer = reply.answer, data = state.ordinary;
   if (answer?.decision !== 'approved' || answer.governingHash !== state.governingHash || !answer.reason?.trim()) throw new Error('Approval requires the current governingHash, decision approved, and reason.');
   if (JSON.stringify(repositoryBaseline(state)) !== JSON.stringify(data.approvalSnapshot)) throw new Error('Repository drifted during approval; recapture baseline.');
@@ -74,7 +83,7 @@ export function approve(state, reply) {
     ? { governingPath: design.path, governingHash: design.revision, rootSlug: designSlug(state.designPath), action: 'increment', design, baseline: data.baseline,
       increment: { id: state.increment.id, planPath: relative(state, state.planPath), walkthroughPath: relative(state, state.walkthroughPath), planHash: state.governingHash } }
     : { governingPath: relative(state, state.planPath), governingHash: state.governingHash, rootSlug: state.slug, action: 'ordinary', baseline: data.baseline });
-  append(state, 'approval', { governingHash: design?.revision ?? state.governingHash, decision: 'approved', actor: 'user' });
+  append(state, 'approval', { governingHash: design?.revision ?? state.governingHash, decision: 'approved', actor });
   if (data.baselineAccepted) ruling(state, 'baseline-red', 'accept', data.baselineAccepted.reason);
-  data.approval = { governingHash: state.governingHash, reason: answer.reason };
+  data.approval = { governingHash: state.governingHash, reason: answer.reason, actor };
 }

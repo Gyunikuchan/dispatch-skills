@@ -294,7 +294,7 @@ function validateData(event) {
       exact(data, ['governingHash', 'decision', 'actor'], [], 'approval.data');
       if (!SHA256.test(data.governingHash)) throw new Error('approval governingHash must be sha256');
       enumeration(data.decision, ['approved', 'rejected'], 'approval.data.decision');
-      enumeration(data.actor, ['user'], 'approval.data.actor');
+      enumeration(data.actor, ['user', 'driver'], 'approval.data.actor');
       break;
   }
 }

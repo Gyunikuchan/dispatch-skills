@@ -6,7 +6,7 @@ import { emitAction } from './actions.mjs';
 import { createRunState, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
-import { acceptBaselineRuling, approve, baselineDecision, beginBaseline } from './baseline-phase.mjs';
+import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBaseline } from './baseline-phase.mjs';
 import { acceptVerification, beginVerification, completionResult, fingerprint } from './verification.mjs';
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
@@ -33,7 +33,7 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
   try {
     const restored = invocation.verb === 'implement' && restoreEvidence(state);
     // An implement run over a plan whose settled checkpoint matches its content needs no new review round.
-    if (!from && !restored && invocation.verb === 'implement' && settledPlan(state)) return save(state, beginBaseline(state));
+    if (!from && !restored && invocation.verb === 'implement' && settledPlan(state)) return save(state, await passGate(state, beginBaseline(state)));
     const entry = from ?? (restored ? state.ordinary.phase : 'plan-review');
     return save(state, await enterPhase(state, entry));
   } catch (error) {
@@ -51,14 +51,14 @@ export async function enterPhase(state, phase) {
   requireSettledPlan(state);
   if (phase === 'baseline') {
     if (ledgerSegment(state)?.tasks.size) return refuse(state, 'Baseline cannot be replaced after task dispatch; resume implementation.');
-    return beginBaseline(state);
+    return passGate(state, beginBaseline(state));
   }
   const segment = ledgerSegment(state) ?? ledgerSegment(state, { terminal: true });
   if (segment?.terminal && phase !== 'handoff') return refuse(state, 'The matching segment is terminal; start a new governed repair plan.');
   if (!segment?.approved) {
     if (!state.ordinary.baselineResults) return refuse(state, `${phase} requires reconciled baseline; baseline produces it.`);
     state.ordinary.afterApproval = phase;
-    return baselineDecision(state);
+    return passGate(state, baselineDecision(state));
   }
   if (phase === 'implementation') {
     // An open post-review failure disposition outranks re-entering code review.
@@ -70,12 +70,19 @@ export async function enterPhase(state, phase) {
   if (phase === 'handoff') return handoff(state);
   return refuse(state, `Unknown ordinary phase ${phase}.`);
 }
+/** Passes an approval gate that autoApproval answers; any other action goes to the host. */
+async function passGate(state, action) {
+  const reply = action.question === 'approval' && autoApproval(state);
+  if (!reply) return action;
+  approve(state, reply, 'driver');
+  return enterPhase(state, state.ordinary.afterApproval ?? 'implementation');
+}
 async function consumeReview(state, action) {
   if (action.action !== 'done') return action;
   if (state.ordinary.phase === 'plan-review') {
     if (!finishPlanReview(state, action)) return action;
     if (state.invocation.verb === 'plan') return emitAction(state, 'done', { outcome: 'complete', summary: 'Plan authored and plan review settled; baseline has not started.', artifactPath: state.planPath, checkpointed: action.checkpointed ?? false });
-    return beginBaseline(state);
+    return passGate(state, beginBaseline(state));
   }
   if (!finishCodeReview(state, action)) return action;
   delete state.reviewState;
@@ -112,7 +119,7 @@ export async function advanceImplement(state, reply) {
       if (state.pending.action === 'verify') {
         action = acceptVerification(state, reply);
         if (!action) {
-          if (data.phase === 'baseline') action = baselineDecision(state);
+          if (data.phase === 'baseline') action = passGate(state, baselineDecision(state));
           else if (data.step === 'post-review-verify') {
             if (completionResult(state) === 'regression') action = openFailure(state, 'Final post-review verification failed or is stale.', { purpose: 'completion', step: 'post-review-verify' });
             else { data.implementationComplete.scopeHash = fingerprint(state); action = await consumeReview(state, await beginReview(state, 'code')); }

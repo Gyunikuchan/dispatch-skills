@@ -6,6 +6,7 @@ import { afterEach, describe, it } from 'node:test';
 import { allProviders, implementationOutcome, parseAction, report, runDispatch } from '../../../helpers/driver-harness.mjs';
 import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
 
@@ -97,6 +98,36 @@ describe('--drive', () => {
     assert.ok(gate, `drive stopped at the completion gate: ${JSON.stringify(stops.map(stop => [stop.action, stop.question, stop.outcome, stop.summary, stop.error]))}`);
     assert.equal(stops.at(-1).outcome, 'complete', JSON.stringify(stops.at(-1)));
     assert.equal([...banners.matchAll(/verify completion/g)].length, 1, 'the evidence reply advanced without rerunning the gate');
+  });
+
+  it('auto-approves an explicit low run with a clean baseline and no red criteria, recording the driver as actor', () => {
+    const fx = createOrdinaryDriverFixture();
+    fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
+    const { action: first } = step(fx, ['--run', 'implement', '--level', 'low', '--orchestrator', 'claude', '--', fx.plan]);
+    const { stops } = driveToDone(fx, first, (action) => {
+      assert.notEqual(action.question, 'approval', 'explicit low with nothing to rule on skips the approval ask');
+      if (action.action === 'delegate-write') {
+        fs.writeFileSync(path.join(fx.repo.dir, 'tests/sample.test.mjs'), RED_TEST);
+        return { envelope: write(fx, action) };
+      }
+      if (action.action === 'verify') {
+        const result = action.summary.results[0];
+        return { criterionEvidence: [{ criterionId: 'SC1', evidenceClass: 'verify', reviewer: 'host', scenario: 'Ran the sample test.', inspectedRevision: result.scopeHash, observableResult: 'value is 2', limitations: 'none', mutationEpoch: result.mutationEpoch }] };
+      }
+      return undefined;
+    });
+    const done = stops.at(-1);
+    assert.equal(done.outcome, 'complete', JSON.stringify(done));
+    const approval = readLedger(done.ledgerPath).events.find(event => event.type === 'approval');
+    assert.equal(approval.data.actor, 'driver');
+  });
+
+  it('still asks for approval at explicit low when a criterion needs red evidence', () => {
+    const fx = createOrdinaryDriverFixture();
+    const { action: first } = step(fx, ['--run', 'implement', '--level', 'low', '--orchestrator', 'claude', '--', fx.plan]);
+    let action = first;
+    for (let turn = 0; turn < 10 && action.action === 'launch'; turn++) action = step(fx, ['--drive', '--state', action.stateFile]).action;
+    assert.equal(action.question, 'approval', JSON.stringify(action));
   });
 
   it('rejects --drive without a state file or combined with --run', () => {
