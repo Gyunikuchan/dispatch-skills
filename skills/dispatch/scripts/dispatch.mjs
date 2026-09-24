@@ -26,6 +26,7 @@ import {
   safeExitCode,
   classifyFailure,
   DEFAULT_MAX_BUFFER_MB,
+  detectBwrap,
   demoteOrchestratorTargets,
   detectOrchestrator,
   detectOrchestratorModel,
@@ -57,6 +58,7 @@ import { appendTelemetry } from './telemetry.mjs';
 import {
   LEVELS,
   loadDispatchConfig as loadConfigFile,
+  effectiveSandbox,
   normalizeProviderKey,
   resolveLevelEntry,
   resolveReadDelegates,
@@ -80,8 +82,8 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @property {string[]} [files]
  * @property {string|string[]} [model]
  * @property {string} [effort]
- * @property {boolean} [sandbox] Sandbox override for Claude/Copilot candidates only (see
- *   SANDBOX_SUPPORTED_PROVIDERS); omitted values default to enabled.
+ * @property {boolean} [sandbox] Sandbox override for sandbox-capable candidates only (see
+ *   SANDBOX_SUPPORTED_PROVIDERS); omitted values use the provider wrapper's effective sandbox.
  * @property {string} [agent]
  * @property {number} [timeout] Seconds before the delegate is killed.
  * @property {number} [maxBufferMb] Stdout cap before the delegate is killed.
@@ -130,11 +132,6 @@ export const providerRunners = {
   agy: runAgy,
   claude: runClaude,
   copilot: runCopilot,
-};
-
-const PROVIDER_DISPLAY_NAMES = {
-  claude: 'Claude Code',
-  copilot: 'Copilot',
 };
 
 export const RESPONSE_SCHEMA_PROVIDERS = new Set(['claude']);
@@ -308,7 +305,16 @@ function batchRecord(entry, status, result = null, error = null, substitutesFor 
     substitutesFor,
     truncated: result?.truncated ?? null,
     logFile: result?.logFile ?? null,
+    ...downgradeFields(result ?? error),
   };
+}
+
+/** `sandboxDowngraded`/`warnings` only when present, so an intact sandbox adds no keys. */
+function downgradeFields(source) {
+  const fields = {};
+  if (source?.sandboxDowngraded === true) fields.sandboxDowngraded = true;
+  if (Array.isArray(source?.warnings) && source.warnings.length > 0) fields.warnings = [...source.warnings];
+  return fields;
 }
 
 async function runBatchEntry(entry, options, config, resolved, substitutesFor = null) {
@@ -472,6 +478,7 @@ function slotLine(record, exit, reportDir) {
     exit,
     session: record.session,
     output,
+    ...downgradeFields(record),
   });
 }
 
@@ -516,10 +523,13 @@ export async function buildDoctorReport(config, configPath, {
   const targets = resolveConfiguredTargets(resolved, orchestrator, orchestratorModel);
   const health = await Promise.all(Object.keys(resolved.platforms).map(async platform => {
     const reachable = await isProviderAvailable(platform);
+    const wrapper = Object.entries(config['read-delegates'] ?? {})
+      .find(([key]) => normalizeProviderKey(key) === platform)?.[1];
     return {
       platform,
       reachable,
       sandboxSupported: SANDBOX_SUPPORTED_PROVIDERS.includes(platform),
+      sandbox: doctorSandbox(platform, wrapper),
       authentication: 'not safely detectable without a provider request',
       correctiveCommand: reachable ? null : PROVIDER_CORRECTIVE_COMMANDS[platform],
     };
@@ -548,6 +558,14 @@ export async function buildDoctorReport(config, configPath, {
     writeSubagents[key] = entries[key] === undefined ? { configured: false } : resolveLevelEntry(entries[key], level);
   }
   return { configPath, level, levelSource, targets, health, phases, writeSubagents };
+}
+
+/** Effective provider sandbox and the mechanism that would supply it. */
+function doctorSandbox(platform, wrapper) {
+  const effective = effectiveSandbox(wrapper, platform);
+  if (effective === undefined) return { effective: null, mechanism: 'none' };
+  if (platform !== 'opencode') return { effective, mechanism: 'cli' };
+  return { effective, mechanism: detectBwrap() ? 'bwrap' : 'unavailable' };
 }
 
 const specText = (value) => (Array.isArray(value) ? value.join(',') : value);
@@ -585,7 +603,8 @@ export function formatDoctorReport(report) {
   }
   lines.push('Provider health:');
   for (const item of report.health) {
-    lines.push(`  ${item.platform}: ${item.reachable ? 'reachable' : 'unreachable'}; sandbox=${item.sandboxSupported ? 'supported' : 'unsupported'}; auth/quota=${item.authentication}`);
+    const sandbox = item.sandbox?.effective === true ? 'on' : item.sandbox?.effective === false ? 'off' : 'n/a';
+    lines.push(`  ${item.platform}: ${item.reachable ? 'reachable' : 'unreachable'}; sandbox=${sandbox} mechanism=${item.sandbox?.mechanism ?? 'none'}; auth/quota=${item.authentication}`);
     if (item.correctiveCommand) lines.push(`    Corrective command: ${item.correctiveCommand}`);
   }
   return lines.join('\n');
@@ -761,8 +780,8 @@ export async function dispatchTask(options = {}) {
   for (const candidateProvider of candidates) {
     const resolvedEntries = resolvedPlatforms[candidateProvider];
     const entries = resolvedEntries?.length ? resolvedEntries : [{}];
-    // A single-candidate platform keeps the bare provider label, as a flat v0.4 entry did.
-    const labelWithModel = Boolean(resolvedEntries) && (resolvedEntries.length > 1 || rawEntryIsArray(config, candidateProvider));
+    // A single-target provider keeps the bare provider label; several targets carry their index.
+    const labelWithModel = Boolean(resolvedEntries) && resolvedEntries.length > 1;
     const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(candidateProvider);
     if (candidateIndex !== null) {
       const selected = entries[candidateIndex];
@@ -790,7 +809,7 @@ export async function dispatchTask(options = {}) {
         label: candidateProvider,
       });
     } else {
-      for (const c of entries) {
+      for (const [index, c] of entries.entries()) {
         const cModel = c.model ?? null;
         const modelLabel = Array.isArray(cModel) ? cModel.join(', ') : cModel;
         targetCandidates.push({
@@ -798,7 +817,9 @@ export async function dispatchTask(options = {}) {
           model: cModel,
           effort: c.effort ?? null,
           sandbox: supportsSandbox ? sandboxOverride ?? c.sandbox ?? true : undefined,
-          label: labelWithModel && modelLabel ? `${candidateProvider} (${modelLabel})` : candidateProvider,
+          label: labelWithModel
+            ? `${candidateProvider}[${index}]${modelLabel ? ` (${modelLabel})` : ''}`
+            : candidateProvider,
         });
       }
     }
@@ -903,13 +924,6 @@ function assertValidConfig(config, configPath) {
   throw err;
 }
 
-/** Whether a provider's raw `read-delegates` entry is a candidate array (alias keys allowed). */
-function rawEntryIsArray(config, provider) {
-  const table = config?.['read-delegates'] ?? {};
-  const key = Object.keys(table).find((k) => normalizeProviderKey(k) === provider);
-  return key !== undefined && Array.isArray(table[key]);
-}
-
 /** Throws if any skill file has been tampered with since installation. */
 function assertSkillIntegrity() {
   const integrity = verifySkillIntegrity(SKILL_DIR);
@@ -993,13 +1007,6 @@ async function runCascade(targetCandidates, runnerOptionsFor, { pinned, hostPlat
     try {
       const result = await executeProvider(currentProvider, runnerOptionsFor(current));
       const effectiveAttempt = captureMetrics(result);
-
-      if (result.failureKind === 'sandbox-unsupported') {
-        if (!shouldCascade('reported unsupported sandbox', result.failureKind)) {
-          return withMetrics({ ...result, exitCode: 1 }, effectiveAttempt);
-        }
-        continue;
-      }
 
       if (result.exitCode === 0 && isEmptyResult(result)) {
         const kind = result.failureKind || classifyFailure(result.stderr) || 'empty-output';
@@ -1331,13 +1338,6 @@ export async function main() {
     );
   }
 
-  if (result.failureKind === 'sandbox-unsupported') {
-    const providerName = PROVIDER_DISPLAY_NAMES[result.provider] ?? result.provider ?? 'Unknown provider';
-    console.error(
-      `\n[dispatch] ${providerName} sandbox support is unavailable. ` +
-        `Upgrade the provider CLI or set read-delegates.${result.provider}.sandbox to false.\n`,
-    );
-  }
 
   appendTelemetry({ result, startedAt });
   process.exit(result.exitCode ?? 0);
@@ -1492,12 +1492,11 @@ function collectRunFlags(options, noConfig) {
  * Expands level-resolved platform entries into the stable target order used by count and `all`
  * pins (and `--list-targets`).
  *
- * @param {{ platforms: Record<string, object | object[]> }} config from `resolveReadDelegates`
+ * @param {{ platforms: Record<string, object[]> }} config from `resolveReadDelegates`
  */
 export function resolveConfiguredTargets(config, orchestrator = null, orchestratorModel = null) {
   const targets = [];
-  for (const [platform, rawEntry] of Object.entries(config.platforms)) {
-    const entries = Array.isArray(rawEntry) ? rawEntry : [rawEntry];
+  for (const [platform, entries] of Object.entries(config.platforms)) {
     for (const [candidateIndex, entry] of entries.entries()) {
       const target = { platform, candidateIndex };
       if (entry?.model !== undefined) target.model = entry.model;

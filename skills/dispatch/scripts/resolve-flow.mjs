@@ -36,7 +36,7 @@ import {
   phaseMembers,
   resolveLevelEntry,
   resolveLevelScalar,
-  resolvePlatformCandidates,
+  resolveTargets,
   selectedLevelKey,
   validateConfig,
 } from './config.mjs';
@@ -91,10 +91,9 @@ export function parseImplementationFields(raw) {
 
 function writeSubagentModelKey(platform, entry, level) {
   const selected = selectedLevelKey(entry, level);
-  if (selected && entry?.[selected]?.model === undefined && entry?.model === undefined) {
-    return `write-subagents.${platform}.${selected}.model`;
-  }
-  return `write-subagents.${platform}.model`;
+  return selected
+    ? `write-subagents.${platform}.${selected}.model`
+    : `write-subagents.${platform}.model`;
 }
 
 function applicableImplementationEntry(entry, fields) {
@@ -122,7 +121,7 @@ export function resolveImplementationEscalation(entry, requestedLevel, applicabl
   const levelKeys = isPlainObject(entry)
     ? LEVELS.filter(level => isPlainObject(entry[level]))
     : [];
-  if (levelKeys.length === 0) return { status: 'exhausted', reason: 'flat-entry' };
+  if (levelKeys.length === 0) return { status: 'exhausted', reason: 'no-distinct-higher-level' };
 
   const current = resolveLevelEntry(entry, requestedLevel);
   const requestedIndex = LEVELS.indexOf(requestedLevel);
@@ -180,13 +179,16 @@ function canonicalTable(table) {
 export function describeEffectiveFlow(config, flow, { configPath, requestedLevel }) {
   const readDelegates = canonicalTable(config['read-delegates']);
   const inheritance = {
-    'read-delegates': Object.fromEntries(Object.entries(readDelegates).map(([platform, rawEntry]) => [
-      platform,
-      (Array.isArray(rawEntry) ? rawEntry : [rawEntry]).map(entry => ({
-        inheritedLevelKey: selectedLevelKey(entry, requestedLevel),
-        candidates: resolvePlatformCandidates(entry, requestedLevel),
-      })),
-    ])),
+    'read-delegates': Object.fromEntries(Object.entries(readDelegates).map(([platform, wrapper]) => {
+      const resolved = resolveTargets(wrapper, requestedLevel, platform);
+      return [
+        platform,
+        (Array.isArray(wrapper?.targets) ? wrapper.targets : []).map((target, index) => ({
+          inheritedLevelKey: selectedLevelKey(target, requestedLevel),
+          candidate: resolved[index],
+        })),
+      ];
+    })),
     'write-subagents': Object.fromEntries(
       Object.entries(canonicalTable(config['write-subagents'])).map(([platform, entry]) => [
         platform,
@@ -451,7 +453,7 @@ export function resolveFlow(options, liveness, config) {
     const members = phaseMembers(config, phase);
     const namedPins = pins && !isAllPin ? pins : [];
     const configuredCandidates = members.flatMap((key) =>
-      resolvePlatformCandidates(readDelegates[key], level).map((candidate, candidateIndex) => {
+      resolveTargets(readDelegates[key], level, key).map((candidate, candidateIndex) => {
         const target = { candidateId: `${phase}:${key}:${candidateIndex}`, platform: key };
         if (candidate.model !== undefined) target.model = candidate.model;
         if (candidate.effort !== undefined) target.effort = candidate.effort;

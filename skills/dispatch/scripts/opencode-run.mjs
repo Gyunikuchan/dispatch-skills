@@ -62,6 +62,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   cascadeModels,
+  detectBwrap,
   resolveModelsToTry,
   formatCliError,
   safeExitCode,
@@ -79,6 +80,7 @@ import {
   isExecutableFile,
   isMainModule,
   parseCommonArgs,
+  parseRunnerModeArgs,
   parseJsonc,
   preparePromptForArgv,
   PROJECT_ROOT,
@@ -260,6 +262,7 @@ export async function runOpencode(options = {}) {
   const {
     prompt = '',
     model = null,
+    sandbox = true,
     // Test seam: defaults to the real single-model run, so production calls are unchanged.
     runSingle = runOpencodeSingle,
   } = options;
@@ -272,15 +275,27 @@ export async function runOpencode(options = {}) {
   validateEffortSpec(options.effort, 'effort');
 
   const metricsAttempts = [];
+  let downgraded = false;
+  const withDowngrade = (value) => {
+    if (value && typeof value === 'object' && (downgraded || value.sandboxDowngraded)) {
+      if (!downgraded) {
+        downgraded = true;
+        process.stderr.write(`${OPENCODE_DOWNGRADE_WARNING}\n`);
+      }
+      value.sandboxDowngraded = true;
+      value.warnings = [OPENCODE_DOWNGRADE_WARNING];
+    }
+    return value;
+  };
   return cascadeModels(
     resolveModelsToTry(model),
     async (currentModel) => {
       try {
-        let result = await runSingle({ ...options, model: currentModel });
+        let result = await runSingle({ ...options, model: currentModel, sandbox });
         // NOTE: v2 rejects `#<effort>` for models without variants; rerun that model once at its default effort.
         if (result.exitCode !== 0 && options.effort && /Variant unavailable/i.test(`${result.stderr ?? ''}\n${result.stdout ?? ''}`)) {
           process.stderr.write(`[dispatch] ${currentModel} has no '${options.effort}' variant; retrying without effort.\n`);
-          result = await runSingle({ ...options, model: currentModel, effort: null });
+          result = await runSingle({ ...options, model: currentModel, sandbox, effort: null });
         }
         const input = result.formattedPromptForMetrics ?? prompt;
         metricsAttempts.push(buildMetricsAttempt({
@@ -298,7 +313,7 @@ export async function runOpencode(options = {}) {
         delete result.formattedPromptForMetrics;
         result.metricsAttempts = [...metricsAttempts];
         result.effectiveAttempt = metricsAttempts.length - 1;
-        return result;
+        return withDowngrade(result);
       } catch (err) {
         metricsAttempts.push(buildMetricsAttempt({
           input: err.formattedPromptForMetrics ?? null,
@@ -308,7 +323,7 @@ export async function runOpencode(options = {}) {
           failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
         }));
         err.metricsAttempts = [...metricsAttempts];
-        throw err;
+        throw withDowngrade(err);
       }
     },
     { label: 'OpenCode' },
@@ -332,6 +347,7 @@ async function runOpencodeSingle(options = {}) {
     json = false,
     verbose = false,
     binary = null,
+    sandbox = true,
   } = options;
 
   // Step 1: one config parse, threaded through every step below. A CLI -m override is folded in
@@ -413,6 +429,8 @@ async function runOpencodeSingle(options = {}) {
   // Hoisted so the outer `finally` can clean it up even when a step between `buildCommand`
   // and the spawn itself throws (e.g. a synchronous spawn resolution failure).
   let briefFile = null;
+  // Hoisted so a throw after buildCommand still reports the unsandboxed attempt.
+  let sandboxDowngraded = false;
   try {
     // Step 5: format prompt with attachments (inlines context files with nonce delimiters and byte caps).
     const formattedPrompt = buildFormattedPrompt(prompt, files);
@@ -444,9 +462,11 @@ async function runOpencodeSingle(options = {}) {
       json,
       config: rawConfig,
       binary: target?.bin ?? null,
+      sandbox,
     });
     const { command, args, engineType } = built;
     briefFile = built.briefFile;
+    sandboxDowngraded = Boolean(built.sandboxDowngraded);
 
     if (verbose) {
       process.stderr.write(
@@ -475,6 +495,7 @@ async function runOpencodeSingle(options = {}) {
       releaseOnce,
     });
     result.formattedPromptForMetrics = formattedPrompt;
+    if (built.sandboxDowngraded) result.sandboxDowngraded = true;
     return result;
   } catch (err) {
     // Synchronous throws from Steps 5-8 (denylisted attachment, budget overrun, binary
@@ -482,6 +503,7 @@ async function runOpencodeSingle(options = {}) {
     releaseOnce();
     failLogger(sessionLogger, err?.message ?? String(err));
     if (typeof formattedPrompt !== 'undefined') err.formattedPromptForMetrics = formattedPrompt;
+    if (sandboxDowngraded && err && typeof err === 'object') err.sandboxDowngraded = true;
     throw err;
   } finally {
     removeBriefFile(briefFile);
@@ -1714,6 +1736,9 @@ export function buildBwrapArgs({
  * @param {string|null} [params.binary] Pre-resolved delegate binary (the discovered target's
  *   absolute path, threaded from `runOpencodeSingle`); falls back to {@link resolveOpencodeBinary}
  *   when omitted.
+ * @param {boolean} [params.sandbox] Effective sandbox; `false` bypasses bwrap even when installed.
+ * @param {boolean} [params.hasBwrap] Bubblewrap availability; probed on Linux when omitted (test seam).
+ * @returns {{ command: string, args: string[], engineType: string, briefFile: string|null, sandboxDowngraded?: true }}
  */
 export function buildCommand({
   prompt = '',
@@ -1724,10 +1749,12 @@ export function buildCommand({
   json = false,
   config = null,
   binary = null,
+  sandbox = true,
+  hasBwrap = sandbox ? detectBwrap() : false,
 } = {}) {
-  const isLinux = process.platform === 'linux';
-  const checkBwrap = isLinux ? cp.spawnSync('which', ['bwrap'], { encoding: 'utf8' }) : null;
-  const hasLinuxBwrap = checkBwrap && checkBwrap.status === 0 && checkBwrap.stdout.trim();
+  const hasLinuxBwrap = Boolean(sandbox && hasBwrap);
+  // Reported, not warned: runOpencode is the single emitter of the downgrade warning.
+  const downgrade = sandbox && !hasBwrap ? { sandboxDowngraded: true } : {};
 
   // Resolved before the prompt is prepared: a Windows .cmd shim forces a brief-file spill.
   let effectiveBinary = binary ?? (hasLinuxBwrap ? 'opencode' : resolveOpencodeBinary());
@@ -1803,24 +1830,26 @@ export function buildCommand({
     args: opencodeArgs,
     engineType: 'process-hardened',
     briefFile,
+    ...downgrade,
   };
 }
+
+export const OPENCODE_DOWNGRADE_WARNING = '[dispatch] WARNING: OpenCode sandbox is unavailable; the run proceeded unsandboxed.';
 
 // ============================================================================
 // SECTION: CLI Entry Point
 // ============================================================================
 
-/** Runner-specific flags — none. Every flag this runner accepts is a common one
- * (`-a/--agent` included, parsed by `parseCommonArgs`); listing any here as runner-declared
- * would shadow common's parsing and discard the value. Exported as an empty spec so the
- * flag-parity test still checks this runner's `--help` against DOCUMENTED_COMMON_FLAGS. */
+/** Runner-specific flags: only the sandbox pair. `-a/--agent` stays a common flag parsed by
+ * `parseCommonArgs`; declaring it here would shadow common's parsing and discard the value. */
 export const CLI_FLAGS = {
   valueFlags: [],
-  booleanFlags: [],
+  booleanFlags: ['--sandbox', '--no-sandbox'],
 };
 
 export async function main() {
-  const options = parseCommonArgs(process.argv);
+  const options = parseCommonArgs(process.argv, CLI_FLAGS);
+  options.sandbox = !parseRunnerModeArgs(process.argv.slice(2), CLI_FLAGS).booleans['--no-sandbox'];
 
   if (options.help) {
     printHelp();
@@ -1873,6 +1902,8 @@ Options:
   -t, --timeout <seconds>     Override execution timeout in seconds (default: ${DEFAULT_TIMEOUT_SECONDS})
   --max-buffer <MB>           Max output buffer limit in MB (default: ${DEFAULT_MAX_BUFFER_MB})
   --json                      Emit raw JSON event stream
+  --sandbox                   Wrap the run in Linux Bubblewrap when available (default)
+  --no-sandbox                Run without Bubblewrap even when installed
   -v, --verbose               Stream live execution trace and tool invocations (default: false)
   -h, --help                  Show this help message
 

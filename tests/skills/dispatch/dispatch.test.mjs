@@ -9,7 +9,9 @@ import {
   detectOrchestrator,
   resolveProvider as resolveProviderImpl,
   getCandidateProviders as getCandidateProvidersImpl,
+  dispatchBatch,
   dispatchTask as dispatchTaskImpl,
+  loadBatchFile,
   executeProvider,
   loadResponseSchema,
   normalizeResponseSchema,
@@ -27,16 +29,19 @@ import {
 } from '../../../skills/dispatch/scripts/common.mjs';
 import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/config.mjs';
 
+/** Strict read-provider wrapper: one target per candidate, each a single `low` level. */
+const targetsOf = (...candidates) => ({ targets: candidates.map(candidate => ({ low: candidate })) });
+
 const TEST_DISPATCH_CONFIG = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'low' },
-    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-    copilot: { model: 'gpt-5.6-luna', effort: 'max' },
-    opencode: [
+    claude: targetsOf({ model: 'claude-opus-5', effort: 'low' }),
+    agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
+    copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }),
+    opencode: targetsOf(
       { model: 'opencode-go/glm-5.3-flash', effort: 'max' },
       { model: 'opencode-go/mistral-small', effort: 'max' },
       { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'max' },
-    ],
+    ),
   },
 };
 const TEST_DISPATCH_CONFIG_ARGS = {
@@ -52,18 +57,18 @@ describe('dispatch: configured target resolution', () => {
   it('takes the level-resolved { platforms } map from resolveReadDelegates', () => {
     const config = {
       'read-delegates': {
-        claude: { model: 'claude-opus-5', high: { model: 'claude-fable-5.1' } },
-        agy: { model: 'gemini-3.7-flash', high: [{ model: 'gemini-3.8-flash' }, { model: 'gemini-3.7-flash' }] },
+        claude: { targets: [{ low: { model: 'claude-opus-5' }, high: { model: 'claude-fable-5.1' } }] },
+        agy: { targets: [{ low: { model: 'gemini-3.7-flash' }, high: { model: 'gemini-3.8-flash' } }, { high: { model: 'gemini-3.7-pro' } }] },
       },
     };
     const high = resolveConfiguredTargets(resolveReadDelegates(config, 'high'), 'claude');
     assert.deepEqual(high.map((t) => `${t.platform}:${t.candidateIndex}:${t.model}`), [
       'agy:0:gemini-3.8-flash',
-      'agy:1:gemini-3.7-flash',
+      'agy:1:gemini-3.7-pro',
       'claude:0:claude-fable-5.1',
     ]);
     const low = resolveConfiguredTargets(resolveReadDelegates(config, 'low'), 'claude');
-    assert.deepEqual(low.map((t) => `${t.platform}:${t.model}`), ['agy:gemini-3.7-flash', 'claude:claude-opus-5']);
+    assert.deepEqual(low.map((t) => `${t.platform}:${t.model}`), ['agy:gemini-3.7-flash', 'agy:gemini-3.7-pro', 'claude:claude-opus-5']);
   });
 
   it('preserves config order while shifting the orchestrator and exact model match back', () => {
@@ -74,7 +79,7 @@ describe('dispatch: configured target resolution', () => {
             { model: 'claude-opus-5', effort: 'high' },
             { model: 'claude-sonnet-5', effort: 'medium' },
           ],
-          agy: { model: 'gemini-3.8-flash' },
+          agy: [{ model: 'gemini-3.8-flash' }],
           opencode: [
             { model: 'glm-5.3-flash' },
             { model: 'mistral-small' },
@@ -87,8 +92,8 @@ describe('dispatch: configured target resolution', () => {
 
     assert.deepEqual(targets, [
       { platform: 'agy', candidateIndex: 0, model: 'gemini-3.8-flash' },
-      { platform: 'opencode', candidateIndex: 0, model: 'glm-5.3-flash' },
-      { platform: 'opencode', candidateIndex: 1, model: 'mistral-small' },
+      { platform: 'opencode', candidateIndex: 0, model: 'glm-5.3-flash', sandbox: true },
+      { platform: 'opencode', candidateIndex: 1, model: 'mistral-small', sandbox: true },
       {
         platform: 'claude',
         candidateIndex: 1,
@@ -480,7 +485,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         dispatchTask({
           prompt: 'Review',
           provider: 'copilot',
-          config: { 'read-delegates': { agy: {} } },
+          config: { 'read-delegates': { agy: targetsOf({ model: 'agy-model' }) } },
           configPath: 'x.jsonc',
         }),
         /is not configured in/,
@@ -629,7 +634,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
   describe('config-driven cascade', () => {
     const CONFIG = {
-      config: { 'read-delegates': { agy: { model: 'gemini-3.8-flash', effort: 'medium' }, claude: {} } },
+      config: { 'read-delegates': { agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }), claude: targetsOf({ model: 'claude-model' }) } },
       configPath: '/fake/config.jsonc',
     };
 
@@ -653,7 +658,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isAgyAvailable', async () => true);
 
       const candidates = await getCandidateProviders({
-        config: { 'read-delegates': { agy: {}, claude: {} } },
+        config: { 'read-delegates': { agy: targetsOf({ model: 'agy-model' }), claude: targetsOf({ model: 'claude-model' }) } },
         configPath: '/fake/config.jsonc',
       });
       assert.deepEqual(candidates, ['agy', 'claude']);
@@ -670,7 +675,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await assert.rejects(
         getCandidateProviders({
           explicitProvider: 'claude',
-          config: { 'read-delegates': { agy: {} } },
+          config: { 'read-delegates': { agy: targetsOf({ model: 'agy-model' }) } },
           configPath: '/fake/agy-only.jsonc',
         }),
         (err) => err.code === 'PLATFORM_NOT_CONFIGURED' && /platform "claude" is not configured/.test(err.message),
@@ -737,7 +742,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         provider: 'copilot',
         config: {
           'read-delegates': {
-            copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: true },
+            copilot: { sandbox: true, ...targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }) },
           },
         },
         configPath: 'custom.jsonc',
@@ -760,7 +765,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         provider: 'copilot',
         config: {
           'read-delegates': {
-            copilot: { model: 'gpt-5.6-luna', effort: 'max' },
+            copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }),
           },
         },
         configPath: 'custom.jsonc',
@@ -783,7 +788,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         provider: 'copilot',
         config: {
           'read-delegates': {
-            copilot: { model: 'gpt-5.6-luna', effort: 'max', sandbox: false },
+            copilot: { sandbox: false, ...targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }) },
           },
         },
         configPath: 'custom.jsonc',
@@ -805,7 +810,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'copilot',
         sandbox: false,
-        config: { 'read-delegates': { copilot: { model: 'gpt-5.6-luna', effort: 'max' } } },
+        config: { 'read-delegates': { copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }) } },
         configPath: 'custom.jsonc',
       });
 
@@ -826,7 +831,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         provider: 'claude',
         config: {
           'read-delegates': {
-            claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: true },
+            claude: { sandbox: true, ...targetsOf({ model: 'claude-sonnet-5', effort: 'medium' }) },
           },
         },
         configPath: 'custom.jsonc',
@@ -847,7 +852,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         provider: 'claude',
-        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        config: { 'read-delegates': { claude: targetsOf({ model: 'claude-sonnet-5', effort: 'medium' }) } },
         configPath: 'custom.jsonc',
       });
 
@@ -866,7 +871,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         provider: 'claude',
-        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium', sandbox: false } } },
+        config: { 'read-delegates': { claude: { sandbox: false, ...targetsOf({ model: 'claude-sonnet-5', effort: 'medium' }) } } },
         configPath: 'custom.jsonc',
       });
 
@@ -886,14 +891,14 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         prompt: 'Test',
         provider: 'claude',
         sandbox: false,
-        config: { 'read-delegates': { claude: { model: 'claude-sonnet-5', effort: 'medium' } } },
+        config: { 'read-delegates': { claude: targetsOf({ model: 'claude-sonnet-5', effort: 'medium' }) } },
         configPath: 'custom.jsonc',
       });
 
       assert.equal(claudeRunner.mock.calls[0].arguments[0].sandbox, false);
     });
 
-    it('fails closed when Copilot reports unsupported sandbox flags with exit code 0', async () => {
+    it('passes a Copilot sandbox-unsupported answer through without the retired fail-closed override', async () => {
       clearOrchestratorEnv();
       mock.method(providerRunners, 'copilot', async () => ({
         provider: 'copilot',
@@ -907,11 +912,12 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       const result = await dispatchTask({
         prompt: 'Test',
         provider: 'copilot',
-        config: { 'read-delegates': { copilot: {} } },
+        config: { 'read-delegates': { copilot: targetsOf({ model: 'copilot-model' }) } },
         configPath: 'custom.jsonc',
       });
-      assert.equal(result.exitCode, 1);
-      assert.equal(result.failureKind, 'sandbox-unsupported');
+      // Warn-and-run: the runner owns the downgrade, so dispatch never forces exit 1 here.
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.stdout, 'answer without sandbox');
     });
 
     it('cascades across multiple candidate models within a platform array', async () => {
@@ -920,11 +926,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
 
       const opencodeConfig = {
         'read-delegates': {
-          opencode: [
+          opencode: targetsOf(
             { model: 'glm-5.3-flash', effort: 'max' },
             { model: 'mistral-small', effort: 'max' },
             { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' },
-          ],
+          ),
         },
       };
 
@@ -955,11 +961,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       clearOrchestratorEnv();
       const multiConfig = {
         'read-delegates': {
-          opencode: [
+          opencode: targetsOf(
             { model: 'glm-5.3-flash', effort: 'medium' },
             { model: 'mistral-small', effort: 'medium' },
-          ],
-          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
+          ),
+          copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'medium' }),
         },
       };
 
@@ -988,7 +994,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       assert.equal(copilotRunner.mock.calls.length, 0, 'did not cascade to copilot');
     });
 
-    it('executes exactly one configured candidate by index with its sandbox setting', async () => {
+    it('executes exactly one configured target by index with its provider sandbox setting', async () => {
       clearOrchestratorEnv();
       mock.method(providerProbes, 'isClaudeAvailable', async () => true);
       const calls = [];
@@ -1003,17 +1009,17 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         candidateIndex: 1,
         config: {
           'read-delegates': {
-            claude: [
-              { model: 'claude-opus-5', effort: 'low', sandbox: true },
-              { effort: 'high', sandbox: false },
-            ],
+            claude: {
+              sandbox: false,
+              ...targetsOf({ model: 'claude-opus-5', effort: 'low' }, { model: 'claude-sonnet-5', effort: 'high' }),
+            },
           },
         },
         configPath: 'custom.jsonc',
       });
 
       assert.equal(result.stdout, 'selected');
-      assert.deepEqual(calls, [{ model: null, effort: 'high', sandbox: false }]);
+      assert.deepEqual(calls, [{ model: 'claude-sonnet-5', effort: 'high', sandbox: false }]);
     });
 
     it('rejects an out-of-range configured candidate index', async () => {
@@ -1024,7 +1030,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
           prompt: 'Test',
           provider: 'claude',
           candidateIndex: 2,
-          config: { 'read-delegates': { claude: [{ model: 'claude-opus-5', effort: 'medium' }] } },
+          config: { 'read-delegates': { claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }) } },
           configPath: 'custom.jsonc',
         }),
         /candidate index 2 is out of range/,
@@ -1038,10 +1044,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         'read-delegates': {
-          claude: { model: 'claude-opus-5', effort: 'medium' },
-          opencode: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }, { model: 'qwen3.8-27b', effort: 'medium' }],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
+          claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }),
+          opencode: targetsOf({ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }, { model: 'qwen3.8-27b', effort: 'medium' }),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
+          copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'medium' }),
         },
       };
 
@@ -1081,7 +1087,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       await dispatchTask({
         prompt: 'Test',
         orchestrator: 'claudecode',
-        config: { 'read-delegates': { claude: {}, agy: {} } },
+        config: { 'read-delegates': { claude: targetsOf({ model: 'claude-model' }), agy: targetsOf({ model: 'agy-model' }) } },
         configPath: 'c.jsonc',
       }).catch(() => {});
       assert.deepEqual(calls, ['agy', 'claude']);
@@ -1094,12 +1100,12 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         'read-delegates': {
-          claude: [
+          claude: targetsOf(
             { model: 'claude-opus-5', effort: 'medium' },
             { model: 'claude-sonnet-5', effort: 'medium' },
-          ],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-          copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
+          ),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
+          copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'medium' }),
         },
       };
 
@@ -1136,11 +1142,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const config = {
         'read-delegates': {
-          claude: [
+          claude: targetsOf(
             { model: 'claude-opus-5', effort: 'low' },
             { model: 'claude-sonnet-5', effort: 'high' },
-          ],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          ),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
         },
       };
 
@@ -1175,11 +1181,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const config = {
         'read-delegates': {
-          claude: [
+          claude: targetsOf(
             { model: 'claude-opus-5', effort: 'medium' },
             { model: 'claude-sonnet-5', effort: 'medium' },
-          ],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          ),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
         },
       };
 
@@ -1211,10 +1217,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       mock.method(providerProbes, 'isClaudeAvailable', async () => true);
       const config = {
         'read-delegates': {
-          claude: [
+          claude: targetsOf(
             { model: 'claude-opus-5', effort: 'medium' },
             { model: 'claude-sonnet-5', effort: 'medium' },
-          ],
+          ),
         },
       };
 
@@ -1246,11 +1252,11 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const config = {
         'read-delegates': {
-          claude: [
+          claude: targetsOf(
             { model: 'claude-opus-5', effort: 'medium' },
             { model: 'claude-sonnet-5', effort: 'medium' },
-          ],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          ),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
         },
       };
 
@@ -1283,8 +1289,8 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       }
       const multiConfig = {
         'read-delegates': {
-          opencode: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }],
-          agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+          opencode: targetsOf({ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }),
+          agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
         },
       };
       const calls = [];
@@ -1302,10 +1308,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
       clearOrchestratorEnv();
       const multiConfig = {
         'read-delegates': {
-          opencode: [
+          opencode: targetsOf(
             { model: 'glm-5.3-flash', effort: 'medium' },
             { model: 'mistral-small', effort: 'medium' },
-          ],
+          ),
         },
       };
 
@@ -1335,7 +1341,10 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
         seen.push(opts.model);
         return { provider: 'agy', stdout: 'ok', exitCode: 0 };
       });
-      const config = { 'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium', high: { model: 'gemini-3.8-flash' } } } };
+      const config = { 'read-delegates': { agy: { targets: [{
+        low: { model: 'gemini-3.7-flash', effort: 'medium' },
+        high: { model: 'gemini-3.8-flash', effort: 'medium' },
+      }] } } };
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'high' });
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc' });
       await dispatchTask({ prompt: 'Test', provider: 'agy', config, configPath: 'c.jsonc', level: 'low' });
@@ -1353,7 +1362,7 @@ describe('dispatch: orchestrator detection & provider resolution', () => {
     it('rejects a v0.4 injected config (top-level platforms) with INVALID_DISPATCH_CONFIG', async () => {
       clearOrchestratorEnv();
       await assert.rejects(
-        dispatchTask({ prompt: 'Test', config: { platforms: { agy: {} } }, configPath: 'old.jsonc' }),
+        dispatchTask({ prompt: 'Test', config: { platforms: { agy: targetsOf({ model: 'agy-model' }) } }, configPath: 'old.jsonc' }),
         (err) => err.code === 'INVALID_DISPATCH_CONFIG',
       );
     });
@@ -1463,7 +1472,7 @@ describe('dispatch: terminal sentinels are set and reach the CLI', () => {
   });
 
   it('reports native schema unavailability without a double negative', async () => {
-    const config = { 'read-delegates': { copilot: {} } };
+    const config = { 'read-delegates': { copilot: targetsOf({ model: 'copilot-model' }) } };
     await assert.rejects(
       () => dispatchTaskImpl({
         prompt: 'Test',
@@ -1702,7 +1711,7 @@ describe('dispatch --validate-only CLI', () => {
     try {
       const legacyDir = path.join(legacyRoot, 'dispatch');
       fs.cpSync(path.join(fixtureRoot, 'dispatch'), legacyDir, { recursive: true });
-      fs.writeFileSync(path.join(legacyDir, 'config.jsonc'), JSON.stringify({ platforms: { claude: {} } }));
+      fs.writeFileSync(path.join(legacyDir, 'config.jsonc'), JSON.stringify({ platforms: { claude: targetsOf({ model: 'claude-model' }) } }));
       const res = cp.spawnSync(process.execPath, [path.join(legacyDir, 'scripts', 'dispatch.mjs'), '--validate-only'], {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1816,5 +1825,145 @@ describe('dispatch --validate-only CLI', () => {
       /--validate-only checks the dispatch config schema alone and cannot be combined with: prompt/,
     );
     assert.doesNotMatch(res.stderr || '', /--list-platforms prints the effective config/);
+  });
+});
+
+// SECTION: strict config format (SC3/SC5/SC6)
+describe('dispatch: strict config targets and sandbox', () => {
+  afterEach(() => mock.restoreAll());
+  const lvl = (model, effort = 'low') => ({ low: { model, effort } });
+  // copilot is absent from the config, so orchestrator demotion cannot mask provider flatten order.
+  const MULTI = {
+    'read-delegates': {
+      claude: { targets: [lvl('claude-opus-5')] },
+      agy: { targets: [lvl('gemini-3.8-flash')] },
+      opencode: { sandbox: false, targets: [lvl('glm-5.3-flash'), lvl('mistral-small')] },
+    },
+  };
+
+  it('SC3 resolveConfiguredTargets enumerates provider[index] targets in provider-then-target order with wrapper sandbox', () => {
+    assert.deepEqual(validateConfig(MULTI), []);
+    const targets = resolveConfiguredTargets(resolveReadDelegates(MULTI, 'low'), 'copilot');
+    assert.deepEqual(targets.map(t => `${t.platform}[${t.candidateIndex}]:${t.model}:${t.sandbox}`), [
+      'claude[0]:claude-opus-5:true',
+      'agy[0]:gemini-3.8-flash:undefined',
+      'opencode[0]:glm-5.3-flash:false',
+      'opencode[1]:mistral-small:false',
+    ]);
+  });
+
+  it('SC3 --list-targets CLI prints every wrapper target in provider-then-target order', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-strict-cli-'));
+    try {
+      const dir = path.join(root, 'dispatch');
+      fs.cpSync(path.join(PROJECT_ROOT, 'skills', 'dispatch'), dir, { recursive: true });
+      fs.rmSync(path.join(dir, 'config.local.jsonc'), { force: true });
+      fs.writeFileSync(path.join(dir, 'config.jsonc'), JSON.stringify(MULTI));
+      const res = cp.spawnSync(process.execPath, [path.join(dir, 'scripts', 'dispatch.mjs'), '--list-targets', '--orchestrator', 'copilot'], {
+        encoding: 'utf8',
+        cwd: PROJECT_ROOT,
+        env: { ...process.env, DISPATCH_TELEMETRY: '0' },
+      });
+      assert.equal(res.status, 0, res.stderr);
+      const listed = JSON.parse(res.stdout || '[]');
+      assert.deepEqual(listed.map(t => `${t.platform}[${t.candidateIndex}]:${t.model}`), [
+        'claude[0]:claude-opus-5',
+        'agy[0]:gemini-3.8-flash',
+        'opencode[0]:glm-5.3-flash',
+        'opencode[1]:mistral-small',
+      ]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('SC5 dispatchTask surfaces a runner sandbox downgrade in the dispatch result', async () => {
+    const warning = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
+    mock.method(providerRunners, 'copilot', async () => ({
+      provider: 'copilot',
+      stdout: 'ok',
+      exitCode: 0,
+      sandboxDowngraded: true,
+      warnings: [warning],
+    }));
+    mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+    const result = await dispatchTask({
+      prompt: 'Test',
+      provider: 'copilot',
+      config: { 'read-delegates': { copilot: { targets: [lvl('gpt-5.6-luna', 'max')] } } },
+      configPath: 'custom.jsonc',
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [warning]);
+  });
+
+  it('SC5 dispatchBatch carries a runner sandbox downgrade into the slot record', async () => {
+    const warning = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
+    mock.method(providerRunners, 'copilot', async () => ({
+      provider: 'copilot', stdout: '{"findings":[]}', stderr: '', exitCode: 0, failureKind: null,
+      logFile: null, truncated: null, metricsAttempts: [], sandboxDowngraded: true, warnings: [warning],
+    }));
+    mock.method(providerProbes, 'isCopilotAvailable', async () => true);
+    const config = { 'read-delegates': { copilot: { targets: [lvl('gpt-5.6-luna', 'max')] } } };
+    const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-strict-batch-'));
+    const saved = process.env.DISPATCH_TELEMETRY;
+    process.env.DISPATCH_TELEMETRY = '0';
+    try {
+      const batchPath = path.join(root, 'batch.json');
+      fs.writeFileSync(batchPath, JSON.stringify({
+        targets: [{ roundId: 'code-review:R1', candidateId: 'code-review:copilot:0', platform: 'copilot', model: 'gpt-5.6-luna' }],
+        reserves: [],
+      }));
+      const batch = loadBatchFile(batchPath, resolveReadDelegates(config, 'low'));
+      const out = await dispatchBatch(batch, { prompt: 'Review', files: [], configPath: 'custom.jsonc', orchestrator: 'claude', level: 'low' }, config);
+      assert.equal(out.targets.length, 1);
+      assert.equal(out.targets[0].sandboxDowngraded, true);
+      assert.deepEqual(out.targets[0].warnings, [warning]);
+    } finally {
+      if (saved === undefined) delete process.env.DISPATCH_TELEMETRY;
+      else process.env.DISPATCH_TELEMETRY = saved;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('SC4 an effort-less level passes no effort to the runner while an explicit effort override still applies', async () => {
+    const runner = mock.method(providerRunners, 'claude', async () => ({ provider: 'claude', stdout: 'ok', exitCode: 0 }));
+    mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+    const config = { 'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5' } }] } } };
+    await dispatchTask({ prompt: 'Test', provider: 'claude', config, configPath: 'custom.jsonc', level: 'low' });
+    await dispatchTask({ prompt: 'Test', provider: 'claude', config, configPath: 'custom.jsonc', level: 'low', effort: 'high' });
+    assert.equal(runner.mock.calls.length, 2);
+    assert.equal(runner.mock.calls[0].arguments[0].effort ?? null, null);
+    assert.equal(runner.mock.calls[0].arguments[0].model, 'claude-opus-5');
+    assert.equal(runner.mock.calls[1].arguments[0].effort, 'high');
+  });
+
+  it('SC5 dispatchTask passes wrapper sandbox false to the Claude runner', async () => {
+    const runner = mock.method(providerRunners, 'claude', async () => ({ provider: 'claude', stdout: 'ok', exitCode: 0 }));
+    mock.method(providerProbes, 'isClaudeAvailable', async () => true);
+    const result = await dispatchTask({
+      prompt: 'Test',
+      provider: 'claude',
+      config: { 'read-delegates': { claude: { sandbox: false, targets: [lvl('claude-opus-5')] } } },
+      configPath: 'custom.jsonc',
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(runner.mock.calls[0].arguments[0].sandbox, false);
+    assert.equal(Object.hasOwn(result, 'sandboxDowngraded'), false);
+  });
+
+  it('SC6 dispatchTask passes the effective wrapper sandbox (default true, explicit false) to OpenCode', async () => {
+    const runner = mock.method(providerRunners, 'opencode', async () => ({ provider: 'opencode', stdout: 'ok', exitCode: 0 }));
+    mock.method(providerProbes, 'isOpencodeAvailable', async () => true);
+    for (const wrapper of [{}, { sandbox: true }, { sandbox: false }]) {
+      await dispatchTask({
+        prompt: 'Test',
+        provider: 'opencode',
+        config: { 'read-delegates': { opencode: { ...wrapper, targets: [lvl('glm-5.3-flash')] } } },
+        configPath: 'custom.jsonc',
+      });
+    }
+    assert.deepEqual(runner.mock.calls.map(c => c.arguments[0].sandbox), [true, true, false]);
   });
 });

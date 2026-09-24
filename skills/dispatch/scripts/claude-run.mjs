@@ -220,6 +220,30 @@ export async function runClaude(options = {}) {
 
   let lastResult = null;
   const metricsAttempts = [];
+  // Warn-and-run: an unsupported sandbox reruns the same model once unsandboxed, then never again.
+  let activeSandbox = sandbox;
+  const downgrade = { flagged: false, warnings: [] };
+  const noteDowngrade = (warning) => {
+    downgrade.flagged = true;
+    if (!downgrade.warnings.includes(warning)) downgrade.warnings.push(warning);
+  };
+  const withDowngrade = (value) => {
+    if (value && typeof value === 'object') {
+      for (const warning of value.warnings ?? []) noteDowngrade(warning);
+      if (value.sandboxDowngraded) downgrade.flagged = true;
+      if (downgrade.flagged) value.sandboxDowngraded = true;
+      if (downgrade.warnings.length > 0) value.warnings = [...downgrade.warnings];
+    }
+    return value;
+  };
+  const tryDowngrade = (failureKind) => {
+    if (!activeSandbox || failureKind !== 'sandbox-unsupported') return false;
+    activeSandbox = false;
+    process.stderr.write(`${CLAUDE_DOWNGRADE_WARNING}\n`);
+    sessionLogger.write(`${CLAUDE_DOWNGRADE_WARNING}\n`);
+    noteDowngrade(CLAUDE_DOWNGRADE_WARNING);
+    return true;
+  };
 
   // Cascade across viable targets, and within each target across candidate models,
   // both in priority order. A quota/auth failure advances to the next target; any
@@ -238,7 +262,7 @@ export async function runClaude(options = {}) {
           model: currentModel,
           formattedPrompt,
           effort: effectiveEffort,
-          sandbox,
+          sandbox: activeSandbox,
           responseSchema,
           timeout,
           maxBufferMb,
@@ -259,7 +283,11 @@ export async function runClaude(options = {}) {
         }));
         result.metricsAttempts = [...metricsAttempts];
         result.effectiveAttempt = metricsAttempts.length - 1;
-        lastResult = result;
+        lastResult = withDowngrade(result);
+        if (result.exitCode !== 0 && tryDowngrade(result.failureKind)) {
+          m--;
+          continue;
+        }
 
         const step = nextClaudeStep({ result, error: null, isLastModel, isLastTarget, pinned: !!claudeMode });
 
@@ -290,6 +318,11 @@ export async function runClaude(options = {}) {
           failureKind: err.failureKind || classifyFailure(`${err.message}\n${err.stderr || ''}`),
         }));
         err.metricsAttempts = [...metricsAttempts];
+        if (tryDowngrade(err.failureKind)) {
+          m--;
+          continue;
+        }
+        withDowngrade(err);
         const step = nextClaudeStep({ result: null, error: err, isLastModel, isLastTarget, pinned: !!claudeMode });
 
         if (step === 'next-model') {
@@ -372,12 +405,7 @@ export function nextClaudeStep({ result, error, isLastModel, isLastTarget, pinne
   // resolveRunnerExitCode already maps an error envelope, empty output, and truncation to
   // non-zero, so exit 0 is a real answer whatever label failureKind carries.
   if (result.exitCode === 0) return 'return';
-  // An unsupported sandbox setting is a property of the CLI/mode, not the model — retrying
-  // across models or execution modes would just repeat the same diagnostic. Return so the
-  // outer dispatch cascade can choose another provider.
-  if (result.failureKind === 'sandbox-unsupported') {
-    return 'return';
-  }
+  // runClaude has already downgraded an unsupported sandbox, so every failure kind advances.
   if (!isLastModel) return 'next-model';
   const isQuotaOrAuth = result.failureKind === 'quota' || result.failureKind === 'auth';
   if (isQuotaOrAuth && !isLastTarget && !pinned) return 'next-target';
@@ -500,6 +528,7 @@ async function executeOnTarget({
           process.stderr.write(warning);
           sessionLogger.write(warning);
         }
+        const downgradeFields = warning ? { sandboxDowngraded: true, warnings: [warning.trim()] } : {};
 
         emitCompletionBanner({
           platform: 'claude',
@@ -524,6 +553,7 @@ async function executeOnTarget({
           sessionLink,
           truncated: outcome.truncated,
           failureKind,
+          ...downgradeFields,
         };
       },
     });
@@ -579,13 +609,6 @@ export async function main() {
     });
     if (shouldPrintClaudeStdout(res) && res.stdout) {
       process.stdout.write(res.stdout.endsWith('\n') ? res.stdout : `${res.stdout}\n`);
-    }
-    if (res.failureKind === 'sandbox-unsupported') {
-      console.error(
-        `\n[dispatch] This Claude CLI does not support the inline --settings sandbox JSON. ` +
-          `Upgrade Claude Code, set read-delegates.claude.sandbox to false, or use --no-sandbox.\n` +
-          `Session log: ${res.logFile}`,
-      );
     }
     process.exit(res.exitCode);
   } catch (err) {
@@ -685,6 +708,8 @@ const SANDBOX_ADVISORY_PATTERN = /^[^\n]*Sandbox disabled[^\n]*not active[^\n]*$
 function stripSandboxAdvisory(text) {
   return String(text ?? '').replace(SANDBOX_ADVISORY_PATTERN, '');
 }
+
+export const CLAUDE_DOWNGRADE_WARNING = '[dispatch] WARNING: Claude sandbox is unavailable; the run proceeded unsandboxed.';
 
 /** Whether Claude printed its "Sandbox disabled … not active" advisory. */
 export function claudeSandboxInactive(stderr) {

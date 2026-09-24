@@ -15,8 +15,8 @@ import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../..
 /** v0.5 config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'low', high: { effort: 'high' } },
-    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+    claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'low' }, high: { model: 'claude-opus-5', effort: 'high' } }] },
+    agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
   },
 };
 /** loadBatchFile validates against the level-resolved { platforms } map (resolved-map contract). */

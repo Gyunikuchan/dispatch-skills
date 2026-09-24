@@ -2,12 +2,12 @@
  * Unified dispatch config: schema validation, v0.4 rejection, and level resolution.
  *
  * One config (`config.local.jsonc`, else `config.jsonc`) holds three tables:
- * - `read-delegates`  platform → candidate or ordered candidate array (required)
- * - `write-subagents` platform → native write-subagent fields (optional)
+ * - `read-delegates`  provider → `{ sandbox?, targets: [levelMap, ...] }` (required)
+ * - `write-subagents` provider → level map (optional)
  * - `phases`          review phase → `targets`/`rounds`/`consensus` level maps + `only` (optional)
  *
- * Every level-keyed value resolves the same way: exact → nearest lower → lowest higher (an
- * entry's flat fields stand in for levels below its lowest override).
+ * A level map maps levels to `{ model, effort? }`. Every level-keyed value resolves the same way:
+ * exact → nearest lower → lowest higher, with no field inheritance across levels.
  * Pure except `detectLegacyConfig`/`loadDispatchConfig`, which probe the filesystem.
  */
 
@@ -93,74 +93,50 @@ export function resolveLevelScalar(knob, level) {
   return chosen === undefined ? undefined : knob[chosen];
 }
 
-/** Level key whose override applies to `entry` at `level`, or null (see chooseOverride). */
+/** Level key a level map (or scalar knob) resolves to at `level`, or null. */
 export function selectedLevelKey(entry, level) {
   if (!isPlainObject(entry)) return null;
-  const isScalarKnob = !Object.keys(entry).some(k => !LEVELS.includes(k));
-  if (isScalarKnob) return selectLevel(LEVELS.filter(l => entry[l] !== undefined), level) ?? null;
-  return chooseOverride(entry, level, value => !!value && typeof value === 'object', pickFields(entry, CANDIDATE_FIELDS)) ?? null;
+  return selectLevel(LEVELS.filter(l => entry[l] !== undefined), level) ?? null;
 }
-
-function pickFields(source, fields) {
-  const picked = {};
-  if (!isPlainObject(source)) return picked;
-  for (const field of fields) {
-    if (source[field] !== undefined) picked[field] = source[field];
-  }
-  return picked;
-}
-
-const CANDIDATE_FIELDS = ['model', 'effort', 'sandbox'];
 
 /**
- * Level override that applies to an entry. Flat fields act as the entry's baseline, so the
- * lowest-higher fallback applies only to entries without any: `{ model: a, high: {...} }` at
- * `low` resolves `a`, while `{ high: {...} }` at `low` resolves the `high` override.
- */
-function chooseOverride(entry, level, isOverride, base) {
-  const defined = LEVELS.filter(l => isOverride(entry[l]));
-  const chosen = selectLevel(defined, level);
-  if (chosen === undefined) return undefined;
-  const fellUpward = LEVELS.indexOf(chosen) > LEVELS.indexOf(level);
-  return fellUpward && Object.keys(base).length > 0 ? undefined : chosen;
-}
-
-const WRITE_FIELDS = ['model', 'effort'];
-
-/**
- * Resolves one write-subagent entry's `model`/`effort` at `level` (object overrides only).
+ * Resolves a level map (write-subagent entry or read target) to a copy of its selected level
+ * configuration; no field inheritance, so an omitted `effort` stays omitted.
  *
  * @param {object} entry
  * @param {string} level
  * @returns {{ model?: string | string[], effort?: string }}
  */
 export function resolveLevelEntry(entry, level) {
-  if (!isPlainObject(entry)) return {};
-  const base = pickFields(entry, WRITE_FIELDS);
-  const chosen = chooseOverride(entry, level, isPlainObject, base);
-  if (chosen === undefined) return base;
-  return { ...base, ...pickFields(entry[chosen], WRITE_FIELDS) };
+  const chosen = selectedLevelKey(entry, level);
+  if (chosen === null || !isPlainObject(entry[chosen])) return {};
+  const resolved = {};
+  if (entry[chosen].model !== undefined) resolved.model = entry[chosen].model;
+  if (entry[chosen].effort !== undefined) resolved.effort = entry[chosen].effort;
+  return resolved;
+}
+
+/** Provider-wide sandbox: explicit boolean, else `true`; undefined for unsupported providers. */
+export function effectiveSandbox(wrapper, canonical) {
+  if (!SANDBOX_SUPPORTED_PROVIDERS.includes(canonical)) return undefined;
+  return typeof wrapper?.sandbox === 'boolean' ? wrapper.sandbox : true;
 }
 
 /**
- * Resolves one read-delegate entry (candidate or candidate array) to its ordered candidates at
- * `level`. A level override may be an object or a candidate array; each inherits the base fields.
+ * Resolves a read-provider wrapper to one candidate per target, in declaration order.
  *
- * @param {object | object[]} entry
+ * @param {{ sandbox?: boolean, targets?: object[] }} wrapper
  * @param {string} level
+ * @param {string} canonical
  * @returns {Array<{ model?: string | string[], effort?: string, sandbox?: boolean }>}
  */
-export function resolvePlatformCandidates(entry, level) {
-  if (!entry) return [];
-  if (Array.isArray(entry)) return entry.flatMap(item => resolvePlatformCandidates(item, level));
-  if (typeof entry !== 'object') return [];
-
-  const base = pickFields(entry, CANDIDATE_FIELDS);
-  const chosen = chooseOverride(entry, level, value => !!value && typeof value === 'object', base);
-  if (chosen === undefined) return [base];
-  const override = entry[chosen];
-  const items = Array.isArray(override) ? override : [override];
-  return items.map(item => ({ ...base, ...pickFields(item, CANDIDATE_FIELDS) }));
+export function resolveTargets(wrapper, level, canonical) {
+  const targets = Array.isArray(wrapper?.targets) ? wrapper.targets : [];
+  const sandbox = effectiveSandbox(wrapper, canonical);
+  return targets.map(target => {
+    const candidate = resolveLevelEntry(target, level);
+    return sandbox === undefined ? candidate : { ...candidate, sandbox };
+  });
 }
 
 /**
@@ -172,8 +148,9 @@ export function resolvePlatformCandidates(entry, level) {
  */
 export function resolveReadDelegates(config, level) {
   const platforms = {};
-  for (const [key, entry] of Object.entries(config?.['read-delegates'] ?? {})) {
-    platforms[normalizeProviderKey(key)] = resolvePlatformCandidates(entry, level);
+  for (const [key, wrapper] of Object.entries(config?.['read-delegates'] ?? {})) {
+    const canonical = normalizeProviderKey(key);
+    platforms[canonical] = resolveTargets(wrapper, level, canonical);
   }
   return { platforms };
 }
@@ -197,12 +174,30 @@ export function phaseMembers(config, phase) {
 // SECTION: Validation
 // ============================================================================
 
+/** Object key order is ignored; array order (alias fallback) is significant. */
+export function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalJson(value[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function validateModel(where, value, problems) {
+  if (value === undefined) {
+    problems.push(`${where}.model is required (${DIFF_HINT}).`);
+    return;
+  }
   try {
-    if (value === null || value === undefined) throw new Error('missing');
+    if (value === null) throw new Error('null');
     validateModelSpec(value, `${where}.model`);
   } catch {
-    problems.push(`${where}.model must be a string or array of strings (${DIFF_HINT}).`);
+    problems.push(`${where}.model must be a nonblank string or non-empty array of nonblank strings (${DIFF_HINT}).`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    const dup = value.find((item, i) => value.indexOf(item) !== i);
+    if (dup !== undefined) problems.push(`${where}.model has duplicate alias "${dup}" (${DIFF_HINT}).`);
   }
 }
 
@@ -211,61 +206,73 @@ function validateEffort(where, value, problems) {
     if (typeof value !== 'string') throw new Error('not a string');
     validateEffortSpec(value, `${where}.effort`);
   } catch {
-    problems.push(`${where}.effort must be a string and not blank (${DIFF_HINT}).`);
+    problems.push(`${where}.effort must be a string and not blank; omit it for the provider default (${DIFF_HINT}).`);
   }
 }
 
-/** Validates a flat candidate (no level keys): model, effort, and sandbox where supported. */
-function validateCandidate(where, value, fields, problems) {
+/** Validates one `{ model, effort? }` level configuration. */
+function validateLevelConfig(where, value, problems) {
   if (!isPlainObject(value)) {
-    problems.push(`${where} must be an object with ${fields.join('/')} (${DIFF_HINT}).`);
+    problems.push(`${where} must be an object with model and optional effort (${DIFF_HINT}).`);
     return;
   }
-  if (Object.keys(value).length === 0) {
-    problems.push(`${where} must set at least one of ${fields.join(', ')} (${DIFF_HINT}).`);
+  for (const key of Object.keys(value)) {
+    if (key !== 'model' && key !== 'effort') {
+      problems.push(`${where} has unrecognized key "${key}". Valid keys: model, effort (${DIFF_HINT}).`);
+    }
   }
-  for (const [field, fieldValue] of Object.entries(value)) {
-    validateField(where, field, fieldValue, fields, problems, false);
+  validateModel(where, value.model, problems);
+  if ('effort' in value) validateEffort(where, value.effort, problems);
+}
+
+/** Validates a non-empty sparse level map whose values are level configurations. */
+function validateLevelMap(where, value, problems) {
+  if (!isPlainObject(value)) {
+    problems.push(`${where} must be an object keyed by level (${DIFF_HINT}).`);
+    return;
+  }
+  const keys = Object.keys(value);
+  if (keys.length === 0) problems.push(`${where} must define at least one level (${DIFF_HINT}).`);
+  for (const key of keys) {
+    if (!LEVELS.includes(key)) {
+      problems.push(`${where} has unrecognized key "${key}". Valid keys: ${LEVELS.join(', ')} (${DIFF_HINT}).`);
+      continue;
+    }
+    validateLevelConfig(`${where}.${key}`, value[key], problems);
   }
 }
 
-/** Validates one entry field; returns false when the field is not a known scalar field. */
-function validateField(where, field, value, fields, problems, allowLevels) {
-  if (field === 'model' && fields.includes('model')) return validateModel(where, value, problems);
-  if (field === 'effort' && fields.includes('effort')) return validateEffort(where, value, problems);
-  if (field === 'sandbox' && fields.includes('sandbox')) {
-    if (typeof value !== 'boolean') problems.push(`${where}.sandbox must be a boolean (${DIFF_HINT}).`);
+/** Validates one read-provider wrapper `{ sandbox?, targets }`, including duplicate targets. */
+function validateReadProvider(where, value, canonical, problems) {
+  const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(canonical);
+  const validKeys = supportsSandbox ? 'sandbox, targets' : 'targets';
+  if (!isPlainObject(value)) {
+    problems.push(`${where} must be an object with keys ${validKeys} (${DIFF_HINT}).`);
     return;
   }
-  const valid = allowLevels ? [...fields, ...LEVELS] : fields;
-  problems.push(`${where} has unrecognized key "${field}". Valid keys: ${valid.join(', ')} (${DIFF_HINT}).`);
-}
-
-/**
- * Validates one entry object with inline level overrides.
- * `allowArrayOverrides` permits a level override to be a candidate array (read delegates only).
- */
-function validateEntry(where, entry, fields, problems, allowArrayOverrides) {
-  if (!isPlainObject(entry)) {
-    problems.push(`${where} must be an object (${DIFF_HINT}).`);
+  for (const [key, field] of Object.entries(value)) {
+    if (key === 'targets') continue;
+    if (key === 'sandbox' && !supportsSandbox) {
+      problems.push(`${where}.sandbox is not supported for ${canonical}; remove it (${DIFF_HINT}).`);
+    } else if (key === 'sandbox') {
+      if (typeof field !== 'boolean') problems.push(`${where}.sandbox must be a boolean (${DIFF_HINT}).`);
+    } else {
+      problems.push(`${where} has unrecognized key "${key}". Valid keys: ${validKeys} (${DIFF_HINT}).`);
+    }
+  }
+  const { targets } = value;
+  if (!Array.isArray(targets) || targets.length === 0) {
+    problems.push(`${where}.targets must be a non-empty array of level maps (${DIFF_HINT}).`);
     return;
   }
-  for (const [field, value] of Object.entries(entry)) {
-    if (!LEVELS.includes(field)) {
-      validateField(where, field, value, fields, problems, true);
-      continue;
-    }
-    const levelWhere = `${where}.${field}`;
-    if (Array.isArray(value) && allowArrayOverrides) {
-      if (value.length === 0) {
-        problems.push(`${levelWhere} must define at least one candidate (${DIFF_HINT}).`);
-        continue;
-      }
-      value.forEach((item, i) => validateCandidate(`${levelWhere}[${i}]`, item, fields, problems));
-      continue;
-    }
-    validateCandidate(levelWhere, value, fields, problems);
-  }
+  const seen = new Map();
+  targets.forEach((target, j) => {
+    validateLevelMap(`${where}.targets[${j}]`, target, problems);
+    if (!isPlainObject(target)) return;
+    const key = canonicalJson(target);
+    if (seen.has(key)) problems.push(`${where}.targets[${j}] duplicates targets[${seen.get(key)}] (${DIFF_HINT}).`);
+    else seen.set(key, j);
+  });
 }
 
 /** Validates a platform-keyed table; returns the canonical keys present, in order. */
@@ -296,20 +303,6 @@ function validatePlatformTable(table, value, problems, validateOne) {
     validateOne(`${table}.${key}`, value[key], canonical);
   }
   return [...seen.keys()];
-}
-
-function validateReadDelegate(where, entry, canonical, problems) {
-  const fields = SANDBOX_SUPPORTED_PROVIDERS.includes(canonical) ? CANDIDATE_FIELDS : WRITE_FIELDS;
-  if (Array.isArray(entry)) {
-    if (entry.length === 0) {
-      problems.push(`${where} must define at least one candidate (${DIFF_HINT}).`);
-      return;
-    }
-    // Array items are candidates with their own level overrides, but never nested arrays.
-    entry.forEach((item, i) => validateEntry(`${where}[${i}]`, item, fields, problems, false));
-    return;
-  }
-  validateEntry(where, entry, fields, problems, true);
 }
 
 function validateKnob(where, name, knob, problems) {
@@ -382,30 +375,6 @@ function validateOnly(where, only, readKeys, problems) {
 }
 
 /**
- * Requires a non-blank `effort` at every level for a resolved candidate that names a `model`: an
- * entry with no model at all (an unconfigured placeholder) is exempt. `resolveAt(entry, level)`
- * returns the level's resolved candidate array (read-delegates) or one-candidate array
- * (write-subagents' `resolveLevelEntry`, wrapped by the caller).
- */
-function validateResolvedEffort(where, entry, resolveAt, problems) {
-  if (!entry || (!isPlainObject(entry) && !Array.isArray(entry))) return;
-  for (const level of LEVELS) {
-    let candidates;
-    try {
-      candidates = resolveAt(entry, level);
-    } catch {
-      continue; // Malformed entries are already reported by structural validation.
-    }
-    candidates.forEach((candidate, index) => {
-      if (candidate?.model !== undefined && !candidate.effort) {
-        const suffix = candidates.length > 1 ? `[${index}]` : '';
-        problems.push(`${where}${suffix} effort is missing at level ${level}; add "effort" (e.g. "medium").`);
-      }
-    });
-  }
-}
-
-/**
  * Validates a parsed config against the v0.5 schema, reporting every problem in one pass.
  *
  * @param {object} config
@@ -427,24 +396,15 @@ export function validateConfig(config) {
     problems.push(`Missing required table "read-delegates" (${DIFF_HINT}).`);
   } else {
     readKeys = validatePlatformTable('read-delegates', config['read-delegates'], problems,
-      (where, entry, canonical) => {
-        validateReadDelegate(where, entry, canonical, problems);
-        validateResolvedEffort(where, entry, resolvePlatformCandidates, problems);
-      });
+      (where, entry, canonical) => validateReadProvider(where, entry, canonical, problems));
     if (isPlainObject(config['read-delegates']) && Object.keys(config['read-delegates']).length === 0) {
       problems.push(`read-delegates must define at least one platform (${DIFF_HINT}).`);
     }
   }
 
   if (config['write-subagents'] !== undefined) {
-    validatePlatformTable('write-subagents', config['write-subagents'], problems, (where, entry) => {
-      if (!isPlainObject(entry)) {
-        problems.push(`${where} must be an object (${DIFF_HINT}).`);
-        return;
-      }
-      validateEntry(where, entry, WRITE_FIELDS, problems, false);
-      validateResolvedEffort(where, entry, (item, level) => [resolveLevelEntry(item, level)], problems);
-    });
+    validatePlatformTable('write-subagents', config['write-subagents'], problems,
+      (where, entry) => validateLevelMap(where, entry, problems));
   }
 
   if (config.phases !== undefined) validatePhases(config.phases, readKeys, problems);

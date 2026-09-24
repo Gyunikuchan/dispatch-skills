@@ -208,7 +208,14 @@ export function validateProviderSpec(provider, where = 'provider') {
 }
 
 /** Providers whose `read-delegates.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
-export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot'];
+export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot', 'opencode'];
+
+/** Whether Linux Bubblewrap (OpenCode's sandbox mechanism) is installed; always false off Linux. */
+export function detectBwrap() {
+  if (process.platform !== 'linux') return false;
+  const check = spawnSync('which', ['bwrap'], { encoding: 'utf8' });
+  return check.status === 0 && Boolean(check.stdout.trim());
+}
 
 /**
  * Detects a provider diagnostic saying that a requested sandbox flag or setting is unsupported.

@@ -19,7 +19,6 @@ import {
   phaseMembers,
   resolveLevelEntry,
   resolveLevelScalar,
-  resolvePlatformCandidates,
   resolveReadDelegates,
   REVIEW_PHASES,
   selectLevel,
@@ -33,14 +32,14 @@ const SAMPLE_CONFIG = parseJsonc(readFileSync(path.join(REPO_ROOT, 'skills', 'di
 
 const VALID = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'low', sandbox: true },
-    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-    copilot: { model: 'gpt-6-astra', effort: 'low', sandbox: true },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
+    claude: { sandbox: true, targets: [{ low: { model: 'claude-opus-5', effort: 'low' } }] },
+    agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+    copilot: { sandbox: true, targets: [{ low: { model: 'gpt-6-astra', effort: 'low' } }] },
+    opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }, { low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' } }] },
   },
   'write-subagents': {
-    claude: { model: 'claude-sonnet-5', effort: 'medium', high: { model: 'claude-opus-5' } },
-    copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' },
+    claude: { low: { model: 'claude-sonnet-5', effort: 'medium' }, high: { model: 'claude-opus-5' } },
+    copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
   },
   phases: {
     'plan-review': { rounds: { low: 0, medium: 2 }, targets: { low: 0, medium: 1 }, consensus: { low: false, medium: true } },
@@ -57,6 +56,8 @@ function withTables({ phases: phasePatches = {}, ...tables } = {}) {
 }
 
 const problemsOf = (config) => validateConfig(config).join('\n');
+/** One-target read-provider wrapper around a single `low` level. */
+const wrap = (level = { model: 'm' }, extra = {}) => ({ ...extra, targets: [{ low: level }] });
 
 /** The v0.4 → v0.5 key-map diagnostic, never naming the retired skill. */
 function assertKeyMap(text) {
@@ -128,7 +129,7 @@ describe('validateConfig (v0.5 schema)', () => {
   });
 
   it('accepts an ask-only config (read-delegates alone)', () => {
-    assert.deepEqual(validateConfig({ 'read-delegates': { claude: {} } }), []);
+    assert.deepEqual(validateConfig({ 'read-delegates': { claude: wrap() } }), []);
   });
 
   it('rejects a non-object root', () => {
@@ -161,63 +162,61 @@ describe('validateConfig (v0.5 schema)', () => {
     });
 
     it('rejects an unknown platform key, listing the valid keys', () => {
-      const text = problemsOf({ 'read-delegates': { bogus: {} } });
+      const text = problemsOf({ 'read-delegates': { bogus: wrap() } });
       assert.match(text, /bogus/);
       assert.match(text, new RegExp(KNOWN_PROVIDERS.join(', ')));
     });
 
     it('accepts alias keys and rejects duplicates after alias normalization', () => {
-      assert.deepEqual(validateConfig({ 'read-delegates': { antigravity: {}, claudecode: {} } }), []);
-      const text = problemsOf({ 'read-delegates': { agy: {}, antigravity: {} } });
+      assert.deepEqual(validateConfig({ 'read-delegates': { antigravity: wrap(), claudecode: wrap() } }), []);
+      const text = problemsOf({ 'read-delegates': { agy: wrap(), antigravity: wrap() } });
       assert.match(text, /duplicate/i);
       assert.match(text, /agy/);
     });
 
     it('rejects the reserved pin keyword "all"', () => {
-      assert.match(problemsOf({ 'read-delegates': { all: { model: 'm' } } }), /reserved pin keyword "all"/);
+      assert.match(problemsOf({ 'read-delegates': { all: wrap() } }), /reserved pin keyword "all"/);
     });
 
     it('type-checks model, effort, and sandbox', () => {
-      assert.match(problemsOf({ 'read-delegates': { agy: { model: 5 } } }), /read-delegates\.agy\.model must be a string/);
-      assert.match(problemsOf({ 'read-delegates': { claude: { model: [] } } }), /read-delegates\.claude\.model must be a string/);
-      assert.match(problemsOf({ 'read-delegates': { claude: { model: 'claude:' } } }), /read-delegates\.claude\.model must be a string/);
-      assert.match(problemsOf({ 'read-delegates': { claude: { effort: '   ' } } }), /read-delegates\.claude\.effort must be a string/);
-      assert.match(problemsOf({ 'read-delegates': { copilot: { sandbox: 'yes' } } }), /read-delegates\.copilot\.sandbox must be a boolean/);
+      assert.match(problemsOf({ 'read-delegates': { agy: wrap({ model: 5 }) } }), /read-delegates\.agy\.targets\[0\]\.low\.model must be a nonblank string/);
+      assert.match(problemsOf({ 'read-delegates': { claude: wrap({ model: [] }) } }), /read-delegates\.claude\.targets\[0\]\.low\.model must be/);
+      assert.match(problemsOf({ 'read-delegates': { claude: wrap({ model: 'claude:' }) } }), /read-delegates\.claude\.targets\[0\]\.low\.model must be/);
+      assert.match(problemsOf({ 'read-delegates': { claude: wrap({ model: 'm', effort: '   ' }) } }), /read-delegates\.claude\.targets\[0\]\.low\.effort must be a string/);
+      assert.match(problemsOf({ 'read-delegates': { copilot: wrap(undefined, { sandbox: 'yes' }) } }), /read-delegates\.copilot\.sandbox must be a boolean/);
     });
 
-    it('accepts sandbox only on Claude and Copilot', () => {
-      assert.deepEqual(validateConfig({ 'read-delegates': { claude: { sandbox: false }, copilot: { sandbox: true } } }), []);
-      for (const platform of ['agy', 'opencode']) {
-        assert.match(
-          problemsOf({ 'read-delegates': { [platform]: { sandbox: true } } }),
-          new RegExp(`read-delegates\\.${platform}.*unrecognized key "sandbox"`),
-        );
-      }
+    it('accepts wrapper sandbox on Claude, Copilot, and OpenCode but not agy', () => {
+      assert.deepEqual(validateConfig({ 'read-delegates': {
+        claude: wrap(undefined, { sandbox: false }), copilot: wrap(undefined, { sandbox: true }), opencode: wrap(undefined, { sandbox: false }),
+      } }), []);
+      assert.match(problemsOf({ 'read-delegates': { agy: wrap(undefined, { sandbox: true }) } }), /read-delegates\.agy\.sandbox is not supported/);
     });
 
-    it('rejects an unrecognized key in an entry or candidate', () => {
-      assert.match(problemsOf({ 'read-delegates': { claude: { timeout: 10 } } }), /unrecognized key "timeout"/);
-      assert.match(problemsOf({ 'read-delegates': { opencode: [{ model: 'x', timeout: 10 }] } }), /read-delegates\.opencode\[0\].*unrecognized key "timeout"/);
+    it('rejects an unrecognized key in a wrapper, target, or level config', () => {
+      assert.match(problemsOf({ 'read-delegates': { claude: wrap(undefined, { timeout: 10 }) } }), /read-delegates\.claude has unrecognized key "timeout"/);
+      assert.match(problemsOf({ 'read-delegates': { opencode: { targets: [{ low: { model: 'x' }, timeout: 10 }] } } }), /read-delegates\.opencode\.targets\[0\].*unrecognized key "timeout"/);
+      assert.match(problemsOf({ 'read-delegates': { opencode: wrap({ model: 'x', timeout: 10 }) } }), /read-delegates\.opencode\.targets\[0\]\.low.*unrecognized key "timeout"/);
     });
 
-    it('validates candidate arrays', () => {
-      assert.match(problemsOf({ 'read-delegates': { opencode: [] } }), /read-delegates\.opencode must define at least one candidate/);
-      assert.match(problemsOf({ 'read-delegates': { opencode: ['x'] } }), /read-delegates\.opencode\[0\] must be an object/);
+    it('validates the targets array', () => {
+      assert.match(problemsOf({ 'read-delegates': { opencode: { targets: [] } } }), /read-delegates\.opencode\.targets must be a non-empty array/);
+      assert.match(problemsOf({ 'read-delegates': { opencode: { targets: ['x'] } } }), /read-delegates\.opencode\.targets\[0\] must be an object keyed by level/);
     });
 
-    it('validates inline level overrides (object or candidate array)', () => {
+    it('validates sparse level maps', () => {
       assert.deepEqual(
-        validateConfig({ 'read-delegates': { opencode: { model: 'a', effort: 'medium', high: [{ model: 'b', effort: 'medium' }, { model: 'c', effort: 'medium' }] }, claude: { max: { sandbox: false } } } }),
+        validateConfig({ 'read-delegates': { opencode: { targets: [{ low: { model: 'a', effort: 'medium' }, high: { model: 'b' } }] } } }),
         [],
       );
-      const misspelled = problemsOf({ 'read-delegates': { agy: { low: { modle: 'x' } } } });
-      assert.match(misspelled, /read-delegates\.agy\.low/);
+      const misspelled = problemsOf({ 'read-delegates': { agy: wrap({ modle: 'x' }) } });
+      assert.match(misspelled, /read-delegates\.agy\.targets\[0\]\.low/);
       assert.match(misspelled, /modle/);
-      assert.match(problemsOf({ 'read-delegates': { agy: { low: {} } } }), /read-delegates\.agy\.low must set at least one of model, effort/);
-      const badLevel = problemsOf({ 'read-delegates': { agy: { model: 'm', hgih: { effort: 'high' } } } });
+      assert.match(problemsOf({ 'read-delegates': { agy: { targets: [{}] } } }), /read-delegates\.agy\.targets\[0\] must define at least one level/);
+      const badLevel = problemsOf({ 'read-delegates': { agy: { targets: [{ hgih: { model: 'm' } }] } } });
       assert.match(badLevel, /hgih/);
       assert.match(badLevel, /low, medium, high, xhigh, max/);
-      assert.match(problemsOf({ 'read-delegates': { agy: { model: 'm', high: 'x' } } }), /read-delegates\.agy.*high/);
+      assert.match(problemsOf({ 'read-delegates': { agy: { targets: [{ high: 'x' }] } } }), /read-delegates\.agy\.targets\[0\]\.high must be an object/);
     });
   });
 
@@ -226,25 +225,25 @@ describe('validateConfig (v0.5 schema)', () => {
       assert.deepEqual(validateConfig(withTables()), []);
     });
 
-    it('rejects candidate arrays, including in level overrides', () => {
-      assert.match(problemsOf(withTables({ 'write-subagents': { claude: [{ model: 'm' }] } })), /write-subagents\.claude must be an object/);
+    it('rejects candidate arrays, including in level maps', () => {
+      assert.match(problemsOf(withTables({ 'write-subagents': { claude: [{ model: 'm' }] } })), /write-subagents\.claude must be an object keyed by level/);
       assert.match(
         problemsOf(withTables({ 'write-subagents': { claude: { high: [{ model: 'm' }] } } })),
-        /write-subagents\.claude\.high must be an object with model\/effort/,
+        /write-subagents\.claude\.high must be an object with model and optional effort/,
       );
     });
 
     it('type-checks model arrays', () => {
       for (const model of [[], [5], [''], ['claude:']]) {
         assert.match(
-          problemsOf(withTables({ 'write-subagents': { copilot: { model } } })),
-          /write-subagents\.copilot\.model must be a string or array of strings/,
+          problemsOf(withTables({ 'write-subagents': { copilot: { low: { model } } } })),
+          /write-subagents\.copilot\.low\.model must be a nonblank string or non-empty array/,
         );
       }
     });
 
     it('rejects unknown platform keys', () => {
-      assert.match(problemsOf(withTables({ 'write-subagents': { bogus: { model: 'm' } } })), /bogus/);
+      assert.match(problemsOf(withTables({ 'write-subagents': { bogus: { low: { model: 'm' } } } })), /bogus/);
     });
   });
 
@@ -280,7 +279,7 @@ describe('validateConfig (v0.5 schema)', () => {
     it('validates only: non-empty array of read-delegate keys or aliases', () => {
       assert.match(problemsOf(withTables({ phases: { 'code-review': { only: [] } } })), /phases\.code-review\.only/);
       const absent = problemsOf(withTables({
-        'read-delegates': { claude: {}, agy: {} },
+        'read-delegates': { claude: wrap(), agy: wrap() },
         phases: { 'code-review': { only: ['opencode'] } },
         'write-subagents': {},
       }));
@@ -292,7 +291,7 @@ describe('validateConfig (v0.5 schema)', () => {
   it('reports every problem in one pass', () => {
     const problems = validateConfig({
       extra: 1,
-      'read-delegates': { claude: { model: 5 }, bogus: {} },
+      'read-delegates': { claude: wrap({ model: 5 }), bogus: wrap() },
       phases: { 'code-review': { rounds: { low: -1 } } },
     });
     assert.ok(problems.length >= 4, `expected multiple problems, got ${problems.length}`);
@@ -330,48 +329,34 @@ describe('uniform level resolution', () => {
       assert.deepEqual(resolveLevelEntry(LEVELED, 'low'), { model: 'claude-sonnet-5', effort: 'medium' });
     });
 
-    it('lets level keys override flat keys and treats flat entries as level-agnostic', () => {
-      const mixed = { model: 'claude-opus-5', effort: 'medium', low: { model: 'claude-sonnet-5' } };
-      assert.deepEqual(resolveLevelEntry(mixed, 'high'), { model: 'claude-sonnet-5', effort: 'medium' });
-      assert.deepEqual(resolveLevelEntry({ model: 'x' }, 'max'), { model: 'x' });
+    it('returns the selected level config as-is, with no effort or sibling-level inheritance', () => {
+      const sparse = { low: { model: 'claude-sonnet-5', effort: 'medium' }, high: { model: 'claude-opus-5' } };
+      assert.deepEqual(resolveLevelEntry(sparse, 'max'), { model: 'claude-opus-5' });
+      assert.equal(Object.hasOwn(resolveLevelEntry(sparse, 'high'), 'effort'), false);
+      assert.deepEqual(resolveLevelEntry(sparse, 'medium'), { model: 'claude-sonnet-5', effort: 'medium' });
       assert.deepEqual(resolveLevelEntry(undefined, 'medium'), {});
-    });
-  });
-
-  describe('resolvePlatformCandidates', () => {
-    it('resolves flat, array, and level-keyed array entries, carrying sandbox', () => {
-      assert.deepEqual(resolvePlatformCandidates({ model: 'a', effort: 'medium' }, 'high'), [{ model: 'a', effort: 'medium' }]);
-      assert.deepEqual(
-        resolvePlatformCandidates({ model: 'd', effort: 'medium', high: [{ model: 'a' }, { model: 'b', effort: 'max' }] }, 'high'),
-        [{ model: 'a', effort: 'medium' }, { model: 'b', effort: 'max' }],
-      );
-      assert.deepEqual(
-        resolvePlatformCandidates({ model: 'c', sandbox: false, max: { model: 'm' } }, 'max'),
-        [{ model: 'm', sandbox: false }],
-      );
-      assert.deepEqual(resolvePlatformCandidates(null, 'high'), []);
     });
   });
 
   describe('resolveReadDelegates', () => {
     const config = {
       'read-delegates': {
-        claudecode: { model: 'a', high: { model: 'b' } },
-        antigravity: [{ model: 'g1' }, { model: 'g2' }],
-        copilot: { model: 'c', sandbox: false },
+        claudecode: { targets: [{ low: { model: 'a' }, high: { model: 'b' } }] },
+        antigravity: { targets: [{ low: { model: 'g1' } }, { low: { model: 'g2' } }] },
+        copilot: { sandbox: false, targets: [{ low: { model: 'c' } }] },
       },
     };
 
-    it('returns canonical keys in config order with level-resolved candidate lists', () => {
+    it('returns canonical keys in config order with one candidate per target', () => {
       const resolved = resolveReadDelegates(config, 'high');
       assert.deepEqual(Object.keys(resolved.platforms), ['claude', 'agy', 'copilot']);
-      assert.deepEqual(resolved.platforms.claude, [{ model: 'b' }]);
+      assert.deepEqual(resolved.platforms.claude, [{ model: 'b', sandbox: true }]);
       assert.deepEqual(resolved.platforms.agy, [{ model: 'g1' }, { model: 'g2' }]);
       assert.deepEqual(resolved.platforms.copilot, [{ model: 'c', sandbox: false }]);
     });
 
     it('changes candidates with the level', () => {
-      assert.deepEqual(resolveReadDelegates(config, 'low').platforms.claude, [{ model: 'a' }]);
+      assert.deepEqual(resolveReadDelegates(config, 'low').platforms.claude, [{ model: 'a', sandbox: true }]);
     });
   });
 
@@ -386,26 +371,27 @@ describe('uniform level resolution', () => {
   });
 });
 
-// SC5: v0.5.0 native-fallback model cascade — effort becomes required per resolved level.
-describe('effort required per resolved level (v0.5.0 cascade)', () => {
-  it('rejects a read-delegates candidate with no resolvable effort at any level', () => {
-    assert.match(problemsOf({ 'read-delegates': { claude: { model: 'm' } } }), /effort/i);
+// Effort is optional per level; omission means the provider default, never inheritance.
+describe('optional effort per level', () => {
+  it('accepts a read-delegate level without effort', () => {
+    assert.deepEqual(validateConfig({ 'read-delegates': { claude: wrap({ model: 'm' }) } }), []);
   });
 
-  it('rejects a read-delegates level override that leaves that level with no resolvable effort', () => {
-    assert.match(problemsOf({ 'read-delegates': { claude: { high: { model: 'x' } } } }), /effort/i);
+  it('accepts a write-subagent level without effort', () => {
+    assert.deepEqual(validateConfig(withTables({ 'write-subagents': { claude: { low: { model: 'm' } } } })), []);
   });
 
-  it('rejects a write-subagents entry with no resolvable effort', () => {
-    assert.match(problemsOf(withTables({ 'write-subagents': { claude: { model: 'm' } } })), /effort/i);
+  it('rejects a null effort rather than treating it as omission', () => {
+    assert.match(problemsOf({ 'read-delegates': { claude: wrap({ model: 'm', effort: null }) } }), /effort must be a string/);
   });
 
-  it('keeps a model-only level override valid when a flat effort exists', () => {
-    assert.deepEqual(validateConfig({ 'read-delegates': { claude: { model: 'm', effort: 'low', high: { model: 'x' } } } }), []);
+  it('SC2 resolves a write-subagent level without effort to exactly its own model', () => {
+    const entry = { low: { model: 'claude-sonnet-5', effort: 'medium' }, high: { model: 'claude-opus-5' } };
+    assert.deepEqual(resolveLevelEntry(entry, 'xhigh'), { model: 'claude-opus-5' });
   });
 
   it('CLI --model without --effort is rejected, naming --effort', () => {
-    const fixture = buildStubDispatchFixture({ 'read-delegates': { claude: { model: 'claude-opus-5', effort: 'low' } } });
+    const fixture = buildStubDispatchFixture({ 'read-delegates': { claude: wrap({ model: 'claude-opus-5', effort: 'low' }) } });
     try {
       const res = runStubDispatch(fixture, ['--no-config', '--provider', 'claude', '-m', 'claude-opus-5', 'positional prompt']);
       assert.notEqual(res.status, 0, `expected rejection, got stdout: ${res.stdout}`);
@@ -451,10 +437,10 @@ describe('detectLegacyConfig and loadDispatchConfig', () => {
 
   it('loadDispatchConfig prefers config.local.jsonc and normalizes absent optional tables', () => {
     writeFileSync(path.join(skillRoot, 'config.jsonc'), JSON.stringify(VALID));
-    writeFileSync(path.join(skillRoot, 'config.local.jsonc'), JSON.stringify({ 'read-delegates': { claude: {} } }));
+    writeFileSync(path.join(skillRoot, 'config.local.jsonc'), JSON.stringify({ 'read-delegates': { claude: wrap() } }));
     const loaded = loadDispatchConfig({ skillRoot });
     assert.equal(loaded.path, path.join(skillRoot, 'config.local.jsonc'));
-    assert.deepEqual(loaded.config['read-delegates'], { claude: {} });
+    assert.deepEqual(loaded.config['read-delegates'], { claude: wrap() });
     assert.deepEqual(loaded.config['write-subagents'], {});
     assert.deepEqual(loaded.config.phases, {});
   });
@@ -499,11 +485,16 @@ describe('shipped config.sample.jsonc', () => {
     assert.equal(detectLegacyConfig(SAMPLE_CONFIG, { skillRoot: path.join(REPO_ROOT, 'skills', 'dispatch') }), null);
   });
 
-  it('configures all three review phases, an only example, an array candidate, and a model cascade', () => {
+  it('configures all three review phases, an only example, a multi-target provider, a model cascade, and an effort-less level', () => {
     for (const phase of REVIEW_PHASES) assert.ok(SAMPLE_CONFIG.phases[phase], phase);
     assert.ok(Object.values(SAMPLE_CONFIG.phases).some((phase) => Array.isArray(phase.only)));
-    assert.ok(Object.values(SAMPLE_CONFIG['read-delegates']).some(Array.isArray));
-    assert.ok(Object.values(SAMPLE_CONFIG['write-subagents']).some((entry) => Array.isArray(entry.model)));
+    const wrappers = Object.values(SAMPLE_CONFIG['read-delegates']);
+    assert.ok(wrappers.every((wrapper) => Array.isArray(wrapper.targets)));
+    assert.ok(wrappers.some((wrapper) => wrapper.targets.length > 1));
+    const levels = [...wrappers.flatMap((wrapper) => wrapper.targets), ...Object.values(SAMPLE_CONFIG['write-subagents'])]
+      .flatMap((map) => Object.values(map));
+    assert.ok(levels.some((level) => Array.isArray(level.model)));
+    assert.ok(levels.some((level) => !Object.hasOwn(level, 'effort')));
   });
 
   for (const [level, phases] of Object.entries(LEVEL_PARITY)) {
@@ -520,4 +511,94 @@ describe('shipped config.sample.jsonc', () => {
       assert.ok(flow.implementation.model, 'claude write-subagent resolves a model');
     });
   }
+});
+
+// SECTION: strict config format (SC1/SC2)
+describe('strict config format', () => {
+  const T = (model, effort) => (effort === undefined ? { model } : { model, effort });
+  const STRICT = {
+    'read-delegates': {
+      claude: { sandbox: true, targets: [{ low: T('claude-sonnet-5', 'low'), high: T('claude-opus-5', 'high') }] },
+      agy: { targets: [{ low: T('gemini-3.8-flash') }] },
+      copilot: { targets: [{ low: T('gpt-6-astra', 'low') }, { medium: T(['gpt-6-astra', 'gpt-6-mini'], 'medium') }] },
+      opencode: { sandbox: false, targets: [{ low: T('opencode-go/glm-5.3-flash', 'max') }] },
+    },
+    'write-subagents': { claude: { low: T('claude-opus-5', 'low') }, opencode: { medium: T('opencode-go/glm-5.3-flash') } },
+  };
+  // Read rows use one provider and no sibling table. Write rows need a strict read-delegates sibling
+  // that today's validator rejects, so `exact` counts only problems in the row's own table.
+  const one = (provider, value) => ({ 'read-delegates': { [provider]: value } });
+  const withWrite = entry => ({ 'read-delegates': { claude: { targets: [{ low: T('a') }] } }, 'write-subagents': { claude: entry } });
+  const REJECTIONS = [
+    ['a bare candidate under a read provider', one('claude', { model: 'a', effort: 'low' }), 'read-delegates.claude', /^read-delegates\.claude has unrecognized key "model"\. Valid keys: sandbox, targets/, false],
+    ['a bare candidate array under a read provider', one('claude', [{ model: 'a', effort: 'low' }]), 'read-delegates.claude', /^read-delegates\.claude must be an object\b/, true],
+    ['an unknown wrapper key', one('claude', { targets: [{ low: T('a') }], extra: 1 }), 'read-delegates.claude', /unrecognized key "extra"\. Valid keys: sandbox, targets/, true],
+    ['an empty targets array', one('claude', { targets: [] }), 'read-delegates.claude.targets', /(non-empty|at least one)/, true],
+    ['a non-level key in a target', one('claude', { targets: [{ low: T('a'), model: 'a' }] }), 'read-delegates.claude.targets[0]', /unrecognized key "model"/, true],
+    ['a misplaced sandbox in a target', one('claude', { targets: [{ low: T('a'), sandbox: true }] }), 'read-delegates.claude.targets[0]', /unrecognized key "sandbox"/, true],
+    ['a level config missing model', one('claude', { targets: [{ low: { effort: 'low' } }] }), 'read-delegates.claude.targets[0].low', /\bmodel\b/, true],
+    ['a null effort', one('claude', { targets: [{ low: { model: 'a', effort: null } }] }), 'read-delegates.claude.targets[0].low.effort', /must be/, true],
+    ['a blank effort', one('claude', { targets: [{ low: { model: 'a', effort: ' ' } }] }), 'read-delegates.claude.targets[0].low.effort', /must be/, true],
+    ['an unknown level-config key', one('claude', { targets: [{ low: { model: 'a', extra: 1 } }] }), 'read-delegates.claude.targets[0].low', /unrecognized key "extra"/, true],
+    ['a misplaced sandbox in a level config', one('claude', { targets: [{ low: { model: 'a', sandbox: true } }] }), 'read-delegates.claude.targets[0].low', /unrecognized key "sandbox"/, true],
+    ['a candidate array in a level map', one('claude', { targets: [{ low: [T('a'), T('b')] }] }), 'read-delegates.claude.targets[0].low', /must be an object/, true],
+    ['a non-boolean sandbox', one('claude', { sandbox: 'yes', targets: [{ low: T('a') }] }), 'read-delegates.claude.sandbox', /must be a boolean/, true],
+    ['sandbox on agy', one('agy', { sandbox: true, targets: [{ low: T('a') }] }), 'read-delegates.agy', /sandbox/, true],
+    ['an invalid model alias', one('claude', { targets: [{ low: T(5) }] }), 'read-delegates.claude.targets[0].low.model', /must be/, true],
+    ['an empty model alias array', one('claude', { targets: [{ low: T([]) }] }), 'read-delegates.claude.targets[0].low.model', /(empty|at least one)/, true],
+    ['a duplicate model alias', one('claude', { targets: [{ low: T(['a', 'a']) }] }), 'read-delegates.claude.targets[0].low.model', /duplicate/i, true],
+    ['a key-reordered duplicate target', one('claude', { targets: [{ low: T('a', 'low') }, { low: { effort: 'low', model: 'a' } }] }), 'read-delegates.claude.targets[1]', /duplicates targets\[0\]/, true],
+    ['a non-level key in a write-subagent entry', withWrite({ model: 'a', low: T('a') }), 'write-subagents.claude', /unrecognized key "model"/, true],
+    ['an empty write-subagent level map', withWrite({}), 'write-subagents.claude', /(non-empty|at least one level)/, true],
+    ['a write-subagent level missing model', withWrite({ low: { effort: 'low' } }), 'write-subagents.claude.low', /\bmodel\b/, true],
+  ];
+
+  it('SC1 accepts the canonical wrapper/level-map schema, including a level without effort', () => {
+    assert.deepEqual(validateConfig(STRICT), []);
+  });
+
+  for (const [name, config, where, rule, exact] of REJECTIONS) {
+    it(`SC1 rejects ${name} at ${where} with the sample hint`, () => {
+      const problems = validateConfig(config);
+      const text = problems.join('\n');
+      assert.ok(problems.some(p => p.startsWith(where) && rule.test(p)), `expected ${where} ${rule}:\n${text}`);
+      for (const p of problems) assert.match(p, /config\.sample\.jsonc/);
+      const table = where.split('.')[0];
+      if (exact) assert.equal(problems.filter(p => p.startsWith(`${table}.`) || p.startsWith(`${table} `)).length, 1, text);
+    });
+  }
+
+  it('SC1 keeps [A,B] and [B,A] alias orders as distinct targets', () => {
+    assert.deepEqual(validateConfig(one('claude', { targets: [{ low: T(['a', 'b']) }, { low: T(['b', 'a']) }] })), []);
+  });
+
+  it('SC1 reports every strict problem with its path in one pass', () => {
+    const problems = validateConfig({ 'read-delegates': {
+      claude: { targets: [{ low: { effort: null } }], extra: 1 },
+      agy: { sandbox: true, targets: [] },
+    } });
+    const text = problems.join('\n');
+    const expected = [
+      [/^read-delegates\.claude has unrecognized key "extra"\. Valid keys: sandbox, targets/, 'claude extra'],
+      [/^read-delegates\.claude\.targets\[0\]\.low\b[^\n]*\bmodel\b/, 'claude missing model'],
+      [/^read-delegates\.claude\.targets\[0\]\.low\.effort must be/, 'claude null effort'],
+      [/^read-delegates\.agy\b[^\n]*sandbox/, 'agy sandbox'],
+      [/^read-delegates\.agy\.targets\b[^\n]*(non-empty|at least one)/, 'agy empty targets'],
+    ];
+    for (const [rule, label] of expected) assert.ok(problems.some(p => rule.test(p)), `${label}:\n${text}`);
+    for (const p of problems) assert.match(p, /config\.sample\.jsonc/);
+  });
+
+  it('SC2 resolveReadDelegates returns one candidate per target with sparse selection, optional effort, and wrapper sandbox', () => {
+    const { platforms } = resolveReadDelegates(STRICT, 'medium');
+    assert.deepEqual(platforms.claude, [{ model: 'claude-sonnet-5', effort: 'low', sandbox: true }]);
+    assert.deepEqual(platforms.agy, [{ model: 'gemini-3.8-flash' }]);
+    assert.deepEqual(platforms.copilot, [
+      { model: 'gpt-6-astra', effort: 'low', sandbox: true },
+      { model: ['gpt-6-astra', 'gpt-6-mini'], effort: 'medium', sandbox: true },
+    ]);
+    assert.deepEqual(platforms.opencode, [{ model: 'opencode-go/glm-5.3-flash', effort: 'max', sandbox: false }]);
+    assert.deepEqual(resolveReadDelegates(STRICT, 'max').platforms.claude, [{ model: 'claude-opus-5', effort: 'high', sandbox: true }]);
+    assert.deepEqual(resolveReadDelegates(STRICT, 'low').platforms.copilot[1], { model: ['gpt-6-astra', 'gpt-6-mini'], effort: 'medium', sandbox: true });
+  });
 });

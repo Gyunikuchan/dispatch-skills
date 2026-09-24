@@ -10,8 +10,8 @@ import { makeGitRepo, parseAction, runDispatch, writePlan } from '../../../helpe
 
 const CONFIG = {
   'read-delegates': {
-    agy: { model: 'gemini-3.7-flash', effort: 'medium' },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }],
+    agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] },
+    opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }] },
   },
   phases: {
     'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },

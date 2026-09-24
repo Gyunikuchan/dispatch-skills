@@ -9,13 +9,13 @@ import {
 
 const CONFIG = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'low', high: { model: 'claude-fable-5.1' } },
-    agy: { model: 'gemini-3.7-flash', effort: 'medium', high: { model: 'gemini-3.8-flash' } },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }],
+    claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'low' }, high: { model: 'claude-fable-5.1', effort: 'low' } }] },
+    agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' }, high: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+    opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }] },
   },
   'write-subagents': {
-    claude: { model: 'claude-sonnet-5', effort: 'medium', high: { model: 'claude-opus-5', effort: 'low' } },
-    copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' },
+    claude: { low: { model: 'claude-sonnet-5', effort: 'medium' }, high: { model: 'claude-opus-5', effort: 'low' } },
+    copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
   },
   phases: {
     'plan-review': { rounds: { low: 0, medium: 2, high: 3 }, targets: { low: 0, medium: 1, high: 2 }, consensus: { low: false, medium: true } },
@@ -24,7 +24,10 @@ const CONFIG = {
   },
 };
 
-const ASK_ONLY = { 'read-delegates': { claude: { model: 'claude-opus-5', effort: 'medium' }, agy: { model: 'gemini-3.8-flash', effort: 'medium' } } };
+const ASK_ONLY = { 'read-delegates': {
+  claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
+  agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+} };
 
 function mockProbes(live = {}) {
   for (const [name, provider] of [
@@ -160,5 +163,30 @@ describe('dispatch doctor --level high (R1)', () => {
     const report = await buildDoctorReport(ASK_ONLY, '/tmp/ask.jsonc', { level: 'low' });
     assert.deepEqual(report.writeSubagents, {});
     assert.match(formatDoctorReport(report), /write-subagents: not configured/i);
+  });
+});
+
+// SECTION: strict config doctor output (SC8)
+describe('dispatch doctor strict targets and sandbox (SC8)', () => {
+  it('lists provider[index] targets, provider-default effort, and per-provider sandbox', async () => {
+    mockProbes();
+    const config = { 'read-delegates': {
+      claude: { sandbox: false, targets: [{ low: { model: 'claude-opus-5' } }] },
+      agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+      opencode: { targets: [{ low: { model: 'glm-a', effort: 'max' } }, { low: { model: 'glm-b', effort: 'max' } }] },
+    } };
+    const report = await buildDoctorReport(config, '/tmp/strict.jsonc', { level: 'low' });
+    const byPlatform = Object.fromEntries(report.health.map((h) => [h.platform, h]));
+    assert.deepEqual(byPlatform.claude.sandbox, { effective: false, mechanism: 'cli' });
+    assert.deepEqual(byPlatform.agy.sandbox, { effective: null, mechanism: 'none' });
+    assert.equal(byPlatform.opencode.sandboxSupported, true);
+    assert.equal(byPlatform.opencode.sandbox.effective, true);
+    assert.match(byPlatform.opencode.sandbox.mechanism, /^(bwrap|unavailable)$/);
+    const text = formatDoctorReport(report);
+    assert.match(text, /claude\[0\] model=claude-opus-5 effort=provider default/);
+    assert.match(text, /opencode\[1\] model=glm-b effort=max/);
+    assert.match(text, /claude: reachable; sandbox=off mechanism=cli;/);
+    assert.match(text, /agy: reachable; sandbox=n\/a mechanism=none;/);
+    assert.match(text, /opencode: reachable; sandbox=on mechanism=(bwrap|unavailable);/);
   });
 });

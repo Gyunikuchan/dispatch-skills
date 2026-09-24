@@ -41,8 +41,8 @@ These are defense-in-depth controls, not a complete secret boundary.
   local opt-out. Native Windows is unsupported: Claude prints a "Sandbox disabled" advisory, the
   run proceeds unsandboxed, and a successful run emits one `[dispatch] WARNING:` line (use WSL2).
 - **Compatibility:** only `enabled` is forced; `allowUnsandboxedCommands` and `failIfUnavailable`
-  are not. A rejected or unavailable setting returns `sandbox-unsupported` and never retries
-  unsandboxed.
+  are not. A rejected setting (`sandbox-unsupported`) reruns the same model once unsandboxed with
+  a downgrade warning and `sandboxDowngraded` in structured output.
 - **Recovery:** the JSON envelope supplies the session id; resume with
   `claude --resume <session_id>`.
 
@@ -69,10 +69,9 @@ These are defense-in-depth controls, not a complete secret boundary.
 - **Sandbox:** enabled by default with `--experimental --sandbox`. Set
   `read-delegates.copilot.sandbox` to `false` or pass `--no-sandbox` when the CLI lacks support or
   blocks a required command. Built-in file edits are not OS-sandboxed; plan mode remains active.
-- **Compatibility:** unsupported sandbox flags return `sandbox-unsupported` without an
-  unsandboxed retry. The outer dispatch may choose another provider; a direct runner reports the
-  upgrade or opt-out action. Quota failures may move to the next mode; authentication failures
-  are returned without repeating the shared credential check.
+- **Compatibility:** unsupported sandbox flags (`sandbox-unsupported`) rerun the same model once
+  unsandboxed with a downgrade warning. Quota failures may move to the next mode; authentication
+  failures are returned without repeating the shared credential check.
 - **Recovery:** resume with `copilot --resume <session_id>`.
 
 ### OpenCode (`opencode`)
@@ -88,8 +87,11 @@ These are defense-in-depth controls, not a complete secret boundary.
   `provider/model` is valid; with no configured model, let OpenCode select one. `-a` and `--json`
   are OpenCode-only dispatch options.
 - **Read-only/local:** a loopback endpoint gets a fast `/models` preflight, a GPU concurrency
-  lock, and a proxy trap that permits the local backend while blocking WAN. On Linux, Bubblewrap
-  may mount the project and attachments read-only while keeping OpenCode state writable.
+  lock, and a proxy trap that permits the local backend while blocking WAN.
+- **Sandbox:** effective `read-delegates.opencode.sandbox` (default `true`) wraps the run in Linux
+  Bubblewrap, mounting the project and attachments read-only while keeping OpenCode state
+  writable. `false` or `--no-sandbox` bypasses Bubblewrap even when installed; `true` without it
+  (non-Linux or missing) runs `process-hardened` with a downgrade warning.
 - **Remote:** skip the live preflight and WAN trap so the provider can reach its service. Put
   credentials in `opencode.jsonc` (`providers.<name>.settings.apiKey`); ambient cloud keys are
   stripped.
@@ -126,7 +128,7 @@ candidates are exhausted.
 | `model-not-found` | Claude reports a 404 or an unavailable selected model | Cascade to another configured target. |
 | `cli-outdated` | Claude reports `claude_code_version_too_old` for the model | Cascade to another configured target; upgrade Claude Code. |
 | `model-not-loaded` | Local backend reports no loaded model | Cascade to another configured target. |
-| `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Fail closed; upgrade or set that provider's sandbox option to `false`. |
+| `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Rerun unsandboxed once; stderr warning plus `sandboxDowngraded`/`warnings` in result and slot output. |
 | `not-found` | Missing or unlaunchable binary | Cascade or inspect the provider probe. |
 | `timeout` / `buffer` | Time limit or output cap | Preserve partial output; use it when sufficient. |
 | `empty-output` | Exit 0 with no response text | Treat as failure and cascade. |

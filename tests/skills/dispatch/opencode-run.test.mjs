@@ -1235,3 +1235,79 @@ describe('opencode-run', () => {
     });
   });
 });
+
+// SECTION: OpenCode sandbox control (SC6)
+describe('OpenCode sandbox control', () => {
+  afterEach(() => mock.restoreAll());
+  const base = { config: {}, prompt: 'x', model: 'lmstudio/m', binary: 'opencode' };
+  const WARNING = '[dispatch] WARNING: OpenCode sandbox is unavailable; the run proceeded unsandboxed.';
+
+  it('SC6 buildCommand gates bwrap on effective sandbox against an injected hasBwrap probe', () => {
+    const on = buildCommand({ ...base, sandbox: true, hasBwrap: true });
+    assert.equal(on.engineType, 'linux-bwrap');
+    assert.equal(Object.hasOwn(on, 'sandboxDowngraded'), false);
+    const off = buildCommand({ ...base, sandbox: false, hasBwrap: true });
+    assert.equal(off.engineType, 'process-hardened');
+    assert.equal(Object.hasOwn(off, 'sandboxDowngraded'), false);
+    // buildCommand only reports the downgrade; runOpencode is the single emitter of the warning.
+    const stderr = [];
+    mock.method(process.stderr, 'write', chunk => { stderr.push(String(chunk)); return true; });
+    const missing = buildCommand({ ...base, sandbox: true, hasBwrap: false });
+    mock.restoreAll();
+    assert.equal(missing.engineType, 'process-hardened');
+    assert.equal(missing.sandboxDowngraded, true);
+    assert.doesNotMatch(stderr.join(''), /sandbox is unavailable/);
+  });
+
+  it('SC6 OpenCode runner CLI accepts --no-sandbox and --sandbox as runner flags', () => {
+    const script = path.join(PROJECT_ROOT, 'skills', 'dispatch', 'scripts', 'opencode-run.mjs');
+    for (const flag of ['--no-sandbox', '--sandbox']) {
+      const res = cp.spawnSync(process.execPath, [script, flag], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        cwd: PROJECT_ROOT,
+        env: { ...process.env, DISPATCH_TELEMETRY: '0' },
+      });
+      // With no prompt the runner stops at prompt validation, proving the flag parsed cleanly.
+      assert.match(res.stderr || '', /No prompt provided/, `${flag}: ${res.stderr}`);
+    }
+  });
+
+  async function runWith(options, single) {
+    const calls = [];
+    const stderr = [];
+    mock.method(process.stderr, 'write', chunk => { stderr.push(String(chunk)); return true; });
+    const result = await runOpencode({
+      prompt: 'x',
+      model: 'lmstudio/m',
+      runSingle: async opts => { calls.push(opts); return { exitCode: 0, stdout: 'ok', ...single }; },
+      ...options,
+    });
+    mock.restoreAll();
+    return { result, calls, stderr: stderr.join('') };
+  }
+
+  it('SC6 runOpencode threads the effective sandbox (default true) to the single run', async () => {
+    assert.equal((await runWith({}, {})).calls[0].sandbox, true);
+    assert.equal((await runWith({ sandbox: false }, {})).calls[0].sandbox, false);
+  });
+
+  it('SC6 runOpencode reports a single run downgrade with one warning and sandboxDowngraded', async () => {
+    const { result, stderr } = await runWith({ sandbox: true }, { sandboxDowngraded: true });
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(stderr.split(WARNING).length - 1, 1, stderr);
+  });
+
+  it('SC6 runOpencode omits the downgrade flag and warnings when the sandbox held', async () => {
+    const { result, stderr } = await runWith({ sandbox: true }, {});
+    assert.equal(Object.hasOwn(result, 'sandboxDowngraded'), false);
+    assert.equal(Object.hasOwn(result, 'warnings'), false);
+    assert.doesNotMatch(stderr, /sandbox is unavailable/);
+  });
+
+  it('SC6 OpenCode runner CLI declares --sandbox and --no-sandbox flags', () => {
+    assert.ok(opencodeRunModule.CLI_FLAGS.booleanFlags.includes('--sandbox'));
+    assert.ok(opencodeRunModule.CLI_FLAGS.booleanFlags.includes('--no-sandbox'));
+  });
+});

@@ -20,8 +20,8 @@ const DISPATCH_SCRIPT = path.join(ROOT, 'skills', 'dispatch', 'scripts', 'dispat
 // platform is configured but excluded from this phase via `only`, so it can never substitute in.
 const CONFIG = {
   'read-delegates': {
-    agy: [{ model: ['native-fallback-a', 'native-fallback-b'], effort: 'low' }],
-    opencode: { model: 'native-fallback-c', effort: 'low' },
+    agy: { targets: [{ low: { model: ['native-fallback-a', 'native-fallback-b'], effort: 'low' } }] },
+    opencode: { targets: [{ low: { model: 'native-fallback-c', effort: 'low' } }] },
   },
   phases: {
     'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false }, only: ['agy'] },
@@ -78,8 +78,8 @@ describe('review-phase post-wave native fallback stays same-platform (SC3)', () 
   it('never emits native-fallback for a cross-platform failed target under the post-wave queue, and records it failed', () => {
     const fixture = buildStubDispatchFixture({
       'read-delegates': {
-        claude: { model: 'claude-opus-5', effort: 'medium' },
-        opencode: { model: 'opencode-model', effort: 'medium' },
+        claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
+        opencode: { targets: [{ low: { model: 'opencode-model', effort: 'medium' } }] },
       },
       phases: {
         'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false }, only: ['claude', 'opencode'] },
@@ -110,7 +110,7 @@ describe('review-phase post-wave native fallback stays same-platform (SC3)', () 
 describe('same-platform early fallback and the one-shot --slots step (SC2)', () => {
   it('launch guidance names the one-shot --slots step and carries slotsPath instead of a host timer', () => {
     const fixture = buildStubDispatchFixture({
-      'read-delegates': { claude: { model: 'claude-opus-5', effort: 'medium' } },
+      'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } },
       phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
     });
     const repo = makeGitRepo();

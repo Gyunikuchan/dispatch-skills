@@ -9,7 +9,7 @@ import { buildStubDispatchFixture } from '../../../helpers/stub-dispatch.mjs';
 import { allProviders, drive, makeGitRepo, parseAction, readBatchFile, runDispatch } from '../../../helpers/driver-harness.mjs';
 
 const CONFIG = {
-  'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } },
+  'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
 };
 
 const cleanup = [];
@@ -64,9 +64,9 @@ describe('`--run ask` (SC4)', () => {
 // SECTION: A-3 ask breadth and pins (SC4)
 
 const MULTI = { 'read-delegates': {
-  agy: { model: 'gemini-3.7-flash', effort: 'medium' },
-  opencode: { model: 'opencode-model', effort: 'medium' },
-  copilot: { model: 'copilot-model', effort: 'medium' },
+  agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] },
+  opencode: { targets: [{ low: { model: 'opencode-model', effort: 'medium' } }] },
+  copilot: { targets: [{ low: { model: 'copilot-model', effort: 'medium' } }] },
 } };
 const platformOf = (target) => target.candidateId.split(':')[1];
 const QUESTION = ['--', 'What does the dispatch config schema require?'];
@@ -139,7 +139,7 @@ describe('`--run ask` breadth and pins (SC4)', () => {
 
   it('a provider pin keeps its platform cascade as ordered reserves', () => {
     const config = { 'read-delegates': { ...MULTI['read-delegates'],
-      opencode: [{ model: 'opencode-a', effort: 'medium' }, { model: 'opencode-b', effort: 'medium' }] } };
+      opencode: { targets: [{ low: { model: 'opencode-a', effort: 'medium' } }, { low: { model: 'opencode-b', effort: 'medium' } }] } } };
     const { batch } = askBatch(config, ['--pins', 'opencode']);
     assert.deepEqual(batch.targets.map((target) => target.candidateId), ['ask:opencode:0']);
     assert.deepEqual(batch.reserves.map((target) => target.candidateId), ['ask:opencode:1']);
@@ -177,7 +177,7 @@ describe('`--run ask` breadth and pins (SC4)', () => {
 
 // SECTION: A-7 ask native fallback (SC5)
 
-const CASCADE = { 'read-delegates': { agy: [{ model: ['ask-model-a', 'ask-model-b'], effort: 'low' }] } };
+const CASCADE = { 'read-delegates': { agy: { targets: [{ low: { model: ['ask-model-a', 'ask-model-b'], effort: 'low' } }] } } };
 const actualOf = (action) => ({
   agentType: action.descriptor.agentType, model: action.descriptor.model, reasoningEffort: action.descriptor.reasoningEffort,
 });
@@ -284,7 +284,9 @@ describe('`--run ask` terminal branches', () => {
   });
 
   it('a same-platform failure with no resolvable model records unresolved-model', () => {
-    const { fixture, repo } = setupWith({ 'read-delegates': { agy: { effort: 'low' } } });
+    // NOTE: a model-less level is schema-invalid now, so an effort-less level is the only config that
+    // reaches this path: the driver's native fallback still requires a configured effort.
+    const { fixture, repo } = setupWith({ 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash' } }] } } });
     const seen = [];
     const run = drive(fixture, {
       cwd: repo.dir,

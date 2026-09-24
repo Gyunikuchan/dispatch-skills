@@ -76,7 +76,7 @@ describe('probe-dispatch: buildTargets', () => {
   it('passes the first model of an array entry, plus effort, under --modes', () => {
     const targets = buildTargets([row('claude', 'cli', '/bin/claude')], {
       modes: true,
-      config: { 'read-delegates': { claude: { model: ['m1', 'm2'], effort: 'high' } } },
+      config: { 'read-delegates': { claude: { targets: [{ low: { model: ['m1', 'm2'], effort: 'high' } }] } } },
       scriptsDir: SCRIPTS_DIR,
     });
     assert.deepEqual(targets[0].baseArgs.slice(-4), ['-m', 'm1', '-e', 'high']);

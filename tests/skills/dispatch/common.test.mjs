@@ -273,6 +273,22 @@ describe('common: cascadeModels', () => {
     );
   });
 
+  it('SC7 exhausts every alias in order on auth failures before giving up the target', async () => {
+    // Aliases may route through different keys or endpoints, so even auth advances the cascade.
+    const calls = [];
+    const authErr = Object.assign(new Error('unauthorized'), { failureKind: 'auth' });
+    const { value } = await captureStderr(() =>
+      cascadeModels(['a', 'b', 'c'], async (m) => {
+        calls.push(m);
+        if (m === 'a') return fail(m, 'auth');
+        if (m === 'b') throw authErr;
+        return ok(m);
+      }, { label: 'X' }),
+    );
+    assert.deepEqual(calls, ['a', 'b', 'c']);
+    assert.equal(value.model, 'c');
+  });
+
   it('[null] is a single attempt with a null model', async () => {
     const calls = [];
     const failed = fail(null);

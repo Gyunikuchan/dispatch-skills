@@ -7,10 +7,10 @@ import { buildStubDispatchFixture, parseSlotLines, runStubDispatch } from '../..
 // `code-review.only` names claude alone: an ask wave must ignore it (only never narrows ask).
 const CONFIG = {
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'medium', high: { model: 'claude-fable-5.1', effort: 'medium' } },
-    agy: { model: 'gemini-3.7-flash', effort: 'medium', high: { model: 'gemini-3.8-flash' } },
-    copilot: { model: 'gpt-6-astra', effort: 'low' },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
+    claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' }, high: { model: 'claude-fable-5.1', effort: 'medium' } }] },
+    agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' }, high: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+    copilot: { targets: [{ low: { model: 'gpt-6-astra', effort: 'low' } }] },
+    opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }, { low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' } }] },
   },
   phases: {
     'code-review': { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false }, only: ['claude'] },
@@ -157,7 +157,7 @@ describe('dispatch --pins wave (R8)', () => {
     });
 
     it('rejects a known provider missing from read-delegates', () => {
-      const narrow = buildStubDispatchFixture({ 'read-delegates': { claude: {}, agy: {} } });
+      const narrow = buildStubDispatchFixture({ 'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5' } }] }, agy: { targets: [{ low: { model: 'gemini-3.8-flash' } }] } } });
       try {
         const res = runStubDispatch(narrow, ['--pins', 'agy,copilot', 'Review']);
         assert.equal(res.status, 1);

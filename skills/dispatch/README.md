@@ -24,11 +24,13 @@ Examples:
 
 Copy `config.sample.jsonc` to `config.jsonc` or `config.local.jsonc`. First match wins; files are not merged.
 
-- `read-delegates`: provider candidates and level overrides.
-- `write-subagents`: native implementation models by host platform.
-- `phases`: targets, rounds, consensus, and optional membership filters.
+- `read-delegates`: each provider is `{ "sandbox"?, "targets": [levelMap, ...] }`. Every target is an independent dispatch target and review voice (`provider[index]`); phase target counts, `"all"`, reserves, and consensus count targets, not providers.
+- `write-subagents`: one level map per host platform.
+- `phases`: targets, rounds, consensus, and optional provider membership filters.
 
-Any candidate or level override naming a `model` must also set `effort`; validation rejects a resolvable candidate left without one.
+A level map keys any of `low`…`max` to `{ "model", "effort"? }`; the nearest configured level is used as-is, with no inheritance. A `model` array is an alias cascade within one target. Omit `effort` for models that reject it; the provider default applies. Old flat or candidate-array shapes are rejected.
+
+Sandbox is provider-wide for Claude, Copilot, and OpenCode and defaults to `true`. When isolation is unavailable, the run proceeds unsandboxed with a stderr warning and `sandboxDowngraded` in structured output. See [config.sample.jsonc](config.sample.jsonc).
 
 Validate with `node scripts/dispatch.mjs --validate-only` and inspect effective routing with `node scripts/dispatch.mjs --doctor --orchestrator <platform>`. v0.4 config keys are rejected with a migration diagnostic.
 

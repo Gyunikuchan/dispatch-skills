@@ -61,7 +61,7 @@ describe('review kind inference (design order 1–6)', () => {
 });
 
 describe('review level resolution (raise rule)', () => {
-  const config = (phase) => ({ 'read-delegates': { agy: { model: 'm', effort: 'medium' } }, phases: { 'plan-review': phase } });
+  const config = (phase) => ({ 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'plan-review': phase } });
   const highOnly = { rounds: { low: 0, medium: 0, high: 2, xhigh: 2, max: 2 }, targets: ALL(1), consensus: ALL(false) };
 
   it('raises a classified level to the lowest level that enables the phase', () => {
@@ -117,7 +117,7 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('maps each kind to its <kind>-review phase and reports configured:false when absent', () => {
-    const cfg = { 'read-delegates': { agy: { model: 'm', effort: 'medium' } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
+    const cfg = { 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
     assert.equal(resolveReviewLevel({ config: cfg, kind: 'code', level: 'medium', levelSource: 'default' }).phase, 'code-review');
     const design = resolveReviewLevel({ config: cfg, kind: 'design', level: 'medium', levelSource: 'default' });
     assert.equal(design.phase, 'design-review');
@@ -131,7 +131,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   let fixture;
   before(() => {
     fixture = buildStubDispatchFixture({
-      'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } },
+      'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
       phases: {
         'plan-review': { rounds: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, targets: ALL(1), consensus: ALL(false) },
         'design-review': { rounds: ALL(0), targets: ALL(1), consensus: ALL(false) },

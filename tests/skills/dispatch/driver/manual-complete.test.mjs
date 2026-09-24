@@ -11,8 +11,8 @@ import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from 
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const config = {
-  'read-delegates': { agy: { model: 'gemini-3.7-flash', effort: 'medium' } },
-  'write-subagents': { claude: { model: ['first-model', 'second-model'], effort: 'low' } },
+  'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
+  'write-subagents': { claude: { low: { model: ['first-model', 'second-model'], effort: 'low' } } },
   phases: Object.fromEntries(['plan-review', 'code-review'].map(key => [key, { rounds: levels, targets: levels, consensus: Object.fromEntries(Object.keys(levels).map(level => [level, false])) }])),
 };
 const cleanup = [];

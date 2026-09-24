@@ -370,13 +370,13 @@ describe('claude-run: runner discovery, reachability & envelope parsing', () => 
       assert.equal(step, 'next-model');
     });
 
-    it('does not retry an unsupported sandbox setting across Claude models', () => {
+    it('advances models on sandbox-unsupported once runClaude has downgraded the sandbox', () => {
       const step = nextClaudeStep({
         ...base,
         result: { exitCode: 1, failureKind: 'sandbox-unsupported' },
         error: null,
       });
-      assert.equal(step, 'return');
+      assert.equal(step, 'next-model');
     });
 
     it('quota/auth failure, last model, not last target, unpinned -> next-target', () => {
@@ -713,5 +713,101 @@ describe('Claude runner sandbox warning (SC3)', () => {
     const count = (chunks) => chunks.join('').match(/\[dispatch\] WARNING: Claude sandbox is not active/g)?.length ?? 0;
     assert.equal(count(stderr), 1, stderr.join(''));
     assert.equal(count(logged), 1, logged.join(''));
+  });
+});
+
+// SECTION: sandbox downgrade contract (SC5)
+describe('Claude sandbox downgrade', () => {
+  const WARNING = '[dispatch] WARNING: Claude sandbox is unavailable; the run proceeded unsandboxed.';
+  const sandboxFail = () => ({ exitCode: 1, failureKind: 'sandbox-unsupported', stdout: '', stderr: 'Unknown option: --settings' });
+  const genericFail = () => ({ exitCode: 1, failureKind: null, stdout: '', stderr: 'boom' });
+  const ok = () => ({ exitCode: 0, failureKind: null, stdout: 'done', stderr: '' });
+  const countWarnings = text => text.split(WARNING).length - 1;
+
+  async function run(options, results) {
+    const calls = [];
+    const stderr = [];
+    const original = process.stderr.write;
+    process.stderr.write = chunk => { stderr.push(String(chunk)); return true; };
+    try {
+      const result = await runClaude({
+        prompt: 'x',
+        model: ['model-a', 'model-b'],
+        discoverTargets: () => [{ name: 'cli', mode: 'cli' }],
+        createLogger: () => ({ logFile: null, write() {}, close() {} }),
+        execute: async ({ model, sandbox }) => {
+          calls.push(`${model}:${sandbox}`);
+          const next = results[calls.length - 1] ?? ok();
+          if (next instanceof Error) throw next;
+          return next;
+        },
+        ...options,
+      });
+      return { result, calls, stderr: stderr.join('') };
+    } finally {
+      process.stderr.write = original;
+    }
+  }
+
+  it('Claude downgrade reruns the same model unsandboxed, warns on stderr, and flags sandboxDowngraded', async () => {
+    const { result, calls, stderr } = await run({ sandbox: true }, [sandboxFail(), ok()]);
+    assert.deepEqual(calls, ['model-a:true', 'model-a:false']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(countWarnings(stderr), 1, stderr);
+  });
+
+  it('Claude downgrade rerun failure advances the alias cascade keeping the flag without a second downgrade', async () => {
+    const { result, calls, stderr } = await run({ sandbox: true }, [sandboxFail(), genericFail(), ok()]);
+    assert.deepEqual(calls, ['model-a:true', 'model-a:false', 'model-b:false']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(countWarnings(stderr), 1, stderr);
+  });
+
+
+  it('Claude downgrade rerun that throws advances to the next alias keeping one warning and the flag', async () => {
+    const { result, calls, stderr } = await run({ sandbox: true }, [sandboxFail(), new Error('rerun boom'), ok()]);
+    assert.deepEqual(calls, ['model-a:true', 'model-a:false', 'model-b:false']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(countWarnings(stderr), 1, stderr);
+  });
+
+  it('Claude downgrade rerun that fails sandbox-unsupported again advances aliases without a second downgrade', async () => {
+    const { result, calls, stderr } = await run({ sandbox: true }, [sandboxFail(), sandboxFail(), ok()]);
+    assert.deepEqual(calls, ['model-a:true', 'model-a:false', 'model-b:false']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(countWarnings(stderr), 1, stderr);
+  });
+
+  it('Claude downgrade also applies when the sandboxed attempt throws sandbox-unsupported', async () => {
+    const thrown = Object.assign(new Error('Unknown option'), { failureKind: 'sandbox-unsupported', stderr: 'Unknown option' });
+    const { result, calls, stderr } = await run({ sandbox: true }, [thrown, ok()]);
+    assert.deepEqual(calls, ['model-a:true', 'model-a:false']);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.sandboxDowngraded, true);
+    assert.deepEqual(result.warnings, [WARNING]);
+    assert.equal(countWarnings(stderr), 1, stderr);
+  });
+  it('Claude sandboxed success omits the downgrade flag and warnings', async () => {
+    const { result, calls, stderr } = await run({ sandbox: true }, [ok()]);
+    assert.deepEqual(calls, ['model-a:true']);
+    assert.equal(Object.hasOwn(result, 'sandboxDowngraded'), false);
+    assert.equal(Object.hasOwn(result, 'warnings'), false);
+    assert.equal(countWarnings(stderr), 0, stderr);
+  });
+
+  it('Claude explicit sandbox false never requests isolation or flags a downgrade', async () => {
+    const { result, calls, stderr } = await run({ sandbox: false }, [ok()]);
+    assert.deepEqual(calls, ['model-a:false']);
+    assert.equal(Object.hasOwn(result, 'sandboxDowngraded'), false);
+    assert.equal(Object.hasOwn(result, 'warnings'), false);
+    assert.equal(countWarnings(stderr), 0, stderr);
   });
 });

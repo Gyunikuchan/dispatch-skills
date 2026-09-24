@@ -21,16 +21,16 @@ const ALL_LIVE = JSON.stringify({ claude: true, agy: true, copilot: true, openco
 /** Four read delegates, four write subagents, and every review phase: a deterministic fixture. */
 const FULL_CONFIG = JSON.stringify({
   'read-delegates': {
-    claude: { model: 'claude-opus-5', effort: 'low' },
-    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-    copilot: { model: 'gpt-6-astra', effort: 'low' },
-    opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
+    claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'low' } }] },
+    agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'medium' } }] },
+    copilot: { targets: [{ low: { model: 'gpt-6-astra', effort: 'low' } }] },
+    opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }, { low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' } }] },
   },
   'write-subagents': {
-    claude: { model: 'claude-sonnet-5', effort: 'medium', high: { model: 'claude-opus-5', effort: 'medium' } },
-    agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-    copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' },
-    opencode: { model: 'opencode-go/glm-5.3-flash', effort: 'medium' },
+    claude: { low: { model: 'claude-sonnet-5', effort: 'medium' }, high: { model: 'claude-opus-5', effort: 'medium' } },
+    agy: { low: { model: 'gemini-3.8-flash', effort: 'medium' } },
+    copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
+    opencode: { low: { model: 'opencode-go/glm-5.3-flash', effort: 'medium' } },
   },
   phases: {
     'plan-review': { rounds: { low: 0, medium: 2, high: 3 }, targets: { low: 0, medium: 1, high: 2 }, consensus: { low: false, medium: true } },
@@ -210,7 +210,7 @@ describe('resolve-flow CLI (dispatch/scripts)', () => {
   });
 
   it('--show-effective tolerates a missing write-subagent entry that the run path rejects', () => {
-    const config = JSON.stringify({ 'read-delegates': { claude: { model: 'review-model', effort: 'medium' } } });
+    const config = JSON.stringify({ 'read-delegates': { claude: { targets: [{ low: { model: 'review-model', effort: 'medium' } }] } } });
     const shown = withFixture({ config }, ['--show-effective', '--platform', 'claude']);
     assert.equal(shown.status, 0, shown.stderr);
     const report = JSON.parse(shown.stdout);
@@ -220,17 +220,17 @@ describe('resolve-flow CLI (dispatch/scripts)', () => {
     assert.match(ordinary.stderr, /write-subagents\.claude is not configured/);
   });
 
-  it('--show-effective reports a selected missing write-subagent model without aborting', () => {
+  it('rejects a write-subagent level without a model in both --show-effective and the run path', () => {
+    // The strict schema requires `model` at every level, so a missing model is a config error.
     const config = JSON.stringify({
-      'read-delegates': { claude: { model: 'review-model', effort: 'medium' } },
-      'write-subagents': { claude: { effort: 'high' } },
+      'read-delegates': { claude: { targets: [{ low: { model: 'review-model', effort: 'medium' } }] } },
+      'write-subagents': { claude: { high: { effort: 'high' } } },
     });
-    const shown = withFixture({ config }, ['--show-effective', '--platform', 'claude']);
-    assert.equal(shown.status, 0, shown.stderr);
-    assert.equal(JSON.parse(shown.stdout).implementation.diagnostic.key, 'write-subagents.claude.model');
-    const ordinary = withFixture({ config }, ['--platform', 'claude']);
-    assert.equal(ordinary.status, 1);
-    assert.match(ordinary.stderr, /write-subagents\.claude\.model/);
+    for (const args of [['--show-effective', '--platform', 'claude'], ['--platform', 'claude']]) {
+      const res = withFixture({ config }, args);
+      assert.equal(res.status, 1, args.join(' '));
+      assert.match(res.stderr, /write-subagents\.claude\.high\.model is required/, args.join(' '));
+    }
   });
 
   it('refuses --show-effective with --validate-only', () => {

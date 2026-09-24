@@ -32,8 +32,8 @@ import {
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 const phase = ({ rounds = 1, targets = 1, consensus = false } = {}) => ({ rounds: ALL(rounds), targets: ALL(targets), consensus: ALL(consensus) });
 const DELEGATES = {
-  agy: { model: 'gemini-3.7-flash', effort: 'medium' },
-  opencode: [{ model: 'opencode-go/glm-5.3-flash', effort: 'max' }],
+  agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] },
+  opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }] },
 };
 const config = (phaseOpts = {}, delegates = DELEGATES) => ({
   'read-delegates': delegates,
@@ -196,7 +196,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('captures a same-platform fallback started during the wave without requesting it again', () => {
-    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const { fixture, repo } = setup(config({}, { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir,
@@ -229,7 +229,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('re-requests only corrected early fallback metadata without relaunching the wave', () => {
-    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const { fixture, repo } = setup(config({}, { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } }));
     const plan = writePlan(repo.dir);
     let replies = 0;
     const run = drive(fixture, {
@@ -255,7 +255,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('queues an empty early capture for ordinary post-wave fallback', () => {
-    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const { fixture, repo } = setup(config({}, { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir,
@@ -275,7 +275,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('rejects an early fallback claimed for a successful slot', () => {
-    const { fixture, repo } = setup(config({}, { claude: { model: 'claude-opus-5', effort: 'medium' } }));
+    const { fixture, repo } = setup(config({}, { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } }));
     const plan = writePlan(repo.dir);
     let replies = 0;
     const run = drive(fixture, {
@@ -365,7 +365,7 @@ describe('scripted review paths (SC5)', () => {
 
   it('native fallback preserves two distinct configured model and effort descriptors', () => {
     const delegates = {
-      agy: [{ model: 'gemini-3.7-flash', effort: 'medium' }, { model: 'gemini-3.7-pro', effort: 'high' }],
+      agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }, { low: { model: 'gemini-3.7-pro', effort: 'high' } }] },
     };
     const { fixture, repo } = setup(config({ targets: 2 }, delegates));
     const plan = writePlan(repo.dir);

@@ -127,6 +127,8 @@ const MODE_DEFINITIONS = [
 // SECTION: Main API — runCopilot()
 // ============================================================================
 
+export const COPILOT_DOWNGRADE_WARNING = '[dispatch] WARNING: Copilot sandbox is unavailable; the run proceeded unsandboxed.';
+
 /**
  * Runs a prompt through GitHub Copilot using the preferred mode (cli > desktop > vscode).
  * If a mode hits a quota/rate limit or fails to spawn, cascades to the next available mode in
@@ -166,6 +168,24 @@ export async function runCopilot(options = {}) {
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const effectiveEffort = effort || null;
   const metricsAttempts = [];
+  // Warn-and-run: an unsupported sandbox reruns the same model once unsandboxed, then never again.
+  let activeSandbox = sandbox;
+  let downgraded = false;
+  const withDowngrade = (value) => {
+    if (downgraded && value && typeof value === 'object') {
+      value.sandboxDowngraded = true;
+      value.warnings = [COPILOT_DOWNGRADE_WARNING];
+    }
+    return value;
+  };
+  const tryDowngrade = (failureKind, sessionLogger) => {
+    if (!activeSandbox || failureKind !== 'sandbox-unsupported') return false;
+    activeSandbox = false;
+    downgraded = true;
+    process.stderr.write(`${COPILOT_DOWNGRADE_WARNING}\n`);
+    sessionLogger.write(`${COPILOT_DOWNGRADE_WARNING}\n`);
+    return true;
+  };
 
   // Each configured model gets the full target cascade; the attempt owns its logger, so a
   // fallback model never writes to a logger an earlier attempt closed.
@@ -173,8 +193,18 @@ export async function runCopilot(options = {}) {
     resolveModelsToTry(model),
     async (currentModel) => {
       const sessionLogger = createLogger('copilot');
+      const attempt = async () => {
+        try {
+          const result = await runTargetCascade({ currentModel, sessionLogger });
+          if (result?.exitCode !== 0 && tryDowngrade(result?.failureKind, sessionLogger)) return attempt();
+          return withDowngrade(result);
+        } catch (err) {
+          if (tryDowngrade(err?.failureKind, sessionLogger)) return attempt();
+          throw withDowngrade(err);
+        }
+      };
       try {
-        return await runTargetCascade({ currentModel, sessionLogger });
+        return await attempt();
       } finally {
         sessionLogger.close();
       }
@@ -199,7 +229,7 @@ export async function runCopilot(options = {}) {
           model: currentModel,
           formattedPrompt,
           effort: effectiveEffort,
-          sandbox,
+          sandbox: activeSandbox,
           timeout,
           maxBufferMb,
           verbose,
@@ -479,14 +509,7 @@ export async function main() {
           `Session log: ${res.logFile}`,
       );
     }
-    if (res.failureKind === 'sandbox-unsupported') {
-      console.error(
-        `\n[dispatch] This Copilot CLI does not support the experimental sandbox flags. ` +
-          `Upgrade Copilot CLI, set read-delegates.copilot.sandbox to false, or use --no-sandbox.\n` +
-          `Session log: ${res.logFile}`,
-      );
-    }
-    process.exit(res.failureKind === 'sandbox-unsupported' ? 1 : res.exitCode);
+    process.exit(res.exitCode);
   } catch (err) {
     console.error(formatCliError(err));
     process.exit(safeExitCode(err));

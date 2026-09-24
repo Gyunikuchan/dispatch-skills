@@ -24,17 +24,20 @@ const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 const LIVE_NONE_EXTERNAL = { claude: true, agy: false, copilot: false, opencode: false };
 const ALL_DEAD = { claude: false, agy: false, copilot: false, opencode: false };
 
+/** Strict read-provider wrapper: one target per candidate, each a single `low` level. */
+const targetsOf = (...candidates) => ({ targets: candidates.map(candidate => ({ low: candidate })) });
+
 const READ_DELEGATES = {
-  claude: { model: 'claude-opus-5', effort: 'medium' },
-  agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-  copilot: { model: 'gpt-5.6-luna', effort: 'max' },
-  opencode: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' },
+  claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }),
+  agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
+  copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'max' }),
+  opencode: targetsOf({ model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }),
 };
 
 const WRITE_SUBAGENTS = {
-  claude: { model: 'claude-opus-5', effort: 'medium' },
-  agy: { model: 'gemini-3.8-flash', effort: 'medium' },
-  copilot: { model: 'gpt-5.6-luna', effort: 'max' },
+  claude: { low: { model: 'claude-opus-5', effort: 'medium' } },
+  agy: { low: { model: 'gemini-3.8-flash', effort: 'medium' } },
+  copilot: { low: { model: 'gpt-5.6-luna', effort: 'max' } },
 };
 
 /** v0.5 config: design-review is deliberately absent, so it resolves as disabled. */
@@ -668,18 +671,14 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.model, 'claude-opus-5');
     });
 
-    it('requires a model only for the selected write-subagent platform', () => {
+    it('rejects a write-subagent level without a model for every platform', () => {
+      // The strict schema requires `model` at every level, so the error no longer depends on --platform.
       const config = withConfig({
-        'write-subagents': { claude: { effort: 'high' }, opencode: { model: 'write-model', effort: 'medium' } },
+        'write-subagents': { claude: { high: { effort: 'high' } }, opencode: { low: { model: 'write-model', effort: 'medium' } } },
       });
-      assert.doesNotThrow(() => resolveFlow({ platform: 'opencode' }, LIVE_ALL, config));
-      assert.throws(
-        () => resolveFlow({ platform: 'claude' }, LIVE_ALL, config),
-        /write-subagents\.claude\.model must resolve an explicit model/,
-      );
-      const shown = resolveFlow({ platform: 'claude', tolerateMissingImplementationModel: true }, LIVE_ALL, config);
-      assert.equal(shown.implementation.diagnostic.code, 'IMPLEMENTATION_MODEL_REQUIRED');
-      assert.equal(shown.implementation.diagnostic.key, 'write-subagents.claude.model');
+      for (const platform of ['opencode', 'claude']) {
+        assert.throws(() => resolveFlow({ platform }, LIVE_ALL, config), /write-subagents\.claude\.high\.model is required/);
+      }
     });
 
     it('reports applicable and ignored configured fields', () => {
@@ -690,16 +689,16 @@ describe('resolveFlow', () => {
       assert.equal(out.implementation.effort, undefined);
     });
 
-    it('resolves a model cascade array with effort and flat-entry exhaustion', () => {
+    it('resolves a model cascade array with effort and single-level exhaustion', () => {
       const config = withConfig({
-        'write-subagents': { copilot: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
+        'write-subagents': { copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } } },
       });
       const out = resolveFlow({ platform: 'copilot', implementationFields: 'model,effort' }, LIVE_ALL, config);
       assert.deepEqual(out.implementation.applicableFields, ['model', 'effort']);
       assert.deepEqual(out.implementation.ignoredConfiguredFields, []);
       assert.deepEqual(out.implementation.model, ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna']);
       assert.equal(out.implementation.effort, 'max');
-      assert.deepEqual(out.implementation.escalation, { status: 'exhausted', reason: 'flat-entry' });
+      assert.deepEqual(out.implementation.escalation, { status: 'exhausted', reason: 'no-distinct-higher-level' });
     });
 
     it('normalizes --platform aliases before self-exclusion', () => {
@@ -777,10 +776,10 @@ describe('resolveFlow', () => {
       );
     });
 
-    it('returns explicit exhaustion for flat and top-level entries', () => {
-      assert.deepEqual(resolveImplementationEscalation({ model: 'flat' }, 'low', ['model']), {
+    it('returns explicit exhaustion for level-less and top-level entries', () => {
+      assert.deepEqual(resolveImplementationEscalation({}, 'low', ['model']), {
         status: 'exhausted',
-        reason: 'flat-entry',
+        reason: 'no-distinct-higher-level',
       });
       assert.deepEqual(resolveImplementationEscalation({ max: { model: 'top' } }, 'max', ['model']), {
         status: 'exhausted',
@@ -812,8 +811,8 @@ describe('resolveFlow', () => {
     });
 
     it('target without effort omits effort field', () => {
-      // A candidate naming no model at all is exempt from the effort requirement (SC5).
-      const config = withConfig({ 'read-delegates': { ...READ_DELEGATES, opencode: {} } });
+      // Effort is optional per level; an omitted effort is never inherited.
+      const config = withConfig({ 'read-delegates': { ...READ_DELEGATES, opencode: targetsOf({ model: 'opencode-model' }) } });
       const out = resolveFlow({ platform: 'claude', level: 'low' }, { ...LIVE_ALL, agy: false }, config);
       const target = out['code-review'].targets[0];
       assert.equal(target.platform, 'opencode');
@@ -822,7 +821,7 @@ describe('resolveFlow', () => {
 
     it('resolves level-keyed read-delegate overrides for every review phase alike', () => {
       const config = withConfig({
-        'read-delegates': { agy: { model: 'gemini-3.8-flash', low: { effort: 'high' }, max: { effort: 'max' } } },
+        'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.8-flash', effort: 'high' }, max: { model: 'gemini-3.8-flash', effort: 'max' } }] } },
         'plan-review': { rounds: { low: 1 }, targets: { low: 1 } },
       });
       for (const level of ['low', 'medium', 'high', 'xhigh']) {
@@ -865,8 +864,8 @@ describe('resolveFlow', () => {
     it('supports an array of candidate objects on a platform', () => {
       const config = withConfig({
         'read-delegates': {
-          opencode: [{ model: 'glm-5.3-flash', effort: 'high' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
-          claude: { model: 'claude-opus-5', effort: 'medium' },
+          opencode: targetsOf({ model: 'glm-5.3-flash', effort: 'high' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }),
+          claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }),
         },
         'code-review': { targets: { low: 2 } },
       });
@@ -878,28 +877,28 @@ describe('resolveFlow', () => {
       ]);
     });
 
-    it('supports a level-keyed candidate array inside a platform entry', () => {
+    it('resolves each target at the requested level independently', () => {
       const config = withConfig({
         'read-delegates': {
-          opencode: {
-            low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' },
-            high: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
-          },
+          opencode: { targets: [
+            { low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }, high: { model: 'glm-5.3-flash', effort: 'medium' } },
+            { high: { model: 'mistral-small', effort: 'medium' } },
+          ] },
         },
-        'code-review': { targets: { low: 1, high: 2 } },
+        'code-review': { targets: { low: 2, high: 2 } },
       });
       const live = { claude: false, agy: false, copilot: false, opencode: true };
       const lowOut = resolveFlow({ platform: 'claude', level: 'low' }, live, config);
-      assert.deepEqual(lowOut['code-review'].targets.map(t => t.model), ['lmstudio/qwen3.8-27b-ridge']);
+      assert.deepEqual(lowOut['code-review'].targets.map(t => t.model), ['lmstudio/qwen3.8-27b-ridge', 'mistral-small']);
       const highOut = resolveFlow({ platform: 'claude', level: 'high' }, live, config);
-      assert.deepEqual(highOut['code-review'].targets.map(t => t.model), ['glm-5.3-flash', 'lmstudio/qwen3.8-27b-ridge']);
+      assert.deepEqual(highOut['code-review'].targets.map(t => t.model), ['glm-5.3-flash', 'mistral-small']);
     });
 
     it('pins dispatch all candidates configured for the pinned platform', () => {
       const config = withConfig({
         'read-delegates': {
-          opencode: [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }],
-          claude: { model: 'claude-opus-5', effort: 'medium' },
+          opencode: targetsOf({ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' }),
+          claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }),
         },
       });
       const live = { claude: true, agy: false, copilot: false, opencode: true };
@@ -912,14 +911,15 @@ describe('resolveFlow', () => {
 describe('resolveFlow — configured-order candidates', () => {
   const ALL_UP = { claude: true, agy: true, copilot: true, opencode: true };
   const OPENCODE_MULTI = [{ model: 'glm-5.3-flash', effort: 'medium' }, { model: 'mistral-small', effort: 'medium' }, { model: 'qwen3.8-27b', effort: 'medium' }];
+  const asTargets = (entry) => (Array.isArray(entry) ? targetsOf(...entry) : targetsOf(entry));
   const label = (t) => (t.platform === 'opencode' ? t.model : t.platform);
   const multi = (agy = { model: 'gemini-3.8-flash', effort: 'medium' }) =>
     withConfig({
       'read-delegates': {
-        claude: { model: 'claude-opus-5', effort: 'medium' },
-        agy,
-        copilot: { model: 'gpt-5.6-luna', effort: 'medium' },
-        opencode: OPENCODE_MULTI,
+        claude: targetsOf({ model: 'claude-opus-5', effort: 'medium' }),
+        agy: asTargets(agy),
+        copilot: targetsOf({ model: 'gpt-5.6-luna', effort: 'medium' }),
+        opencode: targetsOf(...OPENCODE_MULTI),
       },
       'code-review': { targets: { low: 3 } },
     });
@@ -952,8 +952,8 @@ describe('resolveFlow — configured-order candidates', () => {
 
   it('preserves orchestrator candidate order after every external', () => {
     const config = withConfig({
-      'read-delegates': { opencode: OPENCODE_MULTI.slice(0, 2), agy: { model: 'g', effort: 'medium' } },
-      'write-subagents': { ...WRITE_SUBAGENTS, opencode: { model: 'opencode-write-model', effort: 'medium' } },
+      'read-delegates': { opencode: targetsOf(...OPENCODE_MULTI.slice(0, 2)), agy: targetsOf({ model: 'g', effort: 'medium' }) },
+      'write-subagents': { ...WRITE_SUBAGENTS, opencode: { low: { model: 'opencode-write-model', effort: 'medium' } } },
       'code-review': { targets: { low: 'all' } },
     });
     const out = resolveFlow({ platform: 'opencode', level: 'low' }, ALL_UP, config);
@@ -962,11 +962,11 @@ describe('resolveFlow — configured-order candidates', () => {
 
   const CLAUDE_PAIR = (efforts = [undefined, undefined]) => withConfig({
     'read-delegates': {
-      claude: [
+      claude: targetsOf(
         { model: 'claude-opus-5', effort: efforts[0] ?? 'medium' },
         { model: 'claude-sonnet-5', effort: efforts[1] ?? 'medium' },
-      ],
-      agy: { model: 'gemini-3.8-flash', effort: 'medium' },
+      ),
+      agy: targetsOf({ model: 'gemini-3.8-flash', effort: 'medium' }),
     },
     'code-review': { targets: { low: 'all' } },
   });
@@ -1102,8 +1102,8 @@ describe('normalizePin', () => {
 
 describe('probeCandidates', () => {
   const config = {
-    'read-delegates': { agy: {}, copilot: {} },
-    'write-subagents': { claude: { model: 'm' } },
+    'read-delegates': { agy: targetsOf({ model: 'm' }), copilot: targetsOf({ model: 'm' }) },
+    'write-subagents': { claude: { low: { model: 'm' } } },
   };
 
   it('returns every read delegate plus the orchestrator when unpinned', () => {
@@ -1137,4 +1137,46 @@ describe('RUNNER_FILES availability exports', () => {
       assert.equal(typeof mod[fnName], 'function', `${file} must export ${fnName}`);
     });
   }
+});
+
+// SECTION: strict config format flattened targets (SC3)
+describe('flattened provider targets (strict config)', () => {
+  const lvl = model => ({ low: { model, effort: 'low' } });
+  // The orchestrator (copilot) is absent from the config, so no demotion reorders the targets and
+  // the oracle pins pure provider-then-target declaration order.
+  const MULTI = {
+    'read-delegates': {
+      claude: { targets: [lvl('claude-opus-5')] },
+      agy: { targets: [lvl('gemini-3.8-flash')] },
+      opencode: { sandbox: false, targets: [lvl('opencode-go/glm-5.3-flash'), lvl('lmstudio/qwen3.8-27b-ridge')] },
+    },
+    'write-subagents': { claude: { low: { model: 'claude-opus-5', effort: 'low' } }, copilot: { low: { model: 'gpt-5.6-luna', effort: 'low' } } },
+    phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 'all' }, consensus: { low: false } } },
+  };
+  const withPhase = extra => ({ ...MULTI, phases: { 'code-review': { rounds: { low: 1 }, consensus: { low: false }, ...extra } } });
+  const ids = list => list.map(t => t.candidateId);
+  const ORDER = ['code-review:claude:0', 'code-review:agy:0', 'code-review:opencode:0', 'code-review:opencode:1'];
+
+  it('SC3 "all" enumerates every provider[index] target in provider-then-target order', () => {
+    const out = resolveFlow({ platform: 'copilot', level: 'low' }, LIVE_ALL, MULTI);
+    assert.deepEqual(ids(out['code-review'].targets), ORDER);
+    assert.deepEqual(out['code-review'].targets.map(t => t.model).slice(2), ['opencode-go/glm-5.3-flash', 'lmstudio/qwen3.8-27b-ridge']);
+  });
+
+  it('SC3 numeric phase targets count each provider target independently with the remainder as reserves', () => {
+    const out = resolveFlow({ platform: 'copilot', level: 'low' }, LIVE_ALL, withPhase({ targets: { low: 3 } }));
+    assert.deepEqual(ids(out['code-review'].targets), ORDER.slice(0, 3));
+    assert.deepEqual(ids(out['code-review'].reserves), ORDER.slice(3));
+  });
+
+  it('SC3 count pins select target identities in flatten order with the rest as reserves', () => {
+    const out = resolveFlow({ platform: 'copilot', level: 'low', pins: ['2'] }, LIVE_ALL, MULTI);
+    assert.deepEqual(ids(out['code-review'].targets), ORDER.slice(0, 2));
+    assert.deepEqual(ids(out['code-review'].reserves), ORDER.slice(2));
+  });
+
+  it('SC3 only: [provider] includes all of that provider targets', () => {
+    const out = resolveFlow({ platform: 'copilot', level: 'low' }, LIVE_ALL, withPhase({ targets: { low: 'all' }, only: ['opencode'] }));
+    assert.deepEqual(ids(out['code-review'].targets), ORDER.slice(2));
+  });
 });

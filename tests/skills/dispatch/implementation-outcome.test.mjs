@@ -298,7 +298,7 @@ describe('resolveImplementationTransition', () => {
       transition({
         terminalEnvelope: null,
         attempt: 2,
-        escalation: { status: 'exhausted', reason: 'flat-entry' },
+        escalation: { status: 'exhausted', reason: 'no-distinct-higher-level' },
       }),
       { action: 'stop-user-ruling', consumesAttempt: true },
     );
@@ -454,7 +454,7 @@ describe('implementation outcome CLI', () => {
         targetKind: 'delegate',
         resumable: false,
         contextContinuationUsed: false,
-        escalation: { status: 'exhausted', reason: 'flat-entry' },
+        escalation: { status: 'exhausted', reason: 'no-distinct-higher-level' },
       }),
       encoding: 'utf8',
     });
