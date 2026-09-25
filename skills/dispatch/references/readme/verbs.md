@@ -180,7 +180,7 @@ flowchart TD
     Integration --> User
 ```
 
-At an explicitly typed `low` level, the driver answers the approval gate itself when there is nothing to rule on: a clean baseline, no criteria that require red evidence, and no design increment. The ledger records that approval with `actor: "driver"`, and it still authorizes the plan's commands, so read the plan before running `low`.
+At an explicitly typed `low` level, the driver may approve the gate itself when there is nothing to rule on. That approval still authorizes the plan's commands, so read the plan before running `low`.
 
 > [!TIP]
 > For a trivial edit, skip `implement` and ask your host to make the change directly. `implement` is for delivery that needs a plan, verification, and review on record.
