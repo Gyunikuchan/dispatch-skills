@@ -7,24 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- **Breaking:** the `implement-dispatch` alias is renamed `dispatch-implement`; invoke `/dispatch-implement` instead
-- Faster implementation runs: the driver runs verify gates itself and extracts failure identities, RED checks run only the new tests, an unchanged tree reuses its baseline, and the pre-production RED test review is gone (code review after production covers test quality)
-- Easier recovery: a failed task can `retry` in the same run with your ruling as context, and verify logs are kept per run
-- Plans can declare `[GENERATED]` paths with a generator command; the driver regenerates them at completion instead of asking about them
-- Leaner walkthroughs and write briefs: task snapshots live in Git, the RED matrix renders as a table, and writers receive a hashed brief file
-- All temporary files for a run now live in one session directory under the OS temp directory
-- `--drive` advances a run until it needs you: the driver runs review waves and verify gates itself, and a re-requested gate on an unchanged tree reuses its results
-- Write subagents check their own reply with `--check-envelope` before returning, and their briefs rule out full-suite runs and shell text rewrites
-- `implement` on a plan whose review already settled starts at baseline instead of reviewing it again
+## [0.5.0] - 2026-09-25
 
-## [0.5.0] - 2026-09-22
-
-- Unified delegation, plan, design, review, and implementation under one model-visible `dispatch` skill and script-driven action protocol.
-- Retained four familiar slash commands as small user-invoked compatibility aliases.
-- Made standalone reviews report-only by default; accepted fixes require explicit `--fix`.
-- Consolidated provider candidates, native write subagents, and phase policy into one dispatch config.
-- Added shipped-contract terminology enforcement and made CLI `--help` the flag source of truth.
-- **Breaking:** v0.4 configs and operational skill interfaces are retired.
+- Unified delegation, planning, design, review, and implementation under the `dispatch` skill, while retaining familiar slash commands as compatibility aliases.
+- Implementation runs need less supervision: `--drive` advances reviews and verification until a decision is needed, with faster, more focused checks and easier recovery from failures or interruptions.
+- Standalone reviews are report-only by default, require `--fix` to apply accepted changes, and use finding severity to decide whether to continue.
+- Added a brainstorming skill for exploring requirements before implementation.
+- **Breaking:** v0.4 configs and operational skill interfaces are retired; use `/dispatch-implement` instead of `/implement-dispatch`, and upgrade OpenCode integrations to CLI v2 and the updated config format (see `config.sample.jsonc`).
 
 ## [0.4.0] - 2026-09-21
 
