@@ -5,6 +5,7 @@ import path from 'node:path';
 import { loadDispatchConfig } from '../lib/config.mjs';
 import { currentHead } from '../lib/git-state.mjs';
 import { resolveFlow } from '../lib/resolve-flow.mjs';
+import { assembleTemplate, fillTemplate } from '../review/fill-template.mjs';
 import { parseImplementationOutcome, resolveImplementationTransition } from '../verification/implementation-outcome.mjs';
 import { emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
 import { ledgerSegment } from './implement-state.mjs';
@@ -70,31 +71,30 @@ function testsOnlyPrompt(state) {
     boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
     envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS' },
     selfCheck: selfCheck(state),
-    verification: VERIFICATION_RULES,
     ...(repair ? { admissionDefects: repair.defects } : {}),
   };
-  return briefFile(state, `tests-only${repair ? '-repair' : ''}`, document);
+  return briefFile(state, `tests-only${repair ? '-repair' : ''}`, document, 'tests-only');
 }
 /** Writes a hashed write brief beside the run state, so the host relays a path instead of the brief. */
-function briefFile(state, name, document) {
-  const content = `${JSON.stringify(document)}\n`;
+function briefFile(state, name, document, kind) {
+  const frame = path.join(SKILL_ROOT, 'references/templates/write-brief.md');
+  const block = path.join(SKILL_ROOT, `references/templates/write-brief-${kind}.md`);
+  const { template, variables } = assembleTemplate(frame, block);
+  const prose = fillTemplate(template, variables, {});
+  const content = `${JSON.stringify({ brief: prose, ...document })}\n`;
   const hash = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
   const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}.json`);
   fs.writeFileSync(file, content, { mode: 0o600 });
   return { path: file, hash };
 }
-// The driver runs every gate itself, so a writer's own suite run only repeats that work inside its turns.
-const VERIFICATION_RULES = [
-  'Run only the narrowest command covering the files you changed (e.g. node --test <changed test file>); never run an aggregate suite such as npm test: the driver runs every mapped gate after you return.',
-  'Make edits with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.',
-];
 let packetSchema;
 function productionPrompt(state) {
   const data = state.ordinary;
   const packet = {
     ...data.packet,
-    instruction: 'Implement the smallest complete behavior satisfying the governing outcome and settled scope.',
-    conflict: 'Return NEEDS_CONTEXT or BLOCKED with the exact conflict when evidence omits, conflicts with, or exceeds the governing outcome or scope.',
+    // Required packet fields preserve its schema while prose lives in the brief template.
+    instruction: 'Follow the production instruction in brief.',
+    conflict: 'Follow the conflict rule in brief.',
     governingPlan: state.planPath,
     redGate: data.redGate ?? 'validated',
   };
@@ -105,8 +105,7 @@ function productionPrompt(state) {
     schemaVersion: 1, purpose: 'production', packet,
     envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED', stage: 'COMPLETE', summary: 'non-empty string', evidence: 'array of strings holding one CRITERION <SC#> | <owning production path> | <delivered behavior> row per criterion', 'concerns|missingContext|blockers': 'array of non-empty strings, only with DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED respectively' },
     selfCheck: selfCheck(state),
-    verification: VERIFICATION_RULES,
-  });
+  }, 'production');
 }
 // SECTION: Delegation action
 

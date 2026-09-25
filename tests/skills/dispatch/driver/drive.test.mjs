@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
@@ -164,7 +165,11 @@ describe('writer envelope self-check', () => {
     const action = pendingWrite(fx);
     const brief = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8'));
     assert.match(brief.selfCheck.command, /--check-envelope ENVELOPE_FILE --state /);
-    assert.match(brief.verification.join(' '), /never run an aggregate suite/);
+    assert.match(brief.brief, /mapped `commands` only/);
+    assert.match(brief.brief, /Name each test so its criterion's mapped command selects it/);
+    assert.doesNotMatch(brief.brief, /node --test <changed test file>/);
+    assert.deepEqual(brief.manifest[0].commands, action.fields.criteria[0].commands);
+    assert.equal(action.fields.promptHash, `sha256:${crypto.createHash('sha256').update(fs.readFileSync(action.fields.promptPath)).digest('hex')}`);
 
     const stringEvidence = check(fx, action, { ...implementationOutcome({ stage: 'RED_READY' }), evidence: 'RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample' });
     assert.equal(stringEvidence.status, 1);
@@ -180,6 +185,12 @@ describe('writer envelope self-check', () => {
     const productionBrief = JSON.parse(fs.readFileSync(production.fields.promptPath, 'utf8'));
     assert.equal(productionBrief.envelope.stage, 'COMPLETE');
     assert.ok(productionBrief.selfCheck.command.includes(production.stateFile));
+    assert.match(productionBrief.brief, /Tests are evidence, not specification/);
+    assert.match(productionBrief.packet.instruction, /brief/);
+    assert.deepEqual(productionBrief.packet.criteria[0].commands, production.fields.criteria[0].commands);
+    assert.match(productionBrief.brief, /mapped `commands` only/);
+    assert.doesNotMatch(productionBrief.brief, /Name each test/);
+    assert.equal(production.fields.promptHash, `sha256:${crypto.createHash('sha256').update(fs.readFileSync(production.fields.promptPath)).digest('hex')}`);
     const untraced = check(fx, production, implementationOutcome());
     assert.match(untraced.result.errors.join(' '), /CRITERION SC1 \| <one of: src\/app\.js, tests\/sample\.test\.mjs>/);
     assert.equal(check(fx, production, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | value=2'] })).status, 0);

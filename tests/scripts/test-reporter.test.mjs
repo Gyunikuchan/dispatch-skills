@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import quietReporter, { formatDuration, formatFailure, formatSlowFiles } from '../../scripts/test-reporter.mjs';
+import { extractFailureIdentifiers } from '../../skills/dispatch/scripts/verification/test-failures.mjs';
 
 describe('test-reporter', () => {
   // SECTION: Formatting helpers
@@ -100,40 +101,48 @@ describe('test-reporter', () => {
       assert.ok(output.startsWith('✔ All 2 test(s) passed (110ms across 2 file(s), 1 skipped)'));
     });
 
-    it('prints the first failure and exits without consuming later events', async () => {
+    it('reports all leaf failures, expands only the first, and omits subtestsFailed parents', async () => {
       let consumedLaterEvent = false;
       async function* mockEvents() {
-        yield {
-          type: 'test:fail',
-          data: {
-            name: 'broken test',
-            file: '/repo/test1.mjs',
-            line: 15,
-            details: {
-              type: 'test',
-              error: {
-                message: 'assertion failed',
-                stack: 'Error: assertion failed\n    at /repo/test1.mjs:15:3',
-              },
-            },
-          },
-        };
+        yield { type: 'test:fail', data: { name: 'broken test', file: '/repo/test1.mjs', line: 15,
+          details: { type: 'test', error: { stack: 'Error: first detail' } } } };
+        yield { type: 'test:fail', data: { name: 'second test', file: '/repo/test1.mjs', line: 20,
+          details: { type: 'test', error: { stack: 'Error: second detail' } } } };
+        yield { type: 'test:fail', data: { name: 'parent', file: '/repo/test1.mjs',
+          details: { type: 'suite', error: { failureType: 'subtestsFailed' } } } };
         consumedLaterEvent = true;
-        yield { type: 'test:pass', data: { name: 'later test', file: '/repo/test2.mjs', details: { type: 'test' } } };
+        yield { type: 'test:summary', data: { counts: { passed: 0, failed: 2, tests: 2, topLevel: 2 } } };
       }
-
-      let output = '';
-      let exitCode;
+      let output = '', exitCode;
       const stderr = { write: (chunk) => { output += chunk; return true; } };
-      for await (const chunk of quietReporter(mockEvents(), { stderr, exit: (code) => { exitCode = code; } })) {
-        output += chunk;
-      }
-
+      for await (const chunk of quietReporter(mockEvents(), { stderr, exit: (code) => { exitCode = code; } })) output += chunk;
       assert.equal(exitCode, 1);
-      assert.equal(consumedLaterEvent, false);
-      assert.match(output, /--- Test Failure \(fail-fast\) ---/);
-      assert.match(output, /✖ broken test/);
-      assert.match(output, /Error: assertion failed/);
+      assert.equal(consumedLaterEvent, true);
+      assert.match(output, /--- Test Failures ---/);
+      assert.match(output, /✖ broken test\n  Location: .*test1\.mjs:15\n  Error: first detail/);
+      assert.match(output, /✖ second test\n  Location: .*test1\.mjs:20/);
+      assert.doesNotMatch(output, /second detail|✖ parent/);
+    assert.deepEqual(extractFailureIdentifiers(output), ['test:broken test', 'test:second test']);
+    });
+
+    it('rejects one or more zero-selection file summaries even when the global summary passes', async () => {
+      for (const selected of [[], ['/repo/passing.mjs']]) {
+        async function* events() {
+          for (const file of selected.length ? ['/repo/empty-b.mjs', '/repo/empty-a.mjs'] : ['/repo/empty-a.mjs']) yield { type: 'test:summary', data: { file, counts: { tests: 0 } } };
+          for (const file of selected) {
+            yield { type: 'test:pass', data: { name: 'selected', file, details: { type: 'test' } } };
+            yield { type: 'test:summary', data: { file, counts: { tests: 1 } } };
+          }
+          yield { type: 'test:summary', data: { counts: { topLevel: 1, tests: 1, passed: 1, failed: 0 } } };
+        }
+        let output = '', exitCode;
+        const stderr = { write: chunk => { output += chunk; return true; } };
+        for await (const chunk of quietReporter(events(), { stderr, exit: code => { exitCode = code; } })) output += chunk;
+        assert.equal(exitCode, 1);
+        assert.equal((output.match(/Selected no tests:/g) ?? []).length, 1);
+        assert.match(output, selected.length ? /Selected no tests: .*empty-a\.mjs, .*empty-b\.mjs/ : /Selected no tests: .*empty-a\.mjs\n/);
+        assert.doesNotMatch(output, /✔ All/);
+      }
     });
 
     it('names the slowest files by summed top-level duration once one crosses 10s', async () => {

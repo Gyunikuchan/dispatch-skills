@@ -35,7 +35,7 @@ describe('failure identities from real node --test output', () => {
   });
   after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-  for (const reporter of ['spec', 'tap']) {
+  for (const reporter of ['spec', 'tap', QUIET_REPORTER]) {
     it(`extracts leaf and load failures from the ${path.basename(reporter)} reporter`, () => {
       const output = runSuite(reporter);
       assert.deepEqual(extractFailureIdentifiers(output, { repoRoot: dir }), ['error:load tests/broken.test.mjs', 'test:fails # hash', 'test:top fails']);
@@ -43,7 +43,7 @@ describe('failure identities from real node --test output', () => {
     });
   }
 
-  it('extracts the exact failure from the fail-fast reporter', () => {
+  it('extracts failures and counts from the quiet reporter', () => {
     const file = path.join(dir, 'single-failure.test.mjs');
     fs.writeFileSync(file, "import test from 'node:test';\nimport assert from 'node:assert/strict';\ntest('only failure', () => assert.fail('boom'));\n");
     const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
@@ -53,8 +53,22 @@ describe('failure identities from real node --test output', () => {
       env,
     });
     const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 1);
     assert.deepEqual(extractFailureIdentifiers(output, { repoRoot: dir }), ['test:only failure']);
-    assert.equal(testCounts(output), null);
+    assert.deepEqual(testCounts(output), { pass: 0, fail: 1 });
+  });
+
+  it('fails a real filtered run selecting no tests', () => {
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const file = path.join(dir, 'tests/a.test.mjs');
+    const result = spawnSync(process.execPath, ['--test', `--test-reporter=${QUIET_REPORTER}`, '--test-name-pattern=NO_SUCH_TEST_902', file], {
+      cwd: dir, encoding: 'utf8', env,
+    });
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.equal(result.status, 1);
+    assert.equal((output.match(/Selected no tests:/g) ?? []).length, 1);
+    assert.match(output, /Selected no tests: tests\/a\.test\.mjs/);
+    assert.doesNotMatch(output, /✔ All/);
   });
 
   it('returns no identifiers or counts for unrecognized output', () => {

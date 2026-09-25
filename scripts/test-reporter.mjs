@@ -3,11 +3,10 @@
  * @file test-reporter.mjs
  * @description Quiet test reporter for Node.js test runner (node --test).
  * Silences all passing test output to preserve agent context windows.
- * Outputs a concise summary on success, or the first actionable failure before exiting immediately.
+ * Outputs a concise summary on success, or every actionable failure (first expanded) on failure.
  * Names the slowest files when one crosses SLOW_FILE_MS, since one serial file bounds the wall time.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 
 const SLOW_FILE_MS = 10_000;
@@ -107,15 +106,15 @@ export function formatSlowFiles(fileDurations, projectRoot = process.cwd()) {
  */
 export default async function* quietReporter(source, options = {}) {
   const stderr = options.stderr ?? process.stderr;
-  const exit = options.exit ?? process.exit;
+  const exit = options.exit ?? ((code) => { process.exitCode = code; });
   let totalTests = 0;
   let passedTests = 0;
   let failedTests = 0;
   let skippedTests = 0;
   let todoTests = 0;
-  let totalSuites = 0;
   let totalDurationMs = 0;
   const failures = [];
+  const emptyFiles = new Set();
   const files = new Set();
   const fileDurations = new Map();
 
@@ -147,15 +146,12 @@ export default async function* quietReporter(source, options = {}) {
 
         // Only record if it's an actual test failure or a direct suite/hook error
         if (!isSubtestFailure) {
-          const output = `\n--- Test Failure (fail-fast) ---\n\n${formatFailure(data)}\n`;
-          if (stderr === process.stderr) fs.writeSync(process.stderr.fd, output);
-          else stderr.write(output);
-          exit(1);
-          return;
+          failures.push(data);
         }
         break;
       }
       case 'test:summary': {
+        if (data?.file && data?.counts?.tests === 0) emptyFiles.add(data.file);
         if (data?.counts) {
           const counts = data.counts;
           if (counts.topLevel !== undefined || data.file === undefined) {
@@ -169,7 +165,6 @@ export default async function* quietReporter(source, options = {}) {
             if (counts.tests !== undefined) totalTests = counts.tests;
             if (counts.skipped !== undefined) skippedTests = counts.skipped;
             if (counts.todo !== undefined) todoTests = counts.todo;
-            if (counts.suites !== undefined) totalSuites = counts.suites;
           }
         }
         if (data?.duration_ms !== undefined) {
@@ -184,18 +179,23 @@ export default async function* quietReporter(source, options = {}) {
 
   if (failures.length > 0) {
     yield '\n--- Test Failures ---\n\n';
-    for (const fail of failures) {
-      yield formatFailure(fail);
+    for (const [index, fail] of failures.entries()) {
+      yield index === 0 ? formatFailure(fail) : formatFailure({ name: fail.name, file: fail.file, line: fail.line, column: fail.column });
       yield '\n';
     }
     const fileCountStr = files.size > 0 ? ` across ${files.size} file(s)` : '';
-    yield `✖ ${failedTests} of ${totalTests} test(s) failed (${passedTests} passed, ${formatDuration(totalDurationMs)}${fileCountStr})\n`;
-  } else {
+    yield `✖ ${failedTests || failures.length} of ${totalTests} test(s) failed (${passedTests} passed, ${formatDuration(totalDurationMs)}${fileCountStr})\n`;
+  } else if (emptyFiles.size === 0) {
     const skippedStr = skippedTests > 0 ? `, ${skippedTests} skipped` : '';
     const todoStr = todoTests > 0 ? `, ${todoTests} todo` : '';
     const fileCountStr = files.size > 0 ? ` across ${files.size} file(s)` : '';
     yield `✔ All ${totalTests || passedTests} test(s) passed (${formatDuration(totalDurationMs)}${fileCountStr}${skippedStr}${todoStr})\n`;
   }
+  if (emptyFiles.size) {
+    const paths = [...emptyFiles].map(file => path.relative(process.cwd(), file).replace(/\\/g, '/')).sort();
+    stderr.write(`✖ Selected no tests: ${paths.join(', ')}\n`);
+  }
   const slowFiles = formatSlowFiles(fileDurations);
   if (slowFiles) yield slowFiles;
+  if (failures.length || emptyFiles.size || failedTests) exit(1);
 }
