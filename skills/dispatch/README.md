@@ -112,6 +112,8 @@ Use a bounded question and name the relevant behavior or code area. Dispatch ret
 
 This starts at planning, reviews the plan, asks for approval, establishes a test baseline, delegates implementation, verifies approved checks, and reviews the resulting code.
 
+If the `brainstorming` skill is installed, dispatch first uses it to settle scope and solution in chat (followed by any grilling-style skill you invoke), then writes a single plan or design.
+
 ### Design a cross-cutting migration
 
 ```text

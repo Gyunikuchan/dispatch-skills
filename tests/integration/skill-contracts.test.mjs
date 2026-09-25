@@ -27,6 +27,11 @@ describe('dispatch SKILL.md', () => {
   it('keeps review fixes opt-in', () => {
     assert.match(text, /report-only unless the user explicitly supplied `--fix`/);
   });
+
+  it('clarifies before authoring and writes one artifact', () => {
+    assert.match(text, /`implement` without a plan path\), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat/);
+    assert.match(text, /the driver's canonical artifact is the only plan or design written/);
+  });
 });
 
 describe('companion aliases', () => {
