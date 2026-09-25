@@ -1,7 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { requireToplevel } from '../lib/git-root.mjs';
 import { emitAction } from './actions.mjs';
 import { createRunState, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
@@ -19,7 +19,7 @@ import { finishCodeReview, handoff, requireImplementation } from './handoff-phas
  * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string, dispatchScript: string }} options
  */
 export async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {
-  const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+  const repoRoot = requireToplevel(cwd);
   const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });
   writeRunSidecar(state, invocation);
   const from = invocation.phases?.slice(5);

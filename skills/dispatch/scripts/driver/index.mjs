@@ -6,9 +6,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
+import { requireToplevel } from '../lib/git-root.mjs';
 import { KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../lib/providers.mjs';
 import { CLASSIFIABLE_LEVELS, LEVELS, assertClassifiableLevel } from '../lib/config.mjs';
 import { KIND_NAMES } from '../review/kinds.mjs';
@@ -223,12 +223,12 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
     } else {
       const invocation = normalizeRun(parsed);
       if (invocation.verb === 'design') {
-        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+        const repoRoot = requireToplevel(cwd);
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, startDesign(state));
       } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('-design.md')) {
-        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();
+        const repoRoot = requireToplevel(cwd);
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, await resumeDesignPath(state));

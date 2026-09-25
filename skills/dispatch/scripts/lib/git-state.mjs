@@ -109,29 +109,59 @@ export function hashRecords(records) {
 
 // SECTION: Index and materialized state
 
+// NOTE: fingerprints read the index several times per driver step. Hashing the index bytes costs far
+// less than a git spawn and, unlike stat identity, cannot miss a same-tick rewrite.
+/** @type {Map<string, { identity: string, entries: IndexEntry[] }>} */
+const indexCache = new Map();
+const GIT_LOCATION_ENV = ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR'];
+
+/** Content hash of the repository's default index, or null when it cannot be cached safely. */
+function indexIdentity(repoRoot) {
+  // Redirected Git locations or a linked work tree (`.git` file) keep the index elsewhere; read those uncached.
+  if (GIT_LOCATION_ENV.some(name => process.env[name])) return null;
+  try {
+    if (!fs.statSync(path.join(repoRoot, '.git')).isDirectory()) return null;
+    return sha256(fs.readFileSync(path.join(repoRoot, '.git', 'index')));
+  } catch {
+    return null;
+  }
+}
+
+/** @param {string} repoRoot @returns {IndexEntry[]} */
+function readIndexEntries(repoRoot) {
+  // One `-v --stage` listing carries both the tag and the stage record for each entry.
+  const records = nulRecords(git(repoRoot, ['ls-files', '-v', '--stage', '-z']));
+  const flags = new Map();
+  const parsed = records.map(record => {
+    const tab = record.indexOf(0x09);
+    if (tab < 3 || record[1] !== 0x20) throw new Error('Malformed git ls-files record');
+    const header = record.subarray(2, tab).toString('ascii').split(' ');
+    const rawPath = record.subarray(tab + 1);
+    const entryPath = decodeGitPath(rawPath);
+    flags.set(entryPath, String.fromCharCode(record[0]));
+    return { entryPath, rawPath, header };
+  });
+  const entries = parsed.map(({ entryPath, rawPath, header }) => Object.freeze({
+    path: entryPath,
+    pathBytes: rawPath,
+    mode: header[0],
+    objectId: header[1],
+    stage: Number(header[2]),
+    flags: flags.get(entryPath) ?? '',
+  }));
+  return entries.sort((a, b) => Buffer.compare(a.pathBytes, b.pathBytes) || a.stage - b.stage);
+}
+
 /** @param {string} repoRoot @returns {IndexEntry[]} */
 function indexEntries(repoRoot) {
-  const flags = new Map();
-  for (const record of nulRecords(git(repoRoot, ['ls-files', '-v', '-z']))) {
-    if (record.length < 3 || record[1] !== 0x20) throw new Error('Malformed git ls-files flags record');
-    flags.set(decodeGitPath(record.subarray(2)), String.fromCharCode(record[0]));
-  }
-  const entries = [];
-  for (const record of nulRecords(git(repoRoot, ['ls-files', '--stage', '-z']))) {
-    const tab = record.indexOf(0x09);
-    if (tab < 0) throw new Error('Malformed git ls-files record');
-    const header = record.subarray(0, tab).toString('ascii').split(' ');
-    const rawPath = record.subarray(tab + 1);
-    entries.push({
-      path: decodeGitPath(rawPath),
-      pathBytes: rawPath,
-      mode: header[0],
-      objectId: header[1],
-      stage: Number(header[2]),
-      flags: flags.get(decodeGitPath(rawPath)) ?? '',
-    });
-  }
-  return entries.sort((a, b) => Buffer.compare(a.pathBytes, b.pathBytes) || a.stage - b.stage);
+  const key = path.resolve(repoRoot);
+  const identity = indexIdentity(key);
+  const cached = indexCache.get(key);
+  if (identity && cached?.identity === identity) return [...cached.entries];
+  const entries = readIndexEntries(repoRoot);
+  if (identity) indexCache.set(key, { identity, entries });
+  else indexCache.delete(key);
+  return [...entries];
 }
 
 /** @param {string} repoRoot */

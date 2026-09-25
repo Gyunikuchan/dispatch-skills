@@ -39,6 +39,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
+import { showToplevel } from '../lib/git-root.mjs';
 import { PROJECT_ROOT, spawnCliSync } from '../lib/platform.mjs';
 import { detectOrchestrator } from '../lib/providers.mjs';
 import { AGY_MODE_DATA_DIRS } from '../runners/agy.mjs';
@@ -135,14 +136,7 @@ export function repositoryRootHash(root, options) {
 }
 
 export function getRepositoryRoot(cwd = PROJECT_ROOT) {
-  const result = spawnCliSync('git', ['rev-parse', '--show-toplevel'], {
-    cwd,
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  if (result.status !== 0) return null;
-  const root = (result.stdout ?? '').trim();
-  return root || null;
+  return showToplevel(cwd);
 }
 
 /**

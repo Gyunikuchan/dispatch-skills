@@ -2,23 +2,22 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 
 import { appendEvent, governingHash, readLedger } from '../ledger/ledger.mjs';
 import { foldEvents, foldDesignRun } from '../ledger/events.mjs';
 import { parseIncrementGraph } from './graph.mjs';
+import { showToplevel } from '../lib/git-root.mjs';
 
 const LIVE_AMENDMENT_STATES = new Set(['proposed', 'reviewed', 'prepared']);
 const INVALIDATABLE_INCREMENT_STATES = new Set(['pending', 'ready', 'active', 'reopened']);
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/;
-const GIT_TIMEOUT_MS = 5_000;
 
 // SECTION: Paths, durability, and ledger access
 
 /** @param {string} absolute */
 function repoRootOf(absolute) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd: path.dirname(absolute), encoding: 'utf8', timeout: GIT_TIMEOUT_MS });
-  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : process.cwd();
+  const root = showToplevel(path.dirname(absolute));
+  return root ? path.resolve(root) : process.cwd();
 }
 
 // Ledger paths are repository-relative regardless of the caller's cwd.

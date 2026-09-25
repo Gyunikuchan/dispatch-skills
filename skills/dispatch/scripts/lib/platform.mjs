@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { showToplevel } from './git-root.mjs';
+
 // SECTION: Public data shapes
 
 /**
@@ -89,14 +91,8 @@ import { fileURLToPath } from 'node:url';
  * as a portable skill and cannot assume a fixed depth beneath the workspace.
  */
 function resolveWorkspaceRoot() {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], {
-    cwd: process.cwd(),
-    encoding: 'utf8',
-    timeout: 5000,
-  });
-  if (res.status === 0 && res.stdout.trim()) {
-    return path.resolve(res.stdout.trim());
-  }
+  const root = showToplevel(process.cwd());
+  if (root) return path.resolve(root);
   // Outside a repository the caller's cwd is the only boundary on offer.
   return process.cwd();
 }

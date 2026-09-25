@@ -7,10 +7,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { evaluateConsensus } from '../review/consensus.mjs';
+import { showToplevel } from '../lib/git-root.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
 import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../lib/session-temp.mjs';
@@ -19,8 +19,8 @@ import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } fr
 
 /** Repository root of `cwd`, or `cwd` itself outside a work tree. */
 export function gitRoot(cwd) {
-  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });
-  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : path.resolve(cwd);
+  const root = showToplevel(cwd);
+  return path.resolve(root ?? cwd);
 }
 
 /** Writes a private run-scoped file beside the state file and queues it for cleanup. */

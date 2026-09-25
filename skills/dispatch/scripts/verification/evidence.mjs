@@ -8,6 +8,7 @@ import {
   normalizePlanPath,
   structuralLines,
 } from '../plan/structure.mjs';
+import { showToplevel } from '../lib/git-root.mjs';
 import { boxValue } from '../lib/summary-box.mjs';
 
 export { extractApprovedPathSet };
@@ -175,8 +176,8 @@ function runGit(repoRoot, args, { encoding = 'utf8', input } = {}) {
 /** @param {string} repoRoot */
 export function captureRepositoryState(repoRoot) {
   const root = path.resolve(repoRoot);
-  const inside = spawnSync('git', ['-C', root, 'rev-parse', '--is-inside-work-tree'], { encoding: 'utf8' });
-  if (inside.status !== 0 || inside.stdout.trim() !== 'true') {
+  // NOTE: a work-tree root exists exactly where --is-inside-work-tree prints "true" (not bare, not inside .git); the root lookup is cached.
+  if (!showToplevel(root)) {
     return { available: false, reason: 'side-effect capture unavailable', entries: {} };
   }
   const records = parsePorcelainZ(runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']));

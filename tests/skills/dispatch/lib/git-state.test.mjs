@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -114,6 +114,69 @@ describe('Git ledger state', () => {
     const after = materializedFingerprint(repo, ['tracked.txt']).entries;
     assert.equal(diffHash(before, after), diffHash(before, after));
     assert.notEqual(diffHash(before, after), diffHash(after, before));
+  });
+
+  it('re-reads the index after each same-process index write', () => {
+    const tracked = () => indexFingerprint(repo).entries.map(entry => `${entry.path}:${entry.objectId}:${entry.flags}`);
+    const initial = tracked();
+    writeFileSync(path.join(repo, 'staged.txt'), 'new\n');
+    git('add', 'staged.txt');
+    const added = tracked();
+    assert.notDeepEqual(added, initial);
+    writeFileSync(path.join(repo, 'staged.txt'), 'two\n');
+    git('add', 'staged.txt');
+    assert.notDeepEqual(tracked(), added, 'an object id change keeps the index size but is still observed');
+    git('update-index', '--skip-worktree', 'tracked.txt');
+    assert.equal(indexFingerprint(repo).entries.find(entry => entry.path === 'tracked.txt').flags, 'S');
+  });
+
+  it('re-reads an index whose bytes change under an unchanged stat identity', () => {
+    const indexPath = path.join(repo, '.git', 'index');
+    const before = indexFingerprint(repo).digest;
+    writeFileSync(path.join(repo, 'tracked.txt'), 'next\n');
+    // Simulate a same-tick rewrite that recycles the inode: every stat of the index reports its old identity.
+    const frozen = { plain: fs.statSync(indexPath), bigint: fs.statSync(indexPath, { bigint: true }) };
+    const realStat = fs.statSync;
+    fs.statSync = (file, options) => path.resolve(String(file)) === indexPath
+      ? (options?.bigint ? frozen.bigint : frozen.plain)
+      : realStat(file, options);
+    try {
+      git('add', 'tracked.txt');
+      assert.notEqual(indexFingerprint(repo).digest, before);
+    } finally {
+      fs.statSync = realStat;
+    }
+  });
+
+  it('reads uncached while GIT_DIR redirects the repository', () => {
+    const other = mkdtempSync(path.join(os.tmpdir(), 'ledger-other-'));
+    const saved = process.env.GIT_DIR;
+    try {
+      spawnSync('git', ['init', '--quiet', '--initial-branch=work'], { cwd: other });
+      process.env.GIT_DIR = path.join(other, '.git');
+      const empty = indexFingerprint(repo).entries;
+      assert.deepEqual(empty, [], 'the redirected repository has an empty index');
+      writeFileSync(path.join(repo, 'added.txt'), 'x\n');
+      git('add', 'added.txt');
+      assert.deepEqual(indexFingerprint(repo).entries.map(entry => entry.path), ['added.txt']);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_DIR; else process.env.GIT_DIR = saved;
+      rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the index digest of separate tag and stage listings', () => {
+    git('update-index', '--assume-unchanged', 'tracked.txt');
+    const records = args => spawnSync('git', ['ls-files', ...args, '-z'], { cwd: repo }).stdout.toString('utf8').split('\0').filter(Boolean);
+    const tags = new Map(records(['-v']).map(record => [record.slice(2), record[0]]));
+    const expected = records(['--stage']).map(record => {
+      const [header, file] = record.split('\t');
+      const [mode, objectId, stage] = header.split(' ');
+      return { file, mode, objectId, stage: Number(stage), flags: tags.get(file) };
+    });
+    const actual = indexFingerprint(repo).entries.map(entry => ({ file: entry.path, mode: entry.mode, objectId: entry.objectId, stage: entry.stage, flags: entry.flags }));
+    assert.deepEqual(actual, expected);
+    assert.equal(actual[0].flags, 'h');
   });
 
   it('rejects non-UTF-8 path bytes and ordinary directory task paths', () => {
