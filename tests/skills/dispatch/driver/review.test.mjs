@@ -261,7 +261,7 @@ describe('fix verification guidance (narrowest check)', () => {
           const testsOnly = action.fields.stage === 'tests-only';
           fs.writeFileSync(path.join(ordinary.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
             ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-          return { raw: JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: testsOnly ? 'RED_READY' : 'COMPLETE', summary: 'fixture', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | delivered value=2 | src/app.js'] }) };
+          return { raw: JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: testsOnly ? 'RED_READY' : 'COMPLETE', summary: 'fixture', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] }) };
         },
         waveResults: () => allProviders(report(production && ++codeWaves === 1 ? [codeFinding({ defect: 'Missing trailing comment.' })] : [])),
         fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --test tests/sample.test.mjs'] }),

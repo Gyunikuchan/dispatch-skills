@@ -8,6 +8,7 @@ import {
   normalizePlanPath,
   structuralLines,
 } from '../plan/structure.mjs';
+import { boxValue } from '../lib/summary-box.mjs';
 
 export { extractApprovedPathSet };
 
@@ -85,7 +86,7 @@ export function outcomeFirstPacket(source, criteria) {
   const constraints = [section('Key Decisions & Context'), section('Open Questions & Assumptions')].filter(Boolean);
   const failures = section('Review Findings & Resolutions');
   return {
-    governingOutcome: { title, context: section('Context & Intent') || lines.slice(titleIndex + 1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
+    governingOutcome: { title, context: section('Context & Intent') || boxValue(source, 'TL;DR') || lines.slice(titleIndex + 1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
     settledBoundary: { scope: proposed, nonScope: section('Out of Scope') || 'None.', invariants, rollback: section('Rollback & Blast Radius') || 'None.' },
     criteria: criteria.map(({ id, title: outcome, evidence, paths, commands, review }) => ({ id, outcome, evidenceClass: evidence, paths, commands, review: review ?? null })),
     repositoryContext: { constraints, priorFailures: failures && !/No reviews conducted yet/i.test(failures) ? findingDigest(failures) : 'None recorded.' },

@@ -52,7 +52,7 @@ describe('ordinary driver verification gate tiers', () => {
     // Folded from the retired end-to-end defer case: the final gate defers nothing and the deferred SC2 renders final evidence.
     assert.equal(gates.find(action => action.purpose === 'final')?.deferred, undefined, 'the final gate defers nothing');
     const walkthrough = handoffWalkthrough(result.done);
-    assert.match(walkthrough, /- \[SC2\] delivered value=2 — production path: `src\/app\.js`; evidence: verify;/);
+    assert.match(walkthrough, /^\| SC2 \| delivered value=2 \| `src\/app\.js` \| verify;/m);
     assert.doesNotMatch(walkthrough, /Pending — missing validated/);
   });
 

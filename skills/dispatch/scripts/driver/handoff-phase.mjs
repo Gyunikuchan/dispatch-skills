@@ -8,6 +8,8 @@ import { append, ledgerSegment, persistEvidence, relative } from './implement-st
 import { completeTask } from './task-phase.mjs';
 import { completionResult, fingerprint, scopedResult } from './verification.mjs';
 import { reviewPolicy } from './plan-phase.mjs';
+import { lintWalkthrough } from '../walkthrough/lint.mjs';
+import { isPassing, parseTraceability, sectionBody } from '../walkthrough/traceability.mjs';
 
 // SECTION: Handoff preconditions
 
@@ -48,10 +50,14 @@ export function handoff(state) {
   requireImplementation(state, 'handoff');
   persistEvidence(state);
   const walkthrough = readArtifact(state.walkthroughPath, { kind: 'code' }).source;
+  const trace = parseTraceability(sectionBody(walkthrough, 'Outcome Traceability') ?? []);
+  const rows = 'table' in trace ? trace.rows : [];
   for (const criterion of state.ordinary.criteria) {
-    const row = walkthrough.split(/\r?\n/).find(line => line.startsWith(`- [${criterion.id}]`));
-    if (!row || /Pending|missing validated/i.test(row)) throw new Error(`handoff requires complete outcome traceability for ${criterion.id}.`);
+    const row = rows.find(item => item.id === criterion.id);
+    if (!row || !isPassing(row)) throw new Error(`handoff requires complete outcome traceability for ${criterion.id}.`);
   }
+  const defects = lintWalkthrough(walkthrough, { criteria: state.ordinary.criteria }).defects;
+  if (defects.length) throw new Error(`handoff requires a lint-clean walkthrough: ${[...new Set(defects.map(item => item.rule))].join(', ')}.`);
   const disabled = reviewPolicy(state, 'code').skipped;
   const checkpoint = disabled ? null : codeCheckpoint(state);
   const segment = ledgerSegment(state, { terminal: true });

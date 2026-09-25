@@ -127,6 +127,33 @@ describe('design reference', () => {
   });
 });
 
+describe('template reading aids', () => {
+  const template = (file) => read(`skills/dispatch/references/templates/${file}`);
+  const box = (text) => [...text.matchAll(/^> \*\*([^*]+):\*\* /gm)].map((match) => match[1]);
+
+  it('template summary box labels match the lint grammar', () => {
+    assert.deepEqual(box(template('plan.md')), ['TL;DR', 'Decide', 'Risk', 'Scope']);
+    assert.deepEqual(box(template('design.md')), ['TL;DR', 'Decide', 'Risk', 'Increments']);
+    assert.deepEqual(box(template('walkthrough.md')), ['TL;DR', 'Status', 'Deviations']);
+    assert.match(read('skills/dispatch/references/review.md'), /`TL;DR`, `Status`, `Deviations` summary box/);
+  });
+
+  it('template tables carry the criteria and traceability headers', () => {
+    const plan = template('plan.md');
+    assert.ok(plan.indexOf('| SC | Outcome | Evidence | Verify |') > plan.indexOf('## Success Criteria'));
+    assert.ok(plan.indexOf('| SC | Outcome | Evidence | Verify |') < plan.indexOf('- [SC1]'));
+    const walkthrough = template('walkthrough.md');
+    assert.ok(walkthrough.indexOf('| SC | Behavior | Production path | Evidence |') > walkthrough.indexOf('## Outcome Traceability'));
+    assert.match(walkthrough, /None — no governing plan\./);
+    assert.match(read('skills/dispatch/references/review.md'), /\| SC \| Behavior \| Production path \| Evidence \|/);
+    for (const file of ['plan.md', 'design.md', 'walkthrough.md']) {
+      const text = template(file);
+      assert.match(text, /^````markdown$/m, file);
+      assert.ok(text.indexOf('## Field notes') > text.lastIndexOf('````'), file);
+    }
+  });
+});
+
 describe('plan template', () => {
   it('orders success criteria before proposed changes', () => {
     const text = read('skills/dispatch/references/templates/plan.md');

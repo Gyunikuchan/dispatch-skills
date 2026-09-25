@@ -475,3 +475,104 @@ describe('code review preparation', () => {
     }
   });
 });
+
+// SECTION: Walkthrough summary box and traceability table
+
+const PAIRED_PLAN = [
+  '# Feature plan',
+  '',
+  '> **TL;DR:** Update the exported value.',
+  '> **Decide:** none',
+  '> **Risk:** low — one module',
+  '> **Scope:** app.js',
+  '',
+  '## Success Criteria',
+  '| SC | Outcome | Evidence | Verify |',
+  '| --- | --- | --- | --- |',
+  '| SC1 | Export the new value. | red | `npm test` |',
+  '| SC2 | Keep the module importable. | verify | `node app.js` |',
+  '- [SC1] Export the new value.',
+  '  - Changes: app.js',
+  '  - Verify: `npm test`',
+  '  - Evidence: red',
+  '  - Test rationale: The exported value is the observable behavior.',
+  '- [SC2] Keep the module importable.',
+  '  - Changes: app.js',
+  '  - Verify: `node app.js`',
+  '  - Evidence: verify',
+  '  - Test rationale: Import smoke check.',
+  '## Proposed Changes',
+  '#### [MODIFY] app.js',
+  '## Verification Plan',
+  '### Automated Tests',
+  '- `npm test`',
+].join('\n');
+
+function traceabilitySection(walkthrough) {
+  return /## Outcome Traceability\n([\s\S]*?)\n## Key Deviations/.exec(walkthrough)?.[1] ?? '';
+}
+
+function prepareGenerated(repo, extra = {}) {
+  return prepareCodeReview({
+    mode: 'orchestrated',
+    slug: 'feature',
+    summary: 'Update the exported value',
+    verification: { command: 'npm test', result: 'Passed' },
+    targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+    ...extra,
+  }, { repoRoot: repo });
+}
+
+describe('prepare-code walkthrough summary box and traceability', () => {
+  it('prepare-code walkthrough table synthesizes Pending rows from paired-plan criteria', () => {
+    const repo = makeRepo();
+    fs.mkdirSync(path.join(repo, '.scratch', 'plan'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-feature.md'), `${PAIRED_PLAN}\n`);
+    const manifest = prepareGenerated(repo, { planPath: '.scratch/plan/2026-09-20-feature.md' });
+    try {
+      assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
+      const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
+      assert.match(walkthrough, /^# Walkthrough — Update the exported value\n\n> \*\*TL;DR:\*\* \S.*\n> \*\*Status:\*\* 0\/2 SC passing\n> \*\*Deviations:\*\* none\n\n## Changes Made/);
+      const section = traceabilitySection(walkthrough);
+      const rows = section.split('\n').filter(line => line.startsWith('|'));
+      assert.equal(rows[0].replace(/\s+/g, ' '), '| SC | Behavior | Production path | Evidence |');
+      assert.match(rows[1], /^\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|$/);
+      const cells = rows.slice(2).map(row => row.split('|').slice(1, -1).map(value => value.trim()));
+      assert.deepEqual(cells.map(([id]) => id), ['SC1', 'SC2']);
+      assert.match(cells[0][1], /Export the new value/);
+      assert.match(cells[1][1], /Keep the module importable/);
+      for (const row of cells) assert.match(row[3], /^Pending\b/);
+      assert.doesNotMatch(walkthrough, /\[SC#\]|<delivered observable behavior>|<fresh record>/);
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('prepare-code walkthrough plan-less form writes Status n/a and no table', () => {
+    const repo = makeRepo();
+    const manifest = prepareGenerated(repo);
+    try {
+      assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
+      const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
+      assert.match(walkthrough, /^# Walkthrough — Update the exported value\n\n> \*\*TL;DR:\*\* \S.*\n> \*\*Status:\*\* n\/a\n> \*\*Deviations:\*\* none\n\n## Changes Made/);
+      assert.equal(traceabilitySection(walkthrough).trim(), 'None — no governing plan.');
+      assert.doesNotMatch(walkthrough, /\[SC#\]|<delivered observable behavior>|<fresh record>/);
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('prepare-code walkthrough lint gate returns walkthrough-lint without writing a defective walkthrough', async () => {
+    const { REVIEW_KINDS } = await import('../../../../skills/dispatch/scripts/review/kinds.mjs');
+    const { lintWalkthrough } = await import('../../../../skills/dispatch/scripts/walkthrough/lint.mjs');
+    assert.equal(REVIEW_KINDS.code.lint, lintWalkthrough);
+    assert.equal(REVIEW_KINDS.code.lintDecision, 'walkthrough-lint');
+
+    const repo = makeRepo();
+    const manifest = prepareGenerated(repo, { summary: 'Rework <relative-path> handling' });
+    assert.equal(manifest.status, 'decision-required', JSON.stringify(manifest));
+    assert.equal(manifest.decision, 'walkthrough-lint');
+    assert.ok(manifest.defects.some(({ rule }) => rule === 'leftover-placeholder'), JSON.stringify(manifest.defects));
+    assert.equal(fs.existsSync(path.join(repo, manifest.artifact.canonicalPath)), false);
+  });
+});

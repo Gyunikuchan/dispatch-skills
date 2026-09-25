@@ -10,7 +10,11 @@ import { describe, it } from 'node:test';
 import fs from 'node:fs';
 
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY } from '../../../helpers/driver-harness.mjs';
+import path from 'node:path';
+
+import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY, drive, designFinding, report } from '../../../helpers/driver-harness.mjs';
+import { firstReview } from '../../../helpers/scripted-review-fixture.mjs';
+import { governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
 
@@ -44,5 +48,45 @@ describe('driver design state persistence', () => {
     const persisted = JSON.parse(fs.readFileSync(authorAction.stateFile, 'utf8'));
     assert.equal(persisted.pending.action, launchAction.action);
     assert.notEqual(persisted.pending.action, 'author');
+  }));
+
+  it('accepts design-review fixes scoped to the design itself', () => withFixture((fixture, repo) => {
+    let designRel = null;
+    const stop = new Error('reached apply-fixes');
+    assert.throws(() => drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['design', '--orchestrator', 'claude', '--', 'build a thing'],
+      policy: {
+        author: (action) => {
+          fs.writeFileSync(action.path, DESIGN_BODY);
+          designRel = path.relative(repo.dir, action.path).split(path.sep).join('/');
+          return { path: action.path };
+        },
+        waveResults: firstReview(report([designFinding()])),
+        fix: () => ({ affectedPaths: [designRel], dependsOn: [], verification: ['node --version'] }),
+      },
+      onAction: (action) => { if (action.action === 'apply-fixes') throw stop; },
+    }), (err) => err === stop);
+  }));
+
+  it('asks approval for the post-review design revision, not the authored one', () => withFixture((fixture, repo) => {
+    let designPath = null;
+    let approval = null;
+    const stop = new Error('reached approval');
+    assert.throws(() => drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['design', '--orchestrator', 'claude', '--', 'build a thing'],
+      policy: {
+        author: (action) => { designPath = action.path; fs.writeFileSync(designPath, DESIGN_BODY); return { path: designPath }; },
+        waveResults: firstReview(report([designFinding()])),
+        fix: () => ({ affectedPaths: [path.relative(repo.dir, designPath).split(path.sep).join('/')], dependsOn: [], verification: ['node --version'] }),
+        applyFixes: (action) => {
+          fs.writeFileSync(designPath, fs.readFileSync(designPath, 'utf8').replace('## Final Integration\n', '## Final Integration\nReview-applied change.\n'));
+          return { clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })) };
+        },
+      },
+      onAction: (action) => { if (action.action === 'ask-user' && action.question === 'approval') { approval = action; throw stop; } },
+    }), (err) => err === stop);
+    assert.equal(approval.items[0].governingHash, governingHash(fs.readFileSync(designPath, 'utf8'), { kind: 'design' }).hash);
   }));
 });

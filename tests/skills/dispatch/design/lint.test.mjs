@@ -4,8 +4,17 @@ import { describe, it } from 'node:test';
 import { lintDesign } from '../../../../skills/dispatch/scripts/design/lint.mjs';
 import { requiredDesignSections } from '../../../helpers/design-document-fixture.mjs';
 
+const BOX = [
+  '> **TL;DR:** Two increments deliver the demo.',
+  '> **Decide:** none',
+  '> **Risk:** med — two dependent increments',
+  '> **Increments:** 2',
+].join('\n');
+
 const base = [
   '# D',
+  '',
+  BOX,
   requiredDesignSections(['I01', 'I02']),
   '## Architecture & Boundaries',
   'x',
@@ -55,5 +64,55 @@ describe('design lint', () => {
   it('does not accept increment-shaped rows outside the graph section', () => {
     const stray = `${base.replace('## Increment Dependency Graph', '## Other Section')}\n| I03 | 3 | outside | none | c |`;
     assert.equal(hasDiagnostic(stray, 'missing-increments'), true);
+  });
+});
+
+// SECTION: Summary box and template placeholders
+
+const codes = source => lintDesign(source).diagnostics.map(({ code }) => code);
+const withBox = box => base.replace(BOX, box);
+
+describe('design summary box', () => {
+  it('design summary box accepts the ordered TL;DR, Decide, Risk, Increments box', () => {
+    const linted = lintDesign(base);
+    assert.deepEqual(linted.diagnostics, []);
+    assert.equal(linted.valid, true);
+  });
+
+  it('design summary box rejects a missing box', () => {
+    assert.ok(codes(base.replace(`${BOX}\n`, '')).includes('missing-summary-box'));
+  });
+
+  it('design summary box rejects misordered, extra, empty, and malformed labels', () => {
+    const lines = BOX.split('\n');
+    const cases = {
+      misordered: [lines[0], lines[2], lines[1], lines[3]].join('\n'),
+      extra: `${BOX}\n> **Scope:** a, b`,
+      missingLabel: [lines[0], lines[1], lines[2]].join('\n'),
+      empty: BOX.replace('> **Decide:** none', '> **Decide:**'),
+      risk: BOX.replace('med — two dependent increments', 'medium - two'),
+      increments: BOX.replace('> **Increments:** 2', '> **Increments:** two'),
+    };
+    for (const [name, box] of Object.entries(cases)) {
+      assert.ok(codes(withBox(box)).includes('summary-label'), name);
+    }
+  });
+
+  it('design summary box requires Increments to equal the graph increment count', () => {
+    assert.ok(codes(withBox(BOX.replace('> **Increments:** 2', '> **Increments:** 3'))).includes('summary-label'));
+  });
+});
+
+describe('design template placeholder', () => {
+  it('design template placeholder rejects leftover design.md tokens', () => {
+    for (const leftover of ['Touches <what this increment changes>.', 'Paths `<paths>`.']) {
+      const source = base.replace('## Architecture & Boundaries\nx', `## Architecture & Boundaries\n${leftover}`);
+      assert.ok(codes(source).includes('leftover-placeholder'), leftover);
+    }
+  });
+
+  it('design template placeholder ignores fenced examples', () => {
+    const fenced = base.replace('## Architecture & Boundaries\nx', '## Architecture & Boundaries\n```md\n<paths>\n```');
+    assert.ok(!codes(fenced).includes('leftover-placeholder'));
   });
 });

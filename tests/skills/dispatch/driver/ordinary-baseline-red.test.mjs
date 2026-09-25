@@ -92,7 +92,7 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
         packet = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8')).packet;
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
       },
       verify(action) {
         const base = ordinaryDriverPolicy(fixture.repo).verify(action);
@@ -107,8 +107,8 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.match(packet.governingOutcome.title, /Plan/);
     assert.equal(packet.criteria[0].evidenceClass, 'verify');
     const walkthrough = fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8');
-    assert.match(walkthrough, /\[SC1\] delivered value=2/);
+    assert.match(walkthrough, /^\| SC1 \| delivered value=2 \|/m);
     assert.match(walkthrough, /reviewer: host/);
-    assert.doesNotMatch(walkthrough, /\[SC1\] Pending/);
+    assert.doesNotMatch(walkthrough, /^\| SC1 \|[^\n]*\| Pending/m);
   });
 });

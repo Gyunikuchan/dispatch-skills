@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from './driver-harness.mjs';
+import { conformPlan, drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from './driver-harness.mjs';
 import { loadSchema, validateAgainstSchema } from '../../skills/dispatch/scripts/driver/actions.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
@@ -78,7 +78,7 @@ export function ordinaryDriverPolicy(repo, overrides = {}) {
       const testsOnly = action.fields.stage === 'tests-only';
       fs.writeFileSync(path.join(repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
         ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-      return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
     },
     verify(action) {
       return { results: action.commands.map(command => {
@@ -90,6 +90,9 @@ export function ordinaryDriverPolicy(repo, overrides = {}) {
   };
 }
 export function driveOrdinaryImplementation({ fixture, repo, plan }, options = {}) {
+  // Fixtures may edit criteria after writing; resync the summary table (idempotent on conforming plans).
+  const planFile = path.resolve(repo.dir, plan);
+  if (fs.existsSync(planFile)) fs.writeFileSync(planFile, conformPlan(fs.readFileSync(planFile, 'utf8')));
   return drive(fixture, { cwd: repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', plan], policy: ordinaryDriverPolicy(repo, options.policy),
     onAction(action) { assert.deepEqual(validateAgainstSchema(loadSchema(action.action), action), [], JSON.stringify(action)); if (!options.allowErrors) assert.equal(action.error, undefined, JSON.stringify(action)); options.onAction?.(action); }, ...Object.fromEntries(Object.entries(options).filter(([key]) => !['policy', 'onAction', 'allowErrors'].includes(key))) });
 }
@@ -104,7 +107,7 @@ export const LINT_CRITERION = '- [SC3] Test file stays lint-clean.\n  - Changes:
  */
 export function tierFixture({ lint = false, ...options } = {}) {
   const fixture = createOrdinaryDriverFixture({ finalCommand: true, ...options });
-  if (lint) fs.writeFileSync(fixture.plan, fs.readFileSync(fixture.plan, 'utf8').replace('## Proposed Changes', `${LINT_CRITERION}## Proposed Changes`));
+  if (lint) fs.writeFileSync(fixture.plan, conformPlan(fs.readFileSync(fixture.plan, 'utf8').replace('## Proposed Changes', `${LINT_CRITERION}## Proposed Changes`)));
   return fixture;
 }
 
@@ -117,7 +120,7 @@ export function tierPolicy(fixture, overrides = {}) {
     delegateWrite(action) {
       if (action.fields.stage === 'tests-only') return base.delegateWrite(action);
       fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
-      return { raw: JSON.stringify(implementationOutcome({ evidence: ids.map(id => `CRITERION ${id} | delivered value=2 | ${id === 'SC3' ? 'tests/sample.test.mjs' : 'src/app.js'}`) })) };
+      return { raw: JSON.stringify(implementationOutcome({ evidence: ids.map(id => `CRITERION ${id} | ${id === 'SC3' ? 'tests/sample.test.mjs' : 'src/app.js'} | delivered value=2`) })) };
     },
     // Drop the base reply's single scopeHash so each simulated record carries its own command's scope hash.
     verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...result }) => result) })),

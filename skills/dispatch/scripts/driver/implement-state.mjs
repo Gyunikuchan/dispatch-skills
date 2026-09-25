@@ -7,6 +7,7 @@ import { foldSegments } from '../ledger/events.mjs';
 import { resolveLedgerPath } from '../artifacts/resolve-paths.mjs';
 import { emitAction } from './actions.mjs';
 import { writeRunState } from './state.mjs';
+import { DEFERRED, cell, isPassing, renderTraceability, replaceBoxLine, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
 
 const MARKER = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
 
@@ -60,7 +61,6 @@ export function ruling(state, key, decision, reason, status = 'resolved') {
   state.ordinary.rulings ??= [];
   state.ordinary.rulings.push(data);
 }
-const cell = value => String(value ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
 /** Readable RED gate evidence: reviewers inspect this table, not the JSON run state. */
 function redMatrix(ordinary) {
   const rows = (ordinary.redValidated?.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '))
@@ -91,25 +91,44 @@ function replaceVerification(text, lines) {
   // NOTE: a host-authored walkthrough may use CRLF; an LF-only match would silently skip the rewrite.
   return text.replace(/## Verification & Validation\r?\n[\s\S]*?\r?\n## Outcome Traceability/, () => `## Verification & Validation\n${lines.join('\n')}\n\n## Outcome Traceability`);
 }
-function renderValidatedEvidence(text, ordinary) {
-  const matrix = ordinary ? redMatrix(ordinary) : [];
-  if (!ordinary?.implementationComplete || !ordinary.completionResults) {
-    return matrix.length ? replaceVerification(text, [...matrix, 'Completion evidence pending.']) : text;
-  }
-  const records = ordinary.completionResults.flatMap(result => result.criterionEvidence ?? []);
-  const trace = ordinary.criteria.map(criterion => {
+/** Pending rows until completion evidence exists; never bullets. */
+export const pendingRows = criteria => criteria.map(criterion => ({ id: criterion.id, behavior: criterion.title ?? criterion.text ?? '', path: 'pending implementation', evidence: 'Pending' }));
+function traceRows(ordinary, records) {
+  if (!ordinary.implementationComplete || !ordinary.completionResults) return pendingRows(ordinary.criteria);
+  return ordinary.criteria.map(criterion => {
     const row = ordinary.envelope?.evidence?.find(item => typeof item === 'string' && item.startsWith(`CRITERION ${criterion.id} |`));
-    const parts = row?.split('|').map(item => item.trim()) ?? [];
+    // Rows are `CRITERION SC# | <path> | <behavior>` (write.mjs); only the first two pipes delimit, so the behavior keeps its own.
+    const segments = row?.split('|') ?? [];
+    const parts = row ? [...segments.slice(0, 2), segments.slice(2).join('|')].map(item => item.trim()) : [];
     // Evidence at the current epoch; an earlier record for the same criterion is stale.
     const evidence = records.find(item => item.criterionId === criterion.id && item.mutationEpoch === (ordinary.mutationEpoch ?? 0));
-    if (row && !evidence && criterion.evidence !== 'red' && criterion.commands.length && criterion.commands.every(command => (ordinary.finalOnly ?? []).includes(command))) return `- [${criterion.id}] Deferred to final gate — production path: \`${parts[2]}\`.`;
-    if (!row || (criterion.evidence !== 'red' && !evidence)) return `- [${criterion.id}] Pending — missing validated ${criterion.evidence} evidence.`;
+    const base = { id: criterion.id, behavior: parts[2] || criterion.title || '', path: parts[1] ? `\`${parts[1]}\`` : 'pending implementation' };
+    if (row && !evidence && criterion.evidence !== 'red' && criterion.commands.length && criterion.commands.every(command => (ordinary.finalOnly ?? []).includes(command))) return { ...base, evidence: DEFERRED };
+    if (!row || (criterion.evidence !== 'red' && !evidence)) return { ...base, evidence: `Pending — missing validated ${criterion.evidence} evidence.` };
     const fresh = evidence ? `${evidence.evidenceClass}; ${evidence.reviewer}; ${evidence.scenario}; revision ${evidence.inspectedRevision}; ${evidence.observableResult}; limitations: ${evidence.limitations}` : `red; mutation epoch ${ordinary.mutationEpoch}`;
-    return `- [${criterion.id}] ${parts[1]} — production path: \`${parts[2]}\`; evidence: ${fresh}.`;
+    return { ...base, evidence: fresh };
   });
+}
+function renderValidatedEvidence(text, ordinary) {
+  if (!ordinary) return text;
+  const matrix = redMatrix(ordinary);
+  const records = (ordinary.completionResults ?? []).flatMap(result => result.criterionEvidence ?? []);
+  if (Array.isArray(ordinary.criteria)) text = renderTraceabilityBox(text, ordinary, records);
+  if (!ordinary.implementationComplete || !ordinary.completionResults) {
+    return matrix.length ? replaceVerification(text, [...matrix, 'Completion evidence pending.']) : text;
+  }
   const manual = records.map(item => `- [${item.criterionId}] ${item.evidenceClass}; reviewer: ${item.reviewer}; scenario: ${item.scenario}; inspected revision: ${item.inspectedRevision}; observable result: ${item.observableResult}; limitations: ${item.limitations}; mutation epoch: ${item.mutationEpoch}.`);
-  text = text.replace(/## Outcome Traceability\r?\n[\s\S]*?\r?\n## Key Deviations/, () => `## Outcome Traceability\n${trace.join('\n')}\n\n## Key Deviations`);
   return replaceVerification(text, [...matrix, '### Manual Verification', manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.']);
+}
+function renderTraceabilityBox(text, ordinary, records) {
+  const rows = traceRows(ordinary, records);
+  text = text.replace(/## Outcome Traceability\r?\n[\s\S]*?\r?\n## Key Deviations/, () => `## Outcome Traceability\n${renderTraceability(rows)}\n\n## Key Deviations`);
+  text = replaceStatusLine(text, `${rows.filter(isPassing).length}/${ordinary.criteria.length} SC passing`);
+  // The driver owns none-ness only; an authored one-line summary is kept (lint checks none-ness alone).
+  const noDeviations = (sectionBody(text, 'Key Deviations') ?? []).map(line => line.trim()).filter(Boolean).join('\n') === 'None.';
+  if (noDeviations) text = replaceBoxLine(text, 'Deviations', 'none');
+  else if (/^> \*\*Deviations:\*\* none\s*$/m.test(text)) throw new Error('Deviations summary required: Key Deviations records a deviation; replace "> **Deviations:** none" with a one-line summary.');
+  return text;
 }
 // SECTION: Durable evidence
 

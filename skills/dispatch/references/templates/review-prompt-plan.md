@@ -22,7 +22,7 @@ executing the plan as written delivers the requirement.
 ## against
 
 - The requirement: every part traced to a proposed change, and nothing added beyond it.
-- The plan's `## Success Criteria`: each criterion observable and paired with a named test or exact
+- The plan's summary box and `## Success Criteria` (summary table, then detailed entries): each criterion observable and paired with a named test or exact
   verification step whose command runs only that criterion's tests and matches existing test names.
 - An attached "Approved technical-design context" section: the increment's inherited contract and
   acceptance criteria. Treat the governed design as settled; raise a design-changing proposal as an

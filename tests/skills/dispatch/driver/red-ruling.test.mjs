@@ -40,7 +40,7 @@ describe('ordinary driver: RED rulings accepted (SC6)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-red-join-'));
     try {
       const walkthroughPath = path.join(dir, 'walkthrough.md');
-      fs.writeFileSync(walkthroughPath, '# Walkthrough\n\n## Verification & Validation\n- pending\n\n## Outcome Traceability\n- pending\n\n## Key Deviations\n- none\n');
+      fs.writeFileSync(walkthroughPath, '# Walkthrough\n\n> **TL;DR:** Pending.\n> **Status:** 0/0 SC passing\n> **Deviations:** none\n\n## Verification & Validation\n- pending\n\n## Outcome Traceability\n- pending\n\n## Key Deviations\nNone.\n');
       const state = { repoRoot: dir, planPath: path.join(dir, 'plan.md'), walkthroughPath, governingHash: 'sha256:x', ordinary: {
         criteria: [], redValidated: { scopeHash: 'x', evidence: [], exceptions: [{ criterionId: 'SC1', kind: 'carry-over', runId: 'gone' }] } } };
       assert.doesNotThrow(() => persistEvidence(state));

@@ -1,6 +1,9 @@
 // @ts-check
 
 import { parseIncrementGraph } from './graph.mjs';
+import { findPlaceholders, lintSummaryBox } from '../lib/summary-box.mjs';
+
+const BOX_LABELS = ['TL;DR', 'Decide', 'Risk', 'Increments'];
 
 const REQUIRED_SECTIONS = [
   'Context & Intent',
@@ -85,6 +88,13 @@ export function lintDesign(source) {
       }
     }
   }
+
+  const count = graph.increments.length;
+  const countRule = value => (Number(value) === count ? null : `Summary Increments ${value} must equal the graph increment count ${count}.`);
+  for (const item of lintSummaryBox(source, BOX_LABELS, { valueRules: { Increments: value => (/^[1-9]\d*$/.test(value) ? countRule(value) : `Summary Increments value "${value}" must be a positive integer.`) } })) {
+    diagnostics.push({ code: item.rule, message: item.message });
+  }
+  for (const { token, line } of findPlaceholders(source)) diagnostics.push({ code: 'leftover-placeholder', message: `Leftover template placeholder ${token} at line ${line}.` });
 
   const merged = [...diagnostics, ...graph.diagnostics];
   const increments = graph.increments.map(({ id, priority, prerequisites }) => ({ id, priority, prerequisites }));

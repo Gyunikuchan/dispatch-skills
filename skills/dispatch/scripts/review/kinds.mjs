@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 import { lintDesign } from '../design/lint.mjs';
 import { lintPlan } from '../plan/lint.mjs';
+import { lintWalkthrough } from '../walkthrough/lint.mjs';
 
 // SECTION: Shared kind data
 
@@ -99,7 +100,9 @@ export const REVIEW_KINDS = Object.freeze({
     rebuttalBlock: template('rebuttal-code.md'),
     reportSchema: template(path.join('schemas', 'report-code.json')),
     rebuttalSchema: template(path.join('schemas', 'rebuttal.json')),
-    lint: null,
+    // One-argument internal consistency; completeness against plan criteria is prepareCodeReview's and the driver's.
+    lint: lintWalkthrough,
+    lintDecision: 'walkthrough-lint',
     acceptsDesignContext: true,
   }),
   design: Object.freeze({

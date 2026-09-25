@@ -12,6 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { evaluateConsensus } from './consensus.mjs';
 import { assembleTemplate, extractTemplate, fillTemplate } from './fill-template.mjs';
 import { PROMPT_FRAME, REBUTTAL_FRAME, REVIEW_KINDS } from './kinds.mjs';
+import { criterionMappings } from '../verification/evidence.mjs';
+import { lintWalkthrough } from '../walkthrough/lint.mjs';
+import { PLANLESS, cell, renderTraceability } from '../walkthrough/traceability.mjs';
 import {
   getCurrentBranch,
   resolveArtifacts,
@@ -228,7 +231,8 @@ function resolvePair(request, repoRoot) {
   };
 }
 
-function renderWalkthrough({ summary, paths, verification }) {
+/** Renders the template with the box filled and Pending rows from paired-plan criteria, or the plan-less form. */
+function renderWalkthrough({ summary, paths, verification, criteria }) {
   const template = extractTemplate(fs.readFileSync(
     path.join(DISPATCH_DIR, 'references', 'templates', 'walkthrough.md'),
     'utf8',
@@ -239,14 +243,18 @@ function renderWalkthrough({ summary, paths, verification }) {
   const verificationResult = /^exit\s+\S+\s*;/i.test(verification.result)
     ? verification.result
     : `exit unknown; ${verification.result}`;
+  const trace = criteria
+    ? renderTraceability(criteria.map((item) => ({ id: item.id, behavior: item.title, path: item.paths.filter(Boolean).map((file) => `\`${file}\``).join(', ') || '—', evidence: 'Pending' })))
+    : PLANLESS;
+  const status = criteria ? `0/${criteria.length} SC passing` : 'n/a';
   return `${template
     .replaceAll('<Goal Description>', summary)
-    .replace('Summary of changes made, context, and what was accomplished.', summary)
+    .replace(/^> \*\*TL;DR:\*\* .*$/m, `> **TL;DR:** ${cell(summary)}`)
+    .replace(/^> \*\*Status:\*\* .*$/m, `> **Status:** ${status}`)
     .replace(/### <Component Name>[\s\S]*?(?=\n## Verification & Validation)/, `### Selected review scope\n${changes}\n`)
-    .replace('- Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).', `- Command: \`${verification.command}\` — ${verificationResult}`)
-    .replace('- Concrete manual verification performed and observed results.', '- None recorded.')
-    .replace('Deviations from original plan or design intent, with rationale (or "None").', 'None.')
-    .replace('Accepted SHOULD / CONSIDER items not applied in this pass, each with a one-line reason (or "None").', 'None.')
+    .replace(/^- Command: `<test command>`.*$/m, `- Command: \`${verification.command}\` — ${verificationResult}`)
+    .replace(/^- Per `verify`\/`review` criterion.*$/m, '- None recorded.')
+    .replace(/## Outcome Traceability\n[\s\S]*?(?=\n\n## Key Deviations)/, `## Outcome Traceability\n${trace}`)
     .trim()}\n`;
 }
 
@@ -480,11 +488,32 @@ export function prepareCodeReview(request, {
         cleanupPaths: [],
       };
     }
-    writeNewWalkthrough(walkthroughPath, renderWalkthrough({
+    const criteria = pair.plan?.exists ? criterionMappings(fs.readFileSync(pair.plan.path, 'utf8')) : null;
+    const rendered = renderWalkthrough({
       summary: request.summary,
       paths: gitSnapshot.paths,
       verification: request.verification,
-    }));
+      criteria: criteria?.length ? criteria : null,
+    });
+    // Lint before writing so a defective walkthrough never lands.
+    const lint = lintWalkthrough(rendered, criteria?.length ? { criteria } : {});
+    if (lint.defects.length) {
+      return {
+        schemaVersion: 1,
+        kind: 'code',
+        action,
+        status: 'decision-required',
+        decision: REVIEW_KINDS.code.lintDecision,
+        artifact: {
+          canonicalPath: toManifestPath(walkthroughPath, repoRoot),
+          tier: pair.walkthrough.tier,
+          slug: pair.slug,
+        },
+        defects: lint.defects,
+        cleanupPaths: [],
+      };
+    }
+    writeNewWalkthrough(walkthroughPath, rendered);
     generated = true;
   }
 

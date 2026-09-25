@@ -30,7 +30,7 @@ import path from 'node:path';
 import { createStubDispatchEnvironment } from './stub-dispatch-fixture.mjs';
 import { scanResolutionLog } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { materializedFingerprint } from '../../skills/dispatch/scripts/lib/git-state.mjs';
-import { captureRepositoryState } from '../../skills/dispatch/scripts/verification/evidence.mjs';
+import { captureRepositoryState, criterionMappings } from '../../skills/dispatch/scripts/verification/evidence.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',
@@ -38,11 +38,40 @@ export const DRIVER_ACTIONS = Object.freeze([
 
 // SECTION: fixtures
 
+/**
+ * Rebuilds the Success Criteria summary table from the detailed entries, so fixtures that append
+ * criteria stay lint-clean without restating each row.
+ * @param {string} body
+ */
+export function conformPlan(body) {
+  const criteria = criterionMappings(body);
+  const lines = body.split('\n');
+  const start = lines.findIndex((line) => /^## Success Criteria\s*$/.test(line));
+  if (start === -1 || !criteria.length) return body;
+  const kept = lines.filter((line, index) => !(index > start && line.startsWith('|') && lines.slice(start + 1, index).every((prior) => !/^##\s/.test(prior))));
+  const first = kept.findIndex((line, index) => index > start && /^- \[SC\d+\]/.test(line));
+  const table = [
+    '| SC | Outcome | Evidence | Verify |',
+    '| --- | --- | --- | --- |',
+    ...criteria.map((item) => `| ${item.id} | ${item.title.replace(/\|/g, '\\|')} | ${item.evidence} | ${item.commands.map((command) => `\`${command.replace(/\|/g, '\\|')}\`${item.finalCommands.includes(command) ? ' [FINAL]' : ''}`).join('; ') || '—'} |`),
+  ];
+  kept.splice(first, 0, ...table);
+  return kept.join('\n');
+}
+
 export const PLAN_BODY = [
   '# Plan',
   '',
+  '> **TL;DR:** Implement and verify the sample.',
+  '> **Decide:** none',
+  '> **Risk:** low — one sample module',
+  '> **Scope:** src/app.js',
+  '',
   '## Success Criteria',
   '',
+  '| SC | Outcome | Evidence | Verify |',
+  '| --- | --- | --- | --- |',
+  '| SC1 | Implement and verify the sample. | red | `node --test tests/sample.test.mjs` |',
   '- [SC1] Implement and verify the sample.',
   '  - Changes: `src/app.js`',
   '  - Verify: `node --test tests/sample.test.mjs`',
@@ -71,6 +100,11 @@ const DESIGN_FIELDS = ['Outcome', 'Scope', 'Non-scope', 'Observable behavior', '
 
 export const DESIGN_BODY = [
   '# Design',
+  '',
+  '> **TL;DR:** One base increment.',
+  '> **Decide:** none',
+  '> **Risk:** low — single increment',
+  '> **Increments:** 1',
   '',
   '## Context & Intent',
   'x',
@@ -124,7 +158,7 @@ export function makeGitRepo({ dirty = false } = {}) {
 
 export function writePlan(repoDir, name = '2026-09-22-sample.md', body = PLAN_BODY) {
   const file = path.join(repoDir, '.scratch', 'plan', name);
-  fs.writeFileSync(file, body);
+  fs.writeFileSync(file, conformPlan(body));
   return file;
 }
 

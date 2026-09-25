@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { allProviders, implementationOutcome, parseAction, report, runDispatch } from '../../../helpers/driver-harness.mjs';
+import { allProviders, conformPlan, implementationOutcome, parseAction, report, runDispatch } from '../../../helpers/driver-harness.mjs';
 import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
@@ -63,7 +63,7 @@ describe('--drive', () => {
 
   it('runs a completion gate once, stops with its summary, and reruns it only after the tree changes', () => {
     const fx = createOrdinaryDriverFixture();
-    fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
+    fs.writeFileSync(fx.plan, conformPlan(fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify')));
     const base = ordinaryDriverPolicy(fx.repo);
     const { action: first } = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]);
     let gate = null;
@@ -103,7 +103,7 @@ describe('--drive', () => {
 
   it('auto-approves an explicit low run with a clean baseline and no red criteria, recording the driver as actor', () => {
     const fx = createOrdinaryDriverFixture();
-    fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
+    fs.writeFileSync(fx.plan, conformPlan(fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify')));
     const { action: first } = step(fx, ['--run', 'implement', '--level', 'low', '--orchestrator', 'claude', '--', fx.plan]);
     const { stops } = driveToDone(fx, first, (action) => {
       assert.notEqual(action.question, 'approval', 'explicit low with nothing to rule on skips the approval ask');

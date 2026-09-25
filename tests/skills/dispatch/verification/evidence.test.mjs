@@ -284,6 +284,27 @@ describe('verification evidence', () => {
     assert.match(packet.governingOutcome.context, /real context paragraph/);
   });
 
+  // NOTE: the leaf title avoids ";" so RED identifiers stay splittable; the suite title carries the pinned selector.
+  describe('outcome packet reads TL;DR', () => it('takes plan context from the summary box', () => {
+    const boxed = [
+      '---',
+      '{"dispatch":{"schemaVersion":1,"kind":"plan","slug":"sample","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}',
+      '---',
+      '# Sample plan',
+      '',
+      '> **TL;DR:** Ship the boxed context sentence.',
+      '> **Decide:** none',
+      '> **Risk:** low — additive change',
+      '> **Scope:** src/a.js',
+      '',
+      '## Key Decisions & Context',
+      '- A decision bullet that must not become context.',
+      '## Proposed Changes',
+      '#### [MODIFY] src/a.js',
+    ].join('\n');
+    assert.equal(outcomeFirstPacket(boxed, []).governingOutcome.context, 'Ship the boxed context sentence.');
+  }));
+
   it('normalizes volatile diagnostics and compares stable failure identities', () => {
     const first = failureIdentity({
       exitStatus: 1,

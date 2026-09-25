@@ -8,6 +8,11 @@ import { requiredDesignSections } from '../../../helpers/design-document-fixture
 const base = [
   '# D',
   '',
+  '> **TL;DR:** Two increments.',
+  '> **Decide:** none',
+  '> **Risk:** low — fixture',
+  '> **Increments:** 2',
+  '',
   '## Architecture & Boundaries',
   'x',
   '## Alternatives & Decisions',

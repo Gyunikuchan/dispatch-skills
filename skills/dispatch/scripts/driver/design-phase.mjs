@@ -55,6 +55,10 @@ export async function advanceDesign(state, reply) {
     if (action.action !== 'done') return action;
     if (!['complete', 'skipped'].includes(action.outcome)) return action;
     delete state.reviewState;
+    // Review fixes edit governed sections, so approval must bind the settled revision, not the authored one.
+    const settled = governingHash(fs.readFileSync(state.designPath, 'utf8'), { kind: 'design' });
+    if (settled.status !== 'ok') throw new Error(settled.diagnostic);
+    state.governingHash = settled.hash;
     state.ordinary.step = 'design-approval';
     return emitAction(state, 'ask-user', { question: 'approval', text: 'Approve this settled technical design at its current revision.', items: [{ governingHash: state.governingHash }] }, ['Relay the question; answer with {"answer": {"decision": "approved", "governingHash": "<displayed hash>"}}.']);
   }

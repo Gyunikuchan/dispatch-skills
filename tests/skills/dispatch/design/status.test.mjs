@@ -12,10 +12,16 @@ import {
   updateExecutionStatus,
 } from '../../../../skills/dispatch/scripts/design/status.mjs';
 import { parseIncrementGraph } from '../../../../skills/dispatch/scripts/design/graph.mjs';
+import { lintDesign } from '../../../../skills/dispatch/scripts/design/lint.mjs';
 import { governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 const DESIGN_BODY = [
   '# Demo design',
+  '',
+  '> **TL;DR:** Three increments switch the demo over.',
+  '> **Decide:** none',
+  '> **Risk:** low — demo fixture',
+  '> **Increments:** 3',
   '',
   '## Architecture & Boundaries',
   'boundaries',
@@ -109,7 +115,7 @@ describe('design-run selection and status mirror', () => {
     });
 
     it('ignores a fenced Execution Status heading outside the real section', () => {
-      const base = DESIGN_BODY.split('\n').slice(0, 15).join('\n');
+      const base = DESIGN_BODY.split('\n').slice(0, 20).join('\n');
       const fenced = [
         base,
         '## Preparation',
@@ -183,5 +189,30 @@ describe('updateExecutionStatus', () => {
     fs.writeFileSync(file, broken);
     assert.throws(() => updateExecutionStatus({ designPath: file, states: {} }), /unclosed code fence/);
     assert.equal(fs.readFileSync(file, 'utf8'), broken);
+  });
+});
+
+describe('summary box governance', () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-run-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('status mirror keeps summary box governed', () => {
+    const boxCodes = source => lintDesign(source).diagnostics
+      .map(({ code }) => code)
+      .filter(code => code === 'missing-summary-box' || code === 'summary-label');
+    const before = governingHash(DESIGN_BODY, { kind: 'design' }).hash;
+    const edited = DESIGN_BODY.replace('Three increments switch the demo over.', 'Three increments do something else.');
+    assert.notEqual(governingHash(edited, { kind: 'design' }).hash, before, 'box text is governed content');
+
+    const file = path.join(dir, 'design.md');
+    fs.writeFileSync(file, DESIGN_BODY);
+    updateExecutionStatus({ designPath: file, states: { I01: 'complete' } });
+    const after = fs.readFileSync(file, 'utf8');
+    assert.equal(governingHash(after, { kind: 'design' }).hash, before);
+    assert.match(after, /^# Demo design\n\n> \*\*TL;DR:\*\* Three increments switch the demo over\.\n> \*\*Decide:\*\* none\n> \*\*Risk:\*\* low — demo fixture\n> \*\*Increments:\*\* 3\n\n## /);
+    assert.deepEqual(boxCodes(after), []);
+    const boxless = after.replace(/^> .*\n/gm, '');
+    assert.deepEqual(boxCodes(boxless), ['missing-summary-box']);
   });
 });

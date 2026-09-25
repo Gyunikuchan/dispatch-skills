@@ -47,7 +47,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
         delegateWrite(action) {
           if (action.fields.stage === 'tests-only') return base.delegateWrite(action);
           fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
-          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js', 'CRITERION SC2 | delivered value=2 | src/app.js'] })) };
+          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
         },
         verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...item }) => item) })),
       },
@@ -131,7 +131,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
       if (action.fields.stage === 'production') {
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js', 'CRITERION SC2 | delivered value=2 | src/app.js'] })) };
+        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
       }
       calls++; fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
       return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: calls === 1 ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample', 'RED-MATRIX SC2 | tests/sample.test.mjs | exit 1 test:sample'] })) };

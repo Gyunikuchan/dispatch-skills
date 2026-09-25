@@ -9,6 +9,11 @@ import { withDispatchFrontmatter } from '../../../../skills/dispatch/scripts/rev
 import { requiredDesignSections } from '../../../helpers/design-document-fixture.mjs';
 
 const validDesign = `# Design
+
+> **TL;DR:** One base increment.
+> **Decide:** none
+> **Risk:** low — single increment
+> **Increments:** 1
 ${requiredDesignSections(['I01'])}
 ## Architecture & Boundaries
 A.

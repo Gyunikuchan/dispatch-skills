@@ -7,7 +7,16 @@ import { lintPlan } from '../../../../skills/dispatch/scripts/plan/lint.mjs';
 
 const VALID_PLAN = [
   '# Plan',
+  '',
+  '> **TL;DR:** Change and test the feature.',
+  '> **Decide:** none',
+  '> **Risk:** low — one module and its test',
+  '> **Scope:** src/a.js, tests/a.test.js',
+  '',
   '## Success Criteria',
+  '| SC | Outcome | Evidence | Verify |',
+  '| --- | --- | --- | --- |',
+  '| SC1 | Change and test the feature. | red | `node --test tests/a.test.js` |',
   '- [SC1] Change and test the feature.',
   '  - Changes: `src/a.js`, tests/a.test.js',
   '  - Verify: `node --test tests/a.test.js`',
@@ -74,7 +83,7 @@ describe('deterministic plan lint', () => {
       '- `node --test tests/a.test.js`',
       '- `npm test` and `npm run lint`\n- `npm test` then `npm run check`',
     )).warnings.filter(({ rule }) => rule === 'ambiguous-command');
-    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 13', 'line 14']);
+    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 22', 'line 23']);
     assert.ok(rules(lintPlan(VALID_PLAN.replace(
       '- `node --test tests/a.test.js`',
       '```sh\n# explanation\n\n```',
@@ -128,10 +137,10 @@ describe('deterministic plan lint', () => {
     assert.ok(rules(lintPlan(VALID_PLAN.replace('  - Evidence: red\n', ''))).includes('criterion-evidence'));
     assert.ok(rules(lintPlan(VALID_PLAN.replace('Evidence: red', 'Evidence: maybe'))).includes('criterion-evidence'));
     assert.ok(rules(lintPlan(VALID_PLAN.replace('  - Test rationale: Behavioral failure isolates the feature and protects a plausible regression.\n', ''))).includes('criterion-test-rationale'));
-    const review = VALID_PLAN.replace('Evidence: red', 'Evidence: review');
+    const review = VALID_PLAN.replace('Evidence: red', 'Evidence: review').replace('| red |', '| review |');
     assert.ok(rules(lintPlan(review)).includes('criterion-review'));
     assert.deepEqual(lintPlan(review.replace('  - Test rationale:', '  - Review: artifact: src/a.js; scenario: inspect behavior; pass: observable outcome\n  - Test rationale:')).defects, []);
-    const critical = review.replace('Change and test the feature.', 'Protect recovery safety.').replace('  - Test rationale:', '  - Review: artifact: src/a.js; scenario: inspect recovery; pass: safe restoration\n  - Test rationale:');
+    const critical = review.replaceAll('Change and test the feature.', 'Protect recovery safety.').replace('  - Test rationale:', '  - Review: artifact: src/a.js; scenario: inspect recovery; pass: safe restoration\n  - Test rationale:');
     assert.ok(rules(lintPlan(critical)).includes('criterion-critical-review'));
     assert.deepEqual(lintPlan(critical.replace('  - Test rationale:', '  - Enforcement infeasibility: External human judgment has no deterministic oracle.\n  - Test rationale:')).defects, []);
   });
@@ -162,7 +171,7 @@ We reimplement latership and refill in bulk.`);
     const source = `${VALID_PLAN}\n<!-- TODO hidden -->\n> TBD quoted\n\`implement later\`\nProse says fill in this detail.`;
     const result = lintPlan(source);
     assert.equal(result.warnings.filter(({ rule }) => rule === 'placeholder').length, 1);
-    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 17/i);
+    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 26/i);
   });
 });
 
@@ -193,5 +202,130 @@ describe('plan lint: RED exception field', () => {
     assert.ok(!warned(VALID_PLAN));
     assert.ok(!warned(noTest.replace('  - Evidence: red', '  - Evidence: red\n  - RED exception: already-satisfied')));
     assert.ok(!warned(noTest.replace('  - Evidence: red', '  - Evidence: verify')));
+  });
+});
+
+// SECTION: Summary box, criteria table, and template placeholders
+
+const BOX = [
+  '> **TL;DR:** Change and test the feature.',
+  '> **Decide:** none',
+  '> **Risk:** low — one module and its test',
+  '> **Scope:** src/a.js, tests/a.test.js',
+].join('\n');
+const withBox = box => VALID_PLAN.replace(BOX, box);
+const boxRules = result => rules(result).filter(rule => rule === 'missing-summary-box' || rule === 'summary-label');
+
+describe('plan summary box', () => {
+  it('plan summary box accepts the ordered TL;DR, Decide, Risk, Scope box', () => {
+    assert.deepEqual(boxRules(lintPlan(VALID_PLAN)), []);
+    assert.deepEqual(boxRules(lintPlan(withBox(BOX.replace('> **Decide:** none', '> **Decide:** approve the rename')))), []);
+  });
+
+  it('plan summary box rejects a missing box', () => {
+    assert.ok(rules(lintPlan(VALID_PLAN.replace(`${BOX}\n\n`, ''))).includes('missing-summary-box'));
+  });
+
+  it('plan summary box rejects misordered, extra, duplicate, and empty labels', () => {
+    const lines = BOX.split('\n');
+    const cases = {
+      misordered: [lines[1], lines[0], lines[2], lines[3]].join('\n'),
+      extra: `${BOX}\n> **Status:** 0/1 SC passing`,
+      duplicate: `${BOX}\n> **Scope:** again`,
+      missingLabel: [lines[0], lines[1], lines[3]].join('\n'),
+      empty: BOX.replace('> **Scope:** src/a.js, tests/a.test.js', '> **Scope:**'),
+      lowercaseLabel: BOX.replace('**TL;DR:**', '**tl;dr:**'),
+    };
+    for (const [name, box] of Object.entries(cases)) {
+      assert.ok(rules(lintPlan(withBox(box))).includes('summary-label'), name);
+    }
+  });
+
+  it('plan summary box requires Risk as low|med|high — reason', () => {
+    for (const risk of ['medium — broad', 'Low — casing', 'low - hyphen', 'low —', 'high']) {
+      assert.ok(rules(lintPlan(withBox(BOX.replace('low — one module and its test', risk)))).includes('summary-label'), risk);
+    }
+    for (const risk of ['med — two modules', 'high — breaking contract']) {
+      assert.deepEqual(boxRules(lintPlan(withBox(BOX.replace('low — one module and its test', risk)))), [], risk);
+    }
+  });
+});
+
+const TWO_CRITERIA = VALID_PLAN
+  .replace(
+    "| SC1 | Change and test the feature. | red | `node --test tests/a.test.js` |",
+    "| SC1 | Change and test the feature. | red | `node --test tests/a.test.js` |\n| SC2 | Document the feature. | verify | `npm run hashes`; `npm test` [FINAL] |",
+  )
+  .replace(
+    '## Proposed Changes',
+    [
+      '- [SC2] Document the feature.',
+      '  - Changes: `src/a.js`',
+      '  - Verify: `npm run hashes`',
+      '  - Verify: `npm test` [FINAL]',
+      '  - Evidence: verify',
+      '  - Test rationale: Documentation churn is proven by the existing suite.',
+      '## Proposed Changes',
+    ].join('\n'),
+  );
+const tableRules = result => rules(result).filter(rule => /criteria-table/.test(rule) && rule !== 'missing-criteria-table');
+
+describe('plan criteria table', () => {
+  it('plan criteria table accepts rows matching detailed entries, including multi-Verify and [FINAL] cells', () => {
+    assert.deepEqual(lintPlan(VALID_PLAN).defects, []);
+    assert.deepEqual(lintPlan(TWO_CRITERIA).defects, []);
+    const spaced = TWO_CRITERIA.replace('| SC2 | Document the feature. |', '|  SC2  |  Document   the feature.  |');
+    assert.deepEqual(lintPlan(spaced).defects, []);
+  });
+
+  it('plan criteria table rejects detailed criteria without a summary table', () => {
+    const tableless = VALID_PLAN.replace(/\| SC \|.*\n\| --- .*\n\| SC1 .*\n/, '');
+    assert.ok(!tableless.includes('| SC |'));
+    assert.ok(rules(lintPlan(tableless)).includes('missing-criteria-table'));
+  });
+
+  it('plan criteria table rejects rows that differ in ID, order, Outcome, Evidence, or Verify', () => {
+    const row2 = '| SC2 | Document the feature. | verify | `npm run hashes`; `npm test` [FINAL] |';
+    const row1 = '| SC1 | Change and test the feature. | red | `node --test tests/a.test.js` |';
+    const cases = {
+      id: TWO_CRITERIA.replace('| SC2 | Document', '| SC3 | Document'),
+      order: TWO_CRITERIA.replace(`${row1}\n${row2}`, `${row2}\n${row1}`),
+      missingRow: TWO_CRITERIA.replace(`\n${row2}`, ''),
+      outcome: TWO_CRITERIA.replace('| SC2 | Document the feature. |', '| SC2 | Describe the feature. |'),
+      evidence: TWO_CRITERIA.replace('| verify | `npm run hashes`', '| red | `npm run hashes`'),
+      verify: TWO_CRITERIA.replace('`npm run hashes`; `npm test` [FINAL] |', '`npm run hashes`; `npm test` |'),
+    };
+    for (const [name, plan] of Object.entries(cases)) {
+      assert.notDeepEqual(tableRules(lintPlan(plan)), [], name);
+    }
+  });
+
+  it('plan criteria table renders an em dash Verify cell for a criterion without Verify', () => {
+    const review = VALID_PLAN
+      .replace('  - Verify: `node --test tests/a.test.js`\n', '')
+      .replace('  - Evidence: red', '  - Evidence: review\n  - Review: artifact: src/a.js; scenario: inspect behavior; pass: observable outcome')
+      .replace('| red | `node --test tests/a.test.js` |', '| review | — |');
+    assert.deepEqual(tableRules(lintPlan(review)), []);
+  });
+
+  it('plan criteria table rejects a table without detailed entries', () => {
+    const orphan = VALID_PLAN.replace(/- \[SC1\][\s\S]*?(?=## Proposed Changes)/, '');
+    assert.ok(orphan.includes('| SC1 |'));
+    assert.ok(!orphan.includes('- [SC1]'));
+    assert.ok(rules(lintPlan(orphan)).some(rule => /criteria-table/.test(rule)));
+  });
+});
+
+describe('plan template placeholder', () => {
+  it('plan template placeholder rejects leftover template tokens in prose and inline code', () => {
+    for (const leftover of ['Touch <relative-path> next.', 'Run `<test command>` now.', 'Slug `<yyyy-mm-dd>`.']) {
+      const result = lintPlan(`${VALID_PLAN}\n## Out of Scope\n${leftover}`);
+      assert.ok(rules(result).includes('leftover-placeholder'), leftover);
+    }
+  });
+
+  it('plan template placeholder ignores fenced blocks, non-template tokens, and machine-managed comments', () => {
+    const clean = `${VALID_PLAN}\n## Out of Scope\n\`\`\`md\n<relative-path>\n\`\`\`\nGeneric <T> stays.\n<!-- Populated during plan review cycles -->`;
+    assert.ok(!rules(lintPlan(clean)).includes('leftover-placeholder'));
   });
 });

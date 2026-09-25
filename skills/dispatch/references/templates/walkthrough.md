@@ -1,32 +1,34 @@
 # Walkthrough template
 
-Strict rendering of the shared
-[minimum walkthrough contract](../review.md#minimum-walkthrough-contract). External
-delegates read attached files as their primary task context.
+Strict rendering of the [minimum walkthrough contract](../review.md#minimum-walkthrough-contract).
 
 ````markdown
 # Walkthrough — <Goal Description>
 
-Summary of changes made, context, and what was accomplished.
+> **TL;DR:** <what changed>
+> **Status:** 0/1 SC passing
+> **Deviations:** none
 
 ## Changes Made
 
 ### <Component Name>
-- **[NEW]** `<relative-path>` — Purpose and new interface/behavior.
-- **[MODIFY]** `<relative-path>` — Concrete changes and invariants preserved.
-- **[DELETE]** `<relative-path>` — Removed symbols and cleanup.
+- **[NEW]** `<relative-path>` — Purpose and interface.
+- **[MODIFY]** `<relative-path>` — Changes and preserved invariants.
+- **[DELETE]** `<relative-path>` — Removed symbols.
 
 ## Verification & Validation
 ### Automated Tests
-- Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).
+- Command: `<test command>` — exit <status>; results.
 ### Manual Verification
-- For each `verify`/`review` criterion: evidence class, inspected revision, scenario/result, and limitations.
+- Per `verify`/`review` criterion: class, revision, scenario/result, limitations.
 
 ## Outcome Traceability
-- [SC#] <delivered observable behavior> — production path: `<relative-path>`; evidence: <fresh record>.
+| SC | Behavior | Production path | Evidence |
+| --- | --- | --- | --- |
+| SC1 | <delivered observable behavior> | `<relative-path>` | <fresh record> |
 
 ## Key Deviations
-Deviations from original plan or design intent, with rationale (or "None").
+None.
 
 ## Review Findings & Resolutions
 <!-- Populated during code review cycles -->
@@ -34,5 +36,11 @@ Deviations from original plan or design intent, with rationale (or "None").
 *No reviews conducted yet.*
 
 ## Follow-ups
-Accepted SHOULD / CONSIDER items not applied in this pass, each with a one-line reason (or "None").
+None.
 ````
+
+## Field notes
+
+- Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria. Plan-less: traceability `None — no governing plan.`, Status `n/a`.
+- Deviations: one-line summary unless Key Deviations is `None.`.
+- Follow-ups: unapplied SHOULD / CONSIDER items, reasoned.

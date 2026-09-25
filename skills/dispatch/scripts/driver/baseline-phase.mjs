@@ -4,7 +4,10 @@ import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
 import { lintPlan } from '../plan/lint.mjs';
-import { append, ask, ledgerSegment, relative, ruling, source } from './implement-state.mjs';
+import { append, ask, ledgerSegment, pendingRows, refuse, relative, ruling, source } from './implement-state.mjs';
+import { documentTitle } from '../lib/summary-box.mjs';
+import { lintWalkthrough } from '../walkthrough/lint.mjs';
+import { cell, renderTraceability } from '../walkthrough/traceability.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
@@ -18,12 +21,16 @@ export function beginBaseline(state) {
   state.ordinary.baseline = repositoryBaseline(state);
   state.ordinary.baselineSnapshot = snapshot(state);
   if (!fs.existsSync(state.walkthroughPath)) fs.writeFileSync(state.walkthroughPath, [
-    '# Implementation walkthrough', '', 'Implementation of the approved governing plan.', '', '## Changes Made',
+    '# Implementation walkthrough', '',
+    `> **TL;DR:** ${cell(documentTitle(source(state)) ?? 'Implementation of the approved governing plan.')}`,
+    `> **Status:** 0/${state.ordinary.criteria.length} SC passing`, '> **Deviations:** none', '', '## Changes Made',
     ...state.ordinary.approvedPaths.map(file => `- **[MODIFY]** \`${file}\` — Approved implementation scope.`), '',
     '## Verification & Validation', 'Host verification is recorded in Ordinary execution evidence with evidence class, revision, result, and limitations.', '',
-    '## Outcome Traceability', ...state.ordinary.criteria.map(item => `- [${item.id}] Pending — evidence: ${item.evidence}; production path: pending implementation.`), '',
+    '## Outcome Traceability', renderTraceability(pendingRows(state.ordinary.criteria)), '',
     '## Key Deviations', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '', '## Follow-ups', 'None.', '',
   ].join('\n'));
+  const scaffoldDefects = lintWalkthrough(fs.readFileSync(state.walkthroughPath, 'utf8'), { criteria: state.ordinary.criteria }).defects;
+  if (scaffoldDefects.length) return refuse(state, `Walkthrough scaffold failed lint: ${[...new Set(scaffoldDefects.map(item => item.rule))].join(', ')}`);
   // Identical content reuses cached per-command results; the baseline runs only the misses.
   const cached = cachedBaseline(state);
   delete state.ordinary.baselineResults;

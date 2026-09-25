@@ -63,9 +63,11 @@ export async function beginReview(state, kind) {
   state.reviewState = readRunState(action.stateFile);
   return forwardReview(state, action);
 }
+// Plan and design review may only amend their governing artifact; code review uses approved paths.
+const reviewsGoverningArtifact = (state) => ['plan-review', 'design-review'].includes(state.ordinary.phase);
 export function continueReview(state, reply) {
   if (state.reviewState.pending.action === 'adjudicate') {
-    const allowed = state.ordinary.phase === 'plan-review' ? [path.relative(state.repoRoot, state.planPath).split(path.sep).join('/')] : state.ordinary.approvedPaths;
+    const allowed = reviewsGoverningArtifact(state) ? [path.relative(state.repoRoot, state.planPath).split(path.sep).join('/')] : state.ordinary.approvedPaths;
     for (const item of reply.rulings) for (const file of item.fix?.affectedPaths ?? []) {
       if (!allowed.includes(file)) throw new Error(`Review fix path is outside approved scope: ${file}`);
     }
@@ -73,7 +75,7 @@ export function continueReview(state, reply) {
   return forwardReview(state, advanceReview(state.reviewState, reply));
 }
 function forwardReview(state, action) {
-  if (action.action === 'apply-fixes' && state.ordinary.phase === 'plan-review') {
+  if (action.action === 'apply-fixes' && reviewsGoverningArtifact(state)) {
     const target = path.relative(state.repoRoot, state.planPath).split(path.sep).join('/');
     if (action.clusters.some(cluster => cluster.affectedPaths.some(file => file !== target))) throw new Error('Plan review may only amend the governing plan before approval.');
   }

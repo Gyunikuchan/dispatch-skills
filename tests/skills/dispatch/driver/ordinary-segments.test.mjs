@@ -140,7 +140,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
         delegateWrite(action) {
           fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
           fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
         },
         askUser(action) { return action.question === 'approval' ? { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } } : base.askUser(action); },
         verify(action) {

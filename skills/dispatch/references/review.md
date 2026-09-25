@@ -22,10 +22,10 @@ Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Only `MU
 
 A walkthrough exists before baseline verification and contains, in order:
 
-1. one H1;
+1. one H1, then the `TL;DR`, `Status`, `Deviations` summary box;
 2. `## Changes Made`;
 3. `## Verification & Validation`, including `Command: \`<command>\` — exit <status>; <evidence>` records;
-4. `## Outcome Traceability`, mapping every criterion to observable behavior and owning production paths;
+4. `## Outcome Traceability`, a `| SC | Behavior | Production path | Evidence |` table with one row per criterion;
 5. `## Key Deviations`;
 6. `## Review Findings & Resolutions`, initially `*No reviews conducted yet.*`; and
 7. `## Follow-ups`.

@@ -62,11 +62,11 @@ export function resumedRun(fixture, rulings, { testsOnly, restartWhen, beforeRul
       }
       // Code review needs a reviewable change when tests-only touched nothing.
       if (untouched) fs.appendFileSync(path.join(fixture.repo.dir, 'src/app.js'), '// resumed segment\n');
-      return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) };
+      return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
     },
     askUser(action) {
       // The driver never re-emits a pending write after a restart; the host relays the completed write's envelope.
-      if (action.question === 'implementation-recovery') return { answer: { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | delivered value=2 | src/app.js'] })) } };
+      if (action.question === 'implementation-recovery') return { answer: { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) } };
       if (action.question !== 'failure-disposition') return base.askUser(action);
       if (!questions.length) beforeRuling?.(fixture);
       questions.push(action);
