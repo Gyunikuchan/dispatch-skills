@@ -996,7 +996,6 @@ function nextStep(state) {
     (item.status === 'accepted' || item.status === 'resolvedDispute') && item.application?.state !== 'applied');
   const open = consensus.unsettledItems;
   const hasMust = [...accepted, ...open].some((item) => item.severity === 'MUST');
-  const hasShould = [...accepted, ...open].some((item) => item.severity === 'SHOULD');
   if (consensus.exit === 1) {
     const hasPending = open.some((item) => item.status === 'pendingConfirmation');
     if (!state.finalDone && state.policy.consensus && hasPending && state.rebuttalAt !== rounds.length) return prepareRebuttal(state, markdown, rounds.length);
@@ -1006,8 +1005,7 @@ function nextStep(state) {
     state.changed = false;
     return prepareWave(state, 'review');
   }
-  const triggers = !state.finalDone && (state.reviewWaves <= cap ? hasMust || hasShould : hasMust);
-  if (triggers && state.reviewWaves < (state.roundLimit ?? cap)) return prepareWave(state, 'review');
+  if (!state.finalDone && hasMust && state.reviewWaves < (state.roundLimit ?? cap)) return prepareWave(state, 'review');
   if (!state.finalDone && hasMust && state.reviewWaves >= (state.roundLimit ?? cap)) {
     return askCap(state, open, true, accepted.filter((item) => !open.some((entry) => entry.key === item.key)));
   }
@@ -1168,7 +1166,7 @@ function writeApplicationRecords(state, findings, applicationState, reason) {
 
 function addFollowUps(state, bullets) {
   if (bullets.length === 0) return;
-  const markdown = appendToSection(readArtifactText(state), FOLLOW_UPS, '## Follow-ups', bullets, /^(None\.?|Accepted SHOULD-FIX.*)$/);
+  const markdown = appendToSection(readArtifactText(state), FOLLOW_UPS, '## Follow-ups', bullets, /^(None\.?|Accepted SHOULD(-FIX)? \/ CONSIDER.*)$/);
   writeArtifactText(state, markdown);
 }
 

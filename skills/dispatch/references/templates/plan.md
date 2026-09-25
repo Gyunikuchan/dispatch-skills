@@ -27,7 +27,7 @@ Clarifying questions, settling assumptions, or explicit defaults (or "None").
 ## Success Criteria
 - [SC#] Checkable outcome.
   - Changes: <relative-path>[, <relative-path>...]
-  - Verify: `<command>` <!-- command running only this criterion's tests, e.g. `node --test --test-name-pattern="apply-fixes (regenerates|leaves) skill-hashes" <file>` rather than the whole file when it holds other tests; prefer a form that exits nonzero when it selects no tests; red: never the aggregate suite; append [FINAL] to a broad or slow proof run only at required gates -->
+  - Verify: `<command>` <!-- command running only this criterion's tests, e.g. `node --test --test-name-pattern="apply-fixes (regenerates|leaves) skill-hashes" <file>` (a regex matching literal titles "apply-fixes regenerates skill-hashes" and "apply-fixes leaves skill-hashes") rather than the whole file when it holds other tests; prefer a form that exits nonzero when it selects no tests; red: never the aggregate suite; append [FINAL] to a broad or slow proof run only at required gates -->
   - Evidence: <red|verify|review>
   - Pre-existing: <yes|no> <!-- optional; yes admits a red criterion whose failure already exists at baseline -->
   - RED exception: <behavior-preserving|already-satisfied> <!-- optional red; permits a driver-verified no-failing-state ruling -->

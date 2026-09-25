@@ -55,13 +55,19 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 - out of scope: `adjacent` — a concrete existing-code defect you meet outside Scope while inspecting; nearest plan heading as locus, code cited in the defect; spend no extra turns hunting
 
 ### Budget
-Treat the tool-turn value as one advisory target. Stop early when grounded. Exceed it only for a
-named in-scope risk supported by evidence.
+The tool-turn target is advisory: stop early when grounded; exceed it only for an evidenced
+in-scope risk.
 If unspecified, target `8 + 2 × proposed-change entries`; on re-review count changed entries only.
 
+### Severity
+Severity is resolution priority. `MUST`: blocks the promised outcome or breaks a binding
+constraint. `SHOULD`: real defect that degrades the outcome without blocking it. `CONSIDER`: optional
+improvement; no defect.
+In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy.
+
 ### Reply
-Your whole reply is one JSON object holding every finding; the JSON is the report. If JSON cannot
-carry a finding, write that finding as plain text instead. For a clean review use:
+Reply with one JSON object of all findings. If JSON cannot carry a finding, write it as plain
+text. For a clean review use:
 ```json
 {"status":"CLEAN","findings":[]}
 ```
@@ -71,6 +77,6 @@ Otherwise use status `FINDINGS` and one or more findings with every field:
 {"status":"FINDINGS","findings":[{"severity":"MUST|SHOULD|CONSIDER","locus":"§ <Plan heading>","tag":"<tag>","defect":"<defect>","requiredChange":"<required change>"}]}
 ```
 
-Every finding needs a verifiable claim at its locus. Use only the tags above.
+Use only the tags above.
 Cite existing code as `path/to/file:L<line>` inside `defect`.
 ````

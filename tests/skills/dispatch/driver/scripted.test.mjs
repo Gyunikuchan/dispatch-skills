@@ -165,14 +165,14 @@ describe('scripted review paths (SC5)', () => {
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 
-  it('continues SHOULD inside the initial cap, then settles on a clean round', () => {
+  it('SHOULD alone settles inside the initial cap without another review', () => {
     const { fixture, repo } = setup(config({ rounds: 3 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
       policy: { waveResults: (action) => allProviders(report(action.wave.round === 1 ? [planFinding({ severity: 'SHOULD' })] : [])) },
     });
-    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2]);
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
     assert.ok(!run.trace.some((action) => action.action === 'ask-user'));
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
@@ -186,6 +186,75 @@ describe('scripted review paths (SC5)', () => {
     });
     assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
     assert.ok(!run.trace.some((action) => action.action === 'ask-user'));
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('SHOULD report-only records without applying', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const before = fs.readFileSync(plan, 'utf8');
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: firstReview(report([planFinding({ severity: 'SHOULD' })])) },
+    });
+    assert.ok(!actions(run.trace).includes('apply-fixes'));
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+    const entry = logEntries(plan)[0];
+    assert.equal(entry.severity, 'SHOULD');
+    assert.equal(entry.status, 'accepted');
+    assert.equal(splitDispatchFrontmatter(fs.readFileSync(plan, 'utf8')).body.split('## Review Findings')[0], splitDispatchFrontmatter(before).body.split('## Review Findings')[0]);
+  });
+
+  it('SHOULD confirmation settles rejected finding', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'CONFIRM'])))
+          : allProviders(report(action.wave.round === 1 ? [planFinding({ severity: 'SHOULD' })] : [])),
+      },
+    });
+    assert.equal(launches(run.trace, 'rebuttal').length, 1);
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
+    assert.ok(!run.trace.some((action) => action.action === 'ask-user'));
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+    assert.equal(logEntries(plan)[0].status, 'rejected');
+  });
+
+  const planFix = (plan, repoDir) => ({
+    fix: () => ({ affectedPaths: [path.relative(repoDir, plan).split(path.sep).join('/')], dependsOn: [], verification: [] }),
+    applyFixes: (action) => {
+      fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- `node --test tests/sample.test.mjs`\n\n## Review', '- `node --test tests/sample.test.mjs`\n- Failure path: `node --test tests/fail.test.mjs`\n\n## Review'));
+      return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+    },
+  });
+
+  it('SHOULD fix queues immediate application', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: firstReview(report([planFinding({ severity: 'SHOULD' })])), ...planFix(plan, repo.dir) },
+    });
+    const seq = actions(run.trace);
+    assert.ok(seq.indexOf('adjudicate') < seq.indexOf('apply-fixes'), seq.join(' → '));
+    assert.equal(run.trace.find((action) => action.action === 'apply-fixes').clusters.flatMap((c) => c.findingIds).length, 1);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+    assert.equal(logEntries(plan)[0].application?.state, 'applied');
+  });
+
+  it('fix-induced review still runs after a SHOULD fix', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: firstReview(report([planFinding({ severity: 'SHOULD' })])), ...planFix(plan, repo.dir) },
+    });
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2]);
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 

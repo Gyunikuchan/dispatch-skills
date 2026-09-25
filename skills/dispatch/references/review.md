@@ -6,7 +6,7 @@ Use this reference for `review` actions. Terms come from [glossary.md](glossary.
 
 Read every direct, reserve, or native-fallback report through the same parse path. A fallback replaces transport only: preserve the original candidate/source identity and metadata. Refusal, truncation, empty output, missing scope coverage, or loose loci require fallback.
 
-Delegate reports are claims, not verification. Deduplicate and verify every finding against requirements, repository rules, and its cited locus. Accept verified defects regardless of votes. Reject contradicted, missing, uncited, speculative, or unverifiable claims, unused capability, and changes conflicting with a user-approved decision. Clarify related ambiguous findings together. Sanitize text before relay or artifact writes.
+Delegate reports are claims, not verification. Deduplicate and verify every finding against requirements, repository rules, and its cited locus. Accept verified defects regardless of votes; apply the prompt's priority rubric. Reject contradicted, missing, uncited, speculative, or unverifiable claims, unused capability, and changes conflicting with a user-approved decision. Clarify related ambiguous findings together. Sanitize text before relay or artifact writes.
 
 With `consensus: true`, rejected/downgraded `MUST`/`SHOULD` await `CONFIRM` from every reachable citing source; `REBUT` remains live and `INTENT-DISPUTE` records a dispute. With `consensus: false`, host rulings are final. `CONSIDER` and verified adjacent findings are host-final. At a cap with live `MUST`, offer cap-sized extension (default) or user rulings and a final verification wave.
 
@@ -14,9 +14,9 @@ Standalone review is report-only unless the user supplied `--fix`. Accepted adja
 
 ## Resolution log and settlement
 
-Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted `MUST` findings require immediate action when fixes are enabled; unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
+Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted in-scope `MUST`/`SHOULD` require immediate action under `--fix`; report-only acceptance records without edits. Unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
 
-Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. `MUST`/`SHOULD` trigger another round within the initial cap; extensions need `MUST`. A cap without `MUST` needs no extension prompt; disputed/unconfirmed findings still require a ruling. Checkpoint after terminal sources, recorded rulings and verification, and consensus `0`. Verify checkpoint preview before commit; drift restarts preparation.
+Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Only `MUST` or fix-induced changes trigger another round; extensions need `MUST`. Disputed/unconfirmed findings still require a ruling. Checkpoint after terminal sources, recorded rulings and verification, and consensus `0`. Verify checkpoint preview before commit; drift restarts preparation.
 
 ## Minimum walkthrough contract
 

@@ -71,12 +71,12 @@ describe("shared review frames match kind registries and parser schemas", () => 
     assert.match(frame, /Adhere to this project's conventions/);
     assert.match(
       frame,
-      /Your whole reply is one JSON object holding every finding/,
+      /Reply with one JSON object of all findings/,
     );
     for (const kind of ["plan", "code", "design"])
       assert.doesNotMatch(
         read(`skills/dispatch/references/templates/review-prompt-${kind}.md`),
-        /Your whole reply is one JSON object/,
+        /Reply with one JSON object/,
       );
   });
   it("keeps aliases independent of prompt implementation", () => {

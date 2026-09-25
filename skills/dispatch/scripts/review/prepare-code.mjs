@@ -246,7 +246,7 @@ function renderWalkthrough({ summary, paths, verification }) {
     .replace('- Command: `<test command>` — exit <status>; output/results (e.g. `X tests passed`).', `- Command: \`${verification.command}\` — ${verificationResult}`)
     .replace('- Concrete manual verification performed and observed results.', '- None recorded.')
     .replace('Deviations from original plan or design intent, with rationale (or "None").', 'None.')
-    .replace('Accepted SHOULD-FIX / CONSIDER items not applied in this pass, each with a one-line reason (or "None").', 'None.')
+    .replace('Accepted SHOULD / CONSIDER items not applied in this pass, each with a one-line reason (or "None").', 'None.')
     .trim()}\n`;
 }
 

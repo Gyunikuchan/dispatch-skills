@@ -176,6 +176,16 @@ describe('fill-template: assembly', () => {
     });
   }
 
+  for (const kind of ['code', 'plan', 'design']) {
+    it(`assembled ${kind} prompts carry shared severity rubric`, () => {
+      const { template } = assemble(path.join(TEMPLATES, 'review-prompt.md'), path.join(TEMPLATES, `review-prompt-${kind}.md`));
+      assert.match(template, /`MUST`: blocks the promised outcome or breaks a binding\s+constraint/, kind);
+      assert.match(template, /`SHOULD`: real defect that degrades the outcome without blocking it/, kind);
+      assert.match(template, /`CONSIDER`: optional\s+improvement; no defect/, kind);
+      assert.match(template, /In `defect`, state the concrete consequence at the locus; in `requiredChange`, the remedy/, kind);
+    });
+  }
+
   for (const kind of ['plan', 'code', 'design']) {
     it(`assembles the ${kind} rebuttal from the shared frame with no unresolved slots`, () => {
       const assembled = assemble(path.join(TEMPLATES, 'rebuttal.md'), path.join(TEMPLATES, `rebuttal-${kind}.md`));

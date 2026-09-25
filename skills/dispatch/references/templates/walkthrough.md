@@ -34,5 +34,5 @@ Deviations from original plan or design intent, with rationale (or "None").
 *No reviews conducted yet.*
 
 ## Follow-ups
-Accepted SHOULD-FIX / CONSIDER items not applied in this pass, each with a one-line reason (or "None").
+Accepted SHOULD / CONSIDER items not applied in this pass, each with a one-line reason (or "None").
 ````
