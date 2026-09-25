@@ -112,6 +112,7 @@ export const SAFE_ENV_WHITELIST = new Set([
   'XDG_DATA_HOME',
   'XDG_STATE_HOME',
   'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
   'USER',
   'USERNAME',
   'LOGNAME',

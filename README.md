@@ -81,6 +81,7 @@ Requires Node.js `>=22` and at least one supported agent CLI on your `PATH`:
 - Antigravity
 - GitHub Copilot
 - OpenCode
+- Codex
 
 Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it, then keep only the models you actually want to use. Check the resulting configuration with:
 
@@ -92,7 +93,7 @@ node skills/dispatch/scripts/dispatch.mjs --doctor --level high
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
-> OS sandboxing degrades rather than fails. Where it is unavailable — native Windows, Linux without Bubblewrap, a provider that rejects the flag — the delegate still runs, read-only but unsandboxed, and says so with a `[dispatch] WARNING:` line and `sandboxDowngraded` in its structured output. Use WSL2 on Windows if you need the sandbox enforced. Antigravity has no sandbox; plan mode is its only write boundary.
+> OS sandboxing degrades rather than fails. Where it is unavailable — native Windows for Claude, Linux without Bubblewrap, or a provider that rejects the flag — the delegate still runs unsandboxed, prints a `[dispatch] WARNING:` line, and records `sandboxDowngraded` in structured output. Read-only controls remain in place where the provider supports them. Use WSL2 for Claude's sandbox on Windows. Antigravity has no OS sandbox; plan mode is its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tables, levels, sandboxing, and CLI flags.
 

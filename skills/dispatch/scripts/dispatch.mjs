@@ -5,13 +5,8 @@
  * @file dispatch.mjs
  * @description Master cascade dispatcher for multi-agent delegation.
  *
- * Implements preference order:
- * 1. Claude Code (`claude`)
- * 2. Antigravity 2.0 (`agy`)
- * 3. GitHub Copilot (`copilot`)
- * 4. OpenCode (`opencode`) if online
- * (alternative providers tried first; orchestrator platform tried last)
- * 5. Fallback signal for built-in subagent invocation
+ * Reads provider order from the active config, trying alternative platforms before the host.
+ * Emits a native fallback signal when configured delegates cannot answer.
  *
  * Zero context pollution: logs full execution to dedicated session files,
  * emitting only a single initialization banner to stderr and the clean final
@@ -52,6 +47,7 @@ import { isOpencodeAvailable, runOpencode } from './runners/opencode.mjs';
 import { isAgyAvailable, runAgy } from './runners/agy.mjs';
 import { isClaudeAvailable, runClaude } from './runners/claude.mjs';
 import { isCopilotAvailable, runCopilot } from './runners/copilot.mjs';
+import { isCodexAvailable, runCodex } from './runners/codex.mjs';
 import { appendTelemetry } from './lib/telemetry.mjs';
 import {
   CLASSIFIABLE_LEVELS,
@@ -72,7 +68,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
 
 // SECTION: Public contracts
 
-/** @typedef {'opencode'|'agy'|'claude'|'copilot'} Provider */
+/** @typedef {'opencode'|'agy'|'claude'|'copilot'|'codex'} Provider */
 
 /**
  * @typedef {object} DispatchTaskOptions
@@ -121,6 +117,7 @@ export const providerProbes = {
   isAgyAvailable,
   isClaudeAvailable,
   isCopilotAvailable,
+  isCodexAvailable,
 };
 
 /** Executes a task on each provider, indirected so tests can mock individual entries. */
@@ -129,6 +126,7 @@ export const providerRunners = {
   agy: runAgy,
   claude: runClaude,
   copilot: runCopilot,
+  codex: runCodex,
 };
 
 /** @type {Set<Provider>} */
@@ -161,6 +159,7 @@ const PROVIDER_CORRECTIVE_COMMANDS = {
   claude: 'claude auth login',
   agy: 'agy --help',
   copilot: 'gh auth login',
+  codex: 'codex login',
   opencode: 'opencode auth login',
 };
 
@@ -1651,6 +1650,7 @@ async function isProviderAvailable(name) {
     claude: providerProbes.isClaudeAvailable,
     agy: providerProbes.isAgyAvailable,
     copilot: providerProbes.isCopilotAvailable,
+    codex: providerProbes.isCodexAvailable,
     opencode: providerProbes.isOpencodeAvailable,
   }[name];
   return probe ? await probe() : false;

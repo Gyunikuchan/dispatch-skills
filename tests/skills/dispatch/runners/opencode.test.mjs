@@ -1020,16 +1020,20 @@ describe('opencode-run', () => {
 
   describe('resolveOpencodeBinary (win32 where.exe preference)', () => {
     it('prefers opencode.cmd over the extensionless npm shim', { skip: process.platform !== 'win32' }, () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-where-'));
-      const originalPath = process.env.PATH;
+      const shim = path.win32.join('C:\\npm', 'opencode');
+      const launcher = `${shim}.cmd`;
+      const probe = mock.method(cp, 'spawnSync', (command, args) => {
+        assert.equal(command, 'where.exe');
+        assert.deepEqual(args, ['opencode']);
+        return { status: 0, stdout: `${shim}\r\n${launcher}\r\n` };
+      });
       try {
-        fs.writeFileSync(path.join(dir, 'opencode'), '#!/bin/sh\n');
-        fs.writeFileSync(path.join(dir, 'opencode.cmd'), '@echo off\r\n');
-        process.env.PATH = `${dir};${path.join(process.env.SystemRoot || 'C:\\Windows', 'System32')}`;
-        assert.equal(resolveOpencodeBinary().toLowerCase(), path.join(dir, 'opencode.cmd').toLowerCase());
+        _resetOpencodeTargetCache();
+        assert.equal(resolveOpencodeBinary(), launcher);
+        assert.equal(probe.mock.callCount(), 1);
       } finally {
-        process.env.PATH = originalPath;
-        fs.rmSync(dir, { recursive: true, force: true });
+        probe.mock.restore();
+        _resetOpencodeTargetCache();
       }
     });
   });

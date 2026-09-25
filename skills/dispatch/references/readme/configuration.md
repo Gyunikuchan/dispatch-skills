@@ -123,10 +123,11 @@ review failures warrant the latency.
 
 ## Sandboxing
 
-For Claude, Copilot, and OpenCode, provider-wide `sandbox` defaults to `true`; use `false` only
-when necessary for compatibility. If isolation is unavailable, dispatch proceeds with read-only
-controls, prints a warning, and sets `sandboxDowngraded` in structured output. Antigravity has no
-OS sandbox; plan mode provides its write boundary.
+For Claude, Copilot, OpenCode, and Codex, provider-wide `sandbox` defaults to `true`; use `false` only
+when necessary for compatibility. If isolation is unavailable, dispatch proceeds with any
+remaining provider read-only controls, prints a warning, and sets `sandboxDowngraded` in
+structured output.
+Antigravity has no OS sandbox; plan mode provides its write boundary.
 
 Read-only controls and credential stripping are defense in depth, **not** a complete secret
 boundary. Keep sensitive files out of delegated scope and heed downgrade warnings. See the

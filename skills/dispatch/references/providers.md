@@ -100,6 +100,19 @@ These are defense-in-depth controls, not a complete secret boundary.
   `opencode:<provider>/<model>`. `SERVER_OFFLINE`, `CONTEXT_BUDGET_EXCEEDED`, model-load, quota,
   and timeout diagnostics are returned to the outer cascade.
 
+### Codex (`codex`)
+
+- **Direct runner:** `scripts/runners/codex.mjs`; discovery order is standalone CLI → Desktop
+  bundle → VS Code extension bundle. Select with `--codex-mode`; inspect token-free reachability
+  with `--test-modes` or `--probe`. Only executable CLI bundles qualify as modes.
+- **Read-only:** `codex exec --json --sandbox read-only` with approvals disabled. The runner
+  parses final assistant messages from JSONL; tool events remain in the OS-temp log. When Codex
+  rejects the sandbox, the same target retries once unsandboxed with a warning and
+  `sandboxDowngraded` metadata. Explicit `sandbox: false` selects unrestricted execution.
+- **Recovery:** the JSONL `thread.started` ID gives `codex exec resume <id>`.
+- **Nested hosts:** launching Codex from another Codex task may need host permission to access
+  `CODEX_HOME` for CLI state. A denied launch fails and enters the normal target/provider cascade.
+
 ## Orchestrator detection
 
 Unpinned dispatch puts the detected host platform after alternatives and demotes its active model
@@ -112,6 +125,7 @@ detection.
 | Claude Code | `CLAUDECODE`, `CLAUDE_CODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_SESSION_ID`, `CLAUDE_CODE_ENTRYPOINT` | `CLAUDE_MODEL`, `ANTHROPIC_MODEL` |
 | Copilot CLI | `COPILOT_AGENT`, `COPILOT_CLI_SESSION_ID` | `COPILOT_MODEL`, `GITHUB_COPILOT_MODEL` |
 | OpenCode | `OPENCODE_PORT`, `OPENCODE_AGENT` | `OPENCODE_MODEL` |
+| Codex | `CODEX_THREAD_ID`, `CODEX_CLI`, `CODEX_APP_SERVER` | `CODEX_MODEL` |
 
 `VSCODE_PID` is ignored because ordinary VS Code terminals also set it.
 

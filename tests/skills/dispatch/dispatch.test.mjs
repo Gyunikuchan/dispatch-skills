@@ -134,6 +134,9 @@ describe('orchestrator detection and provider resolution', () => {
     delete process.env.VSCODE_PID;
     delete process.env.OPENCODE_PORT;
     delete process.env.OPENCODE_AGENT;
+    delete process.env.CODEX_THREAD_ID;
+    delete process.env.CODEX_CLI;
+    delete process.env.CODEX_APP_SERVER;
   };
 
   describe('detectOrchestrator', () => {
@@ -186,6 +189,18 @@ describe('orchestrator detection and provider resolution', () => {
       });
     }
 
+    for (const [envVar, value] of [
+      ['CODEX_THREAD_ID', 'thread-123'],
+      ['CODEX_CLI', '1'],
+      ['CODEX_APP_SERVER', '1'],
+    ]) {
+      it(`detects codex when ${envVar} is set`, () => {
+        clearOrchestratorEnv();
+        process.env[envVar] = value;
+        assert.equal(detectOrchestrator(), 'codex');
+      });
+    }
+
     it('returns null when no orchestrator markers are present', () => {
       clearOrchestratorEnv();
       assert.equal(detectOrchestrator(), null);
@@ -220,11 +235,12 @@ describe('orchestrator detection and provider resolution', () => {
 
   describe('resolveProvider & getCandidateProviders', () => {
     it('defines canonical providers and aliases', () => {
-      assert.deepEqual(KNOWN_PROVIDERS, ['claude', 'agy', 'copilot', 'opencode']);
+      assert.deepEqual(KNOWN_PROVIDERS, ['claude', 'agy', 'copilot', 'opencode', 'codex']);
       assert.equal(PROVIDER_ALIASES.antigravity, 'agy');
       assert.equal(PROVIDER_ALIASES.claudecode, 'claude');
       assert.equal(PROVIDER_ALIASES['claude-code'], 'claude');
       assert.equal(PROVIDER_ALIASES['github-copilot'], 'copilot');
+      assert.equal(PROVIDER_ALIASES['openai-codex'], 'codex');
     });
 
     it('prioritizes claude over agy, copilot, and opencode when all are available', async () => {

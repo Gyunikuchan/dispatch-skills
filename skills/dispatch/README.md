@@ -37,7 +37,7 @@ Use one verb for a focused question or standalone review, or let `implement` run
 You need:
 
 - Node.js `>=22`
-- At least one supported agent CLI on `PATH`: Claude Code, Antigravity, GitHub Copilot, or OpenCode
+- At least one supported agent CLI or bundle: Claude Code, Antigravity, GitHub Copilot, OpenCode, or Codex
 - An active dispatch configuration
 
 From this directory, create a config and check it:
@@ -156,7 +156,7 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 - Dispatch never commits, pushes, or opens a pull request.
 
 > [!NOTE]
-> When OS sandboxing is unavailable, dispatch continues with read-only controls, prints a `[dispatch] WARNING:`, and records `sandboxDowngraded`. Read the [provider reference](references/providers.md) before relying on sandbox isolation.
+> When OS sandboxing is unavailable, dispatch warns, records `sandboxDowngraded`, and continues unsandboxed. Provider read-only controls remain where supported; see the [provider reference](references/providers.md) for each boundary.
 
 ## Troubleshooting
 

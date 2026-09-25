@@ -11,7 +11,7 @@
 // SECTION: Provider registry
 
 /** Canonical provider keys the dispatch config's platform tables may key on. */
-export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
+export const KNOWN_PROVIDERS = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
 
 /** Accepted `--provider` aliases, normalized to their canonical Provider name. */
 export const PROVIDER_ALIASES = {
@@ -23,6 +23,8 @@ export const PROVIDER_ALIASES = {
   'claude-code': 'claude',
   copilot: 'copilot',
   'github-copilot': 'copilot',
+  codex: 'codex',
+  'openai-codex': 'codex',
 };
 
 /**
@@ -96,7 +98,7 @@ export function validateProviderSpec(provider, where = 'provider') {
 }
 
 /** Providers whose `read-delegates.<key>` entry may set a `sandbox` boolean; rejected elsewhere. */
-export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot', 'opencode'];
+export const SANDBOX_SUPPORTED_PROVIDERS = ['claude', 'copilot', 'opencode', 'codex'];
 
 // SECTION: Candidate ordering
 
@@ -250,6 +252,9 @@ export function detectOrchestrator(options = {}) {
   if (env.OPENCODE_PORT || env.OPENCODE_AGENT) {
     return 'opencode';
   }
+  if (env.CODEX_THREAD_ID || env.CODEX_CLI || env.CODEX_APP_SERVER) {
+    return 'codex';
+  }
   return null;
 }
 
@@ -273,6 +278,9 @@ export function detectOrchestratorModel(options = {}) {
   }
   if (orchestrator === 'copilot') {
     return env.COPILOT_MODEL || env.GITHUB_COPILOT_MODEL || null;
+  }
+  if (orchestrator === 'codex') {
+    return env.CODEX_MODEL || null;
   }
   if (orchestrator === 'opencode') {
     return env.OPENCODE_MODEL || null;

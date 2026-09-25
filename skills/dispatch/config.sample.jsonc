@@ -9,13 +9,14 @@
  * - copilot: https://docs.github.com/en/copilot/reference/ai-models/supported-models
  * - opencode (zen): https://opencode.ai/zen/v1/models
  * - opencode (go): https://opencode.ai/zen/go/v1/models
+ * - codex: https://developers.openai.com/codex/models
  */
 {
   // Required for asks and reviews. Keep only providers you use.
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
-      // Optional for Claude, Copilot, OpenCode; defaults to true. False opts out.
+      // Optional for Claude, Copilot, OpenCode, Codex; defaults to true. False opts out.
       // If unavailable, dispatch warns and runs without a sandbox.
       "sandbox": true,
       "targets": [
@@ -62,6 +63,12 @@
         { "low": { "model": "lmstudio/qwen3.8-27b-ridge", "effort": "medium" } },
       ],
     },
+    "codex": {
+      "sandbox": true,
+      "targets": [
+        { "low": { "model": "gpt-6-sol", "effort": "medium" } },
+      ],
+    },
   },
   // Optional: implementation models used by your host, separate from review targets.
   // Add your host here to use the implement flow.
@@ -80,6 +87,9 @@
     },
     "opencode": {
       "low": { "model": "opencode-go/glm-5.3-flash", "effort": "max" },
+    },
+    "codex": {
+      "low": { "model": "gpt-6-luna", "effort": "max" },
     },
   },
   // Optional: set review size, rounds, and consensus by level.
