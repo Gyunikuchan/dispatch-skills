@@ -8,7 +8,7 @@ Structure for authoring a plan. External delegates read the plan file with no ot
 Brief problem description, background context, and what the change accomplishes.
 
 ## Key Decisions & Context
-Settled architectural choices, trade-offs, and rationale (e.g. from prior grilling or alignment sessions).
+Settled architectural choices (including brainstorming or grilling outcomes), each with trade-offs, rationale, and rejected alternatives; reviews treat entries as settled.
 
 ## User Review Required
 Breaking changes, critical design decisions, or trade-offs requiring user attention (or "None").

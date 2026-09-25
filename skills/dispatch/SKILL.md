@@ -21,7 +21,7 @@ verb-clause = ask
 
 `ask` is the default. A colon separates the prefix from an argument. Prefix-only `plan`, `design`, and `implement` require an argument; `review` may infer its kind and scope. Standalone reviews are report-only unless the user explicitly supplied `--fix`. Start `implement` only for an explicit implementation request.
 
-When a run will author a new plan or design (`plan`, `design`, or `implement` without a plan path), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat. Once both finish, start the run: the driver's canonical artifact is the only plan or design written.
+When a run will author a new plan or design (`plan`, `design`, or `implement` without a plan path), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat. Once both finish, start the run: the driver's canonical artifact is the only plan or design written, and records each settled choice with its trade-offs, rationale, and rejected alternatives.
 
 Pins select configured candidates or breadth. Use `node <skill-path>/scripts/dispatch.mjs --help` as the authoritative CLI and flag reference.
 

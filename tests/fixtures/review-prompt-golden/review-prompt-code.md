@@ -42,7 +42,7 @@ source/text files, excluding `.scratch/`, generated, vendored, and binary paths.
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
-earlier settled findings as closed. When Scope names changed sections or paths, raise new in-scope
+earlier settled findings as closed. Decisions recorded in the governing plan or design are settled: contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 
 ### Tags

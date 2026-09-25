@@ -10,7 +10,7 @@ Goals, non-goals, requirements, and acceptance criteria.
 Constraints, components, domain invariants, and shared interface or ownership boundaries.
 
 ## Alternatives & Decisions
-Governed choices, rejected alternatives, trade-offs, and unresolved questions.
+Settled architectural choices (including brainstorming or grilling outcomes), each with trade-offs, rationale, and rejected alternatives, plus unresolved questions; reviews treat settled entries as final.
 
 ## Risks, Security & Operations
 Failure modes, security, observability, and data, migration, compatibility, rollout, and rollback

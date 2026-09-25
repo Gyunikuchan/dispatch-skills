@@ -38,7 +38,7 @@ reviewed paths, and flag violations as `standards`.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
-earlier settled findings as closed. When Scope names changed sections or paths, raise new in-scope
+earlier settled findings as closed. Decisions recorded in the governing plan or design are settled: contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope
 findings only there; `adjacent` findings may cite any locus. Stop at that blast radius.
 
 ### Tags
