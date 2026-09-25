@@ -178,10 +178,6 @@ export function implementationOutcome({
   return { schemaVersion: 1, status, stage, summary, evidence, ...extra };
 }
 
-export function actionNames(trace) {
-  return trace.map(({ action }) => action);
-}
-
 export function artifactSnapshot(repoDir) {
   const root = path.join(repoDir, '.scratch', 'plan');
   if (!fs.existsSync(root)) return {};
@@ -193,7 +189,7 @@ export function artifactSnapshot(repoDir) {
   ]));
 }
 
-export function removeDriverState(action) {
+function removeDriverState(action) {
   fs.rmSync(action.stateFile, { force: true });
 }
 
@@ -286,7 +282,7 @@ export function logEntries(artifactPath) {
   return readLog(artifactPath).rounds.flatMap((round) => round.entries.map((entry) => ({ ...entry, round: round.number })));
 }
 
-export function isDispatchArgv(argv) {
+function isDispatchArgv(argv) {
   return Array.isArray(argv) && argv.length >= 2 &&
     (argv[0] === process.execPath || /(^|[\\/])node(\.exe)?$/i.test(argv[0])) &&
     path.basename(argv[1]) === 'dispatch.mjs';

@@ -99,7 +99,7 @@ export function driveOrdinaryImplementation({ fixture, repo, plan }, options = {
 
 // SECTION: gate-tier fixtures (split across ordinary-gate-tiers*.test.mjs)
 
-export const LINT_CRITERION = '- [SC3] Test file stays lint-clean.\n  - Changes: `tests/sample.test.mjs`\n  - Verify: `node scripts/lint.mjs`\n  - Evidence: verify\n  - Test rationale: A deterministic lint check needs no dedicated pre-change failure.\n\n';
+const LINT_CRITERION = '- [SC3] Test file stays lint-clean.\n  - Changes: `tests/sample.test.mjs`\n  - Verify: `node scripts/lint.mjs`\n  - Evidence: verify\n  - Test rationale: A deterministic lint check needs no dedicated pre-change failure.\n\n';
 
 /**
  * Tier fixture: SC1 red (sample), SC2 all-[FINAL] verify, optionally SC3 verify (lint) scoped to the test file only.
