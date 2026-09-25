@@ -72,7 +72,7 @@ export async function run${suffix}(options = {}) {
  * @param {object} config dispatch config written as `config.jsonc`.
  * @returns {{ dir: string, skillDir: string, script: string, cleanup: () => void }}
  */
-export function createStubDispatchFixture(config) {
+export function createStubDispatchFixture(config, nativeModelMappings = []) {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-stub-'));
   const skillDir = path.join(dir, 'dispatch');
   fs.cpSync(DISPATCH_SKILL, skillDir, { recursive: true });
@@ -83,6 +83,7 @@ export function createStubDispatchFixture(config) {
     fs.writeFileSync(path.join(skillDir, 'scripts', file), stubSource(provider, suffix));
   }
   fs.writeFileSync(path.join(skillDir, 'config.jsonc'), JSON.stringify(config, null, 2));
+  fs.writeFileSync(path.join(skillDir, 'references', 'native-model-mappings.json'), JSON.stringify(nativeModelMappings));
   return {
     dir,
     skillDir,

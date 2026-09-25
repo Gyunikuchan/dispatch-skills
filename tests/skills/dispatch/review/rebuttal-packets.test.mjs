@@ -8,6 +8,7 @@ import {
   buildRebuttalPackets,
   writeRebuttalPackets,
 } from '../../../../skills/dispatch/scripts/review/rebuttal-packets.mjs';
+import { scanResolutionLog } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 
 const sourceMap = {
   'code-review:R1:claude:0': {
@@ -56,6 +57,14 @@ afterEach(() => {
 });
 
 describe('rebuttal packet builder', () => {
+  it('round hash includes failed target record', () => {
+    const original = buildRebuttalPackets(artifact, context);
+    const changed = artifact.replace(`- **Sources:** ${JSON.stringify(sourceMap)}`, `- **Sources:** ${JSON.stringify(sourceMap)}\n- failed-targets: [{"sourceKey":"code-review:R1:agy:0","kind":"quota"}]`);
+    const updated = buildRebuttalPackets(changed, context);
+    assert.notEqual(updated[0].packet.canonicalLogHash, original[0].packet.canonicalLogHash);
+    assert.notEqual(scanResolutionLog(changed).rounds[0].hash, scanResolutionLog(artifact).rounds[0].hash);
+  });
+
   it('groups only live findings by every citing source', () => {
     const packets = buildRebuttalPackets(artifact, context);
     assert.equal(packets.length, 2);

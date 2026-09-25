@@ -52,16 +52,34 @@
     "counts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["MUST", "SHOULD", "CONSIDER"],
+      "required": [
+        "MUST",
+        "SHOULD",
+        "CONSIDER"
+      ],
       "properties": {
-        "MUST": { "type": "integer", "minimum": 0 },
-        "SHOULD": { "type": "integer", "minimum": 0 },
-        "CONSIDER": { "type": "integer", "minimum": 0 }
+        "MUST": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "SHOULD": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "CONSIDER": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "options": {
       "type": "array",
-      "items": { "enum": ["extend", "stop"] }
+      "items": {
+        "enum": [
+          "extend",
+          "stop"
+        ]
+      }
     },
     "items": {
       "type": "array",
@@ -73,6 +91,49 @@
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "unfulfilledTargets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wave",
+        "round",
+        "targets"
+      ],
+      "properties": {
+        "wave": {
+          "enum": [
+            "review",
+            "rebuttal",
+            "final"
+          ]
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceKey",
+              "kind"
+            ],
+            "properties": {
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
       }
     }
   }

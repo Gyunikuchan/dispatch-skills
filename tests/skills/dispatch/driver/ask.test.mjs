@@ -35,6 +35,43 @@ function setup() {
 }
 
 describe('`--run ask` (SC4)', () => {
+  it('ask launch lists its dispatched target source keys', () => {
+    const { fixture, repo } = setup();
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['ask', '--orchestrator', 'claude', '--', 'What is configured?'],
+    });
+    const launch = run.trace.find((a) => a.action === 'launch');
+    assert.equal(launch.wave.type, 'ask');
+    assert.deepEqual(launch.selectedTargets, [{ sourceKey: 'ask:R1:agy:0', platform: 'agy', candidateIndex: 0 }]);
+  });
+
+  it('ask failed done entries carry wave identity', () => {
+    const { fixture, repo } = setup();
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['ask', '--orchestrator', 'claude', '--', 'What is configured?'],
+      policy: { waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }) },
+    });
+    assert.deepEqual(run.done.failed.map(({ wave, round }) => ({ wave, round })), [{ wave: 'ask', round: 1 }]);
+  });
+
+  it('ask native fallback rejects mapped model replies', () => {
+    const { fixture, repo } = setup();
+    let attempts = 0;
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['ask', '--orchestrator', 'agy', '--', 'What is configured?'],
+      policy: { waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback(action) {
+          attempts++;
+          fs.writeFileSync(action.outputPath, 'Configured answer.');
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType, model: action.descriptor.model, reasoningEffort: action.descriptor.reasoningEffort,
+          }, ...(attempts === 1 ? { mapping: { configuredModel: action.descriptor.model, launcherModel: 'provider/id', provider: 'provider' } } : {}) };
+        },
+      },
+    });
+    assert.equal(attempts, 2);
+    assert.match(run.trace.find((a) => a.action === 'native-fallback' && a.error).error, /mappings are review-only/);
+  });
   it('emits launch, hops to native-fallback on a wave failure, then done with the collected claims', () => {
     const { fixture, repo } = setup();
     const seenActions = [];

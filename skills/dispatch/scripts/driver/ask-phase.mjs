@@ -86,14 +86,19 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
     ...(invocation.orchestratorModel ? ['--orchestrator-model', invocation.orchestratorModel] : []),
     '--output-file', outputFile.path,
   ];
-  state.wave = { argv, outputPath: outputFile.path, promptPath: promptFile.path };
+  state.wave = { argv, outputPath: outputFile.path, promptPath: promptFile.path,
+    selectedTargets: targets.map(({ roundId, platform, candidateIndex }) => ({
+      sourceKey: `${roundId}:${platform}:${candidateIndex}`, platform, candidateIndex,
+    })),
+  };
   return finish(state, launchAction(state));
 }
 
 function launchAction(state, error) {
   return emitAction(state, 'launch', {
     argv: state.wave.argv,
-    wave: { type: 'review', round: 1 },
+    wave: { type: 'ask', round: 1 },
+    selectedTargets: state.wave.selectedTargets,
     ...(error ? { error } : {}),
   }, ['Run argv as one background command, wait for it to exit, then call --next with no --input.']);
 }
@@ -121,7 +126,7 @@ function onLaunch(state) {
   const native = failures.filter((failure) => failure.platform === state.invocation.orchestrator);
   state.collect = {
     claims: envelope.targets.filter((record) => record.report?.trim()).map((record) => ({ sourceKey: record.sourceKey, text: record.report.trim() })),
-    failed: failures.filter((failure) => !native.includes(failure)).map((failure) => ({ sourceKey: failure.sourceKey, kind: failure.failureKind ?? 'cross-platform' })),
+    failed: failures.filter((failure) => !native.includes(failure)).map((failure) => ({ wave: 'ask', round: 1, sourceKey: failure.sourceKey, kind: failure.failureKind ?? 'cross-platform' })),
     queue: native.map((failure) => {
       const key = `${failure.platform}:${failure.candidateIndex}`;
       const resolved = state.modelsByCandidate[key] ?? { models: [], effort: null };
@@ -147,7 +152,7 @@ function nativeFallbackAction(state) {
   const slot = state.collect.queue[0];
   if (!slot.models[slot.cascadePosition] || !slot.effort) {
     state.collect.queue.shift();
-    state.collect.failed.push({ sourceKey: slot.sourceKey, kind: 'unresolved-model' });
+    state.collect.failed.push({ wave: 'ask', round: 1, sourceKey: slot.sourceKey, kind: 'unresolved-model' });
     return processCollected(state);
   }
   const outputPath = runFile(state, `ask-fallback-${state.collect.failed.length + state.collect.claims.length + 1}.txt`);
@@ -171,6 +176,7 @@ function nativeFallbackAction(state) {
 function onNativeFallback(state, reply) {
   const current = state.collect.current;
   if (reply.slot !== current.sourceKey) return reemit(state, `slot must be ${current.sourceKey}.`);
+  if (reply.mapping) return reemit(state, 'Ask native fallback requires an exact configured model; mappings are review-only.');
   if (reply.failed) return failedHop(state, current, reply.failed.kind);
   const expected = current.descriptor;
   const actual = reply.actual;
@@ -190,7 +196,7 @@ function failedHop(state, current, kind) {
   state.collect.queue[0] = { ...current, cascadePosition: nextPosition };
   if (nextPosition >= current.models.length) {
     state.collect.queue.shift();
-    state.collect.failed.push({ sourceKey: current.sourceKey, kind });
+    state.collect.failed.push({ wave: 'ask', round: 1, sourceKey: current.sourceKey, kind });
   }
   return processCollected(state);
 }

@@ -185,19 +185,30 @@ describe('early fallback outcome on a multi-model cascade (A-1)', () => {
       'the early report is collected exactly once');
   });
 
-  it('failed early fallback resumes at cascadePosition 1', () => {
+  it('empty early fallback retries once before advancing to the next model', () => {
     const scenario = setup();
     const seen = [];
-    drive(scenario.fixture, {
+    const run = drive(scenario.fixture, {
       cwd: scenario.repo.dir,
       runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
       onAction: (action) => { if (action.action === 'native-fallback') seen.push(action.descriptor); },
       policy: {
         waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
         launchReply: earlyReply(null),
+        nativeFallback(action) {
+          if (action.descriptor.cascadePosition === 0) {
+            fs.writeFileSync(action.outputPath, '  ');
+          } else {
+            fs.writeFileSync(action.outputPath, report());
+          }
+          return { slot: action.slot, captured: true, actual: { agentType: action.descriptor.agentType,
+            model: action.descriptor.model, reasoningEffort: action.descriptor.reasoningEffort } };
+        },
       },
     });
-    assert.deepEqual(seen.map((descriptor) => [descriptor.model, descriptor.cascadePosition]), [['native-fallback-b', 1]],
-      'model[0] already ran early; the post-wave cascade resumes at model[1] exactly once');
+    assert.deepEqual(seen.map((descriptor) => [descriptor.model, descriptor.cascadePosition]),
+      [['native-fallback-a', 0], ['native-fallback-b', 1]],
+      'one post-wave empty retry consumes the first hop before trying the next model');
+    assert.equal(run.done.failed?.length ?? 0, 0);
   });
 });

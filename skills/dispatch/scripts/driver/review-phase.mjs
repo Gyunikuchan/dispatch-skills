@@ -17,12 +17,12 @@ import { createIndependenceClusters, formatOptInSections, parseOptInResponse } f
 import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
 import { prepareReview } from '../review/prepare.mjs';
 import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
-import { formatApplicationRecord, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
+import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
 import { integrityDiagnostic, regenerateOwnedHashes, skillDirInRepo } from '../lib/integrity.mjs';
-import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
+import { NATIVE_AGENT_TYPES, emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
 import {
   FOLLOW_UPS,
   LOG_HEADING,
@@ -39,6 +39,7 @@ import {
   createRunState,
   finish,
   gitRoot,
+  writeRunState,
   reemit,
   pruneFinishedStates,
   rebuildFromArtifact,
@@ -48,6 +49,12 @@ import {
 } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const NATIVE_MAPPINGS = JSON.parse(fs.readFileSync(path.join(DISPATCH_DIR, 'references', 'native-model-mappings.json'), 'utf8'));
+if (!Array.isArray(NATIVE_MAPPINGS) || new Set(NATIVE_MAPPINGS.map((entry) => entry.configuredModel)).size !== NATIVE_MAPPINGS.length ||
+  NATIVE_MAPPINGS.some((entry) => !entry.configuredModel || !/^[^/]+\/.+/.test(entry.launcherModel) || !entry.provider || !entry.provenance ||
+    Object.keys(entry).sort().join(',') !== 'configuredModel,launcherModel,provenance,provider')) {
+  throw new Error('Invalid native-model-mappings registry.');
+}
 
 const today = () => new Date().toISOString().slice(0, 10);
 const toSlash = (value) => value.split(path.sep).join('/');
@@ -157,7 +164,28 @@ export function advanceReview(state, reply) {
 
 function recordReviewFailure(state, sourceKey, kind) {
   state.reviewFailed ??= [];
-  if (!state.reviewFailed.some((item) => item.sourceKey === sourceKey)) state.reviewFailed.push({ sourceKey, kind });
+  const wave = state.wave.type, round = state.wave.round;
+  if (!state.reviewFailed.some((item) => item.wave === wave && item.round === round && item.sourceKey === sourceKey))
+    state.reviewFailed.push({ wave, round, sourceKey, kind: FAILURE_KINDS.includes(kind) ? kind : 'execution' });
+}
+
+function currentFailures(state) {
+  return (state.reviewFailed ?? []).filter((item) => item.wave === state.wave.type && item.round === state.wave.round)
+    .map(({ sourceKey, kind }) => ({ sourceKey, kind }));
+}
+
+function unfulfilledTargets(state) {
+  return { wave: state.wave.type, round: state.wave.round, targets: currentFailures(state) };
+}
+
+function noticedNextStep(state) {
+  const notice = unfulfilledTargets(state);
+  const action = nextStep(state);
+  if (action.action === 'done' && action.unfulfilledTargets?.wave === notice.wave && action.unfulfilledTargets?.round === notice.round) return action;
+  const updated = { ...action, unfulfilledTargets: notice };
+  const errors = validateAgainstSchema(loadSchema(action.action), updated);
+  if (errors.length) throw new Error(`Invalid failure notice: ${errors.join('; ')}`);
+  return updated;
 }
 
 function done(state, outcome, summary, extra = {}) {
@@ -165,7 +193,7 @@ function done(state, outcome, summary, extra = {}) {
     outcome,
     summary,
     ...(state.artifactPath ? { artifactPath: toSlash(path.relative(state.repoRoot, state.artifactPath)) } : {}),
-    ...(state.reviewFailed?.length ? { failed: state.reviewFailed } : {}),
+    ...(state.reviewFailed?.length ? { failed: state.reviewFailed.map((item) => ({ ...item })) } : {}),
     ...extra,
   }, ['Report the summary to the user; the run is finished.']);
 }
@@ -231,7 +259,7 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
 }
 
 function prepareWave(state, type, rebuttal = null) {
-  if (state.policy.targets.length === 0) {
+  if ((rebuttal?.targets ?? state.policy.targets).length === 0) {
     return done(state, 'failed', 'No live read delegate is available for this review.', { command: state.resumeCommand });
   }
   let manifest;
@@ -276,7 +304,16 @@ function prepareWave(state, type, rebuttal = null) {
   const round = Number(manifest.roundId.split(':R')[1]);
   if (type === 'review') state.reviewWaves += 1;
   if (type === 'final') state.finalDone = true;
-  const earlyFallbacks = state.policy.targets
+  const waveTargets = (rebuttal?.targets ?? state.policy.targets).map((target) => {
+    const configured = [...state.policy.targets, ...state.policy.reserves]
+      .find((entry) => entry.platform === target.platform && entry.candidateIndex === target.candidateIndex);
+    return { ...configured, ...target };
+  });
+  const selectedTargets = waveTargets.map((target) => ({
+    sourceKey: `${manifest.roundId}:${target.platform}:${target.candidateIndex}`,
+    platform: target.platform, candidateIndex: target.candidateIndex,
+  }));
+  const earlyFallbacks = waveTargets
     .filter((target) => target.platform === state.invocation.orchestrator && target.model && target.effort)
     .map((target, index) => {
       const sourceKey = `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
@@ -296,6 +333,7 @@ function prepareWave(state, type, rebuttal = null) {
         },
       };
     });
+  if (selectedTargets.length === 0) return done(state, 'failed', 'No selected target is available for this review wave.');
   const slotsPath = runFile(state, 'slots.jsonl');
   state.wave = {
     type,
@@ -305,6 +343,7 @@ function prepareWave(state, type, rebuttal = null) {
     promptPath: manifest.promptPath,
     slotsPath,
     earlyFallbacks,
+    selectedTargets,
     retried: false,
     keys: rebuttal?.keys ?? null,
   };
@@ -337,6 +376,7 @@ function launchAction(state, error) {
   return emitAction(state, 'launch', {
     argv: state.wave.argv,
     wave: { type: state.wave.type, round: state.wave.round },
+    selectedTargets: state.wave.selectedTargets,
     ...(state.wave.slotsPath ? { slotsPath: state.wave.slotsPath } : {}),
     ...(state.wave.keys ? { keys: state.wave.keys } : {}),
     ...(state.wave.earlyFallbacks.length > 0 ? { earlyFallbacks: state.wave.earlyFallbacks } : {}),
@@ -374,26 +414,48 @@ function onLaunch(state, reply) {
       substitutesFor: record.substitutesFor ?? null,
     };
   }
+  const successSlots = new Set(envelope.targets.map((item) => item.sourceKey));
+  const failedSlots = new Set((envelope.failures ?? []).map((item) => item.sourceKey));
+  for (const target of state.wave.selectedTargets) {
+    if (!successSlots.has(target.sourceKey) && !failedSlots.has(target.sourceKey) &&
+      !envelope.targets.some((item) => item.substitutesFor === target.sourceKey)) {
+      recordReviewFailure(state, target.sourceKey, 'missing-slot');
+    }
+  }
   const earlyBySlot = new Map((reply?.earlyFallbacks ?? []).map((fallback) => [fallback.slot, fallback]));
   const failuresBySlot = new Map((envelope.failures ?? []).map((failure) => [failure.sourceKey, failure]));
+  const rejectedEarly = new Map();
+  if (earlyBySlot.size !== (reply?.earlyFallbacks ?? []).length) return launchReplyAction(state, 'Early fallback slots must be unique.');
   for (const [slot, fallback] of earlyBySlot) {
     const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === slot);
-    const actual = fallback.actual;
-    if (!planned || !failuresBySlot.has(slot) || actual.agentType !== planned.descriptor.agentType || actual.model !== planned.descriptor.model || actual.reasoningEffort !== planned.descriptor.reasoningEffort) {
+    if (!planned || !failuresBySlot.has(slot) || fallback.outputPath !== planned.outputPath ||
+      !fallback.actual || fallback.actual.agentType !== planned.descriptor.agentType || fallback.actual.reasoningEffort !== planned.descriptor.reasoningEffort) {
       return launchReplyAction(state, `Early fallback metadata or failed-slot identity does not match the descriptor for ${slot}.`);
+    }
+    const mapping = nativeMapping(planned.descriptor.model, fallback.actual.model, fallback.mapping, slot);
+    if (mapping.error) return launchReplyAction(state, mapping.error);
+    if (mapping.unavailable) {
+      if (!state.wave.mappingWarnings?.includes(slot)) {
+        (state.wave.mappingWarnings ??= []).push(slot);
+        writeRunState(state);
+        return launchReplyAction(state, `Unmapped native model for ${slot}; correct the capture or confirm its mapping to advance this slot.`);
+      }
+      rejectedEarly.set(slot, 'availability');
+      recordAttempt(state, slot, planned.descriptor, fallback.actual.model, 'availability');
     }
     const text = fs.existsSync(fallback.outputPath) ? fs.readFileSync(fallback.outputPath, 'utf8') : '';
     fallback.text = text;
   }
   // Split early outcomes: a success is final; an empty capture is requeued exactly once below.
-  const earlySucceeded = new Map([...earlyBySlot].filter(([, fallback]) => fallback.text.trim()));
+  const earlySucceeded = new Map([...earlyBySlot].filter(([slot, fallback]) => fallback.text.trim() && !rejectedEarly.has(slot)));
   const earlyFailed = [...earlyBySlot.keys()].filter((slot) => !earlySucceeded.has(slot));
   const unresolvedAll = (envelope.failures ?? []).filter((failure) =>
     !earlyBySlot.has(failure.sourceKey) && !failure.substitutesFor && !envelope.targets.some((record) => record.substitutesFor === failure.sourceKey));
   // Native fallback substitutes a same-platform subagent only; other platforms' failures are recorded
   // in run state (the resolution-log sourceMap has no failed status).
   const unresolved = unresolvedAll.filter((failure) => failure.platform === state.invocation.orchestrator);
-  for (const failure of unresolvedAll) if (!unresolved.includes(failure)) recordReviewFailure(state, failure.sourceKey, failure.failureKind ?? 'cross-platform');
+  for (const failure of unresolvedAll) if (!unresolved.includes(failure))
+    recordReviewFailure(state, failure.sourceKey, failure.failureKind ?? 'cross-platform');
   state.collect = {
     reports: [
       ...envelope.targets.map((record) => ({ sourceKey: record.sourceKey, text: record.report ?? '', fallback: false })),
@@ -405,27 +467,50 @@ function onLaunch(state, reply) {
     queue: unresolved.map((failure) => cascadeSlot(state, failure, 0)),
     fallbackTried: [...earlySucceeded.keys()],
   };
-  // A failed early fallback already ran model[0]: a multi-model cascade resumes at position 1; a
-  // single-model cascade keeps one post-wave native retry of model[0], since the early run was a
-  // different path from the CLI dispatch that failed first.
+  // An unavailable mapping consumes its native hop; an empty early capture retries normally.
   for (const sourceKey of earlyFailed) {
     const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === sourceKey);
     const failure = failuresBySlot.get(sourceKey);
-    state.collect.queue.push(cascadeSlot(state, failure, planned.descriptor.modelCascade.length > 1 ? 1 : 0));
+    const earlyCapture = earlyBySlot.get(sourceKey);
+    if (!earlyCapture.text.trim() && !rejectedEarly.has(sourceKey)) recordAttempt(state, sourceKey, planned.descriptor, earlyCapture.actual.model, 'empty-capture');
+    const position = rejectedEarly.has(sourceKey) ? 1 : 0;
+    if (position >= planned.descriptor.modelCascade.length) {
+      recordReviewFailure(state, sourceKey, rejectedEarly.get(sourceKey));
+    } else {
+      state.collect.queue.push(cascadeSlot(state, failure, position));
+    }
   }
   for (const [sourceKey, fallback] of earlySucceeded) {
     const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
     state.collect.sourceMap[sourceKey] = {
       provider: failure?.platform ?? state.invocation.orchestrator,
       candidateIndex: failure?.candidateIndex ?? Number(sourceKey.split(':').at(-1)),
-      model: fallback.actual.model,
+      model: state.wave.earlyFallbacks.find((item) => item.slot === sourceKey).descriptor.model,
+      launcherModel: fallback.actual.model,
       effort: fallback.actual.reasoningEffort,
       status: 'fallback',
       session: null,
       substitutesFor: null,
     };
   }
+  for (const [sourceKey, fallback] of earlySucceeded) {
+    recordAttempt(state, sourceKey, state.wave.earlyFallbacks.find((item) => item.slot === sourceKey).descriptor, fallback.actual.model, null);
+  }
   return processCollected(state);
+}
+
+function recordAttempt(state, sourceKey, descriptor, launcherModel, kind) {
+  (state.reviewAttempts ??= []).push({ wave: state.wave.type, round: state.wave.round, sourceKey,
+    configuredModel: descriptor.model, launcherModel: launcherModel ?? null,
+    cascadePosition: descriptor.cascadePosition, kind });
+}
+
+function nativeMapping(configuredModel, launcherModel, mapping, sourceKey) {
+  if (launcherModel === configuredModel) return mapping ? { error: `Unexpected mapping for exact model ${sourceKey}.` } : {};
+  const verified = NATIVE_MAPPINGS.find((entry) => entry.configuredModel === configuredModel);
+  if (mapping && (mapping.configuredModel !== configuredModel || mapping.launcherModel !== launcherModel ||
+    (verified && mapping.provider !== verified.provider))) return { error: `Native mapping metadata does not match ${sourceKey}.` };
+  return verified?.launcherModel === launcherModel && mapping?.provider === verified.provider ? {} : { unavailable: true };
 }
 
 /** Resolves a failed slot's own model cascade from the policy target/reserve identified by
@@ -434,7 +519,8 @@ function onLaunch(state, reply) {
 function cascadeSlot(state, failure, cascadePosition) {
   const match = [...state.policy.targets, ...state.policy.reserves]
     .find((candidate) => candidate.platform === failure.platform && candidate.candidateIndex === failure.candidateIndex);
-  const models = match?.model ? (Array.isArray(match.model) ? match.model : [match.model]) : (failure.model ? [failure.model] : []);
+  const models = match?.model ? (Array.isArray(match.model) ? match.model : [match.model])
+    : (state.wave.type !== 'rebuttal' && failure.model ? [failure.model] : []);
   return {
     sourceKey: failure.sourceKey,
     platform: failure.platform,
@@ -451,6 +537,7 @@ function nativeFallbackAction(state) {
   if (!slot.models[slot.cascadePosition] || !slot.effort) {
     state.collect.queue.shift();
     state.collect.fallbackTried.push(slot.sourceKey);
+    recordReviewFailure(state, slot.sourceKey, slot.models.length && slot.effort ? 'availability' : 'missing-configuration');
     return processCollected(state);
   }
   const outputPath = runFile(state, `fallback-${state.collect.fallbackTried.length + 1}.txt`);
@@ -467,7 +554,7 @@ function nativeFallbackAction(state) {
   return emitAction(state, 'native-fallback', { slot: slot.sourceKey, promptPath: state.wave.promptPath, outputPath, descriptor }, [
     'Launch the named read-only native subagent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; never use launcher defaults.',
     'Tell the native subagent: Read promptPath in full and follow it as the authoritative instructions.',
-    'If the launcher cannot accept the configured model or effort, do not launch: re-resolve or exclude this source.',
+    'If the launcher cannot accept the configured model or effort, report availability for this hop; use only a verified registry mapping.',
     'Write its final reply verbatim to outputPath, then report the actual launch metadata with the captured reply, or a {kind, reason} failure.',
   ]);
 }
@@ -477,44 +564,84 @@ function onNativeFallback(state, reply) {
   if (reply.slot !== current.sourceKey) return reemit(state, `slot must be ${current.sourceKey}.`);
   const expected = current.descriptor;
   if (reply.failed) {
+    if (reply.actual || reply.mapping || reply.captured) return reemit(state, 'A failed hop must not claim successful launch metadata.');
+    recordAttempt(state, current.sourceKey, expected, null, reply.failed.kind);
     // A failed hop advances to the next model in this candidate's own cascade; sibling candidates
     // are never substituted in. Exhaustion drops the slot and records it failed.
-    const nextPosition = current.cascadePosition + 1;
-    if (nextPosition < current.models.length) {
-      state.collect.queue[0] = { ...current, cascadePosition: nextPosition };
-    } else {
-      state.collect.queue.shift();
-      state.collect.fallbackTried.push(current.sourceKey);
-      delete state.collect.sourceMap[current.sourceKey];
-      recordReviewFailure(state, current.sourceKey, reply.failed.kind);
-    }
-    return processCollected(state);
+    return advanceFailedHop(state, current, reply.failed.kind);
   }
   const actual = reply.actual;
-  if (!actual || actual.agentType !== expected.agentType || actual.model !== expected.model || actual.reasoningEffort !== expected.reasoningEffort) {
+  if (!actual || actual.agentType !== expected.agentType || actual.reasoningEffort !== expected.reasoningEffort) {
     return reemit(state, `Native fallback launch metadata must match the descriptor exactly; expected ${JSON.stringify({ agentType: expected.agentType, model: expected.model, reasoningEffort: expected.reasoningEffort })}.`);
+  }
+  const mapping = nativeMapping(expected.model, actual.model, reply.mapping, current.sourceKey);
+  if (mapping.error) return reemit(state, mapping.error);
+  if (mapping.unavailable) {
+    if (!current.mappingWarned) {
+      state.collect.current.mappingWarned = true;
+      writeRunState(state);
+      return reemit(state, `Unmapped native model for ${current.sourceKey}; correct the metadata or confirm the mapping failure.`);
+    }
+    recordAttempt(state, current.sourceKey, expected, actual.model, 'availability');
+    return advanceFailedHop(state, current, 'availability');
   }
   state.collect.queue.shift();
   state.collect.fallbackTried.push(current.sourceKey);
   const text = fs.existsSync(current.outputPath) ? fs.readFileSync(current.outputPath, 'utf8') : '';
   if (text.trim()) {
+    recordAttempt(state, current.sourceKey, expected, actual.model, null);
     state.collect.reports.push({ sourceKey: current.sourceKey, text, fallback: true });
     state.collect.sourceMap[current.sourceKey] = {
       provider: current.platform,
       candidateIndex: current.candidateIndex,
-      model: actual.model,
+      model: expected.model,
+      launcherModel: actual.model,
       effort: actual.reasoningEffort,
       status: 'fallback',
       session: null,
       substitutesFor: expected.substitutesFor,
     };
+  } else {
+    recordAttempt(state, current.sourceKey, expected, actual.model, 'empty-capture');
+    const nextPosition = current.cascadePosition + 1;
+    if (nextPosition < current.models.length) {
+      state.collect.queue.unshift({ ...current, cascadePosition: nextPosition, mappingWarned: false });
+    } else {
+      recordReviewFailure(state, current.sourceKey, 'empty-capture');
+    }
+  }
+  return processCollected(state);
+}
+
+function advanceFailedHop(state, current, kind) {
+  const nextPosition = current.cascadePosition + 1;
+  if (nextPosition < current.models.length) {
+    state.collect.queue[0] = { ...current, cascadePosition: nextPosition, mappingWarned: false };
+  } else {
+    state.collect.queue.shift();
+    state.collect.fallbackTried.push(current.sourceKey);
+    delete state.collect.sourceMap[current.sourceKey];
+    recordReviewFailure(state, current.sourceKey, kind);
   }
   return processCollected(state);
 }
 
 function processCollected(state) {
   if (state.collect.queue.length > 0) return nativeFallbackAction(state);
-  if (state.wave.type === 'rebuttal') return applyRebuttals(state);
+  if (state.wave.type === 'rebuttal') {
+    for (const report of [...state.collect.reports]) {
+      try { parseRebuttal(state.kind, report.text, state.rebuttal.keys); }
+      catch {
+        state.collect.reports = state.collect.reports.filter((item) => item !== report);
+        delete state.collect.sourceMap[report.sourceKey];
+        const [, , platform, candidateIndex] = report.sourceKey.split(':');
+        if (!report.fallback && platform === state.invocation.orchestrator && !state.collect.fallbackTried.includes(report.sourceKey)) {
+          state.collect.queue.push(cascadeSlot(state, { sourceKey: report.sourceKey, platform, candidateIndex: Number(candidateIndex) }, 0));
+        } else recordReviewFailure(state, report.sourceKey, 'invalid-report');
+      }
+    }
+    return state.collect.queue.length ? nativeFallbackAction(state) : applyRebuttals(state);
+  }
   const findings = [];
   const byContent = new Map();
   for (const report of [...state.collect.reports]) {
@@ -534,7 +661,7 @@ function processCollected(state) {
       const [, , platform, index] = report.sourceKey.split(':');
       const canFallBack = !report.fallback && !state.collect.fallbackTried.includes(report.sourceKey) && platform === state.invocation.orchestrator;
       if (!canFallBack) {
-        recordReviewFailure(state, report.sourceKey, 'invalid-report');
+        recordReviewFailure(state, report.sourceKey, report.fallback && !report.text.trim() ? 'empty-capture' : 'invalid-report');
       } else {
         state.collect.queue.push(cascadeSlot(state, {
           sourceKey: report.sourceKey,
@@ -569,12 +696,12 @@ function processCollected(state) {
   }
   if (state.collect.queue.length > 0) return nativeFallbackAction(state);
   if (Object.keys(state.collect.sourceMap).length === 0) {
-    return done(state, 'failed', 'No delegate delivered a review in this wave.', { command: state.resumeCommand });
+    return done(state, 'failed', 'No delegate delivered a review in this wave.', { command: state.resumeCommand, unfulfilledTargets: unfulfilledTargets(state) });
   }
   state.adjudication = { round: state.wave.round, findings, sourceMap: state.collect.sourceMap, waveType: state.wave.type };
   if (findings.length === 0) {
     writeRound(state, []);
-    return nextStep(state);
+    return noticedNextStep(state);
   }
   return adjudicateAction(state);
 }
@@ -589,7 +716,7 @@ function adjudicateAction(state) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
   if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
-  return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings }, guidance);
+  return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings, unfulfilledTargets: unfulfilledTargets(state) }, guidance);
 }
 
 // SECTION: adjudication
@@ -640,6 +767,7 @@ function onAdjudicate(state, reply) {
     state.rulings = rulings;
     return emitAction(state, 'ask-user', {
       question: 'rulings',
+      unfulfilledTargets: unfulfilledTargets(state),
       text: 'These findings need your ruling: answer accepted or rejected for each key.',
       items: rulings.filter((ruling) => ruling.status === 'needs-user').map((ruling) => ({
         key: ruling.key, severity: ruling.severity, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key),
@@ -647,7 +775,7 @@ function onAdjudicate(state, reply) {
     }, ['Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
   }
   writeRound(state, rulings);
-  return nextStep(state);
+  return noticedNextStep(state);
 }
 
 function statusLabel(state, ruling, userFinal) {
@@ -662,7 +790,7 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   let markdown = readArtifactText(state);
   const first = Number(nextFindingId(markdown, round).split('-F')[1]);
   const byKey = new Map(findings.map((finding) => [finding.key, finding]));
-  const lines = [`### Round ${round} — ${today()}`, formatSourceMapLine(validateSourceMap(sourceMap, round))];
+  const lines = [`### Round ${round} — ${today()}`, formatSourceMapLine(validateSourceMap(sourceMap, round)), formatFailedTargetsLine(currentFailures(state), round)];
   const unfixable = [];
   rulings.forEach((ruling, index) => {
     const id = `R${round}-F${String(first + index).padStart(3, '0')}`;
@@ -734,7 +862,7 @@ function onAskUser(state, reply) {
     const rulings = state.rulings.map((ruling) => (ruling.status === 'needs-user' ? { ...ruling, status: verdicts[ruling.key] } : ruling));
     state.rulings = null;
     writeRound(state, rulings, new Set(keys));
-    return nextStep(state);
+    return noticedNextStep(state);
   }
   // Round cap: rule unresolved entries, then run one final verification wave.
   let markdown = readArtifactText(state);
@@ -792,7 +920,9 @@ function prepareRebuttal(state, markdown, logRounds) {
     const id = `${platform}:${index}`;
     if (seen.has(id) || !state.policy.targets.concat(state.policy.reserves).some((t) => t.platform === platform)) continue;
     seen.add(id);
-    targets.push({ candidateId: `${state.phase}:${platform}:${index}`, platform, candidateIndex: Number(index) });
+    const configured = [...state.policy.targets, ...state.policy.reserves].find((t) => t.platform === platform && t.candidateIndex === Number(index));
+    targets.push({ candidateId: `${state.phase}:${platform}:${index}`, platform, candidateIndex: Number(index),
+      ...(configured?.model ? { model: configured.model } : {}), ...(configured?.effort ? { effort: configured.effort } : {}) });
   }
   state.rebuttalAt = logRounds;
   state.rebuttal = { keys, citing: Object.fromEntries(unsettled.map((item) => [item.key, item.sourceKeys])) };
@@ -826,8 +956,14 @@ function applyRebuttals(state) {
       markdown = setEntryStatus(markdown, key, 'Rejected / Downgraded');
     }
   }
+  if (currentFailures(state).length > 0) {
+    const record = { wave: 'rebuttal', sourceRound: state.wave.round, findingKeys: state.rebuttal.keys,
+      targets: currentFailures(state) };
+    markdown = appendToSection(markdown, LOG_HEADING, '## Review Findings & Resolutions',
+      [formatRebuttalFailuresLine(record)], /^\*No reviews conducted yet\.\*\s*$/);
+  }
   writeArtifactText(state, markdown);
-  return nextStep(state);
+  return noticedNextStep(state);
 }
 
 function askCap(state, entries, extend = true, accepted = []) {

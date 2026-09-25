@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { after, afterEach, describe, it } from 'node:test';
 
 import { planSnapshot } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
@@ -330,6 +331,302 @@ describe('scripted review paths (SC5)', () => {
     assert.equal(savedLimit, 6);
     assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2, 3, 4]);
     assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('all-target roster exposes both selected slots', () => {
+    const delegates = { copilot: { targets: [
+      { low: { model: 'gemini-3.7-flash', effort: 'medium' } },
+      { low: { model: 'gpt-6-sol', effort: 'high' } },
+    ] } };
+    const { fixture, repo } = setup(config({ targets: 2 }, delegates));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan],
+      policy: { waveResults: () => allProviders(report()) },
+    });
+    const launch = launches(run.trace, 'review')[0];
+    assert.deepEqual(launch.selectedTargets, [
+      { sourceKey: 'plan-review:R1:copilot:0', platform: 'copilot', candidateIndex: 0 },
+      { sourceKey: 'plan-review:R1:copilot:1', platform: 'copilot', candidateIndex: 1 },
+    ]);
+    assert.deepEqual(launch.earlyFallbacks.map((item) => item.descriptor.model), ['gemini-3.7-flash', 'gpt-6-sol']);
+    assert.deepEqual(launch.earlyFallbacks.map((item) => item.descriptor.reasoningEffort), ['medium', 'high']);
+  });
+
+  it('all-target failed slots retain both native reports', () => {
+    const delegates = { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
+    ] } };
+    const { fixture, repo } = setup(config({ targets: 2 }, delegates));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply: (action) => {
+          const [first] = action.earlyFallbacks;
+          fs.writeFileSync(first.outputPath, report([planFinding({ defect: 'Gemini finding.' })]));
+          return { earlyFallbacks: [{ slot: first.slot, outputPath: first.outputPath, captured: true, actual: {
+            agentType: first.descriptor.agentType, model: first.descriptor.model, reasoningEffort: first.descriptor.reasoningEffort,
+          } }] };
+        },
+        nativeFallback: (action) => {
+          assert.equal(action.descriptor.model, 'sol');
+          fs.writeFileSync(action.outputPath, report([planFinding({ defect: 'Sol finding.' })]));
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType, model: action.descriptor.model, reasoningEffort: action.descriptor.reasoningEffort,
+          } };
+        },
+      },
+    });
+    const adjudicate = run.trace.find((a) => a.action === 'adjudicate');
+    assert.deepEqual(adjudicate.findings.map((item) => item.defect), ['Gemini finding.', 'Sol finding.']);
+    assert.equal(Object.keys(readLog(plan).rounds[0].sourceMap).length, 2);
+    assert.deepEqual(readLog(plan).rounds[0].failedTargets, []);
+  });
+
+  it('all-target terminal empty native capture is recorded', () => {
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [{ low: { model: 'sol', effort: 'medium' } }] } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: { waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback: (action) => ({ slot: action.slot, captured: true, actual: {
+          agentType: action.descriptor.agentType, model: action.descriptor.model, reasoningEffort: action.descriptor.reasoningEffort,
+        } }),
+      },
+    });
+    assert.equal(run.done.outcome, 'failed');
+    assert.equal(run.done.failed[0].kind, 'empty-capture');
+    assert.equal(readLog(plan).rounds.length, 0);
+  });
+
+  it('all-target terminal native failure is named without a settled round', () => {
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [{ low: { model: 'sol', effort: 'medium' } }] } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: { waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback: (action) => ({ slot: action.slot, failed: { kind: 'auth', reason: 'native auth failed' } }),
+      },
+    });
+    assert.equal(run.done.outcome, 'failed');
+    assert.deepEqual(run.done.unfulfilledTargets, { wave: 'review', round: 1,
+      targets: [{ sourceKey: 'plan-review:R1:copilot:0', kind: 'auth' }] });
+    assert.equal(readLog(plan).rounds.length, 0);
+  });
+
+  it('all-target terminal envelope omission records missing-slot', () => {
+    const { fixture, repo } = setup(config({ targets: 2 }, { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
+    ] } }));
+    const plan = writePlan(repo.dir);
+    const invoke = (args) => {
+      const res = runDispatch(fixture, args, { cwd: repo.dir });
+      assert.equal(res.status, 0, res.stderr);
+      return parseAction(res.stdout);
+    };
+    const launch = invoke(['--run', 'review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan]);
+    const result = runLaunch(fixture, launch.argv, { cwd: repo.dir, results: allProviders(report()) });
+    assert.equal(result.status, 0, result.stderr);
+    const outputPath = launch.argv[launch.argv.indexOf('--output-file') + 1];
+    const envelope = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
+    assert.equal(envelope.targets.length, 2);
+    envelope.targets.pop();
+    fs.writeFileSync(outputPath, JSON.stringify(envelope));
+    const next = invoke(['--next', '--state', launch.stateFile, '--input', '{"earlyFallbacks":[]}']);
+    assert.equal(next.action, 'done');
+    assert.equal(next.outcome, 'complete');
+    assert.deepEqual(next.unfulfilledTargets.targets, [{ sourceKey: 'plan-review:R1:copilot:1', kind: 'missing-slot' }]);
+    assert.deepEqual(readLog(plan).rounds[0].failedTargets, next.unfulfilledTargets.targets);
+  });
+
+  it('all-target successful direct review avoids native duplicate', () => {
+    const { fixture, repo } = setup(config({ targets: 2 }, { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
+    ] } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan],
+      policy: { waveResults: () => allProviders(report()) },
+    });
+    assert.equal(run.trace.filter((a) => a.action === 'native-fallback').length, 0);
+    assert.equal(readLog(plan).rounds[0].failedTargets.length, 0);
+  });
+
+  it('all-target missing fallback configuration is recorded', () => {
+    const { fixture, repo } = setup(config({ targets: 2 }, { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol' } },
+    ] } }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan],
+      policy: { waveResults: () => ({ copilot: { stdout: report(), exit: 0 }, 'copilot:sol': { exit: 1 } }) },
+    });
+    assert.ok(run.done.failed?.some((item) => item.kind === 'missing-configuration'));
+    assert.ok(readLog(plan).rounds[0].failedTargets.some((item) => item.kind === 'missing-configuration'));
+  });
+
+  it('native fallback rejects invented provider mapping and advances its own slot', () => {
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [{ low: { model: ['first', 'second'], effort: 'medium' } }] } }));
+    const plan = writePlan(repo.dir);
+    const seen = [];
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback(action) {
+          seen.push(action.descriptor.model);
+          fs.writeFileSync(action.outputPath, report());
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType,
+            model: action.descriptor.model === 'first' ? 'invented/native' : 'second',
+            reasoningEffort: action.descriptor.reasoningEffort,
+          }, ...(action.descriptor.model === 'first' ? {
+            mapping: { configuredModel: 'first', launcherModel: 'invented/native', provider: 'invented' },
+          } : {}) };
+        },
+      },
+    });
+    assert.deepEqual(seen, ['first', 'first', 'second']);
+    assert.equal(run.done.outcome, 'complete');
+    assert.deepEqual(readLog(plan).rounds[0].failedTargets, []);
+  });
+
+  it('early fallback rejects invented provider mapping before exhausting its slot', () => {
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [{ low: { model: 'first', effort: 'medium' } }] } }));
+    const plan = writePlan(repo.dir);
+    let replies = 0;
+    const run = drive(fixture, { cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        launchReply(action) {
+          replies++;
+          const [fallback] = action.earlyFallbacks;
+          fs.writeFileSync(fallback.outputPath, report());
+          return { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true,
+            actual: { agentType: fallback.descriptor.agentType, model: 'invented/native',
+              reasoningEffort: fallback.descriptor.reasoningEffort },
+            mapping: { configuredModel: 'first', launcherModel: 'invented/native', provider: 'invented' },
+          }] };
+        },
+      },
+    });
+    assert.equal(replies, 2);
+    assert.equal(run.done.outcome, 'failed');
+    assert.equal(run.done.failed[0].kind, 'availability');
+  });
+
+  it('native fallback gives each cascade hop its own mapping correction', () => {
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [{ low: {
+      model: ['first', 'second'], effort: 'medium',
+    } }] } }));
+    const plan = writePlan(repo.dir);
+    const attempts = [];
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback(action) {
+          attempts.push(action.descriptor.cascadePosition);
+          fs.writeFileSync(action.outputPath, report());
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType, model: 'unmapped/native',
+            reasoningEffort: action.descriptor.reasoningEffort,
+          }, mapping: { configuredModel: action.descriptor.model,
+            launcherModel: 'unmapped/native', provider: 'unmapped' } };
+        },
+      },
+    });
+    assert.deepEqual(attempts, [0, 0, 1, 1]);
+    assert.deepEqual(run.done.failed?.map((item) => item.kind), ['availability']);
+  });
+
+  it('native fallback uses verified provider mapping and exhausts each slot cascade', () => {
+    const delegates = { copilot: { targets: [{ low: { model: ['configured-first', 'configured-next'], effort: 'medium' } }] } };
+    const mappings = [{ configuredModel: 'configured-next', launcherModel: 'provider/native-next', provider: 'provider', provenance: 'fixture catalog' }];
+    const mapped = setup(config({}, delegates), undefined, mappings);
+    const plan = writePlan(mapped.repo.dir);
+    const seen = [];
+    const run = drive(mapped.fixture, { cwd: mapped.repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--', plan],
+      policy: {
+        waveResults: () => allProviders('', { exit: 1, failureKind: 'quota' }),
+        nativeFallback(action) {
+          seen.push(action.descriptor.model);
+          if (action.descriptor.cascadePosition === 0) return { slot: action.slot, failed: { kind: 'quota', reason: 'native quota' } };
+          fs.writeFileSync(action.outputPath, report());
+          return { slot: action.slot, captured: true, actual: {
+            agentType: action.descriptor.agentType, model: 'provider/native-next', reasoningEffort: action.descriptor.reasoningEffort,
+          }, mapping: { configuredModel: 'configured-next', launcherModel: 'provider/native-next', provider: 'provider' } };
+        },
+      },
+    });
+    assert.deepEqual(seen, ['configured-first', 'configured-next']);
+    assert.equal(run.done.failed?.length ?? 0, 0);
+    const source = Object.values(readLog(plan).rounds[0].sourceMap)[0];
+    assert.equal(source.model, 'configured-next');
+    assert.equal(source.launcherModel, 'provider/native-next');
+    assert.equal(fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)),
+      '../../../../skills/dispatch/references/native-model-mappings.json'), 'utf8').trim(), '[]');
+  });
+
+  it('subset rebuttal wave accounts for failed selected targets', () => {
+    const { fixture, repo } = setup(config({ consensus: true }, { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
+    ] } }));
+    const plan = writePlan(repo.dir);
+    let rebuttalWave;
+    const run = drive(fixture, { cwd: repo.dir, runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', plan],
+      policy: {
+        waveResults: (action) => action.wave.type === 'review' ? {
+          'copilot:gemini': { stdout: report([planFinding()]) },
+          'copilot:sol': { stdout: report() },
+        } : allProviders('', { exit: 1, failureKind: 'quota' }),
+        rule: () => ({ status: 'rejected' }),
+        nativeFallback: (action) => ({ slot: action.slot, failed: { kind: 'quota', reason: 'native quota' } }),
+      },
+      onAction: (action) => { if (action.action === 'launch' && action.wave.type === 'rebuttal') rebuttalWave = action; },
+    });
+    assert.ok(rebuttalWave);
+    assert.deepEqual(rebuttalWave.selectedTargets.map((target) => target.candidateIndex), [0]);
+    assert.deepEqual(rebuttalWave.earlyFallbacks.map((fallback) => fallback.slot),
+      rebuttalWave.selectedTargets.map((target) => target.sourceKey));
+    assert.ok(!run.done.failed?.some((item) => item.wave === 'rebuttal' && item.sourceKey.endsWith(':1')));
+    assert.ok(readLog(plan).rebuttalFailures.length);
+    assert.ok(run.done.failed?.some((item) => item.wave === 'rebuttal'));
+
+    const unmatched = setup(config({ consensus: true }, { copilot: { targets: [
+      { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
+    ] } }));
+    const unmatchedPlan = writePlan(unmatched.repo.dir);
+    let unmatchedRebuttal;
+    drive(unmatched.fixture, {
+      cwd: unmatched.repo.dir,
+      runArgs: ['review', '--orchestrator', 'copilot', '--pins', 'all', '--', unmatchedPlan],
+      policy: {
+        waveResults: (action) => action.wave.type === 'review' ? {
+          'copilot:gemini': { stdout: report([planFinding()]) },
+          'copilot:sol': { stdout: report() },
+        } : allProviders('', { exit: 1, failureKind: 'quota' }),
+        rule: () => ({ status: 'rejected' }),
+        nativeFallback: (action) => ({ slot: action.slot, failed: { kind: 'quota', reason: 'native quota' } }),
+      },
+      onAction: (action) => {
+        if (action.action === 'adjudicate' && action.round === 1) {
+          const state = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+          state.policy.targets = state.policy.targets.filter((target) => target.candidateIndex !== 0);
+          fs.writeFileSync(action.stateFile, JSON.stringify(state));
+        }
+        if (action.action === 'launch' && action.wave.type === 'rebuttal') unmatchedRebuttal = action;
+      },
+    });
+    assert.deepEqual(unmatchedRebuttal.selectedTargets.map((target) => target.candidateIndex), [0]);
+    assert.equal(unmatchedRebuttal.earlyFallbacks?.length ?? 0, 0);
+    assert.ok(readLog(unmatchedPlan).rebuttalFailures[0].targets.some((target) => target.kind === 'missing-configuration'),
+      JSON.stringify(readLog(unmatchedPlan).rebuttalFailures));
   });
 
   it('captures a same-platform fallback started during the wave without requesting it again', () => {

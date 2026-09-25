@@ -34,7 +34,7 @@ Passing commands alone do not prove the outcome.
 
 ## Wave and artifact lifecycle
 
-Execute the driver's launch argv directly and unbuffered; wrappers hide streamed slot lines. Inspect declared early failures once at the instructed time, start eligible native fallbacks, then await terminal outcomes without polling. Other failures consume ordered reserves before fallback. Configuration, membership, and integrity errors are terminal.
+Execute the driver's launch argv directly and unbuffered; wrappers hide streamed slot lines. `selectedTargets` is the complete, ordered roster for this wave: `(all)` selects every target voice, not one preferred candidate. Inspect failed slots once, launch each matching slot's own early fallback in parallel, then await terminal outcomes without polling. Reconcile every selected slot with direct success, reserve substitution, native capture, or a named failure before advancing; an empty early reply is not an empty roster. Other failures consume ordered reserves before fallback. Configuration, membership, and integrity errors are terminal.
 
 Canonical scratch artifacts use `.scratch/plan/<yyyy-mm-dd>-<slug>.md` and `.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`; they are the only persistent review write targets. Standalone reviews retain them in place. Views, packets, reports, and run state stay in the run's OS-temp session directory. Remove completed cleanup paths finally-style; retain unresolved inputs. Before successful relocation, warn that the OS may delete the plan and walkthrough and report every destination.
 

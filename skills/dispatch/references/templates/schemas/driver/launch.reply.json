@@ -14,19 +14,68 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["slot", "outputPath", "captured", "actual"],
+            "required": [
+              "slot",
+              "outputPath",
+              "captured",
+              "actual"
+            ],
             "properties": {
-              "slot": { "type": "string", "minLength": 1 },
-              "outputPath": { "type": "string", "minLength": 1 },
-              "captured": { "const": true },
+              "slot": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outputPath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "captured": {
+                "const": true
+              },
               "actual": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["agentType", "model", "reasoningEffort"],
+                "required": [
+                  "agentType",
+                  "model",
+                  "reasoningEffort"
+                ],
                 "properties": {
-                  "agentType": { "type": "string", "minLength": 1 },
-                  "model": { "type": "string", "minLength": 1 },
-                  "reasoningEffort": { "type": "string", "minLength": 1 }
+                  "agentType": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reasoningEffort": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "mapping": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "configuredModel",
+                  "launcherModel",
+                  "provider"
+                ],
+                "properties": {
+                  "configuredModel": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "launcherModel": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "provider": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             }

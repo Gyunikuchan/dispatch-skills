@@ -72,10 +72,18 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sourceKey", "text"],
+        "required": [
+          "sourceKey",
+          "text"
+        ],
         "properties": {
-          "sourceKey": { "type": "string", "minLength": 1 },
-          "text": { "type": "string" }
+          "sourceKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string"
+          }
         }
       }
     },
@@ -84,10 +92,31 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["sourceKey", "kind"],
+        "required": [
+          "sourceKey",
+          "kind"
+        ],
         "properties": {
-          "sourceKey": { "type": "string", "minLength": 1 },
-          "kind": { "type": "string", "minLength": 1 }
+          "sourceKey": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "wave": {
+            "enum": [
+              "ask",
+              "review",
+              "rebuttal",
+              "final"
+            ]
+          },
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       }
     },
@@ -154,6 +183,49 @@
         "reviewDisabled": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "unfulfilledTargets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wave",
+        "round",
+        "targets"
+      ],
+      "properties": {
+        "wave": {
+          "enum": [
+            "review",
+            "rebuttal",
+            "final"
+          ]
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceKey",
+              "kind"
+            ],
+            "properties": {
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         }
       }
     }

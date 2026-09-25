@@ -107,6 +107,38 @@ function parseSourceMap(line, { strict, roundNumber }) {
 
 const SOURCE_RECORD_FIELDS = ['candidateIndex', 'effort', 'model', 'provider', 'session', 'status', 'substitutesFor'];
 const SOURCE_KEY_PARTS = /^(plan-review|code-review|design-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
+export const FAILURE_KINDS = Object.freeze(['quota', 'context-overflow', 'auth', 'model-not-loaded', 'model-not-found', 'not-found', 'cli-outdated', 'timeout', 'empty-output', 'sandbox-unsupported', 'availability', 'cross-platform', 'invalid-report', 'empty-capture', 'missing-slot', 'missing-configuration', 'unresolved-model', 'execution']);
+
+/** Validates terminal failures for a single review wave; no report is fabricated for these keys. */
+export function validateFailedTargets(value, roundNumber) {
+  if (!Array.isArray(value)) throw new Error(`Round ${roundNumber} failed-targets must be an array.`);
+  const seen = new Set();
+  for (const item of value) {
+    const match = SOURCE_KEY_PARTS.exec(item?.sourceKey ?? '');
+    if (!item || Object.keys(item).sort().join(',') !== 'kind,sourceKey' || !match || Number(match[2]) !== roundNumber ||
+      !FAILURE_KINDS.includes(item.kind) || seen.has(item.sourceKey)) {
+      throw new Error(`Round ${roundNumber} failed-targets contains an invalid or duplicate entry.`);
+    }
+    seen.add(item.sourceKey);
+  }
+  return value;
+}
+
+export function formatFailedTargetsLine(value, roundNumber) {
+  validateFailedTargets(value, roundNumber);
+  return `- failed-targets: ${JSON.stringify(value.map(({ sourceKey, kind }) => ({ sourceKey, kind })))}`;
+}
+
+/** Rebuttal failures follow a settled round but never become part of its round hash. */
+export function formatRebuttalFailuresLine(record) {
+  const { wave, sourceRound, findingKeys, targets } = record ?? {};
+  if (wave !== 'rebuttal' || !Number.isSafeInteger(sourceRound) || sourceRound < 2 ||
+    !Array.isArray(findingKeys) || !findingKeys.length || new Set(findingKeys).size !== findingKeys.length ||
+    findingKeys.some((key) => !/^R[1-9]\d*-F\d{3,}$/.test(key))) throw new Error('Invalid rebuttal-failures finding keys or wave.');
+  validateFailedTargets(targets, sourceRound);
+  if (Object.keys(record).sort().join(',') !== 'findingKeys,sourceRound,targets,wave') throw new Error('Invalid rebuttal-failures fields.');
+  return `- rebuttal-failures: ${JSON.stringify({ wave, sourceRound, findingKeys, targets })}`;
+}
 
 // Names the first failing field so a hand-edited or generated record is fixable in one pass.
 function sourceRecordProblem(key, source, roundNumber) {
@@ -114,12 +146,15 @@ function sourceRecordProblem(key, source, roundNumber) {
   if (!keyMatch) return 'key must be <plan-review|code-review>:R<n>:<provider>:<candidate-index>';
   if (Number(keyMatch[2]) !== roundNumber) return `key round must be R${roundNumber}`;
   if (!source || Array.isArray(source) || typeof source !== 'object') return 'record must be an object';
-  if (Object.keys(source).sort().join('\0') !== SOURCE_RECORD_FIELDS.join('\0')) {
+  const fields = source.status === 'fallback' && Object.hasOwn(source, 'launcherModel')
+    ? [...SOURCE_RECORD_FIELDS, 'launcherModel'] : SOURCE_RECORD_FIELDS;
+  if (Object.keys(source).sort().join('\0') !== fields.slice().sort().join('\0')) {
     return `record fields must be exactly: ${SOURCE_RECORD_FIELDS.join(', ')}`;
   }
   if (source.provider !== keyMatch[3]) return `provider must be "${keyMatch[3]}"`;
   if (source.candidateIndex !== Number(keyMatch[4])) return `candidateIndex must be ${Number(keyMatch[4])}`;
   if (source.model !== null && typeof source.model !== 'string') return 'model must be a string or null';
+  if (Object.hasOwn(source, 'launcherModel') && (typeof source.launcherModel !== 'string' || !source.launcherModel.trim())) return 'launcherModel must be a non-empty string';
   if (source.effort !== null && typeof source.effort !== 'string') return 'effort must be a string or null';
   if (!SOURCE_STATUSES.has(source.status)) return `status must be one of: ${[...SOURCE_STATUSES].join(', ')}`;
   if (source.session !== null && typeof source.session !== 'string') return 'session must be a string or null';
@@ -134,7 +169,9 @@ function sourceRecordProblem(key, source, roundNumber) {
 
 /** Renders a validated source map as the round's `- **Sources:**` resolution-log line. */
 export function formatSourceMapLine(map) {
-  return `- **Sources:** ${JSON.stringify(map)}`;
+  return `- **Sources:** ${JSON.stringify(Object.fromEntries(Object.entries(map).map(([key, value]) => [key,
+    Object.fromEntries([...SOURCE_RECORD_FIELDS, 'launcherModel'].filter((field) => Object.hasOwn(value, field)).map((field) => [field, value[field]])),
+  ])))}`;
 }
 
 export function validateSourceMap(value, roundNumber) {
@@ -271,10 +308,12 @@ function findSections(lines, honorFences) {
 
 function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   const rounds = [];
+  const rebuttalFailures = [];
   let current = null;
   let fence = null;
   let previous = 0;
   let lastLineWasEntry = false;
+  let afterRebuttalFailures = false;
   for (let index = 1; index < sectionLines.length; index++) {
     const line = sectionLines[index];
     const nextFence = fenceTransition(line, fence);
@@ -290,8 +329,36 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         const number = Number(roundMatch[1]);
         if (strict && number <= previous) throw new Error(`Round ${number} is duplicate or out of order.`);
         previous = number;
-        current = { number, heading: line, lines: [line], entries: [], sourceMap: null };
+        current = { number, heading: line, lines: [line], entries: [], sourceMap: null, failedTargets: [], hasFailedTargets: false };
+        afterRebuttalFailures = false;
         rounds.push(current);
+        lastLineWasEntry = false;
+        continue;
+      }
+      if (/^\s*[-*]\s+rebuttal-failures:/.test(line)) {
+        try {
+          const record = JSON.parse(line.replace(/^\s*[-*]\s+rebuttal-failures:\s*/, ''));
+          if (!current || !current.sourceMap || record.sourceRound !== current.number + 1 ||
+            rebuttalFailures.some((item) => item.sourceRound === record.sourceRound) ||
+            !record.findingKeys.every((key) => rounds.some((round) => round.number < record.sourceRound && round.entries.some((entry) => entry.id === key))) ||
+            formatRebuttalFailuresLine(record) !== line) throw new Error('misplaced or noncanonical rebuttal-failures record');
+          rebuttalFailures.push(record);
+          afterRebuttalFailures = true;
+        } catch (error) { if (strict) throw new Error(`Invalid rebuttal-failures record: ${error.message}`); }
+        lastLineWasEntry = false;
+        continue;
+      }
+      if (strict && afterRebuttalFailures && line.trim()) throw new Error('Only a new round may follow rebuttal-failures.');
+      if (/^\s*[-*]\s+failed-targets:/.test(line)) {
+        try {
+          if (!current || !current.sourceMap || current.hasFailedTargets || current.entries.length || current.lines.at(-1) !== sectionLines[index - 1] ||
+            !SOURCE_MAP.test(sectionLines[index - 1])) throw new Error('failed-targets must immediately follow Sources');
+          const value = JSON.parse(line.replace(/^\s*[-*]\s+failed-targets:\s*/, ''));
+          if (formatFailedTargetsLine(value, current.number) !== line) throw new Error('failed-targets is not canonical');
+          current.failedTargets = value;
+          current.hasFailedTargets = true;
+        } catch (error) { if (strict) throw new Error(`Invalid failed-targets record: ${error.message}`); }
+        if (current) current.lines.push(line);
         lastLineWasEntry = false;
         continue;
       }
@@ -418,7 +485,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
       unknown: round.entries.filter((entry) => entry.status === 'unknown').length,
     };
   }
-  return rounds;
+  return { rounds, rebuttalFailures };
 }
 
 /**
@@ -438,11 +505,13 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
   const selected = strict ? sections.slice(0, 1) : sections;
   // NOTE: lineOffset is body-relative so that round hashes and entries
   // remain invariant across metadata frontmatter adoption, as asserted by test contracts.
-  const rounds = selected.flatMap((section) =>
+  const parsedSections = selected.map((section) =>
     parseRounds(lines.slice(section.start, section.end), {
       strict,
       lineOffset: section.start,
     }));
+  const rounds = parsedSections.flatMap((section) => section.rounds);
+  const rebuttalFailures = parsedSections.flatMap((section) => section.rebuttalFailures);
   const sectionText = selected.map((section) => lines.slice(section.start, section.end).join('\n')).join('\n');
   const unsettledItems = rounds.flatMap((round) =>
     round.entries
@@ -470,6 +539,7 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
     sectionText,
     canonicalLogHash: digest(sectionText),
     rounds,
+    rebuttalFailures,
     unsettled,
     unsettledItems,
     sectionCount: sections.length,

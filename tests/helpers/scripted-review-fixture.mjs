@@ -26,11 +26,11 @@ export function cleanupScriptedRepos() { for (const fn of cleanups.splice(0)) fn
 /** Stub fixtures are cached per config across one file's tests; register with after. */
 export function disposeScriptedFixtures() { for (const fixture of fixtures.values()) fixture.cleanup(); fixtures.clear(); }
 
-export function setup(cfg, repoOpts) {
-  const key = JSON.stringify(cfg);
+export function setup(cfg, repoOpts, nativeModelMappings = []) {
+  const key = JSON.stringify([cfg, nativeModelMappings]);
   let fixture = fixtures.get(key);
   if (!fixture) {
-    fixture = createStubDispatchFixture(cfg);
+    fixture = createStubDispatchFixture(cfg, nativeModelMappings);
     fixtures.set(key, fixture);
   }
   const repo = makeGitRepo(repoOpts);

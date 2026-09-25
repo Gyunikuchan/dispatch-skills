@@ -9,7 +9,8 @@
     "stateFile",
     "guidance",
     "round",
-    "findings"
+    "findings",
+    "unfulfilledTargets"
   ],
   "properties": {
     "v": {
@@ -78,6 +79,49 @@
           },
           "reportPath": {
             "type": "string"
+          }
+        }
+      }
+    },
+    "unfulfilledTargets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wave",
+        "round",
+        "targets"
+      ],
+      "properties": {
+        "wave": {
+          "enum": [
+            "review",
+            "rebuttal",
+            "final"
+          ]
+        },
+        "round": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceKey",
+              "kind"
+            ],
+            "properties": {
+              "sourceKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         }
       }

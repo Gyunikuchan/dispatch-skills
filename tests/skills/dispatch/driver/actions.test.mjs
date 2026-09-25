@@ -68,7 +68,7 @@ describe('driver action schemas (SC2)', () => {
         else if (['anyOf', 'oneOf', 'allOf'].includes(key)) value.forEach((sub, i) => walk(sub, `${where}.${key}[${i}]`));
       }
     };
-    for (const file of fs.readdirSync(SCHEMA_DIR)) walk(JSON.parse(fs.readFileSync(path.join(SCHEMA_DIR, file), 'utf8')), file);
+    for (const file of fs.readdirSync(SCHEMA_DIR).filter((name) => name.endsWith('.json'))) walk(JSON.parse(fs.readFileSync(path.join(SCHEMA_DIR, file), 'utf8')), file);
   });
 
   it('emitAction stamps v, action, stateFile, and branch guidance', () => {

@@ -154,6 +154,16 @@ describe('review preparation primitives', () => {
       assert.deepEqual(resolutionPaths(artifact(round)), ['a.mjs', 'b.mjs']);
     });
 
+    it('failure records are redacted from delegate view', () => {
+      const round = ['### Round 1 — 2026-09-23', sources,
+        '- failed-targets: [{"sourceKey":"code-review:R1:copilot:1","kind":"quota"}]',
+        entry('R1-F001', 'a.mjs:L1', 'reuse')];
+      const contents = view(round, 2);
+      assert.doesNotMatch(contents, /failed-targets|code-review:R1:copilot:1|"kind":"quota"/);
+      const older = artifact([...round, '### Round 2', `- **Sources:** ${JSON.stringify({ 'code-review:R2:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } })}`]);
+      assert.match(buildReviewView(older, { canonicalPath: 'plan.md', nextRound: 3 }).contents, /failed=1/);
+    });
+
     it('labels projected sources and derives the advisory turn target from scoped files', () => {
       assert.match(view(), /## Review Findings & Resolutions \(bounded view\)\n> Source: canonical resolution log/);
       assert.equal(toolTurnTarget([]), '8');

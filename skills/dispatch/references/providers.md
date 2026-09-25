@@ -12,7 +12,8 @@ membership and effective model/effort; this file defines provider mechanics and 
   platform's second. Put the detected orchestrator platform after alternatives; within that
   platform, put candidates matching the orchestrator model last.
 - **Pinned:** `--provider <key>` removes cross-provider fallback but preserves that provider's
-  candidate order.
+  candidate order. Review `--pins all` selects every eligible target in policy order; each target
+  is an independent voice, and only its own configured model list is a native fallback cascade.
 - **Overrides:** `-m` or `-e` collapses each resolved platform to one target. An omitted value is
   left to the provider CLI.
 - **Membership:** `--list-platforms` is authoritative: dispatchable platforms are defined solely
@@ -146,14 +147,16 @@ other platforms' failures are recorded with their kind. Configuration, integrity
    effort (Claude Code's Agent tool) reports the configured value and states that limitation. A
    launcher that cannot honour the descriptor replies `failed`; never substitute defaults, re-enter
    `dispatch`, or answer inline.
-2. Treat fallback as a transport replacement, not a reduced review. Capture the complete final
-   response in the action's `outputPath`, then reply with the `actual` `agentType`, `model`,
-   and `reasoningEffort` exactly as launched, or with `failed: {kind, reason}` using the kinds
-   above. The driver runs the reply through the same pipeline as a direct report.
-3. Walk the **model cascade** one hop per action: each `native-fallback` names one model
-   (`modelCascade[cascadePosition]`), launched fresh. A `failed` reply or an empty capture
-   re-emits `native-fallback` at the next `cascadePosition`; once `modelCascade` is exhausted the
-   driver drops the source. Mismatched `actual` metadata re-emits the same hop.
+2. Resolve the configured model against the native catalog or a verified binding in
+   `native-model-mappings.json`. For a provider-qualified launcher ID, report `actual.model` and
+   `mapping: {configuredModel, launcherModel, provider}`; the driver independently checks the
+   binding. Capture the full reply at `outputPath`, or report `failed: {kind, reason}`. Keep the
+   configured and actual model IDs distinct in the source record. A CLI quota or auth failure
+   does not establish native unavailability.
+3. Walk the **model cascade** within this slot: a native quota, unsupported, execution, or
+   unverified mapping failure advances its position. A first model mismatch permits correction;
+   a repeated mismatch records `availability`. Exhaustion records the source as failed. Empty
+   early captures retry post-wave; terminal empty captures are named failures.
 
 The descriptor's `agentType` is read-only by construction. A default subagent is write-capable, so
 its read-only boundary is prompt-enforced: instruct it to return claims and evidence only and to
@@ -166,9 +169,10 @@ For an orchestrated multi-dispatch review wave, the launch action precomputes sa
 fallback descriptors at `cascadePosition: 0` (the target's first model). After launch, run
 `node dispatch.mjs --slots <slotsPath>` once and inspect the failed slots it prints; start all
 matching failures as parallel native fallbacks while the wave continues, then never poll again.
-A matching failure first observed after that inspection starts the native branch at
-`cascadePosition: 0` after the wave; a slot whose early fallback failed resumes at `cascadePosition: 1` (a single-model cascade retries model[0] once natively); a successful early fallback is final. Targets without a same-platform fallback may use ordered reserves instead; use
-each reserve at most once per wave and record `<failed target> → <reserve>: <reason>`.
+An omitted or empty early capture retries its slot post-wave at position 0; a confirmed mapping
+rejection resumes at position 1. A successful early capture is final. Targets without a same-platform
+fallback may use ordered reserves instead; use each reserve at most once per wave and record
+`<failed target> → <reserve>: <reason>`.
 
 ## Integrity and diagnosis
 

@@ -324,11 +324,11 @@ export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = n
 
 function summaryLine(round) {
   const { accepted, rejected, resolvedDispute, disputed, pendingConfirmation, unknown } = round.counts;
-  return `- R${round.number} settled accepted=${accepted} rejected=${rejected} resolved=${resolvedDispute} disputed=${disputed + pendingConfirmation} unknown=${unknown} hash=${round.hash.slice(0, 12)}`;
+  return `- R${round.number} settled accepted=${accepted} rejected=${rejected} resolved=${resolvedDispute} disputed=${disputed + pendingConfirmation} unknown=${unknown} failed=${round.failedTargets.length} hash=${round.hash.slice(0, 12)}`;
 }
 
 function withoutSourceMap(roundText) {
-  return roundText.split('\n').filter((line) => !/^\s*[-*]\s+\*\*Sources:\*\*/.test(line)).join('\n');
+  return roundText.split('\n').filter((line) => !/^\s*[-*]\s+(?:\*\*Sources:\*\*|failed-targets:)/.test(line)).join('\n');
 }
 
 // Walkthrough run state (~100 KB+) is driver cache, not review evidence; reviewers get a table instead.

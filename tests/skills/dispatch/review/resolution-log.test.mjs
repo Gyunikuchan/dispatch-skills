@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import {
   findUnsettledResolutionLines,
   formatApplicationRecord,
+  formatFailedTargetsLine,
+  formatRebuttalFailuresLine,
   formatSourceMapLine,
   nextFindingId,
   scanResolutionLog,
@@ -391,6 +393,53 @@ describe('resolution log scanner', () => {
       () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
       /normalized repository-relative slash path/,
     );
+  });
+});
+
+describe('failure records', () => {
+  it('failed target round record round-trips and rejects malformed input', () => {
+    const sourceKey = 'plan-review:R1:copilot:1';
+    const failed = [{ sourceKey, kind: 'availability' }];
+    const record = { wave: 'rebuttal', sourceRound: 2, findingKeys: ['R1-F001'], targets: [
+      { sourceKey: 'plan-review:R2:copilot:1', kind: 'quota' },
+    ] };
+    const base = ['# Plan', '## Review Findings & Resolutions', '### Round 1', roundSources(1),
+      formatFailedTargetsLine(failed, 1),
+      '- **[Rejected — Pending Confirmation]** [R1-F001] [MUST] [sources=plan-review:R1:claude:0] § A — test: missing → rejected',
+    ].join('\n');
+    const settled = scanResolutionLog(base);
+    const repeatedKey = 'plan-review:R2:copilot:1';
+    const roundTwoSource = { provider: 'copilot', candidateIndex: 1, model: 'sol', effort: 'medium',
+      status: 'target', session: null, substitutesFor: null };
+    const doc = `${base}\n${formatRebuttalFailuresLine(record)}\n### Round 2\n${formatSourceMapLine({ [repeatedKey]: roundTwoSource })}\n${formatFailedTargetsLine([{ sourceKey: repeatedKey, kind: 'auth' }], 2)}`;
+    const parsed = scanResolutionLog(doc);
+    assert.deepEqual(parsed.rounds[0].failedTargets, failed);
+    assert.deepEqual(parsed.rebuttalFailures, [record]);
+    assert.deepEqual(parsed.rounds[1].failedTargets, [{ sourceKey: repeatedKey, kind: 'auth' }]);
+    assert.deepEqual(parsed.rebuttalFailures[0].targets, [{ sourceKey: repeatedKey, kind: 'quota' }]);
+    assert.equal(parsed.rounds[0].hash, settled.rounds[0].hash);
+    assert.ok(!parsed.rounds[0].text.includes('rebuttal-failures'));
+    assert.notEqual(parsed.canonicalLogHash, settled.canonicalLogHash);
+    assert.deepEqual(scanResolutionLog(document).rounds[0].failedTargets, []);
+    const fallbackKey = 'plan-review:R2:copilot:1';
+    const fallback = { ...roundTwoSource, model: 'configured-sol', status: 'fallback', launcherModel: 'provider/sol' };
+    const fallbackDoc = ['# Plan', '## Review Findings & Resolutions', '### Round 1', roundSources(1),
+      '### Round 2', formatSourceMapLine({ [fallbackKey]: fallback })].join('\n');
+    assert.deepEqual(scanResolutionLog(fallbackDoc).rounds[1].sourceMap[fallbackKey], fallback);
+    assert.deepEqual(scanResolutionLog(doc).rounds[1].sourceMap[fallbackKey], roundTwoSource);
+    assert.throws(() => scanResolutionLog(fallbackDoc.replace('"status":"fallback"', '"status":"target"')), /source map entry/);
+    assert.throws(() => scanResolutionLog(fallbackDoc.replace('"launcherModel":"provider\/sol"', '"launcherModel":"  "')), /launcherModel/);
+    const earlierFinding = '- **[Disputed]** [R1-F002] [SHOULD] [sources=plan-review:R1:claude:0] § A — test: earlier → disputed';
+    const laterFinding = '- **[Rejected — Pending Confirmation]** [R2-F001] [MUST] [sources=plan-review:R2:claude:0] § B — test: later → rejected';
+    const multiRound = `${base}\n${earlierFinding}\n### Round 2\n${roundSources(2)}\n${laterFinding}\n${formatRebuttalFailuresLine({
+      wave: 'rebuttal', sourceRound: 3, findingKeys: ['R1-F002', 'R2-F001'],
+      targets: [{ sourceKey: 'plan-review:R3:copilot:1', kind: 'quota' }],
+    })}`;
+    assert.deepEqual(scanResolutionLog(multiRound).rebuttalFailures[0].findingKeys, ['R1-F002', 'R2-F001']);
+    assert.throws(() => scanResolutionLog(multiRound.replace('"R1-F002","R2-F001"', '"R1-F099","R2-F001"')), /rebuttal-failures/);
+    assert.throws(() => scanResolutionLog(doc.replace('availability', 'unknown')), /failed-targets/);
+    assert.throws(() => scanResolutionLog(doc.replace(sourceKey, 'bad-key')), /failed-targets/);
+    assert.throws(() => scanResolutionLog(doc.replace('sourceRound":2', 'sourceRound":3')), /rebuttal-failures/);
   });
 });
 
