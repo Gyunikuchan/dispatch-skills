@@ -165,7 +165,7 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 | Implementation cannot start | Configure `write-subagents` for the host platform |
 | A prerequisite is missing | Resume from the producing phase named in the diagnostic |
 | A verification gate failed | Open the reported `logPath`; dispatch preserves the working tree for a recorded recovery decision |
-| Review reached its round cap | Follow the prompt to rule on remaining findings or resume from the resolution log |
+| Review reached its round cap with live MUST findings | Extend by another cap-sized block (default), or stop, rule live findings, and run one final verification wave; resume from the resolution log if interrupted |
 | A provider failed | Use the probe and failure guidance in the [provider reference](references/providers.md) |
 
 For complete configuration diagnostics, see [Validate and diagnose](references/readme/configuration.md#validate-and-diagnose).

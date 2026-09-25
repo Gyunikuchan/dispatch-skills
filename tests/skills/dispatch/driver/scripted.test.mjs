@@ -130,6 +130,208 @@ describe('scripted review paths (SC5)', () => {
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 
+  it('rejects extend on a non-cap ask-user without advancing state', () => {
+    const { fixture, repo } = setup(config(), { dirty: true });
+    const first = runDispatch(fixture, ['--run', 'review', '--orchestrator', 'claude'], { cwd: repo.dir });
+    assert.equal(first.status, 0);
+    const pending = parseAction(first.stdout);
+    assert.equal(pending.question, 'inputs');
+    const invalid = runDispatch(fixture, ['--next', '--state', pending.stateFile, '--input', '{"extend":true}'], { cwd: repo.dir });
+    assert.equal(invalid.status, 0);
+    const repeated = parseAction(invalid.stdout);
+    assert.equal(repeated.action, 'ask-user');
+    assert.equal(repeated.question, 'inputs');
+    assert.match(repeated.error, /extend is only available at the round cap/);
+    assert.equal(JSON.parse(fs.readFileSync(pending.stateFile, 'utf8')).pending.question, 'inputs');
+  });
+
+  it('report-only accepted MUST reaches the cap and requires a stop or extension decision', () => {
+    const { fixture, repo } = setup(config({ rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: firstReview(report([planFinding()])),
+        askUser: (action) => {
+          assert.deepEqual(action.items, []);
+          return { stop: true };
+        },
+      },
+    });
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
+    assert.equal(run.trace.filter((action) => action.action === 'ask-user').length, 1);
+    assert.equal(launches(run.trace, 'final').length, 1);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('continues SHOULD inside the initial cap, then settles on a clean round', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: (action) => allProviders(report(action.wave.round === 1 ? [planFinding({ severity: 'SHOULD' })] : [])) },
+    });
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2]);
+    assert.ok(!run.trace.some((action) => action.action === 'ask-user'));
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('CONSIDER alone ends at any count without prompting', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: () => allProviders(report([planFinding({ severity: 'CONSIDER' })])) },
+    });
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1]);
+    assert.ok(!run.trace.some((action) => action.action === 'ask-user'));
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('extends twice at cap-sized increments; SHOULD in extension ends without prompting', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    const prompts = [];
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan], maxSteps: 140,
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round <= 6
+          ? [planFinding({ defect: `Must at round ${action.wave.round}.` }), planFinding({ severity: 'SHOULD', defect: 'Also should.' }), planFinding({ severity: 'CONSIDER', defect: 'Also consider.' })]
+          : [planFinding({ severity: 'SHOULD', defect: 'Should after extension.' })])),
+        askUser: (action) => {
+          prompts.push(action);
+          assert.equal(action.question, 'rulings');
+          assert.deepEqual(action.options, ['extend', 'stop']);
+          assert.deepEqual(action.counts, { MUST: 1, SHOULD: 1, CONSIDER: 1 });
+          return { extend: true };
+        },
+      },
+    });
+    assert.equal(prompts.length, 2);
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2, 3, 4, 5, 6, 7]);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('requires rulings for disputed SHOULD without an extension prompt', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'INTENT-DISPUTE'])))
+          : allProviders(report(action.wave.type === 'review' ? [planFinding({ severity: 'SHOULD' })] : [])),
+        askUser: (action) => {
+          assert.deepEqual(action.counts, { MUST: 0, SHOULD: 1, CONSIDER: 0 });
+          assert.ok(!action.options?.includes('extend'));
+          return { answer: Object.fromEntries(action.items.map((item) => [item.key, 'accepted'])) };
+        },
+      },
+    });
+    assert.equal(run.trace.filter((action) => action.action === 'ask-user').length, 1);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('stop option leads to required rulings for unresolved MUST', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'REBUT'])))
+          : allProviders(report(action.wave.type === 'review' ? [planFinding()] : [])),
+        askUser: (action) => action.options?.includes('stop')
+          ? { stop: true }
+          : { answer: Object.fromEntries(action.items.map((item) => [item.key, 'rejected'])) },
+      },
+    });
+    assert.equal(run.trace.filter((action) => action.action === 'ask-user').length, 2);
+    assert.equal(launches(run.trace, 'final').length, 1);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('reports open severity counts for mixed pending cap findings', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'REBUT'])))
+          : allProviders(report(action.wave.type === 'review' ? [planFinding(), planFinding({ severity: 'SHOULD', defect: 'Should remain pending.' })] : [])),
+        askUser: (action) => {
+          assert.deepEqual(action.counts, { MUST: 1, SHOULD: 1, CONSIDER: 0 });
+          assert.match(action.text, /1 MUST \/ 1 SHOULD \/ 0 CONSIDER/);
+          return { answer: Object.fromEntries(action.items.map((item) => [item.key, 'rejected'])) };
+        },
+      },
+    });
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('stop under --fix records user-accepted unresolved finding as unapplied', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--kind', 'plan', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'REBUT'])))
+          : allProviders(report(action.wave.type === 'review' ? [planFinding()] : [])),
+        askUser: (action) => ({ answer: Object.fromEntries(action.items.map((item) => [item.key, 'accepted'])) }),
+      },
+    });
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+    const entry = logEntries(plan)[0];
+    assert.equal(entry.status, 'accepted');
+    assert.equal(entry.application?.state, 'unapplied');
+    assert.match(entry.application?.reason ?? '', /accepted at round cap/);
+  });
+
+  it('stop at cap rules live findings then executes exactly one final wave', () => {
+    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        rule: () => ({ status: 'rejected' }),
+        waveResults: (action) => action.wave.type === 'rebuttal'
+          ? allProviders(rebuttal(action.keys.map((key) => [key, 'REBUT'])))
+          : allProviders(report(action.wave.type === 'review' ? [planFinding()] : [])),
+        askUser: (action) => ({ answer: Object.fromEntries(action.items.map((item) => [item.key, 'accepted'])) }),
+      },
+    });
+    assert.equal(run.trace.filter((action) => action.action === 'ask-user').length, 1);
+    assert.equal(launches(run.trace, 'final').length, 1);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
+  it('persists the extended limit in state before the next wave', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }));
+    const plan = writePlan(repo.dir);
+    let savedLimit;
+    const run = drive(fixture, {
+      cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan], maxSteps: 120,
+      onAction: (action) => {
+        if (action.action === 'launch' && action.wave.round === 4) {
+          savedLimit = JSON.parse(fs.readFileSync(action.stateFile, 'utf8')).roundLimit;
+        }
+      },
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round <= 3 ? [planFinding()] : [])),
+        askUser: () => ({ extend: true }),
+      },
+    });
+    assert.equal(savedLimit, 6);
+    assert.deepEqual(launches(run.trace, 'review').map((action) => action.wave.round), [1, 2, 3, 4]);
+    assertSettledAndCheckpointed(plan, run.done, 'plan');
+  });
+
   it('captures a same-platform fallback started during the wave without requesting it again', () => {
     const { fixture, repo } = setup(config({}, { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } }));
     const plan = writePlan(repo.dir);

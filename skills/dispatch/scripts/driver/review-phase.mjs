@@ -104,6 +104,7 @@ export async function startReview({ invocation, cwd, resumeCommand }) {
     return finish(state, done(state, 'skipped', `Review skipped: ${levelInfo.skipped.reason}`, { reason: levelInfo.skipped.reason }));
   }
   state.policy = await resolvePolicy(config, levelInfo, normalized);
+  state.roundLimit = state.policy.rounds;
   state.artifactPath ??= existingWalkthrough(state);
   const unapplied = normalized.fix ? unappliedFixesFromArtifact(state.artifactPath) : null;
   if (unapplied) {
@@ -704,6 +705,22 @@ function onAskUser(state, reply) {
     return prepareWave(state, 'review');
   }
   if (question === 'opt-in') return onOptIn(state, reply);
+  if (reply.extend === true) {
+    if (state.rulings || !state.pending.options?.includes('extend')) return reemit(state, 'extend is only available at the round cap.');
+    state.roundLimit = (state.roundLimit ?? state.policy.rounds) + state.policy.rounds;
+    return nextStep(state);
+  }
+  if (reply.stop === true && state.pending.options?.includes('stop')) {
+    if (state.pending.items.length) {
+      return emitAction(state, 'ask-user', {
+        question: 'rulings',
+        text: 'To stop, rule each unresolved finding accepted or rejected; one final verification wave follows.',
+        items: state.pending.items,
+      }, ['Answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
+    }
+    state.capAsked = true;
+    return nextStep(state);
+  }
   const answer = reply.answer;
   const keys = state.pending.items.map((item) => item.key);
   const verdicts = {};
@@ -719,16 +736,29 @@ function onAskUser(state, reply) {
     writeRound(state, rulings, new Set(keys));
     return nextStep(state);
   }
-  // Round cap: the user rules every live item, then one final verification wave runs.
+  // Round cap: rule unresolved entries, then run one final verification wave.
   let markdown = readArtifactText(state);
-  const statuses = new Map(evaluateConsensus(markdown).unsettledItems.map((item) => [item.key, item.status]));
+  const statuses = new Map(state.pending.items.map((item) => [item.key, item.status]));
+  const accepted = [];
   for (const key of keys) {
     const label = verdicts[key] === 'accepted'
       ? (statuses.get(key) === 'disputed' ? 'Resolved dispute' : 'Accepted')
       : 'Rejected / Downgraded';
     markdown = setEntryStatus(markdown, key, label);
+    if (verdicts[key] === 'accepted' && state.invocation.fix) accepted.push(key);
   }
   writeArtifactText(state, markdown);
+  if (accepted.length) {
+    const entries = scanResolutionLog(markdown, { strict: true }).rounds.flatMap((round) => round.entries);
+    const findings = accepted.map((key) => {
+      const entry = entries.find((item) => item.key === key);
+      const locus = /\[sources=[^\]]*\]\s+(.+?)\s+—/.exec(entry.originalLine)?.[1] ?? '';
+      const defect = /\s+—\s+[^:]+:\s+(.*?)\s+→/.exec(entry.originalLine)?.[1] ?? key;
+      return { id: key, severity: entry.severity, scope: 'in-scope', defect,
+        fix: { affectedPaths: [locusPath(state, locus)], dependsOn: [], verification: [] } };
+    });
+    deferCluster(state, { findings }, 'accepted at round cap without fix details; apply manually');
+  }
   state.capAsked = true;
   return nextStep(state);
 }
@@ -766,7 +796,7 @@ function prepareRebuttal(state, markdown, logRounds) {
   }
   state.rebuttalAt = logRounds;
   state.rebuttal = { keys, citing: Object.fromEntries(unsettled.map((item) => [item.key, item.sourceKeys])) };
-  if (targets.length === 0) return askCap(state, markdown);
+  if (targets.length === 0) return nextStep(state);
   return prepareWave(state, 'rebuttal', { reviewMode: 'rebuttal', targets, reserves: [], packetPath, keys });
 }
 
@@ -800,15 +830,20 @@ function applyRebuttals(state) {
   return nextStep(state);
 }
 
-function askCap(state, markdown) {
-  const items = evaluateConsensus(markdown).unsettledItems.map((item) => ({
+function askCap(state, entries, extend = true, accepted = []) {
+  const items = entries.map((item) => ({
     key: item.key, severity: item.severity, status: item.status, line: item.originalLine,
   }));
+  const counts = Object.fromEntries(['MUST', 'SHOULD', 'CONSIDER'].map((severity) => [severity, [...entries, ...accepted].filter((item) => item.severity === severity).length]));
   return emitAction(state, 'ask-user', {
     question: 'rulings',
-    text: 'The review reached its round cap with live findings. Rule each key accepted or rejected; one final verification wave follows.',
+    text: extend
+      ? `The review reached round ${state.roundLimit} with ${counts.MUST} MUST / ${counts.SHOULD} SHOULD / ${counts.CONSIDER} CONSIDER open findings. Extend by ${state.policy.rounds} rounds (default), or stop, rule unresolved keys, and run one final verification wave. Already accepted findings retain their rulings.`
+      : `The review has ${counts.MUST} MUST / ${counts.SHOULD} SHOULD / ${counts.CONSIDER} CONSIDER unresolved findings. Rule each key before settlement; no additional review round is needed.`,
+    ...(extend ? { options: ['extend', 'stop'] } : {}),
+    counts,
     items,
-  }, ['Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
+  }, [extend ? 'Relay the question; answer with {"extend": true} or {"stop": true} (which asks for rulings when items remain).' : 'Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
 }
 
 /** Chooses the next action from the artifact log and run flags. */
@@ -818,17 +853,31 @@ function nextStep(state) {
   const consensus = evaluateConsensus(markdown);
   if (consensus.exit === 2) return done(state, 'failed', `The resolution log is invalid: ${consensus.error}`);
   const cap = state.policy.rounds;
+  const rounds = scanResolutionLog(markdown, { strict: true }).rounds;
+  const latest = rounds[rounds.length - 1];
+  const recent = latest && (state.adjudication?.round === latest.number || (!state.adjudication && state.reviewWaves === latest.number)) ? latest.entries : [];
+  const accepted = state.finalDone ? [] : recent.filter((item) =>
+    (item.status === 'accepted' || item.status === 'resolvedDispute') && item.application?.state !== 'applied');
+  const open = consensus.unsettledItems;
+  const hasMust = [...accepted, ...open].some((item) => item.severity === 'MUST');
+  const hasShould = [...accepted, ...open].some((item) => item.severity === 'SHOULD');
   if (consensus.exit === 1) {
-    const logRounds = scanResolutionLog(markdown, { strict: true }).rounds.length;
-    const hasPending = consensus.unsettledItems.some((item) => item.status === 'pendingConfirmation');
-    if (state.policy.consensus && hasPending && state.rebuttalAt !== logRounds) return prepareRebuttal(state, markdown, logRounds);
-    if (state.reviewWaves < cap) return prepareWave(state, 'review');
-    return askCap(state, markdown);
+    const hasPending = open.some((item) => item.status === 'pendingConfirmation');
+    if (!state.finalDone && state.policy.consensus && hasPending && state.rebuttalAt !== rounds.length) return prepareRebuttal(state, markdown, rounds.length);
   }
   if (state.capAsked && !state.finalDone) return prepareWave(state, 'final');
-  if (state.changed && state.reviewWaves < cap) {
+  if (!state.finalDone && state.changed && state.reviewWaves < (state.roundLimit ?? cap)) {
     state.changed = false;
     return prepareWave(state, 'review');
+  }
+  const triggers = !state.finalDone && (state.reviewWaves <= cap ? hasMust || hasShould : hasMust);
+  if (triggers && state.reviewWaves < (state.roundLimit ?? cap)) return prepareWave(state, 'review');
+  if (!state.finalDone && hasMust && state.reviewWaves >= (state.roundLimit ?? cap)) {
+    return askCap(state, open, true, accepted.filter((item) => !open.some((entry) => entry.key === item.key)));
+  }
+  if (consensus.exit === 1) {
+    // Unresolved rebuttals and disputes require a host ruling, not a silent status rewrite.
+    return askCap(state, open, false);
   }
   if (state.invocation.fix && !state.optInOffered && state.adjacent.length > 0) return optInAction(state);
   return state.invocation.implementation ? settle(state) : checkpoint(state);
@@ -1019,7 +1068,10 @@ function onOptIn(state, reply) {
   // The offer is settled; later rounds must not re-queue these items.
   state.adjacent = [];
   // The opt-in loop gets a fresh round cap.
-  if (state.fix.pending.length) state.reviewWaves = 0;
+  if (state.fix.pending.length) {
+    state.reviewWaves = 0;
+    state.roundLimit = state.policy.rounds;
+  }
   return nextStep(state);
 }
 
@@ -1058,7 +1110,7 @@ function checkpoint(state) {
     if (!state.driftRestarted) {
       state.driftRestarted = true;
       state.invocationContext = null;
-      state.reviewWaves = Math.min(state.reviewWaves, Math.max(0, state.policy.rounds - 1));
+      state.reviewWaves = Math.min(state.reviewWaves, Math.max(0, (state.roundLimit ?? state.policy.rounds) - 1));
       return prepareWave(state, 'review');
     }
     return done(state, 'failed', `Checkpoint failed: ${err.message}`, { command: state.resumeCommand });

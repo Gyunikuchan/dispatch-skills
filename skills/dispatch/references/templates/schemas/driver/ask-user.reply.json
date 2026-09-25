@@ -3,10 +3,14 @@
   "title": "dispatch driver reply: ask-user",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "answer"
+  "oneOf": [
+    { "required": ["answer"] },
+    { "required": ["extend"] },
+    { "required": ["stop"] }
   ],
   "properties": {
+    "extend": { "const": true },
+    "stop": { "const": true },
     "answer": {
       "anyOf": [
         {

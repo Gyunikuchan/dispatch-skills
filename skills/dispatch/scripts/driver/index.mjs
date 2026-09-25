@@ -174,6 +174,9 @@ function advanceLocked(parsed) {
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
+  if (expected.action === 'ask-user' && (reply?.extend === true || reply?.stop === true) && !expected.options?.includes(reply.extend ? 'extend' : 'stop')) {
+    return { ...expected, error: `${reply.extend ? 'extend' : 'stop'} is only available at the round cap.` };
+  }
   if (state.invocation?.verb === 'ask') return advanceAsk(state, checked.value);
   if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value).then((action) => save(state, action));
   if (state.designPath) return advanceImplement(state, checked.value);
