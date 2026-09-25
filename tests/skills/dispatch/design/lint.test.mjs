@@ -105,10 +105,15 @@ describe('design summary box', () => {
 
 describe('design template placeholder', () => {
   it('design template placeholder rejects leftover design.md tokens', () => {
-    for (const leftover of ['Touches <what this increment changes>.', 'Paths `<paths>`.']) {
+    for (const leftover of ['Touches <what this increment changes>.', 'Paths <paths>.']) {
       const source = base.replace('## Architecture & Boundaries\nx', `## Architecture & Boundaries\n${leftover}`);
       assert.ok(codes(source).includes('leftover-placeholder'), leftover);
     }
+  });
+
+  it('design template placeholder treats backticked prose-only tokens as mentions', () => {
+    const mention = base.replace('## Architecture & Boundaries\nx', '## Architecture & Boundaries\nThe `<paths>` slot lists files.');
+    assert.ok(!codes(mention).includes('leftover-placeholder'));
   });
 
   it('design template placeholder ignores fenced examples', () => {

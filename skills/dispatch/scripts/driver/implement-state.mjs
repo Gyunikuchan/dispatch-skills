@@ -197,9 +197,21 @@ function liveSegment(state, runId) {
   return foldSegments(read.events).find(segment => segment.runId === runId && !segment.terminal) ?? null;
 }
 export function save(state, action) {
+  const durable = state.pending;
   state.pending = action;
-  persistEvidence(state);
-  writeRunState(state);
+  try {
+    try {
+      persistEvidence(state);
+    } catch (error) {
+      // A refusal is often about the walkthrough itself, so evidence it cannot hold must not block recording it.
+      if (action.action !== 'done' || action.outcome === 'complete') throw error;
+    }
+    writeRunState(state);
+  } catch (error) {
+    // Error replies re-emit state.pending, so it must stay the action the state file holds.
+    state.pending = durable;
+    throw error;
+  }
   return action;
 }
 export function refuse(state, reason, nextAction = null) {

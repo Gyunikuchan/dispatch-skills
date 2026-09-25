@@ -7,7 +7,7 @@ import { afterEach, describe, it } from 'node:test';
 import { makeGitRepo, writePlan } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
-import { persistEvidence, restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
+import { persistEvidence, restoreEvidence, save } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
 import {
   acceptVerification,
@@ -277,5 +277,27 @@ describe('fingerprint: dispatch integrity manifest', () => {
     const base = ['skills/dispatch/SKILL.md'];
     assert.equal(fingerprint(state, [...base, 'skills/dispatch/skill-hashes.json']), fingerprint(state, base));
     assert.notEqual(fingerprint(state, [...base, 'src/skill-hashes.json']), fingerprint(state, base));
+  });
+});
+
+describe('durable pending action', () => {
+  it('save keeps the saved pending action when persisting the next one fails', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-rollback-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const durable = { action: 'verify' };
+    // A directory walkthrough makes evidence rendering throw after the next action is chosen.
+    const state = { pending: durable, walkthroughPath: dir, ordinary: {}, reviewState: null };
+    assert.throws(() => save(state, { action: 'ask-user', question: 'failure-disposition' }));
+    assert.equal(state.pending, durable);
+  });
+
+  it('save records a refusal even when the walkthrough cannot take evidence', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-refusal-'));
+    cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const stateFile = path.join(dir, 'state.json');
+    const refusal = { action: 'done', outcome: 'refused' };
+    const state = { stateFile, pending: { action: 'verify' }, walkthroughPath: dir, ordinary: {}, reviewState: null };
+    assert.equal(save(state, refusal), refusal);
+    assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).pending, refusal);
   });
 });

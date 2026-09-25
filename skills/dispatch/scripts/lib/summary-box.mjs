@@ -116,26 +116,32 @@ export function boxValue(source, label) {
 
 // SECTION: Template placeholders
 
-/** @type {Set<string> | null} */
+// CommonMark spans close on a backtick run of the opener's exact length.
+const CODE_SPAN = /(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g;
+
+/** @type {{ all: Set<string>, code: Set<string> } | null} */
 let vocabulary = null;
 
 /**
- * Extracts the innermost angle-bracket tokens from the three templates' fenced bodies, excluding HTML comments.
- * @returns {Set<string>}
+ * Extracts the innermost angle-bracket tokens from the three templates' fenced bodies, excluding HTML comments;
+ * `code` holds the subset the templates themselves place in inline code.
+ * @returns {{ all: Set<string>, code: Set<string> }}
  */
 export function templatePlaceholders() {
   if (vocabulary) return vocabulary;
-  vocabulary = new Set();
+  vocabulary = { all: new Set(), code: new Set() };
   for (const name of TEMPLATE_FILES) {
     const text = fs.readFileSync(path.join(TEMPLATES_DIR, name), 'utf8');
-    const body = /^(`{4,})markdown\s*\n([\s\S]*?)\n\1\s*$/m.exec(text)?.[2] ?? '';
-    for (const token of body.replace(/<!--[\s\S]*?-->/g, '').match(TOKEN) ?? []) vocabulary.add(token);
+    const body = (/^(`{4,})markdown\s*\n([\s\S]*?)\n\1\s*$/m.exec(text)?.[2] ?? '').replace(/<!--[\s\S]*?-->/g, '');
+    for (const token of body.match(TOKEN) ?? []) vocabulary.all.add(token);
+    for (const span of body.match(CODE_SPAN) ?? []) for (const token of span.match(TOKEN) ?? []) vocabulary.code.add(token);
   }
   return vocabulary;
 }
 
 /**
- * Finds template tokens in raw text, including inline code, excluding frontmatter, fenced blocks, and HTML comments.
+ * Finds template tokens in raw text, excluding frontmatter, fenced blocks, and HTML comments.
+ * Inline code flags only tokens the templates put in inline code; other backticked tokens are mentions.
  * @param {string} source
  * @returns {Array<{ token: string, line: number }>}
  */
@@ -170,7 +176,9 @@ export function findPlaceholders(source) {
       comment = true;
       rest = rest.slice(open + 4);
     }
-    for (const token of text.match(TOKEN) ?? []) if (tokens.has(token)) found.push({ token, line: index + 1 + offset });
+    const code = (text.match(CODE_SPAN) ?? []).flatMap(span => span.match(TOKEN) ?? []).filter(token => tokens.code.has(token));
+    const prose = (text.replace(CODE_SPAN, '').match(TOKEN) ?? []).filter(token => tokens.all.has(token));
+    for (const token of [...prose, ...code]) found.push({ token, line: index + 1 + offset });
   });
   return found;
 }

@@ -325,7 +325,7 @@ describe('plan template placeholder', () => {
   });
 
   it('plan template placeholder ignores fenced blocks, non-template tokens, and machine-managed comments', () => {
-    const clean = `${VALID_PLAN}\n## Out of Scope\n\`\`\`md\n<relative-path>\n\`\`\`\nGeneric <T> stays.\n<!-- Populated during plan review cycles -->`;
+    const clean = `${VALID_PLAN}\n## Out of Scope\n\`\`\`md\n<relative-path>\n\`\`\`\nGeneric <T> stays. Increment plans use \`-i<nn>-\` and \`<nn>\` numbering; \`\`<nn>\`\` too.\n<!-- Populated during plan review cycles -->`;
     assert.ok(!rules(lintPlan(clean)).includes('leftover-placeholder'));
   });
 });
