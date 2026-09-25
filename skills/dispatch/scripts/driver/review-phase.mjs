@@ -30,6 +30,7 @@ import {
   appendToSection,
   cleanText,
   readArtifactText,
+  setEntryResolution,
   setEntryStatus,
   writeArtifactText,
 } from './review-artifact.mjs';
@@ -162,16 +163,23 @@ export function advanceReview(state, reply) {
   return finish(state, action);
 }
 
-function recordReviewFailure(state, sourceKey, kind) {
+function recordReviewFailure(state, sourceKey, kind, findingKeys = state.wave.type === 'rebuttal' ? citedKeys(state, sourceKey) : null) {
   state.reviewFailed ??= [];
   const wave = state.wave.type, round = state.wave.round;
   if (!state.reviewFailed.some((item) => item.wave === wave && item.round === round && item.sourceKey === sourceKey))
-    state.reviewFailed.push({ wave, round, sourceKey, kind: FAILURE_KINDS.includes(kind) ? kind : 'execution' });
+    state.reviewFailed.push({ wave, round, sourceKey, kind: FAILURE_KINDS.includes(kind) ? kind : 'execution', ...(findingKeys?.length ? { findingKeys } : {}) });
 }
 
 function currentFailures(state) {
   return (state.reviewFailed ?? []).filter((item) => item.wave === state.wave.type && item.round === state.wave.round)
-    .map(({ sourceKey, kind }) => ({ sourceKey, kind }));
+    .map(({ sourceKey, kind, findingKeys }) => ({ sourceKey, kind, ...(findingKeys ? { findingKeys } : {}) }));
+}
+
+/** Keys a rebuttal delegate cites, matched by `platform:index` because the retry wave's roundId may differ. */
+function citedKeys(state, sourceKey) {
+  const slot = sourceKey.split(':').slice(2).join(':');
+  return Object.entries(state.rebuttal?.citing ?? {})
+    .filter(([, sources]) => sources.some((source) => source.split(':').slice(2).join(':') === slot)).map(([key]) => key);
 }
 
 function unfulfilledTargets(state) {
@@ -237,7 +245,7 @@ async function resolvePolicy(config, levelInfo, invocation) {
 
 // SECTION: preparation and waves
 
-function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], packetPath = null, keys = [] }) {
+function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], packetPath = null, keys = [], retryNote = null }) {
   const dispatchEntry = ({ candidateId, platform, candidateIndex }) => ({ candidateId, platform, candidateIndex });
   const request = {
     mode: 'orchestrated',
@@ -247,7 +255,7 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
   };
   if (state.invocation.orchestratorModel) request.orchestratorModel = state.invocation.orchestratorModel;
   if (state.invocationContext) request.invocationContext = state.invocationContext;
-  if (reviewMode === 'rebuttal') Object.assign(request, { reviewMode, findingPacketPath: packetPath, findingKeys: keys });
+  if (reviewMode === 'rebuttal') Object.assign(request, { reviewMode, findingPacketPath: packetPath, findingKeys: keys, ...(retryNote ? { retryNote } : {}) });
   if (state.kind === 'code') {
     if (state.target.walkthroughPath) request.walkthroughPath = state.target.walkthroughPath;
     if (state.target.range) request.range = state.target.range;
@@ -629,18 +637,27 @@ function advanceFailedHop(state, current, kind) {
 function processCollected(state) {
   if (state.collect.queue.length > 0) return nativeFallbackAction(state);
   if (state.wave.type === 'rebuttal') {
+    state.rebuttal.retried ??= [];
+    state.rebuttal.pendingRetry ??= [];
     for (const report of [...state.collect.reports]) {
       try { parseRebuttal(state.kind, report.text, state.rebuttal.keys); }
-      catch {
+      catch (err) {
         state.collect.reports = state.collect.reports.filter((item) => item !== report);
         delete state.collect.sourceMap[report.sourceKey];
         const [, , platform, candidateIndex] = report.sourceKey.split(':');
+        const slot = `${platform}:${candidateIndex}`;
         if (!report.fallback && platform === state.invocation.orchestrator && !state.collect.fallbackTried.includes(report.sourceKey)) {
           state.collect.queue.push(cascadeSlot(state, { sourceKey: report.sourceKey, platform, candidateIndex: Number(candidateIndex) }, 0));
-        } else recordReviewFailure(state, report.sourceKey, 'invalid-report');
+        } else if (!state.rebuttal.retried.includes(slot)) {
+          state.rebuttal.retried.push(slot);
+          state.rebuttal.pendingRetry.push({ platform, candidateIndex: Number(candidateIndex),
+            error: String(err?.message ?? err).replace(/\s+/g, ' ').trim() || 'the report was not valid JSON' });
+        } else recordReviewFailure(state, report.sourceKey, 'invalid-report', citedKeys(state, report.sourceKey));
       }
     }
-    return state.collect.queue.length ? nativeFallbackAction(state) : applyRebuttals(state);
+    if (state.collect.queue.length) return nativeFallbackAction(state);
+    if (state.rebuttal.pendingRetry.length) return prepareRebuttalRetry(state);
+    return applyRebuttals(state);
   }
   const findings = [];
   const byContent = new Map();
@@ -772,7 +789,7 @@ function onAdjudicate(state, reply) {
       items: rulings.filter((ruling) => ruling.status === 'needs-user').map((ruling) => ({
         key: ruling.key, severity: ruling.severity, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key),
       })),
-    }, ['Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
+    }, ['Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}} or, to replace the resolution text, {"answer": {"<key>": {"verdict": "accepted"|"rejected", "resolution": "..."}}}.']);
   }
   writeRound(state, rulings);
   return noticedNextStep(state);
@@ -821,6 +838,22 @@ function locusPath(state, locus) {
   return match ? match[1] : toSlash(path.relative(state.repoRoot, state.artifactPath));
 }
 
+/** Parses one ruling answer: a verdict string or {verdict, resolution?}; null when invalid. */
+function parseRulingAnswer(value) {
+  const object = value && typeof value === 'object';
+  const verdict = String((object ? value.verdict : value) ?? '').toLowerCase();
+  if (!['accepted', 'rejected', 'downgraded'].includes(verdict)) return null;
+  if (object && value.resolution !== undefined && typeof value.resolution !== 'string') return null;
+  return { verdict, resolution: object && value.resolution?.trim() ? value.resolution : null };
+}
+
+// Keeps the prior resolution as audit evidence and marks that the gate overruled it.
+function appendOverruled(markdown, key, verdict) {
+  const line = markdown.split(/\r?\n/).find((item) => item.includes(`[${key}]`) && item.includes(' → '));
+  if (!line) return markdown;
+  return setEntryResolution(markdown, key, `${line.split(' → ').slice(1).join(' → ')} (overruled at gate: ${verdict})`);
+}
+
 function onAskUser(state, reply) {
   const question = state.pending.question;
   if (question === 'inputs') {
@@ -844,7 +877,7 @@ function onAskUser(state, reply) {
         question: 'rulings',
         text: 'To stop, rule each unresolved finding accepted or rejected; one final verification wave follows.',
         items: state.pending.items,
-      }, ['Answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
+      }, ['Answer with {"answer": {"<key>": "accepted"|"rejected"}} or, to replace the resolution text, {"answer": {"<key>": {"verdict": "accepted"|"rejected", "resolution": "..."}}}.']);
     }
     state.capAsked = true;
     return nextStep(state);
@@ -852,14 +885,18 @@ function onAskUser(state, reply) {
   const answer = reply.answer;
   const keys = state.pending.items.map((item) => item.key);
   const verdicts = {};
+  const resolutions = {};
   for (const key of keys) {
-    const value = answer && typeof answer === 'object' ? String(answer[key] ?? '').toLowerCase() : '';
-    if (!['accepted', 'rejected', 'downgraded'].includes(value)) return reemit(state, `answer must rule ${key} as accepted or rejected.`);
-    verdicts[key] = value;
+    const parsed = parseRulingAnswer(answer && typeof answer === 'object' ? answer[key] : undefined);
+    if (!parsed) return reemit(state, `answer must rule ${key} as accepted or rejected, or {"verdict": ..., "resolution": "..."}.`);
+    verdicts[key] = parsed.verdict;
+    if (parsed.resolution) resolutions[key] = parsed.resolution;
   }
   if (state.rulings) {
     // needs-user rulings: the user's answer is final for those keys.
-    const rulings = state.rulings.map((ruling) => (ruling.status === 'needs-user' ? { ...ruling, status: verdicts[ruling.key] } : ruling));
+    const rulings = state.rulings.map((ruling) => (ruling.status === 'needs-user'
+      ? { ...ruling, status: verdicts[ruling.key], ...(resolutions[ruling.key] ? { resolution: resolutions[ruling.key] } : {}) }
+      : ruling));
     state.rulings = null;
     writeRound(state, rulings, new Set(keys));
     return noticedNextStep(state);
@@ -872,6 +909,9 @@ function onAskUser(state, reply) {
     const label = verdicts[key] === 'accepted'
       ? (statuses.get(key) === 'disputed' ? 'Resolved dispute' : 'Accepted')
       : 'Rejected / Downgraded';
+    const priorAccepted = ['accepted', 'resolvedDispute'].includes(statuses.get(key));
+    if (resolutions[key]) markdown = setEntryResolution(markdown, key, resolutions[key]);
+    else if (priorAccepted !== (verdicts[key] === 'accepted')) markdown = appendOverruled(markdown, key, verdicts[key]);
     markdown = setEntryStatus(markdown, key, label);
     if (verdicts[key] === 'accepted' && state.invocation.fix) accepted.push(key);
   }
@@ -925,14 +965,32 @@ function prepareRebuttal(state, markdown, logRounds) {
       ...(configured?.model ? { model: configured.model } : {}), ...(configured?.effort ? { effort: configured.effort } : {}) });
   }
   state.rebuttalAt = logRounds;
-  state.rebuttal = { keys, citing: Object.fromEntries(unsettled.map((item) => [item.key, item.sourceKeys])) };
+  state.rebuttal = { keys, packetPath, citing: Object.fromEntries(unsettled.map((item) => [item.key, item.sourceKeys])) };
   if (targets.length === 0) return nextStep(state);
   return prepareWave(state, 'rebuttal', { reviewMode: 'rebuttal', targets, reserves: [], packetPath, keys });
 }
 
+// Relaunches every invalid rebuttal delegate once, holding the wave's valid reports until it returns.
+function prepareRebuttalRetry(state) {
+  const retries = state.rebuttal.pendingRetry.splice(0);
+  state.rebuttal.held = [...(state.rebuttal.held ?? []), ...state.collect.reports];
+  const configured = [...state.policy.targets, ...state.policy.reserves];
+  const targets = retries.map(({ platform, candidateIndex }) => {
+    const entry = configured.find((t) => t.platform === platform && t.candidateIndex === candidateIndex);
+    return { candidateId: `${state.phase}:${platform}:${candidateIndex}`, platform, candidateIndex,
+      ...(entry?.model ? { model: entry.model } : {}), ...(entry?.effort ? { effort: entry.effort } : {}) };
+  });
+  const errors = [...new Set(retries.map((retry) => retry.error))].join('; ');
+  const retryNote = `Your previous report didn't parse because ${errors}; answer each key CONFIRM/REBUT/INTENT-DISPUTE.`;
+  return prepareWave(state, 'rebuttal', { reviewMode: 'rebuttal', targets, reserves: [], packetPath: state.rebuttal.packetPath,
+    keys: state.rebuttal.keys, retryNote });
+}
+
 function applyRebuttals(state) {
   const verdicts = new Map();
-  for (const report of state.collect.reports) {
+  const reports = [...(state.rebuttal.held ?? []), ...state.collect.reports];
+  state.rebuttal.held = [];
+  for (const report of reports) {
     let parsed;
     try {
       parsed = parseRebuttal(state.kind, report.text, state.rebuttal.keys);
@@ -958,7 +1016,7 @@ function applyRebuttals(state) {
   }
   if (currentFailures(state).length > 0) {
     const record = { wave: 'rebuttal', sourceRound: state.wave.round, findingKeys: state.rebuttal.keys,
-      targets: currentFailures(state) };
+      targets: currentFailures(state).map(({ sourceKey, kind }) => ({ sourceKey, kind })) };
     markdown = appendToSection(markdown, LOG_HEADING, '## Review Findings & Resolutions',
       [formatRebuttalFailuresLine(record)], /^\*No reviews conducted yet\.\*\s*$/);
   }
@@ -979,7 +1037,7 @@ function askCap(state, entries, extend = true, accepted = []) {
     ...(extend ? { options: ['extend', 'stop'] } : {}),
     counts,
     items,
-  }, [extend ? 'Relay the question; answer with {"extend": true} or {"stop": true} (which asks for rulings when items remain).' : 'Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}}.']);
+  }, [extend ? 'Relay the question; answer with {"extend": true} or {"stop": true} (which asks for rulings when items remain).' : 'Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}} or, to replace the resolution text, {"answer": {"<key>": {"verdict": "accepted"|"rejected", "resolution": "..."}}}.']);
 }
 
 /** Chooses the next action from the artifact log and run flags. */

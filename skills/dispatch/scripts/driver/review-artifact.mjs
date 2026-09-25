@@ -50,6 +50,13 @@ export function setEntryStatus(markdown, id, label) {
   return markdown.replace(new RegExp(`^(\\s*[-*]\\s+\\*\\*\\[)[^\\]]+(\\]\\*\\*\\s+\\[${escaped}\\])`, 'm'), `$1${label}$2`);
 }
 
+/** Replaces the text after the first ` → ` on a resolution-log entry line; other lines stay untouched. */
+export function setEntryResolution(markdown, id, text) {
+  const escaped = id.replace(/[-]/g, '\\-');
+  const entry = new RegExp(`^(\\s*[-*]\\s+\\*\\*\\[[^\\]]+\\]\\*\\*\\s+\\[${escaped}\\].*? → )([^\\r\\n]*)`, 'm');
+  return markdown.replace(entry, (_, head, existing) => `${head}${cleanText(text, existing)}`);
+}
+
 /** Sanitizes host-provided prose and supplies a stable fallback when nothing remains. */
 export function cleanText(text, fallback) {
   return sanitizeReplyText(text) || fallback;

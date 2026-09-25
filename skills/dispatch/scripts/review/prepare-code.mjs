@@ -59,7 +59,7 @@ const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'walkthroughPath', 'planPath',
   'slug', 'date', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
   'trailingText', 'reviewScope', 'toolTurnBudget', 'targets', 'reserves',
-  'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'selector',
+  'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'range', 'verification', 'invocationContext',
   'settlement', 'settledWrites', 'designPath', 'designRevision', 'incrementId',
   'allowedPaths', 'baseRevision',
@@ -564,7 +564,7 @@ export function prepareCodeReview(request, {
   const scopedPaths = round === 1 ? gitSnapshot.paths
     : reReviewPaths.length ? reReviewPaths : resolutionPaths(walkthrough.source);
   const derivedScope = reviewMode === 'rebuttal'
-    ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}`
+    ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}${request.retryNote ? ` — ${request.retryNote}` : ''}`
     : round === 1
       ? scopeResult.reviewScope
       : freshness.bodyOnly

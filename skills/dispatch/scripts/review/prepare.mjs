@@ -49,7 +49,7 @@ const DOCUMENT_REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'date', 'orchestrator',
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
   'toolTurnBudget', 'targets', 'reserves', 'roundId', 'consensus',
-  'findingPacketPath', 'findingKeys', 'selector',
+  'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'invocationContext', 'settlement', 'settledWrites',
 ];
 const DESIGN_CONTEXT_KEYS = ['designPath', 'designRevision', 'incrementId'];
@@ -395,7 +395,7 @@ function prepareDocumentReview(entry, request, {
   const reviewPath = view.viewPath;
   const cleanupPaths = [view.cleanupPath];
   const derivedScope = reviewMode === 'rebuttal'
-    ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}`
+    ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}${request.retryNote ? ` — ${request.retryNote}` : ''}`
     : round === 1
       ? 'Full review'
       : `Re-review round ${round} — changed sections: ${reReviewSections.join(', ') || 'review resolutions only'}`;
