@@ -6,6 +6,7 @@ description: "Use `/dispatch [level] [(pins)] [ask|plan|design|review|implement]
 # Dispatch
 
 `dispatch` is the model-visible contract for delegation, review, design, and implementation. Read delegates return untrusted claims; the host verifies evidence and owns every ruling and write.
+Use [glossary.md](references/glossary.md) for role and workflow terminology.
 
 ## Grammar
 

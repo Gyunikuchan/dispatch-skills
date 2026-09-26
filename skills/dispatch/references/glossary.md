@@ -13,6 +13,7 @@ headings use these terms.
 | **Walkthrough** | Record of a completed implementation: changes, verification results, outcome traceability, review log. | | plan |
 | **Level** | Policy and model tier, `low` through `max`. | | effort (a provider setting) |
 | **Pin** | User selector fixing providers or breadth. | | |
+| **Orchestrator** | The host agent running `dispatch`: drives emitted actions, verifies delegate claims, owns rulings, and owns production writes through the native write subagent. | | driver, read delegate, write subagent |
 | **Read delegate** | A dispatched, structurally read-only provider CLI (the default candidate kind). | reviewer | |
 | **Write subagent** | A native host subagent that edits code; never dispatched. | implementer | |
 | **Candidate / Target / Reserve** | A configured provider entry; one selected for a wave; one held back to replace a failed target. | | |
