@@ -16,7 +16,7 @@
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
-      // Optional.
+      // Optional; defaults to true.
       "sandbox": true,
       "targets": [
         // Set only the levels you need: low, medium, high, xhigh, max.
@@ -66,6 +66,7 @@
       "sandbox": true,
       "targets": [
         { "low": { "model": "gpt-6-sol", "effort": "medium" } },
+        { "max": { "model": "gpt-6-sol", "effort": "high" } },
       ],
     },
   },
