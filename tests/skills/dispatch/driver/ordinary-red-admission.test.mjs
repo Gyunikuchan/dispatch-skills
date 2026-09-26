@@ -5,7 +5,7 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 
-import { drive, implementationOutcome, PLAN_BODY, runDispatch } from '../../../helpers/driver-harness.mjs';
+import { drive, implementationOutcome, PLAN_BODY, runDispatch, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -23,7 +23,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
       delegateWrite(action) {
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] }));
       },
       verify(action) {
         const reply = ordinaryDriverPolicy(fixture.repo).verify(action);
@@ -52,9 +52,9 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
         const testsOnly = action.fields.stage === 'tests-only';
         fs.writeFileSync(path.join(fixture.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
           ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-        return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
+        return writeOutcomeReply(action, implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
           ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample']
-          : ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
+          : ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] }));
       },
       verify(action) {
         // The aggregate command belongs to a verify-class criterion, not a red one; it also goes RED
@@ -84,9 +84,9 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
           const testsOnly = action.fields.stage === 'tests-only';
           fs.writeFileSync(path.join(fixture.repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
             ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-          return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
+          return writeOutcomeReply(action, implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly
             ? ['RED-MATRIX SC1 | tests/sample.test.mjs:alpha one | exit 1 test:alpha one', 'RED-MATRIX SC2 | tests/sample.test.mjs:beta two | exit 1 test:beta two']
-            : ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
+            : ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] }));
         },
         verify(action) {
           if (action.purpose !== 'red') return ordinaryDriverPolicy(fixture.repo).verify(action);
@@ -112,7 +112,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
         scope = action.fields.paths;
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 99;\n');
-        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
       }
       throw new Error('production must not launch after leakage');
     } } });

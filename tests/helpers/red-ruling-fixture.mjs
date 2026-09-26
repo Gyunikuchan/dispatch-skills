@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readLedger } from '../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { implementationOutcome } from './driver-harness.mjs';
+import { implementationOutcome, writeEnvelopeFile, writeOutcomeReply } from './driver-harness.mjs';
 import { createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from './ordinary-driver-fixture.mjs';
 
 // SECTION: Fixture segments
@@ -53,20 +53,20 @@ export function resumedRun(fixture, rulings, { testsOnly, restartWhen, beforeRul
   const questions = [];
   let index = 0;
   const result = driveOrdinaryImplementation(fixture, { allowErrors: true, maxSteps: 60, restartWhen, policy: {
-    delegateWrite(action) {
+      delegateWrite(action) {
       if (action.fields.stage === 'tests-only') {
         // The retained test already asserts landed behavior; the writer only touches its classified test path.
         if (!untouched) fs.appendFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), '// resumed segment\n');
         testsOnly?.(fixture);
-        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: [RED_ROW] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: [RED_ROW] }));
       }
       // Code review needs a reviewable change when tests-only touched nothing.
       if (untouched) fs.appendFileSync(path.join(fixture.repo.dir, 'src/app.js'), '// resumed segment\n');
-      return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+      return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] }));
     },
     askUser(action) {
       // The driver never re-emits a pending write after a restart; the host relays the completed write's envelope.
-      if (action.question === 'implementation-recovery') return { answer: { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) } };
+      if (action.question === 'implementation-recovery') return { answer: writeEnvelopeFile(action.items[0].expectedEnvelopePath, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
       if (action.question !== 'failure-disposition') return base.askUser(action);
       if (!questions.length) beforeRuling?.(fixture);
       questions.push(action);

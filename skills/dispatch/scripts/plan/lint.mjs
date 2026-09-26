@@ -8,7 +8,6 @@ import {
 import { findPlaceholders, lintSummaryBox } from '../lib/summary-box.mjs';
 
 const BOX_LABELS = ['TL;DR', 'Decide', 'Risk', 'Scope'];
-const TABLE_HEADER = ['SC', 'Outcome', 'Evidence', 'Verify'];
 const ACCEPTED_EVIDENCE = ['red', 'verify', 'review'];
 // Mirrors lib/git-state.mjs normalizeTaskPath: approval rejects these, so lint fails them first.
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
@@ -114,55 +113,25 @@ function lintCriteria(context, range) {
   const approved = new Set(records.filter(({ path: value }) => value).map(({ path: value }) => value));
   const ids = new Set();
   let current = null;
-  const detailed = [];
-  const table = [];
-
   const finish = () => {
     if (current) finishCriterion(current, defects, warnings);
   };
   for (const entry of lines.slice(range.start + 1, range.end)) {
-    if (!current && entry.text.trim().startsWith('|')) { table.push(entry); continue; }
+    if (entry.text.trim().startsWith('|')) {
+      defects.push(diagnostic('criterion-format', entry.line, 'Success Criteria requires detailed [SC#] entries.'));
+      continue;
+    }
     const item = /^(?:[-*+]|\d+[.)])\s+(.+)$/.exec(entry.text);
     if (item) {
       finish();
       current = startCriterion(item[1], entry.line, ids, defects);
-      detailed.push(current);
       continue;
     }
     if (!current) continue;
     readCriterionMapping(current, entry, approved, defects);
   }
   finish();
-  lintCriteriaTable(table, detailed, lines[range.start].line, defects);
-}
-
-// Table cells compare after unescaping pipes and collapsing whitespace.
-const tableCells = text => text.trim().split(/(?<!\\)\|/).slice(1, -1).map(value => value.replace(/\\\|/g, '|').replace(/\s+/g, ' ').trim());
-
-function lintCriteriaTable(table, detailed, headingLine, defects) {
-  if (!table.length) {
-    if (detailed.length) defects.push(diagnostic('missing-criteria-table', headingLine, `Success Criteria requires a | ${TABLE_HEADER.join(' | ')} | summary table before the detailed entries.`));
-    return;
-  }
-  const [header, separator, ...rows] = table;
-  if (tableCells(header.text).join('|') !== TABLE_HEADER.join('|') || !separator || !tableCells(separator.text).every(value => /^:?-{3,}:?$/.test(value))) {
-    defects.push(diagnostic('criteria-table', header.line, `Criteria table requires the header | ${TABLE_HEADER.join(' | ')} | and a separator row.`));
-    return;
-  }
-  if (!detailed.length) defects.push(diagnostic('criteria-table', header.line, 'Criteria table requires detailed [SC#] entries.'));
-  const expected = detailed.map(item => [item.id ?? '', item.title ?? '', item.evidence ?? '',
-    (item.verifyCells ?? []).join('; ') || '—'].map(value => value.replace(/\s+/g, ' ').trim()));
-  const count = Math.max(rows.length, expected.length);
-  for (let index = 0; index < count; index += 1) {
-    const actual = rows[index] ? tableCells(rows[index].text) : null;
-    const want = expected[index];
-    if (!actual || !want) {
-      defects.push(diagnostic('criteria-table', rows[index]?.line ?? header.line, `Criteria table rows must equal the detailed entries ${detailed.map(item => item.id).join(', ')} in order.`));
-      continue;
-    }
-    const differing = TABLE_HEADER.filter((_, column) => actual[column] !== want[column]);
-    if (differing.length) defects.push(diagnostic('criteria-table', rows[index].line, `Criteria table row ${want[0]} differs from its detailed entry in ${differing.join(', ')}; expected | ${want.join(' | ')} |.`));
-  }
+  if (!ids.size) defects.push(diagnostic('success-criteria', lines[range.start].line, 'Success Criteria requires at least one detailed [SC#] entry.'));
 }
 
 function startCriterion(text, line, ids, defects) {

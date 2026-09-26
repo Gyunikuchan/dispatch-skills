@@ -23,7 +23,8 @@ describe('delegate response schemas', () => {
       }
     }
     const reply = JSON.parse(fs.readFileSync(path.join(driver, 'delegate-write.reply.json'), 'utf8'));
-    assert.equal(reply.properties.raw.minLength, 1);
+    assert.equal(reply.properties.envelopePath.minLength, 1);
+    assert.equal(reply.properties.raw, undefined);
     assert.deepEqual(reply.properties.rejected, { const: true });
   });
 

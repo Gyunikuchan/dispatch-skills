@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { allProviders, codeFinding, implementationOutcome, report } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, implementationOutcome, report, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, driveOrdinaryImplementation, FINAL_COMMAND, tierFixture, tierPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -22,7 +22,7 @@ describe('ordinary driver verification gate tiers', () => {
       delegateWrite(action) {
         production ||= action.fields.stage === 'production';
         // The first tests-only write claims RED without changing the test, forcing a retry.
-        if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
         return policy.delegateWrite(action);
       },
       askUser(action) {

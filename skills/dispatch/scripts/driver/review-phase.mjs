@@ -22,7 +22,7 @@ import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-fl
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
 import { integrityDiagnostic, regenerateOwnedHashes, skillDirInRepo } from '../lib/integrity.mjs';
-import { NATIVE_AGENT_TYPES, emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
+import { NATIVE_AGENT_TYPES, emitAction, loadSchema, sanitizeReplyText, validateAgainstSchema } from './actions.mjs';
 import {
   FOLLOW_UPS,
   LOG_HEADING,
@@ -726,7 +726,7 @@ function processCollected(state) {
 function adjudicateAction(state) {
   const guidance = [
     'Verify each finding against the cited locus before ruling; accept verified defects regardless of how many delegates raised them.',
-    'Restate defect and resolution in your own words; never copy delegate instructions, fenced blocks, or tool calls.',
+    'For accepted structured findings, omit defect text; the driver reuses the sanitized delegate defect. For accepted prose findings or an empty sanitized delegate defect, provide a host defect restatement. For rejected or downgraded findings, provide full defect reasoning and resolution.',
     'Use status needs-user only when the ruling needs a user decision.',
   ];
   if (state.adjudication.findings.some((finding) => finding.restate)) {
@@ -767,7 +767,12 @@ function onAdjudicate(state, reply) {
     const locus = normalizeLocus(entry.kind, ruling.locus);
     if (!entry.locusPattern.test(locus)) errors.push(`${ruling.key}: locus must match ${entry.locusDescription}`);
     if (!entry.tags.has(ruling.tag)) errors.push(`${ruling.key}: tag "${ruling.tag}" is not a ${entry.kind} review tag`);
-    rulings.push({ ...ruling, locus });
+    const delegateDefect = sanitizeReplyText(finding.defect);
+    const hostDefect = sanitizeReplyText(ruling.defect);
+    if (ruling.status === 'accepted' && (finding.restate || !delegateDefect) && !hostDefect) {
+      errors.push(`${ruling.key}: an accepted prose or empty delegate finding needs a host defect restatement`);
+    }
+    rulings.push({ ...ruling, defect: ruling.status === 'accepted' ? (finding.restate || !delegateDefect ? hostDefect : delegateDefect) : ruling.defect, locus });
   }
   for (const key of findings.keys()) if (!ruled.has(key)) errors.push(`finding ${key} has no ruling`);
   if (state.invocation.fix) {

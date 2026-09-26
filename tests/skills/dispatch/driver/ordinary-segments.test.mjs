@@ -5,7 +5,7 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
-import { allProviders, codeFinding, implementationOutcome, report, runDispatch } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, implementationOutcome, report, runDispatch, writeEnvelopeFile, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -32,25 +32,21 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     assert.equal(fs.readFileSync(fixture.plan, 'utf8'), before);
     assert.equal(fs.existsSync(walkthrough), false);
   });
-  it('asks once for a verbatim envelope when the relay fails its schema, without spending a launch', () => {
-    const fixture = createOrdinaryDriverFixture(); let relays = 0;
+  it('repairs an invalid envelope at the exact path without spending a launch', () => {
+    const fixture = createOrdinaryDriverFixture(); let writes = 0;
     const base = ordinaryDriverPolicy(fixture.repo);
-    const valid = JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
-    const result = driveOrdinaryImplementation(fixture, { policy: {
-      askUser(action) {
-        if (action.question === 'implementation-recovery') { relays++; return { answer: { raw: valid } }; }
-        return base.askUser(action);
-      },
+    const result = driveOrdinaryImplementation(fixture, { allowErrors: true, policy: {
       delegateWrite(action) {
+        writes++;
         const reply = base.delegateWrite(action);
-        if (action.fields.stage !== 'tests-only') return reply;
-        const envelope = JSON.parse(reply.raw);
-        return { raw: JSON.stringify({ ...envelope, evidence: envelope.evidence[0] }) };
+        if (action.fields.stage !== 'tests-only' || writes > 1) return reply;
+        const envelope = JSON.parse(fs.readFileSync(reply.envelopePath, 'utf8'));
+        return writeEnvelopeFile(reply.envelopePath, { ...envelope, evidence: envelope.evidence[0] });
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    assert.equal(relays, 1);
-    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
+    assert.equal(writes, 3, 'the malformed tests-only envelope is repaired on the same pending action');
+    assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'tests-only', 'production']);
   });
   it('relaunches tests-only once when a RED test file fails to load, then continues production from attempt 2', () => {
     const fixture = createOrdinaryDriverFixture(); let calls = 0;
@@ -63,7 +59,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), calls === 1
           ? "import assert from 'node:assert/strict';\nimport { missing } from '../src/app.js';\nassert.equal(missing, 2);\n"
           : "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
       },
       verify(action) {
         const reply = base.verify(action);
@@ -98,7 +94,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
         if (!testsOnly) return base.delegateWrite(action);
         // The tests-only mutation leaves the same failing assertion in place: same command, same
         // host-observed identity as the pre-existing baseline failure.
-        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
@@ -112,8 +108,8 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     const fixture = createOrdinaryDriverFixture();
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, { policy: {
-      delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
-      askUser: action => action.question === 'implementation-recovery' ? { answer: { raw: '{"status":"DONE"}' } } : action.question === 'failure-disposition'
+      delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['malformed RED evidence'] })),
+      askUser: action => action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
         : base.askUser(action),
     } });
@@ -140,7 +136,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
         delegateWrite(action) {
           fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
           fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+          return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] }));
         },
         askUser(action) { return action.question === 'approval' ? { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } } : base.askUser(action); },
         verify(action) {
@@ -184,7 +180,7 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
 
   it('fails closed for green tests-only verification and resolves failure before stable-failure', () => {
     const fixture = createOrdinaryDriverFixture();
-    const result = driveOrdinaryImplementation(fixture, { policy: { delegateWrite: () => ({ envelope: implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }) }) } });
+    const result = driveOrdinaryImplementation(fixture, { policy: { delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) } });
     assert.equal(result.done.outcome, 'stable-failure');
     const ledger = readLedger(result.done.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);

@@ -1,4 +1,5 @@
 // @ts-check
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,7 +9,7 @@ import { currentHead, diffHash, indexFingerprint, materializedFingerprint, snaps
 import { diffRepositoryState } from '../verification/evidence.mjs';
 import { readLedger } from '../ledger/ledger.mjs';
 import { foldSegments } from '../ledger/events.mjs';
-import { emitAction } from './actions.mjs';
+import { emitAction, sanitizeReplyText } from './actions.mjs';
 import { append, ask, ledgerSegment, ruling } from './implement-state.mjs';
 import {
   beginVerification,
@@ -22,7 +23,7 @@ import {
   validateRedAdmission,
   validateRed,
 } from './verification.mjs';
-import { missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
+import { inspectEnvelope, missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 
 // SECTION: Task entry and write cascade
 
@@ -39,7 +40,17 @@ export function beginImplementation(state) {
   if (data.step === 'write-scope') return scopeQuestion(state);
   if (data.step === 'write-pending') {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
-    return ask(state, 'implementation-recovery', 'A write was dispatched before interruption. Return its captured raw terminal envelope. Missing evidence opens failure disposition; the driver will not duplicate the write.', [{ taskId: data.taskId, attempt: data.attempt, paths }]);
+    if (!data.expectedEnvelopePath) {
+      data.writeRecoveryNote = `Legacy pending write has no expected envelope path; inline outcomes are refused. Reissuing a current-format write action. Resume command: ${state.resumeCommand}`;
+      return writeAction(state);
+    }
+    if (path.resolve(path.dirname(data.expectedEnvelopePath)) !== path.resolve(path.dirname(state.stateFile))) {
+      // NOTE: A restored walkthrough belongs to a fresh session, so recovery needs a path in that session.
+      data.previousEnvelopePaths ??= [];
+      data.previousEnvelopePaths.push(data.expectedEnvelopePath);
+      data.expectedEnvelopePath = path.join(path.dirname(state.stateFile), `${state.runId}-write-${crypto.randomUUID()}.json`);
+    }
+    return ask(state, 'implementation-recovery', `A write was dispatched before interruption. Save its implementation-outcome JSON to ${data.expectedEnvelopePath}, then return {envelopePath:"${data.expectedEnvelopePath}"}. The driver validates the file; repair it at that path if validation reports defects.`, [{ taskId: data.taskId, attempt: data.attempt, paths, expectedEnvelopePath: data.expectedEnvelopePath }]);
   }
   if (data.step === 'red-verify' || data.step === 'completion-verify') return beginVerification(state, data.step === 'red-verify' ? 'red' : 'scoped');
   if (data.redValidated) {
@@ -191,6 +202,12 @@ function ruleScope(state, answer) {
   data.step = 'write-pending';
   return acceptWrite(state, reply);
 }
+function writeReceiptAction(state, action) {
+  const receipt = state.ordinary.writeReceipt;
+  if (!receipt || !Array.isArray(action?.guidance)) return action;
+  const concerns = receipt.concerns.length ? receipt.concerns.join('; ') : 'none reported';
+  return { ...action, guidance: [...action.guidance, `Previous write outcome: ${receipt.status}; summary: ${receipt.summary}; concerns: ${concerns}.`] };
+}
 /**
  * @param {any} state
  * @param {any} reply
@@ -198,7 +215,21 @@ function ruleScope(state, answer) {
  */
 export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const data = state.ordinary;
-  if (reply.rejected || reply.failed) return advanceWriteCascade(state, reply);
+  if (reply?.rejected || reply?.failed) return advanceWriteCascade(state, reply);
+  if (state.pending?.action === 'delegate-write' && !state.pending.fields?.expectedEnvelopePath) {
+    data.writeRecoveryNote = `Legacy pending write has no expected envelope path; inline outcomes are refused. Reissuing a current-format write action. Resume command: ${state.resumeCommand}`;
+    return writeAction(state);
+  }
+  const inspected = inspectEnvelope(state, reply.envelopePath);
+  if (inspected.errors.length) {
+    const expected = data.expectedEnvelopePath ?? state.pending?.fields?.expectedEnvelopePath ?? '(no expected path)';
+    throw new Error(`Delegate-write envelope rejected: ${inspected.errors.join('; ')} Repair the envelope at ${expected} and reply {"envelopePath":"${expected}"}. Resume command: ${state.resumeCommand}`);
+  }
+  data.writeReceipt = {
+    status: inspected.envelope.status,
+    summary: sanitizeReplyText(inspected.envelope.summary) || '(no summary)',
+    concerns: (inspected.envelope.concerns ?? []).map(sanitizeReplyText).filter(Boolean),
+  };
   const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
   const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
   const outside = changed.filter(file => !allowed.includes(file));
@@ -215,14 +246,14 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
       data.step = 'write-scope';
       data.scopeExtras = extra;
       data.pendingOutcome = reply;
-      return scopeQuestion(state);
+      return writeReceiptAction(state, scopeQuestion(state));
     }
   }
-  const parsed = outcomeTransition(state, reply, { concernsResolved });
-  // A schema-invalid envelope is usually a relay mistake; ask once for the verbatim envelope before spending a launch.
+  const parsed = outcomeTransition(state, { validatedEnvelope: inspected.envelope }, { concernsResolved });
+  // A parse failure remains repairable at the current action's driver-selected envelope path.
   if (parsed.parseError && !data.relayRetried) {
     data.relayRetried = true;
-    return ask(state, 'implementation-recovery', `The relayed terminal envelope failed its schema (${parsed.parseError}). Return {raw} holding the delegate's verbatim terminal envelope; do not retype or reshape fields.`, [{ taskId: data.taskId, attempt: data.attempt, paths: allowed }]);
+    return writeReceiptAction(state, ask(state, 'implementation-recovery', `The envelope at ${data.expectedEnvelopePath} failed its schema (${parsed.parseError}). Repair that file, rerun its --check-envelope command, and return {envelopePath:"${data.expectedEnvelopePath}"}.`, [{ taskId: data.taskId, attempt: data.attempt, paths: allowed, expectedEnvelopePath: data.expectedEnvelopePath }]));
   }
   delete data.relayRetried;
   data.envelope = parsed.envelope;
@@ -234,9 +265,9 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
         data.testsOnlyRepair = { defects };
         data.testsOnlyAttempts++;
         data.step = 'write-pending';
-        return writeAction(state);
+        return writeReceiptAction(state, writeAction(state));
       }
-      return openFailure(state, `Tests-only admission failed after ${data.testsOnlyAttempts} launches: ${defects.join('; ')}`);
+      return writeReceiptAction(state, openFailure(state, `Tests-only admission failed after ${data.testsOnlyAttempts} launches: ${defects.join('; ')}`));
     }
     data.testsOnlyAdmitted = true;
     delete data.testsOnlyRepair;
@@ -244,7 +275,7 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   if (parsed.transition.action === 'concern-ruling' && !concernsResolved) {
     data.step = 'concern-ruling';
     data.pendingOutcome = reply;
-    return ask(state, 'implementation-concerns', 'Resolve the reported concerns before accepting this outcome. Return {decision:"accept", reason} or stop.', parsed.envelope.concerns.map(reason => ({ reason })));
+    return writeReceiptAction(state, ask(state, 'implementation-concerns', 'Resolve the reported concerns before accepting this outcome. Return {decision:"accept", reason} or stop.', parsed.envelope.concerns.map(reason => ({ reason }))));
   }
   append(state, 'implementation-attempt', { taskId: data.taskId, attempt: data.attempt, launch: data.launch,
     target: target(data), terminalEnvelope: parsed.envelope, evidence: parsed.envelope?.evidence ?? [parsed.parseError ?? 'No terminal evidence'], transition: parsed.transition.action });
@@ -252,18 +283,18 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   if (parsed.parseError) data.outcomeError = parsed.parseError;
   if (['run-red', 'verify'].includes(parsed.transition.action)) {
     data.step = parsed.transition.action === 'run-red' ? 'red-verify' : 'completion-verify';
-    return beginVerification(state, parsed.transition.action === 'run-red' ? 'red' : 'scoped');
+    return writeReceiptAction(state, beginVerification(state, parsed.transition.action === 'run-red' ? 'red' : 'scoped'));
   }
-  if (data.launch === 'tests-only') return openFailure(state, parsed.parseError ?? `Tests-only outcome: ${parsed.transition.action}`);
+  if (data.launch === 'tests-only') return writeReceiptAction(state, openFailure(state, parsed.parseError ?? `Tests-only outcome: ${parsed.transition.action}`));
   if (parsed.envelope?.status === 'NEEDS_CONTEXT') {
     data.step = 'missing-context';
-    return ask(state, 'implementation-context', 'Supply the missing context before a replacement launch. Return {decision:"retry", reason, context}, or stop.', parsed.envelope.missingContext.map(reason => ({ reason })));
+    return writeReceiptAction(state, ask(state, 'implementation-context', 'Supply the missing context before a replacement launch. Return {decision:"retry", reason, context}, or stop.', parsed.envelope.missingContext.map(reason => ({ reason }))));
   }
   if (parsed.transition.action === 'change-blocking-condition') {
     data.step = 'blocking-condition';
-    return ask(state, 'implementation-blocked', 'A blocking condition must change before another write. Return {decision:"retry", reason, context} with the changed condition, or stop.', (parsed.envelope?.blockers ?? []).map(reason => ({ reason })));
+    return writeReceiptAction(state, ask(state, 'implementation-blocked', 'A blocking condition must change before another write. Return {decision:"retry", reason, context} with the changed condition, or stop.', (parsed.envelope?.blockers ?? []).map(reason => ({ reason }))));
   }
-  return retryOrFail(state, parsed.transition);
+  return writeReceiptAction(state, retryOrFail(state, parsed.transition));
 }
 export function retryOrFail(state, transition) {
   const data = state.ordinary;
@@ -330,8 +361,8 @@ export function acceptImplementationDecision(state, reply) {
   const data = state.ordinary, answer = reply.answer;
   if (data.step === 'failure-disposition') return resolveFailure(state, answer);
   if (state.pending.question === 'implementation-recovery') {
-    if (typeof answer?.raw !== 'string') return openFailure(state, 'Interrupted write has no captured outcome.');
-    return acceptWrite(state, { raw: answer.raw });
+    if (typeof answer?.envelopePath !== 'string') throw new Error(`Interrupted write requires its exact envelope path ${data.expectedEnvelopePath ?? '(missing)'}.`);
+    return acceptWrite(state, { envelopePath: answer.envelopePath });
   }
   if (!answer?.reason?.trim()) throw new Error('Decision requires a nonempty reason.');
   if (data.step === 'write-scope') return ruleScope(state, answer);
@@ -398,6 +429,7 @@ function resolveFailure(state, answer) {
 function redRulingOffered(state) {
   const data = state.ordinary;
   if (!data.redCriteria?.length || data.redValidated || data.failure?.verification?.purpose !== 'red') return false;
+  if (redLoadFailures(state).length) return false;
   const attempt = data.taskId ? ledgerSegment(state)?.tasks.get(data.taskId)?.lastAttempt?.data : null;
   return Boolean(attempt && attempt.launch === 'tests-only' && attempt.transition === 'run-red' && attempt.attempt === data.attempt);
 }

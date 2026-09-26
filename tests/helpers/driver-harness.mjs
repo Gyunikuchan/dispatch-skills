@@ -30,34 +30,13 @@ import path from 'node:path';
 import { createStubDispatchEnvironment } from './stub-dispatch-fixture.mjs';
 import { scanResolutionLog } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { materializedFingerprint } from '../../skills/dispatch/scripts/lib/git-state.mjs';
-import { captureRepositoryState, criterionMappings } from '../../skills/dispatch/scripts/verification/evidence.mjs';
+import { captureRepositoryState } from '../../skills/dispatch/scripts/verification/evidence.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',
 ]);
 
 // SECTION: fixtures
-
-/**
- * Rebuilds the Success Criteria summary table from the detailed entries, so fixtures that append
- * criteria stay lint-clean without restating each row.
- * @param {string} body
- */
-export function conformPlan(body) {
-  const criteria = criterionMappings(body);
-  const lines = body.split('\n');
-  const start = lines.findIndex((line) => /^## Success Criteria\s*$/.test(line));
-  if (start === -1 || !criteria.length) return body;
-  const kept = lines.filter((line, index) => !(index > start && line.startsWith('|') && lines.slice(start + 1, index).every((prior) => !/^##\s/.test(prior))));
-  const first = kept.findIndex((line, index) => index > start && /^- \[SC\d+\]/.test(line));
-  const table = [
-    '| SC | Outcome | Evidence | Verify |',
-    '| --- | --- | --- | --- |',
-    ...criteria.map((item) => `| ${item.id} | ${item.title.replace(/\|/g, '\\|')} | ${item.evidence} | ${item.commands.map((command) => `\`${command.replace(/\|/g, '\\|')}\`${item.finalCommands.includes(command) ? ' [FINAL]' : ''}`).join('; ') || '—'} |`),
-  ];
-  kept.splice(first, 0, ...table);
-  return kept.join('\n');
-}
 
 export const PLAN_BODY = [
   '# Plan',
@@ -69,9 +48,6 @@ export const PLAN_BODY = [
   '',
   '## Success Criteria',
   '',
-  '| SC | Outcome | Evidence | Verify |',
-  '| --- | --- | --- | --- |',
-  '| SC1 | Implement and verify the sample. | red | `node --test tests/sample.test.mjs` |',
   '- [SC1] Implement and verify the sample.',
   '  - Changes: `src/app.js`',
   '  - Verify: `node --test tests/sample.test.mjs`',
@@ -158,7 +134,7 @@ export function makeGitRepo({ dirty = false } = {}) {
 
 export function writePlan(repoDir, name = '2026-09-22-sample.md', body = PLAN_BODY) {
   const file = path.join(repoDir, '.scratch', 'plan', name);
-  fs.writeFileSync(file, conformPlan(body));
+  fs.writeFileSync(file, body);
   return file;
 }
 
@@ -176,6 +152,18 @@ export function implementationOutcome({
   ...extra
 } = {}) {
   return { schemaVersion: 1, status, stage, summary, evidence, ...extra };
+}
+
+/** Writes a validated fixture outcome where the caller requests and returns only its path. */
+export function writeEnvelopeFile(file, envelope) {
+  assert.equal(typeof file, 'string', 'delegate-write action must provide expectedEnvelopePath');
+  fs.writeFileSync(file, JSON.stringify(envelope));
+  return { envelopePath: file };
+}
+
+/** Writes a delegate-write outcome at its driver-selected path and returns the path-only reply. */
+export function writeOutcomeReply(action, envelope) {
+  return writeEnvelopeFile(action.fields?.expectedEnvelopePath, envelope);
 }
 
 export function artifactSnapshot(repoDir) {
@@ -313,11 +301,11 @@ const DEFAULT_POLICY = {
   applyFixes: (action) => ({
     clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })),
   }),
-  delegateWrite: (action) => ({ envelope: implementationOutcome({
+  delegateWrite: (action) => writeOutcomeReply(action, implementationOutcome({
     stage: action.fields?.stage === 'tests-only' ? 'RED_READY' : 'COMPLETE',
     summary: `${action.fields?.stage ?? 'production'} fixture completed`,
     evidence: [`attempt:${action.fields?.attempt ?? 1}`],
-  }) }),
+  })),
   verify: (action) => ({ results: action.commands.map((command) => ({
     command,
     exit: action.purpose === 'red' ? 1 : 0,

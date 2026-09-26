@@ -21,7 +21,6 @@
               "scope",
               "locus",
               "tag",
-              "defect",
               "resolution"
             ],
             "properties": {
@@ -95,7 +94,30 @@
                   }
                 }
               }
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "rejected",
+                        "downgraded",
+                        "needs-user"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "required": [
+                    "defect"
+                  ]
+                }
+              }
+            ]
           },
           {
             "type": "object",

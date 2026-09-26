@@ -7,7 +7,7 @@ import { afterEach, describe, it } from 'node:test';
 
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writePlan } from '../../../helpers/driver-harness.mjs';
+import { drive, implementationOutcome, makeGitRepo, PLAN_BODY, writeOutcomeReply, writePlan } from '../../../helpers/driver-harness.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const config = {
@@ -48,7 +48,7 @@ describe('manual-complete recovery decision (SC5)', () => {
   function stuckRun(fixture, answer) {
     return drive(fixture.fixture, { cwd: fixture.repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', fixture.plan], maxSteps: 40, policy: {
       // A claimed tests-only RED that the host observes GREEN opens failure disposition.
-      delegateWrite: () => ({ envelope: implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }) }),
+      delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })),
       verify: (action) => realVerify(fixture.repo, action),
       askUser: (action) => action.question === 'failure-disposition' ? { answer } : baseAskUser(action),
     } });
@@ -81,7 +81,7 @@ describe('manual-complete recovery decision (SC5)', () => {
     const fixture = setup();
     const errors = [];
     const result = drive(fixture.fixture, { cwd: fixture.repo.dir, runArgs: ['implement', '--orchestrator', 'claude', '--', fixture.plan], maxSteps: 40, policy: {
-      delegateWrite: () => ({ envelope: implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }) }),
+      delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })),
       verify: (action) => realVerify(fixture.repo, action),
       askUser(action) {
         if (action.question !== 'failure-disposition') return baseAskUser(action);

@@ -6,7 +6,15 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 
 ## Prompt template
 
+- `<Expected Envelope Path>` — exact output file for this write action.
+- `<Self Check Command>` — command that validates that file.
+
 ````markdown
+### Outcome handoff
+- Write the complete implementation-outcome JSON to `<Expected Envelope Path>`.
+- Run `<Self Check Command>`; correct every listed defect before returning.
+- In chat, return only the status, one-line summary, concerns, and envelope path. Keep evidence rows in the JSON file.
+
 <<slot:purpose>>
 
 ### Verification and editing

@@ -5,7 +5,7 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 
-import { implementationOutcome, runDispatch } from '../../../helpers/driver-harness.mjs';
+import { implementationOutcome, runDispatch, writeEnvelopeFile, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy, withCriterionEvidence } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -47,7 +47,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
         delegateWrite(action) {
           if (action.fields.stage === 'tests-only') return base.delegateWrite(action);
           fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
-          return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
+          return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] }));
         },
         verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...item }) => item) })),
       },
@@ -66,11 +66,11 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.equal(result.trace.filter(action => action.action === 'verify').at(-1).purpose, 'final');
   });
-  it('keeps inspect-first unterminated after malformed tests-only outcome', () => {
+  it('keeps inspect-first unterminated after malformed tests-only RED evidence', () => {
     const fixture = createOrdinaryDriverFixture();
     const result = driveOrdinaryImplementation(fixture, { policy: {
-      delegateWrite: () => ({ raw: '{"status":"DONE"}' }),
-      askUser: action => action.question === 'implementation-recovery' ? { answer: { raw: '{"status":"DONE"}' } } : action.question === 'failure-disposition'
+      delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['malformed RED evidence'] })),
+      askUser: action => action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
         : ordinaryDriverPolicy(fixture.repo).askUser(action),
     } });
@@ -81,7 +81,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     const writes = result.trace.filter(action => action.action === 'delegate-write');
     assert.equal(writes.length, 2);
     assert.equal(writes[1].fields.continuation.kind, 'admission-repair');
-    assert.match(writes[1].fields.continuation.defects.join(' '), /schemaVersion|valid tests-only/i);
+    assert.match(writes[1].fields.continuation.defects.join(' '), /RED-MATRIX/i);
     assert.equal(writes[1].fields.model, writes[0].fields.model);
     assert.equal(writes[1].fields.effort, writes[0].fields.effort);
     const repairPrompt = JSON.parse(fs.readFileSync(writes[1].fields.promptPath, 'utf8'));
@@ -109,11 +109,14 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
           if (action.fields.stage === 'production') return base.delegateWrite(action);
           writes++;
           fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
-          return { raw: '{"status":"DONE"}' };
+          return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['invalid RED row'] }));
         },
         askUser(action) {
-          // The first recovery is the schema re-relay of genuine writer junk; the post-restart one restores the repair.
-          if (action.question === 'implementation-recovery') return { answer: { raw: ++recoveries === 1 ? '{"status":"DONE"}' : JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) } };
+          // The resumed host writes the repair envelope at the pending action's exact path.
+          if (action.question === 'implementation-recovery') {
+            recoveries++;
+            return { answer: writeEnvelopeFile(action.items[0].expectedEnvelopePath, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+          }
           return base.askUser(action);
         },
       },
@@ -131,10 +134,10 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
       if (action.fields.stage === 'production') {
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2', 'CRITERION SC2 | src/app.js | delivered value=2'] }));
       }
       calls++; fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nassert.equal(1, 2);\n");
-      return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: calls === 1 ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample', 'RED-MATRIX SC2 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+      return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: calls === 1 ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample', 'RED-MATRIX SC2 | tests/sample.test.mjs | exit 1 test:sample'] }));
     } } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     const writes = result.trace.filter(action => action.action === 'delegate-write');

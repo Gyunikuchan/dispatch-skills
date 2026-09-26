@@ -44,8 +44,8 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   --drive                     Like --next, then run each launch (no early fallbacks) and verify argv and
                               advance until an action needs the host; prints only that action
   --verify                    Run the pending verify action's commands; requires --state
-  --check-envelope <file>     Check a write subagent's final envelope against the pending
-                              delegate-write; requires --state; exits 1 listing each defect
+  --check-envelope <file>     Check the pending delegate-write's expected envelope file;
+                              requires --state; exits 1 listing each defect
   --state <file>              State file named by the previous action's stateFile
   --input <json|@file>        Reply to the previous action (omit for launch)
   --orchestrator <platform>   Orchestrating platform (required with --run)
@@ -158,7 +158,7 @@ async function next(parsed) {
   try { return await advanceLocked(parsed); }
   finally { fs.closeSync(fd); fs.rmSync(lock, { force: true }); }
 }
-function advanceLocked(parsed) {
+async function advanceLocked(parsed) {
   let state;
   try {
     state = readRunState(parsed.state);
@@ -171,6 +171,10 @@ function advanceLocked(parsed) {
   const expected = state.pending;
   if (!expected || expected.action === 'done') throw new UsageError('This run has finished; start a new one with --run.');
   const reply = readInput(parsed.input);
+  if (expected.action === 'delegate-write' && !expected.fields?.expectedEnvelopePath && !reply?.rejected && !reply?.failed) {
+    const { advanceImplement } = await import('./implement-phase.mjs');
+    return advanceImplement(state, reply);
+  }
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };

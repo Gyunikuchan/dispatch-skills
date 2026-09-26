@@ -101,7 +101,7 @@ export function validateReply(action, reply) {
   if (!ACTIONS.includes(action) || action === 'done') throw new Error(`Action "${action}" takes no reply.`);
   const errors = validateAgainstSchema(loadSchema(`${action}.reply`), reply === undefined ? null : reply);
   if (action === 'delegate-write' && reply && typeof reply === 'object') {
-    const forms = ['envelope', 'raw', 'rejected', 'failed'].filter(key => Object.hasOwn(reply, key));
+    const forms = ['envelopePath', 'rejected', 'failed'].filter(key => Object.hasOwn(reply, key));
     if (forms.length !== 1) errors.push('delegate-write reply must contain exactly one outcome form');
     if (reply.reason !== undefined && reply.rejected !== true) errors.push('reason belongs only to launch rejection');
   }

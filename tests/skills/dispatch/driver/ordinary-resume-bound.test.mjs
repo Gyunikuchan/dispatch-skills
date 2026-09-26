@@ -34,7 +34,7 @@ function recoverWrite(fixture) {
   return (action) => {
     if (action.question !== 'implementation-recovery') return base.askUser(action);
     const stage = action.items[0].paths.includes('src/app.js') ? 'production' : 'tests-only';
-    return { answer: { raw: base.delegateWrite({ fields: { stage } }).raw } };
+    return { answer: base.delegateWrite({ fields: { stage, expectedEnvelopePath: action.items[0].expectedEnvelopePath } }) };
   };
 }
 
@@ -57,6 +57,7 @@ describe('ordinary driver: resume by bound plan path', () => {
         resumedFirst = JSON.parse(reply.stdout);
         assert.notEqual(resumedFirst.action, 'launch', JSON.stringify(resumedFirst));
         assert.notEqual(resumedFirst.action, 'author', JSON.stringify(resumedFirst));
+        assert.equal(path.dirname(resumedFirst.items[0].expectedEnvelopePath), path.dirname(resumedFirst.stateFile));
         Object.assign(action, resumedFirst);
       },
     });

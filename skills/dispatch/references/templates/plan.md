@@ -27,10 +27,6 @@ External delegates read the plan file with no other context.
 - Acceptance mapping: <change / test → acceptance criterion>
 
 ## Success Criteria
-| SC | Outcome | Evidence | Verify |
-| --- | --- | --- | --- |
-| SC1 | <checkable outcome> | <red|verify|review> | `<command>` |
-
 - [SC1] <checkable outcome>
   - Changes: <relative-path>[, <relative-path>...]
   - Verify: `<command>`
@@ -81,7 +77,6 @@ External delegates read the plan file with no other context.
 ## Field notes
 
 - Technical-Design Traceability: increment plans only.
-- Criteria table: one row per entry, in order; Outcome is the title, Evidence the class, Verify each command in backticks plus ` [FINAL]` when marked, joined by `; `, or `—`.
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` marks a broad run for required gates only.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - `[GENERATED]`: the driver reruns Command before completion verification.

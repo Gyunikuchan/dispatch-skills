@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { drive, implementationOutcome, makeGitRepo, runDispatch, parseAction, PLAN_BODY } from '../../../helpers/driver-harness.mjs';
+import { drive, implementationOutcome, makeGitRepo, runDispatch, parseAction, PLAN_BODY, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { foldSegments } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
@@ -67,7 +67,7 @@ function policies(ctx) {
       const testsOnly = action.fields.stage === 'tests-only';
       fs.writeFileSync(path.join(repo.dir, testsOnly ? 'tests/sample.test.mjs' : 'src/app.js'), testsOnly
         ? "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n" : 'export const value = 2;\n');
-      return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+      return writeOutcomeReply(action, implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] }));
     },
     verify(action) {
       return { results: action.commands.map(command => {

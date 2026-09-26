@@ -6,7 +6,7 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { ledgerNamespacePath, repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 
-import { implementationOutcome } from '../../../helpers/driver-harness.mjs';
+import { implementationOutcome, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -92,7 +92,7 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
         packet = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8')).packet;
         fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] }));
       },
       verify(action) {
         const base = ordinaryDriverPolicy(fixture.repo).verify(action);

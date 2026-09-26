@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { allProviders, implementationOutcome, report } from '../../../helpers/driver-harness.mjs';
+import { allProviders, implementationOutcome, report, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -21,7 +21,7 @@ describe('ordinary driver friction relief: retries', () => {
     const result = driveOrdinaryImplementation(fixture, { policy: {
       // The first tests-only write claims RED without changing the test, so the host observes GREEN.
       delegateWrite(action) {
-        if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })) };
+        if (action.fields.stage === 'tests-only' && ++testsOnlyWrites === 1) return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] }));
         return base.delegateWrite(action);
       },
       askUser(action) {
@@ -87,7 +87,7 @@ describe('driver-run verification', () => {
         const testsOnly = action.fields.stage === 'tests-only';
         if (testsOnly) fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\nimport { value } from '../src/app.js';\ntest('sample', () => { assert.equal(value, 2); });\n");
         else fs.writeFileSync(path.join(fixture.repo.dir, 'src/app.js'), 'export const value = 2;\n');
-        return { raw: JSON.stringify(implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] }));
       },
       verify: () => undefined,
       askUser: base.askUser,

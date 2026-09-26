@@ -138,10 +138,10 @@ describe('template reading aids', () => {
     assert.match(read('skills/dispatch/references/review.md'), /`TL;DR`, `Status`, `Deviations` summary box/);
   });
 
-  it('template tables carry the criteria and traceability headers', () => {
+  it('detailed plan criteria and walkthrough traceability use their intended formats', () => {
     const plan = template('plan.md');
-    assert.ok(plan.indexOf('| SC | Outcome | Evidence | Verify |') > plan.indexOf('## Success Criteria'));
-    assert.ok(plan.indexOf('| SC | Outcome | Evidence | Verify |') < plan.indexOf('- [SC1]'));
+    assert.match(plan, /## Success Criteria\s+- \[SC1\]/);
+    assert.doesNotMatch(plan, /\| SC \| Outcome \| Evidence \| Verify \|/);
     const walkthrough = template('walkthrough.md');
     assert.ok(walkthrough.indexOf('| SC | Behavior | Production path | Evidence |') > walkthrough.indexOf('## Outcome Traceability'));
     assert.match(walkthrough, /None — no governing plan\./);

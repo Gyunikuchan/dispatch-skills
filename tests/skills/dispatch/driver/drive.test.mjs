@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { allProviders, conformPlan, implementationOutcome, parseAction, report, runDispatch } from '../../../helpers/driver-harness.mjs';
-import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture } from '../../../helpers/ordinary-driver-fixture.mjs';
+import { allProviders, implementationOutcome, parseAction, report, runDispatch, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
+import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
@@ -24,7 +24,7 @@ function write(fx, action) {
   const testsOnly = action.fields.stage === 'tests-only';
   if (testsOnly) fs.writeFileSync(path.join(fx.repo.dir, 'tests/sample.test.mjs'), RED_TEST);
   else fs.writeFileSync(path.join(fx.repo.dir, 'src/app.js'), 'export const value = 2;\n');
-  return implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] });
+  return writeOutcomeReply(action, implementationOutcome({ stage: testsOnly ? 'RED_READY' : 'COMPLETE', evidence: testsOnly ? ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] : ['CRITERION SC1 | src/app.js | delivered value=2'] }));
 }
 
 /** Drives a run with --drive only, answering each stop; returns every stopping action and the banners. */
@@ -50,7 +50,7 @@ describe('--drive', () => {
     assert.equal(first.action, 'launch');
     const { stops, banners } = driveToDone(fx, first, (action) => {
       if (action.action === 'ask-user') return base.askUser(action);
-      if (action.action === 'delegate-write') return { envelope: write(fx, action) };
+      if (action.action === 'delegate-write') return write(fx, action);
       assert.equal(action.action, 'launch', 'only the first pending launch is handed to --drive unanswered');
       return undefined;
     });
@@ -63,7 +63,7 @@ describe('--drive', () => {
 
   it('runs a completion gate once, stops with its summary, and reruns it only after the tree changes', () => {
     const fx = createOrdinaryDriverFixture();
-    fs.writeFileSync(fx.plan, conformPlan(fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify')));
+    fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
     const base = ordinaryDriverPolicy(fx.repo);
     const { action: first } = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]);
     let gate = null;
@@ -73,7 +73,7 @@ describe('--drive', () => {
       if (action.action === 'ask-user') return base.askUser(action);
       if (action.action === 'delegate-write') {
         fs.writeFileSync(path.join(fx.repo.dir, 'tests/sample.test.mjs'), RED_TEST);
-        return { envelope: write(fx, action) };
+        return write(fx, action);
       }
       if (action.action === 'verify') {
         gate = action;
@@ -103,13 +103,13 @@ describe('--drive', () => {
 
   it('auto-approves an explicit low run with a clean baseline and no red criteria, recording the driver as actor', () => {
     const fx = createOrdinaryDriverFixture();
-    fs.writeFileSync(fx.plan, conformPlan(fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify')));
+    fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
     const { action: first } = step(fx, ['--run', 'implement', '--level', 'low', '--orchestrator', 'claude', '--', fx.plan]);
     const { stops } = driveToDone(fx, first, (action) => {
       assert.notEqual(action.question, 'approval', 'explicit low with nothing to rule on skips the approval ask');
       if (action.action === 'delegate-write') {
         fs.writeFileSync(path.join(fx.repo.dir, 'tests/sample.test.mjs'), RED_TEST);
-        return { envelope: write(fx, action) };
+        return write(fx, action);
       }
       if (action.action === 'verify') {
         const result = action.summary.results[0];
@@ -152,7 +152,7 @@ describe('writer envelope self-check', () => {
     return action;
   }
   function check(fx, action, envelope) {
-    const file = path.join(fx.repo.dir, '..', `${path.basename(fx.repo.dir)}-envelope.json`);
+    const file = action.fields.expectedEnvelopePath;
     fs.writeFileSync(file, typeof envelope === 'string' ? envelope : JSON.stringify(envelope));
     try {
       const res = runDispatch(fx.fixture, ['--check-envelope', file, '--state', action.stateFile], { cwd: fx.repo.dir });
@@ -164,7 +164,10 @@ describe('writer envelope self-check', () => {
     const fx = createOrdinaryDriverFixture();
     const action = pendingWrite(fx);
     const brief = JSON.parse(fs.readFileSync(action.fields.promptPath, 'utf8'));
-    assert.match(brief.selfCheck.command, /--check-envelope ENVELOPE_FILE --state /);
+    assert.ok(brief.selfCheck.command.includes(action.fields.expectedEnvelopePath));
+    assert.ok(brief.brief.includes(action.fields.expectedEnvelopePath));
+    assert.ok(brief.brief.includes(brief.selfCheck.command));
+    assert.doesNotMatch(brief.brief, /ENVELOPE_FILE/);
     assert.match(brief.brief, /mapped `commands` only/);
     assert.match(brief.brief, /Name each test so its criterion's mapped command selects it/);
     assert.doesNotMatch(brief.brief, /node --test <changed test file>/);
@@ -180,11 +183,14 @@ describe('writer envelope self-check', () => {
     assert.match(noRow.result.errors.join(' '), /Exactly one primary RED-MATRIX row required for SC1/);
     assert.deepEqual(check(fx, action, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:sample'] })), { status: 0, result: { ok: true } });
 
-    const production = step(fx, ['--drive', '--state', action.stateFile, '--input', JSON.stringify({ envelope: write(fx, action) })]).action;
+    const production = step(fx, ['--drive', '--state', action.stateFile, '--input', JSON.stringify(write(fx, action))]).action;
     assert.equal(production.fields.stage, 'production');
     const productionBrief = JSON.parse(fs.readFileSync(production.fields.promptPath, 'utf8'));
     assert.equal(productionBrief.envelope.stage, 'COMPLETE');
     assert.ok(productionBrief.selfCheck.command.includes(production.stateFile));
+    assert.ok(productionBrief.selfCheck.command.includes(production.fields.expectedEnvelopePath));
+    assert.ok(productionBrief.brief.includes(production.fields.expectedEnvelopePath));
+    assert.ok(productionBrief.brief.includes(productionBrief.selfCheck.command));
     assert.match(productionBrief.brief, /Tests are evidence, not specification/);
     assert.match(productionBrief.packet.instruction, /brief/);
     assert.deepEqual(productionBrief.packet.criteria[0].commands, production.fields.criteria[0].commands);
@@ -198,6 +204,19 @@ describe('writer envelope self-check', () => {
 });
 
 describe('settled plan at implement start', () => {
+  it('enters implementation from a tableless plan and carries its detailed criteria and command', () => {
+    const fx = createOrdinaryDriverFixture();
+    const plan = fs.readFileSync(fx.plan, 'utf8');
+    assert.doesNotMatch(plan, /^\| SC \| Outcome \|/m);
+    let production;
+    const result = driveOrdinaryImplementation(fx, { onAction(action) {
+      if (action.action === 'delegate-write' && action.fields.stage === 'production') production = action;
+    } });
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+    assert.deepEqual(production.fields.criteria.map(item => item.id), ['SC1']);
+    assert.deepEqual(production.fields.criteria[0].commands, ['node --test tests/sample.test.mjs']);
+  });
+
   it('skips a new plan-review round when the settled checkpoint matches the plan', () => {
     const fx = createOrdinaryDriverFixture();
     let action = step(fx, ['--run', 'plan', '--orchestrator', 'claude', '--', fx.plan]).action;

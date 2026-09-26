@@ -5,7 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { implementationOutcome } from '../../../helpers/driver-harness.mjs';
+import { implementationOutcome, writeEnvelopeFile, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { RED_ROW, assertRejected, carryOver, interruptedRun, noFailingState, resumedRun } from '../../../helpers/red-ruling-fixture.mjs';
 
@@ -38,9 +38,9 @@ describe('ordinary driver: RED rulings rejected (SC6)', () => {
     driveOrdinaryImplementation(fixture, { allowErrors: true, policy: {
       delegateWrite(action) {
         if (action.fields.stage === 'production') return base.delegateWrite(action);
-        if (++calls > 1) return { raw: '{"status":"DONE"}' };
+        if (++calls > 1) return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: [RED_ROW] }));
         fs.writeFileSync(path.join(fixture.repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { missing } from '../src/app.js';\nassert.equal(missing, 2);\n");
-        return { raw: JSON.stringify(implementationOutcome({ stage: 'RED_READY', evidence: [RED_ROW] })) };
+        return writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: [RED_ROW] }));
       },
       verify(action) {
         const reply = base.verify(action);
@@ -48,7 +48,7 @@ describe('ordinary driver: RED rulings rejected (SC6)', () => {
         return reply;
       },
       askUser(action) {
-        if (action.question === 'implementation-recovery') return { answer: { raw: '{"status":"DONE"}' } };
+        if (action.question === 'implementation-recovery') return { answer: writeEnvelopeFile(action.items[0].expectedEnvelopePath, implementationOutcome({ evidence: [RED_ROW] })) };
         if (action.question === 'failure-disposition') { offered.push(/red-ruling/.test(action.text)); return { answer: { decision: 'inspect-first', reason: 'Inspect admission failure.' } }; }
         return base.askUser(action);
       },

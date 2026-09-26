@@ -44,6 +44,7 @@
         "planPath",
         "walkthroughPath",
         "paths",
+        "expectedEnvelopePath",
         "evidence",
         "criteria",
         "packet"
@@ -105,6 +106,10 @@
           },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "expectedEnvelopePath": {
+          "type": "string",
+          "minLength": 1
         },
         "criteria": {
           "type": "array",
