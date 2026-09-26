@@ -16,8 +16,7 @@
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {
     "claude": {
-      // Optional for Claude, Copilot, OpenCode, Codex; defaults to true. False opts out.
-      // If unavailable, dispatch warns and runs without a sandbox.
+      // Optional.
       "sandbox": true,
       "targets": [
         // Set only the levels you need: low, medium, high, xhigh, max.

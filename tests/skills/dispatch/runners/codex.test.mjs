@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import {
   buildCodexArgs, classifyCodexFailure, CODEX_DOWNGRADE_WARNING, findViableTargets, getCodexVscodeCandidates,
-  nextCodexStep, parseCodexArgs, parseCodexEvents, runCodex, testCodexReachability,
+  nextCodexStep, parseCodexArgs, parseCodexEvents, resolveCodexOutcome, runCodex, testCodexReachability,
 } from '../../../../skills/dispatch/scripts/runners/codex.mjs';
 import { dispatchTask, providerRunners } from '../../../../skills/dispatch/scripts/dispatch.mjs';
 import { detectOrchestrator, detectOrchestratorModel, validateProviderSpec } from '../../../../skills/dispatch/scripts/lib/providers.mjs';
@@ -17,7 +17,8 @@ describe('Codex read-delegate runner', () => {
     assert.ok(args.includes('model_reasoning_effort="high"'));
     assert.equal(args.at(-1), '-');
     const unsandboxed = buildCodexArgs('-', { sandbox: false });
-    assert.deepEqual(unsandboxed.slice(unsandboxed.indexOf('--sandbox'), unsandboxed.indexOf('--sandbox') + 2), ['--sandbox', 'danger-full-access']);
+    assert.equal(unsandboxed.includes('--sandbox'), false);
+    assert.ok(unsandboxed.includes('sandbox_mode="danger-full-access"'));
   });
 
   it('extracts only the final agent message and reports failed turns', () => {
@@ -36,11 +37,62 @@ describe('Codex read-delegate runner', () => {
 
   it('classifies sandbox failures and leaves quoted answer text out of classification', () => {
     assert.equal(classifyCodexFailure('sandbox is unavailable'), 'sandbox-unsupported');
+    assert.equal(classifyCodexFailure('sandbox initialization failed'), 'sandbox-unsupported');
+    assert.equal(classifyCodexFailure('sandbox denied write to /repo/file'), null);
+    assert.equal(classifyCodexFailure('failed to initialize sandbox'), 'sandbox-unsupported');
+    assert.equal(classifyCodexFailure('unknown option --sandbox'), 'sandbox-unsupported');
+    assert.equal(classifyCodexFailure("invalid value 'read-only' for '--sandbox'"), 'sandbox-unsupported');
     assert.equal(classifyCodexFailure('rate limit exceeded'), 'quota');
     assert.equal(classifyCodexFailure('healthy'), null);
   });
 
-  it('retries a rejected sandbox on the same target, warns, and records both attempts', async () => {
+  it('does not escalate an in-turn sandbox denial reported by JSONL or stderr', () => {
+    const result = resolveCodexOutcome({
+      stdoutBuffer: [
+        { type: 'thread.started', thread_id: 'thread-1' },
+        { type: 'turn.failed', error: { message: 'sandbox denied write to /repo/file' } },
+      ].map(JSON.stringify).join('\n'),
+      stderrBuffer: 'sandbox denied write to /repo/file', code: 1, signal: null, truncated: null,
+    }, { sandbox: true });
+    assert.equal(result.failureKind, null);
+    assert.notEqual(result.exitCode, 0);
+  });
+
+  it('detects an initialization rejection after Codex reports a thread id', () => {
+    const result = resolveCodexOutcome({
+      stdoutBuffer: [
+        { type: 'thread.started', thread_id: 'thread-1' },
+        { type: 'turn.failed', error: { message: 'sandbox initialization failed' } },
+      ].map(JSON.stringify).join('\n'),
+      stderrBuffer: '', code: 1, signal: null, truncated: null,
+    }, { sandbox: true });
+    assert.equal(result.failureKind, 'sandbox-unsupported');
+  });
+
+  it('keeps the read-only sandbox after an in-turn denial while moving to another target', async () => {
+    const calls = [];
+    const result = await runCodex({
+      prompt: 'Read the project', model: 'gpt-6-sol',
+      discoverTargets: () => [
+        { mode: 'cli', name: 'Codex CLI', binary: 'bad' },
+        { mode: 'vscode', name: 'VS Code', binary: 'good' },
+      ],
+      createLogger: () => ({ logFile: 'test.log', write() {}, close() {} }),
+      execute: async ({ target, sandbox }) => {
+        calls.push([target.mode, sandbox]);
+        const outcome = target.mode === 'cli'
+          ? resolveCodexOutcome({ stdoutBuffer: '{"type":"thread.started","thread_id":"t"}\n{"type":"turn.failed","error":{"message":"sandbox denied write"}}', stderrBuffer: '', code: 1, signal: null, truncated: null }, { sandbox })
+          : { parsed: { answer: 'answer', threadId: 't', usage: null }, diagnostics: '', failureKind: null, exitCode: 0 };
+        return { provider: 'codex', mode: target.mode, stdout: outcome.parsed.answer, exitCode: outcome.exitCode, failureKind: outcome.failureKind };
+      },
+    });
+    assert.deepEqual(calls, [['cli', true], ['vscode', true]]);
+    assert.equal(result.stdout, 'answer');
+    assert.equal(result.metricsAttempts.length, 2);
+    assert.equal(result.effectiveAttempt, 1);
+  });
+
+  it('retries a sandbox rejection on the same mode and warns', async () => {
     const calls = [];
     const logged = [];
     const result = await runCodex({
@@ -52,7 +104,11 @@ describe('Codex read-delegate runner', () => {
       createLogger: () => ({ logFile: 'test.log', write: (line) => logged.push(line), close() {} }),
       execute: async ({ target, sandbox }) => {
         calls.push([target.mode, sandbox]);
-        return { provider: 'codex', mode: target.mode, stdout: sandbox ? '' : 'answer', exitCode: sandbox ? 1 : 0, failureKind: sandbox ? 'sandbox-unsupported' : null };
+        if (sandbox) {
+          const outcome = resolveCodexOutcome({ stdoutBuffer: '', stderrBuffer: 'sandbox is unavailable', code: 1, signal: null, truncated: null }, { sandbox });
+          return { provider: 'codex', mode: target.mode, stdout: '', exitCode: outcome.exitCode, failureKind: outcome.failureKind };
+        }
+        return { provider: 'codex', mode: target.mode, stdout: 'answer', exitCode: 0, failureKind: null };
       },
     });
     assert.deepEqual(calls, [['cli', true], ['cli', false]]);
@@ -64,7 +120,7 @@ describe('Codex read-delegate runner', () => {
     assert.equal(result.effectiveAttempt, 1);
   });
 
-  it('retries a thrown sandbox rejection once, then preserves mode cascade for other failures', async () => {
+  it('retries a thrown sandbox rejection once without switching modes', async () => {
     const calls = [];
     const result = await runCodex({
       prompt: 'Read the project', model: 'gpt-6-sol',
@@ -75,23 +131,20 @@ describe('Codex read-delegate runner', () => {
       createLogger: () => ({ logFile: 'test.log', write() {}, close() {} }),
       execute: async ({ target, sandbox }) => {
         calls.push([target.mode, sandbox]);
-        if (target.mode === 'cli' && sandbox) {
-          const err = new Error('sandbox is unavailable');
-          err.failureKind = 'sandbox-unsupported';
-          throw err;
-        }
-        return { provider: 'codex', mode: target.mode, stdout: target.mode === 'vscode' ? 'answer' : '', exitCode: target.mode === 'vscode' ? 0 : 1, failureKind: target.mode === 'vscode' ? null : 'quota' };
+        if (sandbox) throw new Error('sandbox initialization failed');
+        return { provider: 'codex', mode: target.mode, stdout: '', exitCode: 1, failureKind: 'sandbox-unsupported' };
       },
     });
-    assert.deepEqual(calls, [['cli', true], ['cli', false], ['vscode', false]]);
-    assert.equal(result.stdout, 'answer');
+    assert.deepEqual(calls, [['cli', true], ['cli', false]]);
+    assert.equal(result.exitCode, 1);
     assert.equal(result.sandboxDowngraded, true);
-    assert.equal(result.metricsAttempts.length, 3);
+    assert.equal(result.metricsAttempts.length, 2);
   });
 
   it('keeps a pinned mode pinned', () => {
     assert.equal(nextCodexStep({ result: { exitCode: 1 }, hasNext: false }), 'return');
     assert.equal(nextCodexStep({ result: { exitCode: 1 }, hasNext: true }), 'next-target');
+    assert.equal(nextCodexStep({ result: { exitCode: 1, failureKind: 'sandbox-unsupported' }, hasNext: true }), 'return');
     assert.equal(parseCodexArgs(['node', 'codex.mjs', '--codex-mode', 'vscode', '--no-sandbox', '-p', 'Hi']).codexMode, 'vscode');
   });
 

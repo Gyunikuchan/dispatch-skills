@@ -31,7 +31,7 @@ export const MODE_DEFINITIONS = [
   { mode: 'vscode', name: 'Codex VS Code extension', fn: getCodexVscodeBinary },
 ];
 
-export const CODEX_DOWNGRADE_WARNING = '[dispatch] WARNING: Codex sandbox is unavailable; the run proceeded unsandboxed.';
+export const CODEX_DOWNGRADE_WARNING = '[dispatch] WARNING: Codex sandbox is unavailable; retrying this mode without sandbox (write access is possible).';
 
 /** Codex's JSONL stream, not the tool trace, supplies the delegate's answer.
  * @param {string} raw
@@ -56,7 +56,9 @@ export function parseCodexEvents(raw) {
 /** @param {string} prompt @param {{model?: string|null, effort?: string|null, sandbox?: boolean}} [options] */
 export function buildCodexArgs(prompt, { model = null, effort = null, sandbox = true } = {}) {
   const args = ['exec', '--json', '--cd', PROJECT_ROOT, '--config', 'approval_policy="never"'];
-  args.push('--sandbox', sandbox ? 'read-only' : 'danger-full-access');
+  // NOTE: The fallback uses config because an older CLI may reject --sandbox itself.
+  if (sandbox) args.push('--sandbox', 'read-only');
+  else args.push('--config', 'sandbox_mode="danger-full-access"');
   if (model) args.push('--model', model);
   if (effort) args.push('--config', `model_reasoning_effort=${JSON.stringify(effort)}`);
   args.push(prompt);
@@ -67,12 +69,24 @@ export function buildCodexArgs(prompt, { model = null, effort = null, sandbox = 
  * @param {string} text
  */
 export function classifyCodexFailure(text) {
-  if (/sandbox[^\n]*(?:unavailable|unsupported|failed|denied|not supported)|(?:unrecognized|unknown) (?:option|argument)[^\n]*--sandbox/i.test(text)) return 'sandbox-unsupported';
+  if (/(?:unrecognized|unknown|unexpected|invalid) (?:option|argument|value)[^\n]*--sandbox/i.test(text)) return 'sandbox-unsupported';
+  if (/sandbox[^\n]*(?:unavailable|unsupported|initialization failed|not supported)|(?:failed to initialize|failed to create)[^\n]*sandbox/i.test(text)) return 'sandbox-unsupported';
   return classifyFailure(text);
 }
 
-/** @param {{result?: Record<string, any>|null, error?: Error|null, hasNext: boolean}} options */
+/** @param {{stdoutBuffer: string, stderrBuffer: string, code: number|null, signal: string|null, truncated: 'timeout'|'buffer'|null}} outcome @param {{sandbox: boolean}} options */
+export function resolveCodexOutcome(outcome, { sandbox }) {
+  const parsed = parseCodexEvents(outcome.stdoutBuffer);
+  const diagnostics = `${outcome.stderrBuffer}\n${parsed.error ?? ''}`;
+  const failureKind = resolveFailureKind(classifyCodexFailure(diagnostics), outcome.truncated);
+  const exitCode = resolveRunnerExitCode({ code: outcome.code, signal: outcome.signal, truncated: outcome.truncated, cleanStdout: parsed.answer, isError: !!parsed.error || (sandbox && failureKind === 'sandbox-unsupported') });
+  return { parsed, diagnostics, failureKind, exitCode };
+}
+
+/** @param {{result?: Record<string, any>|null, error?: (Error & {failureKind?: string})|null, hasNext: boolean}} options */
 export function nextCodexStep({ result = null, error = null, hasNext }) {
+  if (error?.failureKind === 'sandbox-unsupported') return 'throw';
+  if (result?.failureKind === 'sandbox-unsupported') return 'return';
   if (error) return hasNext ? 'next-target' : 'throw';
   return result?.exitCode === 0 || !hasNext ? 'return' : 'next-target';
 }
@@ -91,47 +105,48 @@ export async function runCodex(options = /** @type {RunCodexOptions} */ ({})) {
   if (!targets.length) throw createNoTargetsError('Codex was not reachable as a CLI, Desktop bundle, or VS Code extension.', 'not-found');
   const formattedPrompt = buildFormattedPrompt(prompt, files);
   const metricsAttempts = [];
-  let activeSandbox = sandbox;
-  let downgraded = false;
-  const withDowngrade = (value) => {
-    if (downgraded && value && typeof value === 'object') {
-      value.sandboxDowngraded = true;
-      value.warnings = [CODEX_DOWNGRADE_WARNING];
-    }
-    return value;
-  };
-  const tryDowngrade = (failureKind, logger) => {
-    if (!activeSandbox || failureKind !== 'sandbox-unsupported') return false;
-    activeSandbox = false;
-    downgraded = true;
-    process.stderr.write(`${CODEX_DOWNGRADE_WARNING}\n`);
-    logger.write?.(`${CODEX_DOWNGRADE_WARNING}\n`);
-    return true;
-  };
   return cascadeModels(resolveModelsToTry(model), async (currentModel) => {
     let lastResult = null;
     for (let i = 0; i < targets.length; i++) {
       const target = targets[i];
       const logger = createLogger('codex');
       const hasNext = codexMode === 'auto' && i < targets.length - 1;
+      let activeSandbox = sandbox;
+      let downgraded = false;
+      const markDowngrade = (value) => {
+        if (downgraded) {
+          value.sandboxDowngraded = true;
+          value.warnings = [CODEX_DOWNGRADE_WARNING];
+        }
+        return value;
+      };
+      const retryWithoutSandbox = (failureKind) => {
+        if (!activeSandbox || failureKind !== 'sandbox-unsupported') return false;
+        activeSandbox = false;
+        downgraded = true;
+        process.stderr.write(`${CODEX_DOWNGRADE_WARNING}\n`);
+        logger.write?.(`${CODEX_DOWNGRADE_WARNING}\n`);
+        return true;
+      };
       try {
         while (true) {
           try {
             const result = await execute({ target, formattedPrompt, model: currentModel, effort, sandbox: activeSandbox, timeout, maxBufferMb, verbose, sessionLogger: logger });
             metricsAttempts.push(buildMetricsAttempt({ input: formattedPrompt, output: result.stdout, provider: 'codex', model: currentModel, effort, mode: target.mode, exitCode: result.exitCode, failureKind: result.failureKind, truncated: result.truncated, usage: result.usage }));
-            if (result.exitCode !== 0 && tryDowngrade(result.failureKind, logger)) continue;
+            if (result.exitCode !== 0 && retryWithoutSandbox(result.failureKind)) continue;
             result.metricsAttempts = [...metricsAttempts];
             result.effectiveAttempt = metricsAttempts.length - 1;
-            lastResult = withDowngrade(result);
+            lastResult = markDowngrade(result);
             if (nextCodexStep({ result, hasNext }) === 'return') return lastResult;
             process.stderr.write(`[dispatch] fallback codex:${target.mode} -> codex:${targets[i + 1].mode}: ${result.failureKind ?? 'execution'}\n`);
             break;
           } catch (err) {
             const failureKind = err.failureKind ?? classifyCodexFailure(`${err.message}\n${err.stderr ?? ''}`);
             metricsAttempts.push(buildMetricsAttempt({ input: formattedPrompt, provider: 'codex', model: currentModel, effort, mode: target.mode, failureKind }));
-            if (tryDowngrade(failureKind, logger)) continue;
+            if (retryWithoutSandbox(failureKind)) continue;
+            err.failureKind = failureKind;
             err.metricsAttempts = [...metricsAttempts];
-            withDowngrade(err);
+            markDowngrade(err);
             if (nextCodexStep({ error: err, hasNext }) === 'throw') throw err;
             process.stderr.write(`[dispatch] fallback codex:${target.mode} -> codex:${targets[i + 1].mode}: ${err.message}\n`);
             break;
@@ -164,10 +179,7 @@ async function executeOnTarget({ target, formattedPrompt, model, effort, sandbox
     timeoutSeconds: timeout, maxBufferMb, sessionLogger, trace,
     onFail: (err, captured) => { err.failureKind = classifyCodexFailure(`${captured.stderrBuffer}\n${err.message}`); },
     onClose: (outcome) => {
-      const parsed = parseCodexEvents(outcome.stdoutBuffer);
-      const diagnostics = `${outcome.stderrBuffer}\n${parsed.error ?? ''}`;
-      const failureKind = resolveFailureKind(classifyCodexFailure(diagnostics), outcome.truncated);
-      const exitCode = resolveRunnerExitCode({ code: outcome.code, signal: outcome.signal, truncated: outcome.truncated, cleanStdout: parsed.answer, isError: !!parsed.error || (sandbox && failureKind === 'sandbox-unsupported') });
+      const { parsed, diagnostics, failureKind, exitCode } = resolveCodexOutcome(outcome, { sandbox });
       const sessionLink = parsed.threadId ? `codex exec resume ${parsed.threadId}` : null;
       emitCompletionBanner({ platform: 'codex', exitCode, truncated: outcome.truncated, sessionId: parsed.threadId, resumeCommand: sessionLink });
       return { provider: 'codex', mode: target.mode, binary: target.binary, stdout: parsed.answer, rawStdout: outcome.stdoutBuffer, stderr: diagnostics, exitCode, logFile: sessionLogger.logFile, briefFile: null, sessionId: parsed.threadId, sessionLink, truncated: outcome.truncated, failureKind, usage: parsed.usage };

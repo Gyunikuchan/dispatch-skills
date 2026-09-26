@@ -106,9 +106,10 @@ These are defense-in-depth controls, not a complete secret boundary.
   bundle → VS Code extension bundle. Select with `--codex-mode`; inspect token-free reachability
   with `--test-modes` or `--probe`. Only executable CLI bundles qualify as modes.
 - **Read-only:** `codex exec --json --sandbox read-only` with approvals disabled. The runner
-  parses final assistant messages from JSONL; tool events remain in the OS-temp log. When Codex
-  rejects the sandbox, the same target retries once unsandboxed with a warning and
-  `sandboxDowngraded` metadata. Explicit `sandbox: false` selects unrestricted execution.
+  parses final assistant messages from JSONL; tool events remain in the OS-temp log. On sandbox
+  rejection, the same binary retries once without the sandbox and emits a warning plus
+  `sandboxDowngraded`. The retry uses `danger-full-access`, so writes and commands remain possible
+  despite the read-only prompt. Explicit `sandbox: false` selects the same unrestricted mode.
 - **Recovery:** the JSONL `thread.started` ID gives `codex exec resume <id>`.
 - **Nested hosts:** launching Codex from another Codex task may need host permission to access
   `CODEX_HOME` for CLI state. A denied launch fails and enters the normal target/provider cascade.
@@ -143,7 +144,7 @@ candidates are exhausted.
 | `model-not-found` | Claude reports a 404 or an unavailable selected model | Cascade to another configured target. |
 | `cli-outdated` | Claude reports `claude_code_version_too_old` for the model | Cascade to another configured target; upgrade Claude Code. |
 | `model-not-loaded` | Local backend reports no loaded model | Cascade to another configured target. |
-| `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Rerun unsandboxed once; stderr warning plus `sandboxDowngraded`/`warnings` in result and slot output. |
+| `sandbox-unsupported` | Provider rejects requested sandbox flags/settings | Behavior varies by provider; see the provider-specific sandbox notes above. |
 | `not-found` | Missing or unlaunchable binary | Cascade or inspect the provider probe. |
 | `timeout` / `buffer` | Time limit or output cap | Preserve partial output; use it when sufficient. |
 | `empty-output` | Exit 0 with no response text | Treat as failure and cascade. |
