@@ -7,8 +7,8 @@ Choose how much of the development workflow `dispatch` should run. A verb can as
 - [Workflow at a glance](#workflow-at-a-glance)
 - [How to use a verb](#how-to-use-a-verb)
 - [`ask`: get an independent analysis](#ask-get-an-independent-analysis)
-- [`plan`: prepare implementation](#plan-prepare-implementation)
 - [`design`: split larger work into increments](#design-split-larger-work-into-increments)
+- [`plan`: prepare implementation](#plan-prepare-implementation)
 - [`review`: challenge an artifact or change](#review-challenge-an-artifact-or-change)
 - [`implement`: run the delivery loop](#implement-run-the-delivery-loop)
 - [Choosing the right starting point](#choosing-the-right-starting-point)
@@ -19,14 +19,14 @@ Choose how much of the development workflow `dispatch` should run. A verb can as
 ```mermaid
 flowchart LR
     Ask["💬 ask<br/>Independent analysis"]
-    Plan["📝 plan<br/>Implementation plan"]
     Design["🗺️ design<br/>Incremented design"]
-    Review["⚡ review<br/>Plan, design, or code"]
+    Plan["📝 plan<br/>Implementation plan"]
+    Review["⚡ review<br/>Design, plan, or code"]
     Implement["💻 implement<br/>Build and verify"]
 
     Ask -->|Use the answer| User(["👤 You"])
-    Plan --> Review
     Design --> Review
+    Plan --> Review
     Review -->|Report only| User
     Review -->|Approved workflow| Implement
     Implement -->|Verified handoff| User
@@ -42,7 +42,7 @@ The verbs are entry points, not mandatory steps. Start at the point that matches
 
 - **Level** (`low` through `max`) selects progressively broader or more capable configured routing.
 - **Pins** select particular providers or breadth, such as `(claude,agy)`, `(3)`, or `(all)`.
-- **Verb clause** is one of `ask`, `plan`, `design`, `review [plan|design|code] [--fix]`, or `implement [--phases from:<phase>]`.
+- **Verb clause** is one of `ask`, `design`, `plan`, `review [design|plan|code] [--fix]`, or `implement [--phases from:<phase>]`.
 - **Argument** is a question, requirement, artifact path, or Git range. Keep the colon when an argument follows.
 
 `ask` is the default, so `/dispatch: <question>` and `/dispatch ask: <question>` are equivalent.
@@ -67,26 +67,6 @@ flowchart LR
 
 A good question names the decision or uncertainty and narrows the relevant area. Use `review` instead when you have a concrete artifact or diff that should be checked systematically.
 
-## `plan`: prepare implementation
-
-Use `plan` for a change that can be delivered as one coherent unit. Dispatch authors a repository-aware plan, reviews it according to your phase policy, and leaves the resulting artifact ready for approval or implementation.
-
-```mermaid
-flowchart LR
-    Requirement["🎯 Requirement"] --> Author["📝 Repository-aware plan"]
-    Author --> Review["⚡ Plan review"]
-    Review --> Resolve{"🔄 Findings settled?"}
-    Resolve -->|Revise| Author
-    Resolve -->|Yes| Plan["✅ Implementation-ready plan"]
-```
-
-```text
-/dispatch plan: Add idempotency keys to webhook delivery
-/dispatch high (claude,copilot) plan: Replace polling with server-sent events
-```
-
-Prefer a requirement over a proposed patch: include the behavior, constraints, and success criteria, then let the plan identify affected code and verification.
-
 ## `design`: split larger work into increments
 
 Use `design` when work crosses shared boundaries, needs a migration or rollback strategy, or is too large for one implementation pass. It creates and reviews a technical design, then organizes delivery into dependency-aware increments.
@@ -109,13 +89,33 @@ flowchart LR
 > [!NOTE]
 > One invocation implements one selected design increment. This keeps approval, testing, and recovery bounded; the handoff tells you exactly how to resume.
 
-## `review`: challenge an artifact or change
+## `plan`: prepare implementation
 
-Use `review` when the plan, design, or code already exists. Specify the kind when clarity matters; otherwise dispatch can infer it from the argument.
+Use `plan` for a change that can be delivered as one coherent unit. Dispatch authors a repository-aware plan, reviews it according to your phase policy, and leaves the resulting artifact ready for approval or implementation.
 
 ```mermaid
 flowchart LR
-    Scope["📄 Plan, design, or code"] --> Inspect["🔎 Independent review"]
+    Requirement["🎯 Requirement"] --> Author["📝 Repository-aware plan"]
+    Author --> Review["⚡ Plan review"]
+    Review --> Resolve{"🔄 Findings settled?"}
+    Resolve -->|Revise| Author
+    Resolve -->|Yes| Plan["✅ Implementation-ready plan"]
+```
+
+```text
+/dispatch plan: Add idempotency keys to webhook delivery
+/dispatch high (claude,copilot) plan: Replace polling with server-sent events
+```
+
+Prefer a requirement over a proposed patch: include the behavior, constraints, and success criteria, then let the plan identify affected code and verification.
+
+## `review`: challenge an artifact or change
+
+Use `review` when the design, plan, or code already exists. Specify the kind when clarity matters; otherwise dispatch can infer it from the argument.
+
+```mermaid
+flowchart LR
+    Scope["📄 Design, plan, or code"] --> Inspect["🔎 Independent review"]
     Inspect --> Evidence["📍 Cited findings"]
     Evidence --> Ruling["⚖️ Host rulings"]
     Ruling --> Settled{"🔄 Settled?"}
@@ -126,8 +126,8 @@ flowchart LR
 
 | Review | Typical argument | Example |
 |---|---|---|
-| Plan | Plan path | `/dispatch review plan: .scratch/plan/2026-09-24-export-plan.md` |
 | Design | Design path | `/dispatch review design: .scratch/plan/2026-09-24-billing-design.md` |
+| Plan | Plan path | `/dispatch review plan: .scratch/plan/2026-09-24-export-plan.md` |
 | Code | Git range, or no argument | `/dispatch review code: main..HEAD` |
 
 Reviews verify cited evidence rather than accepting findings by vote. Findings are reconciled across rounds until settled or the configured cap needs your decision.
@@ -149,7 +149,7 @@ Code review without an explicit range chooses scope from repository state:
 
 ## `implement`: run the delivery loop
 
-Use `implement` when you want dispatch to carry a requirement or existing artifact through approval-gated delivery. A plain-language requirement starts with planning; a canonical plan or design path resumes from what already exists.
+Use `implement` when you want dispatch to carry a requirement or existing artifact through approval-gated delivery. A plain-language requirement starts with planning; a canonical design or plan path resumes from what already exists.
 
 ```text
 /dispatch implement: Add CSV export to the transactions page
@@ -193,15 +193,15 @@ At an explicitly typed `low` level, the driver may approve the gate itself when 
 | You have… | Start with… |
 |---|---|
 | A focused repository question | `ask` |
-| A change small enough for one delivery unit | `plan` |
 | Cross-cutting work or multiple dependent increments | `design` |
-| An existing plan, design, diff, or branch | `review` |
+| A change small enough for one delivery unit | `plan` |
+| An existing design, plan, diff, or branch | `review` |
 | A requirement or approved artifact you want delivered | `implement` |
 
-If uncertain between `plan` and `design`, start with the expected delivery shape: one independently verifiable unit favors `plan`; several ordered units or a shared migration favors `design`.
+If uncertain between `design` and `plan`, start with the expected delivery shape: one independently verifiable unit favors `plan`; several ordered units or a shared migration favors `design`.
 
 ## Artifacts and resuming
 
-Plans, designs, and walkthroughs live in `.scratch/plan/`. They are the durable handoff for interrupted runs; operational logs and traces stay in the run's OS temporary directory. At completion, dispatch reports retained or relocated artifacts and the exact next command when more work remains.
+Designs, plans, and walkthroughs live in `.scratch/plan/`. They are the durable handoff for interrupted runs; operational logs and traces stay in the run's OS temporary directory. At completion, dispatch reports retained or relocated artifacts and the exact next command when more work remains.
 
 Dispatch does not commit, push, or open a pull request. Publication remains under your control.

@@ -93,9 +93,9 @@ subagent. A missing writer entry blocks implementation, not questions or reviews
 
 ## Review phase policy
 
-`phases` accepts two policy keys: `plan-review` and `code-review`. Technical design reviews keep
-their own `design-review` flow identity but use **all** `plan-review` settings. Changing its target
-count, rounds, consensus, or `only` list changes both plan and design reviews.
+Technical design reviews keep their own `design-review` flow identity but use **all** `plan-review`
+settings. The `phases` table accepts two policy keys: `plan-review` and `code-review`. Changing the
+target count, rounds, consensus, or `only` list changes design and plan reviews.
 
 ```jsonc
 {
@@ -112,7 +112,7 @@ count, rounds, consensus, or `only` list changes both plan and design reviews.
 
 `targets` selects a number of eligible review voices or `"all"`; `rounds` caps review/rebuttal
 waves; `consensus` controls multi-voice settlement; and optional `only` limits providers for the
-phase. An absent `plan-review` policy leaves plan and design review unconfigured in the resolved
+phase. An absent `plan-review` policy leaves design and plan review unconfigured in the resolved
 flow; standalone reviews default to one target, one round, and host-final rulings. `rounds: 0`
 disables a phase at that level; unpinned `targets: 0` also disables it.
 

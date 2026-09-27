@@ -167,7 +167,7 @@ describe('fill-template: assembly', () => {
   const GOLDEN = path.join(PROJECT_ROOT, 'tests', 'fixtures', 'review-prompt-golden');
   const normalize = (text) => text.replace(/\s+/g, ' ').trim();
 
-  for (const kind of ['plan', 'code', 'design']) {
+  for (const kind of ['design', 'plan', 'code']) {
     it(`assembles the ${kind} review prompt to its whitespace-normalized golden`, () => {
       const assembled = assemble(path.join(TEMPLATES, 'review-prompt.md'), path.join(TEMPLATES, `review-prompt-${kind}.md`));
       const golden = extractTemplate(fs.readFileSync(path.join(GOLDEN, `review-prompt-${kind}.md`), 'utf8'));
@@ -176,7 +176,7 @@ describe('fill-template: assembly', () => {
     });
   }
 
-  for (const kind of ['code', 'plan', 'design']) {
+  for (const kind of ['design', 'plan', 'code']) {
     it(`assembled ${kind} prompts carry shared severity rubric`, () => {
       const { template } = assemble(path.join(TEMPLATES, 'review-prompt.md'), path.join(TEMPLATES, `review-prompt-${kind}.md`));
       assert.match(template, /`MUST`: blocks the promised outcome or breaks a binding\s+constraint/, kind);
@@ -186,7 +186,7 @@ describe('fill-template: assembly', () => {
     });
   }
 
-  for (const kind of ['plan', 'code', 'design']) {
+  for (const kind of ['design', 'plan', 'code']) {
     it(`assembles the ${kind} rebuttal from the shared frame with no unresolved slots`, () => {
       const assembled = assemble(path.join(TEMPLATES, 'rebuttal.md'), path.join(TEMPLATES, `rebuttal-${kind}.md`));
       assert.doesNotMatch(assembled.template, /<<slot:/);

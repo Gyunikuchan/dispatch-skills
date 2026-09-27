@@ -5,8 +5,8 @@ headings use these terms.
 
 | Term | Meaning | Banned synonym | Distinct from |
 |---|---|---|---|
-| **Verb** | One `/dispatch` operation: `ask`, `plan`, `design`, `review`, `implement`. | | command, mode |
-| **Phase** | One ordered unit of the workflow. Ordinary order: `plan` → `plan-review` → `baseline` → `implementation` → `code-review` → `handoff`. Design order: `design` → `design-review`; then each increment runs the ordinary phases; then `integration`. | stage | step, increment |
+| **Verb** | One `/dispatch` operation: `ask`, `design`, `plan`, `review`, `implement`. | | command, mode |
+| **Phase** | One ordered unit of the workflow. Design order: `design` → `design-review`; then each increment runs the ordinary phases; then `integration`. Ordinary order: `plan` → `plan-review` → `baseline` → `implementation` → `code-review` → `handoff`. | stage | step, increment |
 | **Increment** | One `I<nn>` row of a technical design's dependency graph: a governed unit of delivery that runs the ordinary phases once. | milestone | phase |
 | **Technical design** | Higher-level architectural plan that breaks a large problem into increments: architecture, boundaries, interfaces, dependency graph, per-increment acceptance criteria; no file-level detail. | | implementation plan |
 | **Implementation plan** | Lower-level plan for building the requested features or a technical-design increment: concrete files and symbols, step order, Success Criteria, exact verification. | | technical design |

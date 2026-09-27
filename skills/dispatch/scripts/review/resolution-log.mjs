@@ -9,12 +9,12 @@ const ROUND = /^###\s+Round\s+(\d+)\b/i;
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const ENTRY = /^\s*[-*]\s+\*\*\[([^\]]+)\]\*\*(.*)$/;
 const REVIEW_BUDGET_MARKER = /^<!-- dispatch-review-budget (.+) -->$/;
-const REVIEW_PHASES = new Set(['plan-review', 'design-review', 'code-review']);
+const REVIEW_PHASES = new Set(['design-review', 'plan-review', 'code-review']);
 const ENRICHED_PREFIX =
   /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
 const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
 const APPLICATION_LINE = /^\s+[-*]\s+application:\s*(.*)$/;
-const SOURCE_KEY = /^(plan-review|code-review|design-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
+const SOURCE_KEY = /^(design-review|plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const SOURCE_STATUSES = new Set(['target', 'reserve', 'fallback', 'replacement']);
 const APPLICATION_STATES = new Set(['unapplied', 'materialized', 'applied', 'superseded']);
 const APPLICATION_SCOPES = new Set(['in-scope', 'adjacent']);
@@ -160,7 +160,7 @@ function parseSourceMap(line, { strict, roundNumber }) {
 }
 
 const SOURCE_RECORD_FIELDS = ['candidateIndex', 'effort', 'model', 'provider', 'session', 'status', 'substitutesFor'];
-const SOURCE_KEY_PARTS = /^(plan-review|code-review|design-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
+const SOURCE_KEY_PARTS = /^(design-review|plan-review|code-review):R([1-9]\d*):([a-z][a-z0-9-]*):([0-9]+)$/;
 export const FAILURE_KINDS = Object.freeze(['quota', 'context-overflow', 'auth', 'model-not-loaded', 'model-not-found', 'not-found', 'cli-outdated', 'timeout', 'empty-output', 'sandbox-unsupported', 'availability', 'cross-platform', 'invalid-report', 'empty-capture', 'missing-slot', 'missing-configuration', 'unresolved-model', 'execution']);
 
 /** Validates terminal failures for a single review wave; no report is fabricated for these keys. */

@@ -25,7 +25,7 @@ const DISPATCH_LOCATIONS = [
   path.join('.agents', 'skills', 'dispatch'),
   path.join('.claude', 'skills', 'dispatch'),
 ];
-const HASHED_SKILLS = ['dispatch', 'dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review'];
+const HASHED_SKILLS = ['dispatch', 'dispatch-design-review', 'dispatch-plan-review', 'dispatch-code-review'];
 const SKILL_LOCATIONS = ['skills', path.join('.agents', 'skills'), path.join('.claude', 'skills')];
 const OPENCODE_LOCATIONS = [
   'opencode.jsonc',

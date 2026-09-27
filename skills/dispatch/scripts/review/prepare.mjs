@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * Review preparation for every kind: `--kind plan|design` run the shared document path below,
+ * Review preparation for every kind: `--kind design|plan` run the shared document path below,
  * `--kind code` delegates to `review/prepare-code.mjs`. Per-kind differences come from the
  * `review/kinds.mjs` registry.
  */
@@ -508,7 +508,7 @@ export function prepareDesignReview(request, opts) {
 }
 
 /**
- * Prepares one review of `kind` (`plan|code|design`).
+ * Prepares one review of `kind` (`design|plan|code`).
  *
  * @param {string} kind
  * @param {Record<string, any>} request

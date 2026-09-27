@@ -678,6 +678,6 @@ describe('plan review preparation', () => {
 
 describe('prepareReview kind', () => {
   it('names the three kinds for an unknown kind', () => {
-    assert.throws(() => prepareReview('essay', {}), /plan\|code\|design/);
+    assert.throws(() => prepareReview('essay', {}), /design\|plan\|code/);
   });
 });

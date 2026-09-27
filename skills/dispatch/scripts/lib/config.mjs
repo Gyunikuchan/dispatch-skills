@@ -33,7 +33,7 @@ export function assertClassifiableLevel(level, source) {
 }
 
 /** Review identities emitted by the resolver, in workflow order. */
-export const REVIEW_PHASES = ['plan-review', 'design-review', 'code-review'];
+export const REVIEW_PHASES = ['design-review', 'plan-review', 'code-review'];
 /** Review phases accepted as keys in the `phases` policy table. */
 export const CONFIGURABLE_PHASES = ['plan-review', 'code-review'];
 

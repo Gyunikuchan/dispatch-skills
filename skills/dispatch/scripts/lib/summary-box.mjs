@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Shared summary-box and template-placeholder grammar for plan, design, and walkthrough lint.
+ * Shared summary-box and template-placeholder grammar for design, plan, and walkthrough lint.
  * The box is the contiguous `> **Label:** value` blockquote between the H1 and the first `##`.
  */
 

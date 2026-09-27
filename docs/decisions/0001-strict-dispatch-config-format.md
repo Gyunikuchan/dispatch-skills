@@ -55,9 +55,9 @@ subagents need workspace writes and do not have independent review voices.
 
 ### Review policy
 
-`phases` accepts `plan-review` and `code-review` only. Technical design reviews use the same
-`plan-review` target count, rounds, consensus, and provider allowlist, but retain distinct
-`design-review` flow and candidate identities. Both artifacts need the same configurable review
+Technical design reviews retain distinct `design-review` flow and candidate identities while using
+the same `plan-review` target count, rounds, consensus, and provider allowlist. The `phases` table
+accepts `plan-review` and `code-review` only. Both artifacts need the same configurable review
 policy without collapsing their review records.
 
 ## Consequences

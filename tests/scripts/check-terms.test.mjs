@@ -51,7 +51,7 @@ describe('glossary', () => {
 
   it('names no downstream skill', () => {
     const text = glossaryText();
-    assert.doesNotMatch(text, /\b(dispatch-implement|dispatch-plan-review|dispatch-code-review|dispatch-design-review)\b/);
+    assert.doesNotMatch(text, /\b(dispatch-design-review|dispatch-plan-review|dispatch-implement|dispatch-code-review)\b/);
   });
 });
 

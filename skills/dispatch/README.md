@@ -59,9 +59,9 @@ For installation instructions, see the [repository README](../../README.md). For
 | Verb | Use it when… | Result |
 |---|---|---|
 | `ask` | You have a focused repository question | Verified, attributed analysis; no edits |
-| `plan` | A change fits one coherent delivery unit | A reviewed implementation plan |
 | `design` | Work crosses boundaries or needs multiple increments | A reviewed design and ordered increments |
-| `review` | A plan, design, diff, or branch already exists | Settled findings; report-only by default |
+| `plan` | A change fits one coherent delivery unit | A reviewed implementation plan |
+| `review` | A design, plan, diff, or branch already exists | Settled findings; report-only by default |
 | `implement` | You want a requirement or artifact carried through delivery | Approval-gated edits, verification, review, and handoff |
 
 Read [Dispatch verbs](references/readme/verbs.md) for decision guidance, each verb's flow, artifact behavior, and more examples.
@@ -80,7 +80,7 @@ Read [Dispatch verbs](references/readme/verbs.md) for decision guidance, each ve
 
 - **Level**: `low`, `medium`, `high`, `xhigh`, or `max`. Your config decides the models, breadth, and review policy behind each level.
 - **Pins**: provider names, a target count such as `(3)`, or `(all)`.
-- **Verb**: `ask` (the default), `plan`, `design`, `review [plan|design|code] [--fix]`, or `implement [--phases from:<phase>]`.
+- **Verb**: `ask` (the default), `design`, `plan`, `review [design|plan|code] [--fix]`, or `implement [--phases from:<phase>]`.
 - **Argument**: a question, requirement, artifact path, or Git range. The colon is required when an argument follows.
 
 Use `node scripts/dispatch.mjs --help` for the exhaustive, current CLI flag reference.
@@ -104,6 +104,14 @@ Use a bounded question and name the relevant behavior or code area. Dispatch ret
 > [!NOTE]
 > Reviews are report-only unless you add `--fix`. With no range, a dirty tree means staged, unstaged, and untracked changes only; use `main..HEAD` when committed branch work should be included.
 
+### Design a cross-cutting migration
+
+```text
+/dispatch max (all) design: Migrate billing from mutable balances to a ledger
+```
+
+Design is for work that should be delivered in dependency-aware increments. One invocation implements one selected increment; the handoff provides the resume command for the next.
+
 ### Plan and deliver a contained change
 
 ```text
@@ -112,15 +120,7 @@ Use a bounded question and name the relevant behavior or code area. Dispatch ret
 
 This starts at planning, reviews the plan, asks for approval, establishes a test baseline, delegates implementation, verifies approved checks, and reviews the resulting code.
 
-If the `brainstorming` skill is installed, dispatch first uses it to settle scope and solution in chat (followed by any grilling-style skill you invoke), then writes a single plan or design.
-
-### Design a cross-cutting migration
-
-```text
-/dispatch max (all) design: Migrate billing from mutable balances to a ledger
-```
-
-Design is for work that should be delivered in dependency-aware increments. One invocation implements one selected increment; the handoff provides the resume command for the next.
+If the `brainstorming` skill is installed, dispatch first uses it to settle scope and solution in chat (followed by any grilling-style skill you invoke), then writes a single design or plan.
 
 ### Resume from an existing artifact
 
@@ -151,8 +151,8 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 - Read delegates run with credentials stripped and provider-specific read-only controls.
 - Production edits require approval and use a configured native write subagent.
 - Verification runs the commands approved in the plan; review fixes are verified and reviewed again.
-- Active plans, designs, and walkthroughs live in `.scratch/plan/` so interrupted work can resume. Dispatch binds each governed workflow to `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/`; run state, prompts, packets, reports, logs, and verification output sit under `runs/<run-id>/`, while `artifacts/`, `ledger/`, `telemetry/`, and `cache/` hold session-owned durable files.
-- Successful handoff moves ordinary plan artifacts into the owning session's `artifacts/`; final design integration moves its complete artifact set together. Sessions retain durable evidence during age pruning, though the operating system or Storage Sense may delete OS-temporary files.
+- Active designs, plans, and walkthroughs live in `.scratch/plan/` so interrupted work can resume. Dispatch binds each governed workflow to `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/`; run state, prompts, packets, reports, logs, and verification output sit under `runs/<run-id>/`, while `artifacts/`, `ledger/`, `telemetry/`, and `cache/` hold session-owned durable files.
+- Design artifacts stay in `.scratch/plan/` through final integration, then move together into the owning session's `artifacts/`. Each successful ordinary handoff moves its plan artifacts into that session's `artifacts/`. Sessions retain durable evidence during age pruning, though the operating system or Storage Sense may delete OS-temporary files.
 - Dispatch never commits, pushes, or opens a pull request.
 
 > [!NOTE]

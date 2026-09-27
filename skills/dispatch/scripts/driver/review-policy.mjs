@@ -10,7 +10,7 @@ import { gitRoot } from './state.mjs';
  *
  * @param {string | null | undefined} argument
  * @param {{ cwd?: string }} [options]
- * @returns {{ kind: 'code', range: string | null } | { kind: 'code', walkthroughPath: string } | { kind: 'plan' | 'design', artifactPath: string }}
+ * @returns {{ kind: 'design' | 'plan', artifactPath: string } | { kind: 'code', range: string | null } | { kind: 'code', walkthroughPath: string }}
  */
 export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
   if (!argument) return { kind: 'code', range: null };
@@ -23,7 +23,7 @@ export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
     return { kind: 'code', range: argument };
   } catch {
     throw new Error(
-      `Cannot review "${argument}": pass a plan (*.md), design (*-design.md), or walkthrough (*-walkthrough.md) path, ` +
+      `Cannot review "${argument}": pass a design (*-design.md), plan (*.md), or walkthrough (*-walkthrough.md) path, ` +
       'a Git revision or range, or no argument for uncommitted changes.',
     );
   }

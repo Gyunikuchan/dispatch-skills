@@ -113,7 +113,7 @@ describe('resolveFlow', () => {
   describe('output shape', () => {
     it('emits rounds for every review phase', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, BASE_CONFIG);
-      for (const phase of ['plan-review', 'design-review', 'code-review']) {
+      for (const phase of ['design-review', 'plan-review', 'code-review']) {
         assert.ok(out[phase], `${phase} section present`);
         assert.equal(typeof out[phase].rounds, 'number', `${phase}.rounds`);
       }
@@ -186,7 +186,7 @@ describe('resolveFlow', () => {
         LIVE_ALL,
         config,
       );
-      for (const phase of ['plan-review', 'design-review', 'code-review']) {
+      for (const phase of ['design-review', 'plan-review', 'code-review']) {
         assert.equal(out[phase].rounds, 0, phase);
         assert.deepEqual(out[phase].targets, [], phase);
         assert.equal(out[phase].configured, false, phase);

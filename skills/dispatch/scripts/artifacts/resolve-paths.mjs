@@ -45,7 +45,7 @@ import { detectOrchestrator } from '../lib/providers.mjs';
 import { AGY_MODE_DATA_DIRS } from '../runners/agy.mjs';
 import { assertWorkflowSession, dispatchTempRoot, sessionArea, workflowSessionDirs } from '../lib/session-temp.mjs';
 
-/** @typedef {'plan'|'walkthrough'|'design'|'increment-plan'|'increment-walkthrough'|'integration-walkthrough'} ArtifactKind */
+/** @typedef {'design'|'plan'|'increment-plan'|'walkthrough'|'increment-walkthrough'|'integration-walkthrough'} ArtifactKind */
 /** @typedef {'native'|'scratch-existing'|'temp-existing'|'scratch-new'} ArtifactTier */
 /** @typedef {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} NativeOptions */
 /** @typedef {{ tier: ArtifactTier, path: string, exists: boolean, scratchOnly?: boolean }} ResolvedArtifact */
@@ -62,9 +62,9 @@ const BRANCH_PREFIX_PATTERN = /^(feature|feat|fix|bugfix|hotfix|chore|refactor|r
 const MAX_SLUG_LENGTH = 60;
 const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
 const NATIVE_FILENAME = Object.freeze({
+  design: 'technical_design.md',
   plan: 'implementation_plan.md',
   walkthrough: 'walkthrough.md',
-  design: 'technical_design.md',
 });
 const INCREMENT_ARTIFACT_PATTERN = /^\.scratch\/plan\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
 
@@ -307,7 +307,7 @@ export function defaultNativeCandidateRoots({ platform = process.platform, env =
  * Tests whether a path has the exact native filename under a configured platform root.
  *
  * @param {string} file
- * @param {'plan'|'walkthrough'|'design'} [kind]
+ * @param {'design'|'plan'|'walkthrough'} [kind]
  * @param {{ roots?: string[] }} [options]
  * @returns {boolean}
  */

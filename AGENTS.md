@@ -35,10 +35,10 @@ Report adjacent findings in output; keep execution strictly bounded to requested
 `dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. The four companion skills are user-invoked compatibility aliases:
 
 ```text
-dispatch-plan-review ─┐
-dispatch-code-review ─┼─> dispatch ─> nothing
-dispatch-design-review┤
-dispatch-implement ───┘
+dispatch-design-review ─┐
+dispatch-plan-review ───┼─> dispatch ─> nothing
+dispatch-implement ────┤
+dispatch-code-review ───┘
 ```
 
 Repository layout:
@@ -78,7 +78,7 @@ Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, C
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
 - **Type checking**: Start every `skills/` and `scripts/` `.mjs` file with `// @ts-check`; type exported functions and destructured options with JSDoc. `npm test` runs `tsc` (`checkJs`, non-strict) first.
-- **Scratch directory allowlist**: Only active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), technical designs (`.scratch/plan/<yyyy-mm-dd>-<slug>-design.md`), increment implementation plans (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan.md`), increment walkthroughs (matching `-walkthrough.md` shape), integration walkthroughs (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-integration-walkthrough.md`), hidden design staging files (`.scratch/plan/.<design-file>.bak`/`.tmp`/`.status.tmp`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. Put generated state, logs, traces, prompts, packets, reports, captures, and temp files under `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/runs/<run-id>/`; keep `artifacts/`, `ledger/`, `telemetry/`, `cache/`, and the manifest in that session root. Keep artifacts in `.scratch/` while active; standalone reviews retain them. At ordinary handoff, move plans into session `artifacts/`; after final integration, move design artifacts there together and report destinations. Prune aged runs and cache only; retain manifests and durable evidence. `.scratch/` is not git-ignored; do not stage its files (see `skills/dispatch/references/review.md` § Wave and artifact lifecycle).
+- **Scratch directory allowlist**: Only technical designs (`.scratch/plan/<yyyy-mm-dd>-<slug>-design.md`) and hidden design staging files (`.scratch/plan/.<design-file>.bak`/`.tmp`/`.status.tmp`), active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`) and increment implementation plans (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), increment walkthroughs (matching `-walkthrough.md` shape), integration walkthroughs (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-integration-walkthrough.md`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. Put generated state, logs, traces, prompts, packets, reports, captures, and temp files under `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/runs/<run-id>/`; keep `artifacts/`, `ledger/`, `telemetry/`, `cache/`, and the manifest in that session root. Keep artifacts in `.scratch/` while active; standalone reviews retain them. After final integration, move design artifacts into session `artifacts/` together; at ordinary handoff, move plans there and report destinations. Prune aged runs and cache only; retain manifests and durable evidence. `.scratch/` is not git-ignored; do not stage its files (see `skills/dispatch/references/review.md` § Wave and artifact lifecycle).
 
 ### Comments
 

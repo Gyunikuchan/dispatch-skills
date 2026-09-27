@@ -112,7 +112,7 @@ describe('lib/platform.mjs does not own dispatch schema validation', () => {
 describe('constants', () => {
   it('exports review identities separately from configurable policy phases', () => {
     assert.deepEqual([...LEVELS], ['low', 'medium', 'high', 'xhigh', 'max']);
-    assert.deepEqual([...REVIEW_PHASES], ['plan-review', 'design-review', 'code-review']);
+    assert.deepEqual([...REVIEW_PHASES], ['design-review', 'plan-review', 'code-review']);
     assert.deepEqual([...CONFIGURABLE_PHASES], ['plan-review', 'code-review']);
     assert.equal(policyPhase('design-review'), 'plan-review');
     assert.equal(policyPhase('plan-review'), 'plan-review');

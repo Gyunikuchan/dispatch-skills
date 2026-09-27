@@ -74,7 +74,7 @@ describe('level and phase resolution', () => {
     );
 
     const phase = (name) => report.phases[name];
-    assert.deepEqual(Object.keys(report.phases), ['plan-review', 'design-review', 'code-review']);
+    assert.deepEqual(Object.keys(report.phases), ['design-review', 'plan-review', 'code-review']);
     assert.deepEqual(
       [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds, phase('plan-review').consensus],
       [['agy', 'opencode'], ['claude'], 3, true],
@@ -103,7 +103,7 @@ describe('level and phase resolution', () => {
     assert.match(text, /level=high/);
     assert.match(text, /source=explicit/);
     assert.match(text, /agy\[0\] model=gemini-3\.8-flash/);
-    for (const [name, rounds] of [['plan-review', 3], ['design-review', 3], ['code-review', 3]]) {
+    for (const [name, rounds] of [['design-review', 3], ['plan-review', 3], ['code-review', 3]]) {
       const line = text.split('\n').find((l) => l.trim().startsWith(`${name}:`));
       assert.ok(line, `${name} line present`);
       assert.match(line, new RegExp(`rounds=${rounds}`));
@@ -144,14 +144,14 @@ describe('level and phase resolution', () => {
   it('renders an ask-only config: phases off and write-subagents not configured', async () => {
     mockProbes();
     const report = await buildDoctorReport(ASK_ONLY, '/tmp/ask.jsonc', { level: 'high', levelSource: 'explicit', orchestrator: 'claude' });
-    for (const name of ['plan-review', 'design-review', 'code-review']) {
+    for (const name of ['design-review', 'plan-review', 'code-review']) {
       assert.equal(report.phases[name].configured, false, name);
       assert.equal(report.phases[name].rounds, 0, name);
       assert.deepEqual(report.phases[name].targets, [], name);
     }
     assert.deepEqual(report.writeSubagents, { claude: { configured: false } });
     const text = formatDoctorReport(report);
-    for (const name of ['plan-review', 'design-review', 'code-review']) {
+    for (const name of ['design-review', 'plan-review', 'code-review']) {
       assert.match(text, new RegExp(`${name}: off \\(not configured\\)`));
     }
     assert.match(text, /claude: not configured/);

@@ -792,7 +792,7 @@ export async function buildDoctorReport(config, configPath, {
     implementationFields: 'model,effort',
     tolerateMissingImplementationModel: true,
   }, liveness, config);
-  const phases = Object.fromEntries(['plan-review', 'design-review', 'code-review'].map(phase => {
+  const phases = Object.fromEntries(['design-review', 'plan-review', 'code-review'].map(phase => {
     const { targets: phaseTargets, reserves, rounds, consensus, configured } = flow[phase];
     return [phase, { configured, targets: phaseTargets, reserves, rounds, consensus }];
   }));

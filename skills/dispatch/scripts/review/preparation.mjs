@@ -111,7 +111,7 @@ export function validateRequestAction(request) {
   return action;
 }
 
-/** Artifact slug from a dated plan, design, or walkthrough filename. */
+/** Artifact slug from a dated design, plan, or walkthrough filename. */
 export function slugFromPath(file) {
   const match = /(?:^|\/)\d{4}-\d{2}-\d{2}-(.+?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
   return match?.[1] ?? null;
@@ -172,7 +172,7 @@ export function validateDispatchMetadata(metadata, { kind = null, slug = null } 
   if (metadata === null) return null;
   assertObjectKeys(metadata, [...METADATA_KEYS], 'dispatch metadata');
   if (metadata.schemaVersion !== 1) throw new Error(`Unsupported dispatch metadata schemaVersion "${metadata.schemaVersion}".`);
-  if (!['plan', 'code', 'design'].includes(metadata.kind)) throw new Error('Dispatch metadata kind must be "plan", "code", or "design".');
+  if (!['design', 'plan', 'code'].includes(metadata.kind)) throw new Error('Dispatch metadata kind must be "design", "plan", or "code".');
   if (kind && metadata.kind !== kind) throw new Error(`Dispatch metadata kind "${metadata.kind}" does not match "${kind}".`);
   if (typeof metadata.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(metadata.slug)) {
     throw new Error('Dispatch metadata slug must be kebab-case.');
@@ -529,7 +529,7 @@ function missingInvocationState(resolved) {
   if (
     !isSessionPath(container) ||
     path.basename(resolved) !== 'state.json' ||
-    !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(dir))
+    !/^dispatch-(?:design|plan|code)-invocation-/.test(path.basename(dir))
   ) return new Error('invocationContext statePath is invalid.');
   return new Error(
     `Invocation state ${dir} no longer exists; it was removed before checkpoint. The prior checkpoint ` +
@@ -563,7 +563,7 @@ export function readInvocationState(context) {
   if (
     stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 ||
     parentStat.isSymbolicLink() || !parentStat.isDirectory() ||
-    !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(parent))
+    !/^dispatch-(?:design|plan|code)-invocation-/.test(path.basename(parent))
   ) throw new Error('invocationContext statePath is invalid.');
   if (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || (parentStat.mode & 0o077) !== 0)) {
     throw new Error('invocationContext state must be owner-only.');

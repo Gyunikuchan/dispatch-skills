@@ -930,7 +930,7 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   if (unboundedConsider.length) addFollowUps(state, unboundedConsider.map((finding) => `- [${finding.id}] ${finding.defect} — accepted; no bounded fix was supplied.`));
 }
 
-// Code loci carry a path; plan and design loci are sections of the artifact itself.
+// Code loci carry a path; design and plan loci are sections of the artifact itself.
 function locusPath(state, locus) {
   const match = /^([^\s:§]+):L\d+/.exec(locus ?? '');
   return match ? match[1] : toSlash(path.relative(state.repoRoot, state.artifactPath));
@@ -1310,7 +1310,7 @@ function onApplyFixes(state, reply) {
     cluster.applyFailure = status.status === 'failed' ? `apply failed: ${cleanText(status.note, 'no detail')}` : null;
   }
   if (state.kind !== 'code') {
-    // Plan and design verify with the in-process lint: no host command runs (AC1).
+    // Design and plan verify with the in-process lint: no host command runs (AC1).
     const defects = reviewKind(state.kind).lint(readArtifactText(state)).defects;
     const failure = defects.length ? `lint: ${defects.map((defect) => defect.rule).join(', ')}` : null;
     return settleVerification(state, () => failure);

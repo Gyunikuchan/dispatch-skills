@@ -284,7 +284,7 @@ function validateData(event) {
       break;
     case 'review':
       exact(data, ['kind', 'round', 'counts', 'checkpointRef'], [], 'review.data');
-      enumeration(data.kind, ['plan', 'code', ...(event.v === 2 ? ['design', 'integration'] : [])], 'review.data.kind');
+      enumeration(data.kind, event.v === 2 ? ['design', 'plan', 'code', 'integration'] : ['plan', 'code'], 'review.data.kind');
       if (!Number.isSafeInteger(data.round) || data.round < 1) throw new Error('review round must be positive');
       exact(data.counts, ['accepted', 'rejected', 'resolvedDispute', 'disputed', 'pendingConfirmation', 'unknown'], [], 'review.data.counts');
       for (const count of Object.values(data.counts)) if (!Number.isSafeInteger(count) || count < 0) throw new Error('review counts must be non-negative integers');

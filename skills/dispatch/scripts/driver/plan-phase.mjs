@@ -61,14 +61,14 @@ export async function beginReview(state, kind) {
   const integrity = kind === 'code' ? regenerateRepoHashes(state.repoRoot, state.ordinary.approvedPaths) : null;
   if (integrity) return emitAction(state, 'done', { outcome: 'failed', summary: integrity, command: state.resumeCommand });
   const action = await startReview({
-    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, argument: ['plan', 'design'].includes(kind) ? state.planPath : state.walkthroughPath },
+    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, argument: ['design', 'plan'].includes(kind) ? state.planPath : state.walkthroughPath },
     cwd: state.repoRoot, resumeCommand: state.resumeCommand, reviewBudget,
   });
   state.reviewState = readRunState(action.stateFile);
   return forwardReview(state, action);
 }
-// Plan and design review may only amend their governing artifact; code review uses approved paths.
-const reviewsGoverningArtifact = (state) => ['plan-review', 'design-review'].includes(state.ordinary.phase);
+// Design and plan review may only amend their governing artifact; code review uses approved paths.
+const reviewsGoverningArtifact = (state) => ['design-review', 'plan-review'].includes(state.ordinary.phase);
 export function continueReview(state, reply) {
   if (state.reviewState.pending.action === 'adjudicate') {
     const allowed = reviewsGoverningArtifact(state) ? [path.relative(state.repoRoot, state.planPath).split(path.sep).join('/')] : state.ordinary.approvedPaths;

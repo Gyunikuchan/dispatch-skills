@@ -79,9 +79,9 @@ describe("dependency direction", () => {
 function dispatchGrammar() {
   const block = read("skills/dispatch/SKILL.md").match(/```text\n([\s\S]*?)```/)[1];
   const levels = block.match(/^level\s+=\s+(.+)$/m)[1].split("|").map((s) => s.trim());
-  assert.match(block, /review \[plan\|design\|code\] \[--fix\]/);
+  assert.match(block, /review \[design\|plan\|code\] \[--fix\]/);
   assert.match(block, /implement \[--phases from:<phase>\]/);
-  const verb = "(?:ask|plan|design|review(?: (?:plan|design|code))?(?: --fix)?|implement(?: --phases from:[a-z-]+)?)";
+  const verb = "(?:ask|design|plan|review(?: (?:design|plan|code))?(?: --fix)?|implement(?: --phases from:[a-z-]+)?)";
   return new RegExp(`^/dispatch(?: (?:${levels.join("|")}))?(?: \\([^)]+\\))?(?: ${verb})?: \\S`);
 }
 

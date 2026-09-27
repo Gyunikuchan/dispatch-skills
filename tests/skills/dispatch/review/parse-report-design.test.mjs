@@ -23,7 +23,7 @@ describe('design review report parsing', () => {
 
   it('names the three kinds for a missing or unknown kind', () => {
     for (const kind of [undefined, 'essay']) {
-      assert.throws(() => parseReport(kind, '{}'), /plan|code|design/);
+      assert.throws(() => parseReport(kind, '{}'), /design|plan|code/);
     }
   });
 });

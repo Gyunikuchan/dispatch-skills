@@ -139,7 +139,7 @@ describe('artifact paths stay aligned across skill documentation', () => {
   });
 
   it('keeps aliases routing through dispatch rather than shared internals', () => {
-    for (const skill of ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review']) {
+    for (const skill of ['dispatch-design-review', 'dispatch-plan-review', 'dispatch-code-review']) {
       const text = readFileSync(path.join(REPO_ROOT, 'skills', skill, 'SKILL.md'), 'utf8');
       assert.match(text, /dispatch review/);
       assert.doesNotMatch(text, /resolve-artifact-paths\.mjs|prepare-review\.mjs/);

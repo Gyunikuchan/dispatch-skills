@@ -22,7 +22,7 @@ const examples = (template) =>
 // SECTION: Shared review-kind contract
 
 describe("shared review frames match kind registries and parser schemas", () => {
-  for (const kind of ["plan", "code", "design"]) {
+  for (const kind of ["design", "plan", "code"]) {
     it(`${kind} assembles complete frames and matches its parser schema`, () => {
       const assembled = assembleTemplate(
         path.join(templates, "review-prompt.md"),
@@ -73,7 +73,7 @@ describe("shared review frames match kind registries and parser schemas", () => 
       frame,
       /Reply with one JSON object of all findings/,
     );
-    for (const kind of ["plan", "code", "design"])
+    for (const kind of ["design", "plan", "code"])
       assert.doesNotMatch(
         read(`skills/dispatch/references/templates/review-prompt-${kind}.md`),
         /Reply with one JSON object/,
@@ -96,7 +96,7 @@ describe("shared review frames match kind registries and parser schemas", () => 
 
 describe("review aliases preserve dispatch forwarding order", () => {
   it("review aliases place --fix after the kind and implement places --phases after the verb", () => {
-    for (const kind of ["plan", "design", "code"]) {
+    for (const kind of ["design", "plan", "code"]) {
       const text = read(`skills/dispatch-${kind}-review/SKILL.md`);
       assert.ok(
         text.includes(`/dispatch <prefix> review ${kind} --fix: <argument>`),

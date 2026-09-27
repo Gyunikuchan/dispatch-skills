@@ -353,7 +353,7 @@ export function appendEvent(ledgerPath, event) {
 
 /**
  * Computes the semantic governing hash, excluding mutable design execution status.
- * @param {string} planSource @param {{ kind?: 'plan'|'design' }} [options]
+ * @param {string} planSource @param {{ kind?: 'design'|'plan' }} [options]
  */
 export function governingHash(planSource, { kind = 'plan' } = {}) {
   try {

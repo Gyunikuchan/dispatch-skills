@@ -17,7 +17,7 @@ import { lintWalkthrough } from '../walkthrough/lint.mjs';
 const TEMPLATES_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'references', 'templates');
 const template = (name) => path.join(TEMPLATES_DIR, name);
 
-export const KIND_NAMES = Object.freeze(['plan', 'code', 'design']);
+export const KIND_NAMES = Object.freeze(['design', 'plan', 'code']);
 export const KIND_USAGE = KIND_NAMES.join('|');
 
 const SECTION_LOCUS_PATTERN = /^§\s+\S.*$/;
@@ -71,6 +71,26 @@ function designMetadata({ slug, invocationId, snapshot, previous, now }) {
 // SECTION: Kind registry
 
 export const REVIEW_KINDS = Object.freeze({
+  design: Object.freeze({
+    kind: 'design',
+    artifactKind: 'design',
+    tags: DESIGN_TAGS,
+    locusPattern: SECTION_LOCUS_PATTERN,
+    locusDescription: '"§ <Design heading>"',
+    promptBlock: template('review-prompt-design.md'),
+    rebuttalBlock: template('rebuttal-design.md'),
+    reportSchema: template(path.join('schemas', 'report-design.json')),
+    rebuttalSchema: template(path.join('schemas', 'rebuttal.json')),
+    // design-lint reports only blocking diagnostics; normalize to the plan-lint shape.
+    lint: (source) => ({ defects: lintDesign(source).diagnostics, warnings: [] }),
+    lintLabel: 'Design lint warnings',
+    lintDecision: 'design-lint',
+    excludedSections: ['Execution Status'],
+    pathVariable: 'Design Path',
+    fallbackRequirement: 'Review the design',
+    acceptsDesignContext: false,
+    metadata: designMetadata,
+  }),
   plan: Object.freeze({
     kind: 'plan',
     artifactKind: 'plan',
@@ -104,26 +124,6 @@ export const REVIEW_KINDS = Object.freeze({
     lint: lintWalkthrough,
     lintDecision: 'walkthrough-lint',
     acceptsDesignContext: true,
-  }),
-  design: Object.freeze({
-    kind: 'design',
-    artifactKind: 'design',
-    tags: DESIGN_TAGS,
-    locusPattern: SECTION_LOCUS_PATTERN,
-    locusDescription: '"§ <Design heading>"',
-    promptBlock: template('review-prompt-design.md'),
-    rebuttalBlock: template('rebuttal-design.md'),
-    reportSchema: template(path.join('schemas', 'report-design.json')),
-    rebuttalSchema: template(path.join('schemas', 'rebuttal.json')),
-    // design-lint reports only blocking diagnostics; normalize to the plan-lint shape.
-    lint: (source) => ({ defects: lintDesign(source).diagnostics, warnings: [] }),
-    lintLabel: 'Design lint warnings',
-    lintDecision: 'design-lint',
-    excludedSections: ['Execution Status'],
-    pathVariable: 'Design Path',
-    fallbackRequirement: 'Review the design',
-    acceptsDesignContext: false,
-    metadata: designMetadata,
   }),
 });
 

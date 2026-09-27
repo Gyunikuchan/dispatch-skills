@@ -112,7 +112,7 @@ The four aliases exist for familiar slash commands only; `dispatch` alone does t
 ## Quick start
 
 ```text
-/dispatch [level] [(pins)] [ask|plan|design|review|implement]: <argument>
+/dispatch [level] [(pins)] [ask|design|plan|review|implement]: <argument>
 ```
 
 Levels `low` … `max` use progressively more targets, review rounds, and capable models. Pins such as `(claude,agy)` or `(all)` choose which configured providers answer.

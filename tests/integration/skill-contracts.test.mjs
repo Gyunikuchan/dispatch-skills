@@ -7,13 +7,13 @@ import { describe, it } from 'node:test';
 // Anchors load-bearing phrases in agent contracts so an edit cannot silently drop a gate.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const ALIASES = ['dispatch-plan-review', 'dispatch-code-review', 'dispatch-design-review', 'dispatch-implement'];
+const ALIASES = ['dispatch-design-review', 'dispatch-plan-review', 'dispatch-implement', 'dispatch-code-review'];
 
 describe('dispatch SKILL.md', () => {
   const text = read('skills/dispatch/SKILL.md');
 
   it('owns the verb grammar and action loop', () => {
-    assert.match(text, /ask\|plan\|design\|review\|implement/);
+    assert.match(text, /ask\|design\|plan\|review\|implement/);
     for (const action of ['ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done']) {
       assert.match(text, new RegExp(`\\b${action}\\b`));
     }
@@ -21,7 +21,7 @@ describe('dispatch SKILL.md', () => {
   });
 
   it('discloses review, implement, and design references', () => {
-    for (const ref of ['references/review.md', 'verbs/implement.md', 'verbs/design.md']) assert.ok(text.includes(ref), ref);
+    for (const ref of ['references/review.md', 'verbs/design.md', 'verbs/implement.md']) assert.ok(text.includes(ref), ref);
   });
 
   it('keeps review fixes opt-in', () => {
@@ -30,25 +30,25 @@ describe('dispatch SKILL.md', () => {
 
   it('clarifies before authoring and writes one artifact', () => {
     assert.match(text, /`implement` without a plan path\), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat/);
-    assert.match(text, /the driver's canonical artifact is the only plan or design written, and records each settled choice with its trade-offs, rationale, and rejected alternatives/);
+    assert.match(text, /the driver's canonical artifact is the only design or plan written, and records each settled choice with its trade-offs, rationale, and rejected alternatives/);
   });
 });
 
 describe('recorded decisions', () => {
   it('templates hold decisions reviews treat as settled', () => {
-    for (const file of ['plan.md', 'design.md']) {
+    for (const file of ['design.md', 'plan.md']) {
       assert.match(read(`skills/dispatch/references/templates/${file}`), /Settled architectural choices.*trade-offs, rationale, and rejected alternatives.*reviews treat (entries as settled|settled entries as final)/s, file);
     }
   });
 
   it('adjudication rejects contradictions unless new evidence escalates', () => {
     const text = read('skills/dispatch/references/review.md');
-    assert.match(text, /findings contradicting a decision recorded in the governing plan or design; rule `needs-user` when such a finding cites evidence the recorded rationale did not weigh/);
+    assert.match(text, /findings contradicting a decision recorded in the governing design or plan; rule `needs-user` when such a finding cites evidence the recorded rationale did not weigh/);
   });
 
   it('review prompt tells delegates decisions are settled', () => {
     const text = read('skills/dispatch/references/templates/review-prompt.md');
-    assert.match(text, /Decisions recorded in the governing plan or design are settled:\s+contest one only by naming it and citing evidence its rationale did not weigh/);
+    assert.match(text, /Decisions recorded in the governing design or plan are settled:\s+contest one only by naming it and citing evidence its rationale did not weigh/);
   });
 });
 
@@ -146,7 +146,7 @@ describe('template reading aids', () => {
     assert.ok(walkthrough.indexOf('| SC | Behavior | Production path | Evidence |') > walkthrough.indexOf('## Outcome Traceability'));
     assert.match(walkthrough, /None — no governing plan\./);
     assert.match(read('skills/dispatch/references/review.md'), /\| SC \| Behavior \| Production path \| Evidence \|/);
-    for (const file of ['plan.md', 'design.md', 'walkthrough.md']) {
+    for (const file of ['design.md', 'plan.md', 'walkthrough.md']) {
       const text = template(file);
       assert.match(text, /^````markdown$/m, file);
       assert.ok(text.indexOf('## Field notes') > text.lastIndexOf('````'), file);

@@ -1,6 +1,6 @@
 ---
 name: dispatch
-description: "Use `/dispatch [level] [(pins)] [ask|plan|design|review|implement]: <argument>`."
+description: "Use `/dispatch [level] [(pins)] [ask|design|plan|review|implement]: <argument>`."
 ---
 
 # Dispatch
@@ -14,21 +14,21 @@ Use [glossary.md](references/glossary.md) for role and workflow terminology.
 /dispatch [level] [(pins)] [verb-clause]: [argument]
 level       = low | medium | high | xhigh | max
 verb-clause = ask
-            | plan
             | design
-            | review [plan|design|code] [--fix]
+            | plan
+            | review [design|plan|code] [--fix]
             | implement [--phases from:<phase>]
 ```
 
-`ask` is the default. A colon separates the prefix from an argument. Prefix-only `plan`, `design`, and `implement` require an argument; `review` may infer its kind and scope. Standalone reviews are report-only unless the user explicitly supplied `--fix`. Start `implement` only for an explicit implementation request.
+`ask` is the default. A colon separates the prefix from an argument. Prefix-only `design`, `plan`, and `implement` require an argument; `review` may infer its kind and scope. Standalone reviews are report-only unless the user explicitly supplied `--fix`. Start `implement` only for an explicit implementation request.
 
-When a run will author a new plan or design (`plan`, `design`, or `implement` without a plan path), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat. Once both finish, start the run: the driver's canonical artifact is the only plan or design written, and records each settled choice with its trade-offs, rationale, and rejected alternatives.
+When a run will author a new design or plan (`design`, `plan`, or `implement` without a plan path), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat. Once both finish, start the run: the driver's canonical artifact is the only design or plan written, and records each settled choice with its trade-offs, rationale, and rejected alternatives.
 
 Pins select configured candidates or breadth. Use `node <skill-path>/scripts/dispatch.mjs --help` as the authoritative CLI and flag reference.
 
 ## Run
 
-For `ask`, `plan`, `design`, `review`, or `implement`:
+For `ask`, `design`, `plan`, `review`, or `implement`:
 
 1. Start `node <skill-path>/scripts/dispatch.mjs --run <verb> [driver flags] --orchestrator <platform> [-- <argument>]`. A user-written level becomes `--level <level> --level-source explicit`; otherwise classify `low`, `medium`, or `high` and pass `--level-source classified`. Reserve `xhigh` and `max` for explicit user selection. `(a,b)`, `(3)`, or `(all)` becomes `--pins a,b`, `--pins 3`, or `--pins all`.
 2. Read its single JSON action and preserve `stateFile`. Advance with `--drive --state <file> [--input <json|@file>]` as one background command: it sends any schema-valid reply, runs `launch` and `verify` argv itself, and prints the next action needing you.
@@ -39,7 +39,7 @@ For `ask`, bound the objective, evidence, stop condition, and output shape; `don
 
 The driver owns phase order, preparation, wave membership, round caps, consensus, source maps, ledgers, checkpoints, scratch lifecycle, and recovery. The host owns judgment: verify every finding at its locus before accepting, rejecting, downgrading, or disputing it.
 
-Load [review.md](references/review.md) for any review action, [verbs/implement.md](references/verbs/implement.md) for implementation or RED/recovery actions, and [verbs/design.md](references/verbs/design.md) for designs, increments, amendments, or integration.
+Load [review.md](references/review.md) for any review action, [verbs/design.md](references/verbs/design.md) for designs, increments, amendments, or integration, and [verbs/implement.md](references/verbs/implement.md) for implementation or RED/recovery actions.
 
 ## Write boundaries
 

@@ -4,7 +4,7 @@ Load this reference for ledger, verification, RED, delegation, and recovery acti
 
 ## Ledger and recovery
 
-Resolve and fold the ledger before trusting completion. Ordinary runs use v1 segments bound to a canonical plan path and governed hash. Design, increment, and integration runs use v2 segments bound to normalized design identity and revision. Malformed tails, identity drift, unsupported events, ownership drift, or unverifiable locks enter reconciliation rather than authorizing work.
+Resolve and fold the ledger before trusting completion. Design, increment, and integration runs use v2 segments bound to normalized design identity and revision. Ordinary runs use v1 segments bound to a canonical plan path and governed hash. Malformed tails, identity drift, unsupported events, ownership drift, or unverifiable locks enter reconciliation rather than authorizing work.
 
 Append `run-start` before run events and `run-complete` last. Record approval before ordinary production work, every attempt before its verification, and completion only after non-regression evidence. Increment segments derive approval from their design binding. Nothing may append after a terminal event except a new `run-start`.
 
