@@ -29,7 +29,9 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
       } });
     } catch (error) { if (error.message !== 'stop') throw error; }
     assert.ok(errored, 'the adjudicate reply must fail');
-    assert.equal(fs.readFileSync(fixture.plan, 'utf8'), before);
+    const after = fs.readFileSync(fixture.plan, 'utf8');
+    assert.match(after, /<!-- dispatch-review-budget \{"schemaVersion":1,"phase":"plan-review","budgetId":"[^"]+","reviewWaves":1,"roundLimit":1\} -->/);
+    assert.equal(after.replace(/<!-- dispatch-review-budget .* -->\n/, '\n*No reviews conducted yet.*\n'), before);
     assert.equal(fs.existsSync(walkthrough), false);
   });
   it('repairs an invalid envelope at the exact path without spending a launch', () => {

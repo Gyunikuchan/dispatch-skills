@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import {
@@ -6,10 +9,12 @@ import {
   formatApplicationRecord,
   formatFailedTargetsLine,
   formatRebuttalFailuresLine,
+  formatReviewBudgetMarker,
   formatSourceMapLine,
   nextFindingId,
   scanResolutionLog,
 } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { rebuildFromArtifact, unappliedFixesFromArtifact } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const sourceMap = JSON.stringify({
   'plan-review:R2:claude:0': {
@@ -109,6 +114,69 @@ describe('resolution log scanner', () => {
     assert.match(scan.semanticBody, /## Proposed Changes/);
     assert.match(scan.semanticBody, /## Out of Scope/);
     assert.doesNotMatch(scan.semanticBody, /Round 1/);
+  });
+
+  it('parses canonical phase-budget markers outside round hashes and rejects malformed markers', () => {
+    const marker = formatReviewBudgetMarker({ schemaVersion: 1, phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 2, roundLimit: 4 });
+    const marked = document.replace('## Review Findings & Resolutions\n', `## Review Findings & Resolutions\n${marker}\n`);
+    const scan = scanResolutionLog(marked);
+    assert.deepEqual(scan.reviewBudgetMarkers, [{ schemaVersion: 1, phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 2, roundLimit: 4 }]);
+    assert.equal(scan.rounds[0].hash, scanResolutionLog(document).rounds[0].hash);
+    assert.throws(() => scanResolutionLog(marked.replace(marker, '<!-- dispatch-review-budget {bad} -->')), /malformed JSON/);
+    assert.throws(() => scanResolutionLog(marked.replace(marker, marker.replace('plan-review', 'other-review'))), /invalid/);
+  });
+
+  it('keeps pending-user application metadata parseable without treating it as consensus-live', () => {
+    const pending = PENDING_B.replace('Rejected — pending confirmation', 'Pending User');
+    const application = formatApplicationRecord({
+      v: 1, findingId: 'R2-F001', state: 'unapplied', scope: 'in-scope', affectedPaths: ['src/app.js'],
+      dependsOn: [], verification: ['node --version'], reason: 'awaiting deferred user ruling',
+    });
+    const marked = document.replace(PENDING_B, `${pending}\n${application}`);
+    const scan = scanResolutionLog(marked);
+    const entry = scan.rounds[1].entries[0];
+    assert.equal(entry.status, 'pendingUser');
+    assert.equal(entry.application.state, 'unapplied');
+    assert.equal(scan.unsettledItems.some((item) => item.key === 'R2-F001'), false);
+  });
+
+  it('recovers the highest matching marker and otherwise keeps the supplied budget', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-review-budget-'));
+    const artifact = path.join(dir, 'plan.md');
+    const highest = formatReviewBudgetMarker({ schemaVersion: 1, phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 4, roundLimit: 5 });
+    const lower = formatReviewBudgetMarker({ schemaVersion: 1, phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 2, roundLimit: 3 });
+    try {
+      fs.writeFileSync(artifact, document);
+      const unmarked = rebuildFromArtifact(artifact, { phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 0, roundLimit: 1 });
+      assert.equal(unmarked.rounds, 0);
+      assert.equal(unmarked.reviewBudget.roundLimit, 1);
+      fs.writeFileSync(artifact, document.replace('## Review Findings & Resolutions\n', `## Review Findings & Resolutions\n${highest}\n${lower}\n`));
+      const recovered = rebuildFromArtifact(artifact, { phase: 'plan-review', budgetId: 'run-1:plan-review', reviewWaves: 1, roundLimit: 2 });
+      assert.equal(recovered.rounds, 4);
+      assert.equal(recovered.reviewBudget.roundLimit, 5);
+      const changedId = rebuildFromArtifact(artifact, { phase: 'plan-review', budgetId: 'new-run:plan-review', reviewWaves: 0, roundLimit: 2 });
+      assert.equal(changedId.reviewBudget.budgetId, 'run-1:plan-review');
+      assert.equal(changedId.reviewBudget.reviewWaves, 4);
+      assert.equal(changedId.reviewBudget.roundLimit, 5);
+      const older = formatReviewBudgetMarker({ schemaVersion: 1, phase: 'plan-review', budgetId: 'old:plan-review', reviewWaves: 3, roundLimit: 3 });
+      const newer = formatReviewBudgetMarker({ schemaVersion: 1, phase: 'plan-review', budgetId: 'new:plan-review', reviewWaves: 1, roundLimit: 2 });
+      fs.writeFileSync(artifact, document.replace('## Review Findings & Resolutions\n', `## Review Findings & Resolutions\n${older}\n${newer}\n`));
+      const latest = rebuildFromArtifact(artifact, { phase: 'plan-review', budgetId: 'resumed:plan-review', reviewWaves: 0, roundLimit: 0 });
+      assert.equal(latest.reviewBudget.budgetId, 'new:plan-review');
+      assert.equal(latest.reviewBudget.reviewWaves, 1);
+      assert.equal(latest.reviewBudget.roundLimit, 2);
+      const acceptedLine = document.split('\n').find((line) => line.includes('[R1-F001]'));
+      const queued = formatApplicationRecord({ v: 1, findingId: 'R1-F001', state: 'unapplied',
+        scope: 'in-scope', affectedPaths: ['src/app.js'], dependsOn: [], verification: [], reason: 'pending --fix' });
+      fs.writeFileSync(artifact, document.replace('## Review Findings & Resolutions\n', `## Review Findings & Resolutions\n${highest}\n`)
+        .replace(acceptedLine, `${acceptedLine}\n${queued}`));
+      const resumedFix = unappliedFixesFromArtifact(artifact, { phase: 'plan-review', budgetId: 'new-run:plan-review', reviewWaves: 0, roundLimit: 2 });
+      assert.equal(resumedFix.pending.length, 1);
+      assert.equal(resumedFix.reviewBudget.reviewWaves, 4);
+      assert.equal(resumedFix.reviewBudget.budgetId, 'run-1:plan-review');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('normalizes CRLF and canonically equivalent Unicode before hashing', () => {

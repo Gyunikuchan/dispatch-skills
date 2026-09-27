@@ -51,6 +51,10 @@ export function acceptPlan(state, reply) {
 }
 export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;
+  const phase = `${kind}-review`;
+  state.reviewBudgets ??= {};
+  const priorBudget = state.reviewBudgets[phase];
+  const reviewBudget = priorBudget ?? { phase, budgetId: `${state.ledgerRunId ?? state.runId}:${phase}` };
   persistEvidence(state);
   // NOTE: hashes regenerate only at the final gate, so a run editing dispatch itself fails the runner's
   // integrity check here; approved paths are owned, and unowned drift fails by name before any launch.
@@ -58,7 +62,7 @@ export async function beginReview(state, kind) {
   if (integrity) return emitAction(state, 'done', { outcome: 'failed', summary: integrity, command: state.resumeCommand });
   const action = await startReview({
     invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, argument: ['plan', 'design'].includes(kind) ? state.planPath : state.walkthroughPath },
-    cwd: state.repoRoot, resumeCommand: state.resumeCommand,
+    cwd: state.repoRoot, resumeCommand: state.resumeCommand, reviewBudget,
   });
   state.reviewState = readRunState(action.stateFile);
   return forwardReview(state, action);
@@ -75,14 +79,30 @@ export function continueReview(state, reply) {
   return forwardReview(state, advanceReview(state.reviewState, reply));
 }
 function forwardReview(state, action) {
+  captureReviewBudget(state);
   if (action.action === 'apply-fixes' && reviewsGoverningArtifact(state)) {
     const target = path.relative(state.repoRoot, state.planPath).split(path.sep).join('/');
     if (action.clusters.some(cluster => cluster.affectedPaths.some(file => file !== target))) throw new Error('Plan review may only amend the governing plan before approval.');
   }
   return { ...action, stateFile: state.stateFile };
 }
+export function captureReviewBudget(state) {
+  const child = state.reviewState;
+  if (!child?.budgetId || !child.phase) return;
+  state.reviewBudgets ??= {};
+  const previous = state.reviewBudgets[child.phase];
+  const budget = { schemaVersion: 1, phase: child.phase, budgetId: child.budgetId,
+    reviewWaves: child.reviewWaves ?? 0, roundLimit: child.roundLimit ?? 0 };
+  state.reviewBudgets[child.phase] = previous?.budgetId === budget.budgetId ? {
+    ...previous,
+    ...budget,
+    reviewWaves: Math.max(previous.reviewWaves ?? 0, budget.reviewWaves),
+    roundLimit: Math.max(previous.roundLimit ?? 0, budget.roundLimit),
+  } : budget;
+}
 export function finishPlanReview(state, action) {
   if (!['complete', 'skipped'].includes(action.outcome)) return false;
+  captureReviewBudget(state);
   rebindPlan(state, state.planPath);
   state.ordinary.planReview = requireSettledPlan(state);
   delete state.reviewState;

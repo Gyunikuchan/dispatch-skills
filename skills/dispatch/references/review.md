@@ -10,13 +10,13 @@ Delegate reports are claims, not verification. Deduplicate and verify every find
 
 With `consensus: true`, rejected/downgraded `MUST`/`SHOULD` await `CONFIRM` from every reachable citing source; `REBUT` remains live and `INTENT-DISPUTE` records a dispute. With `consensus: false`, host rulings are final. `CONSIDER` and verified adjacent findings are host-final. At a cap with live `MUST`, offer cap-sized extension (default) or user rulings and a final verification wave.
 
-Standalone review is report-only unless the user supplied `--fix`. Accepted adjacent findings remain follow-ups and are offered after the main scope settles.
+Standalone review is report-only unless the user supplied `--fix`. With `--fix`, queue accepted in-scope `CONSIDER` findings only when they have bounded fix metadata. A bounded, uncertain in-scope `CONSIDER` is recorded as `Pending User`; do not rebut or reopen review for it. Ask once after available review waves are exhausted. An accepted answer is applied and verified without another review wave. Accepted adjacent findings remain follow-ups and are offered after the main scope settles.
 
 ## Resolution log and settlement
 
-Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted in-scope `MUST`/`SHOULD` require immediate action under `--fix`; report-only acceptance records without edits. Unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
+Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted in-scope `MUST`/`SHOULD` and bounded `CONSIDER` require immediate action under `--fix`; report-only acceptance records without edits. Unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
 
-Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Only `MUST` or fix-induced changes trigger another round; extensions need `MUST`. Disputed/unconfirmed findings still require a ruling. Checkpoint after terminal sources, recorded rulings and verification, and consensus `0`. Verify checkpoint preview before commit; drift restarts preparation.
+Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Persist one cumulative review-wave budget per logical phase identity in parser-owned log markers; carry it through parent/child transitions and artifact recovery. Without a marker, recovery keeps the supplied phase budget. Rebuttals, final verification, fix application, and checkpoints do not consume waves; adjacent opt-in and checkpoint drift do not reset the budget. Apply and verify accepted fixes before cap decisions. Only live `MUST` permits a cap extension. Disputed/unconfirmed findings still require a ruling. Checkpoint after terminal sources, recorded rulings and verification, and consensus `0`. Verify checkpoint preview before commit; drift restarts preparation within the same budget.
 
 ## Minimum walkthrough contract
 

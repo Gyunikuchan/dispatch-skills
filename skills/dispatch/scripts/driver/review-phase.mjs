@@ -17,7 +17,7 @@ import { createIndependenceClusters, formatOptInSections, parseOptInResponse } f
 import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
 import { prepareReview } from '../review/prepare.mjs';
 import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
-import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
+import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatReviewBudgetMarker, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
@@ -59,15 +59,16 @@ if (!Array.isArray(NATIVE_MAPPINGS) || new Set(NATIVE_MAPPINGS.map((entry) => en
 
 const today = () => new Date().toISOString().slice(0, 10);
 const toSlash = (value) => value.split(path.sep).join('/');
+const ENTRY_BODY = /\[sources=[^\]]*\]\s+.+? — [^:]+: (.*?) → /;
 
 // SECTION: Phase entry
 
 /**
  * Starts `--run review`; returns the first action.
  *
- * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string, dispatchScript?: string }} options
+ * @param {{ invocation: Record<string, any>, cwd: string, resumeCommand: string, dispatchScript?: string, reviewBudget?: Record<string, any> }} options
  */
-export async function startReview({ invocation, cwd, resumeCommand }) {
+export async function startReview({ invocation, cwd, resumeCommand, reviewBudget = null }) {
   const repoRoot = gitRoot(cwd);
   /** @type {Record<string, any>} */
   const inferred = invocation.kind
@@ -93,7 +94,8 @@ export async function startReview({ invocation, cwd, resumeCommand }) {
     artifactPath: inferred.artifactPath ? path.resolve(cwd, inferred.artifactPath) : (inferred.walkthroughPath ? path.resolve(cwd, inferred.walkthroughPath) : null),
     cleanup: [],
     invocationContext: null,
-    reviewWaves: 0,
+    budgetId: reviewBudget?.budgetId ?? null,
+    reviewWaves: reviewBudget?.reviewWaves ?? 0,
     rebuttalAt: null,
     capAsked: false,
     finalDone: false,
@@ -104,6 +106,8 @@ export async function startReview({ invocation, cwd, resumeCommand }) {
     inputs: null,
     fix: { pending: [], active: [], attempts: {} },
     adjacent: [],
+    pendingUser: [],
+    skipReviewForDeferredConsider: false,
     pending: null,
   });
   pruneFinishedStates();
@@ -112,23 +116,61 @@ export async function startReview({ invocation, cwd, resumeCommand }) {
     return finish(state, done(state, 'skipped', `Review skipped: ${levelInfo.skipped.reason}`, { reason: levelInfo.skipped.reason }));
   }
   state.policy = await resolvePolicy(config, levelInfo, normalized);
-  state.roundLimit = state.policy.rounds;
+  state.budgetId ??= state.runId;
+  state.roundLimit = reviewBudget?.roundLimit ?? state.policy.rounds;
   state.artifactPath ??= existingWalkthrough(state);
-  const unapplied = normalized.fix ? unappliedFixesFromArtifact(state.artifactPath) : null;
+  const budgetSeed = { phase: state.phase, budgetId: state.budgetId, reviewWaves: state.reviewWaves, roundLimit: reviewBudget?.roundLimit ?? 0 };
+  const unapplied = normalized.fix ? unappliedFixesFromArtifact(state.artifactPath, budgetSeed) : null;
   if (unapplied) {
     // Fixes queued in the log before the cache was lost: apply them (and re-offer the opt-in) before any new wave.
-    state.reviewWaves = unapplied.rounds;
+    adoptReviewBudget(state, unapplied.reviewBudget, unapplied.rounds, reviewBudget);
     state.fix.pending = unapplied.pending;
     state.adjacent = unapplied.adjacent;
+    state.pendingUser = unapplied.pendingUser ?? [];
     return finish(state, nextStep(state));
   }
-  const rebuilt = rebuildFromArtifact(state.artifactPath);
+  const rebuilt = rebuildFromArtifact(state.artifactPath, budgetSeed);
   if (rebuilt) {
     // Resume from the unsettled log: the state cache is only a cache.
-    state.reviewWaves = rebuilt.rounds;
+    adoptReviewBudget(state, rebuilt.reviewBudget, rebuilt.rounds, reviewBudget);
+    state.pendingUser = rebuilt.pendingUser ?? [];
     return finish(state, nextStep(state));
   }
   return finish(state, prepareWave(state, 'review'));
+}
+
+function adoptReviewBudget(state, recovered, fallbackWaves, seed = null) {
+  if (recovered?.budgetId) state.budgetId = recovered.budgetId;
+  state.reviewWaves = Math.max(state.reviewWaves ?? 0, recovered?.reviewWaves ?? fallbackWaves ?? 0);
+  const limit = seed?.roundLimit ?? recovered?.roundLimit ?? 0;
+  if (limit > 0) state.roundLimit = Math.max(limit, recovered?.roundLimit ?? 0);
+}
+
+function persistReviewBudget(state) {
+  const markdown = readArtifactText(state);
+  const current = {
+    schemaVersion: 1,
+    phase: state.phase,
+    budgetId: state.budgetId,
+    reviewWaves: state.reviewWaves,
+    roundLimit: state.roundLimit,
+  };
+  const scan = scanResolutionLog(markdown, { strict: true });
+  const previous = scan.reviewBudgetMarkers.filter((item) => item.phase === current.phase && item.budgetId === current.budgetId)
+    .reduce((latest, item) => latest ? {
+      ...latest,
+      reviewWaves: Math.max(latest.reviewWaves, item.reviewWaves),
+      roundLimit: Math.max(latest.roundLimit, item.roundLimit),
+    } : item, null);
+  if (previous) {
+    current.reviewWaves = Math.max(current.reviewWaves, previous.reviewWaves);
+    current.roundLimit = Math.max(current.roundLimit, previous.roundLimit);
+    state.reviewWaves = current.reviewWaves;
+    state.roundLimit = current.roundLimit;
+    if (previous.reviewWaves === current.reviewWaves && previous.roundLimit === current.roundLimit) return;
+  }
+  const updated = appendToSection(markdown, LOG_HEADING, '## Review Findings & Resolutions', [formatReviewBudgetMarker(current)], /^\*No reviews conducted yet\.\*\s*$/);
+  writeArtifactText(state, updated);
 }
 
 /** A code review's existing walkthrough, resolved as preparation would, so a lost cache can resume from its log. */
@@ -266,16 +308,38 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
   return request;
 }
 
+function prepareCheckpointOnly(state) {
+  if (state.invocationContext) return nextStep(state);
+  const request = prepareRequest(state, { targets: state.policy.targets, reserves: state.policy.reserves });
+  let manifest;
+  try {
+    manifest = prepareReview(state.kind, request, { repoRoot: state.repoRoot });
+  } catch (err) {
+    return done(state, 'failed', `Checkpoint-only preparation failed: ${err.message}`, { command: state.resumeCommand });
+  }
+  if (manifest.status !== 'ready') {
+    return done(state, 'failed', `Checkpoint-only preparation requires a reviewable artifact; got ${manifest.status}.`, { command: state.resumeCommand });
+  }
+  state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
+  state.invocationContext = manifest.invocationContext;
+  state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
+  return nextStep(state);
+}
+
 function prepareWave(state, type, rebuttal = null) {
+  if (type === 'review' && state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
+    return prepareCheckpointOnly(state);
+  }
   if ((rebuttal?.targets ?? state.policy.targets).length === 0) {
     return done(state, 'failed', 'No live read delegate is available for this review.', { command: state.resumeCommand });
   }
   let manifest;
+  const request = prepareRequest(state, rebuttal ?? {
+    targets: state.policy.targets,
+    reserves: state.policy.reserves,
+  });
   try {
-    manifest = prepareReview(state.kind, prepareRequest(state, rebuttal ?? {
-      targets: state.policy.targets,
-      reserves: state.policy.reserves,
-    }), { repoRoot: state.repoRoot });
+    manifest = prepareReview(state.kind, request, { repoRoot: state.repoRoot });
   } catch (err) {
     return done(state, 'failed', `Review preparation failed: ${err.message}`, { command: state.resumeCommand });
   }
@@ -309,8 +373,22 @@ function prepareWave(state, type, rebuttal = null) {
   state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
   state.invocationContext = manifest.invocationContext;
   state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
+  if (type === 'review') {
+    state.reviewWaves += 1;
+    persistReviewBudget(state);
+    // The marker is part of the canonical log, so bind the launch context to its saved revision.
+    request.invocationContext = manifest.invocationContext;
+    try {
+      manifest = prepareReview(state.kind, request, { repoRoot: state.repoRoot });
+    } catch (err) {
+      return done(state, 'failed', `Review preparation failed after budget allocation: ${err.message}`, { command: state.resumeCommand });
+    }
+    if (manifest.status !== 'ready') return done(state, 'failed', 'Review preparation changed after budget allocation.', { command: state.resumeCommand });
+    state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
+    state.invocationContext = manifest.invocationContext;
+    state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
+  }
   const round = Number(manifest.roundId.split(':R')[1]);
-  if (type === 'review') state.reviewWaves += 1;
   if (type === 'final') state.finalDone = true;
   const waveTargets = (rebuttal?.targets ?? state.policy.targets).map((target) => {
     const configured = [...state.policy.targets, ...state.policy.reserves]
@@ -785,13 +863,14 @@ function onAdjudicate(state, reply) {
     }
   }
   if (errors.length) return reemit(state, errors.join('; '));
-  if (rulings.some((ruling) => ruling.status === 'needs-user')) {
+  const immediate = rulings.filter((ruling) => ruling.status === 'needs-user' && !isDeferredConsider(state, ruling));
+  if (immediate.length) {
     state.rulings = rulings;
     return emitAction(state, 'ask-user', {
       question: 'rulings',
       unfulfilledTargets: unfulfilledTargets(state),
       text: 'These findings need your ruling: answer accepted or rejected for each key.',
-      items: rulings.filter((ruling) => ruling.status === 'needs-user').map((ruling) => ({
+      items: immediate.map((ruling) => ({
         key: ruling.key, severity: ruling.severity, locus: ruling.locus, defect: cleanText(ruling.defect, ruling.key),
       })),
     }, ['Relay the question; answer with {"answer": {"<key>": "accepted"|"rejected"}} or, to replace the resolution text, {"answer": {"<key>": {"verdict": "accepted"|"rejected", "resolution": "..."}}}.']);
@@ -800,8 +879,14 @@ function onAdjudicate(state, reply) {
   return noticedNextStep(state);
 }
 
+function isDeferredConsider(state, ruling) {
+  return state.invocation.fix && ruling.status === 'needs-user' && ruling.scope === 'in-scope' &&
+    ruling.severity === 'CONSIDER' && ruling.fix?.affectedPaths?.length > 0;
+}
+
 function statusLabel(state, ruling, userFinal) {
   if (ruling.status === 'accepted') return 'Accepted';
+  if (isDeferredConsider(state, ruling)) return 'Pending User';
   const pending = state.policy.consensus && !userFinal && state.adjudication.waveType === 'review' &&
     ruling.scope === 'in-scope' && ruling.severity !== 'CONSIDER';
   return pending ? 'Rejected — Pending Confirmation' : 'Rejected / Downgraded';
@@ -814,17 +899,23 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   const byKey = new Map(findings.map((finding) => [finding.key, finding]));
   const lines = [`### Round ${round} — ${today()}`, formatSourceMapLine(validateSourceMap(sourceMap, round)), formatFailedTargetsLine(currentFailures(state), round)];
   const unfixable = [];
+  const deferredUser = [];
+  const unboundedConsider = [];
   rulings.forEach((ruling, index) => {
     const id = `R${round}-F${String(first + index).padStart(3, '0')}`;
     const sources = byKey.get(ruling.key).sourceKeys.filter((key) => Object.hasOwn(sourceMap, key));
     const defect = cleanText(ruling.defect, 'Restated finding.');
     const resolution = cleanText(ruling.resolution, 'Ruled by the host.');
     lines.push(`- **[${statusLabel(state, ruling, userFinalKeys.has(ruling.key))}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] ${ruling.locus} — ${ruling.tag}: ${defect} → ${resolution}`);
+    if (isDeferredConsider(state, ruling)) {
+      deferredUser.push({ id, severity: ruling.severity, scope: ruling.scope, defect, fix: ruling.fix });
+      return;
+    }
     if (ruling.status !== 'accepted' || !state.invocation.fix) return;
     const tracked = { id, severity: ruling.severity, scope: ruling.scope, defect, fix: ruling.fix ?? null };
     if (ruling.scope === 'adjacent') state.adjacent.push(tracked);
-    else if (ruling.severity === 'CONSIDER') return;
     else if (ruling.fix?.affectedPaths?.length) state.fix.pending.push(tracked);
+    else if (ruling.severity === 'CONSIDER') unboundedConsider.push(tracked);
     // User-accepted findings (needs-user, round cap) can arrive without fix details: defer, never drop.
     else unfixable.push({ ...tracked, fix: { affectedPaths: [locusPath(state, ruling.locus)], dependsOn: [], verification: [] } });
   });
@@ -834,7 +925,9 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   const queued = [...state.fix.pending, ...state.adjacent].filter((finding) => finding.fix?.affectedPaths?.length && !finding.recorded);
   writeApplicationRecords(state, queued, 'unapplied', PENDING_FIX_REASON);
   for (const finding of queued) finding.recorded = true;
+  if (deferredUser.length) writeApplicationRecords(state, deferredUser, 'unapplied', 'awaiting deferred user ruling');
   if (unfixable.length) deferCluster(state, { findings: unfixable }, 'accepted without fix details; apply manually');
+  if (unboundedConsider.length) addFollowUps(state, unboundedConsider.map((finding) => `- [${finding.id}] ${finding.defect} — accepted; no bounded fix was supplied.`));
 }
 
 // Code loci carry a path; plan and design loci are sections of the artifact itself.
@@ -859,8 +952,89 @@ function appendOverruled(markdown, key, verdict) {
   return setEntryResolution(markdown, key, `${line.split(' → ').slice(1).join(' → ')} (overruled at gate: ${verdict})`);
 }
 
+function removeEntryApplication(markdown, key) {
+  const lines = markdown.split('\n');
+  const index = lines.findIndex((line) => /^\s*[-*]\s+\*\*\[/.test(line) && line.includes(`[${key}]`));
+  if (index >= 0 && /^\s+[-*]\s+application:/.test(lines[index + 1] ?? '')) lines.splice(index + 1, 1);
+  return lines.join('\n');
+}
+
+function replaceEntryApplication(markdown, key, record) {
+  const lines = markdown.split('\n');
+  const index = lines.findIndex((line) => /^\s*[-*]\s+\*\*\[/.test(line) && line.includes(`[${key}]`));
+  if (index < 0) return markdown;
+  const hasRecord = /^\s+[-*]\s+application:/.test(lines[index + 1] ?? '');
+  lines.splice(index + 1, hasRecord ? 1 : 0, formatApplicationRecord(record));
+  return lines.join('\n');
+}
+
+function askDeferredConsider(state, entries) {
+  return emitAction(state, 'ask-user', {
+    question: 'rulings',
+    text: 'No further review wave is available. Rule each bounded in-scope CONSIDER finding accepted or rejected; accepted fixes will be applied and verified without another review wave.',
+    items: entries.map((entry) => ({
+      key: entry.key,
+      severity: entry.severity,
+      status: entry.status,
+      line: entry.originalLine,
+    })),
+  }, ['Answer with {"answer": {"<key>": "accepted"|"rejected"}} or include a resolution: {"<key>": {"verdict": "accepted"|"rejected", "resolution": "..."}}.']);
+}
+
+function onDeferredConsider(state, reply) {
+  const items = state.pending.items ?? [];
+  const verdicts = new Map();
+  const resolutions = new Map();
+  for (const item of items) {
+    const parsed = parseRulingAnswer(reply.answer && typeof reply.answer === 'object' ? reply.answer[item.key] : undefined);
+    if (!parsed || parsed.verdict === 'downgraded') return reemit(state, `answer must rule ${item.key} as accepted or rejected.`);
+    verdicts.set(item.key, parsed.verdict);
+    if (parsed.resolution) resolutions.set(item.key, parsed.resolution);
+  }
+  let markdown = readArtifactText(state);
+  const entries = scanResolutionLog(markdown, { strict: true }).rounds.flatMap((round) => round.entries);
+  const accepted = [];
+  for (const item of items) {
+    const entry = entries.find((candidate) => candidate.key === item.key && candidate.status === 'pendingUser');
+    if (!entry?.application) return reemit(state, `pending CONSIDER finding ${item.key} changed before its ruling was recorded.`);
+    const verdict = verdicts.get(item.key);
+    const label = verdict === 'accepted' ? 'Accepted' : 'Rejected / Downgraded';
+    markdown = setEntryStatus(markdown, item.key, label);
+    markdown = setEntryResolution(markdown, item.key, resolutions.get(item.key) ?? `${verdict} by user after review waves were exhausted`);
+    if (verdict === 'accepted') {
+      markdown = replaceEntryApplication(markdown, item.key, {
+        ...entry.application,
+        state: 'unapplied',
+        reason: PENDING_FIX_REASON,
+      });
+      accepted.push({
+        id: entry.id,
+        severity: entry.severity,
+        scope: entry.application.scope,
+        defect: ENTRY_BODY.exec(entry.originalLine)?.[1]?.trim() ?? entry.id,
+        fix: {
+          affectedPaths: entry.application.affectedPaths,
+          dependsOn: entry.application.dependsOn,
+          verification: entry.application.verification,
+        },
+      });
+    } else {
+      markdown = removeEntryApplication(markdown, item.key);
+    }
+  }
+  writeArtifactText(state, markdown);
+  if (accepted.length) {
+    state.fix.pending.push(...accepted.map((finding) => ({ ...finding, recorded: true })));
+    state.skipReviewForDeferredConsider = true;
+  }
+  return nextStep(state);
+}
+
 function onAskUser(state, reply) {
   const question = state.pending.question;
+  if (question === 'rulings' && state.pending.items?.some((item) => item.status === 'pendingUser' && item.severity === 'CONSIDER')) {
+    return onDeferredConsider(state, reply);
+  }
   if (question === 'inputs') {
     const answer = reply.answer;
     if (!answer || typeof answer !== 'object' || typeof answer.summary !== 'string' || !answer.summary.trim() ||
@@ -874,6 +1048,7 @@ function onAskUser(state, reply) {
   if (reply.extend === true) {
     if (state.rulings || !state.pending.options?.includes('extend')) return reemit(state, 'extend is only available at the round cap.');
     state.roundLimit = (state.roundLimit ?? state.policy.rounds) + state.policy.rounds;
+    persistReviewBudget(state);
     return nextStep(state);
   }
   if (reply.stop === true && state.pending.options?.includes('stop')) {
@@ -899,7 +1074,7 @@ function onAskUser(state, reply) {
   }
   if (state.rulings) {
     // needs-user rulings: the user's answer is final for those keys.
-    const rulings = state.rulings.map((ruling) => (ruling.status === 'needs-user'
+    const rulings = state.rulings.map((ruling) => (ruling.status === 'needs-user' && !isDeferredConsider(state, ruling)
       ? { ...ruling, status: verdicts[ruling.key], ...(resolutions[ruling.key] ? { resolution: resolutions[ruling.key] } : {}) }
       : ruling));
     state.rulings = null;
@@ -1052,30 +1227,43 @@ function nextStep(state) {
   const consensus = evaluateConsensus(markdown);
   if (consensus.exit === 2) return done(state, 'failed', `The resolution log is invalid: ${consensus.error}`);
   const cap = state.policy.rounds;
-  const rounds = scanResolutionLog(markdown, { strict: true }).rounds;
+  const scan = scanResolutionLog(markdown, { strict: true });
+  const rounds = scan.rounds;
   const latest = rounds[rounds.length - 1];
   const recent = latest && (state.adjudication?.round === latest.number || (!state.adjudication && state.reviewWaves === latest.number)) ? latest.entries : [];
   const accepted = state.finalDone ? [] : recent.filter((item) =>
     (item.status === 'accepted' || item.status === 'resolvedDispute') && item.application?.state !== 'applied');
   const open = consensus.unsettledItems;
   const hasMust = [...accepted, ...open].some((item) => item.severity === 'MUST');
+  const hasLiveMust = open.some((item) => item.severity === 'MUST');
   if (consensus.exit === 1) {
     const hasPending = open.some((item) => item.status === 'pendingConfirmation');
     if (!state.finalDone && state.policy.consensus && hasPending && state.rebuttalAt !== rounds.length) return prepareRebuttal(state, markdown, rounds.length);
   }
-  if (state.capAsked && !state.finalDone) return prepareWave(state, 'final');
-  if (!state.finalDone && state.changed && state.reviewWaves < (state.roundLimit ?? cap)) {
+  if (state.capAsked && !state.finalDone) {
+    const pendingUser = rounds.flatMap((round) => round.entries.filter((entry) => entry.status === 'pendingUser'));
+    if (pendingUser.length) return askDeferredConsider(state, pendingUser);
+    return prepareWave(state, 'final');
+  }
+  const changed = state.changed && !state.skipReviewForDeferredConsider;
+  if (state.skipReviewForDeferredConsider) {
+    state.changed = false;
+    state.skipReviewForDeferredConsider = false;
+  }
+  if (!state.finalDone && changed && state.reviewWaves < (state.roundLimit ?? cap)) {
     state.changed = false;
     return prepareWave(state, 'review');
   }
   if (!state.finalDone && hasMust && state.reviewWaves < (state.roundLimit ?? cap)) return prepareWave(state, 'review');
-  if (!state.finalDone && hasMust && state.reviewWaves >= (state.roundLimit ?? cap)) {
+  if (!state.finalDone && hasLiveMust && state.reviewWaves >= (state.roundLimit ?? cap)) {
     return askCap(state, open, true, accepted.filter((item) => !open.some((entry) => entry.key === item.key)));
   }
   if (consensus.exit === 1) {
     // Unresolved rebuttals and disputes require a host ruling, not a silent status rewrite.
     return askCap(state, open, false);
   }
+  const pendingUser = rounds.flatMap((round) => round.entries.filter((entry) => entry.status === 'pendingUser'));
+  if (pendingUser.length) return askDeferredConsider(state, pendingUser);
   if (state.invocation.fix && !state.optInOffered && state.adjacent.length > 0) return optInAction(state);
   return state.invocation.implementation ? settle(state) : checkpoint(state);
 }
@@ -1253,8 +1441,11 @@ function onOptIn(state, reply) {
   const deferred = [];
   const declined = [];
   for (const finding of state.adjacent) {
-    if (chosen.has(finding.id) && finding.fix?.affectedPaths?.length) state.fix.pending.push(finding);
-    else {
+    if (chosen.has(finding.id) && finding.fix?.affectedPaths?.length) {
+      state.fix.pending.push(finding);
+    } else if (chosen.has(finding.id)) {
+      deferred.push(`- [${finding.id}] ${finding.defect} — adjacent; selected without a bounded fix.`);
+    } else {
       declined.push(finding);
       deferred.push(`- [${finding.id}] ${finding.defect} — adjacent; not selected for this run.`);
     }
@@ -1264,11 +1455,6 @@ function onOptIn(state, reply) {
   addFollowUps(state, deferred);
   // The offer is settled; later rounds must not re-queue these items.
   state.adjacent = [];
-  // The opt-in loop gets a fresh round cap.
-  if (state.fix.pending.length) {
-    state.reviewWaves = 0;
-    state.roundLimit = state.policy.rounds;
-  }
   return nextStep(state);
 }
 
@@ -1307,7 +1493,9 @@ function checkpoint(state) {
     if (!state.driftRestarted) {
       state.driftRestarted = true;
       state.invocationContext = null;
-      state.reviewWaves = Math.min(state.reviewWaves, Math.max(0, (state.roundLimit ?? state.policy.rounds) - 1));
+      if (state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
+        return done(state, 'failed', `Checkpoint drift exhausted the ${state.roundLimit}-wave review budget.`, { command: state.resumeCommand });
+      }
       return prepareWave(state, 'review');
     }
     return done(state, 'failed', `Checkpoint failed: ${err.message}`, { command: state.resumeCommand });

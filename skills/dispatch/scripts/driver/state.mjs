@@ -118,10 +118,7 @@ export function readRunSidecar(stateFile) {
   }
 }
 
-/**
- * Counts only the rounds of the unsettled run: rounds after the latest log prefix that settled,
- * so earlier runs' history does not consume this run's round cap.
- */
+/** Counts rounds after the latest settled log prefix for standalone review recovery. */
 function roundsSinceSettled(markdown, total) {
   const headings = [...markdown.matchAll(/^### Round \d+\b.*$/gm)].map((match) => match.index);
   for (let index = headings.length - 1; index >= 1; index--) {
@@ -144,16 +141,40 @@ export function pruneFinishedStates({ maxAgeMs = 24 * 60 * 60 * 1000, now = Date
  * Rebuilds the review position from an artifact: rounds already logged and the unsettled items
  * (pending rebuttals and disputes). Returns null when the log is settled or absent.
  */
-export function rebuildFromArtifact(artifactPath) {
+export function rebuildFromArtifact(artifactPath, budgetSeed = null) {
   if (!artifactPath || !fs.existsSync(artifactPath)) return null;
   const markdown = fs.readFileSync(artifactPath, 'utf8');
   const consensus = evaluateConsensus(markdown);
-  if (consensus.exit !== 1) return null;
   const scan = scanResolutionLog(markdown, { strict: true });
+  const pendingUser = scan.rounds.flatMap((round) => round.entries.filter((entry) => entry.status === 'pendingUser'));
+  if (consensus.exit !== 1 && pendingUser.length === 0) return null;
+  const reviewBudget = recoverReviewBudget(scan, budgetSeed);
   return {
-    rounds: roundsSinceSettled(markdown, scan.rounds.length),
+    rounds: reviewBudget?.reviewWaves ?? roundsSinceSettled(markdown, scan.rounds.length),
+    ...(reviewBudget ? { reviewBudget } : {}),
     unsettled: consensus.unsettledItems,
     pending: consensus.unsettledItems.filter((item) => item.status === 'pendingConfirmation').map((item) => item.key),
+    pendingUser,
+  };
+}
+
+function recoverReviewBudget(scan, seed) {
+  if (!seed?.phase || !seed?.budgetId) return null;
+  const matching = scan.reviewBudgetMarkers.filter((item) => item.phase === seed.phase && item.budgetId === seed.budgetId);
+  const samePhase = scan.reviewBudgetMarkers.filter((item) => item.phase === seed.phase);
+  const selectedId = matching.length ? seed.budgetId : samePhase.at(-1)?.budgetId;
+  const selected = samePhase.filter((item) => item.budgetId === selectedId);
+  const marker = selected.reduce((latest, item) => latest ? {
+    ...latest,
+    reviewWaves: Math.max(latest.reviewWaves, item.reviewWaves),
+    roundLimit: Math.max(latest.roundLimit, item.roundLimit),
+  } : item, null);
+  return {
+    schemaVersion: 1,
+    phase: seed.phase,
+    budgetId: marker?.budgetId ?? seed.budgetId,
+    reviewWaves: Math.max(seed.reviewWaves ?? 0, marker?.reviewWaves ?? 0),
+    roundLimit: Math.max(seed.roundLimit ?? 0, marker?.roundLimit ?? 0),
   };
 }
 
@@ -169,12 +190,13 @@ const ENTRY_BODY = /\[sources=[^\]]*\]\s+.+? — [^:]+: (.*?) → /;
  * pending reason. The record carries the real fix metadata and scope, so report-only rounds (no
  * records) and finished fixes (`applied`) are never re-derived.
  */
-export function unappliedFixesFromArtifact(artifactPath) {
+export function unappliedFixesFromArtifact(artifactPath, budgetSeed = null) {
   if (!artifactPath || !fs.existsSync(artifactPath)) return null;
   const markdown = fs.readFileSync(artifactPath, 'utf8');
   const scan = scanResolutionLog(markdown, { strict: true });
   const pending = [];
   const adjacent = [];
+  const pendingUser = scan.rounds.flatMap((round) => round.entries.filter((entry) => entry.status === 'pendingUser'));
   for (const round of scan.rounds) {
     for (const entry of round.entries) {
       const record = entry.application;
@@ -190,8 +212,15 @@ export function unappliedFixesFromArtifact(artifactPath) {
       (record.scope === 'adjacent' ? adjacent : pending).push(finding);
     }
   }
-  if (pending.length === 0 && adjacent.length === 0) return null;
-  return { rounds: roundsSinceSettled(markdown, scan.rounds.length), pending, adjacent };
+  if (pending.length === 0 && adjacent.length === 0 && pendingUser.length === 0) return null;
+  const reviewBudget = recoverReviewBudget(scan, budgetSeed);
+  return {
+    rounds: reviewBudget?.reviewWaves ?? roundsSinceSettled(markdown, scan.rounds.length),
+    ...(reviewBudget ? { reviewBudget } : {}),
+    pending,
+    adjacent,
+    pendingUser,
+  };
 }
 
 // SECTION: Shared transitions

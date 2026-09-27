@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { after, before, describe, it } from 'node:test';
+import { pathToFileURL } from 'node:url';
+import { after, afterEach, before, describe, it } from 'node:test';
 
 import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { allProviders, codeFinding, drive, implementationOutcome, makeGitRepo, parseAction, report, runDispatch, writeOutcomeReply, writePlan } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, drive, implementationOutcome, logEntries, makeGitRepo, parseAction, planFinding, readLog, report, runDispatch, writeOutcomeReply, writePlan } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
@@ -275,5 +276,146 @@ describe('fix verification guidance (narrowest check)', () => {
     } finally {
       cleanupOrdinaryDriverFixtures();
     }
+  });
+});
+
+describe('cumulative review budgets and CONSIDER fixes', () => {
+  let fixture;
+  afterEach(() => { fixture?.cleanup(); fixture = null; });
+  const makeFixture = (rounds) => createStubDispatchFixture({
+    'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
+    phases: { 'plan-review': { rounds: ALL(rounds), targets: ALL(1), consensus: ALL(false) } },
+  });
+  const fixAt = (file, repoDir) => ({
+    affectedPaths: [path.relative(repoDir, file).split(path.sep).join('/')], dependsOn: [], verification: [],
+  });
+
+  it('checkpoint-only recovery does not allocate a review after the phase cap is spent', async () => {
+    fixture = makeFixture(1);
+    const plan = writePlan(repo.dir, '2026-09-27-spent-review-budget.md');
+    const first = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: { waveResults: () => allProviders(report()) },
+    });
+    assert.equal(first.done.outcome, 'complete');
+    const budget = readLog(plan).reviewBudgetMarkers.at(-1);
+    assert.equal(budget.reviewWaves, 1);
+    const phase = await import(pathToFileURL(path.join(fixture.skillDir, 'scripts', 'driver', 'review-phase.mjs')).href);
+    const action = await phase.startReview({
+      invocation: { verb: 'review', kind: 'plan', argument: plan, fix: true, orchestrator: 'claude', level: 'low', levelSource: 'explicit' },
+      cwd: repo.dir,
+      resumeCommand: 'resume spent budget',
+      reviewBudget: budget,
+    });
+    assert.equal(action.action, 'done', JSON.stringify(action));
+    assert.equal(action.outcome, 'complete', JSON.stringify(action));
+    assert.equal(readLog(plan).reviewBudgetMarkers.at(-1).reviewWaves, 1);
+  });
+
+  it('applies and verifies an accepted bounded in-scope CONSIDER at the cap without another review', () => {
+    fixture = makeFixture(1);
+    const plan = writePlan(repo.dir, '2026-09-27-consider-fix.md');
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round === 1 ? [planFinding({ severity: 'CONSIDER' })] : [])),
+        fix: (finding) => fixAt(plan, repo.dir),
+      },
+    });
+    assert.deepEqual(run.trace.filter((action) => action.action === 'launch').map((action) => action.wave.round), [1]);
+    assert.ok(run.trace.some((action) => action.action === 'apply-fixes'));
+    assert.equal(logEntries(plan)[0].application?.state, 'applied');
+  });
+
+  it('preserves rejected, unbounded, and declined-adjacent CONSIDER dispositions', () => {
+    fixture = makeFixture(1);
+    const plan = writePlan(repo.dir, '2026-09-27-consider-dispositions.md');
+    const findings = [
+      planFinding({ severity: 'CONSIDER', locus: '§ Success Criteria', defect: 'Rejected bounded.' }),
+      planFinding({ severity: 'CONSIDER', locus: '§ Proposed Changes', defect: 'Unbounded accepted.' }),
+      planFinding({ severity: 'CONSIDER', locus: '§ Verification Plan', defect: 'Adjacent declined.' }),
+    ];
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round === 1 ? findings : [])),
+        rule: (finding) => ({
+          status: finding.defect === 'Rejected bounded.' ? 'rejected' : 'accepted',
+          scope: finding.defect === 'Adjacent declined.' ? 'adjacent' : 'in-scope',
+        }),
+        fix: (finding) => finding.defect === 'Unbounded accepted.' ? undefined : fixAt(plan, repo.dir),
+        askUser: (action) => {
+          assert.equal(action.question, 'opt-in');
+          return { answer: 'none' };
+        },
+      },
+    });
+    const entries = logEntries(plan);
+    assert.equal(entries.find((entry) => entry.originalLine.includes('Rejected bounded.')).status, 'rejected');
+    assert.equal(entries.find((entry) => entry.originalLine.includes('Unbounded accepted.')).application, null);
+    assert.equal(entries.find((entry) => entry.originalLine.includes('Adjacent declined.')).application.reason, 'adjacent; declined in opt-in');
+    assert.ok(fs.readFileSync(plan, 'utf8').includes('Unbounded accepted. — accepted; no bounded fix was supplied.'));
+    assert.equal(run.trace.some((action) => action.action === 'apply-fixes'), false);
+  });
+
+  it('keeps an uncertain bounded CONSIDER pending through later waves and applies an accepted answer without a new review', () => {
+    fixture = makeFixture(2);
+    const plan = writePlan(repo.dir, '2026-09-27-deferred-consider.md');
+    let deferredAskCount = 0;
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round === 1
+          ? [planFinding({ severity: 'CONSIDER', defect: 'Needs a user decision.' }), planFinding({ defect: 'Bounded MUST change.' })]
+          : [])),
+        rule: (finding) => ({ status: finding.severity === 'CONSIDER' ? 'needs-user' : 'accepted', scope: 'in-scope' }),
+        fix: () => fixAt(plan, repo.dir),
+        askUser: (action, ctx) => {
+          if (action.question === 'rulings' && action.items?.some((item) => item.status === 'pendingUser')) {
+            deferredAskCount++;
+            assert.equal(ctx.trace.filter((step) => step.action === 'launch').length, 2, 'ask after available review waves');
+            assert.equal(action.items.length, 1);
+            const pending = logEntries(plan).find((entry) => entry.severity === 'CONSIDER');
+            assert.equal(pending.application?.state, 'unapplied');
+            assert.equal(pending.application?.reason, 'awaiting deferred user ruling');
+            return { answer: Object.fromEntries(action.items.map((item) => [item.key, 'accepted'])) };
+          }
+          throw new Error(`unexpected ask-user: ${action.question}`);
+        },
+      },
+    });
+    assert.equal(deferredAskCount, 1, JSON.stringify(run.trace.map(({ action, question, outcome, summary, reason, error }) => ({ action, question, outcome, summary, reason, error }))));
+    const launches = run.trace.filter((action) => action.action === 'launch');
+    assert.deepEqual(launches.map((action) => action.wave.round), [1, 2]);
+    const ask = run.trace.findIndex((action) => action.action === 'ask-user' && action.question === 'rulings' && action.items?.some((item) => item.status === 'pendingUser'));
+    assert.equal(run.trace.slice(ask + 1).some((action) => action.action === 'launch'), false);
+    assert.equal(logEntries(plan).find((entry) => entry.severity === 'CONSIDER').application?.state, 'applied');
+    assert.equal(run.trace.some((action) => action.action === 'launch' && action.wave.type === 'rebuttal'), false);
+  });
+
+  it('keeps the same cumulative budget across adjacent opt-in and a bounded fix', () => {
+    fixture = makeFixture(2);
+    const plan = writePlan(repo.dir, '2026-09-27-adjacent-opt-in.md');
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: (action) => allProviders(report(action.wave.round === 1 ? [planFinding({ severity: 'CONSIDER' })] : [])),
+        rule: () => ({ status: 'accepted', scope: 'adjacent' }),
+        fix: () => fixAt(plan, repo.dir),
+        askUser: (action) => {
+          assert.equal(action.question, 'opt-in');
+          return { answer: 'all' };
+        },
+      },
+    });
+    assert.deepEqual(run.trace.filter((action) => action.action === 'launch').map((action) => action.wave.round), [1, 2], JSON.stringify(run.trace.map(({ action, question, outcome, summary, reason, error }) => ({ action, question, outcome, summary, reason, error }))));
+    const markers = readLog(plan).reviewBudgetMarkers;
+    assert.equal(markers.at(-1).reviewWaves, 2);
+    assert.equal(markers.at(-1).roundLimit, 2);
   });
 });

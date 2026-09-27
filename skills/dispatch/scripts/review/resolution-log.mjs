@@ -8,6 +8,8 @@ const H2 = /^##\s+/;
 const ROUND = /^###\s+Round\s+(\d+)\b/i;
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 const ENTRY = /^\s*[-*]\s+\*\*\[([^\]]+)\]\*\*(.*)$/;
+const REVIEW_BUDGET_MARKER = /^<!-- dispatch-review-budget (.+) -->$/;
+const REVIEW_PHASES = new Set(['plan-review', 'design-review', 'code-review']);
 const ENRICHED_PREFIX =
   /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
 const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
@@ -28,9 +30,61 @@ function statusKey(raw) {
   if (status === 'accepted') return 'accepted';
   if (status === 'resolved dispute') return 'resolvedDispute';
   if (status === 'rejected / downgraded') return 'rejected';
+  if (status === 'pending user') return 'pendingUser';
   if (status === 'disputed') return 'disputed';
   if (/^rejected\s*-+\s*pending confirmation$/.test(status)) return 'pendingConfirmation';
   return 'unknown';
+}
+
+function reviewBudgetProblem(value) {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return 'record must be an object';
+  if (Object.keys(value).sort().join(',') !== 'budgetId,phase,reviewWaves,roundLimit,schemaVersion') return 'record fields are invalid';
+  if (value.schemaVersion !== 1) return 'schemaVersion must be 1';
+  if (!REVIEW_PHASES.has(value.phase)) return 'phase is invalid';
+  if (typeof value.budgetId !== 'string' || !value.budgetId.trim()) return 'budgetId must be a non-empty string';
+  if (!Number.isSafeInteger(value.reviewWaves) || value.reviewWaves < 0) return 'reviewWaves must be a non-negative safe integer';
+  if (!Number.isSafeInteger(value.roundLimit) || value.roundLimit < 1) return 'roundLimit must be a positive safe integer';
+  return null;
+}
+
+/** Formats the parser-owned cumulative review marker in its canonical field order. */
+export function formatReviewBudgetMarker(value) {
+  const marker = {
+    schemaVersion: 1,
+    phase: value.phase,
+    budgetId: value.budgetId,
+    reviewWaves: value.reviewWaves,
+    roundLimit: value.roundLimit,
+  };
+  const problem = reviewBudgetProblem(marker);
+  if (problem) throw new Error(`Review budget marker is invalid: ${problem}.`);
+  return `<!-- dispatch-review-budget ${JSON.stringify(marker)} -->`;
+}
+
+function parseReviewBudgetMarker(line, strict) {
+  if (!line.trim().startsWith('<!-- dispatch-review-budget')) return null;
+  const match = REVIEW_BUDGET_MARKER.exec(line.trim());
+  if (!match) {
+    if (strict) throw new Error('Review budget marker is malformed.');
+    return null;
+  }
+  let value;
+  try {
+    value = JSON.parse(match[1]);
+  } catch (error) {
+    if (strict) throw new Error(`Review budget marker is malformed JSON: ${error.message}`);
+    return null;
+  }
+  const problem = reviewBudgetProblem(value);
+  if (problem) {
+    if (strict) throw new Error(`Review budget marker is invalid: ${problem}.`);
+    return null;
+  }
+  if (formatReviewBudgetMarker(value) !== line.trim()) {
+    if (strict) throw new Error('Review budget marker is not canonical.');
+    return null;
+  }
+  return value;
 }
 
 function digest(text) {
@@ -235,7 +289,7 @@ function applicationRecordProblem(record, entry, roundNumber) {
   if (typeof record.reason !== 'string' || record.reason.trim().length === 0) {
     return 'reason must be a non-empty string';
   }
-  if (entry && entry.status !== 'accepted' && entry.status !== 'resolvedDispute') {
+  if (entry && !['accepted', 'resolvedDispute', 'pendingUser'].includes(entry.status)) {
     return `application record cannot be attached to finding with status "${entry.status}"`;
   }
   return null;
@@ -309,6 +363,7 @@ function findSections(lines, honorFences) {
 function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   const rounds = [];
   const rebuttalFailures = [];
+  const reviewBudgetMarkers = [];
   let current = null;
   let fence = null;
   let previous = 0;
@@ -324,6 +379,12 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
       continue;
     }
     if (!fence) {
+      const budgetMarker = parseReviewBudgetMarker(line, strict);
+      if (budgetMarker) {
+        reviewBudgetMarkers.push(budgetMarker);
+        lastLineWasEntry = false;
+        continue;
+      }
       const roundMatch = ROUND.exec(line);
       if (roundMatch) {
         const number = Number(roundMatch[1]);
@@ -485,7 +546,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
       unknown: round.entries.filter((entry) => entry.status === 'unknown').length,
     };
   }
-  return { rounds, rebuttalFailures };
+  return { rounds, rebuttalFailures, reviewBudgetMarkers };
 }
 
 /**
@@ -512,6 +573,7 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
     }));
   const rounds = parsedSections.flatMap((section) => section.rounds);
   const rebuttalFailures = parsedSections.flatMap((section) => section.rebuttalFailures);
+  const reviewBudgetMarkers = parsedSections.flatMap((section) => section.reviewBudgetMarkers);
   const sectionText = selected.map((section) => lines.slice(section.start, section.end).join('\n')).join('\n');
   const unsettledItems = rounds.flatMap((round) =>
     round.entries
@@ -540,6 +602,7 @@ export function scanResolutionLog(markdown, { strict = true } = {}) {
     canonicalLogHash: digest(sectionText),
     rounds,
     rebuttalFailures,
+    reviewBudgetMarkers,
     unsettled,
     unsettledItems,
     sectionCount: sections.length,

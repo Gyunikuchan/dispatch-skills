@@ -8,6 +8,7 @@ import { makeGitRepo, runDispatch, runLaunch, parseAction, allProviders, report,
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
+import { captureReviewBudget } from '../../../../skills/dispatch/scripts/driver/plan-phase.mjs';
 import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
@@ -45,6 +46,27 @@ function setupLedger(repo, { amendment = null, complete = false } = {}) {
 function withFixture(test) { const fixture = createStubDispatchFixture(config); const repo = makeGitRepo(); try { return test(fixture, repo); } finally { fixture.cleanup(); repo.cleanup(); } }
 
 describe('driver design contracts (SC1–SC5, SC7)', () => {
+  it('copies design review budget monotonically and keeps phase identities separate', () => {
+    const parent = {
+      reviewBudgets: {
+        'design-review': { schemaVersion: 1, phase: 'design-review', budgetId: `${RUN}:design-review`, reviewWaves: 2, roundLimit: 3 },
+      },
+      reviewState: { phase: 'design-review', budgetId: `${RUN}:design-review`, reviewWaves: 1, roundLimit: 2 },
+    };
+    captureReviewBudget(parent);
+    assert.deepEqual(parent.reviewBudgets['design-review'], {
+      schemaVersion: 1, phase: 'design-review', budgetId: `${RUN}:design-review`, reviewWaves: 2, roundLimit: 3,
+    });
+    parent.reviewState = { phase: 'design-review', budgetId: `${RUN}:design-review`, reviewWaves: 4, roundLimit: 5 };
+    captureReviewBudget(parent);
+    parent.reviewState = { phase: 'code-review', budgetId: `${RUN}:code-review`, reviewWaves: 1, roundLimit: 1 };
+    captureReviewBudget(parent);
+    assert.equal(parent.reviewBudgets['design-review'].reviewWaves, 4);
+    assert.equal(parent.reviewBudgets['design-review'].roundLimit, 5);
+    assert.equal(parent.reviewBudgets['code-review'].reviewWaves, 1);
+    assert.notEqual(parent.reviewBudgets['code-review'].budgetId, parent.reviewBudgets['design-review'].budgetId);
+  });
+
   it('RED-MATRIX SC1 | exposes design authoring as a schema-valid durable action', () => withFixture((fixture, repo) => {
     const res = runDispatch(fixture, ['--run', 'design', '--orchestrator', 'claude', '--', 'build a thing'], { cwd: repo.dir });
     assert.equal(res.status, 0, `SC1 design must be available: ${res.stderr}`);

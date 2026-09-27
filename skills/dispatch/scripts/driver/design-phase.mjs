@@ -8,7 +8,7 @@ import { resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs'
 import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
 import { updateExecutionStatus } from '../design/status.mjs';
 import { emitAction } from './actions.mjs';
-import { beginReview, continueReview } from './plan-phase.mjs';
+import { beginReview, captureReviewBudget, continueReview } from './plan-phase.mjs';
 import { repositoryBaseline } from './verification.mjs';
 import { enterPhase } from './implement-phase.mjs';
 import { refuse, relative, restoreEvidence } from './implement-state.mjs';
@@ -54,6 +54,7 @@ export async function advanceDesign(state, reply) {
     const action = continueReview(state, reply);
     if (action.action !== 'done') return action;
     if (!['complete', 'skipped'].includes(action.outcome)) return action;
+    captureReviewBudget(state);
     delete state.reviewState;
     // Review fixes edit governed sections, so approval must bind the settled revision, not the authored one.
     const settled = governingHash(fs.readFileSync(state.designPath, 'utf8'), { kind: 'design' });

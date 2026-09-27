@@ -177,7 +177,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assert.equal(fixes[0].clusters.flatMap((c) => c.findingIds).length, 1, 'only the chosen item is fixed');
     const iFix = run.trace.indexOf(fixes[0]);
     assert.ok(run.trace.slice(iFix).some((a) => a.action === 'verify'));
-    assert.ok(run.trace.slice(iFix).some((a) => a.action === 'launch' && a.wave.type === 'review'), 'opt-in loop re-reviews');
+    assert.equal(run.trace.slice(iFix).some((a) => a.action === 'launch' && a.wave.type === 'review'), false, 'opt-in does not exceed the spent review budget');
     const walkthrough = fs.readFileSync(walkthroughIn(repo.dir), 'utf8');
     const followUps = walkthrough.split(/^## Follow-ups\s*$/m)[1] ?? '';
     assert.match(followUps, /adjacent-two/);

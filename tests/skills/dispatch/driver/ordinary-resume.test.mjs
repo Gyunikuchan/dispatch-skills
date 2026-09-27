@@ -14,6 +14,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
   it('reconstructs review, baseline, and implementation phases from canonical artifacts after cache loss', () => {
     for (const phase of ['plan-review', 'baseline', 'implementation', 'code-review']) {
       const fixture = createOrdinaryDriverFixture(); let restarted = false;
+      let codeBudgetAtRestart = null;
       const result = driveOrdinaryImplementation(fixture, {
         onAction(action) {
           if (restarted) return;
@@ -23,12 +24,23 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
             : phase === 'implementation' ? action.action === 'verify' && action.purpose === 'red'
             : cached.ordinary.phase === 'code-review';
           if (!boundary) return;
+          if (phase === 'code-review') {
+            codeBudgetAtRestart = cached.reviewBudgets?.['code-review'];
+            assert.ok(codeBudgetAtRestart?.budgetId, 'code-review has a parent-owned phase identity');
+            assert.ok(codeBudgetAtRestart.reviewWaves >= 1, 'the first launched wave is carried to the parent');
+          }
           restarted = true;
           fs.rmSync(action.stateFile);
           const reply = runDispatch(fixture.fixture, ['--run', 'implement', '--phases', `from:${phase}`, '--orchestrator', 'claude', '--', fixture.plan], { cwd: fixture.repo.dir });
           assert.equal(reply.status, 0, reply.stderr);
           const resumed = JSON.parse(reply.stdout);
           assert.notEqual(resumed.outcome, 'refused', JSON.stringify(resumed));
+          if (phase === 'code-review') {
+            const recovered = JSON.parse(fs.readFileSync(resumed.stateFile, 'utf8')).reviewBudgets?.['code-review'];
+            assert.equal(recovered?.budgetId, codeBudgetAtRestart.budgetId, 'recovery uses the same code-review identity');
+            assert.ok(recovered.reviewWaves >= codeBudgetAtRestart.reviewWaves, 'recovery never lowers consumed waves');
+            assert.ok(recovered.roundLimit >= codeBudgetAtRestart.roundLimit, 'recovery never lowers the approved cap');
+          }
           // Continue on the newly reconstructed cache through the same scripted host.
           Object.assign(action, resumed);
         },

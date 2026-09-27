@@ -6,7 +6,7 @@ import { emitAction } from './actions.mjs';
 import { createRunState, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { writeCheckpoint } from './review-phase.mjs';
-import { acceptPlan, authorPlan, beginReview, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
+import { acceptPlan, authorPlan, beginReview, captureReviewBudget, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBaseline } from './baseline-phase.mjs';
 import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, scopedResult } from './verification.mjs';
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
@@ -136,6 +136,7 @@ async function afterFinalVerification(state) {
   }
   persistEvidence(state);
   const action = writeCheckpoint(state.reviewState);
+  captureReviewBudget(state);
   if (!finishCodeReview(state, action)) {
     // A drifted checkpoint restarts a review wave inside the retained review.
     if (action.action !== 'done') data.step = 'code-review';
