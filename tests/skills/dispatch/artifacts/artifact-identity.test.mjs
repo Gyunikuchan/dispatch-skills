@@ -17,7 +17,6 @@ import {
   isNativeArtifactPath,
   isReservedOrdinarySlug,
   isValidDate,
-  ledgerNamespacePath,
   localDate,
   parseIncrementArtifactPath,
   repositoryRootHash,
@@ -27,6 +26,7 @@ import {
   resolveSlug,
   sanitizeSlug,
 } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { AGY_MODE_DATA_DIRS } from '../../../../skills/dispatch/scripts/runners/agy.mjs';
 
 // SECTION: Artifact identities and namespaces
@@ -100,16 +100,30 @@ describe('buildScratchPaths', () => {
     });
 
     it('isolates different worktree roots and sanitizes the username', () => {
-      const first = resolveLedgerPath({
-        slug: 'phase-two', slugSource: 'explicit', repositoryRoot: '/repo/a',
-        tempRoot: '/tmp', env: { USER: 'a/b' }, realpath: value => value,
-      });
-      const second = resolveLedgerPath({
-        slug: 'phase-two', slugSource: 'explicit', repositoryRoot: '/repo/b',
-        tempRoot: '/tmp', env: { USER: 'a/b' }, realpath: value => value,
-      });
-      assert.notEqual(first, second);
-      assert.match(first, /dispatch-skills-a_b[/\\][a-f0-9]{12}[/\\]phase-two-ledger\.md$/);
+      const firstRoot = mkdtempSync(path.join(os.tmpdir(), 'ledger-root-a-'));
+      const secondRoot = mkdtempSync(path.join(os.tmpdir(), 'ledger-root-b-'));
+      let firstSession;
+      let secondSession;
+      try {
+        firstSession = bindWorkflowSession({ repositoryRoot: firstRoot, artifactKind: 'plan', slug: 'phase-two' });
+        const first = resolveLedgerPath({
+          slug: 'phase-two', slugSource: 'explicit', repositoryRoot: firstRoot, artifactKind: 'plan',
+        });
+        secondSession = bindWorkflowSession({ repositoryRoot: secondRoot, artifactKind: 'plan', slug: 'phase-two' });
+        const second = resolveLedgerPath({
+          slug: 'phase-two', slugSource: 'explicit', repositoryRoot: secondRoot, artifactKind: 'plan',
+        });
+        assert.notEqual(first, second);
+        assert.equal(path.dirname(first), path.join(firstSession, 'ledger'));
+        assert.equal(path.dirname(second), path.join(secondSession, 'ledger'));
+      } finally {
+        if (firstSession) rmSync(firstSession, { recursive: true, force: true });
+        if (secondSession) rmSync(secondSession, { recursive: true, force: true });
+        rmSync(firstRoot, { recursive: true, force: true });
+        rmSync(secondRoot, { recursive: true, force: true });
+        delete process.env.DISPATCH_SESSION_DIR;
+        delete process.env.DISPATCH_RUN_ID;
+      }
     });
 
     it('returns null for conversation slugs and outside a Git work tree', () => {
@@ -371,4 +385,3 @@ describe('isValidDate / localDate', () => {
     assert.match(localDate(new Date('2026-01-05T12:00:00Z')), /^2026-01-05$/);
   });
 });
-

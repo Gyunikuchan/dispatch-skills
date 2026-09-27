@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { ledgerNamespacePath, repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { readSessionManifest } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 import { implementationOutcome, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
@@ -21,15 +21,16 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.ok(result.done.handoff.destinations.every(file => fs.existsSync(file)));
     const ledger = readLedger(result.done.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);
-    // Pins where the rejected-approval case looks for a ledger.
-    assert.equal(path.dirname(result.done.ledgerPath), ledgerNamespacePath({ repoHash: repositoryRootHash(fixture.repo.dir) }));
+    const sessionRoot = path.dirname(path.dirname(result.done.ledgerPath));
+    assert.equal(path.dirname(result.done.ledgerPath), path.join(sessionRoot, 'ledger'));
+    assert.equal(readSessionManifest(sessionRoot).artifactIdentity, 'artifact:plan:sample');
     assert.match(path.basename(result.done.ledgerPath), /-ledger\.md$/);
     assert.deepEqual(ledger.events.slice(0, 2).map(event => event.type), ['run-start', 'approval']);
     assert.equal(ledger.events[0].data.baseline.commit, fixture.repo.git('rev-parse', 'HEAD').toString().trim());
     assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
     const testsOnly = result.trace.find(action => action.action === 'delegate-write');
-    assert.match(testsOnly.fields.promptPath, /[\\/]sessions[\\/]/);
+    assert.ok(testsOnly.fields.promptPath.startsWith(`${sessionRoot}${path.sep}`));
     const prompt = fs.readFileSync(testsOnly.fields.promptPath, 'utf8');
     assert.equal(testsOnly.fields.promptHash, `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`);
     assert.match(testsOnly.guidance.join(' '), /Read .* fully/);
@@ -48,7 +49,9 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.equal(result.done.outcome, 'refused', JSON.stringify(result.done));
     assert.match(result.done.reason, /Plan approval rejected: Scope is wrong\..*--phases from:plan/);
     assert.equal(result.trace.some(action => action.action === 'delegate-write'), false);
-    const namespace = ledgerNamespacePath({ repoHash: repositoryRootHash(fixture.repo.dir) });
+    const sessionRoot = path.dirname(path.dirname(path.dirname(result.done.stateFile)));
+    assert.equal(readSessionManifest(sessionRoot).artifactIdentity, 'artifact:plan:sample');
+    const namespace = path.join(sessionRoot, 'ledger');
     const ledgers = fs.existsSync(namespace) ? fs.readdirSync(namespace).filter(name => name.endsWith('-ledger.md')) : [];
     assert.deepEqual(ledgers, [], 'rejection writes no ledger');
   });

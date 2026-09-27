@@ -8,8 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
-import { getRepositoryRoot, relocatedArtifactsPath, repositoryRootHash } from './resolve-paths.mjs';
+import { relocatedArtifactsPath } from './resolve-paths.mjs';
 
 /** @typedef {{ targetDir?: string, tempRoot?: string, cwd?: string }} RelocationOptions */
 
@@ -74,10 +73,11 @@ function resolveExistingPath(absolutePath) {
 
 /** Creates and returns the private relocated directory inside the ledger namespace. */
 function ensureRelocatedDir({ cwd, tempRoot }) {
-  const repoHash = repositoryRootHash(getRepositoryRoot(cwd) ?? cwd);
-  ensureLedgerNamespace({ tempRoot, repoHash });
   const directory = relocatedArtifactsPath({ projectRoot: cwd, tempRoot });
   fs.mkdirSync(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe session artifacts directory: ${directory}`);
+  if (process.platform !== 'win32') fs.chmodSync(directory, PRIVATE_DIRECTORY_MODE);
   return directory;
 }
 

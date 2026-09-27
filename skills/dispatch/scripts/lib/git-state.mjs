@@ -1,9 +1,10 @@
 // @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+import { runTempDir } from './session-temp.mjs';
 import { TextDecoder } from 'node:util';
 
 import { canonicalJson, sha256 } from '../ledger/events.mjs';
@@ -287,7 +288,7 @@ export function contentTreeId(repoRoot) {
   let dir;
   try {
     const gitDir = git(repoRoot, ['rev-parse', '--git-path', 'index']).toString('utf8').trim();
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-tree-'));
+    dir = runTempDir('cache', 'dispatch-tree-');
     const index = path.join(dir, 'index');
     const real = path.resolve(repoRoot, gitDir);
     if (fs.existsSync(real)) fs.copyFileSync(real, index);

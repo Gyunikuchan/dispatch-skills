@@ -293,8 +293,7 @@ export function isPathInside(targetPath, rootDirectory) {
  * - Project workspace
  * - Antigravity brain / artifacts (~/.gemini/antigravity and %APPDATA%/%LOCALAPPDATA%/antigravity)
  * - Agent configurations (~/.agents, ~/.claude)
- * - OS temp directory (covers orchestrator-relocated artifacts, e.g. a walkthrough moved to
- *   `os.tmpdir()` by an orchestrator's scratch-fallback cleanup, and delegate brief files)
+ * - OS temp directory (covers session-owned artifacts, delegate briefs, and scratch-fallback files)
  */
 export function getAllowedBoundaryRoots() {
   const homeDir = os.homedir();

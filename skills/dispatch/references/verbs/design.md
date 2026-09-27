@@ -24,4 +24,4 @@ After explicit approval the driver activates the candidate atomically and recove
 
 After every increment is complete, a later invocation runs integration over the ledger-owned path union from the recorded design baseline through current Git and working-tree state. A non-ancestor baseline, unreconstructable ownership, or empty owned intersection fails closed. Record fresh cross-increment verification and any enabled scoped review in the integration walkthrough.
 
-A defect inside an approved increment reopens it. Missing scope or a changed shared contract enters amendment. Completion requires all reopened/amended work and a later integration gate to settle. Then relocate the design-run scratch artifacts with every destination reported; never relocate the ledger.
+A defect inside an approved increment reopens it. Missing scope or a changed shared contract enters amendment. Completion requires all reopened/amended work and a later integration gate to settle. The final-integration action lists each source and exact session `artifacts/` destination; relocate that design-run set together after the gate passes and retain the ledger.

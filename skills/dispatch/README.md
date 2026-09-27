@@ -151,8 +151,8 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 - Read delegates run with credentials stripped and provider-specific read-only controls.
 - Production edits require approval and use a configured native write subagent.
 - Verification runs the commands approved in the plan; review fixes are verified and reviewed again.
-- Plans, designs, and walkthroughs live in `.scratch/plan/` so interrupted work can resume.
-- Noisy prompts, logs, and run state stay in the OS temporary directory.
+- Active plans, designs, and walkthroughs live in `.scratch/plan/` so interrupted work can resume. Dispatch binds each governed workflow to `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/`; run state, prompts, packets, reports, logs, and verification output sit under `runs/<run-id>/`, while `artifacts/`, `ledger/`, `telemetry/`, and `cache/` hold session-owned durable files.
+- Successful handoff moves ordinary plan artifacts into the owning session's `artifacts/`; final design integration moves its complete artifact set together. Sessions retain durable evidence during age pruning, though the operating system or Storage Sense may delete OS-temporary files.
 - Dispatch never commits, pushes, or opens a pull request.
 
 > [!NOTE]

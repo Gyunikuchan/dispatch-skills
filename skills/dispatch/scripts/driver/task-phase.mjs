@@ -313,6 +313,30 @@ export function retryOrFail(state, transition) {
   data.step = 'write-pending';
   return writeAction(state);
 }
+function matchesTerminalVerification(actual, expected) {
+  const fields = Object.keys(expected);
+  if (!actual || typeof actual !== 'object' || Array.isArray(actual) || Object.keys(actual).length !== fields.length ||
+      !fields.every(key => Object.hasOwn(actual, key))) return false;
+  return fields.every(key => key === 'commandRefs'
+    ? Array.isArray(actual.commandRefs) && actual.commandRefs.length === expected.commandRefs.length &&
+      actual.commandRefs.every((command, index) => command === expected.commandRefs[index])
+    : actual[key] === expected[key]);
+}
+function appendOrReplayTerminalVerification(state, verification) {
+  const segment = ledgerSegment(state);
+  const task = segment?.runId === state.ledgerRunId ? segment.tasks.get(verification.taskId) : null;
+  if (task?.terminalVerificationAttempt === verification.attempt) {
+    const read = readLedger(state.ledgerPath);
+    const latestVerification = read.status === 'ok'
+      ? read.events.findLast(event => event.runId === state.ledgerRunId && event.type === 'verification')
+      : null;
+    if (!matchesTerminalVerification(latestVerification?.data, verification)) {
+      throw new Error(`Existing terminal verification does not match the current task ${verification.taskId}, attempt ${verification.attempt}, result, transition, and commands.`);
+    }
+    return latestVerification;
+  }
+  return append(state, 'verification', verification);
+}
 export async function afterImplementationVerification(state) {
   const data = state.ordinary;
   if (data.step === 'red-verify') {
@@ -335,7 +359,7 @@ export async function afterImplementationVerification(state) {
     data.traceabilityDefects = untraced.map(item => `${item.id} lacks delivered observable behavior and owning production path.`);
   }
   const transition = verificationTransition(state, result, 'final');
-  append(state, 'verification', { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.lastGate?.commands ?? [], transition: transition.action });
+  appendOrReplayTerminalVerification(state, { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.lastGate?.commands ?? [], transition: transition.action });
   if (transition.action !== 'complete') return retryOrFail(state, transition);
   data.implementationComplete = { result, scopeHash: fingerprint(state), envelope: data.envelope };
   data.step = 'implemented';

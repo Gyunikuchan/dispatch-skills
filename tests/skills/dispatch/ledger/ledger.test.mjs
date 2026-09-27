@@ -19,6 +19,8 @@ import {
 } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { materializedFingerprint } from '../../../../skills/dispatch/scripts/lib/git-state.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
+import { repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession, sessionDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const state = `sha256:${'b'.repeat(64)}`;
@@ -55,11 +57,8 @@ describe('ledger I/O and resume', () => {
     for (const entry of fs.readdirSync(repo)) {
       if (entry !== '.git') fs.rmSync(path.join(repo, entry), { recursive: true, force: true });
     }
-    const directory = ensureLedgerNamespace({
-      tempRoot,
-      repoHash: 'abcdef123456',
-      env: { USER: 'test/user' },
-    });
+    bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'example' });
+    const directory = ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) });
     ledgerPath = path.join(directory, 'example-ledger.md');
     fs.rmSync(ledgerPath, { force: true });
     fs.rmSync(`${ledgerPath}.lock`, { force: true });
@@ -68,6 +67,9 @@ describe('ledger I/O and resume', () => {
   after(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.rmSync(repo, { recursive: true, force: true });
+    const session = process.env.DISPATCH_SESSION_DIR;
+    if (session) fs.rmSync(session, { recursive: true, force: true });
+    for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
   });
 
   // SECTION: Storage durability, repair, and locking
@@ -179,23 +181,21 @@ describe('ledger I/O and resume', () => {
   });
 
   it('rejects hostile namespace components and escalates as a hard error', () => {
-    const hostileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-hostile-'));
+    const session = sessionDir();
+    const directory = path.join(session, 'ledger');
     try {
-      const namespace = path.join(hostileRoot, 'dispatch-skills-test');
-      fs.mkdirSync(namespace, { mode: 0o777 });
       if (process.platform !== 'win32') {
-        fs.chmodSync(namespace, 0o777);
-        assert.throws(() => ensureLedgerNamespace({
-          tempRoot: hostileRoot, repoHash: 'abcdef123456', env: { USER: 'test' },
-        }), /writable/);
+        fs.chmodSync(session, 0o777);
+        assert.throws(() => ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) }), /writable/);
+        fs.chmodSync(session, 0o700);
       }
-      fs.rmSync(namespace, { recursive: true, force: true });
-      fs.symlinkSync(repo, namespace);
-      assert.throws(() => ensureLedgerNamespace({
-        tempRoot: hostileRoot, repoHash: 'abcdef123456', env: { USER: 'test' },
-      }), /Unsafe ledger directory/);
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.symlinkSync(repo, directory, process.platform === 'win32' ? 'junction' : 'dir');
+      assert.throws(() => ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) }), /Unsafe .* directory/);
     } finally {
-      fs.rmSync(hostileRoot, { recursive: true, force: true });
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
     }
   });
 
@@ -209,15 +209,15 @@ describe('ledger I/O and resume', () => {
   });
 
   it('revalidates namespace components before every append', () => {
-    const hostileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-parent-'));
+    const directory = path.dirname(ledgerPath);
     try {
-      const userRoot = path.join(hostileRoot, 'dispatch-skills-test');
-      fs.mkdirSync(userRoot, { mode: 0o700 });
-      const repoLink = path.join(userRoot, 'abcdef123456');
-      fs.symlinkSync(repo, repoLink);
-      assert.throws(() => appendEvent(path.join(repoLink, 'example-ledger.md'), runStart(state)), /Unsafe ledger directory/);
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.symlinkSync(repo, directory, process.platform === 'win32' ? 'junction' : 'dir');
+      assert.throws(() => appendEvent(ledgerPath, runStart(state)), /Unsafe ledger directory/);
     } finally {
-      fs.rmSync(hostileRoot, { recursive: true, force: true });
+      fs.rmSync(directory, { recursive: true, force: true });
+      fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+      if (process.platform !== 'win32') fs.chmodSync(directory, 0o700);
     }
   });
 

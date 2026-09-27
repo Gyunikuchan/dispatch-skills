@@ -8,26 +8,40 @@ import {
   SCRATCH_DIR,
   findExistingScratchArtifact,
   findExistingTempArtifact,
-  ledgerNamespacePath,
   localDate,
-  repositoryRootHash,
   resolveArtifactPath,
   resolveArtifacts,
 } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 // SECTION: Scratch and relocated artifact discovery
 
 describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', () => {
   let projectRoot;
+  let ownedSessions;
+  let previousSessionEnv;
 
   beforeEach(() => {
     projectRoot = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-test-'));
+    ownedSessions = [];
+    previousSessionEnv = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'].map(key => [key, process.env[key]]));
     mkdirSync(path.join(projectRoot, ...SCRATCH_DIR.split('/')), { recursive: true });
   });
 
   afterEach(() => {
+    for (const dir of new Set(ownedSessions)) rmSync(dir, { recursive: true, force: true });
     rmSync(projectRoot, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previousSessionEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
+
+  function sessionArtifacts(repositoryRoot, slug = 'auth-v2') {
+    const session = bindWorkflowSession({ repositoryRoot, artifactKind: 'plan', slug });
+    ownedSessions.push(session);
+    return path.join(session, 'artifacts');
+  }
 
   it('returns null when no scratch directory exists', () => {
     rmSync(path.join(projectRoot, '.scratch'), { recursive: true, force: true });
@@ -150,15 +164,14 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
     });
   });
 
-  // O1: the temp tier is repo-scoped: `<tempRoot>/dispatch-skills-<user>/<repoHash>/relocated/`, with
-  // repoHash from the project's Git root (the project root itself outside Git). No flat-temp fallback (D3).
-  const relocatedDir = (tempRoot) => {
-    const dir = path.join(ledgerNamespacePath({ tempRoot, repoHash: repositoryRootHash(projectRoot) }), 'relocated');
+  // Relocated artifacts live in the exact repository and workflow session's durable area.
+  const relocatedDir = () => {
+    const dir = sessionArtifacts(projectRoot);
     mkdirSync(dir, { recursive: true });
     return dir;
   };
 
-  it('resolveArtifactPath ignores a same-slug file in flat temp (O1)', () => {
+  it('resolveArtifactPath ignores a same-slug file in flat temp', () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
     try {
       writeFileSync(path.join(tempDir, '2026-09-05-auth-v2-walkthrough.md'), '# stray walkthrough');
@@ -178,38 +191,33 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
     }
   });
 
-  it('resolveArtifactPath ignores a same-slug relocated file from another repository (O1)', () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
+  it('resolveArtifactPath ignores a same-slug relocated file from another repository', () => {
     const otherRepo = mkdtempSync(path.join(os.tmpdir(), 'resolve-artifact-paths-other-'));
     try {
-      const otherDir = path.join(ledgerNamespacePath({ tempRoot: tempDir, repoHash: repositoryRootHash(otherRepo) }), 'relocated');
+      const otherDir = sessionArtifacts(otherRepo);
       mkdirSync(otherDir, { recursive: true });
       writeFileSync(path.join(otherDir, '2026-09-05-auth-v2-walkthrough.md'), '# other repo');
       const resolved = resolveArtifactPath('walkthrough', {
         slug: 'auth-v2',
         date: '2026-09-11',
         projectRoot,
-        tempRoot: tempDir,
         native: { orchestrator: null },
       });
       assert.equal(resolved.tier, 'scratch-new');
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
       rmSync(otherRepo, { recursive: true, force: true });
     }
   });
 
   it('resolveArtifactPath reuses an existing temp artifact over scratch-new', () => {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
     try {
-      const tempWalkthrough = path.join(relocatedDir(tempDir), '2026-09-05-auth-v2-walkthrough.md');
+      const tempWalkthrough = path.join(relocatedDir(), '2026-09-05-auth-v2-walkthrough.md');
       writeFileSync(tempWalkthrough, '# walkthrough');
 
       const resolved = resolveArtifactPath('walkthrough', {
         slug: 'auth-v2',
         date: '2026-09-11',
         projectRoot,
-        tempRoot: tempDir,
         native: { orchestrator: null },
       });
       assert.deepEqual(resolved, {
@@ -218,7 +226,7 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
         exists: true,
       });
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
+      // The session cleanup runs after this test.
     }
   });
 
@@ -226,15 +234,13 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
     const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
     writeFileSync(path.join(dir, '2026-09-05-auth-v2.md'), '# plan');
 
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'test-temp-artifacts-'));
     try {
-      writeFileSync(path.join(relocatedDir(tempDir), '2026-09-04-auth-v2.md'), '# temp plan');
+      writeFileSync(path.join(relocatedDir(), '2026-09-04-auth-v2.md'), '# temp plan');
 
       const resolved = resolveArtifactPath('plan', {
         slug: 'auth-v2',
         date: '2026-09-11',
         projectRoot,
-        tempRoot: tempDir,
         native: { orchestrator: null },
       });
       assert.deepEqual(resolved, {
@@ -243,7 +249,7 @@ describe('findExistingScratchArtifact / resolveArtifactPath (scratch tiers)', ()
         exists: true,
       });
     } finally {
-      rmSync(tempDir, { recursive: true, force: true });
+      // The session cleanup runs after this test.
     }
   });
 

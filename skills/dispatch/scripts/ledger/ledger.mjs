@@ -9,6 +9,7 @@ import path from 'node:path';
 import { isMainModule } from '../lib/platform.mjs';
 import { semanticSectionHashes } from '../review/preparation.mjs';
 import { isReservedOrdinarySlug, ledgerNamespacePath } from '../artifacts/resolve-paths.mjs';
+import { dispatchTempRoot, sessionDir } from '../lib/session-temp.mjs';
 import { materializedFingerprint } from '../lib/git-state.mjs';
 import {
   foldSegments,
@@ -75,7 +76,7 @@ function ensurePrivateChild(parent, name, options) {
 }
 
 /**
- * Creates and validates the private, per-repository durable ledger namespace.
+ * Creates and validates the private ledger directory owned by the bound workflow session.
  * @param {LedgerNamespaceOptions} [options]
  */
 export function ensureLedgerNamespace({
@@ -87,26 +88,42 @@ export function ensureLedgerNamespace({
 } = {}) {
   if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
   const options = { platform, uid };
-  inspectDirectory(tempRoot, { platform: 'win32', uid });
   const target = ledgerNamespacePath({ tempRoot, repoHash, env });
-  const relative = path.relative(tempRoot, target);
-  let current = tempRoot;
-  for (const component of relative.split(path.sep)) current = ensurePrivateChild(current, component, options);
-  return current;
+  if (process.env.DISPATCH_LEGACY_SESSION === '1') {
+    const root = dispatchTempRoot();
+    inspectDirectory(root, { platform: 'win32', uid });
+    const relative = path.relative(root, target);
+    if (!/^[a-f0-9]{12}$/.test(relative)) throw new Error(`Unsafe in-flight legacy ledger directory: ${target}`);
+    return ensurePrivateChild(root, relative, options);
+  }
+  const session = sessionDir();
+  if (path.dirname(target) !== session || path.basename(target) !== 'ledger') {
+    throw new Error(`Ledger directory must be owned by the bound workflow session: ${target}`);
+  }
+  inspectDirectory(session, options);
+  try { fs.mkdirSync(target, { mode: 0o700 }); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; }
+  inspectDirectory(target, options);
+  if (platform !== 'win32') fs.chmodSync(target, 0o700);
+  return target;
 }
 
 function validateLedgerParents(ledgerPath, options = {}) {
-  const tempRoot = path.resolve(options.tempRoot ?? os.tmpdir());
   const parent = path.resolve(path.dirname(ledgerPath));
-  const relative = path.relative(tempRoot, parent);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw new Error(`Ledger path must be below the OS temp directory: ${ledgerPath}`);
+  if (process.env.DISPATCH_LEGACY_SESSION === '1') {
+    const root = dispatchTempRoot();
+    const relative = path.relative(root, parent);
+    if (!/^[a-f0-9]{12}$/.test(relative)) {
+      throw new Error(`In-flight legacy ledger must remain in its repository namespace: ${ledgerPath}`);
+    }
+    inspectDirectory(root, options);
+    inspectDirectory(parent, options);
+    return;
   }
-  let current = tempRoot;
-  for (const component of relative.split(path.sep)) {
-    current = path.join(current, component);
-    inspectDirectory(current, options);
-  }
+  const expected = path.resolve(sessionDir(), 'ledger');
+  if (parent !== expected) throw new Error(`Ledger path must be in the bound workflow session: ${ledgerPath}`);
+  inspectDirectory(sessionDir(), options);
+  inspectDirectory(parent, options);
 }
 
 /** @param {string} ledgerPath @param {OwnershipOptions} [options] */

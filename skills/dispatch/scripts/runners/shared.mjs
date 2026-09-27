@@ -10,7 +10,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isSessionDir, sessionDir, sessionTempDir } from '../lib/session-temp.mjs';
+import { isSessionPath, runArea, runTempDir } from '../lib/session-temp.mjs';
 import { PROJECT_ROOT, getAllowedBoundaryRoots, isBatchLauncher, isPathInside, spawnCliSync, terminateProcessTree } from '../lib/platform.mjs';
 
 // ============================================================================
@@ -988,7 +988,7 @@ export function getArgvByteLimit() {
  * preventing TOCTOU races on shared systems.
  */
 export function createBriefFile(prompt, providerName) {
-  const briefDir = sessionTempDir(`dispatch-brief-${providerName}-`);
+  const briefDir = runTempDir('prompts', `dispatch-brief-${providerName}-`);
 
   const briefFile = path.join(briefDir, 'brief.md');
   fs.writeFileSync(briefFile, prompt, { encoding: 'utf8', mode: 0o600 });
@@ -1007,8 +1007,8 @@ export function createBriefFile(prompt, providerName) {
  * created it, called in a `finally` after the delegate settles.
  *
  * Security: refuses anything that isn't demonstrably one of our own brief directories —
- * absolute path, `dispatch-brief-` basename, a real (non-symlink) directory whose realpath's
- * parent is a session directory — so a crafted or symlinked path can never cause deletion
+ * absolute path, `dispatch-brief-` basename, and a real (non-symlink) directory inside its
+ * bound session — so a crafted or symlinked path can never cause deletion
  * outside temp. Best-effort: errors are swallowed because on Windows a lingering
  * delegate process may still hold the file open.
  *
@@ -1025,8 +1025,7 @@ export function removeBriefFile(briefFile) {
     if (!stat.isDirectory()) return;
 
     const realDir = fs.realpathSync(dir);
-    const realParent = fs.realpathSync(path.dirname(realDir));
-    if (!isSessionDir(realParent)) return;
+    if (!isSessionPath(realDir)) return;
 
     // NOTE: retries ride out transient Windows AV/indexer locks (EBUSY/EPERM) on the fresh brief.
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
@@ -1073,7 +1072,7 @@ export function preparePromptForArgv(prompt, providerName, { binary, reservedByt
  */
 export function createSessionLogger(providerName) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logDir = path.join(sessionDir(), 'logs');
+  const logDir = runArea('logs');
   // Logs hold full delegate transcripts; owner-only modes (ignored on Windows) keep them private.
   try {
     if (!fs.existsSync(logDir)) {

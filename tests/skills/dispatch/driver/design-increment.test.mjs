@@ -8,7 +8,8 @@ import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixtur
 import { drive, implementationOutcome, makeGitRepo, runDispatch, parseAction, PLAN_BODY, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { foldSegments } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
-import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { repositoryRootHash, resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession, readSessionManifest } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
@@ -34,19 +35,21 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 function setup() {
   const fixture = createStubDispatchFixture(config), repo = makeGitRepo();
   cleanup.push(fixture.cleanup, repo.cleanup);
+  const session = bindWorkflowSession({ repositoryRoot: repo.dir, artifactKind: 'design', slug: 'root' });
+  cleanup.push(() => fs.rmSync(session, { recursive: true, force: true }));
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");
   repo.git('add', 'tests'); repo.git('commit', '--no-gpg-sign', '-qm', 'baseline tests');
   const designPath = path.join(repo.dir, DESIGN_REL);
   const source = designBody(); fs.writeFileSync(designPath, source);
   const hash = governingHash(source, { kind: 'design' }).hash;
-  const ledgerPath = resolveLedgerPath({ slug: 'root', slugSource: 'explicit', repositoryRoot: repo.dir });
-  ensureLedgerNamespace({ repoHash: ledgerPath.split(path.sep).at(-2), env: process.env });
+  const ledgerPath = resolveLedgerPath({ slug: 'root', slugSource: 'explicit', repositoryRoot: repo.dir, artifactKind: 'design' });
+  ensureLedgerNamespace({ repoHash: repositoryRootHash(repo.dir) });
   const head = repo.git('rev-parse', 'HEAD').toString().trim();
   appendEvent(ledgerPath, { v: 2, type: 'run-start', runId: RUN, at, data: { governingPath: DESIGN_REL, governingHash: hash, rootSlug: 'root', action: 'design', baseline: { commit: head, repositoryState: `sha256:${'b'.repeat(64)}`, dirtyPaths: [] } } });
   appendEvent(ledgerPath, { v: 2, type: 'approval', runId: RUN, at, data: { governingHash: hash, decision: 'approved', actor: 'user' } });
   appendEvent(ledgerPath, { v: 2, type: 'run-complete', runId: RUN, at, data: { result: 'design-approved-stop', evidenceRefs: ['design'] } });
-  return { fixture, repo, designPath, ledgerPath, hash, authored: null };
+  return { fixture, repo, designPath, ledgerPath, hash, session, authored: null };
 }
 
 function policies(ctx) {
@@ -126,11 +129,12 @@ describe('driver design increment segments', () => {
     const ctx = setup();
     completeI01(ctx);
     assertOneCompletedI01Segment(ctx);
+    assert.equal(readSessionManifest(ctx.session).status, 'active', 'parent design session remains active across increments');
     const res = runDispatch(ctx.fixture, ['--run', 'implement', '--orchestrator', 'claude', '--', ctx.designPath], { cwd: ctx.repo.dir });
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
     assert.equal(action.error, undefined, action.error);
-    assert.equal(action.action, 'author');
+    assert.equal(action.action, 'author', JSON.stringify(action));
     assert.equal(action.incrementId, 'I02');
   });
 

@@ -5,6 +5,7 @@ import { appendEvent, governingHash, readLedger, resumeOrdinary, slugFromPlanPat
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { foldSegments } from '../ledger/events.mjs';
 import { resolveLedgerPath } from '../artifacts/resolve-paths.mjs';
+import { completeSession } from '../lib/session-temp.mjs';
 import { emitAction } from './actions.mjs';
 import { writeRunState } from './state.mjs';
 import { DEFERRED, cell, isPassing, renderTraceability, replaceBoxLine, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
@@ -24,7 +25,7 @@ export function bindPlan(state, file) {
   if (hash.status !== 'ok') throw new Error(hash.diagnostic);
   state.governingHash = hash.hash;
   state.walkthroughPath = state.planPath.replace(/\.md$/, '-walkthrough.md');
-  state.ledgerPath = resolveLedgerPath({ slug: state.slug, slugSource: 'explicit', repositoryRoot: state.repoRoot });
+  state.ledgerPath = resolveLedgerPath({ slug: state.slug, slugSource: 'explicit', repositoryRoot: state.repoRoot, artifactKind: 'plan' });
 }
 export function assertBinding(state) {
   if (governingHash(source(state)).hash !== state.governingHash) throw new Error('Plan changed: return to plan-review and approval.');
@@ -207,6 +208,8 @@ export function save(state, action) {
       if (action.action !== 'done' || action.outcome === 'complete') throw error;
     }
     writeRunState(state);
+    // An increment handoff is a checkpoint in the parent design; later increments share its ledger.
+    if (action.action === 'done' && action.handoff?.destinations && !(state.designPath && state.increment)) completeSession();
   } catch (error) {
     // Error replies re-emit state.pending, so it must stay the action the state file holds.
     state.pending = durable;

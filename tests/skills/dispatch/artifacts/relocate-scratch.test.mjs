@@ -11,24 +11,33 @@ import {
   relocateScratchPaths,
 } from '../../../../skills/dispatch/scripts/artifacts/relocate-scratch.mjs';
 import {
-  ledgerNamespacePath,
-  repositoryRootHash,
+  relocatedArtifactsPath,
   resolveArtifactPath,
 } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 describe('relocate-scratch', () => {
   let tmpWorkspace;
   let tmpDestDir;
+  let tmpSession;
+  let previousSessionEnv;
 
   beforeEach(() => {
     tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-ws-'));
     tmpDestDir = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-dest-'));
+    previousSessionEnv = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'].map(key => [key, process.env[key]]));
+    tmpSession = bindWorkflowSession({ repositoryRoot: tmpWorkspace, artifactKind: 'plan', slug: 'scratch-test' });
     fs.mkdirSync(path.join(tmpWorkspace, '.scratch', 'plan'), { recursive: true });
   });
 
   afterEach(() => {
     fs.rmSync(tmpWorkspace, { recursive: true, force: true });
     fs.rmSync(tmpDestDir, { recursive: true, force: true });
+    fs.rmSync(tmpSession, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(previousSessionEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   describe('isScratchPath', () => {
@@ -65,58 +74,48 @@ describe('relocate-scratch', () => {
     });
   });
 
-  // O1: relocation targets the repo-scoped namespace `<tempRoot>/dispatch-skills-<user>/<repoHash>/relocated/`
-  // (repoHash of the cwd's Git root, or cwd itself outside Git), never flat os.tmpdir().
-  describe('repo-scoped destination (O1)', () => {
-    let tempRoot;
-    beforeEach(() => { tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scratch-test-root-')); });
-    afterEach(() => { fs.rmSync(tempRoot, { recursive: true, force: true }); });
+  describe('workflow session destination', () => {
+    const scopedDir = () => relocatedArtifactsPath({ projectRoot: tmpWorkspace });
 
-    const scopedDir = (root) =>
-      path.join(ledgerNamespacePath({ tempRoot: root, repoHash: repositoryRootHash(tmpWorkspace) }), 'relocated');
-
-    it('defaults the destination to the repo-scoped relocated directory under tempRoot', () => {
+    it('defaults the destination to the bound session artifacts directory', () => {
       const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-scoped.md');
       fs.writeFileSync(srcFile, '# Scoped');
-      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace, tempRoot });
+      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace });
       try {
         assert.ok(dest);
-        assert.equal(path.dirname(dest), scopedDir(tempRoot));
+        assert.equal(path.dirname(dest), scopedDir());
         assert.equal(fs.readFileSync(dest, 'utf8'), '# Scoped');
-        assert.ok(!fs.existsSync(path.join(tempRoot, '2026-09-14-scoped.md')), 'nothing lands in flat temp');
+        assert.ok(!fs.existsSync(path.join(os.tmpdir(), '2026-09-14-scoped.md')), 'nothing lands in flat temp');
       } finally {
         if (dest) fs.rmSync(dest, { force: true });
       }
     });
 
-    it('defaults tempRoot to os.tmpdir() with the same repo-scoped layout', () => {
+    it('keeps relocated artifacts inside the bound session', () => {
       const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-default-root.md');
       fs.writeFileSync(srcFile, '# Default');
       const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace });
       try {
         assert.ok(dest);
-        assert.equal(path.dirname(dest), scopedDir(os.tmpdir()));
+        assert.equal(path.dirname(dest), scopedDir());
       } finally {
-        // Remove only the moved file: before the fix, dirname(dest) is os.tmpdir() itself.
-        if (dest) {
-          fs.rmSync(dest, { force: true });
-          // Non-recursive: removes only the now-empty per-test namespace directories.
-          for (const dir of [path.dirname(dest), path.dirname(path.dirname(dest))]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
-        }
+        if (dest) fs.rmSync(dest, { force: true });
       }
     });
 
-    it('a relocated walkthrough is found by the temp tier; a flat-temp stray is not', () => {
-      fs.writeFileSync(path.join(tempRoot, '2026-09-01-roundtrip-walkthrough.md'), '# stray');
+    it('finds a relocated walkthrough in the matching workflow session', () => {
+      fs.rmSync(tmpSession, { recursive: true, force: true });
+      tmpSession = bindWorkflowSession({ repositoryRoot: tmpWorkspace, artifactKind: 'plan', slug: 'roundtrip' });
+      fs.writeFileSync(path.join(tmpDestDir, '2026-09-01-roundtrip-walkthrough.md'), '# stray');
       const srcFile = path.join(tmpWorkspace, '.scratch', 'plan', '2026-09-14-roundtrip-walkthrough.md');
       fs.writeFileSync(srcFile, '# Walkthrough');
-      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace, tempRoot });
+      const dest = relocateScratchItem(srcFile, { cwd: tmpWorkspace });
       try {
         const resolved = resolveArtifactPath('walkthrough', {
           slug: 'roundtrip',
           date: '2026-09-20',
           projectRoot: tmpWorkspace,
-          tempRoot,
+          tempRoot: tmpDestDir,
           native: { orchestrator: null },
         });
         assert.equal(resolved.tier, 'temp-existing');

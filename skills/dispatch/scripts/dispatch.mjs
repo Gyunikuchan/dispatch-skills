@@ -61,7 +61,7 @@ import {
   validateConfig,
 } from './lib/config.mjs';
 import { normalizePin, parsePins, resolveFlow } from './lib/resolve-flow.mjs';
-import { sessionTempDir, consumeSessionFlag } from './lib/session-temp.mjs';
+import { runArea, consumeSessionFlag } from './lib/session-temp.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -1410,7 +1410,7 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
     batch = wave;
   }
 
-  const reportDir = sessionTempDir('dispatch-slots-');
+  const reportDir = fs.mkdtempSync(path.join(runArea('reports'), 'dispatch-slots-'));
   let envelope;
   try {
     envelope = await dispatchBatch(batch, {

@@ -3,9 +3,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_MANIFEST_NAME, skillDirInRepo } from '../lib/integrity.mjs';
-import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { extractGeneratedPaths } from '../plan/structure.mjs';
-import { ledgerNamespacePath, repositoryRootHash } from '../artifacts/resolve-paths.mjs';
+import { sessionArea } from '../lib/session-temp.mjs';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification/evidence.mjs';
 import { baselineFingerprint, contentTreeId, materializedFingerprint } from '../lib/git-state.mjs';
 import {
@@ -273,7 +272,7 @@ export function acceptVerification(state, reply) {
 // repository-wide file lets a passing final gate seed the next plan's baseline.
 const BASELINE_TTL_MS = 24 * 60 * 60 * 1000;
 function baselineCachePath(state) {
-  return path.join(ledgerNamespacePath({ repoHash: repositoryRootHash(state.repoRoot) }), 'baseline-cache.json');
+  return path.join(sessionArea('cache'), 'baseline-cache.json');
 }
 function entryKey(tree, command) {
   return `sha256:${crypto.createHash('sha256').update(JSON.stringify({ tree, command, node: process.version, platform: process.platform })).digest('hex')}`;
@@ -305,7 +304,6 @@ export function storeBaseline(state, results) {
     // NOTE: without a content key (Git failure) the cache is disabled.
     const tree = contentTreeId(state.repoRoot);
     if (!tree || !results.length) return;
-    ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
     const now = Date.now(), capturedAt = new Date(now).toISOString();
     const entries = Object.fromEntries(Object.entries(readCache(state)).filter(([, entry]) => now - Date.parse(entry.capturedAt) <= BASELINE_TTL_MS));
     for (const result of results) entries[entryKey(tree, result.command)] = { capturedAt, result };

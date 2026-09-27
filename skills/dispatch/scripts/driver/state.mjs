@@ -13,7 +13,7 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { showToplevel } from '../lib/git-root.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
-import { SESSION_ENV, bindSession, isSessionDir, openSession, pruneSessions } from '../lib/session-temp.mjs';
+import { bindLegacyStateSession, bindRun, bindSession, isSessionDir, openSession, pruneSessions, runStatePath, SESSION_ENV, sessionDir } from '../lib/session-temp.mjs';
 
 // SECTION: State storage
 
@@ -46,38 +46,55 @@ function writeAtomic(file, value) {
 }
 
 /**
- * Creates a fresh run state with a new run ID. A top-level run opens its own session; a nested run
- * (an implement run's plan or code review) shares the bound session.
+ * Creates a fresh run state with a new run ID. Top-level workflow binding happens before artifact
+ * resolution; nested runs keep that session and receive their own `runs/<run-id>/` directory.
  */
 export function createRunState(fields) {
   const runId = crypto.randomUUID();
-  const bound = process.env[SESSION_ENV];
-  const dir = bound && isSessionDir(bound) ? bindSession(bound) : openSession(runId);
-  const stateFile = path.join(dir, `${runId}.json`);
+  if (!process.env.DISPATCH_SESSION_DIR) openSession({ repositoryRoot: fields.repoRoot ?? null });
+  else sessionDir();
+  const stateFile = runStatePath(runId);
   return { v: 1, runId, stateFile, ...fields };
 }
 
 /** Binds the session that holds `stateFile`, so a `--next` process and its children share it. */
 export function bindStateSession(stateFile) {
-  let real = null;
+  let real;
   try { real = fs.realpathSync(path.resolve(stateFile)); } catch { return null; }
-  return isSessionDir(path.dirname(real)) ? bindSession(path.dirname(real)) : null;
+  const runDir = path.dirname(real);
+  const runsDir = path.dirname(runDir);
+  const session = path.dirname(runsDir);
+  if (path.basename(real) === 'state.json' && path.basename(runsDir) === 'runs' && isSessionDir(session)) {
+    const bound = bindSession(session);
+    bindRun(path.basename(runDir));
+    return bound;
+  }
+  try { return bindLegacyStateSession(real); } catch { return null; }
 }
 
 /** Reads a state file; throws with `code: 'STATE_UNREADABLE'` when missing or corrupt. */
 export function readRunState(stateFile) {
   const resolved = path.resolve(stateFile);
-  // Trust only files directly in a session directory: state names artifacts and argv.
+  const boundSession = bindStateSession(resolved);
   let real = null;
   try { real = fs.realpathSync(resolved); } catch { real = null; }
-  const inside = real !== null && isSessionDir(path.dirname(real));
+  const parent = real && path.basename(real) === 'state.json' ? path.dirname(real) : null;
+  const runParent = parent && path.basename(path.dirname(parent)) === 'runs' ? path.dirname(path.dirname(parent)) : null;
+  const direct = Boolean(real && runParent && isSessionDir(runParent));
+  const legacyBinding = Boolean(real && boundSession && process.env.DISPATCH_LEGACY_SESSION === '1' &&
+    path.resolve(process.env[SESSION_ENV] ?? '') === path.resolve(boundSession) &&
+    path.resolve(process.env.DISPATCH_LEGACY_STATE_FILE ?? '') === real);
+  const legacy = Boolean(legacyBinding && path.dirname(real) === boundSession);
+  const legacyNested = Boolean(legacyBinding && parent && runParent && path.basename(path.dirname(parent)) === 'runs' &&
+    runParent === boundSession);
   let state = null;
   try {
-    if (inside) state = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    if (direct || legacy || legacyNested) state = JSON.parse(fs.readFileSync(resolved, 'utf8'));
   } catch {
     state = null;
   }
-  if (!state || state.v !== 1 || !state.runId) {
+  const pathRunId = direct || legacyNested ? path.basename(parent) : legacy ? path.basename(real, '.json') : null;
+  if (!state || state.v !== 1 || !state.runId || state.runId !== pathRunId) {
     throw Object.assign(new Error(`Driver state ${stateFile} is missing or unreadable.`), { code: 'STATE_UNREADABLE' });
   }
   return state;

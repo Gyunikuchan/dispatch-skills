@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { scanResolutionLog } from './resolution-log.mjs';
-import { sessionTempDir } from '../lib/session-temp.mjs';
+import { runTempDir } from '../lib/session-temp.mjs';
 
 // SECTION: Context validation
 
@@ -97,7 +97,7 @@ export function writeRebuttalPackets({ artifact, context }) {
   const markdown = fs.readFileSync(artifact, 'utf8');
   const contextValue = JSON.parse(fs.readFileSync(context === '-' ? 0 : context, 'utf8'));
   const packets = buildRebuttalPackets(markdown, contextValue);
-  const dir = sessionTempDir('dispatch-rebuttal-packets-');
+  const dir = runTempDir('packets', 'dispatch-rebuttal-packets-');
   const written = packets.map((group, index) => {
     const safeSource = group.sourceKey.replace(/[^A-Za-z0-9._-]+/g, '-');
     const packetPath = path.join(dir, `${String(index + 1).padStart(2, '0')}-${safeSource}.json`);

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { sessionArea } from './session-temp.mjs';
+
 const MAX_BYTES = 1024 * 1024;
 const FILE_NAME = 'telemetry.jsonl';
 const ROTATED_NAME = 'telemetry.1.jsonl';
@@ -27,13 +29,13 @@ export function userSlug({ env = process.env, userInfo = () => os.userInfo() } =
 }
 
 /**
- * Resolves the cross-session telemetry file.
+ * Resolves the telemetry file owned by the bound workflow session.
  *
  * @param {{ dir?: string }} [options]
  * @returns {string}
  */
 export function telemetryPath({ dir } = {}) {
-  const base = dir ?? path.join(os.tmpdir(), `dispatch-skills-${userSlug()}`, 'telemetry');
+  const base = dir ?? sessionArea('telemetry');
   return path.join(base, FILE_NAME);
 }
 

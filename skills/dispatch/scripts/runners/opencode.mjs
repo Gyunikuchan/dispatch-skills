@@ -234,7 +234,7 @@ export const OPENCODE_EXTRA_ENV_ALLOWLIST = new Set([
   'OPENCODE_PORT',
 ]);
 
-// NOTE: os.tmpdir() is machine-global, so every repo's copy of this skill contends on one lock.
+// NOTE: This machine-global lock is the sole shared output path; local model runs contend across sessions for one GPU.
 export const GPU_LOCK_FILE_NAME = 'dispatch-local-llm.lock';
 export const GPU_LOCK_STALE_MS = 360000;
 export const GPU_LOCK_MAX_WAIT_MS = 15000;

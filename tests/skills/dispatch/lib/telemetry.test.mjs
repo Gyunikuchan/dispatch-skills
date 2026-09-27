@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { appendTelemetry, telemetryPath, userSlug } from '../../../../skills/dispatch/scripts/lib/telemetry.mjs';
+import { openSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 const DISPATCH = fileURLToPath(new URL('../../../../skills/dispatch/scripts/dispatch.mjs', import.meta.url));
 
@@ -23,8 +24,9 @@ const savedEnv = {};
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-test-'));
   dir = path.join(root, 'tel');
-  for (const key of ['DISPATCH_TELEMETRY', 'USER', 'USERNAME']) savedEnv[key] = process.env[key];
+  for (const key of ['DISPATCH_TELEMETRY', 'USER', 'USERNAME', 'DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) savedEnv[key] = process.env[key];
   delete process.env.DISPATCH_TELEMETRY;
+  for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
 });
 
 afterEach(() => {
@@ -120,6 +122,18 @@ describe('telemetry', () => {
     assert.equal(fs.existsSync(telemetryPath({ dir })), false);
   });
 
+  it('writes default telemetry inside the currently bound workflow session', () => {
+    const first = openSession();
+    const firstPath = telemetryPath();
+    appendTelemetry({ result: { metricsAttempts: [ATTEMPT] }, startedAt: Date.now() });
+    const second = openSession();
+    const secondPath = telemetryPath();
+    assert.notEqual(first, second);
+    assert.equal(path.dirname(firstPath), path.join(first, 'telemetry'));
+    assert.equal(path.dirname(secondPath), path.join(second, 'telemetry'));
+    assert.ok(fs.existsSync(firstPath));
+  });
+
   it('skips a non-regular file at the telemetry path', () => {
     fs.mkdirSync(telemetryPath({ dir }), { recursive: true });
     appendTelemetry({ result: { metricsAttempts: [ATTEMPT] }, startedAt: Date.now(), dir });
@@ -142,12 +156,16 @@ describe('telemetry', () => {
 
   it('sanitizes the username in the default path', () => {
     process.env.USER = '../ev il/..';
+    const session = openSession();
     const file = telemetryPath();
-    assert.equal(path.dirname(file), path.join(os.tmpdir(), 'dispatch-skills-.._ev_il_..', 'telemetry'));
+    assert.equal(path.dirname(file), path.join(session, 'telemetry'));
+    assert.equal(path.dirname(session), path.join(os.tmpdir(), 'dispatch-skills-.._ev_il_..'));
     assert.equal(path.basename(file), 'telemetry.jsonl');
     for (const value of ['..', '.']) {
       process.env.USER = value;
-      assert.equal(path.dirname(telemetryPath()), path.join(os.tmpdir(), 'dispatch-skills-unknown', 'telemetry'));
+      const unknown = openSession();
+      assert.equal(path.dirname(unknown), path.join(os.tmpdir(), 'dispatch-skills-unknown'));
+      assert.equal(path.dirname(telemetryPath()), path.join(unknown, 'telemetry'));
     }
   });
 });

@@ -10,6 +10,7 @@ import {
   prepareReview,
 } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
 import {
   cleanupPreparationManifest,
@@ -353,7 +354,8 @@ describe('plan review preparation', () => {
 
   it('reuses an existing relocated plan in OS temp rather than requiring authoring', () => {
     const repo = makeRepo();
-    // The temp tier reads only this repository's relocated directory (O1).
+    const previous = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'].map(key => [key, process.env[key]]));
+    const session = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'sample' });
     const relocated = relocatedArtifactsPath({ projectRoot: repo });
     fs.mkdirSync(relocated, { recursive: true });
     const tempPlan = path.join(relocated, `2026-09-20-sample-${Date.now()}.md`);
@@ -370,8 +372,11 @@ describe('plan review preparation', () => {
       cleanManifest(manifest);
     } finally {
       fs.rmSync(tempPlan, { force: true });
-      // Non-recursive: removes only the now-empty per-test namespace directories.
-      for (const dir of [relocated, path.dirname(relocated)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
+      fs.rmSync(session, { recursive: true, force: true });
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 
@@ -508,6 +513,7 @@ describe('plan review preparation', () => {
     fs.writeFileSync(path.join(repo, 'README.md'), '# Test\n');
     execFileSync('git', ['add', 'README.md'], { cwd: repo });
     execFileSync('git', ['commit', '--no-gpg-sign', '-qm', 'initial'], { cwd: repo });
+    const session = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'feature' });
     const manifest = preparePlanReview({
       requirement: 'Different requirement',
       orchestrator: 'opencode',
@@ -517,6 +523,8 @@ describe('plan review preparation', () => {
       assert.equal(manifest.freshness.status, 'untracked');
     } finally {
       cleanManifest(manifest);
+      fs.rmSync(session, { recursive: true, force: true });
+      for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
     }
   });
 

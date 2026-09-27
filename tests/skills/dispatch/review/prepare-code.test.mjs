@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { prepareCodeReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
 import {
@@ -19,11 +20,30 @@ const BATCH_CONFIG = {
 };
 
 const fixture = createReviewPreparationFixture();
-const makeRepo = () => makeDirtyCodeRepository(fixture.makeDirectory);
+const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'];
+let priorSessionEnv = {};
+let workflowSessions = [];
+const makeRepo = () => {
+  const repo = makeDirtyCodeRepository(fixture.makeDirectory);
+  workflowSessions.push(bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'feature' }));
+  return repo;
+};
 const cleanupManifest = cleanupPreparationManifest;
 
-beforeEach(fixture.beforeEach);
-afterEach(fixture.afterEach);
+beforeEach(() => {
+  fixture.beforeEach();
+  workflowSessions = [];
+  priorSessionEnv = Object.fromEntries(SESSION_ENV_KEYS.map(key => [key, process.env[key]]));
+  for (const key of SESSION_ENV_KEYS) delete process.env[key];
+});
+afterEach(() => {
+  fixture.afterEach();
+  for (const session of new Set(workflowSessions)) fs.rmSync(session, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(priorSessionEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 describe('code review preparation', () => {
   it('generates a missing walkthrough and prepares an orchestrated review', () => {

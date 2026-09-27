@@ -12,8 +12,10 @@ import {
   recoverAmendment,
   rejectAmendment,
 } from '../../../../skills/dispatch/scripts/design/amendment.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { parseEventLine } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
+import { repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 
 const oid = 'c'.repeat(40);
 const at = '2026-09-20T00:00:00.000Z';
@@ -67,24 +69,25 @@ describe('design amendment transactions', { concurrency: false }, () => {
   let repo;
   let designPath;
   let ledgerPath;
+  const workflowSessions = [];
 
   before(() => {
     suiteRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'amend-suite-'));
     tempRoot = path.join(suiteRoot, 'runtime');
-    repo = path.join(suiteRoot, 'repo');
-    fs.mkdirSync(repo);
-    gitInit(repo);
-    repo = fs.realpathSync(repo);
   });
 
   beforeEach(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
-    fs.rmSync(path.join(repo, '.scratch'), { recursive: true, force: true });
     fs.mkdirSync(tempRoot);
+    repo = path.join(suiteRoot, `repo-${workflowSessions.length + 1}`);
+    fs.mkdirSync(repo);
+    gitInit(repo);
+    repo = fs.realpathSync(repo);
     designPath = path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md');
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
-    const namespace = ensureLedgerNamespace({ tempRoot, repoHash: 'abcdef123456', env: { USER: 'test/user' } });
+    workflowSessions.push(bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'design', slug: 'demo' }));
+    const namespace = ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) });
     ledgerPath = path.join(namespace, 'demo-ledger.md');
     appendEvent(ledgerPath, {
       v: 2, seq: 1, type: 'run-start', runId, at,
@@ -102,6 +105,7 @@ describe('design amendment transactions', { concurrency: false }, () => {
   });
 
   after(() => {
+    for (const session of workflowSessions) fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(suiteRoot, { recursive: true, force: true });
   });
 

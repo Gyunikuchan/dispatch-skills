@@ -7,18 +7,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 
 import { requireToplevel } from '../lib/git-root.mjs';
 import { KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../lib/providers.mjs';
 import { CLASSIFIABLE_LEVELS, LEVELS, assertClassifiableLevel } from '../lib/config.mjs';
 import { KIND_NAMES } from '../review/kinds.mjs';
+import { getCurrentBranch, parseIncrementArtifactPath, resolveSlug, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { bindWorkflowSession, openSession } from '../lib/session-temp.mjs';
 import { validateReply } from './actions.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
 import { advanceAsk, startAsk } from './ask-phase.mjs';
+import { inferReviewKind } from './review-policy.mjs';
 import { save } from './implement-state.mjs';
-import { bindStateSession, createRunState, readRunSidecar, readRunState, resumeCommand, writeRunSidecar } from './state.mjs';
+import { bindStateSession, createRunState, gitRoot, readRunSidecar, readRunState, resumeCommand, writeRunSidecar } from './state.mjs';
 
 export { resumeCommand };
 
@@ -141,6 +145,61 @@ function readInput(raw) {
   }
 }
 
+function artifactSlug(value, kind, repoRoot) {
+  const absolute = path.resolve(repoRoot, String(value ?? ''));
+  if (fs.existsSync(absolute)) {
+    try {
+      const source = fs.readFileSync(absolute, 'utf8');
+      const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1];
+      const metadata = frontmatter ? JSON.parse(frontmatter)?.dispatch : null;
+      if (typeof metadata?.slug === 'string' && metadata.slug) return metadata.slug;
+    } catch { /* NOTE: the filename remains a deterministic fallback for uncheckpointed artifacts. */ }
+  }
+  const base = path.basename(String(value ?? '')).replace(/\.md$/i, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
+  const withoutKind = kind === 'design' ? base.replace(/-design$/i, '') : base.replace(/-walkthrough$/i, '');
+  return sanitizeSlug(withoutKind)?.slice(0, 60) ?? null;
+}
+
+/** Binds a governed invocation before it can resolve any artifact or ledger path. */
+function bindInvocationSession(invocation, cwd) {
+  const repoRoot = path.resolve(gitRoot(cwd));
+  let artifactKind = 'plan', slug = null;
+  if (invocation.verb === 'design' || (invocation.verb === 'implement' && /-design\.md$/i.test(invocation.argument ?? ''))) {
+    artifactKind = 'design';
+    slug = /\.md$/i.test(invocation.argument ?? '') ? artifactSlug(invocation.argument, 'design', repoRoot) : sanitizeSlug(invocation.argument)?.slice(0, 60);
+  } else if (invocation.verb === 'review') {
+    const inferred = invocation.kind
+      ? { kind: invocation.kind, ...(invocation.argument ? { artifactPath: invocation.argument } : {}) }
+      : inferReviewKind(invocation.argument, { cwd });
+    const artifactPath = 'artifactPath' in inferred ? inferred.artifactPath : undefined;
+    const walkthroughPath = 'walkthroughPath' in inferred ? inferred.walkthroughPath : undefined;
+    if (inferred.kind === 'design') {
+      artifactKind = 'design';
+      slug = artifactSlug(artifactPath ?? invocation.argument, 'design', repoRoot);
+    } else if (inferred.kind === 'plan') {
+      artifactKind = 'plan';
+      slug = artifactSlug(artifactPath ?? invocation.argument, 'plan', repoRoot);
+    } else {
+      const target = walkthroughPath ?? (/\.md$/i.test(invocation.argument ?? '') ? invocation.argument : null);
+      const increment = target ? parseIncrementArtifactPath(path.relative(repoRoot, path.resolve(repoRoot, target)).split(path.sep).join('/')) : null;
+      if (increment) {
+        artifactKind = 'design';
+        slug = increment.designRootSlug;
+      } else {
+        artifactKind = 'plan';
+        slug = target ? artifactSlug(target, 'plan', repoRoot) : null;
+        if (!slug) slug = resolveSlug({ branch: getCurrentBranch(repoRoot), orchestrator: invocation.orchestrator }).slug;
+      }
+    }
+  } else {
+    slug = /\.md$/i.test(invocation.argument ?? '')
+      ? artifactSlug(invocation.argument, 'plan', repoRoot)
+      : sanitizeSlug(invocation.argument ?? '')?.slice(0, 60);
+  }
+  slug ??= artifactKind === 'design' ? 'design' : invocation.verb === 'plan' ? 'implementation' : `workflow-${crypto.createHash('sha256').update(String(invocation.argument ?? invocation.verb)).digest('hex').slice(0, 12)}`;
+  return bindWorkflowSession({ repositoryRoot: repoRoot, artifactKind, artifactPath: invocation.argument, slug });
+}
+
 async function next(parsed) {
   if (!parsed.state) throw new UsageError('--next requires --state <file>.');
   bindStateSession(parsed.state);
@@ -226,19 +285,23 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
       action = await next(parsed);
     } else {
       const invocation = normalizeRun(parsed);
-      if (invocation.verb === 'design') {
+      if (invocation.verb === 'ask') {
+        openSession({ repositoryRoot: path.resolve(cwd) });
+        action = await startAsk({ invocation, cwd, resumeCommand: resumeCommand(invocation) });
+      } else if (invocation.verb === 'design') {
         const repoRoot = requireToplevel(cwd);
+        bindInvocationSession(invocation, cwd);
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, startDesign(state));
       } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('-design.md')) {
         const repoRoot = requireToplevel(cwd);
+        bindInvocationSession(invocation, cwd);
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, await resumeDesignPath(state));
-      } else if (invocation.verb === 'ask') {
-        action = await startAsk({ invocation, cwd, resumeCommand: resumeCommand(invocation) });
       } else {
+        bindInvocationSession(invocation, cwd);
         action = ['implement', 'plan'].includes(invocation.verb)
           ? await startImplement({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) })
           : await startReview({ invocation, cwd, dispatchScript: DISPATCH_SCRIPT, resumeCommand: resumeCommand(invocation) });

@@ -5,9 +5,13 @@ import crypto from 'node:crypto';
 import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger/ledger.mjs';
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { relocatedArtifactsPath } from '../artifacts/resolve-paths.mjs';
+import { resolveUniqueDest } from '../artifacts/relocate-scratch.mjs';
+import { runStatePath } from '../lib/session-temp.mjs';
 import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
 import { updateExecutionStatus } from '../design/status.mjs';
 import { emitAction } from './actions.mjs';
+import { writeRunSidecar } from './state.mjs';
 import { beginReview, captureReviewBudget, continueReview } from './plan-phase.mjs';
 import { repositoryBaseline } from './verification.mjs';
 import { enterPhase } from './implement-phase.mjs';
@@ -69,7 +73,7 @@ export async function advanceDesign(state, reply) {
     const hash = governingHash(source, { kind: 'design' });
     if (hash.status !== 'ok') throw new Error(hash.diagnostic);
     state.governingHash = hash.hash;
-    state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot });
+    state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot, artifactKind: 'design' });
     return beginReview(state, 'design');
   }
   if (state.ordinary.step === 'design-approval') {
@@ -101,7 +105,7 @@ export function resumeDesignPath(state) {
   const designHash = governingHash(designSource, { kind: 'design' });
   if (designHash.status !== 'ok') return refuse(state, designHash.diagnostic);
   state.governingHash = designHash.hash;
-  state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot });
+  state.ledgerPath = resolveLedgerPath({ slug: designSlug(state.designPath), slugSource: 'explicit', repositoryRoot: state.repoRoot, artifactKind: 'design' });
   /** @type {Record<string, any>} */
   const resumed = resumeDesign({ ledgerPath: state.ledgerPath, planPath: relative(state, state.designPath), planSource: designSource, repoRoot: state.repoRoot });
   if (resumed.status !== 'resumable') {
@@ -131,7 +135,10 @@ export function resumeDesignPath(state) {
     const incrementArtifacts = graph.increments.flatMap(item => { const paths = incrementPaths(state, item.id); return [paths.planPath, paths.walkthroughPath]; });
     const date = path.basename(state.designPath).match(/^(\d{4}-\d{2}-\d{2})-/)?.[1] ?? new Date().toISOString().slice(0, 10);
     const integrationWalkthrough = path.join(state.repoRoot, '.scratch', 'plan', `${date}-${designSlug(state.designPath)}-integration-walkthrough.md`);
-    return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeRelocation: true }, relocateAfterPass: [state.designPath, ...incrementArtifacts, integrationWalkthrough], retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event before exact artifact relocation.', 'Next Action: final-integration.']);
+    const sources = [state.designPath, ...incrementArtifacts, integrationWalkthrough];
+    const artifactDir = relocatedArtifactsPath({ projectRoot: state.repoRoot });
+    const relocation = sources.map(source => `${source} => ${resolveUniqueDest(artifactDir, path.basename(source))}`);
+    return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeRelocation: true }, relocateAfterPass: relocation, retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event before relocating each listed source to its exact session artifact destination.', 'Next Action: final-integration.']);
   }
   // An in-flight increment resumes by the folded run's active increment.
   const id = resumed.nextAction === 'resume-increment' ? resumed.folded?.activeIncrementId : resumed.nextAction?.match(/^implement:(I\d{2})$/)?.[1];
@@ -150,7 +157,11 @@ export function resumeDesignPath(state) {
     try {
       const restored = restoreEvidence(state);
       // The driver run adopts the bound increment segment's run identity.
-      if (state.ledgerRunId) state.runId = state.ledgerRunId;
+      if (state.ledgerRunId) {
+        state.runId = state.ledgerRunId;
+        state.stateFile = runStatePath(state.runId);
+        writeRunSidecar(state, state.invocation);
+      }
       return enterPhase(state, from ?? (restored ? state.ordinary.phase ?? 'implementation' : 'plan-review')).catch(error => refuse(state, error.message));
     } catch (error) {
       return refuse(state, error.message);

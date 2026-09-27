@@ -41,7 +41,7 @@ describe('driver CLI (SC1)', () => {
     const action = parseAction(res.stdout);
     assert.equal(action.action, 'launch');
     assert.ok(path.isAbsolute(action.stateFile));
-    assert.equal(path.basename(path.dirname(path.dirname(action.stateFile))), 'sessions', 'state file lives in its run session directory');
+    assert.equal(path.basename(path.dirname(path.dirname(action.stateFile))), 'runs', 'state file lives under its session run directory');
     assert.ok(fs.realpathSync(action.stateFile).startsWith(tmpRoot()), 'state file lives under os.tmpdir()');
     assert.match(path.basename(action.stateFile), /\.json$/);
     const sidecar = action.stateFile.replace(/\.json$/, '.run.json');

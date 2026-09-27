@@ -5,9 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { makeGitRepo, writePlan } from '../../../helpers/driver-harness.mjs';
-import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { repositoryRootHash, resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { persistEvidence, restoreEvidence, save } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
+import { afterImplementationVerification } from '../../../../skills/dispatch/scripts/driver/task-phase.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
 import {
   acceptVerification,
@@ -21,11 +23,60 @@ import {
 
 const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
+const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'];
+function bindTestWorkflow(repositoryRoot, artifactKind, slug) {
+  const prior = Object.fromEntries(SESSION_ENV_KEYS.map(key => [key, process.env[key]]));
+  const dir = bindWorkflowSession({ repositoryRoot, artifactKind, slug });
+  cleanup.push(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    for (const key of SESSION_ENV_KEYS) {
+      if (prior[key] === undefined) delete process.env[key];
+      else process.env[key] = prior[key];
+    }
+  });
+  return dir;
+}
 function repoWithTestScript(script) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suite-coverage-'));
   cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: script } }));
   return dir;
+}
+
+function interruptedVerificationState({ commandRefs = ['node --test tests/a.test.mjs'], laterVerification = false } = {}) {
+  const repo = makeGitRepo();
+  cleanup.push(repo.cleanup);
+  const planPath = writePlan(repo.dir), planSource = fs.readFileSync(planPath, 'utf8');
+  bindTestWorkflow(repo.dir, 'plan', 'terminal-verification-retry');
+  const governing = governingHash(planSource).hash;
+  const ledgerPath = resolveLedgerPath({ slug: 'terminal-verification-retry', slugSource: 'explicit', repositoryRoot: repo.dir, artifactKind: 'plan' });
+  ensureLedgerNamespace({ repoHash: repositoryRootHash(repo.dir) });
+  const runId = '44444444-4444-4444-8444-444444444444', at = '2026-09-27T12:00:00.000Z';
+  const append = (type, data) => appendEvent(ledgerPath, { v: 1, type, runId, at, data });
+  const command = 'node --test tests/a.test.mjs';
+  fs.mkdirSync(path.join(repo.dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(repo.dir, 'src/app.js'), 'export const value = 1;\n');
+  append('run-start', { governingPath: path.relative(repo.dir, planPath).split(path.sep).join('/'), governingHash: governing, rootSlug: 'terminal-verification-retry', action: 'ordinary',
+    baseline: { commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo.dir, encoding: 'utf8' }).trim(), repositoryState: `sha256:${'a'.repeat(64)}`, dirtyPaths: [] } });
+  append('approval', { governingHash: governing, decision: 'approved', actor: 'user' });
+  append('task-start', { taskId: 'implementation', attemptBudget: 3, paths: ['src/app.js'], preState: `sha256:${'b'.repeat(64)}` });
+  append('implementation-attempt', { taskId: 'implementation', attempt: 1, launch: 'full', target: { platform: 'codex' }, terminalEnvelope: { status: 'DONE', stage: 'COMPLETE' }, evidence: [], transition: 'verify' });
+  append('verification', { taskId: 'implementation', attempt: 1, result: 'pass', commandRefs, transition: 'complete' });
+  if (laterVerification) {
+    append('task-start', { taskId: 'later-task', attemptBudget: 3, paths: ['src/app.js'], preState: `sha256:${'c'.repeat(64)}` });
+    append('implementation-attempt', { taskId: 'later-task', attempt: 1, launch: 'full', target: { platform: 'codex' }, terminalEnvelope: { status: 'DONE', stage: 'COMPLETE' }, evidence: [], transition: 'verify' });
+    append('verification', { taskId: 'later-task', attempt: 1, result: 'pass', commandRefs, transition: 'complete' });
+  }
+  const state = {
+    repoRoot: repo.dir, planPath, governingHash: governing, slug: 'terminal-verification-retry', ledgerPath, ledgerRunId: runId,
+    ordinary: {
+      taskId: 'implementation', attempt: 1, launch: 'full', step: 'completion-verify', commands: [command], finalOnly: [], coverage: {},
+      scopes: { [command]: ['src/app.js'] }, mutationEpoch: 0, approvedPaths: ['src/app.js'], criteria: [], envelope: { evidence: [] },
+      write: { escalation: { status: 'available' } }, lastGate: { commands: [command] },
+    },
+  };
+  state.ordinary.completionResults = [{ command, exitStatus: 0, changed: [], mutationEpoch: 0, scopeHash: fingerprint(state, ['src/app.js']) }];
+  return state;
 }
 
 describe('aggregate suite coverage', () => {
@@ -154,6 +205,7 @@ describe('baseline reuse', () => {
   function baselineState() {
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
+    bindTestWorkflow(repo.dir, 'plan', 'baseline-cache');
     const commands = ['node --test tests/a.test.mjs'];
     return { repoRoot: repo.dir, ledgerPath: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-cache-')), 'sample-ledger.md'), ordinary: { commands, redCriteria: [], coverage: {}, scopes: { [commands[0]]: ['src/app.js'] } } };
   }
@@ -240,6 +292,7 @@ describe('walkthrough evidence restore', () => {
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
     const planPath = writePlan(repo.dir);
+    bindTestWorkflow(repo.dir, 'plan', 'sample');
     const walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
     fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Ordinary execution evidence', '```json', JSON.stringify({ schemaVersion: 1, planPath: '.scratch/plan/2026-09-22-sample.md', ordinary: { step: 'failure-disposition' }, ...record }), '```', ''].join('\n'));
     const state = { repoRoot: repo.dir, planPath, walkthroughPath, governingHash: governingHash(fs.readFileSync(planPath, 'utf8')).hash, ledgerPath: path.join(repo.dir, 'missing-ledger.md') };
@@ -255,7 +308,7 @@ describe('walkthrough evidence restore', () => {
     const oldHash = `sha256:${'a'.repeat(64)}`;
     const state = withEvidence({ governingHash: oldHash, ledgerRunId: runId });
     state.ledgerPath = resolveLedgerPath({ slug: 'sample', slugSource: 'explicit', repositoryRoot: state.repoRoot });
-    ensureLedgerNamespace({ repoHash: state.ledgerPath.split(path.sep).at(-2), env: process.env });
+    ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
     appendEvent(state.ledgerPath, { v: 1, type: 'run-start', runId, at, seq: 1, data: { governingPath: '.scratch/plan/2026-09-22-sample.md', governingHash: oldHash, rootSlug: 'sample', action: 'ordinary', baseline: { commit: 'c'.repeat(40), repositoryState: `sha256:${'b'.repeat(64)}`, dirtyPaths: [] } } });
     cleanup.push(() => fs.rmSync(state.ledgerPath, { force: true }));
     assert.throws(() => restoreEvidence(state), /does not bind this governing plan/);
@@ -299,5 +352,33 @@ describe('durable pending action', () => {
     const state = { stateFile, pending: { action: 'verify' }, walkthroughPath: dir, ordinary: {}, reviewState: null };
     assert.equal(save(state, refusal), refusal);
     assert.deepEqual(JSON.parse(fs.readFileSync(stateFile, 'utf8')).pending, refusal);
+  });
+});
+
+describe('terminal verification retry', () => {
+  it('replays matching terminal evidence after an interrupted completion', async () => {
+    const state = interruptedVerificationState();
+    const before = readLedger(state.ledgerPath).events.filter(event => event.type === 'verification').length;
+
+    assert.equal(await afterImplementationVerification(state), null);
+    assert.equal(state.ordinary.implementationComplete.result, 'pass');
+    assert.equal(state.ordinary.step, 'implemented');
+    assert.equal(readLedger(state.ledgerPath).events.filter(event => event.type === 'verification').length, before);
+  });
+
+  it('rejects an existing terminal record with different command evidence', async () => {
+    const state = interruptedVerificationState({ commandRefs: ['node --test tests/b.test.mjs'] });
+    const before = readLedger(state.ledgerPath).events.length;
+
+    await assert.rejects(afterImplementationVerification(state), /Existing terminal verification does not match/);
+    assert.equal(readLedger(state.ledgerPath).events.length, before);
+  });
+
+  it('rejects replay when a newer verification belongs to another task', async () => {
+    const state = interruptedVerificationState({ laterVerification: true });
+    const before = readLedger(state.ledgerPath).events.length;
+
+    await assert.rejects(afterImplementationVerification(state), /Existing terminal verification does not match/);
+    assert.equal(readLedger(state.ledgerPath).events.length, before);
   });
 });

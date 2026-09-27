@@ -121,7 +121,7 @@ describe('design reference', () => {
   });
 
   it('runs one increment per invocation with amendments and later integration', () => {
-    for (const anchor of [/One invocation runs one ledger-selected increment/, /Amendments/, /Final integration/, /later invocation/, /never relocate the ledger/]) {
+    for (const anchor of [/One invocation runs one ledger-selected increment/, /Amendments/, /Final integration/, /later invocation/, /retain the ledger/, /exact session `artifacts\//]) {
       assert.match(text, anchor);
     }
   });

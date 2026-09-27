@@ -1,11 +1,10 @@
 // @ts-check
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { safeRenameSync } from '../lib/platform.mjs';
-import { dispatchTempRoot, isSessionDir, sessionTempDir, sessionArgs } from '../lib/session-temp.mjs';
+import { isSessionPath, runTempDir, sessionArea, sessionArgs, sessionTempDir } from '../lib/session-temp.mjs';
 import { RESPONSE_SCHEMA_PROVIDERS } from '../dispatch.mjs';
 import {
   scanResolutionLog,
@@ -281,10 +280,7 @@ export function readArtifact(file, expected = {}) {
  */
 export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = null } = {}) {
   const resolved = path.resolve(file);
-  // Cross-session lock: concurrent sessions may checkpoint the same artifact.
-  const locks = path.join(dispatchTempRoot(), 'locks');
-  fs.mkdirSync(locks, { recursive: true, mode: 0o700 });
-  const lock = path.join(locks, `dispatch-metadata-${rawSha256(resolved).slice(7)}.lock`);
+  const lock = path.join(sessionArea('artifacts'), `dispatch-metadata-${rawSha256(resolved).slice(7)}.lock`);
   try {
     fs.mkdirSync(lock, { mode: 0o700 });
   } catch (err) {
@@ -454,7 +450,8 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
 
 /** @param {string} prefix @param {string} filename @param {string} contents */
 export function createTempFile(prefix, filename, contents) {
-  const dir = sessionTempDir(prefix);
+  const area = /prompt|review-view/i.test(prefix) ? 'prompts' : 'tmp';
+  const dir = runTempDir(area, prefix);
   const file = path.join(dir, filename);
   fs.writeFileSync(file, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   return { path: file, cleanupPath: dir };
@@ -530,7 +527,7 @@ function missingInvocationState(resolved) {
     return new Error('invocationContext statePath is invalid.');
   }
   if (
-    !isSessionDir(container) ||
+    !isSessionPath(container) ||
     path.basename(resolved) !== 'state.json' ||
     !/^dispatch-(?:plan|code|design)-invocation-/.test(path.basename(dir))
   ) return new Error('invocationContext statePath is invalid.');
@@ -545,7 +542,6 @@ export function readInvocationState(context) {
   assertObjectKeys(context, ['schemaVersion', 'invocationId', 'statePath', 'generation', 'token'], 'invocationContext');
   if (context.schemaVersion !== 1) throw new Error('Unsupported invocationContext schemaVersion.');
   const resolved = path.resolve(context.statePath);
-  const tempRoot = fs.realpathSync(os.tmpdir());
   // NOTE: lstat-based so a dangling symlink still reaches the symlink rejection below.
   let present = true;
   try {
@@ -555,9 +551,7 @@ export function readInvocationState(context) {
   }
   if (!present) throw missingInvocationState(resolved);
   const parent = fs.realpathSync(path.dirname(resolved));
-  if (parent !== tempRoot && !parent.startsWith(`${tempRoot}${path.sep}`)) {
-    throw new Error('invocationContext statePath must be beneath OS temp.');
-  }
+  if (!isSessionPath(parent)) throw new Error('invocationContext statePath must be inside its bound workflow session.');
   let stat;
   let parentStat;
   try {
