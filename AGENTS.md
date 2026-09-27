@@ -22,9 +22,9 @@ Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, cod
 ## Ask Before You Assume
 
 Clarify requirements, constraints, or trade-offs with multiple viable interpretations before building. State assumptions explicitly; suggest simpler alternatives when available.
+For changes that affect backward compatibility, choose the simpler current behavior and remove legacy support by default; preserve compatibility only when instructed to do so.
 
 **Escalation triggers**:
-- Breaking changes to skill interfaces, shared review schemas, or dependency contracts.
 - Introducing new external dependencies or runtime prerequisites.
 - Suspected user mistake, ambiguous prompt, or contradictory instruction.
 
