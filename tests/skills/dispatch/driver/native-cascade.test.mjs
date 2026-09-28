@@ -212,3 +212,103 @@ describe('early fallback outcome on a multi-model cascade (A-1)', () => {
     assert.equal(run.done.failed?.length ?? 0, 0);
   });
 });
+
+describe('nativeSubagentsOnly review waves', () => {
+  const NATIVE = {
+    'read-delegates': {
+      agy: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-only-a', effort: 'low' } }] },
+      opencode: { targets: [{ low: { model: 'cli-c', effort: 'low' } }] },
+    },
+    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+  };
+  const ALL_NATIVE = {
+    ...NATIVE,
+    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false }, only: ['agy'] } },
+  };
+
+  function nativeScenario(config) {
+    const fixture = fixtureFor(config);
+    const repo = makeGitRepo();
+    cleanup.push(repo.cleanup);
+    return { fixture, repo, plan: writePlan(repo.dir) };
+  }
+
+  function capture(write) {
+    return (action) => ({ earlyFallbacks: (action.nativeLaunches ?? []).flatMap((launch) => {
+      if (!write) return [];
+      fs.writeFileSync(launch.outputPath, write);
+      return [{ slot: launch.slot, outputPath: launch.outputPath, captured: true, actual: {
+        agentType: launch.descriptor.agentType, model: launch.descriptor.model, reasoningEffort: launch.descriptor.reasoningEffort,
+      } }];
+    }) });
+  }
+
+  it('nativeSubagentsOnly mixed wave excludes the slot from argv and emits it as an immediate native launch', () => {
+    const scenario = nativeScenario(NATIVE);
+    const res = runDispatch(scenario.fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'agy', '--', scenario.plan], { cwd: scenario.repo.dir });
+    assert.equal(res.status, 0, res.stderr);
+    const launch = parseAction(res.stdout);
+    assert.equal(launch.action, 'launch');
+    assert.deepEqual(launch.selectedTargets.map((target) => target.platform), ['opencode']);
+    const batch = JSON.parse(fs.readFileSync(launch.argv[launch.argv.indexOf('--batch-file') + 1], 'utf8'));
+    assert.deepEqual([...batch.targets, ...batch.reserves].map((entry) => entry.platform), ['opencode']);
+    assert.deepEqual(launch.nativeLaunches.map((item) => [item.slot, item.descriptor.model]), [['plan-review:R1:agy:0', 'native-only-a']]);
+    assert.ok(launch.guidance.some((line) => /same tool-call round as argv/.test(line)), launch.guidance.join('\n'));
+  });
+
+  it('nativeSubagentsOnly capture is collected as a report without a CLI failure record', () => {
+    const scenario = nativeScenario(NATIVE);
+    const seen = [];
+    const run = drive(scenario.fixture, {
+      cwd: scenario.repo.dir,
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
+      onAction: (action) => { if (action.action === 'native-fallback') seen.push(action.slot); },
+      policy: { launchReply: capture(report([planFinding({ defect: 'native-only defect.' })])) },
+    });
+    assert.deepEqual(seen, []);
+    const adjudicate = run.trace.find((action) => action.action === 'adjudicate');
+    assert.equal(adjudicate?.findings.filter((finding) => /native-only defect/.test(finding.defect)).length, 1);
+  });
+
+  it('nativeSubagentsOnly slot omitted from the reply takes the ordinary native fallback', () => {
+    const scenario = nativeScenario(NATIVE);
+    const seen = [];
+    drive(scenario.fixture, {
+      cwd: scenario.repo.dir,
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
+      onAction: (action) => { if (action.action === 'native-fallback') seen.push(action.slot); },
+      policy: {
+        launchReply: capture(null),
+        nativeFallback: (action) => ({ slot: action.slot, failed: { kind: 'quota', reason: 'Transient.' } }),
+      },
+    });
+    assert.deepEqual(seen, ['plan-review:R1:agy:0']);
+  });
+
+  it('nativeSubagentsOnly all-native wave emits a launch with no argv', () => {
+    const scenario = nativeScenario(ALL_NATIVE);
+    const res = runDispatch(scenario.fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'agy', '--', scenario.plan], { cwd: scenario.repo.dir });
+    assert.equal(res.status, 0, res.stderr);
+    const launch = parseAction(res.stdout);
+    assert.equal(launch.action, 'launch');
+    assert.equal(launch.argv, undefined);
+    assert.deepEqual(launch.selectedTargets, []);
+    assert.deepEqual(launch.nativeLaunches.map((item) => item.slot), ['plan-review:R1:agy:0']);
+    assert.ok(!launch.guidance.some((line) => /argv/.test(line)), launch.guidance.join('\n'));
+    const run = drive(scenario.fixture, {
+      cwd: scenario.repo.dir,
+      runArgs: ['review', '--orchestrator', 'agy', '--', scenario.plan],
+      policy: { launchReply: capture(report([planFinding({ defect: 'all-native defect.' })])) },
+    });
+    assert.equal(run.trace.find((action) => action.action === 'adjudicate')?.findings.filter((finding) => /all-native defect/.test(finding.defect)).length, 1);
+  });
+
+  it('nativeSubagentsOnly mismatched orchestrator skips the platform', () => {
+    const scenario = nativeScenario(NATIVE);
+    const res = runDispatch(scenario.fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', scenario.plan], { cwd: scenario.repo.dir });
+    assert.equal(res.status, 0, res.stderr);
+    const launch = parseAction(res.stdout);
+    assert.deepEqual(launch.selectedTargets.map((target) => target.platform), ['opencode']);
+    assert.equal(launch.nativeLaunches, undefined);
+  });
+});

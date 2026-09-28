@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../lib/config.mjs';
-import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
+import { buildCliPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
 import { createTempFile } from '../review/preparation.mjs';
 import { NATIVE_AGENT_TYPES, emitAction, toError } from './actions.mjs';
 import { createRunState, finish, gitRoot, reemit, runFile, writeRunSidecar } from './state.mjs';
@@ -51,7 +51,7 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
     : [String(Number.isInteger(scalar) && scalar > 0 ? scalar : 1)];
   let wave;
   try {
-    wave = buildPinsWave(resolved, pins, { orchestrator: invocation.orchestrator, orchestratorModel: invocation.orchestratorModel });
+    wave = buildCliPinsWave(resolved, pins, config, { orchestrator: invocation.orchestrator, orchestratorModel: invocation.orchestratorModel });
   } catch (error) {
     return finish(state, emitAction(state, 'done', { outcome: 'failed', summary: error.message, command: resumeCommand },
       ['Report the summary to the user; the run is finished.']));

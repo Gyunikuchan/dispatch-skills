@@ -59,7 +59,7 @@ const DISPATCH_DIR = path.resolve(__dirname, '..', '..');
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'walkthroughPath', 'planPath',
   'slug', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
-  'trailingText', 'reviewScope', 'toolTurnBudget', 'targets', 'reserves',
+  'trailingText', 'reviewScope', 'toolTurnBudget', 'targets', 'nativeTargets', 'reserves',
   'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'range', 'verification', 'invocationContext',
   'settlement', 'settledWrites', 'designPath', 'designRevision', 'incrementId',
@@ -129,8 +129,9 @@ function validateRequest(request) {
   }
   if (request.targets !== undefined) validateTargets(request.targets, request.roundId, 'targets');
   if (request.reserves !== undefined) validateTargets(request.reserves, request.roundId, 'reserves');
-  validateCombinedEntries(request.targets ?? [], request.reserves ?? []);
-  if (action === 'prepare' && request.mode === 'orchestrated' && request.targets?.length === 0) {
+  if (request.nativeTargets !== undefined) validateTargets(request.nativeTargets, request.roundId, 'nativeTargets');
+  validateCombinedEntries([...(request.targets ?? []), ...(request.nativeTargets ?? [])], request.reserves ?? []);
+  if (action === 'prepare' && request.mode === 'orchestrated' && request.targets?.length === 0 && !request.nativeTargets?.length) {
     throw new Error('orchestrated mode requires targets.');
   }
 
@@ -624,15 +625,17 @@ export function prepareCodeReview(request, {
   // A present entry roundId must agree with the resolved round; then every entry (whether it
   // carried one or not) is normalized to the resolved roundId — `loadBatchFile` in dispatch.mjs
   // requires roundId on every batch entry.
-  for (const entry of [...(request.targets ?? []), ...(request.reserves ?? [])]) {
+  for (const entry of [...(request.targets ?? []), ...(request.nativeTargets ?? []), ...(request.reserves ?? [])]) {
     if (entry.roundId !== undefined && entry.roundId !== roundId) {
       throw new Error(`Entry roundId "${entry.roundId}" does not match resolved round ${roundId}.`);
     }
   }
   const targets = (request.targets ?? []).map((entry) => ({ ...entry, roundId }));
   const reserves = (request.reserves ?? []).map((entry) => ({ ...entry, roundId }));
-  if (mode === 'orchestrated' && targets.length === 0) throw new Error('orchestrated mode requires targets.');
-  const keys = mode === 'orchestrated' ? sourceKeys(roundId, targets) : [];
+  // Native-subagents-only targets share the round's prompt and source keys but never enter the CLI batch.
+  const nativeTargets = (request.nativeTargets ?? []).map((entry) => ({ ...entry, roundId }));
+  if (mode === 'orchestrated' && targets.length === 0 && nativeTargets.length === 0) throw new Error('orchestrated mode requires targets.');
+  const keys = mode === 'orchestrated' ? sourceKeys(roundId, [...targets, ...nativeTargets]) : [];
   const snapshot = {
     artifact: artifactSnapshot,
     git: gitSnapshot,
@@ -704,6 +707,6 @@ export function prepareCodeReview(request, {
     advisoryTarget: request.toolTurnBudget ?? 'Unspecified',
     invocationContext: invocation.context,
     promptPath: files.promptPath,
-    dispatch: files.dispatch,
+    dispatch: mode === 'orchestrated' && targets.length === 0 ? null : files.dispatch,
   };
 }

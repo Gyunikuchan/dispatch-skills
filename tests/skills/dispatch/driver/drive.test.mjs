@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { allProviders, implementationOutcome, parseAction, report, runDispatch, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
+import { allProviders, implementationOutcome, makeGitRepo, parseAction, report, runDispatch, writeOutcomeReply, writePlan } from '../../../helpers/driver-harness.mjs';
+import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { ordinaryDriverPolicy, cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
 import { loadSchema, validateAgainstSchema } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
@@ -234,5 +235,31 @@ describe('settled plan at implement start', () => {
     fs.writeFileSync(fx.plan, fs.readFileSync(fx.plan, 'utf8').replace('- First.', '- First, edited.'));
     const edited = step(fx, ['--run', 'implement', '--orchestrator', 'claude', '--', fx.plan]).action;
     assert.equal(edited.action, 'launch', 'changed content is reviewed again');
+  });
+});
+
+describe('--drive with native-subagents-only launches', () => {
+  it('nativeSubagentsOnly all-native launch is handed to the host instead of run', () => {
+    const fixture = createStubDispatchFixture({
+      'read-delegates': { agy: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-only-a', effort: 'low' } }] } },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
+    });
+    const repo = makeGitRepo();
+    try {
+      const plan = writePlan(repo.dir);
+      const first = runDispatch(fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'agy', '--', plan], { cwd: repo.dir });
+      assert.equal(first.status, 0, first.stderr);
+      const launch = parseAction(first.stdout);
+      const res = runDispatch(fixture, ['--drive', '--state', launch.stateFile], { cwd: repo.dir });
+      assert.equal(res.status, 0, res.stderr);
+      const stop = parseAction(res.stdout);
+      assert.equal(stop.action, 'launch');
+      assert.equal(stop.argv, undefined);
+      assert.equal(stop.nativeLaunches.length, 1);
+      assert.doesNotMatch(res.stderr, /[dispatch drive] launch/);
+    } finally {
+      repo.cleanup();
+      fixture.cleanup();
+    }
   });
 });

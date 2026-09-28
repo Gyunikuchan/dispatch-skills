@@ -42,6 +42,10 @@
     // Multiple targets under one provider are separate voices, not fallback models.
     "copilot": {
       "sandbox": true,
+      // Optional; defaults to false. true never runs this provider's CLI: when the orchestrator
+      // is this platform, its native subagents serve these targets alongside the CLI wave;
+      // otherwise the targets are skipped.
+      "nativeSubagentsOnly": true,
       "targets": [
         {
           "low": { "model": "grok-4.7", "effort": "medium" },

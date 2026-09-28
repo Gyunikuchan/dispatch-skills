@@ -3,7 +3,7 @@
  * Unified dispatch config: schema validation and level resolution.
  *
  * One config (`config.local.jsonc`, else `config.jsonc`) holds three tables:
- * - `read-delegates`  provider → `{ sandbox?, targets: [levelMap, ...] }` (required)
+ * - `read-delegates`  provider → `{ sandbox?, nativeSubagentsOnly?, targets: [levelMap, ...] }` (required)
  * - `write-subagents` provider → level map (optional)
  * - `phases`          review phase → `targets`/`rounds`/`consensus` level maps + `only` (optional)
  *
@@ -142,6 +142,31 @@ export function resolveTargets(wrapper, level, canonical) {
 }
 
 /**
+ * Canonical read-delegate keys whose CLI is never dispatched; only the orchestrator's native
+ * subagents can serve them. Absent means `false`.
+ *
+ * @param {Record<string, any>} config
+ * @returns {Set<string>}
+ */
+export function nativeSubagentsOnlyPlatforms(config) {
+  return new Set(Object.entries(config?.['read-delegates'] ?? {})
+    .filter(([, wrapper]) => wrapper?.nativeSubagentsOnly === true)
+    .map(([key]) => normalizeProviderKey(key)));
+}
+
+/**
+ * Drops native-subagents-only platforms from level-resolved read delegates, for CLI-only waves.
+ *
+ * @param {{ platforms: Record<string, Record<string, any>[]> }} resolved
+ * @param {Record<string, any>} config
+ * @returns {{ platforms: Record<string, Record<string, any>[]> }}
+ */
+export function omitNativeSubagentsOnly(resolved, config) {
+  const nativeOnly = nativeSubagentsOnlyPlatforms(config);
+  return { platforms: Object.fromEntries(Object.entries(resolved.platforms).filter(([key]) => !nativeOnly.has(key))) };
+}
+
+/**
  * Level-resolved read delegates, canonical keys in config order.
  *
  * @param {Record<string, any>} config
@@ -242,16 +267,20 @@ function validateLevelMap(where, value, problems) {
   }
 }
 
-/** Validates one read-provider wrapper `{ sandbox?, targets }`, including duplicate targets. */
+/** Validates one read-provider wrapper `{ sandbox?, nativeSubagentsOnly?, targets }`, including duplicate targets. */
 function validateReadProvider(where, value, canonical, problems) {
   const supportsSandbox = SANDBOX_SUPPORTED_PROVIDERS.includes(canonical);
-  const validKeys = supportsSandbox ? 'sandbox, targets' : 'targets';
+  const validKeys = supportsSandbox ? 'sandbox, nativeSubagentsOnly, targets' : 'nativeSubagentsOnly, targets';
   if (!isPlainObject(value)) {
     problems.push(`${where} must be an object with keys ${validKeys} (${DIFF_HINT}).`);
     return;
   }
   for (const [key, field] of Object.entries(value)) {
     if (key === 'targets') continue;
+    if (key === 'nativeSubagentsOnly') {
+      if (typeof field !== 'boolean') problems.push(`${where}.nativeSubagentsOnly must be a boolean (${DIFF_HINT}).`);
+      continue;
+    }
     if (key === 'sandbox' && !supportsSandbox) {
       problems.push(`${where}.sandbox is not supported for ${canonical}; remove it (${DIFF_HINT}).`);
     } else if (key === 'sandbox') {
@@ -272,6 +301,13 @@ function validateReadProvider(where, value, canonical, problems) {
     const key = canonicalJson(target);
     if (seen.has(key)) problems.push(`${where}.targets[${j}] duplicates targets[${seen.get(key)}] (${DIFF_HINT}).`);
     else seen.set(key, j);
+    // A native subagent launch needs an explicit reasoning effort; there is no CLI default to fall back on.
+    if (value.nativeSubagentsOnly !== true) return;
+    for (const [level, entry] of Object.entries(target)) {
+      if (LEVELS.includes(level) && isPlainObject(entry) && entry.effort === undefined) {
+        problems.push(`${where}.targets[${j}].${level}.effort is required when nativeSubagentsOnly is true (${DIFF_HINT}).`);
+      }
+    }
   });
 }
 

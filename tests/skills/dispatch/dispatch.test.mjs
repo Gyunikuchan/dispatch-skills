@@ -8,6 +8,7 @@ import { describe, it, before, after, afterEach, mock } from 'node:test';
 import {
   resolveProvider as resolveProviderImpl,
   getCandidateProviders as getCandidateProvidersImpl,
+  buildCliPinsWave,
   dispatchBatch,
   dispatchTask as dispatchTaskImpl,
   loadBatchFile,
@@ -370,6 +371,41 @@ describe('orchestrator detection and provider resolution', () => {
 
       const candidates = await getCandidateProviders();
       assert.deepEqual(candidates, ['claude', 'agy', 'copilot', 'opencode']);
+    });
+
+    it('nativeSubagentsOnly providers are skipped as CLI candidates and never probed', async () => {
+      clearOrchestratorEnv();
+      process.env.CLAUDE_CODE = '1';
+      const probed = [];
+      for (const [name, probe] of [['claude', 'isClaudeAvailable'], ['agy', 'isAgyAvailable'], ['copilot', 'isCopilotAvailable'], ['opencode', 'isOpencodeAvailable']]) {
+        mock.method(providerProbes, probe, async () => { probed.push(name); return true; });
+      }
+      const config = structuredClone(TEST_DISPATCH_CONFIG);
+      config['read-delegates'].copilot.nativeSubagentsOnly = true;
+      const candidates = await getCandidateProviders({ config });
+      assert.deepEqual(candidates, ['agy', 'opencode', 'claude']);
+      assert.ok(!probed.includes('copilot'));
+      await assert.rejects(
+        getCandidateProviders({ config, explicitProvider: 'copilot' }),
+        (error) => error.code === 'PLATFORM_NATIVE_ONLY' && /Provider "copilot" is native-only; use its native subagent\./.test(error.message),
+      );
+    });
+
+    it('nativeSubagentsOnly host with no other ready provider yields native-fallback guidance', async () => {
+      clearOrchestratorEnv();
+      for (const probe of ['isClaudeAvailable', 'isAgyAvailable', 'isCopilotAvailable', 'isOpencodeAvailable']) {
+        mock.method(providerProbes, probe, async () => probe === 'isCopilotAvailable');
+      }
+      const config = structuredClone(TEST_DISPATCH_CONFIG);
+      config['read-delegates'].copilot.nativeSubagentsOnly = true;
+      await assert.rejects(
+        dispatchTask({ prompt: 'Test task', orchestrator: 'copilot', config }),
+        (error) => {
+          assert.equal(error.code, 'NO_DISPATCH_AVAILABLE');
+          assert.match(error.message, /copilot's own native subagent/);
+          return true;
+        },
+      );
     });
 
     it('returns ordered candidates for fallback passes appending orchestrator last', async () => {
@@ -1977,5 +2013,35 @@ describe('strict config targets and sandbox', () => {
       });
     }
     assert.deepEqual(runner.mock.calls.map(c => c.arguments[0].sandbox), [true, true, false]);
+  });
+});
+
+describe('nativeSubagentsOnly CLI pins wave', () => {
+  const T = (model) => ({ low: { model, effort: 'low' } });
+  const config = { 'read-delegates': {
+    agy: { nativeSubagentsOnly: true, targets: [T('g')] },
+    copilot: { nativeSubagentsOnly: true, targets: [T('c')] },
+    opencode: { targets: [T('o')] },
+  } };
+  const wave = (pins, cfg = config) => buildCliPinsWave(resolveReadDelegates(cfg, 'low'), pins, cfg);
+  const names = (w) => w.targets.map((t) => t.platform);
+
+  it('nativeSubagentsOnly named pins drop flagged platforms, including aliases and case', () => {
+    assert.deepEqual(names(wave(['agy', 'opencode'])), ['opencode']);
+    assert.deepEqual(names(wave(['antigravity', 'COPILOT', 'opencode'])), ['opencode']);
+    assert.throws(() => wave(['COPILOT']), /All pinned platforms are native-subagents-only: COPILOT/);
+  });
+
+  it('nativeSubagentsOnly count and all pins pass through and still reject mixed forms', () => {
+    assert.deepEqual(names(wave(['all'])), ['opencode']);
+    assert.deepEqual(names(wave(['1'])), ['opencode']);
+    assert.throws(() => wave(['all', 'copilot']), /must stand alone/);
+    assert.throws(() => wave(['1', 'copilot']), /must stand alone/);
+  });
+
+  it('nativeSubagentsOnly empty CLI wave throws', () => {
+    const allFlagged = structuredClone(config);
+    allFlagged['read-delegates'].opencode.nativeSubagentsOnly = true;
+    assert.throws(() => wave(['all'], allFlagged), /No CLI read delegate remains/);
   });
 });

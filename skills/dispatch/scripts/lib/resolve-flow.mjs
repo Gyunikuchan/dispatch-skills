@@ -18,6 +18,7 @@ import {
 import {
   CONFIGURABLE_PHASES,
   LEVELS,
+  nativeSubagentsOnlyPlatforms,
   phaseMembers,
   policyPhase,
   resolveLevelEntry,
@@ -220,7 +221,9 @@ export function probeCandidates(opts, config) {
   const keys = count === undefined && pins.length > 0 && !pins.includes('all')
     ? [...configured].filter((key) => pins.includes(key) || key === platform)
     : [...configured];
-  return keys.filter((key) => !excluded.has(key));
+  // Native-subagents-only platforms never run their CLI, so probing them is pure latency.
+  const nativeOnly = nativeSubagentsOnlyPlatforms(config);
+  return keys.filter((key) => !excluded.has(key) && !nativeOnly.has(key));
 }
 
 /**
@@ -338,6 +341,11 @@ export function resolveFlow(options, liveness, config) {
   const rawLiveness = liveness;
   liveness = { ...rawLiveness };
   for (const k of excluded) liveness[k] = false;
+  // A native-subagents-only platform is live only as the orchestrator's own native subagents;
+  // on any other orchestrator it is unusable, like an excluded platform.
+  const nativeOnly = nativeSubagentsOnlyPlatforms(config);
+  const unusable = new Set([...excluded, ...[...nativeOnly].filter((key) => key !== platform)]);
+  for (const k of nativeOnly) liveness[k] = k === platform;
 
   const clamped = {};
   const droppedPins = {};
@@ -356,12 +364,13 @@ export function resolveFlow(options, liveness, config) {
         const target = { candidateId: `${phase}:${key}:${candidateIndex}`, platform: key };
         if (candidate.model !== undefined) target.model = candidate.model;
         if (candidate.effort !== undefined) target.effort = candidate.effort;
+        if (nativeOnly.has(key)) target.nativeSubagentsOnly = true;
         return target;
       }));
 
     if (namedPins.length > 0) {
       const validPins = namedPins.filter(p => members.includes(p));
-      const eligiblePins = validPins.filter(p => !excluded.includes(p));
+      const eligiblePins = validPins.filter(p => !unusable.has(p));
       if (validPins.length > 0 && eligiblePins.length === 0) {
         throw new Error(`All pinned platforms excluded: ${validPins.join(', ')}`);
       }
@@ -375,7 +384,7 @@ export function resolveFlow(options, liveness, config) {
     // Explicit count/all uses every configured candidate. Unpinned selection keeps its liveness
     // filter and diversity ordering so a narrow configured `targets` prefers distinct platforms.
     const eligibleCandidates = configuredCandidates.filter((candidate) =>
-      !excluded.includes(candidate.platform) &&
+      !unusable.has(candidate.platform) &&
       (hasExplicitBreadth || liveness[candidate.platform] === true));
 
     const orderedCandidates = demoteOrchestratorTargets(
@@ -435,11 +444,12 @@ export function resolveFlow(options, liveness, config) {
     'code-review': buildReviewPhase('code-review'),
   };
 
-  const unavailable = Object.keys(readDelegates).filter(k => rawLiveness[k] !== true && !excluded.includes(k)).sort();
+  const unavailable = Object.keys(readDelegates).filter(k => rawLiveness[k] !== true && !excluded.includes(k) && !nativeOnly.has(k)).sort();
   flow.diagnostics = {
     effectiveLevel: level,
     unavailable,
     excluded,
+    nativeSubagentsOnly: [...nativeOnly].sort(),
     droppedPins,
     clamped,
     targetCountPin: isAllPin ? 'all' : count ?? null,

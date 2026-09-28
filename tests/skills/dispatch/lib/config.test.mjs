@@ -15,6 +15,8 @@ import * as common from '../../../../skills/dispatch/scripts/lib/platform.mjs';
 import {
   LEVELS,
   loadDispatchConfig,
+  nativeSubagentsOnlyPlatforms,
+  omitNativeSubagentsOnly,
   phaseMembers,
   resolveLevelEntry,
   resolveLevelScalar,
@@ -491,9 +493,9 @@ describe('strict config format', () => {
   const one = (provider, value) => ({ 'read-delegates': { [provider]: value } });
   const withWrite = entry => ({ 'read-delegates': { claude: { targets: [{ low: T('a') }] } }, 'write-subagents': { claude: entry } });
   const REJECTIONS = [
-    ['a bare candidate under a read provider', one('claude', { model: 'a', effort: 'low' }), 'read-delegates.claude', /^read-delegates\.claude has unrecognized key "model"\. Valid keys: sandbox, targets/, false],
+    ['a bare candidate under a read provider', one('claude', { model: 'a', effort: 'low' }), 'read-delegates.claude', /^read-delegates\.claude has unrecognized key "model"\. Valid keys: sandbox, nativeSubagentsOnly, targets/, false],
     ['a bare candidate array under a read provider', one('claude', [{ model: 'a', effort: 'low' }]), 'read-delegates.claude', /^read-delegates\.claude must be an object\b/, true],
-    ['an unknown wrapper key', one('claude', { targets: [{ low: T('a') }], extra: 1 }), 'read-delegates.claude', /unrecognized key "extra"\. Valid keys: sandbox, targets/, true],
+    ['an unknown wrapper key', one('claude', { targets: [{ low: T('a') }], extra: 1 }), 'read-delegates.claude', /unrecognized key "extra"\. Valid keys: sandbox, nativeSubagentsOnly, targets/, true],
     ['an empty targets array', one('claude', { targets: [] }), 'read-delegates.claude.targets', /(non-empty|at least one)/, true],
     ['a non-level key in a target', one('claude', { targets: [{ low: T('a'), model: 'a' }] }), 'read-delegates.claude.targets[0]', /unrecognized key "model"/, true],
     ['a misplaced sandbox in a target', one('claude', { targets: [{ low: T('a'), sandbox: true }] }), 'read-delegates.claude.targets[0]', /unrecognized key "sandbox"/, true],
@@ -529,6 +531,34 @@ describe('strict config format', () => {
     });
   }
 
+  it('nativeSubagentsOnly accepts a boolean and rejects any other value', () => {
+    assert.deepEqual(validateConfig(one('copilot', { nativeSubagentsOnly: true, targets: [{ low: T('a', 'low') }] })), []);
+    assert.deepEqual(validateConfig(one('agy', { nativeSubagentsOnly: false, targets: [{ low: T('a') }] })), []);
+    const problems = validateConfig(one('copilot', { nativeSubagentsOnly: 'yes', targets: [{ low: T('a', 'low') }] }));
+    assert.deepEqual(problems, ['read-delegates.copilot.nativeSubagentsOnly must be a boolean (diff against config.sample.jsonc).']);
+  });
+
+  it('nativeSubagentsOnly effort check ignores non-level keys', () => {
+    const problems = validateConfig(one('copilot', { nativeSubagentsOnly: true, targets: [{ low: T('a', 'low'), hgih: T('b') }] }));
+    assert.equal(problems.length, 1, problems.join('\n'));
+    assert.match(problems[0], /hgih/);
+  });
+
+  it('nativeSubagentsOnly requires effort on every level of every target', () => {
+    const problems = validateConfig(one('copilot', { nativeSubagentsOnly: true, targets: [{ low: T('a', 'low'), high: T('b') }] }));
+    assert.deepEqual(problems, ['read-delegates.copilot.targets[0].high.effort is required when nativeSubagentsOnly is true (diff against config.sample.jsonc).']);
+  });
+
+  it('nativeSubagentsOnly defaults to false: absent keeps every platform and resolves unchanged', () => {
+    assert.deepEqual([...nativeSubagentsOnlyPlatforms(STRICT)], []);
+    const flagged = structuredClone(STRICT);
+    flagged['read-delegates'].copilot.nativeSubagentsOnly = true;
+    assert.deepEqual([...nativeSubagentsOnlyPlatforms(flagged)], ['copilot']);
+    assert.deepEqual(resolveReadDelegates(flagged, 'medium'), resolveReadDelegates(STRICT, 'medium'));
+    assert.deepEqual(Object.keys(omitNativeSubagentsOnly(resolveReadDelegates(flagged, 'medium'), flagged).platforms), ['claude', 'agy', 'opencode']);
+    assert.deepEqual(omitNativeSubagentsOnly(resolveReadDelegates(STRICT, 'medium'), STRICT), resolveReadDelegates(STRICT, 'medium'));
+  });
+
   it('SC1 keeps [A,B] and [B,A] alias orders as distinct targets', () => {
     assert.deepEqual(validateConfig(one('claude', { targets: [{ low: T(['a', 'b']) }, { low: T(['b', 'a']) }] })), []);
   });
@@ -540,7 +570,7 @@ describe('strict config format', () => {
     } });
     const text = problems.join('\n');
     const expected = [
-      [/^read-delegates\.claude has unrecognized key "extra"\. Valid keys: sandbox, targets/, 'claude extra'],
+      [/^read-delegates\.claude has unrecognized key "extra"\. Valid keys: sandbox, nativeSubagentsOnly, targets/, 'claude extra'],
       [/^read-delegates\.claude\.targets\[0\]\.low\b[^\n]*\bmodel\b/, 'claude missing model'],
       [/^read-delegates\.claude\.targets\[0\]\.low\.effort must be/, 'claude null effort'],
       [/^read-delegates\.agy\b[^\n]*sandbox/, 'agy sandbox'],

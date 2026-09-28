@@ -25,7 +25,8 @@ const elapsed = (start) => {
 function mechanical(action) {
   // Errors need the host before work resumes, except a state-kind launch re-emit (missing wave envelope), whose recovery is the relaunch.
   if (action.error && !(action.action === 'launch' && action.error.kind === 'state')) return false;
-  if (action.action === 'launch') return !action.replyOnly && !action.earlyFallbacks?.length;
+  // Host-launched native subagents (early fallbacks, native-subagents-only launches) need the host.
+  if (action.action === 'launch') return Array.isArray(action.argv) && !action.replyOnly && !action.earlyFallbacks?.length && !action.nativeLaunches?.length;
   return action.action === 'verify' && Array.isArray(action.argv);
 }
 

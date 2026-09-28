@@ -57,6 +57,22 @@ describe('dispatch doctor report', () => {
   });
 });
 
+describe('nativeSubagentsOnly doctor report', () => {
+  it('nativeSubagentsOnly platforms report native-only (skipped) without probing', async () => {
+    const probed = [];
+    for (const [name, provider] of [['isClaudeAvailable', 'claude'], ['isAgyAvailable', 'agy'], ['isCopilotAvailable', 'copilot'], ['isOpencodeAvailable', 'opencode']]) {
+      mock.method(providerProbes, name, async () => { probed.push(provider); return true; });
+    }
+    const config = structuredClone(CONFIG);
+    config['read-delegates'].copilot = { nativeSubagentsOnly: true, targets: [{ low: { model: 'gpt-5.6-luna', effort: 'max' } }] };
+    const report = await buildDoctorReport(config, '/tmp/config.jsonc', { orchestrator: 'copilot' });
+    assert.ok(!probed.includes('copilot'));
+    const text = formatDoctorReport(report);
+    assert.match(text, /^  copilot: native-only \(skipped\)$/m);
+    assert.doesNotMatch(text, /copilot: unreachable/);
+  });
+});
+
 describe('level and phase resolution', () => {
   it('reports level, source, level-resolved candidates, all three review phases, and the orchestrator write subagent', async () => {
     mockProbes();

@@ -276,6 +276,7 @@ async function resolvePolicy(config, levelInfo, invocation) {
       candidateIndex: index,
       ...(target.model ? { model: target.model } : {}),
       ...(target.effort ? { effort: target.effort } : {}),
+      ...(target.nativeSubagentsOnly ? { nativeSubagentsOnly: true } : {}),
     };
   };
   return {
@@ -291,11 +292,15 @@ async function resolvePolicy(config, levelInfo, invocation) {
 
 function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], packetPath = null, keys = [], retryNote = null }) {
   const dispatchEntry = ({ candidateId, platform, candidateIndex }) => ({ candidateId, platform, candidateIndex });
+  // Native-subagents-only targets never enter the CLI batch, and never serve as its reserves.
+  const native = targets.filter((target) => isNativeSubagentsOnly(state, target));
+  /** @type {Record<string, any>} */
   const request = {
     mode: 'orchestrated',
     orchestrator: state.invocation.orchestrator,
-    targets: targets.map(dispatchEntry),
-    reserves: reserves.map(dispatchEntry),
+    targets: targets.filter((target) => !native.includes(target)).map(dispatchEntry),
+    reserves: reserves.filter((target) => !isNativeSubagentsOnly(state, target)).map(dispatchEntry),
+    ...(native.length ? { nativeTargets: native.map(dispatchEntry) } : {}),
   };
   if (state.invocation.orchestratorModel) request.orchestratorModel = state.invocation.orchestratorModel;
   if (state.invocationContext) request.invocationContext = state.invocationContext;
@@ -308,6 +313,31 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
     request.artifactPath = state.artifactPath ?? state.target.artifactPath;
   }
   return request;
+}
+
+/** Whether a wave target resolves to a native-subagents-only policy candidate. */
+function isNativeSubagentsOnly(state, target) {
+  return [...state.policy.targets, ...state.policy.reserves]
+    .some((entry) => entry.platform === target.platform && entry.candidateIndex === target.candidateIndex && entry.nativeSubagentsOnly);
+}
+
+/** Native subagent launch descriptor shared by early fallbacks and native-subagents-only launches. */
+function nativeLaunch(target, sourceKey, promptPath, outputPath) {
+  const modelCascade = Array.isArray(target.model) ? target.model : [target.model];
+  return {
+    slot: sourceKey,
+    promptPath,
+    outputPath,
+    descriptor: {
+      sourceKey,
+      agentType: NATIVE_AGENT_TYPES[target.platform] ?? 'explore',
+      model: modelCascade[0],
+      reasoningEffort: target.effort,
+      substitutesFor: null,
+      cascadePosition: 0,
+      modelCascade,
+    },
+  };
 }
 
 function prepareCheckpointOnly(state) {
@@ -394,40 +424,30 @@ function prepareWave(state, type, rebuttal = null) {
       .find((entry) => entry.platform === target.platform && entry.candidateIndex === target.candidateIndex);
     return { ...configured, ...target };
   });
-  const selectedTargets = waveTargets.map((target) => ({
+  const nativeTargets = waveTargets.filter((target) => isNativeSubagentsOnly(state, target));
+  const cliTargets = waveTargets.filter((target) => !nativeTargets.includes(target));
+  const selectedTargets = cliTargets.map((target) => ({
     sourceKey: `${manifest.roundId}:${target.platform}:${target.candidateIndex}`,
     platform: target.platform, candidateIndex: target.candidateIndex,
   }));
-  const earlyFallbacks = waveTargets
+  const sourceKeyOf = (target) => `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
+  const earlyFallbacks = cliTargets
     .filter((target) => target.platform === state.invocation.orchestrator && target.model && target.effort)
-    .map((target, index) => {
-      const sourceKey = `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
-      const modelCascade = Array.isArray(target.model) ? target.model : [target.model];
-      return {
-        slot: sourceKey,
-        promptPath: manifest.promptPath,
-        outputPath: runFile(state, `early-fallback-${index + 1}.txt`),
-        descriptor: {
-          sourceKey,
-          agentType: NATIVE_AGENT_TYPES[target.platform] ?? 'explore',
-          model: modelCascade[0],
-          reasoningEffort: target.effort,
-          substitutesFor: null,
-          cascadePosition: 0,
-          modelCascade,
-        },
-      };
-    });
-  if (selectedTargets.length === 0) return done(state, 'failed', 'No selected target is available for this review wave.');
-  const slotsPath = runFile(state, 'slots.jsonl');
+    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, `early-fallback-${index + 1}.txt`)));
+  // Resolution drops a native-subagents-only target unless the orchestrator shares its platform.
+  const nativeLaunches = nativeTargets
+    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, `native-${index + 1}.txt`)));
+  if (selectedTargets.length === 0 && nativeLaunches.length === 0) return done(state, 'failed', 'No selected target is available for this review wave.');
+  const slotsPath = selectedTargets.length ? runFile(state, 'slots.jsonl') : null;
   state.wave = {
     type,
     round,
-    argv: [...manifest.dispatch.argv, '--level', state.level, '--slots-file', slotsPath],
-    outputPath: manifest.dispatch.outputPath,
+    argv: manifest.dispatch ? [...manifest.dispatch.argv, '--level', state.level, '--slots-file', slotsPath] : null,
+    outputPath: manifest.dispatch?.outputPath ?? null,
     promptPath: manifest.promptPath,
     slotsPath,
     earlyFallbacks,
+    nativeLaunches,
     selectedTargets,
     retried: false,
     keys: rebuttal?.keys ?? null,
@@ -447,31 +467,37 @@ function launchReplyAction(state, error) {
 }
 
 function launchAction(state, error) {
-  const guidance = state.wave.earlyFallbacks.length > 0
+  const early = state.wave.earlyFallbacks.length > 0;
+  const native = (state.wave.nativeLaunches ?? []).length > 0;
+  const guidance = early || native
     ? [
-      'Run argv as one background command. Once, run `node dispatch.mjs --slots <slotsPath>` after launch and inspect the failed slots it prints; do not poll again.',
-      'For every failed slot matching earlyFallbacks, immediately launch its native fallback in one parallel tool-call round while the wave continues.',
+      ...(early ? ['Run argv as one background command. Once, run `node dispatch.mjs --slots <slotsPath>` after launch and inspect the failed slots it prints; do not poll again.']
+        : state.wave.argv ? ['Run argv as one background command.'] : []),
+      ...(native ? [`${state.wave.argv ? 'In the same tool-call round as argv, launch' : 'Launch'} every nativeLaunches entry as a read-only native subagent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; tell it to Read promptPath in full and follow it, and write its final reply verbatim to outputPath.`] : []),
+      ...(early ? ['For every failed slot matching earlyFallbacks, immediately launch its native fallback in one parallel tool-call round while the wave continues.'] : []),
       'Return only successful non-empty captures with exact descriptor metadata. Omit an unproductive launch so ordinary post-wave fallback can retry it.',
-      'After the wave and launched fallbacks finish, call --next once with {"earlyFallbacks":[...]} (empty when none succeeded).',
+      `After ${state.wave.argv ? 'the wave and ' : ''}launched subagents finish, call --next once with {"earlyFallbacks":[...]} covering ${[early && 'earlyFallbacks', native && 'nativeLaunches'].filter(Boolean).join(' and ')} (empty when none succeeded).`,
     ]
     : ['Run argv as one background command, wait for it to exit, then call --next with no --input.'];
   if (state.wave.type === 'rebuttal') {
     guidance.push('Delegates answer each key: CONFIRM accepts the rejection, REBUT keeps the finding live, INTENT-DISPUTE records a dispute.');
   }
   return emitAction(state, 'launch', {
-    argv: state.wave.argv,
+    ...(state.wave.argv ? { argv: state.wave.argv } : {}),
     wave: { type: state.wave.type, round: state.wave.round },
     selectedTargets: state.wave.selectedTargets,
     ...(state.wave.slotsPath ? { slotsPath: state.wave.slotsPath } : {}),
     ...(state.wave.keys ? { keys: state.wave.keys } : {}),
     ...(state.wave.earlyFallbacks.length > 0 ? { earlyFallbacks: state.wave.earlyFallbacks } : {}),
+    ...(state.wave.nativeLaunches?.length ? { nativeLaunches: state.wave.nativeLaunches } : {}),
     ...(error ? { error: toError(error) } : {}),
   }, guidance);
 }
 
 function onLaunch(state, reply) {
-  let envelope = null;
-  try {
+  // An all-native wave runs no CLI, so its envelope is empty by construction.
+  let envelope = state.wave.argv ? null : { targets: [], failures: [] };
+  if (state.wave.argv) try {
     const text = fs.readFileSync(state.wave.outputPath, 'utf8');
     envelope = text.trim() ? JSON.parse(text) : null;
   } catch {
@@ -512,8 +538,10 @@ function onLaunch(state, reply) {
   const rejectedEarly = new Map();
   if (earlyBySlot.size !== (reply?.earlyFallbacks ?? []).length) return launchReplyAction(state, 'Early fallback slots must be unique.');
   for (const [slot, fallback] of earlyBySlot) {
-    const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === slot);
-    if (!planned || !failuresBySlot.has(slot) || fallback.outputPath !== planned.outputPath ||
+    const planned = plannedLaunch(state, slot);
+    // A native-subagents-only slot never ran its CLI, so it has no failure record to match.
+    const isNative = (state.wave.nativeLaunches ?? []).includes(planned);
+    if (!planned || (!isNative && !failuresBySlot.has(slot)) || fallback.outputPath !== planned.outputPath ||
       !fallback.actual || fallback.actual.agentType !== planned.descriptor.agentType || fallback.actual.reasoningEffort !== planned.descriptor.reasoningEffort) {
       return launchReplyAction(state, `Early fallback metadata or failed-slot identity does not match the descriptor for ${slot}.`);
     }
@@ -554,8 +582,8 @@ function onLaunch(state, reply) {
   };
   // An unavailable mapping consumes its native hop; an empty early capture retries normally.
   for (const sourceKey of earlyFailed) {
-    const planned = state.wave.earlyFallbacks.find((candidate) => candidate.slot === sourceKey);
-    const failure = failuresBySlot.get(sourceKey);
+    const planned = plannedLaunch(state, sourceKey);
+    const failure = failuresBySlot.get(sourceKey) ?? nativeFailure(planned);
     const earlyCapture = earlyBySlot.get(sourceKey);
     if (!earlyCapture.text.trim() && !rejectedEarly.has(sourceKey)) recordAttempt(state, sourceKey, planned.descriptor, earlyCapture.actual.model, 'empty-capture');
     const position = rejectedEarly.has(sourceKey) ? 1 : 0;
@@ -565,12 +593,16 @@ function onLaunch(state, reply) {
       state.collect.queue.push(cascadeSlot(state, failure, position));
     }
   }
+  // A native-subagents-only slot omitted from the reply takes the ordinary post-wave fallback.
+  for (const launch of state.wave.nativeLaunches ?? []) {
+    if (!earlyBySlot.has(launch.slot)) state.collect.queue.push(cascadeSlot(state, nativeFailure(launch), 0));
+  }
   for (const [sourceKey, fallback] of earlySucceeded) {
     const failure = (envelope.failures ?? []).find((candidate) => candidate.sourceKey === sourceKey);
     state.collect.sourceMap[sourceKey] = {
       provider: failure?.platform ?? state.invocation.orchestrator,
       candidateIndex: failure?.candidateIndex ?? Number(sourceKey.split(':').at(-1)),
-      model: state.wave.earlyFallbacks.find((item) => item.slot === sourceKey).descriptor.model,
+      model: plannedLaunch(state, sourceKey).descriptor.model,
       launcherModel: fallback.actual.model,
       effort: fallback.actual.reasoningEffort,
       status: 'fallback',
@@ -579,9 +611,20 @@ function onLaunch(state, reply) {
     };
   }
   for (const [sourceKey, fallback] of earlySucceeded) {
-    recordAttempt(state, sourceKey, state.wave.earlyFallbacks.find((item) => item.slot === sourceKey).descriptor, fallback.actual.model, null);
+    recordAttempt(state, sourceKey, plannedLaunch(state, sourceKey).descriptor, fallback.actual.model, null);
   }
   return processCollected(state);
+}
+
+/** The early-fallback or native-subagents-only launch planned for `slot`. */
+function plannedLaunch(state, slot) {
+  return [...state.wave.earlyFallbacks, ...(state.wave.nativeLaunches ?? [])].find((candidate) => candidate.slot === slot);
+}
+
+/** A synthetic failure record that lets a native-subagents-only slot enter the fallback cascade. */
+function nativeFailure(launch) {
+  const [, platform, index] = launch.slot.split(':').slice(-3);
+  return { sourceKey: launch.slot, platform, candidateIndex: Number(index) };
 }
 
 function recordAttempt(state, sourceKey, descriptor, launcherModel, kind) {

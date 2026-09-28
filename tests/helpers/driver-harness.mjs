@@ -495,13 +495,14 @@ export function drive(fixture, {
     let input;
     switch (action.action) {
       case 'launch': {
-        assert.ok(isDispatchArgv(action.argv), `launch argv must be a dispatch.mjs invocation: ${JSON.stringify(action.argv)}`);
-        if (!action.replyOnly && !policy.skipLaunch(action, ctx)) {
+        // An all-native wave (every target native-subagents-only) carries no argv.
+        if (action.argv) assert.ok(isDispatchArgv(action.argv), `launch argv must be a dispatch.mjs invocation: ${JSON.stringify(action.argv)}`);
+        if (action.argv && !action.replyOnly && !policy.skipLaunch(action, ctx)) {
           argvLog.push(action.argv);
           const res = runLaunch(fixture, action.argv, { cwd, results: policy.waveResults(action, ctx) });
           ctx.lastLaunch = res;
         }
-        input = action.earlyFallbacks ? policy.launchReply(action, ctx) ?? { earlyFallbacks: [] } : undefined;
+        input = action.earlyFallbacks || action.nativeLaunches ? policy.launchReply(action, ctx) ?? { earlyFallbacks: [] } : undefined;
         break;
       }
       case 'adjudicate':

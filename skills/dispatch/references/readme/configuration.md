@@ -48,6 +48,17 @@ Use model identifiers accepted by the installed provider CLI. For fallback *with
 voice, set `model` to an ordered array such as `["preferred-model", "fallback-alias"]`.
 Dispatch tries the next alias when one fails; aliases are not additional review voices.
 
+### Native subagents only
+
+Set `"nativeSubagentsOnly": true` beside `targets` when a provider's CLI is unusable but its native
+subagents still work (for example, a disabled Copilot CLI). It defaults to `false`. Dispatch never
+runs or probes that provider's CLI, and `--doctor` reports it as `native-only (skipped)`:
+
+- When the orchestrator runs on that platform, review waves start its targets as native subagents
+  alongside the CLI wave to other platforms, so the wave's wait is not doubled.
+- On any other orchestrator, its targets are skipped and the next candidate fills the slot. Ask
+  runs and `--pins` waves also skip it.
+
 ## Levels and model selection
 
 Configure only the levels where settings change: `low`, `medium`, `high`, `xhigh`, or `max`.

@@ -56,6 +56,8 @@ import {
   effectiveSandbox,
   normalizeProviderKey,
   resolveLevelEntry,
+  nativeSubagentsOnlyPlatforms,
+  omitNativeSubagentsOnly,
   resolveReadDelegates,
   validateConfig,
 } from './lib/config.mjs';
@@ -665,6 +667,28 @@ export async function dispatchBatch(batch, options, config) {
 // SECTION: Wave planning and execution
 
 /**
+ * {@link buildPinsWave} for a CLI-only wave: skips native-subagents-only platforms and drops named
+ * pins for them (count and `all` pins pass through so `parsePins` still rejects mixed forms).
+ * Throws when no CLI target remains.
+ *
+ * @param {{ platforms: Record<string, Record<string, any>[]> }} resolved
+ * @param {string[]} pins
+ * @param {Record<string, any>} config
+ * @param {{ orchestrator?: string|null, orchestratorModel?: string|null }} [options]
+ */
+export function buildCliPinsWave(resolved, pins, config, options = {}) {
+  const nativeOnly = nativeSubagentsOnlyPlatforms(config);
+  const standalone = pins.some((pin) => /^-?\d+$/.test(pin) || pin.toLowerCase() === 'all');
+  const kept = standalone ? pins : pins.filter((pin) => !nativeOnly.has(normalizePin(pin).toLowerCase()));
+  if (pins.length > 0 && kept.length === 0) {
+    throw new Error(`All pinned platforms are native-subagents-only: ${pins.join(', ')}.`);
+  }
+  const wave = buildPinsWave(omitNativeSubagentsOnly(resolved, config), kept, options);
+  if (wave.targets.length === 0) throw new Error('No CLI read delegate remains after skipping native-subagents-only platforms.');
+  return wave;
+}
+
+/**
  * Builds the `ask` wave for `--pins` over level-resolved read delegates. Named pins: one
  * provider-pinned slot per distinct configured platform, in input order, cascading within the
  * platform and with no reserves. Count `n`: the first `n` targets in `--list-targets` order, the
@@ -764,7 +788,12 @@ export async function buildDoctorReport(config, configPath, {
 } = {}) {
   const resolved = resolveReadDelegates(config, level);
   const targets = resolveConfiguredTargets(resolved, orchestrator, orchestratorModel);
+  const nativeOnly = nativeSubagentsOnlyPlatforms(config);
   const health = await Promise.all(Object.keys(resolved.platforms).map(async platform => {
+    // A native-subagents-only CLI is never dispatched, so probing it would report a false failure.
+    if (nativeOnly.has(platform)) {
+      return { platform, reachable: false, nativeSubagentsOnly: true, sandboxSupported: SANDBOX_SUPPORTED_PROVIDERS.includes(platform), sandbox: { effective: null, mechanism: 'none' }, authentication: 'not applicable', correctiveCommand: null };
+    }
     const reachable = await isProviderAvailable(platform);
     const wrapper = Object.entries(config['read-delegates'] ?? {})
       .find(([key]) => normalizeProviderKey(key) === platform)?.[1];
@@ -847,6 +876,10 @@ export function formatDoctorReport(report) {
   lines.push('Provider health:');
   for (const item of report.health) {
     const sandbox = item.sandbox?.effective === true ? 'on' : item.sandbox?.effective === false ? 'off' : 'n/a';
+    if (item.nativeSubagentsOnly) {
+      lines.push(`  ${item.platform}: native-only (skipped)`);
+      continue;
+    }
     lines.push(`  ${item.platform}: ${item.reachable ? 'reachable' : 'unreachable'}; sandbox=${sandbox} mechanism=${item.sandbox?.mechanism ?? 'none'}; auth/quota=${item.authentication}`);
     if (item.correctiveCommand) lines.push(`    Corrective command: ${item.correctiveCommand}`);
   }
@@ -1393,7 +1426,7 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
     batch = loadBatchFile(batchFile, resolved);
   } else {
     const { orchestrator, orchestratorModel } = resolveOrchestratorContext(options);
-    const wave = buildPinsWave(resolved, rawPins.split(',').map(s => s.trim()).filter(Boolean), { orchestrator, orchestratorModel });
+    const wave = buildCliPinsWave(resolved, rawPins.split(',').map(s => s.trim()).filter(Boolean), loaded.config, { orchestrator, orchestratorModel });
     if (wave.clamped) {
       process.stderr.write(
         `[dispatch] --pins ${wave.clamped.requested} clamped to ${wave.clamped.resolved} (the level-resolved candidate total).\n`,
@@ -1571,6 +1604,7 @@ export async function getCandidateProviders(params = {}) {
   if (!noConfig && config) assertValidConfig(config, configPath);
   // Membership is level-independent: every read-delegate key, canonicalized, in config order.
   const configuredKeys = config ? Object.keys(config['read-delegates']).map(normalizeProviderKey) : null;
+  const nativeOnly = config ? nativeSubagentsOnlyPlatforms(config) : new Set();
 
   if (explicitProvider) {
     const resolved = resolveExplicitProvider(explicitProvider);
@@ -1580,11 +1614,18 @@ export async function getCandidateProviders(params = {}) {
       err.code = 'PLATFORM_NOT_CONFIGURED';
       throw err;
     }
+    if (nativeOnly.has(resolved)) {
+      /** @type {Error & Record<string, any>} */
+      const err = new Error(`Provider "${resolved}" is native-only; use its native subagent.`);
+      err.code = 'PLATFORM_NATIVE_ONLY';
+      throw err;
+    }
     if (allowedProviders && !allowedProviders.has(resolved)) return [];
     return [resolved];
   }
 
-  const configuredOrder = configuredKeys ?? KNOWN_PROVIDERS;
+  // Native-subagents-only providers never run their CLI; the no-candidate path emits native-fallback guidance.
+  const configuredOrder = (configuredKeys ?? KNOWN_PROVIDERS).filter((name) => !nativeOnly.has(name));
   const order = allowedProviders
     ? configuredOrder.filter((name) => allowedProviders.has(name))
     : configuredOrder;

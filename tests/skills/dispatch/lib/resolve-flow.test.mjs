@@ -1138,3 +1138,44 @@ describe('flattened provider targets (strict config)', () => {
     assert.deepEqual(ids(out['code-review'].targets), ORDER.slice(2));
   });
 });
+
+describe('nativeSubagentsOnly resolution', () => {
+  const NATIVE_CONFIG = {
+    ...BASE_CONFIG,
+    'read-delegates': { ...READ_DELEGATES, copilot: { nativeSubagentsOnly: true, ...READ_DELEGATES.copilot } },
+  };
+  // The copilot CLI is never probed for a native-subagents-only platform, so liveness reports it dead.
+  const LIVE = { claude: true, agy: true, copilot: false, opencode: true };
+
+  it('nativeSubagentsOnly keeps tagged targets when the orchestrator shares the platform', () => {
+    const flow = resolveFlow({ platform: 'copilot', level: 'high' }, LIVE, NATIVE_CONFIG);
+    const copilot = flow['code-review'].targets.filter(target => target.platform === 'copilot');
+    assert.equal(copilot.length, 1);
+    assert.equal(copilot[0].nativeSubagentsOnly, true);
+    assert.ok(flow['code-review'].targets.filter(target => target.platform !== 'copilot').every(target => !target.nativeSubagentsOnly));
+    assert.deepEqual(flow.diagnostics.nativeSubagentsOnly, ['copilot']);
+    assert.ok(!flow.diagnostics.unavailable.includes('copilot'));
+  });
+
+  it('nativeSubagentsOnly drops the platform for another orchestrator and backfills from reserves', () => {
+    const flow = resolveFlow({ platform: 'claude', level: 'medium' }, { ...LIVE, copilot: true }, {
+      ...NATIVE_CONFIG,
+      phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 }, consensus: { low: false } } },
+    });
+    const all = [...flow['code-review'].targets, ...flow['code-review'].reserves];
+    assert.ok(all.every(target => target.platform !== 'copilot'), JSON.stringify(all));
+    assert.equal(flow['code-review'].targets.length, 2);
+  });
+
+  it('nativeSubagentsOnly drops a mismatched named pin and rejects a wave of only such pins', () => {
+    const flow = resolveFlow({ platform: 'claude', level: 'medium', pins: ['agy', 'copilot'] }, LIVE, NATIVE_CONFIG);
+    assert.deepEqual(flow['code-review'].targets.map(target => target.platform), ['agy']);
+    assert.throws(() => resolveFlow({ platform: 'claude', level: 'medium', pins: ['copilot'] }, LIVE, NATIVE_CONFIG),
+      /All pinned platforms excluded: copilot/);
+  });
+
+  it('nativeSubagentsOnly platforms are never probed', () => {
+    assert.ok(!probeCandidates({ platform: 'copilot' }, NATIVE_CONFIG).includes('copilot'));
+    assert.ok(probeCandidates({ platform: 'copilot' }, BASE_CONFIG).includes('copilot'));
+  });
+});
