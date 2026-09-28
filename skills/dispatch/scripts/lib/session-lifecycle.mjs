@@ -77,14 +77,25 @@ function ensureBase(base) {
   return fs.realpathSync(base);
 }
 
+// NOTE: mirrors this repository's tracked .scratch/dispatch-skills/.gitignore.
+export const SESSION_ROOT_GITIGNORE = [
+  '# Keep only chat deliverables; the manifest, .state/, logs, and runtime state stay local.',
+  '*/*', '!*/*.spec.md', '!*/*.design.md', '!*/*.plan.md', '!*/*.walkthrough.md', '!*/*.report.md', '',
+].join('\n');
+
 /** @param {string} repositoryRoot */
 export function workspaceSessionRoot(repositoryRoot) {
   const repo = fs.realpathSync(repositoryRoot);
   const scratch = path.join(repo, '.scratch');
   if (fs.existsSync(scratch)) assertRealDirectory(scratch);
   else fs.mkdirSync(scratch, { mode: 0o700 });
-  const base = path.join(scratch, 'dispatch-skills');
-  return ensureBase(base);
+  const root = ensureBase(path.join(scratch, 'dispatch-skills'));
+  // NOTE: upsert on every call so deleted or stale rules self-repair across skill upgrades.
+  const ignore = path.join(root, '.gitignore');
+  let current = null;
+  try { current = fs.readFileSync(ignore, 'utf8'); } catch {}
+  if (current !== SESSION_ROOT_GITIGNORE) fs.writeFileSync(ignore, SESSION_ROOT_GITIGNORE);
+  return root;
 }
 
 /** @param {{ tempRoot?: string, create?: boolean }} [options] */

@@ -76,7 +76,7 @@
   "scripts/lib/platform.mjs": "a2b0d5b70d65c40f405c9ba1603a6bb536f790d2c5184343e28f0c27c23ac62b",
   "scripts/lib/providers.mjs": "914441105696fd572be648d572bedc45ea17ac73315bddbf1430689f7e938e94",
   "scripts/lib/resolve-flow.mjs": "36667bb6d171647c2cacb6ac33342e099571079e8e40cdc586ce53752cac57fe",
-  "scripts/lib/session-lifecycle.mjs": "ad6fc627ced005e934522bc2bf98421dd87043e2746f99fa8c0194532eaf2667",
+  "scripts/lib/session-lifecycle.mjs": "90a67a8beab1bc4e2dce8cc700f039aca5faa9c08b818d9f6c1389406ff9ee82",
   "scripts/lib/session-paths.mjs": "00b71f2c4735cbb6c1dd9eb629ce7cf8fbe10c0d9bc9b83cdad88a53a586344f",
   "scripts/lib/session-temp.mjs": "0af84e79649e2a5d6b082bba9211ff9f82d6c35d7e88b771ccea9ebbf6d21a2e",
   "scripts/lib/summary-box.mjs": "dbb342f98b4c330cca2508c3049425abeace06fe1f91bdf087d59d628e10a879",

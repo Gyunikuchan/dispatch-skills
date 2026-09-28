@@ -6,7 +6,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { findSession, initializeSession, readLifecycleManifest } from '../../../../skills/dispatch/scripts/lib/session-lifecycle.mjs';
+import { findSession, initializeSession, readLifecycleManifest, workspaceSessionRoot } from '../../../../skills/dispatch/scripts/lib/session-lifecycle.mjs';
 
 const LIFECYCLE = pathToFileURL(fileURLToPath(new URL('../../../../skills/dispatch/scripts/lib/session-lifecycle.mjs', import.meta.url))).href;
 
@@ -37,6 +37,19 @@ describe('chat session lifecycle identity', () => {
     assert.equal(manifest.location, 'workspace');
   });
 
+
+  it('upserts session-root gitignore with canonical content', () => {
+    const canonical = [
+      '# Keep only chat deliverables; the manifest, .state/, logs, and runtime state stay local.',
+      '*/*', '!*/*.spec.md', '!*/*.design.md', '!*/*.plan.md', '!*/*.walkthrough.md', '!*/*.report.md', '',
+    ].join('\n');
+    const root = workspaceSessionRoot(repositoryRoot);
+    const ignore = path.join(root, '.gitignore');
+    assert.equal(fs.readFileSync(ignore, 'utf8'), canonical);
+    fs.writeFileSync(ignore, 'stale\n');
+    workspaceSessionRoot(repositoryRoot);
+    assert.equal(fs.readFileSync(ignore, 'utf8'), canonical);
+  });
   it('session.mjs runs when invoked through a symlinked skill directory', () => {
     const skillDir = fileURLToPath(new URL('../../../../skills/dispatch', import.meta.url));
     const link = path.join(tempRoot, 'linked-dispatch');
