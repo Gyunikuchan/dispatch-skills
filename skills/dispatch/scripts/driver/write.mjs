@@ -12,6 +12,7 @@ import { ledgerSegment } from './implement-state.mjs';
 import { SKILL_ROOT } from './plan-phase.mjs';
 import { bindStateSession, nextStep, readRunState, runFile } from './state.mjs';
 import { freeRunFilePath } from '../lib/session-paths.mjs';
+import { normalizePath } from '../lib/platform.mjs';
 import { validateRedAdmission } from './verification.mjs';
 
 // SECTION: Write target and validation
@@ -61,12 +62,14 @@ export function inspectEnvelope(state, file) {
   if (state.pending?.action === 'delegate-write' && data.expectedEnvelopePath !== expected) {
     return { errors: ['Pending delegate-write envelope path does not match the saved run path.'] };
   }
-  if (file !== expected) {
-    const kind = data.previousEnvelopePaths?.includes(file) ? 'stale' : 'foreign';
+  // Replies may name the file relative to the repository or with other separators or drive-letter case.
+  const same = (/** @type {string} */ other) => typeof file === 'string' && normalizePath(path.resolve(state.repoRoot ?? '', file.replace(/\\/g, '/'))) === normalizePath(other);
+  if (!same(expected)) {
+    const kind = data.previousEnvelopePaths?.some(same) ? 'stale' : 'foreign';
     return { errors: [`The ${kind} envelope path does not match the pending action's expected path.`] };
   }
   const sessionDir = path.resolve(path.dirname(state.stateFile));
-  const absolute = path.resolve(file);
+  const absolute = path.resolve(expected);
   const relative = path.relative(sessionDir, absolute);
   if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     return { errors: ['The expected envelope path must name a file inside the run session directory.'] };
@@ -101,7 +104,7 @@ function testsOnlyPrompt(state, expectedEnvelopePath) {
     purpose: repair ? 'tests-only-admission-repair' : 'tests-only-red',
     manifest: testsOnlyManifest(data),
     boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
-    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'exactly one RED-MATRIX <SC#> | <approved test path>:<test name> | exit <nonzero integer> test:<full name>[; test:<full name>...] per criterion; N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS' },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'array of strings: exactly one RED-MATRIX <SC#> | <approved test path>:<leaf test name> | exit <nonzero integer> test:<leaf test name>[; test:<leaf test name>...] per criterion (leaf name as the runner prints it, without describe/suite prefixes); N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS' },
     expectedEnvelopePath,
     selfCheck: selfCheck(state, expectedEnvelopePath),
     ...(repair ? { admissionDefects: repair.defects } : {}),

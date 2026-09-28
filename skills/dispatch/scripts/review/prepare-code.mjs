@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizePath } from '../lib/platform.mjs';
 import { fileURLToPath } from 'node:url';
 
 import { evaluateConsensus } from './consensus.mjs';
@@ -648,7 +649,7 @@ export function prepareCodeReview(request, {
   let invocation;
   if (request.invocationContext) {
     const previous = readInvocationState(request.invocationContext);
-    if (previous.kind !== 'code' || previous.artifactPath !== walkthroughPath) {
+    if (previous.kind !== 'code' || normalizePath(previous.artifactPath ?? '') !== normalizePath(walkthroughPath)) {
       throw new Error('Invocation context does not match the walkthrough artifact.');
     }
     invocation = advanceInvocationState(request.invocationContext, {

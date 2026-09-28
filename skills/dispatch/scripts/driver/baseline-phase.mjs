@@ -1,5 +1,6 @@
 // @ts-check
 import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { lintPlan } from '../plan/lint.mjs';
@@ -80,6 +81,8 @@ export function approve(state, reply, actor = 'user') {
   if (answer?.decision !== 'approved' || answer.governingHash !== state.governingHash || !answer.reason?.trim()) throw new DriverError('reply', 'Approval requires the current governingHash, decision approved, and reason.');
   if (JSON.stringify(repositoryBaseline(state)) !== JSON.stringify(data.approvalSnapshot)) throw new DriverError('state', 'Repository drifted during approval.', 'recapture baseline.');
   const redPaths = new Set(data.redCriteria.flatMap(item => item.paths));
+  // Approved paths are POSIX repository-relative; replies may use backslashes or a leading "./".
+  if (Array.isArray(answer.testPaths)) answer.testPaths = answer.testPaths.map(file => typeof file === 'string' ? path.posix.normalize(file.replace(/\\/g, '/')).replace(/^\.\//, '') : file);
   if (!Array.isArray(answer.testPaths) || (data.redCriteria.length > 0 && !answer.testPaths.length) || answer.testPaths.some(file => !data.approvedPaths.includes(file) || !redPaths.has(file))) throw new DriverError('reply', 'Approval must classify tests-only paths mapped to red criteria; nonempty paths are required only for red criteria.');
   data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
   data.testPaths = data.testsOnlyPaths;

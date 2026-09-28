@@ -1,5 +1,6 @@
 // @ts-check
 import path from 'node:path';
+import { normalizePath } from '../lib/platform.mjs';
 import { fileURLToPath } from 'node:url';
 
 import { evaluateConsensus } from '../review/consensus.mjs';
@@ -50,8 +51,8 @@ export function authorPlan(state) {
   ]);
 }
 export function acceptPlan(state, reply) {
-  if (path.resolve(state.repoRoot, reply.path) !== state.planPath) throw new DriverError('reply', 'Author reply must name the requested canonical plan.');
-  rebindPlan(state, reply.path);
+  if (typeof reply.path !== 'string' || normalizePath(path.resolve(state.repoRoot, reply.path.replace(/\\/g, '/'))) !== normalizePath(state.planPath)) throw new DriverError('reply', 'Author reply must name the requested canonical plan.');
+  rebindPlan(state, state.planPath);
 }
 export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;

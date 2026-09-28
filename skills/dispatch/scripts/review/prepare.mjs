@@ -7,6 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizePath } from '../lib/platform.mjs';
 import { fileURLToPath } from 'node:url';
 
 import { assembleTemplate, fillTemplate } from './fill-template.mjs';
@@ -440,7 +441,7 @@ function prepareDocumentReview(entry, request, {
   let invocation;
   if (request.invocationContext) {
     const previous = readInvocationState(request.invocationContext);
-    if (previous.kind !== entry.kind || previous.artifactPath !== path.resolve(resolved.path)) {
+    if (previous.kind !== entry.kind || normalizePath(previous.artifactPath ?? '') !== normalizePath(resolved.path)) {
       throw new Error(`Invocation context does not match the ${entry.kind} artifact.`);
     }
     invocation = advanceInvocationState(request.invocationContext, { snapshot, round, expectedSourceKeys: keys });

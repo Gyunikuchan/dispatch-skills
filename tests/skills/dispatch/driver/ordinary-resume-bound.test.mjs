@@ -124,6 +124,15 @@ describe('ordinary driver: resume by bound plan path', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
   });
 
+  it('binds the canonical plan when the author reply spells it repository-relative with backslashes', () => {
+    const fixture = createOrdinaryDriverFixture();
+    const author = authorFrom(fixture);
+    const backslashed = action => { author(action); return { path: path.relative(fixture.repo.dir, action.path).split(path.sep).join('\\') }; };
+    const result = driveOrdinaryImplementation({ ...fixture, plan: ASK }, { policy: { author: backslashed } });
+    assert.equal(result.trace[0].action, 'author');
+    assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
+  });
+
   it('SC2: an author reply naming a plan with restorable walkthrough evidence resumes the restored phase', () => {
     const fixture = createOrdinaryDriverFixture(); let restarted = false, replied = false;
     const result = driveOrdinaryImplementation({ ...fixture, plan: ASK }, {

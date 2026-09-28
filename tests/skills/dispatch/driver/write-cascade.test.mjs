@@ -51,7 +51,7 @@ function driveToFirstWrite({ fixture, repo, plan }) {
       runArgs: ['implement', '--orchestrator', 'claude', '--', plan],
       policy: {
         askUser(action) {
-          if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: ['tests/sample.test.mjs'], reason: 'Approved fixture plan.' } };
+          if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: ['.\\tests\\sample.test.mjs'], reason: 'Approved fixture plan.' } };
           throw new Error(`Unexpected question ${action.question} before first write`);
         },
         delegateWrite(action) { throw new Stop(action); },
@@ -108,6 +108,29 @@ describe('delegate-write envelope path', () => {
     assert.equal(nextAction.action, 'ask-user');
     assert.equal(nextAction.question, 'implementation-concerns');
     assert.match(nextAction.guidance.join(' '), /Previous write outcome: DONE_WITH_CONCERNS; summary: test outcome checked; concerns: The fixture records a concern/);
+  });
+
+  it('normalises approval testPaths spelled with backslashes and a leading dot', () => {
+    const fx = setup();
+    const first = driveToFirstWrite(fx);
+    assert.deepEqual(readFixtureState(first.stateFile).ordinary.testsOnlyPaths, ['tests/sample.test.mjs']);
+    const brief = JSON.parse(fs.readFileSync(first.fields.promptPath, 'utf8'));
+    assert.match(brief.envelope.evidence, /^array of strings: .*test:<leaf test name>.*without describe\/suite prefixes/);
+  });
+
+  it('accepts repository-relative, slash-separated, and case-variant spellings of the pending path', () => {
+    const fx = setup();
+    const first = driveToFirstWrite(fx);
+    const expected = first.fields.expectedEnvelopePath;
+    save(expected, { ...outcome(), status: 'DONE_WITH_CONCERNS' });
+    const state = readFixtureState(first.stateFile);
+    const relative = path.relative(state.repoRoot, expected);
+    const spellings = [relative, relative.split(path.sep).join('/'), `./${relative.split(path.sep).join('/')}`, relative.split(path.sep).join('\\')];
+    if (process.platform === 'win32') spellings.push(expected.replace(/^[a-z]:/i, drive => drive === drive.toUpperCase() ? drive.toLowerCase() : drive.toUpperCase()));
+    for (const spelling of spellings) assert.deepEqual(inspectEnvelope(state, spelling).errors, [], spelling);
+    const selfCheck = runDispatch(fx.fixture, ['--check-envelope', relative.split(path.sep).join('/'), '--state', first.stateFile], { cwd: fx.repo.dir });
+    assert.equal(selfCheck.status, 0, selfCheck.stderr);
+    assert.match(inspectEnvelope(state, 'elsewhere/envelope.json').errors.join(' '), /foreign envelope path/);
   });
 
   it('refuses a missing file at the exact path with repair guidance', () => {

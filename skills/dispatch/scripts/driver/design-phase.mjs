@@ -1,6 +1,7 @@
 // @ts-check
 import fs from 'node:fs';
 import path from 'node:path';
+import { normalizePath } from '../lib/platform.mjs';
 import crypto from 'node:crypto';
 import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger/ledger.mjs';
 import { parseIncrementGraph } from '../design/graph.mjs';
@@ -66,7 +67,7 @@ export async function advanceDesign(state, reply) {
     return emitAction(state, 'ask-user', { question: 'approval', text: 'Approve this settled technical design at its current revision.', items: [{ governingHash: state.governingHash }] }, ['Relay the question; answer with {"answer": {"decision": "approved", "governingHash": "<displayed hash>"}}.']);
   }
   if (state.ordinary.step === 'design-author') {
-    if (path.resolve(state.repoRoot, reply.path) !== state.designPath) throw new DriverError('reply', 'Author reply must name the requested canonical design.');
+    if (typeof reply.path !== 'string' || normalizePath(path.resolve(state.repoRoot, reply.path.replace(/\\/g, '/'))) !== normalizePath(state.designPath)) throw new DriverError('reply', 'Author reply must name the requested canonical design.');
     const source = fs.readFileSync(state.designPath, 'utf8');
     const hash = governingHash(source, { kind: 'design' });
     if (hash.status !== 'ok') throw new Error(hash.diagnostic);
