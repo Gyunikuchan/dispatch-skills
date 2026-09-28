@@ -82,7 +82,7 @@
   "scripts/lib/summary-box.mjs": "dbb342f98b4c330cca2508c3049425abeace06fe1f91bdf087d59d628e10a879",
   "scripts/lib/telemetry.mjs": "09f797ba243fe6973e1174370e92d768fdeeb6f6bf9372c5aca29d166ed750f2",
   "scripts/plan/lint.mjs": "6ce6fbabc67a6f94094a35a7dfeb6d76481871dbabef46d02f628b0582dbad94",
-  "scripts/plan/structure.mjs": "786fa2d50f49386d27e9fd363f59ec9753042e75f597a5c5cfc1a250dbd64dbb",
+  "scripts/plan/structure.mjs": "d098203f3882d63c6c508a729d4362fae012941e5db08596a8a35017a8f2c0bb",
   "scripts/review/consensus.mjs": "d93ed5cbd178795c90fb7c5fb1932958df3259c593e6955bb81d8f21da138eeb",
   "scripts/review/fill-template.mjs": "ec375c179faf59df27ca1700b03b584e989a6c35d58b7d5efc200475c5d9fcd9",
   "scripts/review/fix-clustering.mjs": "11cc4468599b26ade6c3352e4813901cf4d875b84ecd4ade09f8bf695a675f0d",

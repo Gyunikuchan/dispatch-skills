@@ -53,6 +53,17 @@ describe('shared plan structure parser', () => {
     assert.deepEqual(extractActionHeadingRecords(source).map(({ path }) => path), ['inside.js']);
   });
 
+  it('treats comment markers inside inline code as literal text', () => {
+    const source = [
+      '## Proposed Changes',
+      '#### [MODIFY] a.js',
+      '- Changes: writes `<!-- dispatch-sources … -->` and `` `<!--` `` lines.',
+      '#### [MODIFY] b.js',
+    ].join('\n');
+    assert.deepEqual(extractActionHeadingRecords(source).map(({ path }) => path), ['a.js', 'b.js']);
+    assert.equal(structuralLines(source)[2].text, source.split('\n')[2]);
+  });
+
   it('removes fenced code, comments, and quotes while preserving inline code', () => {
     const source = [
       '## Proposed Changes',

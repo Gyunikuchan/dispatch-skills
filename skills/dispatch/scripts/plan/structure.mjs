@@ -96,7 +96,7 @@ function parseStructuralLine(original, line, state) {
       cursor = close + 3;
       continue;
     }
-    const open = original.indexOf('<!--', cursor);
+    const open = commentOpenOutsideCode(original, cursor);
     if (open === -1) {
       text += original.slice(cursor);
       break;
@@ -106,6 +106,23 @@ function parseStructuralLine(original, line, state) {
     cursor = open + 4;
   }
   return { line, text: /^\s*>/.test(text) ? '' : text, original };
+}
+
+// NOTE: `<!--` inside a closed inline code span is literal (CommonMark); unmatched backticks stay literal too.
+function commentOpenOutsideCode(original, from) {
+  const run = /`+/g;
+  let cursor = from;
+  for (;;) {
+    const open = original.indexOf('<!--', cursor);
+    if (open === -1) return -1;
+    run.lastIndex = cursor;
+    const opener = run.exec(original);
+    if (!opener || opener.index > open) return open;
+    cursor = run.lastIndex;
+    let closer;
+    while ((closer = run.exec(original)) && closer[0].length !== opener[0].length);
+    if (closer) cursor = run.lastIndex;
+  }
 }
 
 function generatedCommandAfter(lines, recordLine) {
