@@ -9,8 +9,7 @@
  *      when the orchestrator actually is that platform; scoped to the exact active
  *      conversation when its id is known, else a same-platform recency guess.
  *   2. Existing scratch artifact matching the slug (any date) — reuse, don't re-author.
- *   3. Existing relocated artifact in OS temp matching the slug (any date) — reuse, don't re-author.
- *   4. Scratch-new: the deterministic `.scratch/plan/<date>-<slug>[-walkthrough].md` path.
+ *   3. Session-new: the deterministic `<session>/artifacts/<date>-<slug>[-walkthrough].md` path.
  *
  * Usage:
  *   node artifacts/resolve-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>]
@@ -29,13 +28,12 @@
  * the platform consulted for conversation-id slug derivation.
  *
  * Outputs JSON: `{ slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
- * `tier` is `native`, `scratch-existing`, `temp-existing`, or `scratch-new`. `slugSource` is
+ * `tier` is `native`, `session-import`, `scratch-existing`, or `scratch-new`. `slugSource` is
  * `explicit`, `branch`, or `conversation`.
  */
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -43,14 +41,14 @@ import { showToplevel } from '../lib/git-root.mjs';
 import { PROJECT_ROOT, spawnCliSync } from '../lib/platform.mjs';
 import { detectOrchestrator } from '../lib/providers.mjs';
 import { AGY_MODE_DATA_DIRS } from '../runners/agy.mjs';
-import { assertWorkflowSession, dispatchTempRoot, sessionArea, workflowSessionDirs } from '../lib/session-temp.mjs';
+import { assertWorkflowSession, sessionArea } from '../lib/session-temp.mjs';
 
 /** @typedef {'design'|'plan'|'increment-plan'|'walkthrough'|'increment-walkthrough'|'integration-walkthrough'} ArtifactKind */
-/** @typedef {'native'|'scratch-existing'|'temp-existing'|'scratch-new'} ArtifactTier */
+/** @typedef {'native'|'session-import'|'scratch-existing'|'scratch-new'} ArtifactTier */
 /** @typedef {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} NativeOptions */
 /** @typedef {{ tier: ArtifactTier, path: string, exists: boolean, scratchOnly?: boolean }} ResolvedArtifact */
 
-export const SCRATCH_DIR = '.scratch/plan';
+export const SCRATCH_DIR = 'artifacts';
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export const PHASED_KINDS = /** @type {readonly ArtifactKind[]} */ (Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']));
@@ -66,7 +64,7 @@ const NATIVE_FILENAME = Object.freeze({
   plan: 'implementation_plan.md',
   walkthrough: 'walkthrough.md',
 });
-const INCREMENT_ARTIFACT_PATTERN = /^\.scratch\/plan\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
+const INCREMENT_ARTIFACT_PATTERN = /(?:^|\/)artifacts\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
 
 /** Env vars carrying conversation/session identity, scoped to the detected orchestrator. */
 const CONVERSATION_ID_ENV_VARS = Object.freeze({
@@ -106,75 +104,31 @@ export function isValidDate(value) {
  * @returns {Record<ArtifactKind, string>|string}
  */
 export function buildScratchPaths(date, slug, kind = 'plan') {
+  const artifacts = sessionArea('artifacts');
   const paths = {
-    plan: path.posix.join(SCRATCH_DIR, `${date}-${slug}.md`),
-    walkthrough: path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
-    design: path.posix.join(SCRATCH_DIR, `${date}-${slug}-design.md`),
-    'increment-plan': path.posix.join(SCRATCH_DIR, `${date}-${slug}-plan.md`),
-    'increment-walkthrough': path.posix.join(SCRATCH_DIR, `${date}-${slug}-walkthrough.md`),
-    'integration-walkthrough': path.posix.join(SCRATCH_DIR, `${date}-${slug}-integration-walkthrough.md`),
+    plan: path.join(artifacts, `${date}-${slug}.md`),
+    walkthrough: path.join(artifacts, `${date}-${slug}-walkthrough.md`),
+    design: path.join(artifacts, `${date}-${slug}-design.md`),
+    'increment-plan': path.join(artifacts, `${date}-${slug}-plan.md`),
+    'increment-walkthrough': path.join(artifacts, `${date}-${slug}-walkthrough.md`),
+    'integration-walkthrough': path.join(artifacts, `${date}-${slug}-integration-walkthrough.md`),
   };
   if (!Object.hasOwn(paths, kind)) throw new Error(`Unknown artifact kind "${kind}"`);
   return kind === 'plan' || kind === 'walkthrough' ? paths : paths[kind];
-}
-
-/**
- * @param {string} root
- * @param {{ platform?: NodeJS.Platform, realpath?: (p: string) => string }} [options]
- */
-export function canonicalRepositoryRoot(
-  root,
-  { platform = process.platform, realpath = fs.realpathSync.native } = {},
-) {
-  let canonical = realpath(root).normalize('NFC').replaceAll('\\', '/');
-  if (platform === 'win32') canonical = canonical.toLowerCase();
-  return canonical;
-}
-
-export function repositoryRootHash(root, options) {
-  return crypto.createHash('sha256').update(canonicalRepositoryRoot(root, options)).digest('hex').slice(0, 12);
 }
 
 export function getRepositoryRoot(cwd = PROJECT_ROOT) {
   return showToplevel(cwd);
 }
 
-/**
- * @param {{ slug?: string, slugSource?: string|null, repositoryRoot?: string|null, artifactKind?: ArtifactKind, platform?: NodeJS.Platform, tempRoot?: string, env?: NodeJS.ProcessEnv, realpath?: (p: string) => string }} [options]
- */
-export function resolveLedgerPath({
-  slug,
-  slugSource,
-  repositoryRoot,
-  artifactKind,
-  platform = process.platform,
-  tempRoot = os.tmpdir(),
-  env = process.env,
-  realpath,
-} = {}) {
+/** @param {{ slug?: string, slugSource?: string|null, repositoryRoot?: string|null, artifactKind?: ArtifactKind }} [options] */
+export function resolveLedgerPath({ slug, slugSource, repositoryRoot } = {}) {
   if (!repositoryRoot || !['explicit', 'branch'].includes(slugSource)) return null;
-  if (!realpath) assertWorkflowSession({ repositoryRoot, artifactKind, slug });
-  const repoHash = repositoryRootHash(repositoryRoot, { platform, realpath });
-  return path.join(ledgerNamespacePath({ tempRoot, repoHash, env }), `${slug}-ledger.md`);
-}
-
-/** @param {{ tempRoot?: string, repoHash?: string, env?: NodeJS.ProcessEnv }} [options] */
-export function ledgerNamespacePath({ tempRoot = os.tmpdir(), repoHash, env = process.env } = {}) {
-  if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
-  if (process.env.DISPATCH_LEGACY_SESSION === '1') return path.join(dispatchTempRoot(), repoHash);
-  return sessionArea('ledger');
-}
-
-/**
- * Durable artifact directory owned by the currently bound workflow session.
- *
- * @param {{ projectRoot?: any, tempRoot?: string, env?: NodeJS.ProcessEnv }} [options]
- */
-export function relocatedArtifactsPath({ projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), env = process.env } = {}) {
-  const repositoryRoot = getRepositoryRoot(projectRoot) ?? projectRoot;
   assertWorkflowSession({ repositoryRoot });
-  return sessionArea('artifacts');
+  return path.join(ledgerNamespacePath(), `${slug}-ledger.md`);
 }
+
+export function ledgerNamespacePath() { return sessionArea('ledger'); }
 
 // SECTION: Slug derivation
 
@@ -421,7 +375,7 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
   }
 
-  const dir = path.join(projectRoot, ...SCRATCH_DIR.split('/'));
+  const dir = sessionArea('artifacts');
   if (!existsSync(dir)) return null;
 
   const suffix = kind === 'walkthrough' ? '-walkthrough.md' : '.md';
@@ -452,58 +406,7 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
     }
   }
 
-  return newest ? path.posix.join(SCRATCH_DIR, newest.name) : null;
-}
-
-// ============================================================================
-// SECTION: Discovery: existing temp tier (relocated scratch artifacts)
-// ============================================================================
-
-/**
- * Finds a relocated artifact only in validated sessions for this repository and workflow identity.
- * Completed generations remain discoverable for history. Returns an absolute posix path, or null.
- *
- * @param {string} kind
- * @param {string} slug
- * @param {string} [tempRoot]
- * @param {string|null} [repositoryRoot]
- * @returns {string|null}
- */
-export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir(), repositoryRoot = null) {
-  if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
-    throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
-  }
-  const workflowKind = kind === 'walkthrough' ? 'plan' : kind;
-  const directories = repositoryRoot
-    ? workflowSessionDirs({ repositoryRoot, artifactKind: workflowKind, slug }).map(dir => path.join(dir, 'artifacts'))
-    : [tempRoot];
-
-  const pattern = kind === 'walkthrough'
-    ? new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}-walkthrough(?:-\\d+)*\\.md$`)
-    : new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}(?:-\\d+)*\\.md$`);
-
-  let newest = null;
-  for (const directory of directories) {
-    if (!existsSync(directory)) continue;
-    if (repositoryRoot) {
-      const stat = fs.lstatSync(directory);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || path.dirname(fs.realpathSync(directory)) !== path.dirname(directory)) {
-        throw new Error(`Unsafe session artifact directory: ${directory}`);
-      }
-    }
-    let entries;
-    try { entries = readdirSync(directory, { withFileTypes: true }); }
-    catch { continue; }
-    for (const entry of entries) {
-      if (!entry.isFile() || (kind === 'plan' && entry.name.includes('-walkthrough')) || !pattern.test(entry.name)) continue;
-      const abs = path.join(directory, entry.name);
-      let stat;
-      try { stat = statSync(abs); } catch { continue; }
-      if (!newest || stat.mtimeMs > newest.mtimeMs) newest = { path: abs.split(path.sep).join('/'), mtimeMs: stat.mtimeMs };
-    }
-  }
-
-  return newest ? newest.path : null;
+  return newest ? path.join(dir, newest.name) : null;
 }
 
 // ============================================================================
@@ -511,7 +414,7 @@ export function findExistingTempArtifact(kind, slug, tempRoot = os.tmpdir(), rep
 // ============================================================================
 
 /** Canonical increment artifact path:
- *  `.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
+ *  `<session>/artifacts/<yyyy-mm-dd>-<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
  *  Returns `{date, designRootSlug, incrementId, incrementSlug, kind}` or null. */
 export function parseIncrementArtifactPath(value) {
   const normalized = String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '');
@@ -533,7 +436,7 @@ export function parseIncrementArtifactPath(value) {
 /** Bounded off-date scan: a reserved-form artifact for the same root slug at another date
  *  must not be silently shadowed by a new-dated phased artifact. */
 function assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate) {
-  const scratchDir = path.resolve(projectRoot, SCRATCH_DIR);
+  const scratchDir = sessionArea('artifacts');
   let entries;
   try {
     entries = fs.readdirSync(scratchDir);
@@ -571,19 +474,18 @@ function phasedRootSlug(candidateSlug) {
 }
 
 /**
- * Resolves one artifact kind: native tier, then existing scratch, then existing
- * temp artifact (this repository's relocated scratch), then the deterministic scratch-new path.
+ * Resolves one artifact kind: native working copy, existing session artifact, or new session path.
  *
  * @param {ArtifactKind} kind
- * @param {{ slug?: string, date?: string, projectRoot?: string, tempRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
+ * @param {{ slug?: string, date?: string, projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
  * @returns {ResolvedArtifact}
  */
-export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, tempRoot = os.tmpdir(), repositoryRoot, native: nativeOptions = {} } = {}) {
+export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, repositoryRoot, native: nativeOptions = {} } = {}) {
   if (PHASED_KINDS.includes(kind)) {
     const resolvedDate = date ?? localDate();
     const canonical = /** @type {string} */ (buildScratchPaths(resolvedDate, slug, kind));
     assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate);
-    const absolute = path.resolve(projectRoot, canonical);
+    const absolute = canonical;
     if (existsSync(absolute)) {
       const source = fs.readFileSync(absolute, 'utf8');
       const metadataKind = /^---\n\{\s*"dispatch"\s*:\s*\{[\s\S]*?"kind"\s*:\s*"([^"]+)"/m.exec(source)?.[1] ?? null;
@@ -598,14 +500,21 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
     return { tier: 'scratch-new', path: canonical, exists: false, scratchOnly: true };
   }
   const native = findNativeArtifact(kind, nativeOptions);
-  if (native) return { tier: 'native', path: native, exists: true };
+  if (native) {
+    const built = buildScratchPaths(date ?? localDate(), slug, kind === 'plan' || kind === 'walkthrough' ? 'plan' : kind);
+    const target = kind === 'plan' || kind === 'walkthrough'
+      ? /** @type {Record<ArtifactKind, string>} */ (built)[kind]
+      : /** @type {string} */ (built);
+    if (path.resolve(native) === path.resolve(target)) return { tier: 'native', path: target, exists: true };
+    if (!existsSync(target)) {
+      try { fs.copyFileSync(native, target, fs.constants.COPYFILE_EXCL); }
+      catch (error) { if (error.code !== 'EEXIST') throw error; }
+    }
+    return { tier: 'session-import', path: target, exists: true };
+  }
 
   const existing = findExistingScratchArtifact(kind, slug, projectRoot);
   if (existing) return { tier: 'scratch-existing', path: existing, exists: true };
-
-  const ownerRoot = repositoryRoot ?? getRepositoryRoot(projectRoot) ?? projectRoot;
-  const existingTemp = findExistingTempArtifact(kind, slug, tempRoot, ownerRoot);
-  if (existingTemp) return { tier: 'temp-existing', path: existingTemp, exists: true };
 
   const paths = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(date ?? localDate(), slug));
   return { tier: 'scratch-new', path: paths[kind], exists: false };
@@ -614,7 +523,7 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
 /**
  * Resolves plan and/or walkthrough artifact paths together.
  *
- * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: ArtifactKind[], projectRoot?: string, tempRoot?: string, repositoryRoot?: string|null, ledger?: Record<string, any>, native?: NativeOptions }} options
+ * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: ArtifactKind[], projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
  * @returns {{ slug: string, date: string, plan?: Record<string, any>, walkthrough?: Record<string, any> }}
  */
 export function resolveArtifacts({
@@ -623,9 +532,7 @@ export function resolveArtifacts({
   date,
   kinds = ['plan', 'walkthrough'],
   projectRoot = PROJECT_ROOT,
-  tempRoot = os.tmpdir(),
   repositoryRoot,
-  ledger = {},
   native,
 }) {
   // See findExistingScratchArtifact for why `typeof` is checked before SLUG_PATTERN.
@@ -655,11 +562,10 @@ export function resolveArtifacts({
       slugSource,
       repositoryRoot: resolvedRepositoryRoot,
       artifactKind: kinds.some(kind => kind === 'design' || kind.startsWith('increment-') || kind === 'integration-walkthrough') ? 'design' : 'plan',
-      ...ledger,
     }),
   };
   for (const kind of kinds) {
-    result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, tempRoot, repositoryRoot: resolvedRepositoryRoot ?? projectRoot, native });
+    result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, repositoryRoot: resolvedRepositoryRoot ?? projectRoot, native });
   }
   return result;
 }

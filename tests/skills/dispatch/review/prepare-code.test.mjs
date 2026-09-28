@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { sessionArea } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { prepareCodeReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
@@ -20,13 +20,20 @@ const BATCH_CONFIG = {
 };
 
 const fixture = createReviewPreparationFixture();
-const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'];
+const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID'];
 let priorSessionEnv = {};
 let workflowSessions = [];
 const makeRepo = () => {
   const repo = makeDirtyCodeRepository(fixture.makeDirectory);
   workflowSessions.push(bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'feature' }));
   return repo;
+};
+const sessionArtifact = (repo, filename) => {
+  const sessionRoot = path.resolve(process.env.DISPATCH_SESSION_DIR ?? '');
+  if (!sessionRoot.startsWith(`${path.resolve(repo)}${path.sep}`)) throw new Error('The test repository has no bound workflow session.');
+  const artifacts = path.join(sessionRoot, 'artifacts');
+  fs.mkdirSync(artifacts, { recursive: true });
+  return path.join(artifacts, filename);
 };
 const cleanupManifest = cleanupPreparationManifest;
 
@@ -69,13 +76,13 @@ describe('code review preparation', () => {
     }
   });
 
-  it('reuses an existing relocated walkthrough in OS temp rather than generating a new one', () => {
+  it('reuses an existing walkthrough in the active session rather than generating a new one', () => {
     const repo = makeRepo();
-    // The temp tier reads only this repository's relocated directory (O1).
-    const relocated = relocatedArtifactsPath({ projectRoot: repo });
-    fs.mkdirSync(relocated, { recursive: true });
-    const tempWalkthrough = path.join(relocated, `2026-09-20-feature-walkthrough-${Date.now()}.md`);
-    fs.writeFileSync(tempWalkthrough, '# Walkthrough — Existing in Temp\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
+    // The resolver reads the active session's artifact directory for this repository.
+    const artifacts = sessionArea('artifacts');
+    fs.mkdirSync(artifacts, { recursive: true });
+    const existingWalkthrough = path.join(artifacts, '2026-09-20-feature-walkthrough.md');
+    fs.writeFileSync(existingWalkthrough, '# Walkthrough — Existing in Session\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
     try {
       const manifest = prepareCodeReview({
         mode: 'orchestrated',
@@ -86,12 +93,12 @@ describe('code review preparation', () => {
       }, { repoRoot: repo });
       assert.equal(manifest.status, 'ready');
       assert.equal(manifest.artifact.generated, false);
-      assert.equal(manifest.artifact.canonicalPath, tempWalkthrough.split(path.sep).join('/'));
+      assert.equal(manifest.artifact.canonicalPath, path.relative(repo, existingWalkthrough).split(path.sep).join('/'));
       cleanupManifest(manifest);
     } finally {
-      fs.rmSync(tempWalkthrough, { force: true });
+      fs.rmSync(existingWalkthrough, { force: true });
       // Non-recursive: removes only the now-empty per-test namespace directories.
-      for (const dir of [relocated, path.dirname(relocated)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
+      for (const dir of [artifacts, path.dirname(artifacts)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
     }
   });
 
@@ -138,8 +145,7 @@ describe('code review preparation', () => {
         '## Review Findings & Resolutions',
         '*No reviews conducted yet.*',
       ].join('\n');
-      fs.mkdirSync(path.join(repo, '.scratch', 'plan'), { recursive: true });
-      fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md'), design);
+      fs.writeFileSync(sessionArtifact(repo, '2026-09-20-demo-design.md'), design);
       return design;
     }
 
@@ -151,7 +157,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: '.scratch/plan/2026-09-20-demo-design.md',
+        designPath: sessionArtifact(repo, '2026-09-20-demo-design.md'),
         designRevision: null,
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
@@ -179,7 +185,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: '.scratch/plan/2026-09-20-missing-design.md',
+        designPath: sessionArtifact(repo, '2026-09-20-missing-design.md'),
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
       }, { repoRoot: repo }), /design/i);
@@ -248,9 +254,7 @@ describe('code review preparation', () => {
 
   it('reviews an existing metadata-less walkthrough', () => {
     const repo = makeRepo();
-    const dir = path.join(repo, '.scratch', 'plan');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, '2026-09-17-feature-walkthrough.md'), '# Walkthrough — Old\n');
+    fs.writeFileSync(sessionArtifact(repo, '2026-09-17-feature-walkthrough.md'), '# Walkthrough — Old\n');
     const manifest = prepareCodeReview({ summary: 'New work' }, { repoRoot: repo });
     try {
       assert.equal('choices' in manifest, false);
@@ -268,9 +272,8 @@ describe('code review preparation', () => {
 
   it('accepts a minimum-contract baseline walkthrough without rewriting it', () => {
     const repo = makeRepo();
-    const dir = path.join(repo, '.scratch', 'plan');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, '2026-09-17-feature-walkthrough.md'), [
+    const walkthrough = sessionArtifact(repo, '2026-09-17-feature-walkthrough.md');
+    fs.writeFileSync(walkthrough, [
       '# Walkthrough — Feature',
       '## Changes Made',
       'No implementation changes yet.',
@@ -285,7 +288,7 @@ describe('code review preparation', () => {
     ].join('\n'));
     const manifest = prepareCodeReview({
       slug: 'feature',
-      walkthroughPath: '.scratch/plan/2026-09-17-feature-walkthrough.md',
+      walkthroughPath: walkthrough,
     }, { repoRoot: repo });
     try {
       assert.equal(manifest.status, 'ready');
@@ -542,9 +545,9 @@ function prepareGenerated(repo, extra = {}) {
 describe('prepare-code walkthrough summary box and traceability', () => {
   it('prepare-code walkthrough table synthesizes Pending rows from paired-plan criteria', () => {
     const repo = makeRepo();
-    fs.mkdirSync(path.join(repo, '.scratch', 'plan'), { recursive: true });
-    fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-feature.md'), `${PAIRED_PLAN}\n`);
-    const manifest = prepareGenerated(repo, { planPath: '.scratch/plan/2026-09-20-feature.md' });
+    const plan = sessionArtifact(repo, '2026-09-20-feature.md');
+    fs.writeFileSync(plan, `${PAIRED_PLAN}\n`);
+    const manifest = prepareGenerated(repo, { planPath: plan });
     try {
       assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
       const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');

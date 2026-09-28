@@ -6,7 +6,7 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { loadDispatchConfig } from '../lib/config.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { readArtifact } from '../review/preparation.mjs';
-import { sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { buildScratchPaths, localDate, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { emitAction } from './actions.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { bindPlan, persistEvidence, source } from './implement-state.mjs';
@@ -38,7 +38,7 @@ export function authorPlan(state) {
   state.ordinary.phase = 'plan';
   if (!state.planPath) {
     const slug = sanitizeSlug(state.invocation.argument).slice(0, 64) || 'implementation';
-    state.planPath = path.join(state.repoRoot, '.scratch', 'plan', `${new Date().toISOString().slice(0, 10)}-${slug}.md`);
+    state.planPath = /** @type {Record<string, string>} */ (buildScratchPaths(localDate(), slug)).plan;
   }
   return emitAction(state, 'author', { path: state.planPath, template: 'plan', defects: [] }, [
     `Author the canonical plan for: ${state.invocation.argument}`,
@@ -61,7 +61,7 @@ export async function beginReview(state, kind) {
   const integrity = kind === 'code' ? regenerateRepoHashes(state.repoRoot, state.ordinary.approvedPaths) : null;
   if (integrity) return emitAction(state, 'done', { outcome: 'failed', summary: integrity, command: state.resumeCommand });
   const action = await startReview({
-    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, argument: ['design', 'plan'].includes(kind) ? state.planPath : state.walkthroughPath },
+    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, terminalHandoff: false, argument: ['design', 'plan'].includes(kind) ? state.planPath : state.walkthroughPath },
     cwd: state.repoRoot, resumeCommand: state.resumeCommand, reviewBudget,
   });
   state.reviewState = readRunState(action.stateFile);

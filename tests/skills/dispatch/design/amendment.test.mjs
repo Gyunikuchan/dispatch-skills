@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { after, before, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 
 import {
   abortAmendment,
@@ -12,10 +12,9 @@ import {
   recoverAmendment,
   rejectAmendment,
 } from '../../../../skills/dispatch/scripts/design/amendment.mjs';
-import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { bindWorkflowSession, RUN_ENV, SESSION_ENV } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { parseEventLine } from '../../../../skills/dispatch/scripts/ledger/events.mjs';
-import { repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 
 const oid = 'c'.repeat(40);
 const at = '2026-09-20T00:00:00.000Z';
@@ -69,6 +68,7 @@ describe('design amendment transactions', { concurrency: false }, () => {
   let repo;
   let designPath;
   let ledgerPath;
+  let savedEnv;
   const workflowSessions = [];
 
   before(() => {
@@ -77,17 +77,22 @@ describe('design amendment transactions', { concurrency: false }, () => {
   });
 
   beforeEach(() => {
+    const keys = [SESSION_ENV, RUN_ENV, 'DISPATCH_CHAT_ID', 'DISPATCH_SESSION_TERMINAL'];
+    savedEnv = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    for (const key of keys) delete process.env[key];
     fs.rmSync(tempRoot, { recursive: true, force: true });
     fs.mkdirSync(tempRoot);
     repo = path.join(suiteRoot, `repo-${workflowSessions.length + 1}`);
     fs.mkdirSync(repo);
     gitInit(repo);
     repo = fs.realpathSync(repo);
-    designPath = path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md');
+    process.env.DISPATCH_CHAT_ID = `amend-${process.pid}-${workflowSessions.length + 1}`;
+    const session = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'design', slug: 'demo' });
+    workflowSessions.push(session);
+    designPath = path.join(session, 'artifacts', '2026-09-20-demo-design.md');
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
-    workflowSessions.push(bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'design', slug: 'demo' }));
-    const namespace = ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) });
+    const namespace = ensureLedgerNamespace();
     ledgerPath = path.join(namespace, 'demo-ledger.md');
     appendEvent(ledgerPath, {
       v: 2, seq: 1, type: 'run-start', runId, at,
@@ -102,6 +107,12 @@ describe('design amendment transactions', { concurrency: false }, () => {
       v: 2, seq: 2, type: 'approval', runId, at,
       data: { governingHash: governedHash(approvedDesign()), decision: 'approved', actor: 'user' },
     });
+  });
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
   });
 
   after(() => {

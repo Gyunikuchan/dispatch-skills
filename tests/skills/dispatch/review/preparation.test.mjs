@@ -25,16 +25,35 @@ import {
   toolTurnTarget,
   writeArtifactMetadata,
 } from '../../../../skills/dispatch/scripts/review/preparation.mjs';
+import { bindWorkflowSession, RUN_ENV, SESSION_ENV } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { formatApplicationRecord } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 
 const tempDirs = [];
+const sessionEnvRestorers = [];
 const makeDir = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-preparation-test-'));
   tempDirs.push(dir);
   return dir;
 };
+const makeInvocationArtifact = () => {
+  const repositoryRoot = makeDir();
+  const keys = [SESSION_ENV, RUN_ENV, 'DISPATCH_CHAT_ID', 'DISPATCH_SESSION_TERMINAL'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  process.env.DISPATCH_CHAT_ID = `review-preparation-${process.pid}-${Date.now()}`;
+  sessionEnvRestorers.push(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const session = bindWorkflowSession({ repositoryRoot, slug: 'review-preparation' });
+  const artifact = path.join(session, 'artifacts', 'plan.md');
+  fs.mkdirSync(path.dirname(artifact), { recursive: true });
+  return artifact;
+};
 
 afterEach(() => {
+  for (const restore of sessionEnvRestorers.splice(0)) restore();
   for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -219,8 +238,7 @@ describe('review preparation primitives', () => {
   });
 
   it('consumes invocation generations exactly once', () => {
-    const dir = makeDir();
-    const artifact = path.join(dir, 'plan.md');
+    const artifact = makeInvocationArtifact();
     fs.writeFileSync(artifact, '# Plan\n');
     const created = createInvocationState({
       kind: 'plan',
@@ -252,7 +270,7 @@ describe('review preparation primitives', () => {
   });
 
   it('explains invocation state removed before checkpoint', () => {
-    const artifactPath = path.join(makeDir(), 'plan.md');
+    const artifactPath = makeInvocationArtifact();
     fs.writeFileSync(artifactPath, '# Plan\n');
     const created = createInvocationState({
       kind: 'plan',
@@ -267,7 +285,7 @@ describe('review preparation primitives', () => {
   });
 
   it('explains a removed state file inside a surviving invocation dir', () => {
-    const artifactPath = path.join(makeDir(), 'plan.md');
+    const artifactPath = makeInvocationArtifact();
     fs.writeFileSync(artifactPath, '# Plan\n');
     const created = createInvocationState({
       kind: 'code',
@@ -504,9 +522,9 @@ describe('fence-aware excluded-section stripping', () => {
 
 describe('slugFromPath', () => {
   it('strips the design and walkthrough suffixes for every review kind', () => {
-    assert.equal(slugFromPath('.scratch/plan/2026-09-23-cache-design.md'), 'cache');
+    assert.equal(slugFromPath('artifacts/2026-09-23-cache-design.md'), 'cache');
     assert.equal(slugFromPath(['.scratch', 'plan', '2026-09-23-cache-walkthrough.md'].join('\\')), 'cache');
-    assert.equal(slugFromPath('.scratch/plan/2026-09-23-cache.md'), 'cache');
+    assert.equal(slugFromPath('artifacts/2026-09-23-cache.md'), 'cache');
     assert.equal(slugFromPath('notes/cache.md'), null);
   });
 });

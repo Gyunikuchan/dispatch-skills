@@ -24,9 +24,9 @@ const savedEnv = {};
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'telemetry-test-'));
   dir = path.join(root, 'tel');
-  for (const key of ['DISPATCH_TELEMETRY', 'USER', 'USERNAME', 'DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) savedEnv[key] = process.env[key];
+  for (const key of ['DISPATCH_TELEMETRY', 'USER', 'USERNAME', 'DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID']) savedEnv[key] = process.env[key];
   delete process.env.DISPATCH_TELEMETRY;
-  for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
+  for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID']) delete process.env[key];
 });
 
 afterEach(() => {
@@ -123,10 +123,11 @@ describe('telemetry', () => {
   });
 
   it('writes default telemetry inside the currently bound workflow session', () => {
-    const first = openSession();
+    const first = openSession({ repositoryRoot: root, id: 'first' });
     const firstPath = telemetryPath();
     appendTelemetry({ result: { metricsAttempts: [ATTEMPT] }, startedAt: Date.now() });
-    const second = openSession();
+    delete process.env.DISPATCH_SESSION_DIR;
+    const second = openSession({ repositoryRoot: root, id: 'second' });
     const secondPath = telemetryPath();
     assert.notEqual(first, second);
     assert.equal(path.dirname(firstPath), path.join(first, 'telemetry'));
@@ -154,17 +155,18 @@ describe('telemetry', () => {
     assert.equal(fs.existsSync(path.join(tmp, 'dispatch-skills-tel-test', 'telemetry')), false);
   });
 
-  it('sanitizes the username in the default path', () => {
+  it('keeps default telemetry under the chat folder across username changes', () => {
     process.env.USER = '../ev il/..';
-    const session = openSession();
+    const session = openSession({ repositoryRoot: root, id: 'username-one' });
     const file = telemetryPath();
     assert.equal(path.dirname(file), path.join(session, 'telemetry'));
-    assert.equal(path.dirname(session), path.join(os.tmpdir(), 'dispatch-skills-.._ev_il_..'));
+    assert.equal(path.dirname(session), path.join(root, '.scratch', 'dispatch-skills'));
     assert.equal(path.basename(file), 'telemetry.jsonl');
-    for (const value of ['..', '.']) {
+    for (const [index, value] of ['..', '.'].entries()) {
       process.env.USER = value;
-      const unknown = openSession();
-      assert.equal(path.dirname(unknown), path.join(os.tmpdir(), 'dispatch-skills-unknown'));
+      delete process.env.DISPATCH_SESSION_DIR;
+      const unknown = openSession({ repositoryRoot: root, id: `username-${index}` });
+      assert.equal(path.dirname(unknown), path.join(root, '.scratch', 'dispatch-skills'));
       assert.equal(path.dirname(telemetryPath()), path.join(unknown, 'telemetry'));
     }
   });

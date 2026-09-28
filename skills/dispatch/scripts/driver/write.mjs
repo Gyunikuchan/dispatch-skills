@@ -48,23 +48,19 @@ export function missingTrace(criteria, envelope) {
  * Checks a write subagent's envelope file as acceptance would, without advancing the run.
  * @param {any} state
  * @param {string} file
- * @param {{ allowLegacySelfCheck?: boolean }} [options]
  * @returns {{ envelope?: any, errors: string[] }}
  */
-export function inspectEnvelope(state, file, { allowLegacySelfCheck = false } = {}) {
+export function inspectEnvelope(state, file) {
   const data = state.ordinary;
   const expected = state.pending?.action === 'delegate-write'
     ? state.pending.fields?.expectedEnvelopePath
     : data.expectedEnvelopePath;
   const errors = [];
-  const legacySelfCheck = !expected && allowLegacySelfCheck;
-  if (!expected && !legacySelfCheck) {
-    return { errors: [`Legacy pending delegate-write has no expected envelope path; inline outcomes are refused. Resume with ${state.resumeCommand} to reissue a current-format write action.`] };
-  }
+  if (!expected) return { errors: ['Pending delegate-write has no expected envelope path.'] };
   if (state.pending?.action === 'delegate-write' && data.expectedEnvelopePath !== expected) {
     return { errors: ['Pending delegate-write envelope path does not match the saved run path.'] };
   }
-  if (expected && file !== expected) {
+  if (file !== expected) {
     const kind = data.previousEnvelopePaths?.includes(file) ? 'stale' : 'foreign';
     return { errors: [`The ${kind} envelope path does not match the pending action's expected path.`] };
   }
@@ -73,9 +69,6 @@ export function inspectEnvelope(state, file, { allowLegacySelfCheck = false } = 
   const relative = path.relative(sessionDir, absolute);
   if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     return { errors: ['The expected envelope path must name a file inside the run session directory.'] };
-  }
-  if (legacySelfCheck && !path.basename(absolute).startsWith(`${state.runId}-`)) {
-    return { errors: ['A legacy pending write can self-check only an envelope file named for this run inside its session directory.'] };
   }
   let stats;
   try { stats = fs.lstatSync(absolute); }
@@ -95,10 +88,9 @@ export function checkEnvelope(stateFile, file) {
   bindStateSession(stateFile);
   const state = readRunState(stateFile);
   if (state.pending?.action !== 'delegate-write') throw new Error('No delegate-write is pending for this state.');
-  const legacy = !state.pending.fields?.expectedEnvelopePath;
-  const { envelope, errors } = inspectEnvelope(state, file, { allowLegacySelfCheck: legacy });
+  const { envelope, errors } = inspectEnvelope(state, file);
   if (!errors.length && state.ordinary.launch === 'tests-only' && ['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) errors.push(...validateRedAdmission(state, envelope));
-  return errors.length ? { ok: false, errors } : { ok: true, ...(legacy ? { warning: `Legacy pending action was self-checked only; resume with ${state.resumeCommand} to reissue a current-format write action.` } : {}) };
+  return errors.length ? { ok: false, errors } : { ok: true };
 }
 function testsOnlyPrompt(state, expectedEnvelopePath) {
   const data = state.ordinary;
@@ -172,10 +164,8 @@ export function writeAction(state) {
   const prompt = testsOnly ? testsOnlyPrompt(state, expectedEnvelopePath) : productionPrompt(state, expectedEnvelopePath);
   const cascadeContinuation = data.pendingCascadeContinuation ?? null;
   const restore = data.pendingRestore ?? null;
-  const recoveryNote = data.writeRecoveryNote;
   delete data.pendingCascadeContinuation;
   delete data.pendingRestore;
-  delete data.writeRecoveryNote;
   return emitAction(state, 'delegate-write', { fields: {
     stage: testsOnly ? 'tests-only' : 'production', launch: data.launch,
     attempt: data.attempt, model: write.models[write.candidate], effort: write.effort ?? null,
@@ -193,7 +183,6 @@ export function writeAction(state) {
   } }, [
     'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Give it promptPath with promptHash, paths, criteria, expectedEnvelopePath, and any evidence, context, continuation, or restore fields; do not restate the brief. Reply {"envelopePath": "<expectedEnvelopePath>"}, or {"rejected": true, "reason": "..."} if the launch is refused; never substitute launcher defaults.',
     testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
-    ...(recoveryNote ? [recoveryNote] : []),
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

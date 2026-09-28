@@ -29,8 +29,8 @@ describe('dispatch SKILL.md', () => {
   });
 
   it('clarifies before authoring and writes one artifact', () => {
-    assert.match(text, /`implement` without a plan path\), first clarify scope and solution with `brainstorming` if installed, then any user-invoked grilling skill; both stay in chat/);
-    assert.match(text, /the driver's canonical artifact is the only design or plan written, and records each settled choice with its trade-offs, rationale, and rejected alternatives/);
+    assert.match(text, /For a new design or plan, clarify scope with `brainstorming` if installed, then any user-invoked grilling skill/);
+    assert.match(text, /The driver writes the canonical design or plan and records settled choices with trade-offs and rationale/);
   });
 });
 
@@ -85,11 +85,27 @@ describe('shared review reference', () => {
   });
 });
 
+describe('chat session artifact lifecycle', () => {
+  const adr = read('docs/decisions/0003-chat-session-artifact-lifecycle.md');
+
+  it('keeps the accepted workspace root, durable artifact areas, and whole-folder handoff', () => {
+    assert.match(adr, /root is\s+`\.scratch\/dispatch-skills\/<timestamp>-<session-id>-<session-title>\/`/s);
+    assert.match(adr, /`artifacts\/` and\s+`runs\/<run-id>\/`/s);
+    assert.match(adr, /move the \*\*entire\*\* folder/);
+    assert.match(adr, /`<realpath\(os\.tmpdir\(\)\)>\/dispatch-skills\/<same-folder-name>\/`/);
+  });
+
+  it('exposes the active artifacts root in the shipped contracts', () => {
+    assert.match(read('skills/dispatch/SKILL.md'), /`<sessionDir>\/artifacts\/`/);
+    assert.match(read('skills/dispatch/references/review.md'), /Active canonical artifacts live in `<sessionDir>\/artifacts\/`/);
+  });
+});
+
 describe('implement reference', () => {
   const text = read('skills/dispatch/references/verbs/implement.md');
 
   it('owns ledger fold and recovery', () => {
-    for (const anchor of [/Resolve and fold the ledger/, /run-start/, /run-complete/, /reconciliation/, /never relocated/]) assert.match(text, anchor);
+    for (const anchor of [/Resolve and fold the ledger/, /run-start/, /run-complete/, /reconciliation/, /whole session/]) assert.match(text, anchor);
   });
 
   it('maps evidence and baseline handling', () => {
@@ -121,7 +137,7 @@ describe('design reference', () => {
   });
 
   it('runs one increment per invocation with amendments and later integration', () => {
-    for (const anchor of [/One invocation runs one ledger-selected increment/, /Amendments/, /Final integration/, /later invocation/, /retain the ledger/, /exact session `artifacts\//]) {
+    for (const anchor of [/One invocation runs one ledger-selected increment/, /Amendments/, /Final integration/, /later invocation/, /including its ledger/, /whole chat folder/]) {
       assert.match(text, anchor);
     }
   });

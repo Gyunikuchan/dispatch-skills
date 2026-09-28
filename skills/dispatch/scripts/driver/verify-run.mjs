@@ -15,6 +15,7 @@ import { extractFailureIdentifiers, testCounts } from '../verification/test-fail
 import { diffRepositoryState } from '../verification/evidence.mjs';
 import { bindStateSession, readRunState } from './state.mjs';
 import { fingerprint, snapshot } from './verification.mjs';
+import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
 
 // A single command beyond this is treated as hung; its partial log stays for inspection.
 // SECTION: Execution policy
@@ -43,7 +44,7 @@ function execute(command, { cwd, logPath }) {
 /** Results this gate already recorded, when the tree has not changed since they finished. */
 function reusableRecord(state, pending) {
   let record;
-  try { record = JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8')); } catch { return null; }
+  try { record = restoreSessionPaths(JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8'))); } catch { return null; }
   if (record.token !== pending.token || record.purpose !== pending.purpose || !record.final) return null;
   return diffRepositoryState(record.final, snapshot(state)).changed.length ? null : record;
 }
@@ -92,7 +93,7 @@ export function runVerification(stateFile) {
 
   const record = { v: 1, token: pending.token, purpose: pending.purpose, results, generated, mutationEpoch: epoch, final: current, finishedAt: new Date().toISOString() };
   const temp = `${pending.resultsPath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+  fs.writeFileSync(temp, `${JSON.stringify(storeSessionPaths(record))}\n`, { mode: 0o600 });
   fs.renameSync(temp, pending.resultsPath);
   return summarize(pending, record);
 }

@@ -96,7 +96,7 @@ describe('rebuttal packet builder', () => {
     }), /unknown finding key/);
   });
 
-  it('writes private OS-temp packet files and returns cleanup paths', () => {
+  it('writes private session packet files and returns cleanup paths', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuttal-builder-test-'));
     tempDirs.push(dir);
     const artifactPath = path.join(dir, 'walkthrough.md');

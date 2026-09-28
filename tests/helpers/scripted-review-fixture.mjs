@@ -1,12 +1,11 @@
 // Shared fixtures for scripted*.test.mjs: stub-dispatch configs, cached fixtures, and trace assertions.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
 
 import { evaluateConsensus } from '../../skills/dispatch/scripts/review/consensus.mjs';
 import { splitDispatchFrontmatter } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { createStubDispatchFixture } from './stub-dispatch-fixture.mjs';
-import { allProviders, makeGitRepo, report } from './driver-harness.mjs';
+import { allProviders, makeGitRepo, report, walkthroughPath } from './driver-harness.mjs';
 
 export const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 export const phase = ({ rounds = 1, targets = 1, consensus = false } = {}) => ({ rounds: ALL(rounds), targets: ALL(targets), consensus: ALL(consensus) });
@@ -44,10 +43,7 @@ export const firstReview = (waveReport) => (action) =>
   action.wave.type === 'review' && action.wave.round === 1 ? allProviders(waveReport) : allProviders(report());
 
 export function walkthroughIn(repoDir) {
-  const dir = path.join(repoDir, '.scratch', 'plan');
-  const found = fs.readdirSync(dir).filter((name) => name.endsWith('-walkthrough.md'));
-  assert.equal(found.length, 1, `one walkthrough expected, found ${found.join(', ')}`);
-  return path.join(dir, found[0]);
+  return walkthroughPath(repoDir);
 }
 
 /** Asserts the resolution log carries a round with a Sources line, consensus exits 0, and metadata is checkpointed. */

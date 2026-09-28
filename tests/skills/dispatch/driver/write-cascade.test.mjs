@@ -11,7 +11,7 @@ import { afterEach, describe, it } from 'node:test';
 import { validateReply } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
 import { inspectEnvelope } from '../../../../skills/dispatch/scripts/driver/write.mjs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { drive, implementationOutcome, makeGitRepo, parseAction, PLAN_BODY, runDispatch, writePlan } from '../../../helpers/driver-harness.mjs';
+import { drive, implementationOutcome, makeGitRepo, parseAction, PLAN_BODY, runDispatch, writePlan, readFixtureState } from '../../../helpers/driver-harness.mjs';
 
 const levels = { low: 1, medium: 1, high: 1, xhigh: 1, max: 1 };
 const CONFIG = {
@@ -99,7 +99,7 @@ describe('delegate-write envelope path', () => {
     const fx = setup();
     const first = driveToFirstWrite(fx);
     const expected = first.fields.expectedEnvelopePath;
-    assert.equal(JSON.parse(fs.readFileSync(first.stateFile, 'utf8')).pending.fields.expectedEnvelopePath, expected);
+    assert.equal(readFixtureState(first.stateFile).pending.fields.expectedEnvelopePath, expected);
     save(expected, { ...outcome(), status: 'DONE_WITH_CONCERNS' });
     const selfCheck = runDispatch(fx.fixture, ['--check-envelope', expected, '--state', first.stateFile], { cwd: fx.repo.dir });
     assert.equal(selfCheck.status, 0, selfCheck.stderr);
@@ -137,7 +137,7 @@ describe('delegate-write envelope path', () => {
     assert.equal(JSON.parse(selfCheck.stdout).ok, false);
     const repaired = next(fx.fixture, fx.repo, first.stateFile, { envelopePath: first.fields.expectedEnvelopePath });
     assert.equal(repaired.action, 'delegate-write', repaired.error);
-    assert.ok(JSON.parse(fs.readFileSync(repaired.stateFile, 'utf8')).ordinary.testsOnlyRepair, repaired.error);
+    assert.ok(readFixtureState(repaired.stateFile).ordinary.testsOnlyRepair, repaired.error);
     assert.match(repaired.guidance.join(' '), /Previous write outcome/);
   });
 
@@ -155,7 +155,7 @@ describe('delegate-write envelope path', () => {
   it('refuses production DONE stage and trace defects at the same delegate-write path', () => {
     const fx = setup();
     const first = driveToFirstWrite(fx);
-    const state = JSON.parse(fs.readFileSync(first.stateFile, 'utf8'));
+    const state = readFixtureState(first.stateFile);
     state.ordinary.launch = 'full';
     const expected = first.fields.expectedEnvelopePath;
     save(expected, implementationOutcome({ stage: 'RED_READY', evidence: ['CRITERION SC1 | src/app.js | delivered value=2'] }));
@@ -164,19 +164,19 @@ describe('delegate-write envelope path', () => {
     assert.match(inspectEnvelope(state, expected).errors.join(' '), /Evidence needs a row "CRITERION SC1/);
   });
 
-  it('reissues a legacy pending write on resume without a reply', () => {
+  it('rejects a pending write without its required envelope path', () => {
     const fx = setup();
     const first = driveToFirstWrite(fx);
-    const state = JSON.parse(fs.readFileSync(first.stateFile, 'utf8'));
+    const state = readFixtureState(first.stateFile);
     delete state.pending.fields.expectedEnvelopePath;
     delete state.ordinary.expectedEnvelopePath;
     fs.writeFileSync(first.stateFile, JSON.stringify(state));
+    const selfCheck = runDispatch(fx.fixture, ['--check-envelope', first.fields.expectedEnvelopePath, '--state', first.stateFile], { cwd: fx.repo.dir });
+    assert.equal(selfCheck.status, 1, selfCheck.stderr);
+    assert.match(JSON.parse(selfCheck.stdout).errors.join(' '), /no expected envelope path/);
     const result = runDispatch(fx.fixture, ['--next', '--state', first.stateFile], { cwd: fx.repo.dir });
-    assert.equal(result.status, 0, result.stderr);
-    const reissued = parseAction(result.stdout);
-    assert.equal(reissued.action, 'delegate-write', reissued.error);
-    assert.ok(reissued.fields.expectedEnvelopePath);
-    assert.match(reissued.guidance.join(' '), /Legacy pending write/);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /no expected envelope path/);
   });
 
   it('rejects a path from a prior write action as stale', () => {

@@ -30,7 +30,7 @@ describe('audit-dispatch-skills shared helpers', () => {
 
     it('throws when --run is not a run id', () => {
       assert.throws(
-        () => resolveRunDirs(PROJECT_ROOT, ['--run', '.scratch/plan/foo']),
+        () => resolveRunDirs(PROJECT_ROOT, ['--run', 'artifacts/foo']),
         /--run must be a run id/,
       );
     });

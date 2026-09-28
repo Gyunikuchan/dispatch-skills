@@ -197,7 +197,7 @@ function bindInvocationSession(invocation, cwd) {
       : sanitizeSlug(invocation.argument ?? '')?.slice(0, 60);
   }
   slug ??= artifactKind === 'design' ? 'design' : invocation.verb === 'plan' ? 'implementation' : `workflow-${crypto.createHash('sha256').update(String(invocation.argument ?? invocation.verb)).digest('hex').slice(0, 12)}`;
-  return bindWorkflowSession({ repositoryRoot: repoRoot, artifactKind, artifactPath: invocation.argument, slug });
+  return bindWorkflowSession({ repositoryRoot: repoRoot, artifactKind, artifactPath: invocation.argument, slug, objective: invocation.argument ?? invocation.verb });
 }
 
 async function next(parsed) {
@@ -230,10 +230,7 @@ async function advanceLocked(parsed) {
   const expected = state.pending;
   if (!expected || expected.action === 'done') throw new UsageError('This run has finished; start a new one with --run.');
   const reply = readInput(parsed.input);
-  if (expected.action === 'delegate-write' && !expected.fields?.expectedEnvelopePath && !reply?.rejected && !reply?.failed) {
-    const { advanceImplement } = await import('./implement-phase.mjs');
-    return advanceImplement(state, reply);
-  }
+  if (expected.action === 'delegate-write' && !expected.fields?.expectedEnvelopePath) throw new UsageError('Pending delegate-write has no expected envelope path.');
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
   if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
@@ -284,9 +281,9 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
       if (parsed.run !== undefined) throw new UsageError('--run and --next are exclusive.');
       action = await next(parsed);
     } else {
-      const invocation = normalizeRun(parsed);
+      const invocation = { ...normalizeRun(parsed), terminalHandoff: true };
       if (invocation.verb === 'ask') {
-        openSession({ repositoryRoot: path.resolve(cwd) });
+        openSession({ repositoryRoot: path.resolve(cwd), objective: invocation.argument ?? invocation.verb });
         action = await startAsk({ invocation, cwd, resumeCommand: resumeCommand(invocation) });
       } else if (invocation.verb === 'design') {
         const repoRoot = requireToplevel(cwd);

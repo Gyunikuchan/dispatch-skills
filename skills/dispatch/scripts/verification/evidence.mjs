@@ -180,7 +180,10 @@ export function captureRepositoryState(repoRoot) {
   if (!showToplevel(root)) {
     return { available: false, reason: 'side-effect capture unavailable', entries: {} };
   }
-  const records = parsePorcelainZ(runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']));
+  // Runtime files are outside the reviewed source tree and can exceed Git's Windows path limit.
+  const records = parsePorcelainZ(runGit(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all']))
+    .map(record => ({ ...record, paths: record.paths.filter(file => !file.replaceAll('\\', '/').startsWith('.scratch/dispatch-skills/')) }))
+    .filter(record => record.paths.length > 0);
   const entries = {};
   const existingPaths = [...new Set(records.flatMap(({ paths }) => paths))]
     .filter((relativePath) => {

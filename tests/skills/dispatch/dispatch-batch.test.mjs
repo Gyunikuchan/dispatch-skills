@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import {
@@ -10,7 +11,8 @@ import {
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { resolveReadDelegates } from '../../../skills/dispatch/scripts/lib/config.mjs';
-import { createStubDispatchFixture, parseSlotLines, runStubDispatch } from '../../helpers/stub-dispatch-fixture.mjs';
+import { bindWorkflowSession } from '../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { createStubDispatchEnvironment, createStubDispatchFixture, parseSlotLines } from '../../helpers/stub-dispatch-fixture.mjs';
 
 /** Config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
 const CONFIG = {
@@ -23,10 +25,16 @@ const CONFIG = {
 const RESOLVED = resolveReadDelegates(CONFIG, 'medium');
 
 let root;
+let session;
 let savedTelemetry;
+let savedSessionEnv;
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-batch-'));
+  savedSessionEnv = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_CHAT_ID'].map(key => [key, process.env[key]]));
+  for (const key of Object.keys(savedSessionEnv)) delete process.env[key];
+  process.env.DISPATCH_CHAT_ID = `batch-${process.pid}-${Date.now()}`;
+  session = bindWorkflowSession({ repositoryRoot: root, artifactKind: 'plan', slug: 'batch' });
   // Keep batch runs out of the user's real telemetry file.
   savedTelemetry = process.env.DISPATCH_TELEMETRY;
   process.env.DISPATCH_TELEMETRY = '0';
@@ -37,10 +45,15 @@ afterEach(() => {
   if (savedTelemetry === undefined) delete process.env.DISPATCH_TELEMETRY;
   else process.env.DISPATCH_TELEMETRY = savedTelemetry;
   fs.rmSync(root, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(savedSessionEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
 });
 
 function writeBatch(value) {
-  const batchPath = path.join(root, 'batch.json');
+  const directory = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'packets');
+  fs.mkdirSync(directory, { recursive: true });
+  const batchPath = path.join(directory, 'batch.json');
   fs.writeFileSync(batchPath, JSON.stringify(value));
   return batchPath;
 }
@@ -127,13 +140,20 @@ describe('dispatch batch manifest', () => {
     );
   });
 
-  it('rejects unsafe batch-file paths', () => {
+  it('rejects foreign paths and loads a workspace batch without OS-temp access', () => {
     assert.throws(() => loadBatchFile('relative.json', RESOLVED), /absolute path/);
     assert.throws(
       () => loadBatchFile(path.resolve('package.json'), RESOLVED),
-      /OS temp directory/,
+      /active chat session root/,
     );
-    const oversized = path.join(root, 'oversized.json');
+    const originalRealpath = fs.realpathSync;
+    fs.realpathSync = (target, ...args) => {
+      if (path.resolve(String(target)) === path.resolve(os.tmpdir())) throw Object.assign(new Error('temp denied'), { code: 'EACCES' });
+      return originalRealpath(target, ...args);
+    };
+    try { assert.equal(loadBatchFile(writeBatch({ targets: [entry()], reserves: [] }), RESOLVED).targets.length, 1); }
+    finally { fs.realpathSync = originalRealpath; }
+    const oversized = path.join(path.dirname(writeBatch({ targets: [entry()], reserves: [] })), 'oversized.json');
     fs.writeFileSync(oversized, ' '.repeat(64 * 1024 + 1));
     assert.throws(() => loadBatchFile(oversized, RESOLVED), /exceeds 64 KiB/);
   });
@@ -387,9 +407,22 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   afterEach(() => fixture.cleanup());
 
   function writeFixtureBatch(value) {
-    const file = path.join(fixture.dir, `batch-${Date.now()}.json`);
+    const directory = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'packets');
+    fs.mkdirSync(directory, { recursive: true });
+    const file = path.join(directory, `batch-${Date.now()}.json`);
     fs.writeFileSync(file, JSON.stringify(value));
     return file;
+  }
+
+  function runFixtureDispatch(args, { results = {}, live = {}, env: extraEnv = {} } = {}) {
+    const logFile = path.join(fixture.dir, `calls-${Date.now()}-${Math.random().toString(16).slice(2)}.jsonl`);
+    const env = createStubDispatchEnvironment({
+      results, live, logFile, extra: { DISPATCH_SESSION_DIR: session, ...extraEnv },
+    });
+    const res = spawnSync(process.execPath, [fixture.script, ...args], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], cwd: root, env, timeout: 60_000, killSignal: 'SIGKILL',
+    });
+    return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
   }
 
   const BATCH = {
@@ -398,7 +431,7 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   };
 
   it('prints one compact JSON line per slot and no envelope on stdout', () => {
-    const res = runStubDispatch(fixture, ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', 'Review']);
+    const res = runFixtureDispatch(['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', 'Review']);
     assert.equal(res.status, 0, res.stderr);
     const lines = parseSlotLines(res.stdout);
     assert.equal(lines.length, 1);
@@ -412,8 +445,7 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   });
 
   it('prints a line for the failed target and for its reserve substitute', () => {
-    const res = runStubDispatch(
-      fixture,
+    const res = runFixtureDispatch(
       ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', 'Review'],
       { results: { claude: { exit: 1 } } },
     );
@@ -427,9 +459,9 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   });
 
   it('keeps the full envelope unchanged in --output-file', () => {
-    const outputFile = path.join(fixture.dir, 'envelope.json');
-    const res = runStubDispatch(
-      fixture,
+    const outputFile = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'reports', 'envelope.json');
+    fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+    const res = runFixtureDispatch(
       ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', '--output-file', outputFile, 'Review'],
       { results: { claude: { exit: 1 } } },
     );

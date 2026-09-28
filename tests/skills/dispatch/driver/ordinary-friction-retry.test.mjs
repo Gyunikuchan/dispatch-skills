@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { readSessionManifest } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { readSessionManifest, restoreSessionPaths } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 import { allProviders, implementationOutcome, report, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
@@ -95,21 +95,24 @@ describe('driver-run verification', () => {
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.deepEqual(verifies.map(action => action.purpose), ['baseline', 'red', 'scoped', 'final']);
+    const sessionRoot = result.done.handoff.destinations[0];
+    const resultFile = action => path.join(sessionRoot, path.relative(path.dirname(path.dirname(path.dirname(action.stateFile))), action.resultsPath));
     for (const action of verifies) {
       assert.deepEqual(action.argv.slice(-3, -1), ['--verify', '--state']);
-      const record = JSON.parse(fs.readFileSync(action.resultsPath, 'utf8'));
+      const stored = JSON.parse(fs.readFileSync(resultFile(action), 'utf8'));
+      assert.ok(stored.results.every(item => item.logPath.startsWith('@session/')));
+      const record = restoreSessionPaths(stored, sessionRoot);
       assert.equal(record.purpose, action.purpose);
-      const sessionRoot = path.dirname(path.dirname(path.dirname(action.stateFile)));
-      assert.equal(readSessionManifest(sessionRoot).artifactIdentity, 'artifact:plan:sample');
+      assert.equal(readSessionManifest(sessionRoot).sessionId, fixture.repo.sessionId);
       for (const item of record.results) {
         assert.ok(fs.existsSync(item.logPath), item.logPath);
         assert.ok(path.relative(sessionRoot, item.logPath).startsWith(`runs${path.sep}`), item.logPath);
       }
     }
-    const completion = JSON.parse(fs.readFileSync(verifies[3].resultsPath, 'utf8'));
+    const completion = restoreSessionPaths(JSON.parse(fs.readFileSync(resultFile(verifies[3]), 'utf8')), sessionRoot);
     assert.deepEqual(completion.generated.map(item => [item.exit, item.changed, item.outside]), [[0, ['gen.txt'], []]]);
     assert.equal(fs.readFileSync(path.join(fixture.repo.dir, 'gen.txt'), 'utf8'), 'generated');
-    const red = JSON.parse(fs.readFileSync(verifies[1].resultsPath, 'utf8')).results[0];
+    const red = restoreSessionPaths(JSON.parse(fs.readFileSync(resultFile(verifies[1]), 'utf8')), sessionRoot).results[0];
     assert.equal(red.exit, 1);
     assert.deepEqual(red.identifiers, ['test:sample']);
     const ledger = readLedger(result.done.ledgerPath);

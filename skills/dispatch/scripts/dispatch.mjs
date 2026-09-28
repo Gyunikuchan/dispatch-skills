@@ -15,7 +15,6 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
-import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { verifySkillIntegrity } from './lib/integrity.mjs';
 import { detectBwrap, isMainModule } from './lib/platform.mjs';
@@ -61,7 +60,7 @@ import {
   validateConfig,
 } from './lib/config.mjs';
 import { normalizePin, parsePins, resolveFlow } from './lib/resolve-flow.mjs';
-import { runArea, consumeSessionFlag } from './lib/session-temp.mjs';
+import { isSessionPath, runArea, consumeSessionFlag } from './lib/session-temp.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -478,7 +477,7 @@ function validateBatchEntry(entry, where, config, sourceKeys, tuples) {
 /**
  * Loads and validates a caller-resolved batch manifest.
  *
- * @param {string} file Absolute path under the OS temp directory.
+ * @param {string} file Absolute path under the active chat session root.
  * @param {{ platforms: Record<string, Record<string, any> | Record<string, any>[]> }} config Level-resolved read delegates
  *   (from `resolveReadDelegates`), which candidate indexes are checked against.
  */
@@ -487,11 +486,8 @@ export function loadBatchFile(file, config) {
   const resolved = path.resolve(file);
   const inputStat = fs.lstatSync(resolved);
   if (inputStat.isSymbolicLink()) throw new Error('--batch-file must not be a symbolic link.');
-  const tempRoot = fs.realpathSync(os.tmpdir());
   const realFile = fs.realpathSync(resolved);
-  if (realFile !== tempRoot && !realFile.startsWith(`${tempRoot}${path.sep}`)) {
-    throw new Error('--batch-file must be located under the OS temp directory.');
-  }
+  if (!isSessionPath(realFile)) throw new Error('--batch-file must be located under the active chat session root.');
   const stat = fs.lstatSync(realFile);
   if (!stat.isFile()) throw new Error('--batch-file must be a regular file.');
   if (stat.size > MAX_BATCH_FILE_BYTES) throw new Error('--batch-file exceeds 64 KiB.');
@@ -717,7 +713,7 @@ export function buildPinsWave(resolved, rawPins, { orchestrator = null, orchestr
 }
 
 /**
- * Formats one R8 per-slot stdout line and writes a successful slot's report to an OS-temp file
+ * Formats one R8 per-slot stdout line and writes a successful slot's report to an session file
  * (mode 0600) so stdout carries paths, never report bodies.
  */
 function slotLine(record, exit, reportDir) {
@@ -1378,7 +1374,7 @@ function loadValidConfigOrExit() {
 
 /**
  * Runs a `--batch-file` or `--pins` wave: one R8 JSON line per launched slot on stdout, each
- * successful report in an OS-temp file, and the full envelope in `--output-file` when given.
+ * successful report in an session file, and the full envelope in `--output-file` when given.
  * Exits 0 only when every slot resolved.
  */
 async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, responseSchema, promptFile, outputFile, slotsFile = null }) {

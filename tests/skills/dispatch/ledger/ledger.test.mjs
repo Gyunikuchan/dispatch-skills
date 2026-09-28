@@ -19,19 +19,18 @@ import {
 } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { materializedFingerprint } from '../../../../skills/dispatch/scripts/lib/git-state.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
-import { repositoryRootHash } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
-import { bindWorkflowSession, sessionDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { bindWorkflowSession, RUN_ENV, runDir, SESSION_ENV, sessionDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const state = `sha256:${'b'.repeat(64)}`;
 const oid = 'c'.repeat(40);
 const at = '2026-09-20T00:00:00.000Z';
 
-function runStart(hash, plan = '.scratch/plan/2026-09-20-example.md') {
+function runStart(hash, plan = 'artifacts/2026-09-20-example.md', rootSlug = 'example') {
   return {
     v: 1, type: 'run-start', runId, at,
     data: {
-      governingPath: plan, governingHash: hash, rootSlug: 'example', action: 'ordinary',
+      governingPath: plan, governingHash: hash, rootSlug, action: 'ordinary',
       baseline: { commit: oid, repositoryState: state, dirtyPaths: [] },
     },
   };
@@ -57,8 +56,9 @@ describe('ledger I/O and resume', () => {
     for (const entry of fs.readdirSync(repo)) {
       if (entry !== '.git') fs.rmSync(path.join(repo, entry), { recursive: true, force: true });
     }
+    for (const key of [SESSION_ENV, RUN_ENV, 'DISPATCH_SESSION_TERMINAL']) delete process.env[key];
     bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'example' });
-    const directory = ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) });
+    const directory = ensureLedgerNamespace();
     ledgerPath = path.join(directory, 'example-ledger.md');
     fs.rmSync(ledgerPath, { force: true });
     fs.rmSync(`${ledgerPath}.lock`, { force: true });
@@ -69,7 +69,7 @@ describe('ledger I/O and resume', () => {
     fs.rmSync(repo, { recursive: true, force: true });
     const session = process.env.DISPATCH_SESSION_DIR;
     if (session) fs.rmSync(session, { recursive: true, force: true });
-    for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
+    for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID']) delete process.env[key];
   });
 
   // SECTION: Storage durability, repair, and locking
@@ -186,12 +186,12 @@ describe('ledger I/O and resume', () => {
     try {
       if (process.platform !== 'win32') {
         fs.chmodSync(session, 0o777);
-        assert.throws(() => ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) }), /writable/);
+        assert.throws(() => ensureLedgerNamespace(), /writable/);
         fs.chmodSync(session, 0o700);
       }
       fs.rmSync(directory, { recursive: true, force: true });
       fs.symlinkSync(repo, directory, process.platform === 'win32' ? 'junction' : 'dir');
-      assert.throws(() => ensureLedgerNamespace({ repoHash: repositoryRootHash(repo) }), /Unsafe .* directory/);
+      assert.throws(() => ensureLedgerNamespace(), /Unsafe .* directory/);
     } finally {
       fs.rmSync(directory, { recursive: true, force: true });
       fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -231,21 +231,21 @@ describe('ledger I/O and resume', () => {
 
   // SECTION: Artifact identity and governing content
 
-  it('derives only canonical scratch plan slugs', () => {
-    assert.equal(slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2.md'), 'v0-4-phase2');
-    assert.throws(() => slugFromPlanPath('.scratch/plan/2026-09-20-v0-4-phase2-walkthrough.md'), /must match/);
-    assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /must match/);
+  it('derives only canonical session artifact plan slugs', () => {
+    assert.equal(slugFromPlanPath('artifacts/2026-09-20-v0-4-phase2.md'), 'v0-4-phase2');
+    assert.throws(() => slugFromPlanPath('artifacts/2026-09-20-v0-4-phase2-walkthrough.md'), /canonical artifact/);
+    assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /canonical artifact/);
   });
 
   it('derives design root slugs across path styles and rejects reserved roots', () => {
-    assert.equal(designRootSlug('.scratch/plan/2026-09-20-platform-design.md'), 'platform');
-    assert.equal(designRootSlug('.scratch\\plan\\2026-09-20-platform-design.md'), 'platform');
-    assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-i01-one-design.md'), null);
-    assert.equal(designRootSlug('.scratch/plan/2026-09-20-root-integration-design.md'), null);
+    assert.equal(designRootSlug('artifacts/2026-09-20-platform-design.md'), 'platform');
+    assert.equal(designRootSlug('artifacts\\2026-09-20-platform-design.md'), 'platform');
+    assert.equal(designRootSlug('artifacts/2026-09-20-root-i01-one-design.md'), null);
+    assert.equal(designRootSlug('artifacts/2026-09-20-root-integration-design.md'), null);
   });
 
   it('requires artifact and ledger approval revisions for design resume', () => {
-    const designPath = '.scratch/plan/2026-09-20-example-design.md';
+    const designPath = 'artifacts/2026-09-20-example-design.md';
     const source = '# Design\n\n## Architecture\nA\n\n## Execution Status\nReady\n';
     const hash = governingHash(source, { kind: 'design' }).hash;
     const designRunId = '22222222-2222-4222-8222-222222222222';
@@ -261,11 +261,11 @@ describe('ledger I/O and resume', () => {
   });
 
   it('rejects increment-shaped plans as ordinary resume artifacts', () => {
-    assert.throws(() => slugFromPlanPath('.scratch/plan/2026-09-20-root-i01-model-plan.md'), /reserved for phased artifacts/);
+    assert.throws(() => slugFromPlanPath('artifacts/2026-09-20-root-i01-model-plan.md'), /reserved for phased artifacts/);
   });
 
   it('blocks approval-less and aborted design segments', () => {
-    const designPath = '.scratch/plan/2026-09-20-example-design.md';
+    const designPath = 'artifacts/2026-09-20-example-design.md';
     const source = '# Design\n\nBody\n';
     const hash = governingHash(source, { kind: 'design' }).hash;
     const metadata = { approvedContentHash: hash };
@@ -284,7 +284,7 @@ describe('ledger I/O and resume', () => {
 
   it('resumes after RED without repeating tests-only and preserves completion after commit', () => {
     fs.writeFileSync(path.join(repo, 'done.txt'), 'done\n');
-    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const planPath = 'artifacts/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     const resultState = materializedFingerprint(repo, ['done.txt']).digest;
@@ -308,7 +308,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('returns explicit missing and mismatched ledger states', () => {
-    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const planPath = 'artifacts/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     assert.equal(resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo }).status, 'missing');
     appendEvent(ledgerPath, runStart(`sha256:${'d'.repeat(64)}`, planPath));
@@ -316,7 +316,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('prioritizes an open failure-disposition ruling over ordinary completion drift', () => {
-    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const planPath = 'artifacts/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'failed mutation\n');
@@ -334,7 +334,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('routes post-failure snapshot drift to reconciliation', () => {
-    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const planPath = 'artifacts/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'changed after failure\n');
@@ -349,7 +349,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('keeps inspect-first open and resolves disposition with terminal stable-failure', () => {
-    const planPath = '.scratch/plan/2026-09-20-example.md';
+    const planPath = 'artifacts/2026-09-20-example.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     const snapshot = { available: true, entries: {} };
@@ -369,7 +369,7 @@ describe('ledger I/O and resume', () => {
   // SECTION: Phased design resume
 
   describe('design-run resume across segments', () => {
-    const designPath = '.scratch/plan/2026-09-20-demo-design.md';
+    const designPath = 'artifacts/2026-09-20-demo-design.md';
     const designBody = [
       '# Design',
       '',
@@ -405,8 +405,8 @@ describe('ledger I/O and resume', () => {
           baseline: { commit: oid, repositoryState: state, dirtyPaths: [] },
           design: { path: designPath, revision: designHash },
           increment: {
-            id, planPath: `.scratch/plan/2026-09-20-example-${slug}-plan.md`,
-            walkthroughPath: `.scratch/plan/2026-09-20-example-${slug}-walkthrough.md`,
+            id, planPath: `artifacts/2026-09-20-example-${slug}-plan.md`,
+            walkthroughPath: `artifacts/2026-09-20-example-${slug}-walkthrough.md`,
             planHash: designHash,
           },
         },

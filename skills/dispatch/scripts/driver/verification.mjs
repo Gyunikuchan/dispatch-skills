@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_MANIFEST_NAME, skillDirInRepo } from '../lib/integrity.mjs';
 import { extractGeneratedPaths } from '../plan/structure.mjs';
-import { sessionArea } from '../lib/session-temp.mjs';
+import { sessionArea, restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification/evidence.mjs';
 import { baselineFingerprint, contentTreeId, materializedFingerprint } from '../lib/git-state.mjs';
 import {
@@ -191,8 +191,7 @@ export function deferredCriteria(data, commands = []) {
 }
 export function verificationAction(state) {
   const data = state.ordinary, pending = data.verification;
-  // NOTE: a host-run verification pending from before driver-run gates restarts on this gate's commands; a legacy completion gate restarts as scoped.
-  if (!pending.token || pending.purpose === 'completion') return beginVerification(state, pending.purpose === 'completion' ? 'scoped' : pending.purpose);
+  if (!pending.token || !['baseline', 'red', 'scoped', 'final'].includes(pending.purpose)) throw new Error('Pending verification record has no valid token or gate purpose.');
   pending.before = snapshot(state);
   pending.epoch = data.mutationEpoch ?? 0;
   const judged = JUDGED.has(pending.purpose) ? judgedCriteria(data, pending.commands) : [];
@@ -217,7 +216,7 @@ export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
   if (reply?.results) throw new Error('This gate runs on the driver: run the verify argv, then call --next without results.');
   let file;
-  try { file = JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8')); } catch { throw new Error('Verification results are missing: run the verify argv, wait for it to exit, then call --next.'); }
+  try { file = restoreSessionPaths(JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8'))); } catch { throw new Error('Verification results are missing: run the verify argv, wait for it to exit, then call --next.'); }
   if (file.token !== pending.token || file.purpose !== pending.purpose) throw new Error('Verification results belong to another gate; rerun the verify argv.');
   // Edits after the runner finished postdate every result, so they mark the last one changed.
   const drift = diffRepositoryState(file.final, snapshot(state)).changed;
@@ -279,7 +278,7 @@ function entryKey(tree, command) {
 }
 function readCache(state) {
   try {
-    const cache = JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8'));
+    const cache = restoreSessionPaths(JSON.parse(fs.readFileSync(baselineCachePath(state), 'utf8')));
     return cache.v === 2 && cache.entries && typeof cache.entries === 'object' ? cache.entries : {};
   } catch { return {}; }
 }
@@ -308,7 +307,7 @@ export function storeBaseline(state, results) {
     const entries = Object.fromEntries(Object.entries(readCache(state)).filter(([, entry]) => now - Date.parse(entry.capturedAt) <= BASELINE_TTL_MS));
     for (const result of results) entries[entryKey(tree, result.command)] = { capturedAt, result };
     const file = baselineCachePath(state), temp = `${file}.${crypto.randomUUID()}.tmp`;
-    fs.writeFileSync(temp, `${JSON.stringify({ v: 2, entries })}\n`, { mode: 0o600 });
+    fs.writeFileSync(temp, `${JSON.stringify(storeSessionPaths({ v: 2, entries }))}\n`, { mode: 0o600 });
     fs.renameSync(temp, file);
   } catch {
     // NOTE: the cache only saves time; a failed write reruns the baseline next segment.

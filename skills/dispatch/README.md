@@ -125,8 +125,8 @@ If the `brainstorming` skill is installed, dispatch first uses it to settle scop
 ### Resume from an existing artifact
 
 ```text
-/dispatch implement: .scratch/plan/2026-09-24-webhooks-plan.md
-/dispatch implement --phases from:code-review: .scratch/plan/2026-09-24-webhooks-plan.md
+/dispatch implement: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-webhooks-plan.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-webhooks-plan.md
 ```
 
 > [!NOTE]
@@ -151,12 +151,11 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 - Read delegates run with credentials stripped and provider-specific read-only controls.
 - Production edits require approval and use a configured native write subagent.
 - Verification runs the commands approved in the plan; review fixes are verified and reviewed again.
-- Active designs, plans, and walkthroughs live in `.scratch/plan/` so interrupted work can resume. Dispatch binds each governed workflow to `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/`; run state, prompts, packets, reports, logs, and verification output sit under `runs/<run-id>/`, while `artifacts/`, `ledger/`, `telemetry/`, and `cache/` hold session-owned durable files.
-- Design artifacts stay in `.scratch/plan/` through final integration, then move together into the owning session's `artifacts/`. Each successful ordinary handoff moves its plan artifacts into that session's `artifacts/`. Sessions retain durable evidence during age pruning, though the operating system or Storage Sense may delete OS-temporary files.
+- Each chat keeps its artifacts together in one folder under workspace `.scratch/` while work is active. The handoff gives you the full folder path, normally in OS temp; if the move is blocked, the folder stays in scratch. Later work in the same chat reuses that folder. The OS may eventually purge temp data.
 - Dispatch never commits, pushes, or opens a pull request.
 
 > [!NOTE]
-> When OS sandboxing is unavailable, dispatch warns, records `sandboxDowngraded`, and continues unsandboxed. Provider read-only controls remain where supported; see the [provider reference](references/providers.md) for each boundary.
+> When OS sandboxing is unavailable, dispatch warns and continues unsandboxed. Provider read-only controls remain where supported; see the [provider reference](references/providers.md) for each boundary.
 
 ## Troubleshooting
 
@@ -166,7 +165,7 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 | A model or phase is unexpected | Inspect the active file, requested level, pins, and `--doctor` output |
 | Implementation cannot start | Configure `write-subagents` for the host platform |
 | A prerequisite is missing | Resume from the producing phase named in the diagnostic |
-| A verification gate failed | Open the reported `logPath`; dispatch preserves the working tree for a recorded recovery decision |
+| A verification gate failed | Open the reported verification log; dispatch preserves the working tree for a recorded recovery decision |
 | Review reached its round cap with live MUST findings | Extend by another cap-sized block (default), or stop, rule live findings, and run one final verification wave; resume from the resolution log if interrupted |
 | A provider failed | Use the probe and failure guidance in the [provider reference](references/providers.md) |
 

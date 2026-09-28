@@ -4,9 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger/ledger.mjs';
 import { parseIncrementGraph } from '../design/graph.mjs';
-import { resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
-import { relocatedArtifactsPath } from '../artifacts/resolve-paths.mjs';
-import { resolveUniqueDest } from '../artifacts/relocate-scratch.mjs';
+import { buildScratchPaths, resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { runStatePath } from '../lib/session-temp.mjs';
 import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
 import { updateExecutionStatus } from '../design/status.mjs';
@@ -31,8 +29,8 @@ export function incrementPaths(state, id) {
   const date = path.basename(state.designPath).match(/^(\d{4}-\d{2}-\d{2})-/)?.[1] ?? new Date().toISOString().slice(0, 10);
   const stem = `${designSlug(state.designPath)}-${id.toLowerCase()}-driver`;
   return {
-    planPath: path.join(state.repoRoot, '.scratch', 'plan', `${date}-${stem}-plan.md`),
-    walkthroughPath: path.join(state.repoRoot, '.scratch', 'plan', `${date}-${stem}-walkthrough.md`),
+    planPath: /** @type {string} */ (buildScratchPaths(date, stem, 'increment-plan')),
+    walkthroughPath: /** @type {string} */ (buildScratchPaths(date, stem, 'increment-walkthrough')),
   };
 }
 
@@ -43,7 +41,7 @@ export function startDesign(state) {
   const argument = state.invocation.argument;
   state.designPath = argument.endsWith('-design.md')
     ? path.resolve(state.repoRoot, argument)
-    : path.join(state.repoRoot, '.scratch', 'plan', `${new Date().toISOString().slice(0, 10)}-${sanitizeSlug(argument).slice(0, 64) || 'design'}-design.md`);
+    : buildScratchPaths(new Date().toISOString().slice(0, 10), sanitizeSlug(argument).slice(0, 64) || 'design', 'design');
   state.planPath = state.designPath;
   state.ordinary.phase = 'design';
   state.ordinary.step = 'design-author';
@@ -134,11 +132,9 @@ export function resumeDesignPath(state) {
     const graph = parseIncrementGraph(designSource);
     const incrementArtifacts = graph.increments.flatMap(item => { const paths = incrementPaths(state, item.id); return [paths.planPath, paths.walkthroughPath]; });
     const date = path.basename(state.designPath).match(/^(\d{4}-\d{2}-\d{2})-/)?.[1] ?? new Date().toISOString().slice(0, 10);
-    const integrationWalkthrough = path.join(state.repoRoot, '.scratch', 'plan', `${date}-${designSlug(state.designPath)}-integration-walkthrough.md`);
+    const integrationWalkthrough = /** @type {string} */ (buildScratchPaths(date, designSlug(state.designPath), 'integration-walkthrough'));
     const sources = [state.designPath, ...incrementArtifacts, integrationWalkthrough];
-    const artifactDir = relocatedArtifactsPath({ projectRoot: state.repoRoot });
-    const relocation = sources.map(source => `${source} => ${resolveUniqueDest(artifactDir, path.basename(source))}`);
-    return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeRelocation: true }, relocateAfterPass: relocation, retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event before relocating each listed source to its exact session artifact destination.', 'Next Action: final-integration.']);
+    return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeHandoff: true }, sessionArtifacts: sources, retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event after all evidence is settled. The driver moves the complete chat folder after successful final integration.', 'Next Action: final-integration.']);
   }
   // An in-flight increment resumes by the folded run's active increment.
   const id = resumed.nextAction === 'resume-increment' ? resumed.folded?.activeIncrementId : resumed.nextAction?.match(/^implement:(I\d{2})$/)?.[1];

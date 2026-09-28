@@ -38,7 +38,7 @@ plain prose. Code spans and fenced blocks are exempt.
 | `baseline` | settled plan | walkthrough with baseline verify records and recorded approval |
 | `implementation` | approved baseline | code edits, implementation outcome, ledger events |
 | `code-review` | walkthrough + edits | settled code resolution log and checkpoint |
-| `handoff` | settled code review | Execution Status, handoff summary, scratch relocation |
+| `handoff` | settled code review | Execution Status, handoff summary, session handoff |
 
 The **RED gate** is a gate inside `implementation`: failing tests are
 written and confirmed before production edits. Phase and increment are distinct on purpose: a

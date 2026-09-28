@@ -23,6 +23,7 @@ import { verifySkillIntegrity } from '../../../skills/dispatch/scripts/lib/integ
 import { PROJECT_ROOT } from '../../../skills/dispatch/scripts/lib/platform.mjs';
 import { detectOrchestrator, KNOWN_PROVIDERS, PROVIDER_ALIASES } from '../../../skills/dispatch/scripts/lib/providers.mjs';
 import { resolveReadDelegates, validateConfig } from '../../../skills/dispatch/scripts/lib/config.mjs';
+import { bindWorkflowSession } from '../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 /** Strict read-provider wrapper: one target per candidate, each a single `low` level. */
 const targetsOf = (...candidates) => ({ targets: candidates.map(candidate => ({ low: candidate })) });
@@ -1910,9 +1911,14 @@ describe('strict config targets and sandbox', () => {
     const config = { 'read-delegates': { copilot: { targets: [lvl('gpt-5.6-luna', 'max')] } } };
     const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-strict-batch-'));
     const saved = process.env.DISPATCH_TELEMETRY;
+    const savedSession = process.env.DISPATCH_SESSION_DIR;
+    const savedRun = process.env.DISPATCH_RUN_ID;
     process.env.DISPATCH_TELEMETRY = '0';
     try {
-      const batchPath = path.join(root, 'batch.json');
+      delete process.env.DISPATCH_SESSION_DIR;
+      delete process.env.DISPATCH_RUN_ID;
+      const session = bindWorkflowSession({ repositoryRoot: root, slug: 'batch' });
+      const batchPath = path.join(session, 'batch.json');
       fs.writeFileSync(batchPath, JSON.stringify({
         targets: [{ roundId: 'code-review:R1', candidateId: 'code-review:copilot:0', platform: 'copilot', model: 'gpt-5.6-luna' }],
         reserves: [],
@@ -1925,6 +1931,10 @@ describe('strict config targets and sandbox', () => {
     } finally {
       if (saved === undefined) delete process.env.DISPATCH_TELEMETRY;
       else process.env.DISPATCH_TELEMETRY = saved;
+      if (savedSession === undefined) delete process.env.DISPATCH_SESSION_DIR;
+      else process.env.DISPATCH_SESSION_DIR = savedSession;
+      if (savedRun === undefined) delete process.env.DISPATCH_RUN_ID;
+      else process.env.DISPATCH_RUN_ID = savedRun;
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

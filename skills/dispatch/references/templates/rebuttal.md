@@ -6,7 +6,7 @@ kind block `rebuttal-<kind>.md`.
 ## Prompt template
 
 Populate every variable (kind blocks declare the rest):
-- `<Finding Packet Path>` — source-specific OS-temp packet.
+- `<Finding Packet Path>` — source-specific session packet.
 - `<Tool Turn Budget>` — advisory target.
 
 ````markdown

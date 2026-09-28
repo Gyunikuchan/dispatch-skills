@@ -1,196 +1,160 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
-  LEGACY_STATE_FLAG, MANIFEST_NAME, RUN_ENV, RUN_FLAG, SESSION_ENV, SESSION_FLAG,
-  assertWorkflowSession, bindRun, bindSession, bindWorkflowSession, completeSession, consumeSessionFlag,
-  isSessionDir, openSession, pruneSessions, readSessionManifest, runDir, runId,
-  sessionArgs, sessionDir, sessionTempDir, sessionsRoot, workflowSessionDirs,
+  RUN_ENV, RUN_FLAG, SESSION_ENV, SESSION_FLAG, assertWorkflowSession, bindRun,
+  bindWorkflowSession, consumeSessionFlag, isPublishedSessionDir, isWorkspaceSessionDir,
+  openSession, pruneSessions, readSessionManifest, runDir, runId, sessionArgs, sessionDir, sessionTempDir,
+  publishedSessionRoot,
 } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
-const HELPER = pathToFileURL(fileURLToPath(new URL('../../../../skills/dispatch/scripts/lib/session-temp.mjs', import.meta.url))).href;
-
-describe('workflow session temp directory', () => {
+describe('chat session binding', () => {
   let saved;
+  let repositoryRoot;
+  let ownedRoots;
+
   beforeEach(() => {
-    saved = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'].map(key => [key, process.env[key]]));
-    for (const key of Object.keys(saved)) delete process.env[key];
+    const keys = [
+      SESSION_ENV, RUN_ENV, 'DISPATCH_SESSION_TERMINAL', 'DISPATCH_CHAT_ID', 'CODEX_THREAD_ID',
+    ];
+    saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    for (const key of keys) delete process.env[key];
+    repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-session-repo-'));
+    ownedRoots = [];
   });
+
   afterEach(() => {
+    for (const root of ownedRoots) fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(repositoryRoot, { recursive: true, force: true });
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   });
 
-  it('opens a direct session and organizes temp files below its active run', () => {
-    const dir = sessionDir();
-    assert.equal(path.dirname(dir), sessionsRoot());
-    assert.ok(isSessionDir(dir));
-    assert.equal(process.env[SESSION_ENV], dir);
-    assert.equal(readSessionManifest(dir).status, 'active');
-    const temp = sessionTempDir('dispatch-x-');
-    assert.equal(path.dirname(temp), path.join(runDir(), 'tmp'));
-    assert.ok(!isSessionDir(temp), 'a nested directory is not a session');
-    assert.ok(!isSessionDir(os.tmpdir()));
+  it('clears inherited dispatch bindings only during the first isolated-temp preload', () => {
+    const preload = fileURLToPath(new URL('../../../helpers/isolated-temp.mjs', import.meta.url));
+    const env = { ...process.env, DISPATCH_TEST_TEMP_PRELOAD: preload };
+    delete env.DISPATCH_TEST_TEMP;
+    const flags = [
+      'DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID',
+      'DISPATCH_SESSION_TERMINAL',
+    ];
+    for (const key of flags) env[key] = 'inherited';
+    const script = `
+      import { pathToFileURL } from 'node:url';
+      const flags = ${JSON.stringify(flags)};
+      const cleared = flags.every(key => process.env[key] === undefined);
+      for (const key of flags) process.env[key] = 'fixture';
+      await import(pathToFileURL(process.env.DISPATCH_TEST_TEMP_PRELOAD).href + '?fixture');
+      const preserved = flags.every(key => process.env[key] === 'fixture');
+      process.stdout.write(JSON.stringify({ cleared, preserved }));
+    `;
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, '--input-type=module', '-e', script], { encoding: 'utf8', env, windowsHide: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), { cleared: true, preserved: true });
   });
 
-  it('propagates direct session and run identity before the command separator', () => {
-    const dir = openSession('flag-session');
-    const args = sessionArgs();
-    assert.deepEqual(args.slice(0, 2), [SESSION_FLAG, dir]);
-    assert.deepEqual(args.slice(2, 4), [RUN_FLAG, runId()]);
+  it('keeps multiple workflows in one chat folder and gives each workflow a distinct run ID', () => {
+    process.env.DISPATCH_CHAT_ID = 'chat-123';
+    const first = bindWorkflowSession({ repositoryRoot, artifactKind: 'plan', slug: 'first-task', objective: 'Build the first task' });
+    ownedRoots.push(first);
+    const manifest = readSessionManifest(first);
+    assert.equal(path.dirname(first), path.join(repositoryRoot, '.scratch', 'dispatch-skills'));
+    assert.equal(manifest.sessionId, 'chat-123');
+    assert.equal(manifest.sessionTitle, 'build-the-first-task');
+    assert.equal(manifest.location, 'workspace');
+    const firstRun = runId();
+
     delete process.env[SESSION_ENV];
     delete process.env[RUN_ENV];
-    assert.deepEqual(consumeSessionFlag(['--run', ...args, 'implement', '--', SESSION_FLAG, 'kept']), ['--run', 'implement', '--', SESSION_FLAG, 'kept']);
+    const second = bindWorkflowSession({ repositoryRoot, artifactKind: 'design', slug: 'second-task', objective: 'Build a second task' });
+    assert.equal(second, first);
+    assert.notEqual(runId(), firstRun);
+    assertWorkflowSession({ repositoryRoot, artifactKind: 'design', slug: 'second-task' });
+  });
+
+  it('organizes run files below the active workspace root and propagates session identity', () => {
+    const dir = openSession({ repositoryRoot, id: 'explicit-chat', objective: 'A stable title' });
+    ownedRoots.push(dir);
+    assert.ok(isWorkspaceSessionDir(dir, repositoryRoot));
+    assert.ok(!isPublishedSessionDir(dir));
     assert.equal(process.env[SESSION_ENV], dir);
-    assert.equal(process.env[RUN_ENV], args[3]);
-    assert.throws(() => consumeSessionFlag([SESSION_FLAG, os.tmpdir()]), /direct child/);
-    assert.throws(() => openSession('../escape'), /Invalid session id/);
-    assert.throws(() => openSession('.'), /Invalid session id/);
-    assert.throws(() => openSession('..'), /Invalid session id/);
+    const temp = sessionTempDir('dispatch-test-');
+    assert.equal(path.dirname(temp), path.join(runDir(), 'tmp'));
+    assert.deepEqual(sessionArgs(), [SESSION_FLAG, dir, RUN_FLAG, runId()]);
+
+    delete process.env[SESSION_ENV];
+    delete process.env[RUN_ENV];
+    assert.deepEqual(consumeSessionFlag([SESSION_FLAG, dir, RUN_FLAG, 'resume-1', '--', SESSION_FLAG, 'kept']), ['--', SESSION_FLAG, 'kept']);
+    assert.equal(sessionDir(), dir);
+    assert.equal(process.env[RUN_ENV], 'resume-1');
+    assert.equal(path.dirname(dir), path.join(repositoryRoot, '.scratch', 'dispatch-skills'));
+    assert.equal(path.dirname(publishedSessionRoot()), fs.realpathSync(os.tmpdir()));
+  });
+
+  it('keeps a completed workflow chat root reusable', () => {
+    process.env.DISPATCH_CHAT_ID = 'reusable-chat';
+    const first = bindWorkflowSession({ repositoryRoot, artifactKind: 'plan', slug: 'one' });
+    ownedRoots.push(first);
+    delete process.env[SESSION_ENV];
+    delete process.env[RUN_ENV];
+    const next = bindWorkflowSession({ repositoryRoot, artifactKind: 'plan', slug: 'two' });
+    assert.equal(next, first);
+    assert.equal(readSessionManifest(next).sessionId, 'reusable-chat');
+  });
+
+  it('prunes aged run data in another chat while the current chat stays bound', () => {
+    const stale = openSession({ repositoryRoot, id: 'stale-chat' });
+    ownedRoots.push(stale);
+    const staleRun = runDir();
+    fs.writeFileSync(path.join(staleRun, 'old.log'), 'old');
+    const staleCache = path.join(stale, 'cache');
+    fs.mkdirSync(staleCache);
+    fs.writeFileSync(path.join(staleCache, 'old.cache'), 'old');
+    const artifact = path.join(stale, 'artifacts', 'plan.md');
+    fs.mkdirSync(path.dirname(artifact));
+    fs.writeFileSync(artifact, '# Plan');
+    const markAged = (dir) => {
+      const file = path.join(dir, 'manifest.json');
+      const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+      manifest.lastUsedAt = '2000-01-01T00:00:00.000Z';
+      fs.writeFileSync(file, JSON.stringify(manifest));
+    };
+    markAged(stale);
+
+    delete process.env[SESSION_ENV];
+    delete process.env[RUN_ENV];
+    const active = openSession({ repositoryRoot, id: 'active-chat' });
+    ownedRoots.push(active);
+    const activeRun = runDir();
+    fs.writeFileSync(path.join(activeRun, 'live.log'), 'live');
+    markAged(active);
+
+    pruneSessions({ maxAgeMs: 1000, now: Date.now() });
+    assert.equal(fs.existsSync(path.join(stale, 'runs')), false);
+    assert.equal(fs.existsSync(staleCache), false);
+    assert.equal(fs.existsSync(artifact), true);
+    assert.equal(fs.existsSync(path.join(stale, 'manifest.json')), true);
+    assert.equal(fs.existsSync(activeRun), true);
+  });
+
+  it('rejects artifact resolution until a chat root is bound', () => {
+    assert.throws(() => assertWorkflowSession({ repositoryRoot }), /must be bound/);
+    assert.equal(process.env[SESSION_ENV], undefined);
+  });
+
+  it('validates run IDs and session containment', () => {
+    const dir = openSession({ repositoryRoot, id: 'safe-chat' });
+    ownedRoots.push(dir);
     assert.throws(() => bindRun('..'), /Invalid run id/);
     assert.throws(() => runDir('..'), /Invalid run id/);
-    assert.equal(path.dirname(runDir()), path.join(dir, 'runs'));
+    assert.throws(() => consumeSessionFlag([SESSION_FLAG, os.tmpdir()]), /outside the validated/);
+    assert.equal(isPublishedSessionDir(os.tmpdir()), false);
   });
 
-  it('binds nested state only from a validated legacy run directory', () => {
-    const legacy = path.join(sessionsRoot(), 'sessions', `legacy-nested-${process.pid}-${Date.now()}`);
-    const id = '22222222-2222-4222-8222-222222222222';
-    const stateFile = path.join(legacy, 'runs', id, 'state.json');
-    const arbitraryFile = path.join(legacy, 'other', id, 'state.json');
-    fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-    fs.mkdirSync(path.dirname(arbitraryFile), { recursive: true });
-    fs.writeFileSync(stateFile, JSON.stringify({ v: 1, runId: id }));
-    fs.writeFileSync(arbitraryFile, JSON.stringify({ v: 1, runId: id }));
-    try {
-      assert.deepEqual(consumeSessionFlag([LEGACY_STATE_FLAG, stateFile]), []);
-      assert.equal(process.env[SESSION_ENV], legacy);
-      assert.equal(process.env[RUN_ENV], id);
-      assert.throws(() => consumeSessionFlag([LEGACY_STATE_FLAG, arbitraryFile]), /recognized in-flight legacy layout/);
-    } finally {
-      fs.rmSync(legacy, { recursive: true, force: true });
-    }
-  });
-
-  it('fails a repository-scoped assertion without opening an ungoverned session', () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-session-unbound-'));
-    try {
-      assert.throws(() => assertWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'sample' }), /must be bound/);
-      assert.equal(process.env[SESSION_ENV], undefined);
-    } finally {
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('claims concurrent starts once and advances after a completed generation', async () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-session-repo-'));
-    const childEnv = { ...process.env, DISPATCH_TEST_REPO: repo };
-    for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete childEnv[key];
-    const script = `import { bindWorkflowSession } from ${JSON.stringify(HELPER)}; console.log(bindWorkflowSession({ repositoryRoot: process.env.DISPATCH_TEST_REPO, artifactKind: 'plan', slug: 'shared-work' }));`;
-    const claim = () => new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ['--input-type=module', '--eval', script], { env: childEnv, windowsHide: true });
-      let stdout = '', stderr = '';
-      child.stdout.setEncoding('utf8').on('data', value => { stdout += value; });
-      child.stderr.setEncoding('utf8').on('data', value => { stderr += value; });
-      child.on('error', reject);
-      child.on('close', code => code === 0 ? resolve(stdout.trim()) : reject(new Error(stderr)));
-    });
-    try {
-      const [first, second] = await Promise.all([claim(), claim()]);
-      assert.equal(first, second);
-      assert.equal(workflowSessionDirs({ repositoryRoot: repo, artifactKind: 'plan', slug: 'shared-work' }).length, 1);
-      bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'shared-work' });
-      completeSession();
-      const next = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'shared-work' });
-      assert.notEqual(next, first);
-      assert.equal(readSessionManifest(first).status, 'completed');
-      assert.equal(readSessionManifest(next).generation, 2);
-      assertWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'shared-work' });
-    } finally {
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('ignores an interrupted unpublished claim and keeps completion terminal after a touch', () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-session-orphan-'));
-    const staging = fs.mkdtempSync(path.join(sessionsRoot(), '.claim-'));
-    try {
-      const claimed = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'orphan-work' });
-      assert.equal(readSessionManifest(claimed).status, 'active');
-      assert.equal(workflowSessionDirs({ repositoryRoot: repo, artifactKind: 'plan', slug: 'orphan-work' }).length, 1);
-      completeSession();
-      bindSession(claimed);
-      assert.equal(readSessionManifest(claimed).status, 'completed');
-      assert.equal(fs.existsSync(staging), true, 'an interrupted unpublished claim cannot own a workflow');
-      const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-      fs.utimesSync(staging, old, old);
-      pruneSessions();
-      assert.equal(fs.existsSync(staging), false, 'aged unpublished claims are pruned');
-    } finally {
-      fs.rmSync(staging, { recursive: true, force: true });
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('retries a transient rename while publishing a new session', () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-session-rename-'));
-    const original = fs.renameSync;
-    let attempts = 0;
-    fs.renameSync = (source, destination) => {
-      if (path.basename(source).startsWith('.claim-')) {
-        attempts++;
-        if (attempts === 1) throw Object.assign(new Error('transient claim contention'), { code: 'EPERM' });
-      }
-      return original(source, destination);
-    };
-    try {
-      const claimed = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'retry-work' });
-      assert.equal(attempts, 2);
-      assert.equal(readSessionManifest(claimed).status, 'active');
-    } finally {
-      fs.renameSync = original;
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('names the recovery path for a legacy manifest-less candidate', () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'workflow-session-stale-'));
-    let orphan;
-    try {
-      const first = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'stale-work' });
-      completeSession();
-      orphan = path.join(path.dirname(first), `${path.basename(first).replace(/-1$/, '')}-2`);
-      fs.mkdirSync(orphan);
-      assert.throws(() => bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'stale-work' }),
-        (error) => error.message.includes(orphan) && /Inspect and remove that stale directory/.test(error.message));
-    } finally {
-      if (orphan) fs.rmSync(orphan, { recursive: true, force: true });
-      fs.rmSync(repo, { recursive: true, force: true });
-    }
-  });
-
-  it('prunes aged run and cache content while retaining the manifest and durable ledger', () => {
-    const stale = openSession('stale-session');
-    const bound = openSession('bound-session');
-    for (const area of ['runs', 'cache', 'artifacts', 'ledger', 'telemetry']) fs.mkdirSync(path.join(stale, area), { recursive: true });
-    fs.writeFileSync(path.join(stale, 'ledger', 'kept-ledger.md'), 'evidence');
-    const manifestFile = path.join(stale, MANIFEST_NAME);
-    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
-    manifest.lastUsedAt = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-    fs.writeFileSync(manifestFile, JSON.stringify(manifest));
-    const old = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-    fs.utimesSync(stale, old, old);
-    pruneSessions();
-    assert.equal(fs.existsSync(stale), true);
-    assert.equal(fs.existsSync(path.join(stale, MANIFEST_NAME)), true);
-    assert.equal(fs.existsSync(path.join(stale, 'ledger', 'kept-ledger.md')), true);
-    assert.equal(fs.existsSync(path.join(stale, 'runs')), false);
-    assert.equal(fs.existsSync(path.join(stale, 'cache')), false);
-    assert.equal(fs.existsSync(bound), true);
-  });
 });

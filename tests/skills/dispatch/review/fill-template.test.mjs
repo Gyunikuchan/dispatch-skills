@@ -55,10 +55,10 @@ describe('fill-template: fillTemplate', () => {
   it('replaces every declared placeholder', () => {
     const template = 'Plan: <Plan Path>\nFocus: <User Focus Areas>';
     const filled = fillTemplate(template, ['Plan Path', 'User Focus Areas'], {
-      'Plan Path': '.scratch/plan/x.md',
+      'Plan Path': 'artifacts/x.md',
       'User Focus Areas': 'General review',
     });
-    assert.equal(filled, 'Plan: .scratch/plan/x.md\nFocus: General review');
+    assert.equal(filled, 'Plan: artifacts/x.md\nFocus: General review');
   });
 
   it('leaves ungoverned grammar placeholders untouched', () => {

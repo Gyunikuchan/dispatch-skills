@@ -1,85 +1,41 @@
 // @ts-check
-/**
- * A workflow session owns its durable artifacts and its per-invocation run directories:
- * `<os.tmpdir()>/dispatch-skills-<user>/<session-id>/`. Manifests bind sessions to a canonical
- * repository and governing artifact; `runs/<run-id>/` holds transient state and outputs.
- */
+/** Session binding and run areas backed by the chat folder managed by `session-lifecycle.mjs`. */
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { safeRenameSync } from './platform.mjs';
-import { userSlug } from './telemetry.mjs';
+import {
+  findSession, handoffSession, initializeSession, isPublishedSessionDir, isWorkspaceSessionDir,
+  publishedSessionRoot, readLifecycleManifest, reactivateSession, validateSessionRoot, workspaceSessionRoot,
+} from './session-lifecycle.mjs';
 
 export const SESSION_ENV = 'DISPATCH_SESSION_DIR';
 export const SESSION_FLAG = '--session-dir';
 export const RUN_ENV = 'DISPATCH_RUN_ID';
 export const RUN_FLAG = '--session-run-id';
-export const LEGACY_STATE_FLAG = '--legacy-state-file';
 export const MANIFEST_NAME = 'manifest.json';
 
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const MANIFEST_WAIT_MS = 5000;
-const SESSION_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,120}$/;
-const RUN_ID_PATTERN = SESSION_ID_PATTERN;
-const LEGACY_STATE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
+const RUN_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,120}$/;
 const DURABLE_AREAS = new Set(['artifacts', 'ledger', 'telemetry', 'cache']);
 const RUN_AREAS = new Set(['logs', 'prompts', 'packets', 'reports', 'verify', 'cache', 'tmp']);
 
-// SECTION: Roots and validation
-
-/** `<realpath(os.tmpdir())>/dispatch-skills-<user>`: the parent of direct session children. */
-export function dispatchTempRoot({ env = process.env, tempRoot = os.tmpdir() } = {}) {
-  return path.join(fs.realpathSync(tempRoot), `dispatch-skills-${userSlug({ env })}`);
-}
-
-/** Kept as the session-parent API name used by state pruning and filesystem callers. */
-export function sessionsRoot(options) {
-  return dispatchTempRoot(options);
-}
-
-function legacySessionsRoot(options) {
-  return path.join(dispatchTempRoot(options), 'sessions');
-}
-
+/** @param {string} dir */
 function isRealDirectory(dir) {
   try {
     const stat = fs.lstatSync(dir);
-    return stat.isDirectory() && !stat.isSymbolicLink() && fs.realpathSync(dir) === dir;
-  } catch {
-    return false;
-  }
+    const real = path.resolve(fs.realpathSync(dir));
+    const resolved = path.resolve(dir);
+    return stat.isDirectory() && !stat.isSymbolicLink() && (process.platform === 'win32' ? real.toLowerCase() === resolved.toLowerCase() : real === resolved);
+  } catch { return false; }
 }
 
-function privateDirectory(dir) {
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const stat = fs.lstatSync(dir);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe dispatch directory: ${dir}`);
-  try { fs.chmodSync(dir, 0o700); } catch { /* NOTE: win32 ignores POSIX modes. */ }
-  return fs.realpathSync(dir);
-}
-
-/** True when `dir` is a direct, non-symlink child of this user's dispatch temp root. */
-export function isSessionDir(dir, options) {
-  if (typeof dir !== 'string' || !dir) return false;
-  const root = dispatchTempRoot(options);
-  const resolved = path.resolve(dir);
-  if (path.dirname(resolved) !== root || !SESSION_ID_PATTERN.test(path.basename(resolved))) return false;
-  try {
-    const stat = fs.lstatSync(resolved);
-    return stat.isDirectory() && !stat.isSymbolicLink() && fs.realpathSync(resolved) === resolved;
-  } catch {
-    return false;
-  }
-}
-
-function isLegacySessionDir(dir) {
-  if (typeof dir !== 'string' || !dir) return false;
-  const resolved = path.resolve(dir);
-  if (path.dirname(resolved) !== legacySessionsRoot() || !SESSION_ID_PATTERN.test(path.basename(resolved))) return false;
-  return isRealDirectory(resolved);
+/** @param {string} left @param {string} right */
+function sameFilesystemPath(left, right) {
+  const a = path.resolve(left), b = path.resolve(right);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 export function canonicalRepositoryRoot(root) {
@@ -87,444 +43,219 @@ export function canonicalRepositoryRoot(root) {
   return process.platform === 'win32' ? real.toLowerCase() : real;
 }
 
-function canonicalArtifactIdentity({ repositoryRoot, artifactPath, artifactKind, slug }) {
-  if (typeof artifactKind === 'string' && typeof slug === 'string' && slug) {
-    return `artifact:${artifactKind}:${slug.normalize('NFC')}`;
-  }
-  if (typeof artifactPath === 'string' && artifactPath) {
-    const absolute = path.resolve(repositoryRoot ?? process.cwd(), artifactPath);
-    const root = repositoryRoot ? path.resolve(repositoryRoot) : null;
-    if (root) {
-      const relative = path.relative(root, absolute);
-      if (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
-        return `path:${relative.replaceAll('\\', '/').normalize('NFC')}`;
-      }
-    }
-    const owner = sessionForArtifactPath(absolute);
-    if (owner) {
-      const manifest = readSessionManifest(owner);
-      if (repositoryRoot && manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot)) {
-        throw new Error(`Relocated artifact belongs to a different repository: ${artifactPath}`);
-      }
-      return manifest.artifactIdentity;
-    }
-    return `path:${absolute.normalize('NFC').replaceAll('\\', '/')}`;
-  }
-  return null;
-}
+/** @param {string} repositoryRoot */
+function checkedRepositoryRoot(repositoryRoot) { return canonicalRepositoryRoot(repositoryRoot); }
 
-/** Reads and validates the root manifest before a session can be reused. */
+/** Reads a manifest only from a validated workspace or published session root. */
 export function readSessionManifest(dir) {
-  if (!isSessionDir(dir)) throw new Error(`Session directory must be a direct child of ${dispatchTempRoot()}: ${dir}`);
-  const file = path.join(dir, MANIFEST_NAME);
-  let stat;
-  try { stat = fs.lstatSync(file); } catch (error) {
-    throw new Error(`Session manifest is missing or unreadable: ${file}`);
-  }
-  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Unsafe session manifest: ${file}`);
-  let manifest;
-  try { manifest = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {
-    throw new Error(`Session manifest is invalid JSON: ${file}`);
-  }
-  if (!manifest || manifest.schemaVersion !== 1 || manifest.sessionId !== path.basename(dir) ||
-      !['active', 'completed'].includes(manifest.status) ||
-      !(manifest.repositoryRoot === null || typeof manifest.repositoryRoot === 'string') ||
-      !(manifest.artifactIdentity === null || typeof manifest.artifactIdentity === 'string') ||
-      !Number.isSafeInteger(manifest.generation) || manifest.generation < 1 ||
-      typeof manifest.createdAt !== 'string' || typeof manifest.lastUsedAt !== 'string') {
-    throw new Error(`Session manifest has an unsupported or unsafe identity: ${file}`);
-  }
-  return manifest;
+  if (isWorkspaceSessionDir(dir, readRepositoryFromManifest(dir)) || isPublishedSessionDir(dir)) return readLifecycleManifest(dir);
+  throw new Error(`Session directory is outside the validated workspace or terminal roots: ${dir}`);
 }
 
-function manifestPath(dir) {
-  return path.join(dir, MANIFEST_NAME);
-}
-
-function writeManifest(dir, manifest) {
-  const target = manifestPath(dir);
-  const temp = `${target}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  try { safeRenameSync(temp, target); }
-  finally { fs.rmSync(temp, { force: true }); }
-}
-
-function touchManifest(dir) {
-  const manifest = readSessionManifest(dir);
-  // Activity changes directory metadata, leaving terminal manifest status immutable to touches.
-  const now = new Date();
-  fs.utimesSync(dir, now, now);
-  return manifest;
-}
-
-function renameClaim(staging, destination) {
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (let attempt = 0; attempt < 6; attempt++) {
-    try { fs.renameSync(staging, destination); return true; }
-    catch (error) {
-      if (fs.existsSync(destination)) return false;
-      if (!['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt === 5) throw error;
-      Atomics.wait(pause, 0, 0, 20);
-    }
-  }
-  throw new Error(`Could not publish session directory: ${destination}`);
-}
-
-/** Publishes a complete session directory in one rename; losers inspect the winner's manifest. */
-function publishSession(base, id, manifest) {
-  const destination = path.join(base, id);
-  const staging = fs.mkdtempSync(path.join(base, '.claim-'));
+function readRepositoryFromManifest(dir) {
+  const file = path.join(path.resolve(dir), MANIFEST_NAME);
   try {
-    try { fs.chmodSync(staging, 0o700); } catch { /* NOTE: win32 ignores POSIX modes. */ }
-    writeManifest(staging, manifest);
-    return renameClaim(staging, destination);
-  } finally {
-    const resolved = path.resolve(staging);
-    if (path.dirname(resolved) === base && path.basename(resolved).startsWith('.claim-') && fs.existsSync(resolved)) {
-      const stat = fs.lstatSync(resolved);
-      if (stat.isDirectory() && !stat.isSymbolicLink()) fs.rmSync(resolved, { recursive: true, force: true });
-    }
-  }
+    const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return typeof value?.repositoryRoot === 'string' ? value.repositoryRoot : process.cwd();
+  } catch { return process.cwd(); }
 }
 
-function setBoundSession(dir, { legacy = false, stateFile = null } = {}) {
+function setBoundSession(dir) {
   process.env[SESSION_ENV] = dir;
-  if (legacy) {
-    process.env.DISPATCH_LEGACY_SESSION = '1';
-    process.env.DISPATCH_LEGACY_STATE_FILE = stateFile;
-  } else {
-    delete process.env.DISPATCH_LEGACY_SESSION;
-    delete process.env.DISPATCH_LEGACY_STATE_FILE;
-  }
+  delete process.env.DISPATCH_SESSION_TERMINAL;
 }
 
+/** @param {string} id */
 export function bindRun(id) {
   if (!RUN_ID_PATTERN.test(id)) throw new Error(`Invalid run id "${id}".`);
   process.env[RUN_ENV] = id;
   return id;
 }
 
-function randomRunId() {
-  return crypto.randomUUID();
-}
+function randomRunId() { return crypto.randomBytes(8).toString('hex'); }
 
-/** The active run id, opening one for a stand-alone dispatch invocation when needed. */
+/** The active run id, opening one for a stand-alone invocation when needed. */
 export function runId() {
   const bound = process.env[RUN_ENV];
   return bound && RUN_ID_PATTERN.test(bound) ? bound : bindRun(randomRunId());
 }
 
-/**
- * Opens a standalone session or reuses an explicit test/session id. Production governed work uses
- * `bindWorkflowSession`, which derives an identity and claims a deterministic generation.
- * @param {string|{id?: string, repositoryRoot?: string|null, artifactKind?: string|null, artifactPath?: string|null, artifactIdentity?: string|null, slug?: string|null, generation?: number, tempRoot?: string}} [value]
- */
+/** @param {string|{id?: string, repositoryRoot?: string|null, artifactPath?: string|null, slug?: string|null, sessionTitle?: string|null, objective?: string|null, tempRoot?: string}} [value] */
 export function openSession(value) {
   const options = typeof value === 'string' ? { id: value } : (value ?? {});
-  const id = options.id ?? `${Date.now().toString(36)}-${crypto.randomBytes(6).toString('hex')}`;
-  if (!SESSION_ID_PATTERN.test(id)) throw new Error(`Invalid session id "${id}".`);
-  const root = dispatchTempRoot({ tempRoot: options.tempRoot });
-  privateDirectory(root);
-  const dir = path.join(root, id);
-  const now = new Date().toISOString();
-  const created = publishSession(root, id, {
-    schemaVersion: 1,
-    sessionId: id,
-    repositoryRoot: options.repositoryRoot ? canonicalRepositoryRoot(options.repositoryRoot) : null,
-    artifactIdentity: options.artifactIdentity ?? null,
-    artifactKind: options.artifactKind ?? null,
-    artifactPath: options.artifactPath ?? null,
-    slug: options.slug ?? null,
-    generation: options.generation ?? 1,
-    status: 'active',
-    createdAt: now,
-    lastUsedAt: now,
-  });
-  if (!created) {
-    if (!isSessionDir(dir, { tempRoot: options.tempRoot })) throw new Error(`Unsafe session directory: ${dir}`);
-    const prior = readSessionManifest(dir);
-    if (prior.status === 'completed' || prior.artifactIdentity !== (options.artifactIdentity ?? null)) {
-      throw new Error(`Session id is already owned by another workflow: ${id}`);
-    }
-  }
-  const real = fs.realpathSync(dir);
-  setBoundSession(real);
-  bindRun(randomRunId());
-  pruneSessions();
-  return real;
-}
-
-function identityHash(repositoryRoot, artifactIdentity) {
-  return crypto.createHash('sha256').update(`${repositoryRoot}\0${artifactIdentity}`).digest('hex').slice(0, 24);
-}
-
-function waitForManifest(dir) {
-  const deadline = Date.now() + MANIFEST_WAIT_MS;
-  const shared = new Int32Array(new SharedArrayBuffer(4));
-  while (Date.now() < deadline) {
-    if (fs.existsSync(manifestPath(dir))) return readSessionManifest(dir);
-    Atomics.wait(shared, 0, 0, 10);
-  }
-  throw new Error(`A manifest-less session candidate remains at ${dir}. Inspect and remove that stale directory, then retry the workflow.`);
-}
-
-function sameWorkflow(manifest, repositoryRoot, artifactIdentity) {
-  return manifest.repositoryRoot === repositoryRoot && manifest.artifactIdentity === artifactIdentity;
-}
-
-/** Returns all validated generations for an exact repository and governed artifact identity. */
-/** @param {{ repositoryRoot?: string, artifactKind?: string, slug?: string }} [options] */
-export function workflowSessionDirs({ repositoryRoot, artifactKind, slug } = {}) {
-  if (!repositoryRoot || typeof artifactKind !== 'string' || typeof slug !== 'string' || !slug) {
-    throw new Error('Repository root, artifact kind, and slug are required for workflow discovery.');
-  }
-  const canonicalRoot = canonicalRepositoryRoot(repositoryRoot);
-  const artifactIdentity = `artifact:${artifactKind}:${slug.normalize('NFC')}`;
-  const prefix = identityHash(canonicalRoot, artifactIdentity);
-  const base = dispatchTempRoot();
-  let entries;
-  try { entries = fs.readdirSync(base, { withFileTypes: true }); }
-  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-  const sessions = [];
-  for (const entry of entries) {
-    if (!entry.name.startsWith(`${prefix}-`)) continue;
-    const dir = path.join(base, entry.name);
-    if (!entry.isDirectory()) throw new Error(`Unsafe session candidate for ${artifactIdentity}: ${dir}`);
+  const repositoryRoot = options.repositoryRoot ?? process.cwd();
+  const explicit = process.env[SESSION_ENV];
+  const sessionId = options.id ?? null;
+  let dir;
+  if (explicit) {
+    dir = bindSession(explicit);
     const manifest = readSessionManifest(dir);
-    if (!sameWorkflow(manifest, canonicalRoot, artifactIdentity)) {
-      throw new Error(`Session candidate identity mismatch for ${artifactIdentity}: ${dir}`);
-    }
-    sessions.push({ dir, manifest });
-  }
-  return sessions.sort((left, right) => left.manifest.generation - right.manifest.generation).map(item => item.dir);
-}
-
-function claimWorkflowSession({ repositoryRoot, artifactIdentity, artifactKind, artifactPath, slug, tempRoot }) {
-  const base = dispatchTempRoot({ tempRoot });
-  privateDirectory(base);
-  const canonicalRoot = canonicalRepositoryRoot(repositoryRoot);
-  const prefix = identityHash(canonicalRoot, artifactIdentity);
-  const candidates = fs.readdirSync(base, { withFileTypes: true })
-    .filter(entry => entry.isDirectory() && entry.name.startsWith(`${prefix}-`))
-    .map(entry => path.join(base, entry.name));
-  const active = [];
-  for (const dir of candidates) {
-    let manifest;
-    try { manifest = readSessionManifest(dir); }
-    catch (error) {
-      if (!fs.existsSync(manifestPath(dir))) manifest = waitForManifest(dir);
-      else throw error;
-    }
-    if (sameWorkflow(manifest, canonicalRoot, artifactIdentity) && manifest.status === 'active') active.push(dir);
-  }
-  if (active.length > 1) throw new Error(`Ambiguous active session manifests match ${artifactIdentity}: ${active.join(', ')}`);
-  if (active.length === 1) {
-    const dir = fs.realpathSync(active[0]);
-    setBoundSession(dir);
-    touchManifest(dir);
-    bindRun(randomRunId());
-    return dir;
-  }
-
-  for (let generation = 1; generation < 100000; generation++) {
-    const id = `${prefix}-${generation}`;
-    const dir = path.join(base, id);
-    const now = new Date().toISOString();
-    const created = publishSession(base, id, {
-      schemaVersion: 1,
-      sessionId: id,
-      repositoryRoot: canonicalRoot,
-      artifactIdentity,
-      artifactKind: artifactKind ?? null,
-      artifactPath: artifactPath ?? null,
-      slug: slug ?? null,
-      generation,
-      status: 'active',
-      createdAt: now,
-      lastUsedAt: now,
+    if (manifest.repositoryRoot !== checkedRepositoryRoot(repositoryRoot)) throw new Error(`Bound session belongs to a different repository: ${dir}`);
+  } else {
+    dir = initializeSession({
+      repositoryRoot,
+      sessionId,
+      sessionTitle: options.sessionTitle ?? options.objective ?? options.slug ?? null,
+      objective: options.objective ?? options.artifactPath ?? options.slug ?? null,
+      ...(options.tempRoot ? { tempRoot: options.tempRoot } : {}),
     });
-    if (created) {
-      const real = fs.realpathSync(dir);
-      setBoundSession(real);
-      bindRun(randomRunId());
-      pruneSessions();
-      return real;
-    }
-    const manifest = readSessionManifest(dir);
-    if (!sameWorkflow(manifest, canonicalRoot, artifactIdentity)) throw new Error(`Session candidate is bound to another workflow: ${dir}`);
-    if (manifest.status === 'active') {
-      const real = fs.realpathSync(dir);
-      setBoundSession(real);
-      touchManifest(real);
-      bindRun(randomRunId());
-      return real;
-    }
+    setBoundSession(dir);
   }
-  throw new Error(`Could not claim a session generation for ${artifactIdentity}.`);
+  bindRun(randomRunId());
+  return dir;
 }
 
-/** Finds an artifact's owner only when it is below a validated session's `artifacts/` directory. */
-function sessionForArtifactPath(file) {
-  const root = dispatchTempRoot();
-  const absolute = path.resolve(file);
-  const relative = path.relative(root, absolute);
-  const parts = relative.split(path.sep);
-  if (parts.length < 3 || parts[1] !== 'artifacts' || parts[0] === '..' || path.isAbsolute(relative)) return null;
-  const owner = path.join(root, parts[0]);
-  return isSessionDir(owner) ? owner : null;
-}
-
-/** Binds or atomically claims the session for one repository artifact. */
-/** @param {{ repositoryRoot?: string, artifactPath?: string, artifactKind?: string|null, slug?: string|null, tempRoot?: string }} [options] */
-export function bindWorkflowSession({ repositoryRoot, artifactPath, artifactKind = null, slug = null, tempRoot } = {}) {
+/** Binds one chat root. Workflow identity selects artifacts; it does not create another session. */
+/** @param {{ repositoryRoot?: string, artifactPath?: string, artifactKind?: string|null, slug?: string|null, objective?: string|null, sessionTitle?: string|null, tempRoot?: string }} [options] */
+export function bindWorkflowSession({ repositoryRoot, artifactPath, slug, objective, sessionTitle, tempRoot } = {}) {
   if (!repositoryRoot) throw new Error('A repository root is required to bind a workflow session.');
-  const canonicalRoot = canonicalRepositoryRoot(repositoryRoot);
-  const artifactIdentity = canonicalArtifactIdentity({ repositoryRoot, artifactPath, artifactKind, slug });
-  if (!artifactIdentity) throw new Error('A governing artifact identity is required to bind a workflow session.');
   const bound = process.env[SESSION_ENV];
-  if (bound && process.env.DISPATCH_LEGACY_SESSION !== '1' && isSessionDir(bound, { tempRoot })) {
-    const manifest = readSessionManifest(bound);
-    if (sameWorkflow(manifest, canonicalRoot, artifactIdentity) && manifest.status === 'active') {
-      touchManifest(bound);
-      if (!process.env[RUN_ENV]) bindRun(randomRunId());
-      return fs.realpathSync(bound);
-    }
+  let dir = null;
+  if (bound) {
+    dir = bindSession(bound);
+    const manifest = readSessionManifest(dir);
+    if (manifest.repositoryRoot !== checkedRepositoryRoot(repositoryRoot)) throw new Error(`Bound session belongs to a different repository: ${dir}`);
+  } else {
+    dir = findSession({ repositoryRoot, ...(tempRoot ? { tempRoot } : {}) });
+    if (!dir) dir = initializeSession({ repositoryRoot, sessionTitle: sessionTitle ?? objective ?? slug ?? 'dispatch', objective: objective ?? artifactPath ?? slug ?? 'dispatch', ...(tempRoot ? { tempRoot } : {}) });
+    setBoundSession(dir);
   }
-  return claimWorkflowSession({ repositoryRoot, artifactIdentity, artifactKind, artifactPath, slug, tempRoot });
+  if (!process.env[RUN_ENV]) bindRun(randomRunId());
+  touchSession(dir);
+  return dir;
 }
 
-/** Confirms that path resolution is still running inside the requested workflow session. */
+/** Confirms a chat binding before artifact resolution. */
 /** @param {{ repositoryRoot?: string, artifactKind?: string, slug?: string }} [options] */
-export function assertWorkflowSession({ repositoryRoot, artifactKind, slug } = {}) {
-  if (!process.env[SESSION_ENV]) throw new Error('A workflow session must be bound before resolving repository artifacts.');
+export function assertWorkflowSession({ repositoryRoot } = {}) {
+  if (!process.env[SESSION_ENV]) throw new Error('A chat session must be bound before resolving repository artifacts.');
   const dir = sessionDir();
-  if (process.env.DISPATCH_LEGACY_SESSION === '1') return dir;
   const manifest = readSessionManifest(dir);
-  if (repositoryRoot && manifest.repositoryRoot !== canonicalRepositoryRoot(repositoryRoot)) {
-    throw new Error(`Bound session belongs to a different repository: ${dir}`);
-  }
-  if (artifactKind && slug && manifest.artifactIdentity !== `artifact:${artifactKind}:${slug.normalize('NFC')}`) {
-    throw new Error(`Bound session belongs to a different workflow artifact: ${dir}`);
-  }
-  if (manifest.status !== 'active') throw new Error(`Completed workflow session cannot accept new writes: ${dir}`);
+  if (repositoryRoot && manifest.repositoryRoot !== checkedRepositoryRoot(repositoryRoot)) throw new Error(`Bound session belongs to a different repository: ${dir}`);
   return dir;
 }
 
-/** Marks the bound generation complete after its governed workflow reaches successful handoff. */
-export function completeSession() {
-  const dir = sessionDir();
-  if (process.env.DISPATCH_LEGACY_SESSION === '1') return null;
-  const manifest = readSessionManifest(dir);
-  if (manifest.status !== 'completed') {
-    manifest.status = 'completed';
-    manifest.completedAt = new Date().toISOString();
-    manifest.lastUsedAt = manifest.completedAt;
-    writeManifest(dir, manifest);
+/** @param {any} value @param {string} root @param {boolean} restore */
+function mapSessionPaths(value, root, restore) {
+  if (typeof value === 'string') {
+    if (restore) {
+      const currentRoot = path.resolve(root);
+      return value.replace(/@session(?:\/[A-Za-z0-9._-]+)*/g, marker => {
+        const parts = marker.slice('@session'.length).split('/').filter(Boolean);
+        if (parts.includes('..')) throw new Error('Stored session path escapes its session root.');
+        return parts.length ? path.join(currentRoot, ...parts) : currentRoot;
+      });
+    }
+    const variants = [root, root.replaceAll('\\', '/'), root.replaceAll('/', '\\')];
+    let result = value;
+    for (const variant of [...new Set(variants)]) result = result.replaceAll(variant, '@session');
+    return result.includes('@session') ? result.replaceAll('\\', '/') : result;
   }
-  return dir;
+  if (Array.isArray(value)) return value.map(item => mapSessionPaths(item, root, restore));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, mapSessionPaths(item, root, restore)]));
+  }
+  return value;
 }
 
-/** Binds a validated direct session from `--session-dir`. */
+/** @param {any} value @param {string} [root] */
+export function restoreSessionPaths(value, root = sessionDir()) { return mapSessionPaths(value, root, true); }
+
+/** @param {any} value @param {string} [root] */
+export function storeSessionPaths(value, root = sessionDir()) { return mapSessionPaths(value, root, false); }
+
+/** Moves the active chat folder after its terminal state has been written. */
+/** @param {string} repositoryRoot */
+export function handoffCurrentSession(repositoryRoot) {
+  const result = handoffSession({ sessionDir: sessionDir(), repositoryRoot });
+  setBoundSession(result.currentRoot);
+  process.env.DISPATCH_SESSION_TERMINAL = '1';
+  return result;
+}
+
+/** Binds an explicit session root, reactivating a terminal folder into workspace scratch. */
+/** @param {string} dir */
 export function bindSession(dir) {
-  if (!isSessionDir(dir)) throw new Error(`Session directory must be a direct child of ${dispatchTempRoot()}: ${dir}`);
-  readSessionManifest(dir);
-  const real = privateDirectory(dir);
+  const manifest = readSessionManifest(dir);
+  const result = reactivateSession({ sessionDir: dir, repositoryRoot: manifest.repositoryRoot });
+  const real = fs.realpathSync(result.currentRoot);
   setBoundSession(real);
   if (!process.env[RUN_ENV]) bindRun(randomRunId());
-  touchManifest(real);
+  touchSession(real);
   return real;
 }
 
-/** Explicit compatibility binding used only when resuming a pre-change state file. */
-export function bindLegacyStateSession(stateFile) {
-  const resolved = path.resolve(stateFile);
-  const real = fs.realpathSync(resolved);
-  const parent = path.dirname(real);
-  const flatId = path.basename(real).match(/^([0-9a-f]{8}-[0-9a-f-]{27})\.json$/i)?.[1];
-  let dir = parent;
-  let id = flatId;
-  const flatState = Boolean(flatId && isLegacySessionDir(parent));
-  if (!flatState) {
-    const runsDir = path.dirname(parent);
-    const legacyDir = path.dirname(runsDir);
-    const nestedId = path.basename(parent);
-    const nestedState = path.basename(real) === 'state.json' && path.basename(runsDir) === 'runs' &&
-      LEGACY_STATE_ID_PATTERN.test(nestedId) && isLegacySessionDir(legacyDir) &&
-      isRealDirectory(runsDir) && isRealDirectory(parent);
-    if (!nestedState) {
-      throw new Error(`State file is not in the recognized in-flight legacy layout: ${stateFile}`);
-    }
-    dir = legacyDir;
-    id = nestedId;
-  }
-  const stat = fs.lstatSync(real);
-  if (!stat.isFile() || stat.isSymbolicLink() || !id) {
-    throw new Error(`State file is not in the recognized in-flight legacy layout: ${stateFile}`);
-  }
-  const state = JSON.parse(fs.readFileSync(real, 'utf8'));
-  if (!state || state.v !== 1 || state.runId !== id) throw new Error(`Legacy state identity does not match its path: ${stateFile}`);
-  setBoundSession(dir, { legacy: true, stateFile: real });
-  bindRun(id);
-  return dir;
+/** @param {string} dir */
+function touchSession(dir) {
+  const now = new Date();
+  try { fs.utimesSync(dir, now, now); } catch { /* Activity timestamps are advisory. */ }
+  try {
+    const manifest = readLifecycleManifest(dir);
+    manifest.lastUsedAt = now.toISOString();
+    const temp = `${path.join(dir, MANIFEST_NAME)}.${crypto.randomUUID()}.tmp`;
+    fs.writeFileSync(temp, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    try { fs.renameSync(temp, path.join(dir, MANIFEST_NAME)); }
+    finally { fs.rmSync(temp, { force: true }); }
+  } catch { /* Failed activity metadata must not stop artifact work. */ }
 }
 
-/** The bound session, opening a standalone session when none exists. */
+/** The bound root; opens a new chat folder only when no binding exists. */
 export function sessionDir() {
   const bound = process.env[SESSION_ENV];
   if (!bound) return openSession();
-  if (process.env.DISPATCH_LEGACY_SESSION === '1' && isLegacySessionDir(bound)) return bound;
-  if (isSessionDir(bound)) {
-    readSessionManifest(bound);
+  if (isWorkspaceSessionDir(bound, readRepositoryFromManifest(bound))) {
+    readLifecycleManifest(bound);
     return fs.realpathSync(bound);
+  }
+  if (isPublishedSessionDir(bound)) {
+    if (process.env.DISPATCH_SESSION_TERMINAL === '1') return fs.realpathSync(bound);
+    return bindSession(bound);
   }
   throw new Error(`Bound session directory is invalid or unsafe: ${bound}`);
 }
 
-function ensureSubdirectory(parent, name) {
-  if (!SESSION_ID_PATTERN.test(name)) throw new Error(`Invalid dispatch path component "${name}".`);
-  const dir = path.join(parent, name);
+/** @param {string} area */
+function ensureSubdirectory(parent, area) {
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(area)) throw new Error(`Invalid dispatch path component "${area}".`);
+  const dir = path.join(parent, area);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = fs.lstatSync(dir);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe dispatch directory: ${dir}`);
-  try { fs.chmodSync(dir, 0o700); } catch { /* NOTE: win32 ignores POSIX modes. */ }
   const real = fs.realpathSync(dir);
   const relative = path.relative(path.resolve(parent), real);
-  if (relative !== name || path.isAbsolute(relative)) throw new Error(`Dispatch directory escaped its owner: ${dir}`);
+  if (relative !== area || path.isAbsolute(relative)) throw new Error(`Dispatch directory escaped its owner: ${dir}`);
   return real;
 }
 
-/** Returns the private durable area owned by the bound workflow. */
+/** Returns a durable area owned by the bound chat folder. */
 export function sessionArea(area) {
   if (!DURABLE_AREAS.has(area)) throw new Error(`Unknown durable session area "${area}".`);
   return ensureSubdirectory(sessionDir(), area);
 }
 
-/** Returns `<session>/runs/<run-id>`, creating it with private permissions. */
+/** Returns `<session>/runs/<run-id>`, creating it inside the active chat folder. */
 export function runDir(id = runId()) {
   if (!RUN_ID_PATTERN.test(id)) throw new Error(`Invalid run id "${id}".`);
   return ensureSubdirectory(ensureSubdirectory(sessionDir(), 'runs'), id);
 }
 
-/** Returns a private organized directory for one transient output class in the active run. */
+/** @param {string} area @param {string} [id] */
 export function runArea(area, id = runId()) {
   if (!RUN_AREAS.has(area)) throw new Error(`Unknown run area "${area}".`);
   return ensureSubdirectory(runDir(id), area);
 }
 
-/** A unique private directory in an organized run area. */
+/** @param {string} area @param {string} prefix */
 export function runTempDir(area, prefix) {
-  if (typeof prefix !== 'string' || !/^[A-Za-z0-9._-]+$/.test(prefix)) throw new Error('Temp directory prefix must be a safe filename prefix.');
+  if (!/^[A-Za-z0-9._-]+$/.test(prefix)) throw new Error('Temp directory prefix must be a safe filename prefix.');
   const dir = fs.mkdtempSync(path.join(runArea(area), prefix));
-  try { fs.chmodSync(dir, 0o700); } catch { /* NOTE: win32 ignores POSIX modes. */ }
   return fs.realpathSync(dir);
 }
 
-/** A unique private scratch directory in the bound run. */
-export function sessionTempDir(prefix) {
-  return runTempDir('tmp', prefix);
-}
+/** @param {string} prefix */
+export function sessionTempDir(prefix) { return runTempDir('tmp', prefix); }
 
-/** True when a path is contained in the bound direct session without crossing a symlink. */
+/** @param {string} target */
 export function isSessionPath(target) {
   if (typeof target !== 'string' || !target) return false;
   let root;
@@ -539,14 +270,14 @@ export function isSessionPath(target) {
   } catch {
     const parent = path.dirname(absolute);
     try {
-      const realParent = fs.realpathSync(parent);
-      const realRelative = path.relative(root, realParent);
+      const realRelative = path.relative(root, fs.realpathSync(parent));
       return realRelative !== '..' && !realRelative.startsWith(`..${path.sep}`) && !path.isAbsolute(realRelative);
     } catch { return false; }
   }
 }
 
 /** Path to a new run state file. */
+/** @param {string} id */
 export function runStatePath(id) {
   bindRun(id);
   return path.join(runDir(id), 'state.json');
@@ -554,102 +285,74 @@ export function runStatePath(id) {
 
 // SECTION: Argument propagation
 
-/** Removes session/run flags from argv; legacy binding also requires its existing state file. */
+/** Removes session/run binding flags from argv before ordinary dispatch parsing. */
 export function consumeSessionFlag(args) {
   const out = [];
-  let session = null, legacyStateFile = null, run = null;
+  let session = null, run = null;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === '--') { out.push(...args.slice(index)); break; }
-    if (arg === SESSION_FLAG || arg === RUN_FLAG || arg === LEGACY_STATE_FLAG) {
+    if (arg === SESSION_FLAG || arg === RUN_FLAG) {
       const value = args[++index];
       if (!value || value.startsWith('--')) throw new Error(`${arg} requires a value.`);
-      if (arg === SESSION_FLAG) {
-        if (session !== null) throw new Error(`${SESSION_FLAG} was given twice.`);
-        session = value;
-      } else if (arg === RUN_FLAG) {
-        if (run !== null) throw new Error(`${RUN_FLAG} was given twice.`);
-        run = value;
-      } else {
-        if (legacyStateFile !== null) throw new Error(`${LEGACY_STATE_FLAG} was given twice.`);
-        legacyStateFile = value;
-      }
+      if (arg === SESSION_FLAG) { if (session !== null) throw new Error(`${SESSION_FLAG} was given twice.`); session = value; }
+      else { if (run !== null) throw new Error(`${RUN_FLAG} was given twice.`); run = value; }
       continue;
     }
-    if (arg.startsWith(`${SESSION_FLAG}=`)) {
-      if (session !== null) throw new Error(`${SESSION_FLAG} was given twice.`);
-      session = arg.slice(SESSION_FLAG.length + 1);
-      continue;
-    }
-    if (arg.startsWith(`${RUN_FLAG}=`)) {
-      if (run !== null) throw new Error(`${RUN_FLAG} was given twice.`);
-      run = arg.slice(RUN_FLAG.length + 1);
-      continue;
-    }
-    if (arg.startsWith(`${LEGACY_STATE_FLAG}=`)) {
-      if (legacyStateFile !== null) throw new Error(`${LEGACY_STATE_FLAG} was given twice.`);
-      legacyStateFile = arg.slice(LEGACY_STATE_FLAG.length + 1);
+    const flags = [[SESSION_FLAG, 'session'], [RUN_FLAG, 'run']];
+    const pair = flags.find(([flag]) => arg.startsWith(`${flag}=`));
+    if (pair) {
+      const value = arg.slice(pair[0].length + 1);
+      if (!value) throw new Error(`${pair[0]} requires a value.`);
+      if (pair[1] === 'session') { if (session !== null) throw new Error(`${SESSION_FLAG} was given twice.`); session = value; }
+      else { if (run !== null) throw new Error(`${RUN_FLAG} was given twice.`); run = value; }
       continue;
     }
     out.push(arg);
   }
-  if (legacyStateFile !== null) {
-    const bound = bindLegacyStateSession(legacyStateFile);
-    if (session !== null && path.resolve(session) !== path.resolve(bound)) {
-      throw new Error(`${LEGACY_STATE_FLAG} does not belong to ${SESSION_FLAG}.`);
-    }
-  } else if (session !== null) bindSession(session);
+  if (session !== null) bindSession(session);
   if (run !== null) bindRun(run);
   return out;
 }
 
-/** Session and run flags for argv launched in a new shell. */
+/** Session and run flags for processes launched in another shell. */
 export function sessionArgs() {
   const dir = sessionDir();
-  return [SESSION_FLAG, dir,
-    ...(process.env.DISPATCH_LEGACY_SESSION === '1' ? [LEGACY_STATE_FLAG, process.env.DISPATCH_LEGACY_STATE_FILE] : []),
-    RUN_FLAG, runId()];
+  return [SESSION_FLAG, dir, RUN_FLAG, runId()];
 }
 
-// SECTION: Retention
-
-/** Prunes transient areas of aged sessions while retaining manifests and workflow evidence. */
-export function pruneSessions({ maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now() } = {}) {
-  let root;
-  try { root = dispatchTempRoot(); } catch { return; }
-  let entries;
-  try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return; }
+/** Prunes only aged run and cache directories; session manifests and canonical evidence remain. */
+/** @param {{ maxAgeMs?: number, now?: number, tempRoot?: string }} [options] */
+export function pruneSessions({ maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now(), tempRoot = os.tmpdir() } = {}) {
   const bound = process.env[SESSION_ENV] ? path.resolve(process.env[SESSION_ENV]) : null;
-  for (const entry of entries) {
-    if (entry.name.startsWith('.claim-')) {
-      const staging = path.join(root, entry.name);
+  const bases = [];
+  try { bases.push(publishedSessionRoot({ tempRoot })); } catch { /* Temp access is optional during active workspace work. */ }
+  let repositoryRoot = process.cwd();
+  if (bound) {
+    try { repositoryRoot = readSessionManifest(bound).repositoryRoot ?? repositoryRoot; }
+    catch { /* A stale binding cannot authorize pruning outside the current repository. */ }
+  }
+  try { bases.push(workspaceSessionRoot(repositoryRoot)); } catch { /* The current folder may not be a repository. */ }
+  for (const base of bases) {
+    if (!fs.existsSync(base)) continue;
+    let entries;
+    try { entries = fs.readdirSync(base, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const dir = path.join(base, entry.name);
       try {
-        const stat = fs.lstatSync(staging);
-        if (path.dirname(staging) === root && stat.isDirectory() && !stat.isSymbolicLink() &&
-            fs.realpathSync(staging) === staging && now - stat.mtimeMs >= maxAgeMs) {
-          fs.rmSync(staging, { recursive: true, force: true });
+        if (!isRealDirectory(dir)) continue;
+        const manifest = readSessionManifest(dir);
+        const stat = fs.statSync(dir);
+        const lastUsed = Date.parse(manifest.lastUsedAt ?? '') || stat.mtimeMs;
+        if (now - lastUsed < maxAgeMs || (bound && sameFilesystemPath(dir, bound))) continue;
+        for (const area of ['runs', 'cache']) {
+          const target = path.join(dir, area);
+          if (fs.existsSync(target) && isRealDirectory(target)) fs.rmSync(target, { recursive: true, force: true });
         }
-      } catch { /* NOTE: retention never blocks a run or follows unsafe paths. */ }
-      continue;
-    }
-    if (!entry.isDirectory() || !SESSION_ID_PATTERN.test(entry.name)) continue;
-    const dir = path.join(root, entry.name);
-    if (bound && dir === bound) continue;
-    try {
-      const stat = fs.lstatSync(dir);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || !isSessionDir(dir)) continue;
-      const manifest = readSessionManifest(dir);
-      const lastUsed = Math.max(Date.parse(manifest.lastUsedAt), stat.mtimeMs);
-      if (!Number.isFinite(lastUsed) || now - lastUsed < maxAgeMs) continue;
-      for (const area of ['runs', 'cache']) {
-        const target = path.join(dir, area);
-        if (path.dirname(target) !== dir || !fs.existsSync(target)) continue;
-        const child = fs.lstatSync(target);
-        if (!child.isDirectory() || child.isSymbolicLink()) continue;
-        fs.rmSync(target, { recursive: true, force: true });
-      }
-    } catch {
-      // NOTE: retention never blocks a run or follows unsafe paths.
+      } catch { /* Retention never blocks a run or follows an invalid session. */ }
     }
   }
 }
+
+export { findSession, handoffSession, initializeSession, isPublishedSessionDir, isWorkspaceSessionDir, publishedSessionRoot, reactivateSession, validateSessionRoot, workspaceSessionRoot };

@@ -8,7 +8,7 @@ Resolve and fold the ledger before trusting completion. Design, increment, and i
 
 Append `run-start` before run events and `run-complete` last. Record approval before ordinary production work, every attempt before its verification, and completion only after non-regression evidence. Increment segments derive approval from their design binding. Nothing may append after a terminal event except a new `run-start`.
 
-Run state is disposable. Resume from canonical artifacts, resolution logs, ledger events, checkpoints, and Git state; a restart ignores walkthrough evidence from an earlier plan revision whose run is no longer live. Preserve working-tree changes on failure. Tail repair, stale-lock breaking, attributable reversion, and replacement baselines require explicit rulings. Handoffs name the exact ledger path and resume command; the ledger is never relocated.
+Run state is disposable. Resume from canonical artifacts, resolution logs, ledger events, checkpoints, and Git state; a restart ignores walkthrough evidence from an earlier plan revision whose run is no longer live. Preserve working-tree changes on failure. Tail repair, stale-lock breaking, attributable reversion, and replacement baselines require explicit rulings. Handoffs name the exact ledger path and resume command; the whole session follows the lifecycle in `../review.md`.
 
 ## Verification and RED
 

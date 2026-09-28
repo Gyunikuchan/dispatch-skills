@@ -126,8 +126,8 @@ flowchart LR
 
 | Review | Typical argument | Example |
 |---|---|---|
-| Design | Design path | `/dispatch review design: .scratch/plan/2026-09-24-billing-design.md` |
-| Plan | Plan path | `/dispatch review plan: .scratch/plan/2026-09-24-export-plan.md` |
+| Design | Design path | `/dispatch review design: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-billing-design.md` |
+| Plan | Plan path | `/dispatch review plan: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md` |
 | Code | Git range, or no argument | `/dispatch review code: main..HEAD` |
 
 Reviews verify cited evidence rather than accepting findings by vote. Findings are reconciled across rounds until settled or the configured cap needs your decision.
@@ -153,8 +153,8 @@ Use `implement` when you want dispatch to carry a requirement or existing artifa
 
 ```text
 /dispatch implement: Add CSV export to the transactions page
-/dispatch high implement: .scratch/plan/2026-09-24-export-plan.md
-/dispatch implement --phases from:code-review: .scratch/plan/2026-09-24-export-plan.md
+/dispatch high implement: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md
 ```
 
 The complete delivery loop is shown below. A plain-language `implement` request starts at planning; design-driven work enters through its increment plan.
@@ -202,6 +202,6 @@ If uncertain between `design` and `plan`, start with the expected delivery shape
 
 ## Artifacts and resuming
 
-Designs, plans, and walkthroughs live in `.scratch/plan/`. They are the durable handoff for interrupted runs; operational logs and traces stay in the run's OS temporary directory. At completion, dispatch reports retained or relocated artifacts and the exact next command when more work remains.
+Each chat has one folder at `.scratch/dispatch-skills/<folder>/`. Canonical designs, plans, and walkthroughs live in `artifacts/`; generated state, prompts, logs, packets, reports, and verification output live in `runs/<run-id>/` while active. At terminal handoff, dispatch moves the whole folder to `<realpath(os.tmpdir())>/dispatch-skills/<folder>/` when possible; the handoff gives you its full path. The OS may later purge published temp data.
 
 Dispatch does not commit, push, or open a pull request. Publication remains under your control.

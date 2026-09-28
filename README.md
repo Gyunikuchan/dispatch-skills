@@ -65,7 +65,7 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 | What dispatch does | Why it matters |
 |---|---|
 | **🛡️ Keeps read delegates read-only** | Read delegates run without credentials or access to sensitive files. Supported platforms add an OS sandbox for another layer of protection. After plan approval, production edits go through the host's native write agent/subagent. |
-| **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in OS temp, while structured handoffs preserve cited findings and progress for the next phase. |
+| **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in session files, while structured handoffs preserve cited findings and progress for the next phase. |
 | **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
 | **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |
 
@@ -128,7 +128,7 @@ Write a plan, then have other models attack it before you spend tokens on code:
 
 ```text
 /dispatch high (claude,agy) plan: Add webhook idempotency
-/dispatch review plan: .scratch/plan/2026-09-22-webhooks.md
+/dispatch review plan: .scratch/dispatch-skills/<folder>/artifacts/2026-09-22-webhooks.md
 ```
 
 Review your working tree or a branch range:
@@ -149,7 +149,7 @@ Run the whole loop — plan, review, approval gate, implementation, code review 
 
 ```text
 /dispatch implement: Add CSV export
-/dispatch implement --phases from:code-review: .scratch/plan/2026-09-22-csv.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/2026-09-22-csv.md
 ```
 
 For work too big for one pass, `design:` splits it into increments and implements them one at a time:
@@ -159,7 +159,7 @@ For work too big for one pass, `design:` splits it into increments and implement
 ```
 
 > [!NOTE]
-> Nothing is ever committed, pushed, or opened as a PR. Interrupted runs resume from their artifacts in `.scratch/plan/`; logs and traces stay out of your context in OS temp.
+> Nothing is ever committed, pushed, or opened as a PR. Interrupted runs resume from their session artifacts; logs and traces stay out of your context. The handoff reports the full session folder path.
 
 ## License
 

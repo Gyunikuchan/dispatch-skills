@@ -40,10 +40,7 @@ export function beginImplementation(state) {
   if (data.step === 'write-scope') return scopeQuestion(state);
   if (data.step === 'write-pending') {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
-    if (!data.expectedEnvelopePath) {
-      data.writeRecoveryNote = `Legacy pending write has no expected envelope path; inline outcomes are refused. Reissuing a current-format write action. Resume command: ${state.resumeCommand}`;
-      return writeAction(state);
-    }
+    if (!data.expectedEnvelopePath) throw new Error('Pending delegate-write has no expected envelope path.');
     if (path.resolve(path.dirname(data.expectedEnvelopePath)) !== path.resolve(path.dirname(state.stateFile))) {
       // NOTE: A restored walkthrough belongs to a fresh session, so recovery needs a path in that session.
       data.previousEnvelopePaths ??= [];
@@ -216,10 +213,6 @@ function writeReceiptAction(state, action) {
 export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const data = state.ordinary;
   if (reply?.rejected || reply?.failed) return advanceWriteCascade(state, reply);
-  if (state.pending?.action === 'delegate-write' && !state.pending.fields?.expectedEnvelopePath) {
-    data.writeRecoveryNote = `Legacy pending write has no expected envelope path; inline outcomes are refused. Reissuing a current-format write action. Resume command: ${state.resumeCommand}`;
-    return writeAction(state);
-  }
   const inspected = inspectEnvelope(state, reply.envelopePath);
   if (inspected.errors.length) {
     const expected = data.expectedEnvelopePath ?? state.pending?.fields?.expectedEnvelopePath ?? '(no expected path)';
@@ -444,8 +437,8 @@ function resolveFailure(state, answer) {
     }
   }
   ruling(state, 'failure-disposition', answer.decision, answer.reason);
-  append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [state.walkthroughPath] });
-  return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Repair evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+  append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [path.relative(state.repoRoot, state.walkthroughPath).split(path.sep).join('/')] });
+  return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
 }
 // SECTION: RED rulings
 
@@ -591,8 +584,8 @@ function manualComplete(state, answer) {
   const criterionEvidence = data.criteria.map(criterion => ({ criterionId: criterion.id, evidence: evidence.find(item => item.criterionId === criterion.id).evidence.trim() }));
   append(state, 'manual-complete', { reviewer: answer.reviewer.trim(), reason: answer.reason.trim(), redEvidence: data.redCriteria.length ? answer.redEvidence.trim() : null, criterionEvidence, fingerprint: repositoryBaseline(state) });
   ruling(state, 'failure-disposition', 'manual-complete', answer.reason);
-  append(state, 'run-complete', { result: 'complete', evidenceRefs: [state.walkthroughPath, 'manual-complete'] });
-  return emitAction(state, 'done', { outcome: 'complete', summary: `Closed by manual review (${answer.reviewer.trim()}): ${answer.reason.trim()}`, ledgerPath: state.ledgerPath, handoff: { rulings: data.rulings, retained: [{ path: state.walkthroughPath, reason: 'Manual completion evidence' }], destinations: [], warning: 'OS temp / Storage Sense may purge the ledger.' } });
+  append(state, 'run-complete', { result: 'complete', evidenceRefs: [path.relative(state.repoRoot, state.walkthroughPath).split(path.sep).join('/'), 'manual-complete'] });
+  return emitAction(state, 'done', { outcome: 'complete', summary: `Closed by manual review (${answer.reviewer.trim()}): ${answer.reason.trim()}`, ledgerPath: state.ledgerPath, handoff: { rulings: data.rulings, retained: [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
 }
 export function completeTask(state) {
   const data = state.ordinary, segment = ledgerSegment(state);

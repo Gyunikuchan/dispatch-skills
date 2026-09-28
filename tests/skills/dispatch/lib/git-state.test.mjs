@@ -83,7 +83,7 @@ describe('Git ledger state', () => {
     writeFileSync(path.join(repo, '.scratch', 'plan.md'), 'artifact');
     writeFileSync(path.join(repo, 'ignored.txt'), 'ignored');
     assert.deepEqual(dirtyPaths(repo), []);
-    assert.throws(() => normalizeTaskPath('.scratch/plan.md'), /excluded/);
+    assert.throws(() => normalizeTaskPath('.scratch/notes.md'), /excluded/);
   });
 
   it('uses the empty tree in repositories without commits', () => {

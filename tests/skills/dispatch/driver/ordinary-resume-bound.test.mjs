@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { drive, runDispatch } from '../../../helpers/driver-harness.mjs';
+import { drive, runDispatch, readFixtureState } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -48,7 +48,7 @@ describe('ordinary driver: resume by bound plan path', () => {
       policy: { author: action => { planRel = relativePlan(fixture.repo.dir, action); return authorFrom(fixture)(action); }, askUser: recoverWrite(fixture) },
       onAction(action) {
         if (resumedFirst || action.action !== 'delegate-write' || action.fields.stage !== 'tests-only') return;
-        const cached = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+        const cached = readFixtureState(action.stateFile);
         const args = resumeArgs(cached.resumeCommand);
         assert.equal(args.at(-1), planRel, cached.resumeCommand);
         fs.rmSync(action.stateFile);
@@ -74,7 +74,7 @@ describe('ordinary driver: resume by bound plan path', () => {
       maxSteps: 40,
       onAction(action) {
         if (resumed || action.action !== 'delegate-write' || action.fields.stage !== 'tests-only') return;
-        const cached = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+        const cached = readFixtureState(action.stateFile);
         const args = resumeArgs(cached.resumeCommand);
         assert.equal(args.at(-1), planRel, cached.resumeCommand);
         fs.rmSync(action.stateFile);
@@ -97,7 +97,7 @@ describe('ordinary driver: resume by bound plan path', () => {
       maxSteps: 40,
       onAction(action) {
         if (resumed || action.action !== 'delegate-write' || action.fields.stage !== 'tests-only') return;
-        const cached = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+        const cached = readFixtureState(action.stateFile);
         const args = resumeArgs(cached.resumeCommand);
         assert.equal(args.at(-1), planRel, cached.resumeCommand);
         assert.equal(args.includes('--phases'), false, cached.resumeCommand);

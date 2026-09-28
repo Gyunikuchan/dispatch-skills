@@ -3,13 +3,12 @@
 
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import os from 'node:os';
 import path from 'node:path';
 
 import { isMainModule } from '../lib/platform.mjs';
 import { semanticSectionHashes } from '../review/preparation.mjs';
 import { isReservedOrdinarySlug, ledgerNamespacePath } from '../artifacts/resolve-paths.mjs';
-import { dispatchTempRoot, sessionDir } from '../lib/session-temp.mjs';
+import { sessionDir } from '../lib/session-temp.mjs';
 import { materializedFingerprint } from '../lib/git-state.mjs';
 import {
   foldSegments,
@@ -24,12 +23,12 @@ import { parseIncrementGraph } from '../design/graph.mjs';
 import { captureRepositoryState } from '../verification/evidence.mjs';
 
 /** @typedef {{ platform?: NodeJS.Platform, uid?: number }} OwnershipOptions */
-/** @typedef {{ tempRoot?: string, repoHash?: string, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, uid?: number }} LedgerNamespaceOptions */
+/** @typedef {{ platform?: NodeJS.Platform, uid?: number }} LedgerNamespaceOptions */
 
 // SECTION: Artifact identity
 
-export const CANONICAL_PLAN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
-export const CANONICAL_DESIGN = /^\.scratch\/plan\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
+export const CANONICAL_PLAN = /(?:^|\/)artifacts\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
+export const CANONICAL_DESIGN = /(?:^|\/)artifacts\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
 
 /** Returns a canonical design artifact's root slug, or null for invalid/reserved paths. */
 export function designRootSlug(planPath) {
@@ -41,13 +40,14 @@ export function designRootSlug(planPath) {
 export function slugFromPlanPath(planPath) {
   const normalized = planPath.replaceAll('\\', '/').replace(/^\.\//, '');
   const match = CANONICAL_PLAN.exec(normalized);
-  if (!match) {
-    throw new Error('Resume plan path must match .scratch/plan/<yyyy-mm-dd>-<slug>.md');
+  const slug = match?.[1];
+  if (!slug) {
+    throw new Error('Resume plan path must be a canonical artifact under the active session artifacts/ directory.');
   }
-  if (isReservedOrdinarySlug(match[1])) {
-    throw new Error(`Resume plan slug "${match[1]}" is reserved for phased artifacts; use the explicit design-run artifact path.`);
+  if (isReservedOrdinarySlug(slug)) {
+    throw new Error(`Resume plan slug "${slug}" is reserved for phased artifacts; use the explicit design-run artifact path.`);
   }
-  return match[1];
+  return slug;
 }
 
 // SECTION: Private ledger storage
@@ -62,40 +62,16 @@ function inspectDirectory(directory, { platform = process.platform, uid = proces
   }
 }
 
-function ensurePrivateChild(parent, name, options) {
-  inspectDirectory(parent, options);
-  const child = path.join(parent, name);
-  try {
-    fs.mkdirSync(child, { mode: 0o700 });
-  } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-  }
-  inspectDirectory(child, options);
-  if ((options?.platform ?? process.platform) !== 'win32') fs.chmodSync(child, 0o700);
-  return child;
-}
-
 /**
  * Creates and validates the private ledger directory owned by the bound workflow session.
  * @param {LedgerNamespaceOptions} [options]
  */
 export function ensureLedgerNamespace({
-  tempRoot = os.tmpdir(),
-  repoHash,
-  env = process.env,
   platform = process.platform,
   uid = process.getuid?.(),
 } = {}) {
-  if (!/^[a-f0-9]{12}$/.test(repoHash ?? '')) throw new Error('repoHash must be 12 lowercase hexadecimal characters');
   const options = { platform, uid };
-  const target = ledgerNamespacePath({ tempRoot, repoHash, env });
-  if (process.env.DISPATCH_LEGACY_SESSION === '1') {
-    const root = dispatchTempRoot();
-    inspectDirectory(root, { platform: 'win32', uid });
-    const relative = path.relative(root, target);
-    if (!/^[a-f0-9]{12}$/.test(relative)) throw new Error(`Unsafe in-flight legacy ledger directory: ${target}`);
-    return ensurePrivateChild(root, relative, options);
-  }
+  const target = ledgerNamespacePath();
   const session = sessionDir();
   if (path.dirname(target) !== session || path.basename(target) !== 'ledger') {
     throw new Error(`Ledger directory must be owned by the bound workflow session: ${target}`);
@@ -110,16 +86,6 @@ export function ensureLedgerNamespace({
 
 function validateLedgerParents(ledgerPath, options = {}) {
   const parent = path.resolve(path.dirname(ledgerPath));
-  if (process.env.DISPATCH_LEGACY_SESSION === '1') {
-    const root = dispatchTempRoot();
-    const relative = path.relative(root, parent);
-    if (!/^[a-f0-9]{12}$/.test(relative)) {
-      throw new Error(`In-flight legacy ledger must remain in its repository namespace: ${ledgerPath}`);
-    }
-    inspectDirectory(root, options);
-    inspectDirectory(parent, options);
-    return;
-  }
   const expected = path.resolve(sessionDir(), 'ledger');
   if (parent !== expected) throw new Error(`Ledger path must be in the bound workflow session: ${ledgerPath}`);
   inspectDirectory(sessionDir(), options);
@@ -436,7 +402,7 @@ export function resumeOrdinary({ ledgerPath, planPath, planSource, repoRoot }) {
   };
 }
 
-/** Reconstructs legacy or phased design execution and returns its next action. */
+/** Reconstructs design execution and returns its next action. */
 export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
   const artifact = typeof planSource === 'string'
     ? { source: planSource, metadata: null }
@@ -455,7 +421,7 @@ export function resumeDesign({ ledgerPath, planPath, planSource, repoRoot }) {
   return resumeDesignRun({ planPath, artifact, hash, read, repoRoot });
 }
 
-/** Pre-5B path: the design-review segment itself is the only design identity. */
+/** Before the first increment, resume from the approved design-review segment. */
 function resumeDesignSegment({ planPath, artifact, hash, read }) {
   const segment = selectDesignSegment(read.events, hash.hash);
   if (!segment) return { status: 'needs-reconciliation', governingHash: hash.hash, diagnostic: 'No matching design segment.', requiresFlowConfirmation: true };

@@ -57,7 +57,7 @@ describe('dispatch --pins wave (R8)', () => {
         assert.equal(line.status, 'ok');
         assert.equal(line.exit, 0);
         assert.equal(line.session, `${line.platform}-session`);
-        assert.ok(line.output && fs.existsSync(line.output), 'report written to an OS-temp file');
+        assert.ok(line.output && fs.existsSync(line.output), 'report written to a session file');
         assert.match(fs.readFileSync(line.output, 'utf8'), new RegExp(`report from ${line.platform}`));
         if (process.platform !== 'win32') {
           assert.equal(fs.statSync(line.output).mode & 0o777, 0o600);

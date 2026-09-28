@@ -16,7 +16,7 @@ The ledger, never filenames or user choice, selects the highest-priority healthy
 
 ## Amendments
 
-A design-changing discovery pauses further writes. Keep the approved design authoritative while an OS-temp candidate records changes and affected increments. Review the candidate's changed sections. The ledger records `proposed`, `reviewed`, `prepared`, and `activated`, or a terminal rejection/abort.
+A design-changing discovery pauses further writes. Keep the approved design authoritative while a session-local candidate records changes and affected increments. Review the candidate's changed sections. The ledger records `proposed`, `reviewed`, `prepared`, and `activated`, or a terminal rejection/abort.
 
 After explicit approval the driver activates the candidate atomically and recovers an interrupted activation; ambiguous state preserves every copy and enters reconciliation. Activation alone invalidates affected work and dependants. Caller-owned changes are never removed automatically.
 
@@ -24,4 +24,4 @@ After explicit approval the driver activates the candidate atomically and recove
 
 After every increment is complete, a later invocation runs integration over the ledger-owned path union from the recorded design baseline through current Git and working-tree state. A non-ancestor baseline, unreconstructable ownership, or empty owned intersection fails closed. Record fresh cross-increment verification and any enabled scoped review in the integration walkthrough.
 
-A defect inside an approved increment reopens it. Missing scope or a changed shared contract enters amendment. Completion requires all reopened/amended work and a later integration gate to settle. The final-integration action lists each source and exact session `artifacts/` destination; relocate that design-run set together after the gate passes and retain the ledger.
+A defect inside an approved increment reopens it. Missing scope or a changed shared contract enters amendment. Completion requires all reopened/amended work and a later integration gate to settle. After the gate passes, hand off the whole chat folder, including its ledger, through the lifecycle in `../review.md`.

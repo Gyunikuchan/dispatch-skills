@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, afterEach, describe, it } from 'node:test';
 
-import { allProviders, drive, logEntries, planFinding, readLog, rebuttal, report, writePlan } from '../../../helpers/driver-harness.mjs';
+import { allProviders, drive, logEntries, planFinding, readLog, rebuttal, report, writePlan, readFixtureState } from '../../../helpers/driver-harness.mjs';
 import { cleanupScriptedRepos, config, disposeScriptedFixtures, launches, setup } from '../../../helpers/scripted-review-fixture.mjs';
 
 afterEach(cleanupScriptedRepos);
@@ -30,7 +30,7 @@ function rebuttalRun(rebuttals) {
     },
     onAction: (action) => {
       if (action.action !== 'launch' || action.wave.type !== 'rebuttal') return;
-      const state = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+      const state = readFixtureState(action.stateFile);
       prompts.push(fs.readFileSync(state.wave.promptPath, 'utf8'));
     },
   });

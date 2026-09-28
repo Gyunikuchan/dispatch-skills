@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
-import { repositoryRootHash } from '../artifacts/resolve-paths.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { append, ask, ledgerSegment, pendingRows, refuse, relative, ruling, source } from './implement-state.mjs';
 import { documentTitle } from '../lib/summary-box.mjs';
@@ -84,7 +83,7 @@ export function approve(state, reply, actor = 'user') {
   data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
   data.testPaths = data.testsOnlyPaths;
   data.baselineSnapshot = snapshot(state);
-  ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
+  ensureLedgerNamespace();
   const segment = ledgerSegment(state);
   if (segment?.approved) { state.ledgerRunId = segment.runId; return; }
   if (segment && segment.tasks.size) throw new Error('Unapproved ledger contains task activity; reconcile first.');

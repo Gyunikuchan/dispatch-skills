@@ -22,7 +22,7 @@ membership and effective model/effort; this file defines provider mechanics and 
 ### Shared runner boundary
 
 Every runner strips credentials from the delegate environment, applies the sensitive-file prompt
-guardrail, enforces provider-specific read-only controls, and writes logs to the run's OS-temp session directory.
+guardrail, enforces provider-specific read-only controls, and writes logs to the run's session directory.
 These are defense-in-depth controls, not a complete secret boundary.
 
 ## Provider mechanics
@@ -106,7 +106,7 @@ These are defense-in-depth controls, not a complete secret boundary.
   bundle → VS Code extension bundle. Select with `--codex-mode`; inspect token-free reachability
   with `--test-modes` or `--probe`. Only executable CLI bundles qualify as modes.
 - **Read-only:** `codex exec --json --sandbox read-only` with approvals disabled. The runner
-  parses final assistant messages from JSONL; tool events remain in the OS-temp log. On sandbox
+  parses final assistant messages from JSONL; tool events remain in the session log. On sandbox
   rejection, the same binary retries once without the sandbox and emits a warning plus
   `sandboxDowngraded`. The retry uses `danger-full-access`, so writes and commands remain possible
   despite the read-only prompt. Explicit `sandbox: false` selects the same unrestricted mode.

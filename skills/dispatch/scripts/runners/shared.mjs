@@ -880,7 +880,7 @@ export function readAttachment(filePath, maxBytes = MAX_ATTACHMENT_BYTES_PER_FIL
     return null;
   }
   // Boundary awareness (warn, not reject): the orchestrator's own workspace, agent-config
-  // directories, and the OS temp dir (where relocated artifacts like a walkthrough.md live)
+  // directories, and the OS temp dir (for host-managed inputs)
   // cover the common attachment sources. `-f` is always an explicit orchestrator choice, so a
   // path outside those roots is not blocked here — the denylist above is the actual gate — but
   // it's surfaced so an operator scanning logs can spot an unexpectedly wide attachment.

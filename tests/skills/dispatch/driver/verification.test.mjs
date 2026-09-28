@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
-import { makeGitRepo, writePlan } from '../../../helpers/driver-harness.mjs';
+import { makeGitRepo, writePlan, fixtureSessionDir } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { repositoryRootHash, resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
-import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { bindWorkflowSession, sessionArea, handoffCurrentSession, bindSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { persistEvidence, restoreEvidence, save } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { afterImplementationVerification } from '../../../../skills/dispatch/scripts/driver/task-phase.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
@@ -23,9 +23,10 @@ import {
 
 const cleanup = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
-const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'];
+const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID'];
 function bindTestWorkflow(repositoryRoot, artifactKind, slug) {
   const prior = Object.fromEntries(SESSION_ENV_KEYS.map(key => [key, process.env[key]]));
+  process.env.DISPATCH_SESSION_DIR = fixtureSessionDir(repositoryRoot);
   const dir = bindWorkflowSession({ repositoryRoot, artifactKind, slug });
   cleanup.push(() => {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -50,7 +51,7 @@ function interruptedVerificationState({ commandRefs = ['node --test tests/a.test
   bindTestWorkflow(repo.dir, 'plan', 'terminal-verification-retry');
   const governing = governingHash(planSource).hash;
   const ledgerPath = resolveLedgerPath({ slug: 'terminal-verification-retry', slugSource: 'explicit', repositoryRoot: repo.dir, artifactKind: 'plan' });
-  ensureLedgerNamespace({ repoHash: repositoryRootHash(repo.dir) });
+  ensureLedgerNamespace();
   const runId = '44444444-4444-4444-8444-444444444444', at = '2026-09-27T12:00:00.000Z';
   const append = (type, data) => appendEvent(ledgerPath, { v: 1, type, runId, at, data });
   const command = 'node --test tests/a.test.mjs';
@@ -228,11 +229,24 @@ describe('baseline reuse', () => {
     fs.writeFileSync(path.join(state.repoRoot, 'src/app.js'), 'export const value = 2;\n');
     storeBaseline(state, [{ command: A, exitStatus: 0 }]);
     const repoGit = (...args) => execFileSync('git', args, { cwd: state.repoRoot, stdio: 'pipe' });
-    repoGit('add', '-A'); repoGit('commit', '--no-gpg-sign', '-qm', 'implemented');
-    fs.writeFileSync(path.join(state.repoRoot, '.scratch/plan/2026-09-24-next.md'), '# Next\n');
+    repoGit('add', 'src'); repoGit('commit', '--no-gpg-sign', '-qm', 'implemented');
+    fs.writeFileSync(path.join(sessionArea('artifacts'), '2026-09-24-next.md'), '# Next\n');
     assert.deepEqual(hitCommands(cachedBaseline(nextRun(state))), [A], 'same content after commit and scratch edit');
     fs.writeFileSync(path.join(state.repoRoot, 'src/app.js'), 'export const value = 3;\n');
     assert.deepEqual(cachedBaseline(nextRun(state)).misses, [A, RED], 'a changed tree reruns the baseline');
+  });
+  it('keeps cached verification log references portable through publication and reactivation', () => {
+    const state = baselineState();
+    const logPath = path.join(sessionArea('artifacts'), 'baseline.log');
+    fs.writeFileSync(logPath, 'verified\n');
+    storeBaseline(state, [{ command: A, exitStatus: 0, logPath }]);
+    const stored = JSON.parse(fs.readFileSync(path.join(sessionArea('cache'), 'baseline-cache.json'), 'utf8'));
+    assert.equal(Object.values(stored.entries)[0].result.logPath, '@session/artifacts/baseline.log');
+    const published = handoffCurrentSession(state.repoRoot);
+    assert.equal(published.moved, true);
+    bindSession(published.currentRoot);
+    const hit = cachedBaseline(state).hits[0];
+    assert.equal(fs.readFileSync(hit.logPath, 'utf8'), 'verified\n');
   });
   it('does not claim a covered red command as seeded by its suite', () => {
     const state = baselineState();
@@ -294,7 +308,7 @@ describe('walkthrough evidence restore', () => {
     const planPath = writePlan(repo.dir);
     bindTestWorkflow(repo.dir, 'plan', 'sample');
     const walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
-    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Ordinary execution evidence', '```json', JSON.stringify({ schemaVersion: 1, planPath: '.scratch/plan/2026-09-22-sample.md', ordinary: { step: 'failure-disposition' }, ...record }), '```', ''].join('\n'));
+    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Ordinary execution evidence', '```json', JSON.stringify({ schemaVersion: 1, planPath: path.relative(repo.dir, planPath).split(path.sep).join('/'), ordinary: { step: 'failure-disposition' }, ...record }), '```', ''].join('\n'));
     const state = { repoRoot: repo.dir, planPath, walkthroughPath, governingHash: governingHash(fs.readFileSync(planPath, 'utf8')).hash, ledgerPath: path.join(repo.dir, 'missing-ledger.md') };
     return state;
   }
@@ -308,8 +322,8 @@ describe('walkthrough evidence restore', () => {
     const oldHash = `sha256:${'a'.repeat(64)}`;
     const state = withEvidence({ governingHash: oldHash, ledgerRunId: runId });
     state.ledgerPath = resolveLedgerPath({ slug: 'sample', slugSource: 'explicit', repositoryRoot: state.repoRoot });
-    ensureLedgerNamespace({ repoHash: repositoryRootHash(state.repoRoot) });
-    appendEvent(state.ledgerPath, { v: 1, type: 'run-start', runId, at, seq: 1, data: { governingPath: '.scratch/plan/2026-09-22-sample.md', governingHash: oldHash, rootSlug: 'sample', action: 'ordinary', baseline: { commit: 'c'.repeat(40), repositoryState: `sha256:${'b'.repeat(64)}`, dirtyPaths: [] } } });
+    ensureLedgerNamespace();
+    appendEvent(state.ledgerPath, { v: 1, type: 'run-start', runId, at, seq: 1, data: { governingPath: path.relative(state.repoRoot, state.planPath).split(path.sep).join('/'), governingHash: oldHash, rootSlug: 'sample', action: 'ordinary', baseline: { commit: 'c'.repeat(40), repositoryState: `sha256:${'b'.repeat(64)}`, dirtyPaths: [] } } });
     cleanup.push(() => fs.rmSync(state.ledgerPath, { force: true }));
     assert.throws(() => restoreEvidence(state), /does not bind this governing plan/);
   });

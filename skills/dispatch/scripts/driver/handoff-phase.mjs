@@ -2,7 +2,6 @@
 import { evaluateConsensus } from '../review/consensus.mjs';
 import { readArtifact, semanticSectionHashes } from '../review/preparation.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
-import { relocateScratchPaths } from '../artifacts/relocate-scratch.mjs';
 import { emitAction } from './actions.mjs';
 import { append, ledgerSegment, persistEvidence, relative } from './implement-state.mjs';
 import { completeTask } from './task-phase.mjs';
@@ -72,10 +71,9 @@ export function handoff(state) {
     }
     append(state, 'run-complete', { result: 'complete', evidenceRefs: [relative(state, state.planPath), relative(state, state.walkthroughPath), ...(checkpoint ? [checkpoint.invocationId] : [disabled.reason])] });
   }
-  // Design-run artifacts relocate together only after final integration.
-  const retained = state.designPath ? [state.planPath, state.walkthroughPath].map(file => ({ path: relative(state, file), reason: 'Design-run artifact; relocates after final integration' })) : [];
-  const destinations = state.designPath ? [] : relocateScratchPaths([state.planPath, state.walkthroughPath], { cwd: state.repoRoot });
+  // Intermediate increments remain in the active chat folder until final integration.
+  const retained = state.designPath ? [state.planPath, state.walkthroughPath].map(file => ({ path: relative(state, file), reason: 'Intermediate increment; stays active until final integration' })) : [];
   return emitAction(state, 'done', { outcome: 'complete', summary: 'Implementation verified and code review settled.', checkpointed: Boolean(checkpoint),
     ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { checkpoint, resumeCommand: state.resumeCommand, ledgerPath: state.ledgerPath,
-      rulings: state.ordinary.rulings ?? [], warning: 'OS temp / Storage Sense may purge the ledger and relocated artifacts.', retained, destinations, ...(disabled ? { reviewDisabled: disabled.reason } : {}) } });
+      rulings: state.ordinary.rulings ?? [], warning: 'The complete chat folder is moved to its terminal handoff location.', retained, destinations: [], ...(disabled ? { reviewDisabled: disabled.reason } : {}) } });
 }

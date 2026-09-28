@@ -104,7 +104,7 @@ describe('driver reply validation (SC2)', () => {
       ['ask-user', { answer: 'include O1' }],
       ['ask-user', { answer: { summary: 's', verification: { command: 'npm test', result: 'ok' } } }],
       ['native-fallback', { slot: 'plan-review:R1:agy:0', captured: true, actual: { agentType: 'research', model: 'gemini', reasoningEffort: 'medium' } }],
-      ['author', { path: '.scratch/plan/x.md' }],
+      ['author', { path: 'artifacts/x.md' }],
       ['launch', null],
       ['launch', {}],
     ];
@@ -302,7 +302,7 @@ describe('driver reply handling end to end (SC2)', () => {
 
 // Ordinary write replies preserve raw JSON so the outcome parser can reject duplicate keys.
 describe('ordinary action reply forms', () => {
-  it('accepts a path-only outcome and explicit launch rejection, but rejects legacy and ambiguous forms', () => {
+  it('accepts a path-only outcome and explicit launch rejection, but rejects inline and ambiguous forms', () => {
     assert.equal(validateReply('delegate-write', { envelopePath: 'C:/session/run-write-id.json' }).ok, true);
     assert.equal(validateReply('delegate-write', { rejected: true, reason: 'Configured model unavailable.' }).ok, true);
     assert.equal(validateReply('delegate-write', { raw: '{"schemaVersion":1}' }).ok, false);

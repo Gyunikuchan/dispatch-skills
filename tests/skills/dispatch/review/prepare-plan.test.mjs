@@ -9,7 +9,7 @@ import {
   preparePlanReview,
   prepareReview,
 } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
-import { relocatedArtifactsPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { sessionArea } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
 import {
@@ -24,15 +24,34 @@ const BATCH_CONFIG = {
 };
 
 const fixture = createReviewPreparationFixture();
+const SESSION_ENV_KEYS = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_CHAT_ID', 'DISPATCH_SESSION_TERMINAL'];
+let savedSessionEnv = {};
 const makeRepo = () => {
   const dir = fixture.makeDirectory('plan-prepare-test-');
-  fs.mkdirSync(path.join(dir, '.scratch', 'plan'), { recursive: true });
+  process.env.DISPATCH_CHAT_ID = `plan-prepare-${process.pid}-${Date.now()}`;
+  bindWorkflowSession({ repositoryRoot: dir, artifactKind: 'plan', slug: 'plan-review' });
   return dir;
+};
+const planArtifact = (repo, filename) => {
+  const sessionRoot = path.resolve(process.env.DISPATCH_SESSION_DIR ?? '');
+  if (!sessionRoot.startsWith(`${path.resolve(repo)}${path.sep}`)) throw new Error('The test repository has no bound workflow session.');
+  const artifacts = path.join(sessionRoot, 'artifacts');
+  fs.mkdirSync(artifacts, { recursive: true });
+  return path.join(artifacts, filename);
 };
 const cleanManifest = cleanupPreparationManifest;
 
-beforeEach(fixture.beforeEach);
-afterEach(fixture.afterEach);
+beforeEach(() => {
+  fixture.beforeEach();
+  savedSessionEnv = Object.fromEntries(SESSION_ENV_KEYS.map(key => [key, process.env[key]]));
+  for (const key of SESSION_ENV_KEYS) delete process.env[key];
+});
+afterEach(() => {
+  fixture.afterEach();
+  for (const [key, value] of Object.entries(savedSessionEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+});
 
 const planBody = [
   '# Plan',
@@ -71,7 +90,7 @@ const planBody = [
 describe('plan review preparation', () => {
   it('stops invalid plans before creating any review artifacts', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-invalid.md');
+    const plan = planArtifact(repo, '2026-09-17-invalid.md');
     fs.writeFileSync(plan, '# Invalid\n\nTODO implement later\n');
     const manifest = preparePlanReview({
       artifactPath: plan,
@@ -93,7 +112,7 @@ describe('plan review preparation', () => {
 
   it('returns lint before strict resolution-log parsing', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-invalid.md');
+    const plan = planArtifact(repo, '2026-09-17-invalid.md');
     fs.writeFileSync(plan, '# Invalid\n\n## Review Findings & Resolutions\n\nmalformed');
     const manifest = preparePlanReview({
       artifactPath: plan,
@@ -104,7 +123,7 @@ describe('plan review preparation', () => {
 
   it('reports persisted-plan lint loci against canonical source lines', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-persisted.md');
+    const plan = planArtifact(repo, '2026-09-17-persisted.md');
     const metadata = {
       schemaVersion: 1,
       kind: 'plan',
@@ -130,7 +149,7 @@ describe('plan review preparation', () => {
 
   it('keeps explicit native plan lint defects warning-only', () => {
     const repo = makeRepo();
-    const nativeRoot = path.join(repo, 'native');
+    const nativeRoot = path.join(process.env.DISPATCH_SESSION_DIR, 'artifacts', 'native');
     const plan = path.join(nativeRoot, 'conversation', 'implementation_plan.md');
     fs.mkdirSync(path.dirname(plan), { recursive: true });
     fs.writeFileSync(plan, planBody.replace('## Proposed Changes', '## Changes'));
@@ -149,7 +168,7 @@ describe('plan review preparation', () => {
 
   it('reviews a metadata-less existing plan as-is', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-existing.md');
+    const plan = planArtifact(repo, '2026-09-17-existing.md');
     fs.writeFileSync(plan, '# Existing\n');
     const manifest = preparePlanReview({ slug: 'existing', requirement: 'Use the existing plan' }, { repoRoot: repo });
     assert.equal(manifest.status, 'decision-required');
@@ -160,7 +179,7 @@ describe('plan review preparation', () => {
 
   it('rejects unsupported request fields', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     assert.throws(() => preparePlanReview({ artifactPath: plan, slug: 'sample', decision: 'as-is' }, { repoRoot: repo }), /unsupported field "decision"/);
     assert.throws(() => preparePlanReview({ artifactPath: plan, slug: 'sample', artifactOwned: true }, { repoRoot: repo }), /unsupported field "artifactOwned"/);
@@ -168,7 +187,7 @@ describe('plan review preparation', () => {
 
   it('includes every lint warning in full and rebuttal prompt scope', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-warning.md');
+    const plan = planArtifact(repo, '2026-09-17-warning.md');
     const warned = planBody
       .replace(/## Success Criteria[\s\S]*?(?=## Proposed Changes)/, '')
       .replace('- `node --test tests/sample.test.mjs`', '- None: no compatible runner')
@@ -203,7 +222,7 @@ describe('plan review preparation', () => {
 
   it('prepares an orchestrated full review and emits argv rather than shell text', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const manifest = preparePlanReview({
       mode: 'orchestrated',
@@ -250,14 +269,14 @@ describe('plan review preparation', () => {
         '## Review Findings & Resolutions',
         '*No reviews conducted yet.*',
       ].join('\n');
-      fs.writeFileSync(path.join(repo, '.scratch', 'plan', '2026-09-20-demo-design.md'), design);
+      fs.writeFileSync(planArtifact(repo, '2026-09-20-demo-design.md'), design);
       return design;
     }
 
     it('attaches bounded approved-design context and revision to increment plan reviews', () => {
       const repo = makeRepo();
       writeDesign(repo);
-      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      const plan = planArtifact(repo, '2026-09-17-sample.md');
       fs.writeFileSync(plan, planBody);
       const manifest = preparePlanReview({
         mode: 'orchestrated',
@@ -265,7 +284,7 @@ describe('plan review preparation', () => {
         slug: 'sample',
         requirement: 'Implement sample',
         roundId: 'plan-review:R1',
-        designPath: '.scratch/plan/2026-09-20-demo-design.md',
+        designPath: planArtifact(repo, '2026-09-20-demo-design.md'),
         designRevision: null,
         incrementId: 'I01',
         targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
@@ -286,7 +305,7 @@ describe('plan review preparation', () => {
     it('keeps ordinary behavior unchanged without design context', () => {
       const repo = makeRepo();
       writeDesign(repo);
-      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      const plan = planArtifact(repo, '2026-09-17-sample.md');
       fs.writeFileSync(plan, planBody);
       const manifest = preparePlanReview({
         mode: 'orchestrated',
@@ -308,14 +327,14 @@ describe('plan review preparation', () => {
     it('rejects an invalid design path or revision with a stable diagnostic', () => {
       const repo = makeRepo();
       writeDesign(repo);
-      const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+      const plan = planArtifact(repo, '2026-09-17-sample.md');
       fs.writeFileSync(plan, planBody);
       assert.throws(() => preparePlanReview({
         mode: 'orchestrated',
         artifactPath: plan,
         slug: 'sample',
         roundId: 'plan-review:R1',
-        designPath: '.scratch/plan/2026-09-20-missing-design.md',
+        designPath: planArtifact(repo, '2026-09-20-missing-design.md'),
         incrementId: 'I01',
         targets: [{ roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium'}],
         reserves: [],
@@ -352,14 +371,14 @@ describe('plan review preparation', () => {
     });
   });
 
-  it('reuses an existing relocated plan in OS temp rather than requiring authoring', () => {
+  it('reuses an existing plan in the active session rather than requiring authoring', () => {
     const repo = makeRepo();
-    const previous = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE'].map(key => [key, process.env[key]]));
+    const previous = Object.fromEntries(['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID'].map(key => [key, process.env[key]]));
     const session = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'sample' });
-    const relocated = relocatedArtifactsPath({ projectRoot: repo });
-    fs.mkdirSync(relocated, { recursive: true });
-    const tempPlan = path.join(relocated, `2026-09-20-sample-${Date.now()}.md`);
-    fs.writeFileSync(tempPlan, planBody);
+    const artifacts = sessionArea('artifacts');
+    fs.mkdirSync(artifacts, { recursive: true });
+    const existingPlan = path.join(artifacts, '2026-09-20-sample.md');
+    fs.writeFileSync(existingPlan, planBody);
     try {
       const manifest = preparePlanReview({
         mode: 'orchestrated',
@@ -368,10 +387,10 @@ describe('plan review preparation', () => {
         targets: [{ candidateId: 'plan-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
       }, { repoRoot: repo });
       assert.equal(manifest.status, 'ready');
-      assert.equal(manifest.artifact.canonicalPath, tempPlan.split(path.sep).join('/'));
+      assert.equal(manifest.artifact.canonicalPath, path.relative(repo, existingPlan).split(path.sep).join('/'));
       cleanManifest(manifest);
     } finally {
-      fs.rmSync(tempPlan, { force: true });
+      fs.rmSync(existingPlan, { force: true });
       fs.rmSync(session, { recursive: true, force: true });
       for (const [key, value] of Object.entries(previous)) {
         if (value === undefined) delete process.env[key];
@@ -382,7 +401,7 @@ describe('plan review preparation', () => {
 
   it('accepts targets/reserves without a per-entry roundId, defaulting to the resolved round', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const manifest = preparePlanReview({
       mode: 'orchestrated',
@@ -402,7 +421,7 @@ describe('plan review preparation', () => {
 
   it('accepts a request with no top-level roundId and no per-entry roundId', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const manifest = preparePlanReview({
       mode: 'orchestrated',
@@ -421,7 +440,7 @@ describe('plan review preparation', () => {
 
   it('rejects a per-entry roundId that mismatches the resolved round', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     assert.throws(() => preparePlanReview({
       mode: 'orchestrated',
@@ -434,7 +453,7 @@ describe('plan review preparation', () => {
 
   it('writes a batch file whose every entry carries the resolved roundId and loads via loadBatchFile', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const manifest = preparePlanReview({
       mode: 'orchestrated',
@@ -460,7 +479,7 @@ describe('plan review preparation', () => {
 
   it('rejects standalone targets and orchestrated selectors', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const target = { roundId: 'plan-review:R1', candidateId: 'plan-review:claude:0', platform: 'claude', candidateIndex: 0 };
     assert.throws(() => preparePlanReview({
@@ -474,7 +493,7 @@ describe('plan review preparation', () => {
 
   it('scopes a later wave to sections changed since the prior wave', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const first = preparePlanReview({ artifactPath: plan, slug: 'sample' }, { repoRoot: repo });
     fs.writeFileSync(plan, planBody
@@ -496,7 +515,7 @@ describe('plan review preparation', () => {
   it('returns authoring-required for a missing plan', () => {
     const repo = makeRepo();
     const manifest = preparePlanReview({
-      artifactPath: '.scratch/plan/2026-09-17-sample.md',
+      artifactPath: planArtifact(repo, '2026-09-17-sample.md'),
       slug: 'sample',
       requirement: 'Implement sample',
     }, { repoRoot: repo });
@@ -506,7 +525,7 @@ describe('plan review preparation', () => {
 
   it('proceeds to ready for a resolved metadata-less existing plan', () => {
     const repo = makeRepo();
-    fs.writeFileSync(path.join(repo, '.scratch/plan/2026-09-17-feature.md'), planBody);
+    fs.writeFileSync(planArtifact(repo, '2026-09-17-feature.md'), planBody);
     execFileSync('git', ['init', '-q', '-b', 'feature'], { cwd: repo });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: repo });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
@@ -524,13 +543,13 @@ describe('plan review preparation', () => {
     } finally {
       cleanManifest(manifest);
       fs.rmSync(session, { recursive: true, force: true });
-      for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_LEGACY_SESSION', 'DISPATCH_LEGACY_STATE_FILE']) delete process.env[key];
+      for (const key of ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID']) delete process.env[key];
     }
   });
 
   it('checkpoints declared body edits and treats resolution-only edits as semantic no-ops', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const prepared = preparePlanReview({
       artifactPath: plan,
@@ -556,7 +575,7 @@ describe('plan review preparation', () => {
 
   it('carries the rerun remedy on checkpoint drift', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const first = preparePlanReview({ artifactPath: plan, slug: 'sample' }, { repoRoot: repo });
     const second = preparePlanReview({ artifactPath: plan, slug: 'sample' }, { repoRoot: repo });
@@ -579,7 +598,7 @@ describe('plan review preparation', () => {
 
   it('rejects undeclared edits, replayed contexts, and unknown request fields', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     assert.throws(() => preparePlanReview({ surprise: true }, { repoRoot: repo }), /unsupported field/);
     const prepared = preparePlanReview({
@@ -629,7 +648,7 @@ describe('plan review preparation', () => {
 
   it('previews exactly the checkpoint that succeeds, without writing', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const prepared = preparePlanReview({ artifactPath: plan, slug: 'sample' }, { repoRoot: repo });
     fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- First.', '- Changed.'));
@@ -654,7 +673,7 @@ describe('plan review preparation', () => {
 
   it('previews a nonzero consensus exit that the echoed checkpoint rejects', () => {
     const repo = makeRepo();
-    const plan = path.join(repo, '.scratch/plan/2026-09-17-sample.md');
+    const plan = planArtifact(repo, '2026-09-17-sample.md');
     fs.writeFileSync(plan, planBody);
     const prepared = preparePlanReview({ artifactPath: plan, slug: 'sample' }, { repoRoot: repo });
     const log = (line) => fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace(

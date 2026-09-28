@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { safeRenameSync } from '../lib/platform.mjs';
-import { isSessionPath, runTempDir, sessionArea, sessionArgs, sessionTempDir } from '../lib/session-temp.mjs';
+import { isSessionPath, runTempDir, sessionArea, sessionArgs, sessionDir, sessionTempDir } from '../lib/session-temp.mjs';
 import { RESPONSE_SCHEMA_PROVIDERS } from '../dispatch.mjs';
 import {
   scanResolutionLog,
@@ -488,13 +488,39 @@ function contextFor(state) {
  */
 function writeState(state, { exclusive = false } = {}) {
   const temp = `${state.statePath}.${crypto.randomUUID()}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  const root = sessionDir();
+  const stored = {
+    ...state,
+    statePath: sessionRelativePath(state.statePath, root),
+    artifactPath: sessionRelativePath(state.artifactPath, root),
+  };
+  fs.writeFileSync(temp, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
   try {
     if (exclusive) fs.linkSync(temp, state.statePath);
     else safeRenameSync(temp, state.statePath);
   } finally {
     if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
   }
+}
+
+/** @param {string} file @param {string} root */
+function sessionRelativePath(file, root) {
+  const absolute = path.resolve(file);
+  const relative = path.relative(root, absolute);
+  if (relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+    return `@session/${relative.split(path.sep).join('/')}`;
+  }
+  throw new Error(`Review invocation path is outside its session folder: ${file}`);
+}
+
+/** @param {any} state @param {string} root */
+function restoreInvocationPaths(state, root) {
+  for (const key of ['statePath', 'artifactPath']) {
+    if (typeof state[key] === 'string' && state[key].startsWith('@session/')) {
+      state[key] = path.join(root, ...state[key].slice('@session/'.length).split('/'));
+    }
+  }
+  return state;
 }
 
 export function createInvocationState({ kind, artifactPath, snapshot, expectedSourceKeys = [] }) {
@@ -568,7 +594,9 @@ export function readInvocationState(context) {
   if (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || (parentStat.mode & 0o077) !== 0)) {
     throw new Error('invocationContext state must be owner-only.');
   }
-  const state = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+  const root = sessionDir();
+  const state = restoreInvocationPaths(JSON.parse(fs.readFileSync(resolved, 'utf8')), root);
+  if (!isSessionPath(state.artifactPath)) throw new Error('invocationContext artifactPath must be inside its workflow session.');
   if (
     path.resolve(state.statePath ?? '') !== resolved ||
     state.status !== 'active' ||

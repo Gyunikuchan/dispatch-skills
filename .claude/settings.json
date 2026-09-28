@@ -1,3 +1,4 @@
 {
-  "outputStyle": "Concise"
+  "outputStyle": "Concise",
+  "autoCompactWindow": 300000
 }

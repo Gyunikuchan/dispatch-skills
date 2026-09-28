@@ -28,15 +28,32 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createStubDispatchEnvironment } from './stub-dispatch-fixture.mjs';
+import { initializeSession, reactivateSession } from '../../skills/dispatch/scripts/lib/session-lifecycle.mjs';
+import { SESSION_FLAG } from '../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { scanResolutionLog } from '../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { materializedFingerprint } from '../../skills/dispatch/scripts/lib/git-state.mjs';
 import { captureRepositoryState } from '../../skills/dispatch/scripts/verification/evidence.mjs';
+import { readRunState } from '../../skills/dispatch/scripts/driver/state.mjs';
 
 export const DRIVER_ACTIONS = Object.freeze([
   'ask-user', 'author', 'launch', 'native-fallback', 'adjudicate', 'apply-fixes', 'delegate-write', 'verify', 'done',
 ]);
 
 // SECTION: fixtures
+
+const fixtureSessions = new Map();
+
+/** Reads restored state without leaking the reader's session binding between fixture repositories. */
+export function readFixtureState(stateFile) {
+  const keys = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_SESSION_TERMINAL'];
+  const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try { return readRunState(stateFile); }
+  finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+}
 
 export const PLAN_BODY = [
   '# Plan',
@@ -114,32 +131,57 @@ export const DESIGN_BODY = [
 ].join('\n');
 
 /**
- * A temp Git repo with `src/app.js` committed, on a unique branch: the branch names the artifact
- * slug, and a shared slug could resolve to another test's relocated walkthrough in OS temp.
+ * A temp Git repo and validated chat folder with `src/app.js` committed. The session ID is stable
+ * across its driver subprocesses, so each child resolves the same artifact root.
  */
 export function makeGitRepo({ dirty = false } = {}) {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'driver-repo-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'd-'));
   const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' });
   git('init', '-q', '-b', `driver-${path.basename(dir).slice(-6).toLowerCase().replace(/[^a-z0-9]/g, 'x')}`);
   // Persist fixture identity directly to avoid two Git processes for every scenario repository.
   fs.appendFileSync(path.join(dir, '.git', 'config'), '[user]\n\temail = test@example.com\n\tname = Test\n[core]\n\tautocrlf = false\n');
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-  fs.mkdirSync(path.join(dir, '.scratch', 'plan'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'src', 'app.js'), 'export const value = 1;\n');
   git('add', 'src/app.js');
   git('commit', '--no-gpg-sign', '-qm', 'initial');
   if (dirty) fs.writeFileSync(path.join(dir, 'src', 'app.js'), 'export const value = 2;\n');
-  return { dir, git, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
+  const sessionId = path.basename(dir);
+  const fixture = {
+    dir,
+    git,
+    sessionId,
+    sessionDir: initializeSession({ repositoryRoot: dir, sessionId, sessionTitle: 'test', objective: 'driver test' }),
+    cleanup: () => {
+      fixtureSessions.delete(dir);
+      fs.rmSync(fixture.sessionDir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    },
+  };
+  fixtureSessions.set(dir, fixture);
+  return fixture;
+}
+
+export function fixtureSessionDir(repoDir) {
+  const fixture = fixtureSessions.get(path.resolve(repoDir));
+  assert.ok(fixture, `no chat session is registered for ${repoDir}`);
+  fixture.sessionDir = reactivateSession({ sessionDir: fixture.sessionDir, repositoryRoot: repoDir }).currentRoot;
+  return fixture.sessionDir;
+}
+
+function artifactsDirectory(repoDir) {
+  const directory = path.join(fixtureSessionDir(repoDir), 'artifacts');
+  fs.mkdirSync(directory, { recursive: true });
+  return directory;
 }
 
 export function writePlan(repoDir, name = '2026-09-22-sample.md', body = PLAN_BODY) {
-  const file = path.join(repoDir, '.scratch', 'plan', name);
+  const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;
 }
 
 export function writeDesign(repoDir, name = '2026-09-22-sample-design.md', body = DESIGN_BODY) {
-  const file = path.join(repoDir, '.scratch', 'plan', name);
+  const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;
 }
@@ -167,7 +209,7 @@ export function writeOutcomeReply(action, envelope) {
 }
 
 export function artifactSnapshot(repoDir) {
-  const root = path.join(repoDir, '.scratch', 'plan');
+  const root = artifactsDirectory(repoDir);
   if (!fs.existsSync(root)) return {};
   return Object.fromEntries(fs.readdirSync(root).sort().map((name) => [
     name,
@@ -182,10 +224,17 @@ function removeDriverState(action) {
 }
 
 export function walkthroughPath(repoDir) {
-  const root = path.join(repoDir, '.scratch', 'plan');
+  const root = artifactsDirectory(repoDir);
   const names = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.endsWith('-walkthrough.md')) : [];
   assert.equal(names.length, 1, `expected one walkthrough, found: ${names.join(', ')}`);
   return path.join(root, names[0]);
+}
+
+export function readHandoffWalkthrough(done) {
+  const root = path.join(done.handoff.destinations[0], 'artifacts');
+  const files = fs.readdirSync(root).filter(name => name.endsWith('-walkthrough.md'));
+  assert.equal(files.length, 1, 'one walkthrough in the final chat folder');
+  return fs.readFileSync(path.join(root, files[0]), 'utf8');
 }
 
 // SECTION: stub reports
@@ -225,15 +274,49 @@ export const rebuttal = (responses) => JSON.stringify({
 
 /** Spawns the fixture's dispatch.mjs in `cwd`. */
 export function runDispatch(fixture, args, { cwd, results, live, env } = {}) {
-  const res = spawnSync(process.execPath, [fixture.script, ...args], {
+  const session = cwd ? fixtureSessions.get(path.resolve(cwd)) : null;
+  const sessionEnv = {
+    ...(session ? {
+      DISPATCH_SESSION_DIR: session.sessionDir,
+      DISPATCH_CHAT_ID: session.sessionId,
+    } : {}),
+    DISPATCH_RUN_ID: '',
+    DISPATCH_SESSION_TERMINAL: '',
+  };
+  const delimiter = args.indexOf('--');
+  const optionArgs = delimiter === -1 ? args : args.slice(0, delimiter);
+  const boundArgs = !session || optionArgs.some(arg => arg === SESSION_FLAG || arg.startsWith(`${SESSION_FLAG}=`))
+    ? args
+    : [SESSION_FLAG, session.sessionDir, ...args];
+  const res = spawnSync(process.execPath, [fixture.script, ...boundArgs], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd,
-    env: createStubDispatchEnvironment({ results, live, extra: env }),
+    env: createStubDispatchEnvironment({ results, live, extra: { ...env, ...sessionEnv } }),
     timeout: 60_000,
     killSignal: 'SIGKILL',
   });
-  return { status: res.status, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
+  const stdout = res.stdout ?? '';
+  // A rejected invocation can reactivate the chat before returning without an action.
+  if (session && !fs.existsSync(session.sessionDir)) {
+    const activeRoot = path.join(cwd, '.scratch', 'dispatch-skills', path.basename(session.sessionDir));
+    if (fs.existsSync(path.join(activeRoot, 'manifest.json'))) {
+      const manifest = JSON.parse(fs.readFileSync(path.join(activeRoot, 'manifest.json'), 'utf8'));
+      if (manifest.sessionId === session.sessionId) session.sessionDir = fs.realpathSync(activeRoot);
+    }
+  }
+  try {
+    const action = JSON.parse(stdout.trim());
+    const stateFile = path.resolve(action.stateFile ?? '');
+    if (action.v === 1 && path.basename(stateFile) === 'state.json' && path.basename(path.dirname(path.dirname(stateFile))) === 'runs') {
+      const currentRoot = path.dirname(path.dirname(path.dirname(stateFile)));
+      const manifest = JSON.parse(fs.readFileSync(path.join(currentRoot, 'manifest.json'), 'utf8'));
+      if (session && manifest.sessionId === session.sessionId) {
+        session.sessionDir = fs.realpathSync(currentRoot);
+      }
+    }
+  } catch { /* Non-action output does not change the fixture's bound session location. */ }
+  return { status: res.status, stdout, stderr: res.stderr ?? '' };
 }
 
 /** Asserts stdout is exactly one compact JSON line and returns the parsed action. */
@@ -251,11 +334,22 @@ export function parseAction(stdout) {
 
 /** Runs a `launch` argv the way the agent would (background process, awaited) with stub results. */
 export function runLaunch(fixture, argv, { cwd, results, live }) {
+  const session = cwd ? fixtureSessions.get(path.resolve(cwd)) : null;
   const res = spawnSync(argv[0], argv.slice(1), {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd,
-    env: createStubDispatchEnvironment({ results, live, logFile: path.join(fixture.dir, 'stub-calls.jsonl') }),
+    env: createStubDispatchEnvironment({
+      results, live, logFile: path.join(fixture.dir, 'stub-calls.jsonl'),
+      extra: {
+        ...(session ? {
+          DISPATCH_SESSION_DIR: session.sessionDir,
+          DISPATCH_CHAT_ID: session.sessionId,
+        } : {}),
+        DISPATCH_RUN_ID: '',
+        DISPATCH_SESSION_TERMINAL: '',
+      },
+    }),
     timeout: 60_000,
     killSignal: 'SIGKILL',
   });

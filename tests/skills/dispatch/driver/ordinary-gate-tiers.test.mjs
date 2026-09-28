@@ -3,14 +3,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 
-import { allProviders, codeFinding, implementationOutcome, report, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, implementationOutcome, report, writeOutcomeReply, readHandoffWalkthrough } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, driveOrdinaryImplementation, FINAL_COMMAND, tierFixture, tierPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
 
 const verifies = trace => trace.filter(action => action.action === 'verify');
 const SAMPLE = 'node --test tests/sample.test.mjs', LINT = 'node scripts/lint.mjs';
-const handoffWalkthrough = done => fs.readFileSync(done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8');
+const handoffWalkthrough = readHandoffWalkthrough;
 
 describe('ordinary driver verification gate tiers', () => {
   it('runs a [FINAL] command only at baseline and one final gate across a retry and an accepted fix round', () => {

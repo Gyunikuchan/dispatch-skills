@@ -5,9 +5,9 @@ import { appendEvent, governingHash, readLedger, resumeOrdinary, slugFromPlanPat
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { foldSegments } from '../ledger/events.mjs';
 import { resolveLedgerPath } from '../artifacts/resolve-paths.mjs';
-import { completeSession } from '../lib/session-temp.mjs';
 import { emitAction } from './actions.mjs';
-import { writeRunState } from './state.mjs';
+import { finish as persistAction } from './state.mjs';
+import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
 import { DEFERRED, cell, isPassing, renderTraceability, replaceBoxLine, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
 
 const MARKER = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
@@ -139,8 +139,8 @@ export function persistEvidence(state) {
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
   // A passed final gate renders its evidence before the deferred code-review checkpoint is recorded.
   if (state.ordinary.checkpoint || (state.reviewState?.kind === 'code' && !(state.ordinary.step === 'final-verify' && state.ordinary.finalVerified))) return;
-  const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: relative(state, state.planPath), ...(state.designPath ? { designPath: relative(state, state.designPath), designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
-  const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(record)}\n\`\`\`\n`;
+  const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: state.planPath, ...(state.designPath ? { designPath: state.designPath, designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
+  const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(storeSessionPaths(record))}\n\`\`\`\n`;
   const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);
   fs.writeFileSync(state.walkthroughPath, MARKER.test(text) ? text.replace(MARKER, () => block) : text + block);
 }
@@ -148,13 +148,14 @@ export function restoreEvidence(state) {
   if (!fs.existsSync(state.walkthroughPath)) return false;
   const match = MARKER.exec(fs.readFileSync(state.walkthroughPath, 'utf8'));
   if (!match) return false;
-  const record = JSON.parse(match[1]);
+  const record = restoreSessionPaths(JSON.parse(match[1]));
+  const planMatches = typeof record.planPath === 'string' && path.resolve(state.repoRoot, record.planPath) === path.resolve(state.planPath);
   // Ordinary evidence from a finished or never-approved run of an earlier plan revision has no authority over a restart.
   const ordinaryRecord = !state.designPath && !record.designPath && !record.incrementId;
-  if (ordinaryRecord && record.schemaVersion === 1 && record.governingHash !== state.governingHash && record.planPath === relative(state, state.planPath) && !liveSegment(state, record.ledgerRunId)) return false;
-  if (record.schemaVersion !== 1 || record.governingHash !== state.governingHash || record.planPath !== relative(state, state.planPath)) throw new Error('Walkthrough evidence does not bind this governing plan.');
+  if (ordinaryRecord && record.schemaVersion === 1 && record.governingHash !== state.governingHash && planMatches && !liveSegment(state, record.ledgerRunId)) return false;
+  if (record.schemaVersion !== 1 || record.governingHash !== state.governingHash || !planMatches) throw new Error('Walkthrough evidence does not bind this governing plan.');
   if (state.designPath) {
-    if (record.designPath !== relative(state, state.designPath) || record.designRevision !== state.designRevision && record.designRevision !== state.governingHash) throw new Error('Walkthrough evidence does not bind this parent design identity.');
+    if (typeof record.designPath !== 'string' || path.resolve(state.repoRoot, record.designPath) !== path.resolve(state.designPath) || record.designRevision !== state.designRevision && record.designRevision !== state.governingHash) throw new Error('Walkthrough evidence does not bind this parent design identity.');
     if (state.increment?.id && record.incrementId !== state.increment.id) throw new Error('Walkthrough evidence increment ID does not bind the selected increment.');
     if (!state.increment?.id && record.incrementId && !/^I\d{2}$/.test(record.incrementId)) throw new Error('Walkthrough evidence increment ID is invalid.');
   } else if (record.designPath || record.designRevision) throw new Error('Walkthrough evidence contains an unbound parent design identity.');
@@ -207,15 +208,13 @@ export function save(state, action) {
       // A refusal is often about the walkthrough itself, so evidence it cannot hold must not block recording it.
       if (action.action !== 'done' || action.outcome === 'complete') throw error;
     }
-    writeRunState(state);
-    // An increment handoff is a checkpoint in the parent design; later increments share its ledger.
-    if (action.action === 'done' && action.handoff?.destinations && !(state.designPath && state.increment)) completeSession();
+    // The state layer performs terminal chat-folder movement after this action is ready to persist.
+    return persistAction(state, action);
   } catch (error) {
     // Error replies re-emit state.pending, so it must stay the action the state file holds.
     state.pending = durable;
     throw error;
   }
-  return action;
 }
 export function refuse(state, reason, nextAction = null) {
   return emitAction(state, 'done', { outcome: 'refused', summary: reason, reason, command: state.resumeCommand, ...(nextAction ? { nextAction } : {}) });

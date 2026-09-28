@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readLedger } from '../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-import { implementationOutcome, writeEnvelopeFile, writeOutcomeReply } from './driver-harness.mjs';
+import { implementationOutcome, writeEnvelopeFile, writeOutcomeReply, readHandoffWalkthrough } from './driver-harness.mjs';
 import { createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from './ordinary-driver-fixture.mjs';
 
 // SECTION: Fixture segments
@@ -82,7 +82,7 @@ export const carryOver = (runId, extra = []) => ({ decision: 'red-ruling', reaso
 export const noFailingState = (locus = 'src/app.js:1') => ({ decision: 'red-ruling', reason: 'Behavior already satisfied by landed production.', rulings: [{ criterionId: 'SC1', kind: 'no-failing-state', locus, reason: 'src/app.js already exports value=2.' }] });
 
 export function walkthroughText(result) {
-  return fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8');
+  return readHandoffWalkthrough(result.done);
 }
 
 export function assertAccepted(result) {

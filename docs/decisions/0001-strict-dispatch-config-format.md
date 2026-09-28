@@ -2,9 +2,6 @@
 
 - **Status**: Accepted; implemented in v0.5.0
 - **Date**: 2026-09-24
-- **Original specification**: `.scratch/plan/2026-09-22-strict-config-format-design.md`
-  (supersedes the streamline design's `R1 — Unified config` candidate shapes; this scratch
-  artifact may have been relocated to OS temp)
 
 ## Context
 

@@ -1,24 +1,65 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
+import { bindSession, bindWorkflowSession, SESSION_ENV, RUN_ENV } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
-import { implementationOutcome, runDispatch, writeEnvelopeFile, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
+import { implementationOutcome, runDispatch, writeEnvelopeFile, writeOutcomeReply, readFixtureState } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy, withCriterionEvidence } from '../../../helpers/ordinary-driver-fixture.mjs';
 
-afterEach(cleanupOrdinaryDriverFixtures);
+let savedSessionEnv;
+let savedTempEnv;
+let shortTempRoot;
+beforeEach(() => {
+  const keys = ['DISPATCH_SESSION_DIR', 'DISPATCH_RUN_ID', 'DISPATCH_CHAT_ID'];
+  savedSessionEnv = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  for (const key of keys) delete process.env[key];
+  const tempKeys = ['TMPDIR', 'TEMP', 'TMP'];
+  savedTempEnv = Object.fromEntries(tempKeys.map(key => [key, process.env[key]]));
+  shortTempRoot = fs.mkdtempSync(path.join(os.homedir(), '.d-'));
+  for (const key of tempKeys) process.env[key] = shortTempRoot;
+});
+afterEach(() => {
+  cleanupOrdinaryDriverFixtures();
+  if (shortTempRoot) fs.rmSync(shortTempRoot, { recursive: true, force: true });
+  for (const [key, value] of Object.entries(savedSessionEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  for (const [key, value] of Object.entries(savedTempEnv)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+});
+
+function createFixture(options) {
+  const fixture = createOrdinaryDriverFixture(options);
+  process.env[SESSION_ENV] = fixture.repo.sessionDir;
+  delete process.env[RUN_ENV];
+  process.env.DISPATCH_CHAT_ID = fixture.repo.sessionId;
+  bindWorkflowSession({ repositoryRoot: fixture.repo.dir, artifactKind: 'plan', slug: 'sample', objective: 'Ordinary resume fixture' });
+  return fixture;
+}
+
+function reactivateDone(done) {
+  const published = done.handoff.destinations[0];
+  delete process.env[SESSION_ENV];
+  delete process.env[RUN_ENV];
+  const active = bindSession(published);
+  const ledgerRelative = path.relative(published, done.ledgerPath);
+  return { active, ledgerPath: path.join(active, ledgerRelative) };
+}
 
 describe('ordinary driver canonical contracts: resume and repair', () => {
   it('reconstructs review, baseline, and implementation phases from canonical artifacts after cache loss', () => {
     for (const phase of ['plan-review', 'baseline', 'implementation', 'code-review']) {
-      const fixture = createOrdinaryDriverFixture(); let restarted = false;
+      const fixture = createFixture(); let restarted = false;
       let codeBudgetAtRestart = null;
       const result = driveOrdinaryImplementation(fixture, {
         onAction(action) {
           if (restarted) return;
-          const cached = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
+          const cached = readFixtureState(action.stateFile);
           const boundary = phase === 'plan-review' ? cached.ordinary.phase === 'plan-review'
             : phase === 'baseline' ? action.action === 'verify' && action.purpose === 'baseline'
             : phase === 'implementation' ? action.action === 'verify' && action.purpose === 'red'
@@ -36,7 +77,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
           const resumed = JSON.parse(reply.stdout);
           assert.notEqual(resumed.outcome, 'refused', JSON.stringify(resumed));
           if (phase === 'code-review') {
-            const recovered = JSON.parse(fs.readFileSync(resumed.stateFile, 'utf8')).reviewBudgets?.['code-review'];
+            const recovered = readFixtureState(resumed.stateFile).reviewBudgets?.['code-review'];
             assert.equal(recovered?.budgetId, codeBudgetAtRestart.budgetId, 'recovery uses the same code-review identity');
             assert.ok(recovered.reviewWaves >= codeBudgetAtRestart.reviewWaves, 'recovery never lowers consumed waves');
             assert.ok(recovered.roundLimit >= codeBudgetAtRestart.roundLimit, 'recovery never lowers the approved cap');
@@ -46,13 +87,14 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
         },
       });
       assert.equal(result.done.outcome, 'complete', `${phase}: ${JSON.stringify(result.done)}`);
-      const events = readLedger(result.done.ledgerPath).events;
+      const active = reactivateDone(result.done);
+      const events = readLedger(active.ledgerPath).events;
       assert.equal(events.filter(event => event.type === 'approval').length, 1, phase);
       assert.equal(events.filter(event => event.type === 'task-start').length, 1, phase);
     }
   });
   it('resumes at code review after only scoped gates, deferring [FINAL] evidence to the final gate', () => {
-    const fixture = createOrdinaryDriverFixture({ finalCommand: true }); let restarted = false;
+    const fixture = createFixture({ finalCommand: true }); let restarted = false;
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, {
       policy: {
@@ -64,7 +106,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
         verify: withCriterionEvidence(action => ({ results: base.verify(action).results.map(({ scopeHash, ...item }) => item) })),
       },
       onAction(action) {
-        if (restarted || JSON.parse(fs.readFileSync(action.stateFile, 'utf8')).ordinary?.phase !== 'code-review') return;
+        if (restarted || readFixtureState(action.stateFile).ordinary?.phase !== 'code-review') return;
         restarted = true;
         fs.rmSync(action.stateFile);
         const reply = runDispatch(fixture.fixture, ['--run', 'implement', '--phases', 'from:code-review', '--orchestrator', 'claude', '--', fixture.plan], { cwd: fixture.repo.dir });
@@ -79,14 +121,15 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.equal(result.trace.filter(action => action.action === 'verify').at(-1).purpose, 'final');
   });
   it('keeps inspect-first unterminated after malformed tests-only RED evidence', () => {
-    const fixture = createOrdinaryDriverFixture();
+    const fixture = createFixture();
     const result = driveOrdinaryImplementation(fixture, { policy: {
       delegateWrite: action => writeOutcomeReply(action, implementationOutcome({ stage: 'RED_READY', evidence: ['malformed RED evidence'] })),
       askUser: action => action.question === 'failure-disposition'
         ? { answer: { decision: 'inspect-first', reason: 'Inspect incomplete outcome.' } }
         : ordinaryDriverPolicy(fixture.repo).askUser(action),
     } });
-    const ledger = readLedger(result.done.ledgerPath);
+    const active = reactivateDone(result.done);
+    const ledger = readLedger(active.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);
     assert.equal(ledger.events.some(event => event.type === 'run-complete'), false);
     assert.equal(ledger.events.at(-1).data.state, 'open');
@@ -112,7 +155,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.deepEqual(validateRedAdmission(state, implementationOutcome({ stage: 'RED_READY', evidence: ['RED-MATRIX SC1 | tests/sample.test.mjs | exit 1 test:hops A then B'] })), []);
   });
   it('restores a dispatched admission repair from walkthrough evidence without relaunching it', () => {
-    const fixture = createOrdinaryDriverFixture(); let writes = 0, restarted = false, recoveries = 0;
+    const fixture = createFixture(); let writes = 0, restarted = false, recoveries = 0;
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, {
       restartWhen: action => action.action === 'delegate-write' && action.fields.continuation?.kind === 'admission-repair' && !restarted && (restarted = true),
@@ -138,7 +181,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     assert.equal(result.restarts, 1);
   });
   it('repairs a missing RED criterion without charging another attempt', () => {
-    const fixture = createOrdinaryDriverFixture(); let calls = 0;
+    const fixture = createFixture(); let calls = 0;
     const source = fs.readFileSync(fixture.plan, 'utf8').replace('## Proposed Changes', '- [SC2] Preserve the same RED observable.\n  - Changes: `src/app.js`, `tests/sample.test.mjs`\n  - Verify: `node --test tests/sample.test.mjs`\n  - Evidence: red\n  - Test rationale: A second mapped acceptance condition requires explicit matrix coverage.\n\n## Proposed Changes');
     fs.writeFileSync(fixture.plan, source);
     const base = ordinaryDriverPolicy(fixture.repo);
@@ -155,9 +198,11 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     const writes = result.trace.filter(action => action.action === 'delegate-write');
     assert.equal(writes[1].fields.continuation.kind, 'admission-repair');
     assert.deepEqual(writes[1].fields.continuation.defects, ['Exactly one primary RED-MATRIX row required for SC2.']);
-    const ledger = readLedger(result.done.ledgerPath);
+    const active = reactivateDone(result.done);
+    const ledger = readLedger(active.ledgerPath);
     assert.equal(ledger.events.filter(event => event.type === 'implementation-attempt' && event.data.launch === 'tests-only').length, 1);
-    const evidence = JSON.parse(fs.readFileSync(result.done.handoff.destinations.find(file => file.endsWith('-walkthrough.md')), 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
+    const walkthroughPath = path.join(active.active, 'artifacts', `${path.basename(fixture.plan, '.md')}-walkthrough.md`);
+    const evidence = JSON.parse(fs.readFileSync(walkthroughPath, 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
   });

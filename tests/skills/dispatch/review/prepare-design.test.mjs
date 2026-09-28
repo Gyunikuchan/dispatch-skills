@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it } from 'node:test';
+import { beforeEach, afterEach, describe, it } from 'node:test';
+import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { designSnapshot, prepareDesignReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { withDispatchFrontmatter } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 
@@ -36,6 +37,16 @@ Ready.
 *No reviews conducted yet.*
 `;
 
+const originalSession = process.env.DISPATCH_SESSION_DIR;
+beforeEach(() => { delete process.env.DISPATCH_SESSION_DIR; delete process.env.DISPATCH_RUN_ID; });
+afterEach(() => { if (originalSession === undefined) delete process.env.DISPATCH_SESSION_DIR; else process.env.DISPATCH_SESSION_DIR = originalSession; delete process.env.DISPATCH_RUN_ID; });
+function designPath(root) {
+  const session = bindWorkflowSession({ repositoryRoot: root, slug: 'platform' });
+  const file = path.join(session, 'artifacts', '2026-09-20-platform-design.md');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  return file;
+}
+
 describe('design review preparation', () => {
   it('returns design authoring state for a missing canonical design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
@@ -50,7 +61,7 @@ describe('design review preparation', () => {
   it('prepares an existing valid design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      const design = designPath(root);
       fs.mkdirSync(path.dirname(design), { recursive: true });
       const snapshot = designSnapshot(validDesign);
       fs.writeFileSync(design, withDispatchFrontmatter(validDesign, {
@@ -71,7 +82,7 @@ describe('design review preparation', () => {
   it('blocks an existing design with a dependency cycle', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      const design = designPath(root);
       fs.mkdirSync(path.dirname(design), { recursive: true });
       const cyclic = validDesign.replace('| I01 | 1 | Base | none |', '| I01 | 1 | Base | I01 |');
       const snapshot = designSnapshot(cyclic);
@@ -90,7 +101,7 @@ describe('design review preparation', () => {
   it('prepares a design rebuttal manifest from the shared rebuttal frame', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      const design = designPath(root);
       fs.mkdirSync(path.dirname(design), { recursive: true });
       const snapshot = designSnapshot(validDesign);
       fs.writeFileSync(design, withDispatchFrontmatter(validDesign, {
@@ -132,7 +143,7 @@ describe('design review preparation', () => {
   it('SC1 prepares a verb-approved design whose metadata slug omits -design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      const design = designPath(root);
       fs.mkdirSync(path.dirname(design), { recursive: true });
       const snapshot = designSnapshot(validDesign);
       fs.writeFileSync(design, withDispatchFrontmatter(validDesign, {
@@ -154,7 +165,7 @@ describe('design review preparation', () => {
   it('reviews a metadata-less existing design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const design = path.join(root, '.scratch/plan/2026-09-20-platform-design.md');
+      const design = designPath(root);
       fs.mkdirSync(path.dirname(design), { recursive: true });
       fs.writeFileSync(design, validDesign);
       const result = prepareDesignReview({ action: 'prepare', artifactPath: design, slug: 'platform', requirement: 'other' }, { repoRoot: root });

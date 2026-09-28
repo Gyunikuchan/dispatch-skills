@@ -49,7 +49,7 @@
       "additionalProperties": false,
       "required": [
         "terminalEvent",
-        "relocateAfterPass",
+        "sessionArtifacts",
         "retain"
       ],
       "properties": {
@@ -59,7 +59,7 @@
           "required": [
             "type",
             "result",
-            "beforeRelocation"
+            "beforeHandoff"
           ],
           "properties": {
             "type": {
@@ -68,12 +68,12 @@
             "result": {
               "const": "pass"
             },
-            "beforeRelocation": {
+            "beforeHandoff": {
               "const": true
             }
           }
         },
-        "relocateAfterPass": {
+        "sessionArtifacts": {
           "type": "array",
           "items": {
             "type": "string",

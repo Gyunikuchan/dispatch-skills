@@ -78,7 +78,7 @@ Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, C
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
 - **Type checking**: Start every `skills/` and `scripts/` `.mjs` file with `// @ts-check`; type exported functions and destructured options with JSDoc. `npm test` runs `tsc` (`checkJs`, non-strict) first.
-- **Scratch directory allowlist**: Only technical designs (`.scratch/plan/<yyyy-mm-dd>-<slug>-design.md`) and hidden design staging files (`.scratch/plan/.<design-file>.bak`/`.tmp`/`.status.tmp`), active plan files (`.scratch/plan/<yyyy-mm-dd>-<slug>.md`) and increment implementation plans (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan.md`), walkthrough files (`.scratch/plan/<yyyy-mm-dd>-<slug>-walkthrough.md`), increment walkthroughs (matching `-walkthrough.md` shape), integration walkthroughs (`.scratch/plan/<yyyy-mm-dd>-<design-slug>-integration-walkthrough.md`), audit reports (`.scratch/audits/<run>-audit.md`), and in-flight audit working directories (`.scratch/audits/<run>-work/`) belong in `.scratch/`. Put generated state, logs, traces, prompts, packets, reports, captures, and temp files under `<realpath(os.tmpdir())>/dispatch-skills-<user>/<session-id>/runs/<run-id>/`; keep `artifacts/`, `ledger/`, `telemetry/`, `cache/`, and the manifest in that session root. Keep artifacts in `.scratch/` while active; standalone reviews retain them. After final integration, move design artifacts into session `artifacts/` together; at ordinary handoff, move plans there and report destinations. Prune aged runs and cache only; retain manifests and durable evidence. `.scratch/` is not git-ignored; do not stage its files (see `skills/dispatch/references/review.md` § Wave and artifact lifecycle).
+- **Scratch**: Do not commit files under `.scratch/` unless explicitly instructed.
 
 ### Comments
 
@@ -94,6 +94,10 @@ Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
 - **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
 - **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Shipped skills and development tooling require Node 22+.
+
+### Long-running commands and delegates
+
+Start each command or delegate once and retain its handle. Use an event-driven wait with a 30-minute timeout as fallback, waking earlier for completion, a material blocker, or user input. Ask delegates to report only completion or material blockers; continue waiting through routine progress without another status request or narration. When an API caps waits, use its longest event-capable wait and reuse the same handle.
 
 ### Handoff Format
 

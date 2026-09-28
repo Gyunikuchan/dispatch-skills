@@ -2,6 +2,8 @@
 
 External delegates read the plan file with no other context.
 
+The driver keeps each chat's artifacts under `.scratch/dispatch-skills/<folder>/artifacts/` and generated run files under that folder's `runs/<run-id>/`. At terminal handoff, it moves the whole folder under `<realpath(os.tmpdir())>/dispatch-skills/<folder>/` when possible and names the authoritative root.
+
 ````markdown
 # <Goal Description>
 
@@ -20,7 +22,7 @@ External delegates read the plan file with no other context.
 *Questions, assumptions, or defaults (or "None").*
 
 ## Technical-Design Traceability
-- Parent design: `.scratch/plan/<yyyy-mm-dd>-<design-slug>-design.md`
+- Parent design: exact runtime path to the approved design in the active session artifacts area; filename format: `<yyyy-mm-dd>-<design-slug>-design.md`
 - Approved revision: `sha256:<64 hex>`
 - Increment ID and inherited contract: I<nn> — <inherited outcome, invariants, rollback boundary>
 - Prerequisite evidence: <prerequisite completion evidence>

@@ -13,7 +13,8 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { showToplevel } from '../lib/git-root.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
-import { bindLegacyStateSession, bindRun, bindSession, isSessionDir, openSession, pruneSessions, runStatePath, SESSION_ENV, sessionDir } from '../lib/session-temp.mjs';
+import { loadSchema, validateAgainstSchema } from './actions.mjs';
+import { bindRun, bindSession, handoffCurrentSession, isPublishedSessionDir, isWorkspaceSessionDir, openSession, pruneSessions, runStatePath, SESSION_ENV, sessionDir, storeSessionPaths, restoreSessionPaths } from '../lib/session-temp.mjs';
 
 // SECTION: State storage
 
@@ -59,46 +60,66 @@ export function createRunState(fields) {
 
 /** Binds the session that holds `stateFile`, so a `--next` process and its children share it. */
 export function bindStateSession(stateFile) {
+  const resolved = path.resolve(stateFile);
   let real;
-  try { real = fs.realpathSync(path.resolve(stateFile)); } catch { return null; }
-  const runDir = path.dirname(real);
-  const runsDir = path.dirname(runDir);
-  const session = path.dirname(runsDir);
-  if (path.basename(real) === 'state.json' && path.basename(runsDir) === 'runs' && isSessionDir(session)) {
-    const bound = bindSession(session);
-    bindRun(path.basename(runDir));
-    return bound;
-  }
-  try { return bindLegacyStateSession(real); } catch { return null; }
+  try { real = fs.realpathSync(resolved); } catch { return null; }
+  const parts = statePathParts(real);
+  if (!parts || (!isPublishedSessionDir(parts.session) && !isWorkspaceSessionDir(parts.session, manifestRepository(parts.session)))) return null;
+  const bound = bindSession(parts.session);
+  bindRun(parts.runId);
+  return bound;
 }
 
 /** Reads a state file; throws with `code: 'STATE_UNREADABLE'` when missing or corrupt. */
 export function readRunState(stateFile) {
   const resolved = path.resolve(stateFile);
   const boundSession = bindStateSession(resolved);
+  const original = statePathParts(resolved);
+  const actual = original && boundSession
+    ? path.join(boundSession, 'runs', original.runId, 'state.json')
+    : resolved;
   let real = null;
-  try { real = fs.realpathSync(resolved); } catch { real = null; }
-  const parent = real && path.basename(real) === 'state.json' ? path.dirname(real) : null;
-  const runParent = parent && path.basename(path.dirname(parent)) === 'runs' ? path.dirname(path.dirname(parent)) : null;
-  const direct = Boolean(real && runParent && isSessionDir(runParent));
-  const legacyBinding = Boolean(real && boundSession && process.env.DISPATCH_LEGACY_SESSION === '1' &&
-    path.resolve(process.env[SESSION_ENV] ?? '') === path.resolve(boundSession) &&
-    path.resolve(process.env.DISPATCH_LEGACY_STATE_FILE ?? '') === real);
-  const legacy = Boolean(legacyBinding && path.dirname(real) === boundSession);
-  const legacyNested = Boolean(legacyBinding && parent && runParent && path.basename(path.dirname(parent)) === 'runs' &&
-    runParent === boundSession);
+  try { real = fs.realpathSync(actual); } catch { real = null; }
+  const parts = real ? statePathParts(real) : null;
+  const direct = Boolean(parts && boundSession && path.resolve(parts.session) === path.resolve(boundSession) &&
+    (isPublishedSessionDir(parts.session) || isWorkspaceSessionDir(parts.session, manifestRepository(parts.session))));
   let state = null;
   try {
-    if (direct || legacy || legacyNested) state = JSON.parse(fs.readFileSync(resolved, 'utf8'));
+    if (direct) {
+      const stat = fs.lstatSync(actual);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Driver state must be a regular file.');
+      state = JSON.parse(fs.readFileSync(actual, 'utf8'));
+    }
   } catch {
     state = null;
   }
-  const pathRunId = direct || legacyNested ? path.basename(parent) : legacy ? path.basename(real, '.json') : null;
+  const pathRunId = direct ? parts?.runId : null;
   if (!state || state.v !== 1 || !state.runId || state.runId !== pathRunId) {
     throw Object.assign(new Error(`Driver state ${stateFile} is missing or unreadable.`), { code: 'STATE_UNREADABLE' });
   }
+  const root = boundSession ?? path.dirname(path.dirname(path.dirname(real)));
+  state = restoreSessionPaths(state, root);
+  state.stateFile = actual;
+  if (state.reviewState?.invocation) state.reviewState.invocation.terminalHandoff = false;
+  if (state.invocation) state.resumeCommand = resumeCommand(state.invocation);
   return state;
 }
+
+/** @param {string} stateFile */
+function statePathParts(stateFile) {
+  if (path.basename(stateFile) !== 'state.json') return null;
+  const runDir = path.dirname(stateFile);
+  const runsDir = path.dirname(runDir);
+  if (path.basename(runsDir) !== 'runs') return null;
+  return { session: path.dirname(runsDir), runId: path.basename(runDir) };
+}
+
+/** @param {string} session */
+function manifestRepository(session) {
+  try { return JSON.parse(fs.readFileSync(path.join(session, 'manifest.json'), 'utf8')).repositoryRoot; }
+  catch { return process.cwd(); }
+}
+
 
 // Hosted here so implement-phase can rebind it without importing index.mjs (an import cycle).
 const DISPATCH_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'dispatch.mjs');
@@ -114,22 +135,23 @@ export function resumeCommand(invocation) {
   if (invocation.pins) parts.push('--pins', quote(invocation.pins));
   parts.push('--orchestrator', invocation.orchestrator);
   if (invocation.orchestratorModel) parts.push('--orchestrator-model', quote(invocation.orchestratorModel));
+  if (process.env[SESSION_ENV]) parts.push('--session-dir', quote(process.env[SESSION_ENV]));
   if (invocation.argument) parts.push('--', quote(invocation.argument));
   return parts.join(' ');
 }
 
 export function writeRunState(state) {
-  writeAtomic(state.stateFile, state);
+  writeAtomic(state.stateFile, storeSessionPaths(state, sessionDir()));
 }
 
 /** Records the full normalized invocation so a lost state can name its resuming `--run`. */
 export function writeRunSidecar(state, invocation) {
-  writeAtomic(sidecarPathFor(state.stateFile), invocation);
+  writeAtomic(sidecarPathFor(state.stateFile), storeSessionPaths(invocation, sessionDir()));
 }
 
 export function readRunSidecar(stateFile) {
   try {
-    return JSON.parse(fs.readFileSync(sidecarPathFor(path.resolve(stateFile)), 'utf8'));
+    return restoreSessionPaths(JSON.parse(fs.readFileSync(sidecarPathFor(path.resolve(stateFile)), 'utf8')), sessionDir());
   } catch {
     return null;
   }
@@ -248,14 +270,55 @@ export const REEMITTED = new WeakSet();
 /** Records the next pending action (cleaning temp files on `done`); a re-emitted action returns untouched. */
 export function finish(state, action) {
   if (REEMITTED.has(action)) return action;
+  if (action.action === 'done' && state.invocation?.terminalHandoff === true && state.repoRoot && !keepsDesignSessionActive(state, action) && !action.handoff) {
+    action = { ...action, handoff: { destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } };
+    const errors = validateAgainstSchema(loadSchema('done'), action);
+    if (errors.length) throw new Error(`Invalid terminal session handoff: ${errors.join('; ')}`);
+  }
   if (action.action === 'done') cleanupRun(state);
   state.pending = action;
   writeRunState(state);
-  return action;
+  if (action.action !== 'done' || !action.handoff || !state.repoRoot || keepsDesignSessionActive(state, action)) return action;
+  const sourceRoot = sessionDir();
+  const relocation = handoffCurrentSession(state.repoRoot);
+  const destinationRoot = relocation.currentRoot;
+  const rebasedState = rebaseSessionRoot(state, sourceRoot, destinationRoot);
+  Object.assign(state, rebasedState);
+  const rebasedAction = rebaseSessionRoot(action, sourceRoot, destinationRoot);
+  const moveDescription = `Session folder move: ${relocation.method}; authoritative=${relocation.authoritative}${relocation.warning ? `; reason=${relocation.warning}` : ''}`;
+  const terminal = { ...rebasedAction, handoff: {
+    ...rebasedAction.handoff,
+    destinations: [destinationRoot],
+    warning: [rebasedAction.handoff.warning, moveDescription].filter(Boolean).join(' '),
+  } };
+  state.pending = terminal;
+  state.resumeCommand = state.invocation ? resumeCommand(state.invocation) : state.resumeCommand;
+  writeRunState(state);
+  return terminal;
+}
+
+/** @param {any} state @param {any} action */
+function keepsDesignSessionActive(state, action) {
+  return Boolean(state.designPath && action.outcome === 'complete' && (state.increment || action.nextAction));
+}
+
+/** @param {any} value @param {string} from @param {string} to */
+function rebaseSessionRoot(value, from, to) {
+  if (typeof value === 'string') {
+    const variants = [from, from.replaceAll('\\', '/'), from.replaceAll('/', '\\')];
+    let result = value;
+    for (const variant of [...new Set(variants)]) result = result.replaceAll(variant, to);
+    return result;
+  }
+  if (Array.isArray(value)) return value.map(item => rebaseSessionRoot(item, from, to));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rebaseSessionRoot(item, from, to)]));
+  }
+  return value;
 }
 
 export function cleanupRun(state) {
-  for (const target of state.cleanup.splice(0)) fs.rmSync(target, { recursive: true, force: true });
+  for (const target of (state.cleanup ??= []).splice(0)) fs.rmSync(target, { recursive: true, force: true });
 }
 
 export function reemit(state, error) {

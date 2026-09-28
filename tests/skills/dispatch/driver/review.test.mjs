@@ -7,7 +7,7 @@ import { after, afterEach, before, describe, it } from 'node:test';
 
 import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
-import { allProviders, codeFinding, drive, implementationOutcome, logEntries, makeGitRepo, parseAction, planFinding, readLog, report, runDispatch, writeOutcomeReply, writePlan } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, drive, implementationOutcome, logEntries, makeGitRepo, parseAction, planFinding, readLog, report, runDispatch, writeOutcomeReply, writePlan, writeDesign } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
@@ -23,17 +23,17 @@ describe('review kind inference (design order 1–6)', () => {
   const infer = (argument) => inferReviewKind(argument, { cwd: repo.dir });
 
   it('1: *-design.md → design', () => {
-    assert.equal(infer('.scratch/plan/2026-09-22-x-design.md').kind, 'design');
+    assert.equal(infer('artifacts/2026-09-22-x-design.md').kind, 'design');
   });
 
   it('2: *-walkthrough.md → code scoped to the walkthrough (checked before the generic .md rule)', () => {
-    const result = infer('.scratch/plan/2026-09-22-x-walkthrough.md');
+    const result = infer('artifacts/2026-09-22-x-walkthrough.md');
     assert.equal(result.kind, 'code');
-    assert.equal(result.walkthroughPath, '.scratch/plan/2026-09-22-x-walkthrough.md');
+    assert.equal(result.walkthroughPath, 'artifacts/2026-09-22-x-walkthrough.md');
   });
 
   it('3: any other *.md → plan', () => {
-    assert.equal(infer('.scratch/plan/2026-09-22-x.md').kind, 'plan');
+    assert.equal(infer('artifacts/2026-09-22-x.md').kind, 'plan');
     assert.equal(infer('docs/notes.md').kind, 'plan');
   });
 
@@ -156,7 +156,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
     assert.equal(action.outcome, 'skipped');
     assert.match(action.reason, /medium/);
     assert.match(action.reason, /plan-review/);
-    assert.equal(fs.readFileSync(plan, 'utf8').includes('### Round'), false, 'nothing was reviewed');
+    assert.equal(fs.readFileSync(path.join(action.handoff.destinations[0], 'artifacts', path.basename(plan)), 'utf8').includes('### Round'), false, 'nothing was reviewed');
   });
 
   it('rejects a classified xhigh or max level before starting a run', () => {
@@ -183,8 +183,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
     });
     try {
-      const design = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-fallback-design.md');
-      fs.writeFileSync(design, '# Design\n');
+      const design = writeDesign(repo.dir, '2026-09-22-fallback-design.md', '# Design\n');
       const result = runDispatch(fallbackFixture, ['--run', 'review', '--orchestrator', 'claude', '--', design], { cwd: repo.dir });
       assert.equal(result.status, 0, result.stderr);
       const action = parseAction(result.stdout);
@@ -203,8 +202,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('skips a design review disabled at the explicit level (inferred from *-design.md)', () => {
-    const design = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-off-design.md');
-    fs.writeFileSync(design, '# Design\n');
+    const design = writeDesign(repo.dir, '2026-09-22-off-design.md', '# Design\n');
     const action = parseAction(run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', design]).stdout);
     assert.equal(action.action, 'done');
     assert.equal(action.outcome, 'skipped');
@@ -302,12 +300,16 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
     const budget = readLog(plan).reviewBudgetMarkers.at(-1);
     assert.equal(budget.reviewWaves, 1);
     const phase = await import(pathToFileURL(path.join(fixture.skillDir, 'scripts', 'driver', 'review-phase.mjs')).href);
+    const savedSession = process.env.DISPATCH_SESSION_DIR;
+    process.env.DISPATCH_SESSION_DIR = repo.sessionDir;
     const action = await phase.startReview({
       invocation: { verb: 'review', kind: 'plan', argument: plan, fix: true, orchestrator: 'claude', level: 'low', levelSource: 'explicit' },
       cwd: repo.dir,
       resumeCommand: 'resume spent budget',
       reviewBudget: budget,
     });
+    if (savedSession === undefined) delete process.env.DISPATCH_SESSION_DIR;
+    else process.env.DISPATCH_SESSION_DIR = savedSession;
     assert.equal(action.action, 'done', JSON.stringify(action));
     assert.equal(action.outcome, 'complete', JSON.stringify(action));
     assert.equal(readLog(plan).reviewBudgetMarkers.at(-1).reviewWaves, 1);

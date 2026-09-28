@@ -18,6 +18,7 @@ import {
   resolveRunnerExitCode,
   runDelegateCapture,
 } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
+import { isSessionPath } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 // SECTION: Session Logging & Banners
 
@@ -25,8 +26,7 @@ describe('common: session logging & banners', () => {
   it('creates dedicated session log file without errors', () => {
     const logger = createSessionLogger('test-provider');
     assert.ok(logger.logFile.includes('test-provider'));
-    assert.ok(logger.logFile.startsWith(os.tmpdir()));
-    assert.ok(!logger.logFile.includes('.scratch'));
+    assert.ok(isSessionPath(logger.logFile));
     logger.write('Sample log line\n');
     logger.close();
 

@@ -254,6 +254,19 @@ describe('verification evidence', () => {
     assert.equal(captureRepositoryState(repo).available, true);
   });
 
+  it('excludes long dispatch runtime paths before Git hashes them, preserving other scratch files', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verification-runtime-'));
+    tempDirs.push(repo);
+    execFileSync('git', ['init', '-q'], { cwd: repo });
+    const runtime = path.join(repo, '.scratch', 'dispatch-skills', 's'.repeat(60), 'runs', 'r'.repeat(36), 'e'.repeat(100));
+    fs.mkdirSync(path.dirname(runtime), { recursive: true });
+    fs.writeFileSync(runtime, 'runtime\n');
+    fs.writeFileSync(path.join(repo, '.scratch', 'notes.md'), 'host notes\n');
+    const capture = captureRepositoryState(repo);
+    assert.deepEqual(Object.keys(capture.entries), ['.scratch/notes.md']);
+    assert.match(capture.entries['.scratch/notes.md'].objectId, /^[0-9a-f]{40,64}$/);
+  });
+
   it('rejects newline paths with a stable capture diagnostic', { skip: process.platform === 'win32' ? 'NTFS forbids LF in filenames, so the fixture cannot exist on win32' : false }, () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'verification-newline-'));
     tempDirs.push(repo);

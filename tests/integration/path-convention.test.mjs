@@ -1,17 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 import { resolveArtifacts } from '../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
+import { initializeSession } from '../../skills/dispatch/scripts/lib/session-lifecycle.mjs';
+import { RUN_ENV, SESSION_ENV } from '../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
-const SCRATCH_PREFIX = '.scratch/plan/';
+const WORKSPACE_SESSION_PREFIX = '.scratch/dispatch-skills/';
+const ACTIVE_ARTIFACT_PREFIX = '<sessionDir>/artifacts/';
 
 /**
- * The two canonical artifact shapes, as placeholder form (`<yyyy-mm-dd>-<slug>.md`)
+ * The canonical artifact filename shapes, as placeholder form (`<yyyy-mm-dd>-<slug>.md`)
  * or as a concrete dated kebab-case filename. The resolver generates these; skill
  * prose repeats them in locations that cannot import the resolver, so this suite is
  * the drift guard across both.
@@ -53,7 +58,7 @@ const GUARDED = [
 ];
 
 /**
- * Mentions of the scratch directory that name no artifact: the bare directory and the
+ * Mentions of a session root that name no artifact: the bare directory and the
  * abbreviated diagram label.
  */
 const ALLOWLIST = ['', '...'];
@@ -85,19 +90,23 @@ function skillMarkdownFiles() {
   });
 }
 
-/** Every `.scratch/plan/` mention in a file, as `{ rel, line, token }`. */
-function scratchMentions(rel) {
+/** Session artifact mentions in a file, as `{ rel, line, token }`. */
+function sessionArtifactMentions(rel) {
   const text = readFileSync(path.join(REPO_ROOT, rel), 'utf8');
   const mentions = [];
   text.split('\n').forEach((line, index) => {
-    let from = 0;
-    for (;;) {
-      const at = line.indexOf(SCRATCH_PREFIX, from);
-      if (at === -1) break;
-      const rest = line.slice(at + SCRATCH_PREFIX.length);
-      const raw = rest.split(/\s/)[0] ?? '';
-      mentions.push({ rel, line: index + 1, token: trimTrailing(raw) });
-      from = at + SCRATCH_PREFIX.length;
+    for (const [prefix, strip] of [
+      [WORKSPACE_SESSION_PREFIX, raw => raw.startsWith('<folder>/artifacts/') ? raw.slice('<folder>/artifacts/'.length) : raw.startsWith('<folder>/') ? '' : raw],
+      [ACTIVE_ARTIFACT_PREFIX, raw => raw],
+    ]) {
+      let from = 0;
+      for (;;) {
+        const at = line.indexOf(prefix, from);
+        if (at === -1) break;
+        const raw = trimTrailing(line.slice(at + prefix.length).split(/\s/)[0] ?? '');
+        mentions.push({ rel, line: index + 1, token: strip(raw) });
+        from = at + prefix.length;
+      }
     }
   });
   return mentions;
@@ -107,22 +116,37 @@ function scratchMentions(rel) {
 
 describe('artifact resolver path contract', () => {
   it('generates paths matching the canonical shapes', () => {
-    const result = resolveArtifacts({ slug: 'auth-v2', date: '2026-09-10', native: { orchestrator: null } });
-    for (const [generated, shapes] of [
-      [result.plan.path, PLAN_SHAPES],
-      [result.walkthrough.path, WALKTHROUGH_SHAPES],
-    ]) {
-      assert.ok(generated.startsWith(SCRATCH_PREFIX), `${generated} lives under ${SCRATCH_PREFIX}`);
-      const token = generated.slice(SCRATCH_PREFIX.length);
-      assert.ok(
-        shapes.some(shape => shape.test(token)),
-        `${generated} matches its canonical shape`
-      );
+    const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-path-contract-'));
+    const keys = [SESSION_ENV, RUN_ENV, 'DISPATCH_CHAT_ID', 'DISPATCH_SESSION_TERMINAL'];
+    const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    for (const key of keys) delete process.env[key];
+    try {
+      const sessionId = `path-contract-${process.pid}`;
+      const sessionDir = initializeSession({ repositoryRoot, sessionId, sessionTitle: 'path contract', objective: 'path contract' });
+      process.env[SESSION_ENV] = sessionDir;
+      const result = resolveArtifacts({
+        slug: 'auth-v2', date: '2026-09-10', projectRoot: repositoryRoot,
+        repositoryRoot, native: { orchestrator: null },
+      });
+      const artifactRoot = path.join(sessionDir, 'artifacts');
+      for (const [generated, shapes] of [
+        [result.plan.path, PLAN_SHAPES],
+        [result.walkthrough.path, WALKTHROUGH_SHAPES],
+      ]) {
+        const relative = path.relative(artifactRoot, generated).split(path.sep).join('/');
+        assert.ok(!relative.startsWith('../') && !path.isAbsolute(relative), `${generated} lives in the bound session artifacts/`);
+        assert.ok(shapes.some(shape => shape.test(relative)), `${generated} matches its canonical shape`);
+      }
+      assert.ok(result.walkthrough.path.endsWith('-walkthrough.md'));
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+      fs.rmSync(repositoryRoot, { recursive: true, force: true });
     }
-    assert.ok(result.walkthrough.path.endsWith('-walkthrough.md'));
   });
 
-  it('rejects a slug that would escape the scratch directory', () => {
+  it('rejects a slug that would escape the session artifact path', () => {
     assert.throws(
       () => resolveArtifacts({ slug: '../evil', date: '2026-09-10' }),
       /must be kebab-case/
@@ -132,7 +156,7 @@ describe('artifact resolver path contract', () => {
 
 // SECTION: Cross-skill documentation contract
 
-describe('artifact paths stay aligned across skill documentation', () => {
+describe('session artifact paths stay aligned across skill documentation', () => {
   it('discovers every guarded markdown file', () => {
     const discovered = new Set(skillMarkdownFiles());
     assert.deepEqual(GUARDED.filter(rel => !discovered.has(rel)), []);
@@ -147,17 +171,24 @@ describe('artifact paths stay aligned across skill documentation', () => {
   });
 
   it('keeps the shared reference doc naming the convention', () => {
-    const mentions = scratchMentions('skills/dispatch/references/review.md').filter(m =>
-      CANONICAL.some(s => s.test(m.token))
-    );
-    assert.ok(mentions.length > 0, 'skills/dispatch/references/review.md no longer names a canonical artifact path');
+    const text = readFileSync(path.join(REPO_ROOT, 'skills/dispatch/references/review.md'), 'utf8');
+    assert.match(text, /Active canonical artifacts live in `<sessionDir>\/artifacts\//);
+    assert.match(text, /Terminal handoff moves the whole folder/);
   });
 
   it('keeps every skill markdown mention on a canonical shape', () => {
     const offenders = skillMarkdownFiles()
-      .flatMap(scratchMentions)
+      .flatMap(sessionArtifactMentions)
       .filter(m => !ALLOWLIST.includes(m.token) && !CANONICAL.some(shape => shape.test(m.token)))
-      .map(m => `${m.rel}:L${m.line} — ${SCRATCH_PREFIX}${m.token}`);
+      .map(m => `${m.rel}:L${m.line} — session artifacts/${m.token}`);
     assert.deepEqual(offenders, []);
+  });
+
+  it('does not document a retired artifact root', () => {
+    const retired = skillMarkdownFiles().flatMap(rel => {
+      const lines = readFileSync(path.join(REPO_ROOT, rel), 'utf8').split('\n');
+      return lines.flatMap((line, index) => line.includes(['.scratch', 'plan', ''].join('/')) ? [`${rel}:L${index + 1}`] : []);
+    });
+    assert.deepEqual(retired, []);
   });
 });
