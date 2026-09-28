@@ -6,7 +6,7 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { loadDispatchConfig } from '../lib/config.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { readArtifact } from '../review/preparation.mjs';
-import { buildScratchPaths, localDate, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { buildScratchPaths, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { emitAction } from './actions.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { bindPlan, persistEvidence, source } from './implement-state.mjs';
@@ -38,7 +38,7 @@ export function authorPlan(state) {
   state.ordinary.phase = 'plan';
   if (!state.planPath) {
     const slug = sanitizeSlug(state.invocation.argument).slice(0, 64) || 'implementation';
-    state.planPath = /** @type {Record<string, string>} */ (buildScratchPaths(localDate(), slug)).plan;
+    state.planPath = /** @type {Record<string, string>} */ (buildScratchPaths(slug)).plan;
   }
   return emitAction(state, 'author', { path: state.planPath, template: 'plan', defects: [] }, [
     `Author the canonical plan for: ${state.invocation.argument}`,

@@ -247,7 +247,7 @@ describe('review preparation primitives', () => {
       expectedSourceKeys: ['plan-review:R1:claude:0'],
     });
 
-    tempDirs.push(created.cleanupPath);
+    tempDirs.push(path.dirname(created.context.statePath));
     const advanced = advanceInvocationState(created.context, { round: 1 });
     assert.equal(advanced.context.generation, 1);
     assert.throws(() => advanceInvocationState(created.context), /stale, replayed, forked/);
@@ -277,10 +277,10 @@ describe('review preparation primitives', () => {
       artifactPath,
       snapshot: { contentHash: sha256('x'), sectionHashes: {} },
     });
-    fs.rmSync(created.cleanupPath, { recursive: true, force: true });
+    fs.rmSync(path.dirname(created.context.statePath), { recursive: true, force: true });
     assert.throws(
       () => readInvocationState(created.context),
-      /no longer exists; it was removed before checkpoint.*prior checkpoint is retained.*invocationCleanupPath only after checkpoint or abort.*rerun preparation/s,
+      /no longer exists; it was removed before checkpoint.*prior checkpoint is retained.*rerun preparation/s,
     );
   });
 
@@ -292,7 +292,7 @@ describe('review preparation primitives', () => {
       artifactPath,
       snapshot: { contentHash: sha256('x'), sectionHashes: {} },
     });
-    tempDirs.push(created.cleanupPath);
+    tempDirs.push(path.dirname(created.context.statePath));
     fs.rmSync(created.context.statePath);
     assert.throws(() => readInvocationState(created.context), /no longer exists; it was removed before checkpoint/);
   });
@@ -338,7 +338,6 @@ describe('review preparation primitives', () => {
       ...baseParams,
       batch: { targets: [], reserves: [] },
     });
-    tempDirs.push(...batchRes.cleanupPaths);
     assert.ok(batchRes.dispatch.argv.includes('--response-schema-file'));
 
     // 2. No selector -> should include schema file
@@ -346,7 +345,6 @@ describe('review preparation primitives', () => {
       ...baseParams,
       selector: null,
     });
-    tempDirs.push(...noSelectorRes.cleanupPaths);
     assert.ok(noSelectorRes.dispatch.argv.includes('--response-schema-file'));
 
     // 3. Claude selector -> should include schema file
@@ -354,7 +352,6 @@ describe('review preparation primitives', () => {
       ...baseParams,
       selector: { provider: 'claude' },
     });
-    tempDirs.push(...claudeRes.cleanupPaths);
     assert.ok(claudeRes.dispatch.argv.includes('--response-schema-file'));
 
     // 4. Non-Claude selector (agy) -> should NOT include schema file
@@ -362,7 +359,6 @@ describe('review preparation primitives', () => {
       ...baseParams,
       selector: { provider: 'agy' },
     });
-    tempDirs.push(...agyRes.cleanupPaths);
     assert.equal(agyRes.dispatch.argv.includes('--response-schema-file'), false);
 
     // 5. Non-Claude selector (opencode) -> should NOT include schema file
@@ -370,11 +366,10 @@ describe('review preparation primitives', () => {
       ...baseParams,
       selector: { provider: 'opencode' },
     });
-    tempDirs.push(...opencodeRes.cleanupPaths);
     assert.equal(opencodeRes.dispatch.argv.includes('--response-schema-file'), false);
   });
 
-  it('routes dispatch output to a cleaned-up temp file named in the manifest', () => {
+  it('routes dispatch output to a session temp file named in the manifest', () => {
     const res = createDispatchFiles({
       prompt: 'Test prompt',
       attachments: [],
@@ -382,11 +377,10 @@ describe('review preparation primitives', () => {
       dispatchScriptPath: 'dispatch.mjs',
       batch: { targets: [], reserves: [] },
     });
-    tempDirs.push(...res.cleanupPaths);
     const index = res.dispatch.argv.indexOf('--output-file');
     assert.ok(index > 0);
     assert.equal(res.dispatch.argv[index + 1], res.dispatch.outputPath);
-    assert.ok(res.cleanupPaths.includes(path.dirname(res.dispatch.outputPath)));
+    assert.ok(fs.existsSync(res.dispatch.outputPath));
   });
 
   it('computes sorted changed keys across previous and current records', () => {
@@ -522,9 +516,9 @@ describe('fence-aware excluded-section stripping', () => {
 
 describe('slugFromPath', () => {
   it('strips the design and walkthrough suffixes for every review kind', () => {
-    assert.equal(slugFromPath('artifacts/2026-09-23-cache-design.md'), 'cache');
-    assert.equal(slugFromPath(['.scratch', 'plan', '2026-09-23-cache-walkthrough.md'].join('\\')), 'cache');
-    assert.equal(slugFromPath('artifacts/2026-09-23-cache.md'), 'cache');
+    assert.equal(slugFromPath('artifacts/cache-design.md'), 'cache');
+    assert.equal(slugFromPath(['.scratch', 'artifacts', 'cache-walkthrough.md'].join('\\')), 'cache');
+    assert.equal(slugFromPath('artifacts/cache.md'), 'cache');
     assert.equal(slugFromPath('notes/cache.md'), null);
   });
 });

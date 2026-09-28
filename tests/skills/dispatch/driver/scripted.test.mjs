@@ -69,7 +69,7 @@ describe('scripted standalone reviews, report-only (SC4, SC6)', () => {
 
   it('report-only lint failure ends in done with the defects and never emits author', () => {
     const { fixture, repo } = setup(config());
-    const plan = writePlan(repo.dir, '2026-09-22-bad.md', '# Bad\n\nTODO later\n');
+    const plan = writePlan(repo.dir, 'bad.md', '# Bad\n\nTODO later\n');
     const run = drive(fixture, { cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan] });
     assert.deepEqual(actions(run.trace), ['done']);
     assert.equal(run.done.outcome, 'lint-defects');
@@ -1070,7 +1070,7 @@ describe('scripted review paths (SC5)', () => {
 
   it('authoring-required ends in done refusing and naming the producing phase', () => {
     const { fixture, repo } = setup(config());
-    const missing = path.join(repo.dir, '.scratch', 'plan', '2026-09-22-missing.md');
+    const missing = path.join(repo.dir, '.scratch', 'plan', 'missing.md');
     const run = drive(fixture, { cwd: repo.dir, runArgs: ['review', '--kind', 'plan', '--orchestrator', 'claude', '--', missing] });
     assert.deepEqual(actions(run.trace), ['done']);
     assert.equal(run.done.outcome, 'refused');

@@ -91,7 +91,6 @@ import {
   parseRunnerModeArgs,
   preparePromptForArgv,
   readStdin,
-  removeBriefFile,
   resolveRunnerExitCode,
   runDelegateCapture,
   SAFE_ENV_WHITELIST,
@@ -515,8 +514,6 @@ async function runOpencodeSingle(options = /** @type {RunOpencodeOptions} */ ({}
     if (formattedPrompt !== undefined) err.formattedPromptForMetrics = formattedPrompt;
     if (sandboxDowngraded && err && typeof err === 'object') err.sandboxDowngraded = true;
     throw err;
-  } finally {
-    removeBriefFile(briefFile);
   }
 }
 

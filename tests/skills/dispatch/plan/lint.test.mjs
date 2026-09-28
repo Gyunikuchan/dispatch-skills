@@ -284,7 +284,7 @@ describe('plan detailed criteria', () => {
 
 describe('plan template placeholder', () => {
   it('plan template placeholder rejects leftover template tokens in prose and inline code', () => {
-    for (const leftover of ['Touch <relative-path> next.', 'Run `<test command>` now.', 'Slug `<yyyy-mm-dd>`.']) {
+    for (const leftover of ['Touch <relative-path> next.', 'Run `<test command>` now.', 'Slug `<design-slug>`.']) {
       const result = lintPlan(`${VALID_PLAN}\n## Out of Scope\n${leftover}`);
       assert.ok(rules(result).includes('leftover-placeholder'), leftover);
     }

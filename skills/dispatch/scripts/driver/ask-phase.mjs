@@ -31,7 +31,7 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
   const resolved = resolveReadDelegates(config, invocation.level);
   const orderedTargets = resolveConfiguredTargets(resolved, invocation.orchestrator, invocation.orchestratorModel);
   const state = createRunState({
-    invocation, repoRoot, resumeCommand, cleanup: [], pending: null,
+    invocation, repoRoot, resumeCommand, pending: null,
     modelsByCandidate: Object.fromEntries(orderedTargets.map((target) => [
       `${target.platform}:${target.candidateIndex}`,
       { models: Array.isArray(target.model) ? target.model : [target.model].filter(Boolean), effort: target.effort ?? null },
@@ -76,7 +76,6 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
   const promptFile = createTempFile('dispatch-ask-prompt-', 'prompt.md', `${invocation.argument}\n`);
   const batchFile = createTempFile('dispatch-ask-batch-', 'batch.json', `${JSON.stringify({ targets, reserves }, null, 2)}\n`);
   const outputFile = createTempFile('dispatch-ask-output-', 'output.txt', '');
-  state.cleanup.push(promptFile.cleanupPath, batchFile.cleanupPath, outputFile.cleanupPath);
   const argv = [
     process.execPath, DISPATCH_SCRIPT, ...sessionArgs(),
     '--batch-file', batchFile.path,

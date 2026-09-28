@@ -268,7 +268,7 @@ describe('`--run ask` native fallback (SC5)', () => {
     assert.equal(run.done.claims[0]?.text, body);
   });
 
-  it('ask removes its temp files on done', () => {
+  it('ask keeps its temp files on done', () => {
     const paths = [];
     driveFallback((action) => {
       paths.push(action.outputPath);
@@ -279,8 +279,8 @@ describe('`--run ask` native fallback (SC5)', () => {
       for (const flag of ['--batch-file', '--prompt-file', '--output-file']) paths.push(action.argv[action.argv.indexOf(flag) + 1]);
     });
     assert.ok(paths.length >= 4, JSON.stringify(paths));
-    const left = paths.filter((file) => fs.existsSync(file));
-    assert.deepEqual(left, [], 'every ask temp file is removed on done');
+    const missing = paths.filter((file) => !fs.existsSync(file));
+    assert.deepEqual(missing, [], 'every ask temp file stays for investigation');
   });
 
   it('metadata mismatch re-emits native-fallback without changing pending', () => {

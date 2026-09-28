@@ -21,16 +21,15 @@ import { refuse, relative, restoreEvidence } from './implement-state.mjs';
 export function designSlug(file) {
   const named = designRootSlug(file);
   if (named) return named;
-  const base = path.basename(file, '.md').replace(/-design$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
+  const base = path.basename(file, '.md').replace(/-design$/, '');
   return base || 'design';
 }
 
 export function incrementPaths(state, id) {
-  const date = path.basename(state.designPath).match(/^(\d{4}-\d{2}-\d{2})-/)?.[1] ?? new Date().toISOString().slice(0, 10);
   const stem = `${designSlug(state.designPath)}-${id.toLowerCase()}-driver`;
   return {
-    planPath: /** @type {string} */ (buildScratchPaths(date, stem, 'increment-plan')),
-    walkthroughPath: /** @type {string} */ (buildScratchPaths(date, stem, 'increment-walkthrough')),
+    planPath: /** @type {string} */ (buildScratchPaths(stem, 'increment-plan')),
+    walkthroughPath: /** @type {string} */ (buildScratchPaths(stem, 'increment-walkthrough')),
   };
 }
 
@@ -41,7 +40,7 @@ export function startDesign(state) {
   const argument = state.invocation.argument;
   state.designPath = argument.endsWith('-design.md')
     ? path.resolve(state.repoRoot, argument)
-    : buildScratchPaths(new Date().toISOString().slice(0, 10), sanitizeSlug(argument).slice(0, 64) || 'design', 'design');
+    : buildScratchPaths(sanitizeSlug(argument).slice(0, 64) || 'design', 'design');
   state.planPath = state.designPath;
   state.ordinary.phase = 'design';
   state.ordinary.step = 'design-author';
@@ -131,8 +130,7 @@ export function resumeDesignPath(state) {
   if (resumed.nextAction === 'final-integration' || resumed.nextAction === 'complete') {
     const graph = parseIncrementGraph(designSource);
     const incrementArtifacts = graph.increments.flatMap(item => { const paths = incrementPaths(state, item.id); return [paths.planPath, paths.walkthroughPath]; });
-    const date = path.basename(state.designPath).match(/^(\d{4}-\d{2}-\d{2})-/)?.[1] ?? new Date().toISOString().slice(0, 10);
-    const integrationWalkthrough = /** @type {string} */ (buildScratchPaths(date, designSlug(state.designPath), 'integration-walkthrough'));
+    const integrationWalkthrough = /** @type {string} */ (buildScratchPaths(designSlug(state.designPath), 'integration-walkthrough'));
     const sources = [state.designPath, ...incrementArtifacts, integrationWalkthrough];
     return emitAction(state, 'verify', { commands: [], phase: 'final-integration', nextAction: 'final-integration', incrementId: null, lifecycle: { terminalEvent: { type: 'integration', result: 'pass', beforeHandoff: true }, sessionArtifacts: sources, retain: [state.ledgerPath] } }, ['Run fresh integration verification and scoped code review; record the integration event after all evidence is settled. The driver moves the complete chat folder after successful final integration.', 'Next Action: final-integration.']);
   }

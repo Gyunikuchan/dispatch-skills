@@ -35,7 +35,7 @@ const tmpRoot = () => fs.realpathSync(os.tmpdir());
 
 describe('driver CLI (SC1)', () => {
   it('--run review prints exactly one compact JSON action carrying v, action, and stateFile', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-cli.md');
+    const plan = writePlan(repo.dir, 'cli.md');
     const res = run(['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
@@ -59,7 +59,7 @@ describe('driver CLI (SC1)', () => {
   });
 
   it('--next with an empty launch reply prints exactly one action for the same state file', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-cli-next.md');
+    const plan = writePlan(repo.dir, 'cli-next.md');
     const first = parseAction(run(['--run', 'review', '--orchestrator', 'claude', '--', plan]).stdout);
     // The wave was never run: the driver re-emits launch once with an error (envelope missing).
     const res = run(['--next', '--state', first.stateFile]);
@@ -71,7 +71,7 @@ describe('driver CLI (SC1)', () => {
   });
 
   it('accepts --input as inline JSON text and as @file', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-cli-input.md');
+    const plan = writePlan(repo.dir, 'cli-input.md');
     const first = parseAction(run(['--run', 'review', '--orchestrator', 'claude', '--', plan]).stdout);
     const inline = run(['--next', '--state', first.stateFile, '--input', '{}']);
     assert.equal(inline.status, 0, inline.stderr);
@@ -120,7 +120,7 @@ describe('driver CLI (SC1)', () => {
   });
 
   it('names the resuming --run command when the state file is corrupt', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-cli-corrupt.md');
+    const plan = writePlan(repo.dir, 'cli-corrupt.md');
     const first = parseAction(run(['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan]).stdout);
     fs.writeFileSync(first.stateFile, '{ not json');
     const res = run(['--next', '--state', first.stateFile]);

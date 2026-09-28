@@ -53,7 +53,6 @@ import {
   parseRunnerModeArgs,
   preparePromptForArgv,
   readStdin,
-  removeBriefFile,
   resolveRunnerExitCode,
   runDelegateCapture,
 } from './shared.mjs';
@@ -402,81 +401,76 @@ async function executeOnTarget({
   const { prompt: argvPrompt, briefFile } = preparePromptForArgv(formattedPrompt, 'copilot', {
     binary: target.binary,
   });
-  try {
-    const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort, sandbox });
+  const copilotArgs = buildCopilotArgs(argvPrompt, { model, effort, sandbox });
 
-    emitInitBanner({
-      platform: 'copilot',
-      mode: target.mode,
-      model,
-      effort,
-      logFile: sessionLogger.logFile,
-    });
+  emitInitBanner({
+    platform: 'copilot',
+    mode: target.mode,
+    model,
+    effort,
+    logFile: sessionLogger.logFile,
+  });
 
-    const trace = createTraceWriter(verbose);
+  const trace = createTraceWriter(verbose);
 
-    return await runDelegateCapture({
-      spawnChild: () =>
-        spawnCli(target.binary, copilotArgs, {
-          cwd: PROJECT_ROOT,
-          env: getSanitizedEnv(),
-          stdio: ['ignore', 'pipe', 'pipe'],
-          shell: false,
-        }),
-      timeoutSeconds: timeout,
-      maxBufferMb,
-      sessionLogger,
-      trace,
-      onFail: (err, { stderrBuffer }) => {
-        err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
-      },
-      onClose: (outcome) => {
-        const sessionId = extractCopilotSessionId(outcome.stdoutBuffer) || extractCopilotSessionId(outcome.stderrBuffer);
-        const sessionLink = sessionId ? `copilot --resume ${sessionId}` : null;
+  return await runDelegateCapture({
+    spawnChild: () =>
+      spawnCli(target.binary, copilotArgs, {
+        cwd: PROJECT_ROOT,
+        env: getSanitizedEnv(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+        shell: false,
+      }),
+    timeoutSeconds: timeout,
+    maxBufferMb,
+    sessionLogger,
+    trace,
+    onFail: (err, { stderrBuffer }) => {
+      err.failureKind = classifyCopilotFailure(`${stderrBuffer}\n${err.message}`);
+    },
+    onClose: (outcome) => {
+      const sessionId = extractCopilotSessionId(outcome.stdoutBuffer) || extractCopilotSessionId(outcome.stderrBuffer);
+      const sessionLink = sessionId ? `copilot --resume ${sessionId}` : null;
 
-        // A truncated run still carries its partial analysis; return captured output
-        const cleanStdout = extractCleanResponse(outcome.stdoutBuffer);
-        const exitCode = resolveRunnerExitCode({
-          code: outcome.code,
-          signal: outcome.signal,
-          truncated: outcome.truncated,
-          cleanStdout,
-        });
-        const failureKind = resolveFailureKind(
-          classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }),
-          outcome.truncated,
-        );
-        const effectiveExitCode = failureKind === 'sandbox-unsupported' ? 1 : exitCode;
+      // A truncated run still carries its partial analysis; return captured output
+      const cleanStdout = extractCleanResponse(outcome.stdoutBuffer);
+      const exitCode = resolveRunnerExitCode({
+        code: outcome.code,
+        signal: outcome.signal,
+        truncated: outcome.truncated,
+        cleanStdout,
+      });
+      const failureKind = resolveFailureKind(
+        classifyCopilotResult({ exitCode, stderr: outcome.stderrBuffer, stdout: outcome.stdoutBuffer }),
+        outcome.truncated,
+      );
+      const effectiveExitCode = failureKind === 'sandbox-unsupported' ? 1 : exitCode;
 
-        emitCompletionBanner({
-          platform: 'copilot',
-          exitCode: effectiveExitCode,
-          truncated: outcome.truncated,
-          sessionId,
-          resumeCommand: sessionLink,
-        });
+      emitCompletionBanner({
+        platform: 'copilot',
+        exitCode: effectiveExitCode,
+        truncated: outcome.truncated,
+        sessionId,
+        resumeCommand: sessionLink,
+      });
 
-        return {
-          provider: 'copilot',
-          mode: target.mode,
-          binary: target.binary,
-          stdout: cleanStdout,
-          rawStdout: outcome.stdoutBuffer,
-          stderr: outcome.stderrBuffer,
-          exitCode: effectiveExitCode,
-          logFile: sessionLogger.logFile,
-          briefFile,
-          sessionId,
-          sessionLink,
-          truncated: outcome.truncated,
-          failureKind,
-        };
-      },
-    });
-  } finally {
-    // Also covers a synchronous throw between the spill and the spawn.
-    removeBriefFile(briefFile);
-  }
+      return {
+        provider: 'copilot',
+        mode: target.mode,
+        binary: target.binary,
+        stdout: cleanStdout,
+        rawStdout: outcome.stdoutBuffer,
+        stderr: outcome.stderrBuffer,
+        exitCode: effectiveExitCode,
+        logFile: sessionLogger.logFile,
+        briefFile,
+        sessionId,
+        sessionLink,
+        truncated: outcome.truncated,
+        failureKind,
+      };
+    },
+  });
 }
 
 // ============================================================================

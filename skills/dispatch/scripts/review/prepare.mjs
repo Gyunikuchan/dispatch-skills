@@ -46,7 +46,7 @@ export { prepareCodeReview };
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const DOCUMENT_REQUEST_KEYS = [
-  'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'date', 'orchestrator',
+  'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'orchestrator',
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
   'toolTurnBudget', 'targets', 'reserves', 'roundId', 'consensus',
   'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
@@ -195,7 +195,6 @@ function resolveDocument(entry, request, repoRoot) {
   const result = resolveArtifacts({
     slug: resolvedSlug.slug,
     slugSource: resolvedSlug.slugSource,
-    date: request.date,
     kinds: [entry.artifactKind],
     projectRoot: repoRoot,
     native: request.orchestrator ? { orchestrator: request.orchestrator } : undefined,
@@ -282,7 +281,7 @@ function checkpoint(entry, request, { now }) {
   const written = writeArtifactMetadata(state.artifactPath, metadata, {
     expectedDocumentHash: artifact.documentHash,
   });
-  const completed = completeInvocationState(request.invocationContext);
+  completeInvocationState(request.invocationContext);
   return {
     schemaVersion: 1,
     kind: entry.kind,
@@ -290,7 +289,6 @@ function checkpoint(entry, request, { now }) {
     status: 'checkpointed',
     artifactPath: toManifestPath(written.path, state.repoRoot),
     metadata,
-    cleanupPaths: [completed.cleanupPath],
   };
 }
 
@@ -351,7 +349,6 @@ function prepareDocumentReview(entry, request, {
       status: 'authoring-required',
       artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
       requirement: request.requirement ?? request.trailingText ?? null,
-      cleanupPaths: [],
     };
   }
   const artifact = readArtifact(resolved.path, { kind: entry.kind, slug: resolved.slug });
@@ -369,7 +366,6 @@ function prepareDocumentReview(entry, request, {
       artifact: { canonicalPath: manifestPath, tier: resolved.tier, slug: resolved.slug },
       freshness: { status: persisted ? 'changed' : 'untracked', changedSections: [] },
       defects: lint.defects,
-      cleanupPaths: [],
     };
   }
   const snapshot = documentSnapshot(entry, artifact.source);
@@ -393,7 +389,6 @@ function prepareDocumentReview(entry, request, {
   // Every round reads the projection, so round-1 and re-review briefs share one shape.
   const view = createReviewView({ artifact: resolved.path, nextRound: round });
   const reviewPath = view.viewPath;
-  const cleanupPaths = [view.cleanupPath];
   const derivedScope = reviewMode === 'rebuttal'
     ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}${request.retryNote ? ` — ${request.retryNote}` : ''}`
     : round === 1
@@ -490,8 +485,6 @@ function prepareDocumentReview(entry, request, {
     invocationContext: invocation.context,
     promptPath: files.promptPath,
     dispatch: files.dispatch,
-    invocationCleanupPath: invocation.cleanupPath,
-    cleanupPaths: [...cleanupPaths, ...files.cleanupPaths],
   };
 }
 

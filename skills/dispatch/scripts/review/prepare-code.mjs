@@ -57,7 +57,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DISPATCH_DIR = path.resolve(__dirname, '..', '..');
 const REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'walkthroughPath', 'planPath',
-  'slug', 'date', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
+  'slug', 'orchestrator', 'orchestratorModel', 'summary', 'focus',
   'trailingText', 'reviewScope', 'toolTurnBudget', 'targets', 'reserves',
   'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'range', 'verification', 'invocationContext',
@@ -215,7 +215,6 @@ function resolvePair(request, repoRoot) {
   const resolved = resolveArtifacts({
     slug: resolvedSlug,
     slugSource: derived.slugSource,
-    date: request.date,
     kinds: ['plan', 'walkthrough'],
     projectRoot: repoRoot,
     native: request.orchestrator ? { orchestrator: request.orchestrator } : undefined,
@@ -404,7 +403,7 @@ function checkpoint(request, { now }) {
   const written = writeArtifactMetadata(state.artifactPath, metadata, {
     expectedDocumentHash: artifact.documentHash,
   });
-  const completed = completeInvocationState(request.invocationContext);
+  completeInvocationState(request.invocationContext);
   return {
     schemaVersion: 1,
     kind: 'code',
@@ -412,7 +411,6 @@ function checkpoint(request, { now }) {
     status: 'checkpointed',
     artifactPath: toManifestPath(written.path, repoRoot),
     metadata,
-    cleanupPaths: [completed.cleanupPath],
   };
 }
 
@@ -459,7 +457,6 @@ export function prepareCodeReview(request, {
       status: 'no-reviewable-changes',
       message: scopeResult.message,
       ...(scopeResult.kind === 'empty-owned-intersection' ? { scopeKind: scopeResult.kind } : {}),
-      cleanupPaths: [],
     };
   }
   const gitSnapshot = captureReviewSnapshot({ repoRoot, scope: scopeResult });
@@ -485,7 +482,6 @@ export function prepareCodeReview(request, {
           tier: pair.walkthrough.tier,
           slug: pair.slug,
         },
-        cleanupPaths: [],
       };
     }
     const criteria = pair.plan?.exists ? criterionMappings(fs.readFileSync(pair.plan.path, 'utf8')) : null;
@@ -510,7 +506,6 @@ export function prepareCodeReview(request, {
           slug: pair.slug,
         },
         defects: lint.defects,
-        cleanupPaths: [],
       };
     }
     writeNewWalkthrough(walkthroughPath, rendered);
@@ -545,11 +540,9 @@ export function prepareCodeReview(request, {
   if (reviewMode === 'rebuttal' && !request.findingPacketPath) {
     throw new Error('rebuttal review requires findingPacketPath.');
   }
-  const cleanupPaths = [];
   // Every round reads the projection, so round-1 and re-review briefs share one shape.
   const view = createReviewView({ artifact: walkthroughPath, nextRound: round });
   const reviewPath = view.viewPath;
-  cleanupPaths.push(view.cleanupPath);
   let planReviewPath = pair.plan.exists ? path.resolve(repoRoot, pair.plan.path) : null;
   if (planReviewPath) {
     const planScan = scanResolutionLog(fs.readFileSync(planReviewPath, 'utf8'), { strict: true });
@@ -558,7 +551,6 @@ export function prepareCodeReview(request, {
       nextRound: (planScan.rounds.at(-1)?.number ?? 0) + 1,
     });
     planReviewPath = planView.viewPath;
-    cleanupPaths.push(planView.cleanupPath);
   }
   // Resolutions can land before the prior wave's snapshot; their application records still name the paths.
   const scopedPaths = round === 1 ? gitSnapshot.paths
@@ -702,7 +694,5 @@ export function prepareCodeReview(request, {
     invocationContext: invocation.context,
     promptPath: files.promptPath,
     dispatch: files.dispatch,
-    invocationCleanupPath: invocation.cleanupPath,
-    cleanupPaths: [...cleanupPaths, ...files.cleanupPaths],
   };
 }

@@ -96,7 +96,7 @@ describe('rebuttal packet builder', () => {
     }), /unknown finding key/);
   });
 
-  it('writes private session packet files and returns cleanup paths', () => {
+  it('writes private session packet files', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rebuttal-builder-test-'));
     tempDirs.push(dir);
     const artifactPath = path.join(dir, 'walkthrough.md');
@@ -104,7 +104,6 @@ describe('rebuttal packet builder', () => {
     fs.writeFileSync(artifactPath, artifact);
     fs.writeFileSync(contextPath, JSON.stringify(context));
     const result = writeRebuttalPackets({ artifact: artifactPath, context: contextPath });
-    tempDirs.push(...result.cleanupPaths);
     assert.equal(result.packets.length, 2);
     assert.ok(result.packets.every((packet) => fs.existsSync(packet.packetPath)));
     assert.deepEqual(result.packets[0].keys, ['R1-F001']);

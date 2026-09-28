@@ -42,7 +42,7 @@ beforeEach(() => { delete process.env.DISPATCH_SESSION_DIR; delete process.env.D
 afterEach(() => { if (originalSession === undefined) delete process.env.DISPATCH_SESSION_DIR; else process.env.DISPATCH_SESSION_DIR = originalSession; delete process.env.DISPATCH_RUN_ID; });
 function designPath(root) {
   const session = bindWorkflowSession({ repositoryRoot: root, slug: 'platform' });
-  const file = path.join(session, 'artifacts', '2026-09-20-platform-design.md');
+  const file = path.join(session, 'artifacts', 'platform-design.md');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   return file;
 }
@@ -51,10 +51,10 @@ describe('design review preparation', () => {
   it('returns design authoring state for a missing canonical design', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-prepare-'));
     try {
-      const result = prepareDesignReview({ action: 'prepare', slug: 'platform', date: '2026-09-20', requirement: 'large change' }, { repoRoot: root });
+      const result = prepareDesignReview({ action: 'prepare', slug: 'platform', requirement: 'large change' }, { repoRoot: root });
       assert.equal(result.kind, 'design');
       assert.equal(result.status, 'authoring-required');
-      assert.match(result.artifact.canonicalPath, /2026-09-20-platform-design\.md$/);
+      assert.match(result.artifact.canonicalPath, /platform-design\.md$/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
@@ -70,11 +70,10 @@ describe('design review preparation', () => {
         reviewedAt: '2026-09-20T00:00:00.000Z', approvedContentHash: null, approvedAt: null,
       }));
       const result = prepareDesignReview({
-        action: 'prepare', slug: 'platform', date: '2026-09-20',
+        action: 'prepare', slug: 'platform',
         selector: { provider: 'claude', candidateIndex: 0 },
       }, { repoRoot: root });
       assert.equal(result.status, 'ready');
-      for (const cleanup of result.cleanupPaths) fs.rmSync(cleanup, { recursive: true, force: true });
       fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -91,7 +90,7 @@ describe('design review preparation', () => {
         contentHash: snapshot.contentHash, sectionHashes: snapshot.sectionHashes,
         reviewedAt: '2026-09-20T00:00:00.000Z', approvedContentHash: null, approvedAt: null,
       }));
-      const result = prepareDesignReview({ action: 'prepare', slug: 'platform', date: '2026-09-20' }, { repoRoot: root });
+      const result = prepareDesignReview({ action: 'prepare', slug: 'platform' }, { repoRoot: root });
       assert.equal(result.status, 'decision-required');
       assert.equal(result.decision, 'design-lint');
       assert.ok(result.defects.some(defect => defect.code === 'cycle'));
@@ -112,7 +111,7 @@ describe('design review preparation', () => {
       const packet = path.join(root, 'packet.json');
       fs.writeFileSync(packet, '{}');
       const result = prepareDesignReview({
-        action: 'prepare', slug: 'platform', date: '2026-09-20',
+        action: 'prepare', slug: 'platform',
         selector: { provider: 'claude', candidateIndex: 0 },
         reviewMode: 'rebuttal', findingPacketPath: packet, findingKeys: ['R1-F001'],
       }, { repoRoot: root });
@@ -126,7 +125,6 @@ describe('design review preparation', () => {
         assert.doesNotMatch(prompt, /<<slot:/);
         assert.doesNotMatch(prompt, /{{[A-Z_]+}}/);
       } finally {
-        for (const cleanup of result.cleanupPaths) fs.rmSync(cleanup, { recursive: true, force: true });
         fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });
       }
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -157,7 +155,6 @@ describe('design review preparation', () => {
       }, { repoRoot: root });
       assert.equal(result.status, 'ready');
       assert.equal(result.artifact.slug, 'platform');
-      for (const cleanup of result.cleanupPaths) fs.rmSync(cleanup, { recursive: true, force: true });
       fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
@@ -173,7 +170,6 @@ describe('design review preparation', () => {
         assert.equal(result.status, 'ready');
         assert.equal(result.freshness.status, 'untracked');
       } finally {
-        for (const cleanup of result.cleanupPaths ?? []) fs.rmSync(cleanup, { recursive: true, force: true });
         if (result.invocationContext) fs.rmSync(path.dirname(result.invocationContext.statePath), { recursive: true, force: true });
       }
     } finally { fs.rmSync(root, { recursive: true, force: true }); }

@@ -174,13 +174,13 @@ function artifactsDirectory(repoDir) {
   return directory;
 }
 
-export function writePlan(repoDir, name = '2026-09-22-sample.md', body = PLAN_BODY) {
+export function writePlan(repoDir, name = 'sample.md', body = PLAN_BODY) {
   const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;
 }
 
-export function writeDesign(repoDir, name = '2026-09-22-sample-design.md', body = DESIGN_BODY) {
+export function writeDesign(repoDir, name = 'sample-design.md', body = DESIGN_BODY) {
   const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;

@@ -24,11 +24,10 @@ export function gitRoot(cwd) {
   return path.resolve(root ?? cwd);
 }
 
-/** Writes a private run-scoped file beside the state file and queues it for cleanup. */
+/** Writes a private run-scoped file beside the state file. */
 export function runFile(state, name, contents = '') {
   const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}`);
   fs.writeFileSync(file, contents, { mode: 0o600 });
-  state.cleanup.push(file);
   return file;
 }
 
@@ -267,7 +266,7 @@ export function unappliedFixesFromArtifact(artifactPath, budgetSeed = null) {
 // Re-emitted actions leave state untouched, so they are never written back.
 export const REEMITTED = new WeakSet();
 
-/** Records the next pending action (cleaning temp files on `done`); a re-emitted action returns untouched. */
+/** Records the next pending action; a re-emitted action returns untouched. */
 export function finish(state, action) {
   if (REEMITTED.has(action)) return action;
   if (action.action === 'done' && state.invocation?.terminalHandoff === true && state.repoRoot && !keepsDesignSessionActive(state, action) && !action.handoff) {
@@ -275,7 +274,6 @@ export function finish(state, action) {
     const errors = validateAgainstSchema(loadSchema('done'), action);
     if (errors.length) throw new Error(`Invalid terminal session handoff: ${errors.join('; ')}`);
   }
-  if (action.action === 'done') cleanupRun(state);
   state.pending = action;
   writeRunState(state);
   if (action.action !== 'done' || !action.handoff || !state.repoRoot || keepsDesignSessionActive(state, action)) return action;
@@ -315,10 +313,6 @@ function rebaseSessionRoot(value, from, to) {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rebaseSessionRoot(item, from, to)]));
   }
   return value;
-}
-
-export function cleanupRun(state) {
-  for (const target of (state.cleanup ??= []).splice(0)) fs.rmSync(target, { recursive: true, force: true });
 }
 
 export function reemit(state, error) {

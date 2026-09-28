@@ -45,7 +45,6 @@ import {
   readAttachment,
   preparePromptForArgv,
   createBriefFile,
-  removeBriefFile,
   classifyFailure,
   resolveFailureKind,
   isEmptyResult,
@@ -892,83 +891,6 @@ describe('common: attachments, brief files & spill', () => {
     assert.ok(result.text.includes('safe content'));
     assert.ok(result.notes.some((n) => n.includes('token.txt')));
   });
-});
-
-// SECTION: Brief File Cleanup
-
-describe('common: removeBriefFile', () => {
-  const leftovers = [];
-  const makeBriefDir = (providerName = 'claude') => {
-    const dir = sessionTempDir(`dispatch-brief-${providerName}-`);
-    leftovers.push(dir);
-    const briefFile = path.join(dir, 'brief.md');
-    fs.writeFileSync(briefFile, 'body', 'utf8');
-    return { dir, briefFile };
-  };
-
-  after(() => {
-    for (const dir of leftovers) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch {}
-    }
-  });
-
-  it('deletes the brief directory for a valid brief file', () => {
-    const { dir, briefFile } = makeBriefDir();
-    removeBriefFile(briefFile);
-    assert.equal(fs.existsSync(dir), false);
-  });
-
-  it('is a no-op for null or undefined', () => {
-    assert.doesNotThrow(() => removeBriefFile(null));
-    assert.doesNotThrow(() => removeBriefFile(undefined));
-  });
-
-  it('refuses a relative path', () => {
-    const { dir } = makeBriefDir();
-    removeBriefFile(path.join('dispatch-brief-claude-xxx', 'brief.md'));
-    assert.equal(fs.existsSync(dir), true);
-  });
-
-  it('refuses a directory whose basename does not start with dispatch-brief-', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-brief-dir-'));
-    leftovers.push(dir);
-    const briefFile = path.join(dir, 'brief.md');
-    fs.writeFileSync(briefFile, 'body', 'utf8');
-    removeBriefFile(briefFile);
-    assert.equal(fs.existsSync(dir), true);
-  });
-
-  it('refuses a brief directory outside a session directory', () => {
-    const outerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-outside-'));
-    leftovers.push(outerRoot);
-    const dir = path.join(outerRoot, 'dispatch-brief-claude-fake');
-    fs.mkdirSync(dir);
-    const briefFile = path.join(dir, 'brief.md');
-    fs.writeFileSync(briefFile, 'body', 'utf8');
-    removeBriefFile(briefFile);
-    assert.equal(fs.existsSync(dir), true);
-  });
-
-  it('refuses a symlink standing in for the brief directory', (t) => {
-    const { dir: realDir } = makeBriefDir();
-    const linkDir = path.join(os.tmpdir(), `dispatch-brief-claude-link-${process.pid}`);
-    try {
-      fs.symlinkSync(realDir, linkDir, 'junction');
-    } catch (err) {
-      if (err.code === 'EPERM') return t.skip('symlink creation needs elevated rights here');
-      throw err;
-    }
-    leftovers.push(linkDir);
-    try {
-      removeBriefFile(path.join(linkDir, 'brief.md'));
-      assert.equal(fs.existsSync(realDir), true, 'the real directory behind the symlink must survive');
-    } finally {
-      try { fs.rmSync(linkDir, { recursive: true, force: true }); } catch {}
-    }
-  });
-
 });
 
 // SECTION: Failure Classification

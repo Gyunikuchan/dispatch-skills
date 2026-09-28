@@ -230,7 +230,7 @@ describe('baseline reuse', () => {
     storeBaseline(state, [{ command: A, exitStatus: 0 }]);
     const repoGit = (...args) => execFileSync('git', args, { cwd: state.repoRoot, stdio: 'pipe' });
     repoGit('add', 'src'); repoGit('commit', '--no-gpg-sign', '-qm', 'implemented');
-    fs.writeFileSync(path.join(sessionArea('artifacts'), '2026-09-24-next.md'), '# Next\n');
+    fs.writeFileSync(path.join(sessionArea('artifacts'), 'next.md'), '# Next\n');
     assert.deepEqual(hitCommands(cachedBaseline(nextRun(state))), [A], 'same content after commit and scratch edit');
     fs.writeFileSync(path.join(state.repoRoot, 'src/app.js'), 'export const value = 3;\n');
     assert.deepEqual(cachedBaseline(nextRun(state)).misses, [A, RED], 'a changed tree reruns the baseline');

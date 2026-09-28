@@ -565,10 +565,10 @@ describe('runClaude cascade loop', () => {
   });
 });
 
-describe('runClaude brief cleanup', () => {
-  // Real subprocess (node itself as the "claude" binary) so the default executor and its
-  // `.finally(removeBriefFile)` chain run; any exit code is fine — only the leftover dir matters.
-  it('leaves no brief dir behind after a spilled-prompt run', async () => {
+describe('runClaude brief retention', () => {
+  // Real subprocess (node itself as the "claude" binary) so the default executor runs; any exit
+  // code is fine — only the brief matters. Session handoff owns cleanup.
+  it('keeps the spilled brief for post-run investigation', async () => {
     const result = await runClaude({
       prompt: 'x'.repeat(200000),
       model: 'model-a',
@@ -579,7 +579,7 @@ describe('runClaude brief cleanup', () => {
     // Pins the spill premise, and checks this run's own dir (not a shared-tmpdir diff that
     // races parallel test files).
     assert.ok(typeof result.briefFile === 'string' && path.isAbsolute(result.briefFile), 'prompt must spill');
-    assert.equal(fs.existsSync(path.dirname(result.briefFile)), false, 'the spilled brief directory must be removed');
+    assert.equal(fs.existsSync(result.briefFile), true, 'the spilled brief stays in the session');
   });
 });
 

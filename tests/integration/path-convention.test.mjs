@@ -16,27 +16,27 @@ const WORKSPACE_SESSION_PREFIX = '.scratch/dispatch-skills/';
 const ACTIVE_ARTIFACT_PREFIX = '<sessionDir>/artifacts/';
 
 /**
- * The canonical artifact filename shapes, as placeholder form (`<yyyy-mm-dd>-<slug>.md`)
- * or as a concrete dated kebab-case filename. The resolver generates these; skill
+ * The canonical artifact filename shapes, as placeholder form (`<slug>.md`)
+ * or as a concrete kebab-case filename. The resolver generates these; skill
  * prose repeats them in locations that cannot import the resolver, so this suite is
  * the drift guard across both.
  */
 const PLAN_SHAPES = [
-  /^<yyyy-mm-dd>-<slug>\.md$/,
-  // Concrete dated plan filename; the lookbehind keeps walkthroughs out, since
+  /^<slug>\.md$/,
+  // Concrete plan filename; the lookbehind keeps walkthroughs out, since
   // `-walkthrough` is otherwise just another kebab segment. A plan whose slug is
   // literally `walkthrough` matches neither list and is reported as an offender —
   // intentional, because that filename is genuinely ambiguous with a walkthrough.
-  /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*(?<!-walkthrough)\.md$/,
+  /^[a-z0-9]+(-[a-z0-9]+)*(?<!-walkthrough)\.md$/,
   // Phased artifacts: technical designs, increment plans, integration walkthroughs.
-  /^<yyyy-mm-dd>-<design-slug>-design\.md$/,
-  /^<yyyy-mm-dd>-<design-slug>-i<nn>-<increment-slug>-plan\.md$/,
-  /^<date>-<design-slug>-integration-walkthrough\.md$/,
+  /^<design-slug>-design\.md$/,
+  /^<design-slug>-i<nn>-<increment-slug>-plan\.md$/,
+  /^<design-slug>-integration-walkthrough\.md$/,
 ];
 
 const WALKTHROUGH_SHAPES = [
-  /^<yyyy-mm-dd>-<slug>-walkthrough\.md$/,
-  /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(-[a-z0-9]+)*-walkthrough\.md$/,
+  /^<slug>-walkthrough\.md$/,
+  /^[a-z0-9]+(-[a-z0-9]+)*-walkthrough\.md$/,
 ];
 
 const CANONICAL = [...PLAN_SHAPES, ...WALKTHROUGH_SHAPES];
@@ -125,7 +125,7 @@ describe('artifact resolver path contract', () => {
       const sessionDir = initializeSession({ repositoryRoot, sessionId, sessionTitle: 'path contract', objective: 'path contract' });
       process.env[SESSION_ENV] = sessionDir;
       const result = resolveArtifacts({
-        slug: 'auth-v2', date: '2026-09-10', projectRoot: repositoryRoot,
+        slug: 'auth-v2', projectRoot: repositoryRoot,
         repositoryRoot, native: { orchestrator: null },
       });
       const artifactRoot = path.join(sessionDir, 'artifacts');
@@ -148,7 +148,7 @@ describe('artifact resolver path contract', () => {
 
   it('rejects a slug that would escape the session artifact path', () => {
     assert.throws(
-      () => resolveArtifacts({ slug: '../evil', date: '2026-09-10' }),
+      () => resolveArtifacts({ slug: '../evil' }),
       /must be kebab-case/
     );
   });

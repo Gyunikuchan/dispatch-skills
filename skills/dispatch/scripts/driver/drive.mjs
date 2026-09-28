@@ -75,7 +75,7 @@ export async function drive({ state: stateFile, input }, { advance, stderr }) {
     else {
       const summary = verify(action, stderr);
       if (needsEvidence(action)) {
-        return { ...action, summary, guidance: [`The driver already ran argv; do not rerun it. Its summary is in summary; logs are at each result's logPath.`, ...action.guidance.slice(1)] };
+        return { ...action, summary, guidance: [`The driver already ran argv; do not rerun it. Its summary is in summary; a failing result carries its output tail in diagnostic, and full logs are at each result's logPath.`, ...action.guidance.slice(1)] };
       }
     }
     const next = await advance(action.stateFile, undefined);

@@ -49,7 +49,7 @@ function setup() {
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");
   repo.git('add', 'tests'); repo.git('commit', '--no-gpg-sign', '-qm', 'baseline tests');
-  const designPath = path.join(session, 'artifacts', '2026-09-22-root-design.md');
+  const designPath = path.join(session, 'artifacts', 'root-design.md');
   const designRel = path.relative(repo.dir, designPath).split(path.sep).join('/');
   const source = designBody(); fs.mkdirSync(path.dirname(designPath), { recursive: true }); fs.writeFileSync(designPath, source);
   const hash = governingHash(source, { kind: 'design' }).hash;

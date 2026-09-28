@@ -1002,38 +1002,6 @@ export function createBriefFile(prompt, providerName) {
   return { briefFile, pointerPrompt };
 }
 
-/**
- * Deletes the brief directory a spilled prompt was written to. Owned by the runner that
- * created it, called in a `finally` after the delegate settles.
- *
- * Security: refuses anything that isn't demonstrably one of our own brief directories —
- * absolute path, `dispatch-brief-` basename, and a real (non-symlink) directory inside its
- * bound session — so a crafted or symlinked path can never cause deletion
- * outside temp. Best-effort: errors are swallowed because on Windows a lingering
- * delegate process may still hold the file open.
- *
- * @param {string|null|undefined} briefFile Absolute path to `.../dispatch-brief-<provider>-XXXX/brief.md`.
- */
-export function removeBriefFile(briefFile) {
-  if (!briefFile) return;
-  try {
-    if (!path.isAbsolute(briefFile)) return;
-    const dir = path.dirname(briefFile);
-    if (!path.basename(dir).startsWith('dispatch-brief-')) return;
-
-    const stat = fs.lstatSync(dir);
-    if (!stat.isDirectory()) return;
-
-    const realDir = fs.realpathSync(dir);
-    if (!isSessionPath(realDir)) return;
-
-    // NOTE: retries ride out transient Windows AV/indexer locks (EBUSY/EPERM) on the fresh brief.
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-  } catch {
-    // Best-effort: a held file handle (Windows) or already-removed directory is not an error.
-  }
-}
-
 // cmd.exe's own command-line ceiling (8191 chars) sits far below CreateProcess's 32767.
 const BATCH_LAUNCHER_ARG_BYTE_LIMIT = 8000;
 

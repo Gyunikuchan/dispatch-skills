@@ -466,7 +466,7 @@ describe('orchestrator detection and provider resolution', () => {
           assert.doesNotMatch(error.message, /copilot's own native subagent/);
           assert.match(error.message, /read this prompt file in full and follow it as the authoritative instructions: tmp\/brief\.md/i);
           assert.match(error.message, /attachment paths: tmp\/walkthrough\.md/);
-          assert.match(error.message, /prune them once this fallback consumes them or reaches a terminal outcome/);
+          assert.doesNotMatch(error.message, /prune/);
           return true;
         },
       );

@@ -20,7 +20,7 @@ const oid = 'c'.repeat(40);
 const at = '2026-09-20T00:00:00.000Z';
 const event = (seq, type, data) => ({ v: 1, seq, type, runId, at, data });
 const start = (seq = 1, governingHash = hash) => event(seq, 'run-start', {
-  governingPath: 'artifacts/2026-09-20-example.md',
+  governingPath: 'artifacts/example.md',
   governingHash,
   rootSlug: 'example',
   action: 'ordinary',
@@ -48,7 +48,7 @@ describe('canonical ledger events', () => {
   });
 
   it('round-trips v2 design repair markers and rejects invalid second events', () => {
-    const designStart = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: 'artifacts/2026-09-20-example-design.md', repair: true } };
+    const designStart = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: 'artifacts/example-design.md', repair: true } };
     assert.deepEqual(parseEventLine(serializeEvent(designStart).trimEnd()), designStart);
     assert.throws(() => foldEvents([designStart, { ...approval(2), v: 2, data: { ...approval(2).data, decision: 'approved' } }]), /reconciliation/);
     const ruling = event(2, 'ruling', { key: 'reconciliation', decision: 'accept-repair', reason: 'reviewed', costIfWrong: 'n/a', state: 'resolved' });
@@ -161,7 +161,7 @@ describe('v1 fold', () => {
   });
 
   it('selects newest matching design segment and skips only resolved repair', () => {
-    const design = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: 'artifacts/2026-09-20-example-design.md' } };
+    const design = { ...start(), v: 2, data: { ...start().data, action: 'design', governingPath: 'artifacts/example-design.md' } };
     const approval2 = { ...approval(2), v: 2 };
     const newerId = '22222222-2222-4222-8222-222222222222';
     const newer = [{ ...design, seq: 3, runId: newerId }, { ...approval2, seq: 4, runId: newerId }];
@@ -195,7 +195,7 @@ describe('v1 fold', () => {
 // SECTION: Phased segment state machines
 
 describe('v2 phased ledger events', () => {
-  const designPath = 'artifacts/2026-09-20-demo-design.md';
+  const designPath = 'artifacts/demo-design.md';
   const revision = hash;
   const laterRevision = `sha256:${'e'.repeat(64)}`;
   const designStart = (seq = 1, governingHash = hash, overrides = {}) => ({
@@ -220,8 +220,8 @@ describe('v2 phased ledger events', () => {
       design: { path: designPath, revision },
       increment: {
         id: 'I01',
-        planPath: 'artifacts/2026-09-20-demo-i01-one-plan.md',
-        walkthroughPath: 'artifacts/2026-09-20-demo-i01-one-walkthrough.md',
+        planPath: 'artifacts/demo-i01-one-plan.md',
+        walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md',
         planHash: hash,
       },
       ...overrides,
@@ -269,13 +269,13 @@ describe('v2 phased ledger events', () => {
       design: { path: 'artifacts/other-design.md', revision },
     })]), /design\.path/);
     assert.throws(() => foldEvents([incrementStart(2, {
-      increment: { id: 'I01', planPath: 'artifacts/2026-09-20-demo-i01-one-plan.md', walkthroughPath: 'artifacts/2026-09-20-demo-i01-one-walkthrough.md' },
+      increment: { id: 'I01', planPath: 'artifacts/demo-i01-one-plan.md', walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md' },
     })]), /planHash/);
     assert.throws(() => foldEvents([incrementStart(2, {
       design: { path: designPath, revision },
       increment: {
-        id: 'X1', planPath: 'artifacts/2026-09-20-demo-i01-one-plan.md',
-        walkthroughPath: 'artifacts/2026-09-20-demo-i01-one-walkthrough.md', planHash: hash,
+        id: 'X1', planPath: 'artifacts/demo-i01-one-plan.md',
+        walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md', planHash: hash,
       },
     })]), /increment\.id/);
     assert.throws(() => foldEvents([{ ...start(1), v: 2 }]), /version/);
@@ -407,7 +407,7 @@ describe('v2 phased ledger events', () => {
     ];
     const secondId = '22222222-2222-4222-8222-222222222222';
     const reopened = [
-      { ...incrementStart(7, { increment: { id: 'I02', planPath: 'artifacts/2026-09-20-demo-i02-two-plan.md', walkthroughPath: 'artifacts/2026-09-20-demo-i02-two-walkthrough.md', planHash: hash } }), runId: secondId, v: 2 },
+      { ...incrementStart(7, { increment: { id: 'I02', planPath: 'artifacts/demo-i02-two-plan.md', walkthroughPath: 'artifacts/demo-i02-two-walkthrough.md', planHash: hash } }), runId: secondId, v: 2 },
       { ...event(8, 'run-complete', { result: 'complete', evidenceRefs: [] }), runId: secondId, v: 2 },
     ];
     const folded = foldDesignRun([designStart(), designApproval(2), ...completed, ...reopened]);

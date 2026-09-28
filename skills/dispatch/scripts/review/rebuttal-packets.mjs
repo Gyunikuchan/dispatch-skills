@@ -113,5 +113,5 @@ export function writeRebuttalPackets({ artifact, context }) {
       keys: group.packet.findings.map((finding) => finding.key),
     };
   });
-  return { packets: written, cleanupPaths: [dir] };
+  return { packets: written };
 }

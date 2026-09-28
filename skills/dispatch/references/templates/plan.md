@@ -22,7 +22,7 @@ The driver keeps each chat's artifacts under `.scratch/dispatch-skills/<folder>/
 *Questions, assumptions, or defaults (or "None").*
 
 ## Technical-Design Traceability
-- Parent design: exact runtime path to the approved design in the active session artifacts area; filename format: `<yyyy-mm-dd>-<design-slug>-design.md`
+- Parent design: exact runtime path to the approved design in the active session artifacts area; filename format: `<design-slug>-design.md`
 - Approved revision: `sha256:<64 hex>`
 - Increment ID and inherited contract: I<nn> — <inherited outcome, invariants, rollback boundary>
 - Prerequisite evidence: <prerequisite completion evidence>

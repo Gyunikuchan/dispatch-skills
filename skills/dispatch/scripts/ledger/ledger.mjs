@@ -27,8 +27,8 @@ import { captureRepositoryState } from '../verification/evidence.mjs';
 
 // SECTION: Artifact identity
 
-export const CANONICAL_PLAN = /(?:^|\/)artifacts\/\d{4}-\d{2}-\d{2}-(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
-export const CANONICAL_DESIGN = /(?:^|\/)artifacts\/\d{4}-\d{2}-\d{2}-([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
+export const CANONICAL_PLAN = /(?:^|\/)artifacts\/(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
+export const CANONICAL_DESIGN = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
 
 /** Returns a canonical design artifact's root slug, or null for invalid/reserved paths. */
 export function designRootSlug(planPath) {

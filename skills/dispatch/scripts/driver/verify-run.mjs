@@ -106,9 +106,11 @@ export function runVerification(stateFile) {
 function summarize(pending, { results, generated, mutationEpoch }, extra = {}) {
   return {
     purpose: pending.purpose, resultsPath: pending.resultsPath, mutationEpoch, ...extra,
-    results: results.map(({ command, ran, exit, timedOut, counts, identifiers, scopeHash, mutationEpoch, changed, logPath }) => ({
+    results: results.map(({ command, ran, exit, timedOut, counts, identifiers, diagnostic, scopeHash, mutationEpoch, changed, logPath }) => ({
       command, ...(ran !== command ? { ran } : {}), exit, ...(timedOut ? { timedOut } : {}), ...(counts ?? {}),
       identifiers: identifiers.slice(0, SUMMARY_IDENTIFIERS), ...(identifiers.length > SUMMARY_IDENTIFIERS ? { moreIdentifiers: identifiers.length - SUMMARY_IDENTIFIERS } : {}),
+      // The failing tail usually holds the first assertion, sparing the host a log read.
+      ...(exit !== 0 && diagnostic ? { diagnostic } : {}),
       scopeHash, mutationEpoch, ...(changed.length ? { changed } : {}), logPath,
     })),
     ...(generated.length ? { generated: generated.map(({ command, exit, changed, outside, logPath }) => ({ command, exit, changed, ...(outside.length ? { outside } : {}), logPath })) } : {}),

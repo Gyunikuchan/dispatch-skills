@@ -85,6 +85,12 @@ describe('--drive', () => {
         assert.equal(rejected.action.action, 'verify');
         assert.equal(rejected.action.summary.reused, true);
         assert.match(rejected.stderr, /verify scoped: 1 command\(s\), 0 nonzero, reused unchanged-tree results/);
+        assert.equal('diagnostic' in action.summary.results[0], false, 'a passing result omits its output tail');
+        // A failing rerun carries its output tail so the host need not read the log.
+        fs.writeFileSync(path.join(fx.repo.dir, 'src/app.js'), 'export const value = 3;\n');
+        const failing = step(fx, ['--drive', '--state', action.stateFile]).action.summary.results[0];
+        assert.notEqual(failing.exit, 0);
+        assert.match(failing.diagnostic, /sample/);
         // An approved-path edit after the run invalidates those results, so the same gate runs again.
         fs.writeFileSync(path.join(fx.repo.dir, 'src/app.js'), 'export const value = 2; // edited\n');
         const rerun = step(fx, ['--drive', '--state', action.stateFile]);

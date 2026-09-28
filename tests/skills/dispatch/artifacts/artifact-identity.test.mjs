@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import {
   SLUG_PATTERN, buildScratchPaths, deriveConversationKey, deriveSlugFromBranch,
-  isReservedOrdinarySlug, isValidDate, localDate, parseIncrementArtifactPath,
+  isReservedOrdinarySlug, parseIncrementArtifactPath,
   resolveArtifacts, resolveLedgerPath, resolveSlug, sanitizeSlug,
 } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
@@ -37,33 +37,24 @@ describe('artifact identity is bound to the chat session', () => {
 
   it('builds every canonical artifact under the active session artifacts area', () => {
     const artifacts = path.join(session, 'artifacts');
-    const paths = buildScratchPaths('2026-09-11', 'auth-v2');
-    assert.equal(normalized(paths.plan), normalized(path.join(artifacts, '2026-09-11-auth-v2.md')));
-    assert.equal(normalized(paths.walkthrough), normalized(path.join(artifacts, '2026-09-11-auth-v2-walkthrough.md')));
-    assert.equal(normalized(buildScratchPaths('2026-09-11', 'auth', 'design')), normalized(path.join(artifacts, '2026-09-11-auth-design.md')));
-    assert.equal(normalized(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-plan')), normalized(path.join(artifacts, '2026-09-11-auth-i01-model-plan.md')));
-    assert.equal(normalized(buildScratchPaths('2026-09-11', 'auth', 'integration-walkthrough')), normalized(path.join(artifacts, '2026-09-11-auth-integration-walkthrough.md')));
-    const resolved = resolveArtifacts({ slug: 'auth-i01-model', slugSource: 'explicit', date: '2026-09-11', kinds: ['increment-plan'], repositoryRoot });
-    assert.equal(normalized(resolved['increment-plan'].path), normalized(buildScratchPaths('2026-09-11', 'auth-i01-model', 'increment-plan')));
+    const paths = buildScratchPaths('auth-v2');
+    assert.equal(normalized(paths.plan), normalized(path.join(artifacts, 'auth-v2.md')));
+    assert.equal(normalized(paths.walkthrough), normalized(path.join(artifacts, 'auth-v2-walkthrough.md')));
+    assert.equal(normalized(buildScratchPaths('auth', 'design')), normalized(path.join(artifacts, 'auth-design.md')));
+    assert.equal(normalized(buildScratchPaths('auth-i01-model', 'increment-plan')), normalized(path.join(artifacts, 'auth-i01-model-plan.md')));
+    assert.equal(normalized(buildScratchPaths('auth', 'integration-walkthrough')), normalized(path.join(artifacts, 'auth-integration-walkthrough.md')));
+    const resolved = resolveArtifacts({ slug: 'auth-i01-model', slugSource: 'explicit', kinds: ['increment-plan'], repositoryRoot });
+    assert.equal(normalized(resolved['increment-plan'].path), normalized(buildScratchPaths('auth-i01-model', 'increment-plan')));
   });
 
   it('parses increment identities from session paths and rejects ambiguous nested increments', () => {
-    const plan = path.join(session, 'artifacts', '2026-09-21-demo-i01-foundation-plan.md');
+    const plan = path.join(session, 'artifacts', 'demo-i01-foundation-plan.md');
     assert.deepEqual(parseIncrementArtifactPath(plan), {
-      date: '2026-09-21', designRootSlug: 'demo', incrementId: 'I01', incrementSlug: 'foundation', kind: 'increment-plan',
+      designRootSlug: 'demo', incrementId: 'I01', incrementSlug: 'foundation', kind: 'increment-plan',
     });
-    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', '2026-09-21-demo-i01-foundation-walkthrough.md')).kind, 'increment-walkthrough');
-    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', '2026-09-21-demo-design.md')), null);
-    assert.throws(() => parseIncrementArtifactPath(path.join(session, 'artifacts', '2026-09-21-demo-i01-foundation-i02-switch-plan.md')), /ambiguous|second/);
-  });
-
-  it('rejects a reserved artifact collision on another date inside the bound session', () => {
-    const directory = path.join(session, 'artifacts');
-    fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(directory, '2026-01-01-collision-design.md'), '# design');
-    assert.throws(() => resolveArtifacts({
-      slug: 'collision-i01-one', slugSource: 'explicit', date: '2026-09-21', kinds: ['increment-plan'], repositoryRoot,
-    }), /collision|reserved|occupied/);
+    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-i01-foundation-walkthrough.md')).kind, 'increment-walkthrough');
+    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-design.md')), null);
+    assert.throws(() => parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-i01-foundation-i02-switch-plan.md')), /ambiguous|second/);
   });
 
   it('stores each repository ledger inside its own chat root', () => {
@@ -81,7 +72,7 @@ describe('artifact identity is bound to the chat session', () => {
   });
 });
 
-describe('slug and date identities', () => {
+describe('slug identities', () => {
   it('sanitizes slugs and rejects reserved ordinary names', () => {
     assert.equal(sanitizeSlug('Auth V2!! Rewrite'), 'auth-v2-rewrite');
     assert.equal(isReservedOrdinarySlug('root-i01-model'), true);
@@ -90,10 +81,7 @@ describe('slug and date identities', () => {
     assert.equal(deriveSlugFromBranch('main'), null);
   });
 
-  it('keeps calendar dates valid and reports a conversation key only for known platforms', () => {
-    assert.equal(isValidDate('2026-09-11'), true);
-    assert.equal(isValidDate('2026-02-30'), false);
-    assert.match(localDate(new Date('2026-01-05T12:00:00Z')), /^2026-01-05$/);
+  it('reports a conversation key only for known platforms', () => {
     assert.equal(deriveConversationKey({ orchestrator: 'claude', env: { CLAUDE_CODE_SESSION_ID: '12345678abcd' } }), 'conversation-12345678');
     assert.equal(deriveConversationKey({ orchestrator: 'opencode', env: { OPENCODE_SESSION_ID: 'ignored' } }), null);
     assert.deepEqual(resolveSlug({ branch: 'feature/Auth-V2' }), { slug: 'auth-v2', slugSource: 'branch' });

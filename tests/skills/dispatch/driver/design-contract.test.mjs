@@ -24,7 +24,7 @@ function designBody() {
 
 function setupLedger(repo, { amendment = null, complete = false } = {}) {
   process.env.DISPATCH_SESSION_DIR = repo.sessionDir;
-  const designPath = path.join(repo.sessionDir, 'artifacts', '2026-09-22-root-design.md');
+  const designPath = path.join(repo.sessionDir, 'artifacts', 'root-design.md');
   const designRel = path.relative(repo.dir, designPath).split(path.sep).join('/');
   fs.mkdirSync(path.dirname(designPath), { recursive: true });
   const source = designBody(); fs.writeFileSync(designPath, source);
@@ -103,8 +103,8 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
     assert.equal(res.status, 0, `SC2 design implement must be available: ${res.stderr}`);
     const action = parseAction(res.stdout);
     assert.equal(action.incrementId, 'I01');
-    assert.equal(action.planPath, path.join(repo.sessionDir, 'artifacts', '2026-09-22-root-i01-driver-plan.md'));
-    assert.equal(action.walkthroughPath, path.join(repo.sessionDir, 'artifacts', '2026-09-22-root-i01-driver-walkthrough.md'));
+    assert.equal(action.planPath, path.join(repo.sessionDir, 'artifacts', 'root-i01-driver-plan.md'));
+    assert.equal(action.walkthroughPath, path.join(repo.sessionDir, 'artifacts', 'root-i01-driver-walkthrough.md'));
     assert.ok(['author', 'launch'].includes(action.action), `expected selected-I01 entry action, got ${action.action}`);
   }));
 
@@ -162,8 +162,8 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
 
   it('RED-MATRIX SC5 | enters final integration with exact terminal lifecycle contract', () => withFixture((fixture, repo) => {
     const { designPath, ledgerPath } = setupLedger(repo, { complete: true });
-    const incrementArtifacts = ['2026-09-22-root-i01-driver-plan.md', '2026-09-22-root-i01-driver-walkthrough.md', '2026-09-22-root-i02-driver-plan.md', '2026-09-22-root-i02-driver-walkthrough.md'];
-    const sources = [designPath, ...incrementArtifacts.map(file => path.join(repo.sessionDir, 'artifacts', file)), path.join(repo.sessionDir, 'artifacts', '2026-09-22-root-integration-walkthrough.md')];
+    const incrementArtifacts = ['root-i01-driver-plan.md', 'root-i01-driver-walkthrough.md', 'root-i02-driver-plan.md', 'root-i02-driver-walkthrough.md'];
+    const sources = [designPath, ...incrementArtifacts.map(file => path.join(repo.sessionDir, 'artifacts', file)), path.join(repo.sessionDir, 'artifacts', 'root-integration-walkthrough.md')];
     for (const file of incrementArtifacts) fs.writeFileSync(path.join(repo.sessionDir, 'artifacts', file), file);
     const res = runDispatch(fixture, ['--run', 'implement', '--orchestrator', 'claude', '--', designPath], { cwd: repo.dir });
     assert.equal(res.status, 0, `SC5 design implement must enter final integration: ${res.stderr}`);

@@ -155,7 +155,7 @@ function artifactSlug(value, kind, repoRoot) {
       if (typeof metadata?.slug === 'string' && metadata.slug) return metadata.slug;
     } catch { /* NOTE: the filename remains a deterministic fallback for uncheckpointed artifacts. */ }
   }
-  const base = path.basename(String(value ?? '')).replace(/\.md$/i, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
+  const base = path.basename(String(value ?? '')).replace(/\.md$/i, '');
   const withoutKind = kind === 'design' ? base.replace(/-design$/i, '') : base.replace(/-walkthrough$/i, '');
   return sanitizeSlug(withoutKind)?.slice(0, 60) ?? null;
 }

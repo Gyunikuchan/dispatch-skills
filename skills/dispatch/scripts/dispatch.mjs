@@ -1144,11 +1144,7 @@ function nativeFallbackGuidance({ hostPlatform = null, failedPlatforms = [], pro
   if (promptFile) {
     lines.push(
       `- Tell the native subagent to read this prompt file in full and follow it as the authoritative instructions: ${promptFile}` +
-        `${files.length > 0 ? `; attachment paths: ${files.join(', ')}` : ''}.`,
-      // Only stated alongside the paths themselves: the cleanup bound is unactionable otherwise.
-      '- Those inputs are unfinished cleanup paths: prune them once this fallback consumes them or' +
-        ' reaches a terminal outcome.',
-    );
+        `${files.length > 0 ? `; attachment paths: ${files.join(', ')}` : ''}.`,    );
   } else {
     lines.push(
       '- Reuse the exact prompt and attachments prepared for this dispatch, unchanged; never paraphrase them.',
@@ -1407,25 +1403,20 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
   }
 
   const reportDir = fs.mkdtempSync(path.join(runArea('reports'), 'dispatch-slots-'));
-  let envelope;
-  try {
-    envelope = await dispatchBatch(batch, {
-      ...options,
-      prompt,
-      level,
-      responseSchema,
-      configPath: loaded.path,
-      promptFile,
-      onSlot: (record, exit) => {
-        process.stdout.write(`${slotLine(record, exit, reportDir)}\n`);
-        if (slotsFile) {
-          fs.appendFileSync(slotsFile, `${JSON.stringify({ slot: record.sourceKey, platform: record.platform, status: record.status, exit, session: record.session })}\n`);
-        }
-      },
-    }, loaded.config);
-  } finally {
-    if (batchFile) fs.rmSync(batch.path, { force: true });
-  }
+  const envelope = await dispatchBatch(batch, {
+    ...options,
+    prompt,
+    level,
+    responseSchema,
+    configPath: loaded.path,
+    promptFile,
+    onSlot: (record, exit) => {
+      process.stdout.write(`${slotLine(record, exit, reportDir)}\n`);
+      if (slotsFile) {
+        fs.appendFileSync(slotsFile, `${JSON.stringify({ slot: record.sourceKey, platform: record.platform, status: record.status, exit, session: record.session })}\n`);
+      }
+    },
+  }, loaded.config);
   if (outputFile) writeDispatchOutput(`${JSON.stringify(envelope, null, 2)}\n`, outputFile);
   process.exit(envelope.complete ? 0 : 1);
 }

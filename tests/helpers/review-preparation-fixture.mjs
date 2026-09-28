@@ -35,10 +35,9 @@ export function createReviewPreparationFixture() {
   };
 }
 
-/** Removes invocation and subprocess artifacts returned in a preparation manifest. */
+/** Removes the invocation state returned in a preparation manifest. */
 export function cleanupPreparationManifest(manifest) {
   const paths = [
-    ...(manifest.cleanupPaths ?? []),
     manifest.invocationContext?.statePath && path.dirname(manifest.invocationContext.statePath),
   ].filter(Boolean);
   for (const cleanupPath of paths) fs.rmSync(cleanupPath, { recursive: true, force: true });

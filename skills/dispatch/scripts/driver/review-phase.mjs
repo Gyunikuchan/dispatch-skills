@@ -92,7 +92,6 @@ export async function startReview({ invocation, cwd, resumeCommand, reviewBudget
       range: inferred.range ?? null,
     },
     artifactPath: inferred.artifactPath ? path.resolve(cwd, inferred.artifactPath) : (inferred.walkthroughPath ? path.resolve(cwd, inferred.walkthroughPath) : null),
-    cleanup: [],
     invocationContext: null,
     budgetId: reviewBudget?.budgetId ?? null,
     reviewWaves: reviewBudget?.reviewWaves ?? 0,
@@ -320,7 +319,6 @@ function prepareCheckpointOnly(state) {
   if (manifest.status !== 'ready') {
     return done(state, 'failed', `Checkpoint-only preparation requires a reviewable artifact; got ${manifest.status}.`, { command: state.resumeCommand });
   }
-  state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
   state.invocationContext = manifest.invocationContext;
   state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
   return nextStep(state);
@@ -370,7 +368,6 @@ function prepareWave(state, type, rebuttal = null) {
     }
     return done(state, 'lint-defects', `${state.kind} lint failed; the review did not run.`, { defects: manifest.defects });
   }
-  state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
   state.invocationContext = manifest.invocationContext;
   state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
   if (type === 'review') {
@@ -384,7 +381,6 @@ function prepareWave(state, type, rebuttal = null) {
       return done(state, 'failed', `Review preparation failed after budget allocation: ${err.message}`, { command: state.resumeCommand });
     }
     if (manifest.status !== 'ready') return done(state, 'failed', 'Review preparation changed after budget allocation.', { command: state.resumeCommand });
-    state.cleanup.push(...(manifest.cleanupPaths ?? []), manifest.invocationCleanupPath);
     state.invocationContext = manifest.invocationContext;
     state.artifactPath = path.resolve(state.repoRoot, manifest.artifact.canonicalPath);
   }
@@ -1464,15 +1460,11 @@ function onOptIn(state, reply) {
 function settle(state) {
   const preview = prepareReview(state.kind, { action: 'checkpoint-preview', invocationContext: state.invocationContext }, { repoRoot: state.repoRoot });
   if (preview.settlement.consensusExit !== 0) return done(state, 'failed', 'Consensus did not settle before checkpoint.');
-  // The checkpoint still needs the invocation state, so its cleanup waits for writeCheckpoint.
-  state.deferredCleanup = state.cleanup.splice(0);
   return done(state, 'complete', 'Review settled; checkpoint deferred to the final verification gate.', { checkpointed: false });
 }
 
 /** Records the deferred checkpoint of a settled implementation code review. */
 export function writeCheckpoint(state) {
-  state.cleanup.push(...(state.deferredCleanup ?? []).filter(item => !state.cleanup.includes(item)));
-  delete state.deferredCleanup;
   return finish(state, checkpoint(state));
 }
 
@@ -1486,7 +1478,6 @@ function checkpoint(state) {
       settlement: preview.settlement,
       settledWrites: preview.settledWrites,
     }, { repoRoot: state.repoRoot });
-    state.cleanup.push(...(result.cleanupPaths ?? []));
     return done(state, 'complete', `Review settled and checkpointed (${result.artifactPath}).`, { checkpointed: true });
   } catch (err) {
     // Drift restarts preparation once; the driver never forces a stale checkpoint.

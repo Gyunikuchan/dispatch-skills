@@ -89,7 +89,7 @@ describe('design amendment transactions', { concurrency: false }, () => {
     process.env.DISPATCH_CHAT_ID = `amend-${process.pid}-${workflowSessions.length + 1}`;
     const session = bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'design', slug: 'demo' });
     workflowSessions.push(session);
-    designPath = path.join(session, 'artifacts', '2026-09-20-demo-design.md');
+    designPath = path.join(session, 'artifacts', 'demo-design.md');
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
     const namespace = ensureLedgerNamespace();
@@ -151,7 +151,7 @@ describe('design amendment transactions', { concurrency: false }, () => {
     assert.equal(events.at(-1).type, 'amendment');
     assert.equal(events.at(-1).data.state, 'prepared');
     assert.equal(events.at(-1).data.baseRevision, priorHash);
-    assert.ok(events.at(-1).data.targetPath.endsWith('2026-09-20-demo-design.md'));
+    assert.ok(events.at(-1).data.targetPath.endsWith('demo-design.md'));
     assert.ok(events.at(-1).data.replacementPath.endsWith('demo-design.md.tmp'));
     assert.ok(path.basename(events.at(-1).data.replacementPath).startsWith('.'));
     assert.equal(fs.existsSync(`${staging()}.bak`), true);

@@ -77,7 +77,7 @@ describe('driver state in a movable chat folder', () => {
   });
 
   it('rejects artifacts outside the bound chat session', () => {
-    const artifact = path.join(repositoryRoot, '.scratch', 'other', '2026-09-27-new-chat-walkthrough.md');
+    const artifact = path.join(repositoryRoot, '.scratch', 'other', 'new-chat-walkthrough.md');
     fs.mkdirSync(path.dirname(artifact), { recursive: true });
     fs.writeFileSync(artifact, '# New chat walkthrough\n');
     process.env.DISPATCH_CHAT_ID = `new-chat-${process.pid}-${Date.now()}`;

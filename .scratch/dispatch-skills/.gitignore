@@ -1,0 +1,3 @@
+# Keep only chat artifacts; logs and runtime state stay local.
+*/*
+!*/artifacts/

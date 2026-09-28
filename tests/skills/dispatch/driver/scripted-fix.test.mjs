@@ -66,7 +66,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
 
   it('plan --fix routes lint defects to author (repair), then prepares again', () => {
     const { fixture, repo } = setup(config());
-    const plan = writePlan(repo.dir, '2026-09-22-repair.md', '# Bad\n\nTODO later\n');
+    const plan = writePlan(repo.dir, 'repair.md', '# Bad\n\nTODO later\n');
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],

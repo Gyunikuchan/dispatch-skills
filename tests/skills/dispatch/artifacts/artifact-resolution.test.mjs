@@ -32,19 +32,48 @@ describe('canonical artifacts in the active chat folder', () => {
   });
 
   it('resolves plans and walkthroughs below the active session artifacts directory', () => {
-    const plan = resolveArtifactPath('plan', { slug: 'auth-v2', date: '2026-09-27', projectRoot: repositoryRoot, repositoryRoot });
-    const walkthrough = resolveArtifactPath('walkthrough', { slug: 'auth-v2', date: '2026-09-27', projectRoot: repositoryRoot, repositoryRoot });
-    assert.equal(normalized(plan.path), normalized(path.join(session, 'artifacts', '2026-09-27-auth-v2.md')));
-    assert.equal(normalized(walkthrough.path), normalized(path.join(session, 'artifacts', '2026-09-27-auth-v2-walkthrough.md')));
+    const plan = resolveArtifactPath('plan', { slug: 'auth-v2', projectRoot: repositoryRoot, repositoryRoot });
+    const walkthrough = resolveArtifactPath('walkthrough', { slug: 'auth-v2', projectRoot: repositoryRoot, repositoryRoot });
+    assert.equal(normalized(plan.path), normalized(path.join(session, 'artifacts', 'auth-v2.md')));
+    assert.equal(normalized(walkthrough.path), normalized(path.join(session, 'artifacts', 'auth-v2-walkthrough.md')));
     assert.equal(plan.exists, false);
     fs.writeFileSync(plan.path, 'plan');
     assert.equal(normalized(findExistingScratchArtifact('plan', 'auth-v2', repositoryRoot)), normalized(plan.path));
     assert.equal(normalized(resolveArtifactPath('plan', { slug: 'auth-v2', projectRoot: repositoryRoot, repositoryRoot }).path), normalized(plan.path));
   });
 
+  it('ignores a symlink at the canonical artifact path', (t) => {
+    const outside = path.join(repositoryRoot, 'outside.md');
+    fs.writeFileSync(outside, 'outside');
+    const plan = resolveArtifactPath('plan', { slug: 'linked', projectRoot: repositoryRoot, repositoryRoot });
+    try { fs.symlinkSync(outside, plan.path, 'file'); }
+    catch (error) { if (error.code === 'EPERM') return t.skip('symlinks need elevated rights'); throw error; }
+    assert.equal(findExistingScratchArtifact('plan', 'linked', repositoryRoot), null);
+  });
+
+  it('refuses a symlink at a phased or native-import canonical path', (t) => {
+    const outside = path.join(repositoryRoot, 'outside.md');
+    fs.writeFileSync(outside, 'outside');
+    const design = resolveArtifactPath('design', { slug: 'linked', projectRoot: repositoryRoot, repositoryRoot });
+    try { fs.symlinkSync(outside, design.path, 'file'); }
+    catch (error) { if (error.code === 'EPERM') return t.skip('symlinks need elevated rights'); throw error; }
+    assert.throws(() => resolveArtifactPath('design', { slug: 'linked', projectRoot: repositoryRoot, repositoryRoot }), /is a symlink/);
+    const nativeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'native-link-root-'));
+    try {
+      const native = path.join(nativeRoot, 'brain', 'conversation-7', 'implementation_plan.md');
+      fs.mkdirSync(path.dirname(native), { recursive: true });
+      fs.writeFileSync(native, '# Native plan');
+      fs.symlinkSync(outside, path.join(session, 'artifacts', 'native-link.md'), 'file');
+      assert.throws(() => resolveArtifactPath('plan', {
+        slug: 'native-link', projectRoot: repositoryRoot, repositoryRoot,
+        native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: 'conversation-7' },
+      }), /is a symlink/);
+    } finally { fs.rmSync(nativeRoot, { recursive: true, force: true }); }
+  });
+
   it('keeps ledger and phased artifacts in the same session root', () => {
     const resolved = resolveArtifacts({
-      slug: 'design-root', slugSource: 'explicit', date: '2026-09-27', kinds: ['design', 'increment-plan', 'integration-walkthrough'],
+      slug: 'design-root', slugSource: 'explicit', kinds: ['design', 'increment-plan', 'integration-walkthrough'],
       projectRoot: repositoryRoot, repositoryRoot,
     });
     assert.equal(normalized(path.dirname(resolved.ledgerPath)), normalized(path.join(session, 'ledger')));
@@ -60,11 +89,11 @@ describe('canonical artifacts in the active chat folder', () => {
     fs.writeFileSync(native, '# Native plan');
     try {
       const result = resolveArtifactPath('plan', {
-        slug: 'native-plan', date: '2026-09-27', projectRoot: repositoryRoot, repositoryRoot,
+        slug: 'native-plan', projectRoot: repositoryRoot, repositoryRoot,
         native: { roots: [nativeRoot], orchestrator: 'agy', conversationId: 'conversation-42' },
       });
       assert.equal(result.tier, 'session-import');
-      assert.equal(normalized(result.path), normalized(path.join(session, 'artifacts', '2026-09-27-native-plan.md')));
+      assert.equal(normalized(result.path), normalized(path.join(session, 'artifacts', 'native-plan.md')));
       assert.notEqual(normalized(result.path), normalized(native));
       assert.equal(fs.readFileSync(result.path, 'utf8'), '# Native plan');
       fs.writeFileSync(native, '# Updated native plan');

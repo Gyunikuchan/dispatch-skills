@@ -23,17 +23,17 @@ describe('review kind inference (design order 1–6)', () => {
   const infer = (argument) => inferReviewKind(argument, { cwd: repo.dir });
 
   it('1: *-design.md → design', () => {
-    assert.equal(infer('artifacts/2026-09-22-x-design.md').kind, 'design');
+    assert.equal(infer('artifacts/x-design.md').kind, 'design');
   });
 
   it('2: *-walkthrough.md → code scoped to the walkthrough (checked before the generic .md rule)', () => {
-    const result = infer('artifacts/2026-09-22-x-walkthrough.md');
+    const result = infer('artifacts/x-walkthrough.md');
     assert.equal(result.kind, 'code');
-    assert.equal(result.walkthroughPath, 'artifacts/2026-09-22-x-walkthrough.md');
+    assert.equal(result.walkthroughPath, 'artifacts/x-walkthrough.md');
   });
 
   it('3: any other *.md → plan', () => {
-    assert.equal(infer('artifacts/2026-09-22-x.md').kind, 'plan');
+    assert.equal(infer('artifacts/x.md').kind, 'plan');
     assert.equal(infer('docs/notes.md').kind, 'plan');
   });
 
@@ -148,7 +148,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   const run = (args) => runDispatch(fixture, args, { cwd: repo.dir });
 
   it('ends in done/skipped when an explicit level disables the phase', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-skip.md');
+    const plan = writePlan(repo.dir, 'skip.md');
     const res = run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
@@ -160,7 +160,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('rejects a classified xhigh or max level before starting a run', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-elevated.md');
+    const plan = writePlan(repo.dir, 'elevated.md');
     for (const level of ['xhigh', 'max']) {
       const res = run(['--run', 'review', '--level', level, '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
       assert.equal(res.status, 2);
@@ -169,7 +169,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('raises a classified level and launches instead of skipping', () => {
-    const plan = writePlan(repo.dir, '2026-09-22-raise.md');
+    const plan = writePlan(repo.dir, 'raise.md');
     const res = run(['--run', 'review', '--level', 'low', '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
@@ -183,7 +183,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
     });
     try {
-      const design = writeDesign(repo.dir, '2026-09-22-fallback-design.md', '# Design\n');
+      const design = writeDesign(repo.dir, 'fallback-design.md', '# Design\n');
       const result = runDispatch(fallbackFixture, ['--run', 'review', '--orchestrator', 'claude', '--', design], { cwd: repo.dir });
       assert.equal(result.status, 0, result.stderr);
       const action = parseAction(result.stdout);
@@ -202,7 +202,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('skips a design review disabled at the explicit level (inferred from *-design.md)', () => {
-    const design = writeDesign(repo.dir, '2026-09-22-off-design.md', '# Design\n');
+    const design = writeDesign(repo.dir, 'off-design.md', '# Design\n');
     const action = parseAction(run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', design]).stdout);
     assert.equal(action.action, 'done');
     assert.equal(action.outcome, 'skipped');
@@ -290,7 +290,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('checkpoint-only recovery does not allocate a review after the phase cap is spent', async () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, '2026-09-27-spent-review-budget.md');
+    const plan = writePlan(repo.dir, 'spent-review-budget.md');
     const first = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
@@ -317,7 +317,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('applies and verifies an accepted bounded in-scope CONSIDER at the cap without another review', () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, '2026-09-27-consider-fix.md');
+    const plan = writePlan(repo.dir, 'consider-fix.md');
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
@@ -333,7 +333,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('preserves rejected, unbounded, and declined-adjacent CONSIDER dispositions', () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, '2026-09-27-consider-dispositions.md');
+    const plan = writePlan(repo.dir, 'consider-dispositions.md');
     const findings = [
       planFinding({ severity: 'CONSIDER', locus: '§ Success Criteria', defect: 'Rejected bounded.' }),
       planFinding({ severity: 'CONSIDER', locus: '§ Proposed Changes', defect: 'Unbounded accepted.' }),
@@ -365,7 +365,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('keeps an uncertain bounded CONSIDER pending through later waves and applies an accepted answer without a new review', () => {
     fixture = makeFixture(2);
-    const plan = writePlan(repo.dir, '2026-09-27-deferred-consider.md');
+    const plan = writePlan(repo.dir, 'deferred-consider.md');
     let deferredAskCount = 0;
     const run = drive(fixture, {
       cwd: repo.dir,
@@ -401,7 +401,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('keeps the same cumulative budget across adjacent opt-in and a bounded fix', () => {
     fixture = makeFixture(2);
-    const plan = writePlan(repo.dir, '2026-09-27-adjacent-opt-in.md');
+    const plan = writePlan(repo.dir, 'adjacent-opt-in.md');
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],

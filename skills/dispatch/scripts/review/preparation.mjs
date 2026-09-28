@@ -113,7 +113,7 @@ export function validateRequestAction(request) {
 
 /** Artifact slug from a dated design, plan, or walkthrough filename. */
 export function slugFromPath(file) {
-  const match = /(?:^|\/)\d{4}-\d{2}-\d{2}-(.+?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
+  const match = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
   return match?.[1] ?? null;
 }
 
@@ -454,7 +454,7 @@ export function createTempFile(prefix, filename, contents) {
   const dir = runTempDir(area, prefix);
   const file = path.join(dir, filename);
   fs.writeFileSync(file, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  return { path: file, cleanupPath: dir };
+  return { path: file };
 }
 
 export function createReviewView({ artifact, nextRound }) {
@@ -467,7 +467,7 @@ export function createReviewView({ artifact, nextRound }) {
     `${path.basename(artifact, path.extname(artifact))}-review-view.md`,
     built.contents,
   );
-  return { ...built, viewPath: written.path, cleanupPath: written.cleanupPath };
+  return { ...built, viewPath: written.path };
 }
 
 // SECTION: Invocation state
@@ -540,7 +540,7 @@ export function createInvocationState({ kind, artifactPath, snapshot, expectedSo
     initialMetadata: readArtifact(artifactPath).metadata,
   };
   writeState(state, { exclusive: true });
-  return { context: contextFor(state), cleanupPath: dir };
+  return { context: contextFor(state) };
 }
 
 // Containment is checked lexically first so a forged missing path never earns the recovery hint.
@@ -559,8 +559,7 @@ function missingInvocationState(resolved) {
   ) return new Error('invocationContext statePath is invalid.');
   return new Error(
     `Invocation state ${dir} no longer exists; it was removed before checkpoint. The prior checkpoint ` +
-    'is retained. Remove invocationCleanupPath only after checkpoint or abort; rerun preparation to ' +
-    'start a fresh invocation.',
+    'is retained; rerun preparation to start a fresh invocation.',
   );
 }
 
@@ -630,15 +629,14 @@ export function advanceInvocationState(context, updates = {}) {
       token: crypto.randomBytes(24).toString('hex'),
     };
     writeState(next);
-    return { state: next, context: contextFor(next), cleanupPath: path.dirname(next.statePath) };
+    return { state: next, context: contextFor(next) };
   } finally {
     fs.rmSync(lock, { recursive: true, force: true });
   }
 }
 
 export function completeInvocationState(context) {
-  const advanced = advanceInvocationState(context, { status: 'complete' });
-  return { state: advanced.state, cleanupPath: advanced.cleanupPath };
+  return { state: advanceInvocationState(context, { status: 'complete' }).state };
 }
 
 /** Fence-aware removal of one `## <section>` block: a fenced `## <section>` heading inside a
@@ -767,11 +765,9 @@ export function createDispatchFiles({
   orchestratorModel = null,
 }) {
   const promptFile = createTempFile('dispatch-review-prompt-', 'prompt.md', prompt);
-  const cleanupPaths = [promptFile.cleanupPath];
   const argv = [process.execPath, path.resolve(dispatchScriptPath), ...sessionArgs()];
   if (batch) {
     const batchFile = createTempFile('dispatch-review-batch-', 'batch.json', `${JSON.stringify(batch, null, 2)}\n`);
-    cleanupPaths.push(batchFile.cleanupPath);
     argv.push('--batch-file', batchFile.path);
   } else if (selector) {
     if (selector.provider) argv.push('--provider', selector.provider);
@@ -788,11 +784,9 @@ export function createDispatchFiles({
   if (orchestrator) argv.push('--orchestrator', orchestrator);
   if (orchestratorModel) argv.push('--orchestrator-model', orchestratorModel);
   const outputFile = createTempFile('dispatch-review-output-', 'output.txt', '');
-  cleanupPaths.push(outputFile.cleanupPath);
   argv.push('--output-file', outputFile.path);
   return {
     promptPath: promptFile.path,
     dispatch: { argv, outputPath: outputFile.path },
-    cleanupPaths,
   };
 }

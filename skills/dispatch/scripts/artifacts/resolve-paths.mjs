@@ -8,12 +8,11 @@
  *   1. Platform-native artifact (currently: Antigravity's brain dir) — only scanned
  *      when the orchestrator actually is that platform; scoped to the exact active
  *      conversation when its id is known, else a same-platform recency guess.
- *   2. Existing scratch artifact matching the slug (any date) — reuse, don't re-author.
- *   3. Session-new: the deterministic `<session>/artifacts/<date>-<slug>[-walkthrough].md` path.
+ *   2. Existing scratch artifact matching the slug — reuse, don't re-author.
+ *   3. Session-new: the deterministic `<session>/artifacts/<slug>[-walkthrough].md` path.
  *
  * Usage:
- *   node artifacts/resolve-paths.mjs [--slug <kebab-slug>] [--date <yyyy-mm-dd>]
- *                                   [--kind plan|walkthrough|both] [--orchestrator <name>]
+ *   node artifacts/resolve-paths.mjs [--slug <kebab-slug>] [--kind plan|walkthrough|both] [--orchestrator <name>]
  *
  * `--slug` is optional: when omitted it is derived, in order, from (1) the current git
  * branch (prefix stripped, kebab-cased) or (2) the active orchestrator's own
@@ -27,12 +26,12 @@
  * applies to platforms with a known native artifact (currently `agy`), and is also
  * the platform consulted for conversation-id slug derivation.
  *
- * Outputs JSON: `{ slug, slugSource, date, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
+ * Outputs JSON: `{ slug, slugSource, ledgerPath, plan?: { tier, path, exists }, walkthrough?: { tier, path, exists } }`.
  * `tier` is `native`, `session-import`, `scratch-existing`, or `scratch-new`. `slugSource` is
  * `explicit`, `branch`, or `conversation`.
  */
 
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -50,7 +49,6 @@ import { assertWorkflowSession, sessionArea } from '../lib/session-temp.mjs';
 
 export const SCRATCH_DIR = 'artifacts';
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export const PHASED_KINDS = /** @type {readonly ArtifactKind[]} */ (Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']));
 export const RESERVED_SLUG_PATTERN = /(?:-design|-integration(?:-walkthrough)?|-i\d{2}-.+)$/;
 
@@ -64,7 +62,7 @@ const NATIVE_FILENAME = Object.freeze({
   plan: 'implementation_plan.md',
   walkthrough: 'walkthrough.md',
 });
-const INCREMENT_ARTIFACT_PATTERN = /(?:^|\/)artifacts\/(\d{4}-\d{2}-\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
+const INCREMENT_ARTIFACT_PATTERN = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
 
 /** Env vars carrying conversation/session identity, scoped to the detected orchestrator. */
 const CONVERSATION_ID_ENV_VARS = Object.freeze({
@@ -82,36 +80,23 @@ export function isReservedOrdinarySlug(slug) {
   return typeof slug === 'string' && RESERVED_SLUG_PATTERN.test(slug);
 }
 
-/** Local calendar date as `yyyy-mm-dd` — the filename should match the user's day. */
-export function localDate(now = new Date()) {
-  const pad = n => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
-
-export function isValidDate(value) {
-  if (!DATE_PATTERN.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
-
 /**
  * Builds canonical scratch paths. The default returns the ordinary plan/walkthrough map;
  * an explicit phased kind returns only that kind's path.
  *
- * @param {string} date - Calendar date as `yyyy-mm-dd`.
  * @param {string} slug - Kebab-case artifact identity.
  * @param {ArtifactKind} [kind]
  * @returns {Record<ArtifactKind, string>|string}
  */
-export function buildScratchPaths(date, slug, kind = 'plan') {
+export function buildScratchPaths(slug, kind = 'plan') {
   const artifacts = sessionArea('artifacts');
   const paths = {
-    plan: path.join(artifacts, `${date}-${slug}.md`),
-    walkthrough: path.join(artifacts, `${date}-${slug}-walkthrough.md`),
-    design: path.join(artifacts, `${date}-${slug}-design.md`),
-    'increment-plan': path.join(artifacts, `${date}-${slug}-plan.md`),
-    'increment-walkthrough': path.join(artifacts, `${date}-${slug}-walkthrough.md`),
-    'integration-walkthrough': path.join(artifacts, `${date}-${slug}-integration-walkthrough.md`),
+    plan: path.join(artifacts, `${slug}.md`),
+    walkthrough: path.join(artifacts, `${slug}-walkthrough.md`),
+    design: path.join(artifacts, `${slug}-design.md`),
+    'increment-plan': path.join(artifacts, `${slug}-plan.md`),
+    'increment-walkthrough': path.join(artifacts, `${slug}-walkthrough.md`),
+    'integration-walkthrough': path.join(artifacts, `${slug}-integration-walkthrough.md`),
   };
   if (!Object.hasOwn(paths, kind)) throw new Error(`Unknown artifact kind "${kind}"`);
   return kind === 'plan' || kind === 'walkthrough' ? paths : paths[kind];
@@ -356,9 +341,8 @@ function findNativeArtifact(kind, options = {}) {
 // ============================================================================
 
 /**
- * Finds an existing scratch artifact matching the slug regardless of date
- * (a review can run the day after planning), newest-file-wins if more than
- * one date matches. Returns a repo-relative posix path, or null.
+ * Finds an existing scratch artifact for the slug (a review can run in a later chat turn than
+ * planning). Returns its path, or null.
  *
  * @param {string} kind
  * @param {string} slug
@@ -366,47 +350,15 @@ function findNativeArtifact(kind, options = {}) {
  * @returns {string|null}
  */
 export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_ROOT) {
-  // `slug` is interpolated into a RegExp source below; guard against a caller that
-  // bypasses `resolveArtifacts`'/the CLI's validation and hands this a slug with
-  // regex-special characters. `typeof` is checked first because `RegExp.test`
-  // coerces `undefined`/`null` to the string literals "undefined"/"null", both of
-  // which satisfy SLUG_PATTERN and would otherwise slip past this guard.
+  // Guards callers that bypass `resolveArtifacts`' validation; `typeof` first because
+  // `RegExp.test` coerces `undefined`/`null` to strings that satisfy SLUG_PATTERN.
   if (typeof slug !== 'string' || !SLUG_PATTERN.test(slug)) {
     throw new Error(`Slug "${slug}" must be kebab-case (${SLUG_PATTERN.source})`);
   }
-
-  const dir = sessionArea('artifacts');
-  if (!existsSync(dir)) return null;
-
-  const suffix = kind === 'walkthrough' ? '-walkthrough.md' : '.md';
-  const pattern = new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${slug}${suffix.replace('.', '\\.')}$`);
-  // The plan pattern anchors on `<slug>\.md$`, which cannot match `<slug>-walkthrough.md`
-  // (the literal `-walkthrough` before `.md` breaks the anchor) — no extra guard needed.
-
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return null;
-  }
-
-  let newest = null;
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    if (!pattern.test(entry.name)) continue;
-    const abs = path.join(dir, entry.name);
-    let stat;
-    try {
-      stat = statSync(abs);
-    } catch {
-      continue;
-    }
-    if (!newest || stat.mtimeMs > newest.mtimeMs) {
-      newest = { name: entry.name, mtimeMs: stat.mtimeMs };
-    }
-  }
-
-  return newest ? path.join(dir, newest.name) : null;
+  const paths = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(slug));
+  const candidate = paths[kind === 'walkthrough' ? 'walkthrough' : 'plan'];
+  // lstat: a symlinked artifact could pull content from outside the session into a brief.
+  try { return lstatSync(candidate).isFile() ? candidate : null; } catch { return null; }
 }
 
 // ============================================================================
@@ -414,18 +366,17 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
 // ============================================================================
 
 /** Canonical increment artifact path:
- *  `<session>/artifacts/<yyyy-mm-dd>-<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
- *  Returns `{date, designRootSlug, incrementId, incrementSlug, kind}` or null. */
+ *  `<session>/artifacts/<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
+ *  Returns `{designRootSlug, incrementId, incrementSlug, kind}` or null. */
 export function parseIncrementArtifactPath(value) {
   const normalized = String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '');
   const match = INCREMENT_ARTIFACT_PATTERN.exec(normalized);
   if (!match) return null;
-  const [, date, designRootSlug, digits, incrementSlug, suffix] = match;
+  const [, designRootSlug, digits, incrementSlug, suffix] = match;
   if (/(^|-)i\d{2}-/.test(incrementSlug) || /(^|-)i\d{2}$/.test(incrementSlug)) {
     throw new Error(`Increment artifact path "${normalized}" is ambiguous: the increment slug contains a second -i${digits}- segment.`);
   }
   return {
-    date,
     designRootSlug,
     incrementId: `I${digits}`,
     incrementSlug,
@@ -433,59 +384,25 @@ export function parseIncrementArtifactPath(value) {
   };
 }
 
-/** Bounded off-date scan: a reserved-form artifact for the same root slug at another date
- *  must not be silently shadowed by a new-dated phased artifact. */
-function assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate) {
-  const scratchDir = sessionArea('artifacts');
-  let entries;
-  try {
-    entries = fs.readdirSync(scratchDir);
-  } catch {
-    return;
-  }
-  const requestedRoot = kind === 'increment-plan' || kind === 'increment-walkthrough'
-    ? /^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-(?:[a-z0-9]+(?:-[a-z0-9]+)*)$/.exec(slug)?.[1] ?? slug
-    : slug;
-  if (!requestedRoot) return;
-  for (const entry of entries) {
-    const dated = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/.exec(entry);
-    if (!dated) continue;
-    const [, fileDate, candidateSlug] = dated;
-    if (!isReservedOrdinarySlug(candidateSlug) || candidateSlug === slug) continue;
-    const reservedRoot = phasedRootSlug(candidateSlug);
-    if (reservedRoot && reservedRoot === requestedRoot && fileDate !== resolvedDate) {
-      throw new Error(`Phased ${kind} slug "${slug}" collides with reserved artifact "${entry}" for the same root slug "${requestedRoot}" at another date; use the design's canonical date and slug.`);
-    }
-  }
-}
-
-/** Root slug of a reserved-form slug: `X-design`, `X-integration(-walkthrough)`, or `X-i<NN>-…`. */
-function phasedRootSlug(candidateSlug) {
-  if (/^([a-z0-9]+(?:-[a-z0-9]+)*)-design$/.test(candidateSlug)) {
-    return /^([a-z0-9]+(?:-[a-z0-9]+)*)-design$/.exec(candidateSlug)[1];
-  }
-  if (/^([a-z0-9]+(?:-[a-z0-9]+)*)-integration(?:-walkthrough)?$/.test(candidateSlug)) {
-    return /^([a-z0-9]+(?:-[a-z0-9]+)*)-integration(?:-walkthrough)?$/.exec(candidateSlug)[1];
-  }
-  if (/^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-.+$/.test(candidateSlug)) {
-    return /^([a-z0-9]+(?:-[a-z0-9]+)*?)-i\d{2}-.+$/.exec(candidateSlug)[1];
-  }
-  return null;
+/** Refuses a symlink at a canonical path: following it would read content from outside the session. */
+function assertNotSymlink(file) {
+  let stat;
+  try { stat = lstatSync(file); } catch { return; }
+  if (stat.isSymbolicLink()) throw new Error(`Canonical artifact path ${file} is a symlink; replace it with a regular file.`);
 }
 
 /**
  * Resolves one artifact kind: native working copy, existing session artifact, or new session path.
  *
  * @param {ArtifactKind} kind
- * @param {{ slug?: string, date?: string, projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
+ * @param {{ slug?: string, projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
  * @returns {ResolvedArtifact}
  */
-export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_ROOT, repositoryRoot, native: nativeOptions = {} } = {}) {
+export function resolveArtifactPath(kind, { slug, projectRoot = PROJECT_ROOT, repositoryRoot, native: nativeOptions = {} } = {}) {
   if (PHASED_KINDS.includes(kind)) {
-    const resolvedDate = date ?? localDate();
-    const canonical = /** @type {string} */ (buildScratchPaths(resolvedDate, slug, kind));
-    assertNoOffDateReservedCollision(kind, slug, projectRoot, resolvedDate);
+    const canonical = /** @type {string} */ (buildScratchPaths(slug, kind));
     const absolute = canonical;
+    assertNotSymlink(absolute);
     if (existsSync(absolute)) {
       const source = fs.readFileSync(absolute, 'utf8');
       const metadataKind = /^---\n\{\s*"dispatch"\s*:\s*\{[\s\S]*?"kind"\s*:\s*"([^"]+)"/m.exec(source)?.[1] ?? null;
@@ -501,11 +418,12 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
   }
   const native = findNativeArtifact(kind, nativeOptions);
   if (native) {
-    const built = buildScratchPaths(date ?? localDate(), slug, kind === 'plan' || kind === 'walkthrough' ? 'plan' : kind);
+    const built = buildScratchPaths(slug, kind === 'plan' || kind === 'walkthrough' ? 'plan' : kind);
     const target = kind === 'plan' || kind === 'walkthrough'
       ? /** @type {Record<ArtifactKind, string>} */ (built)[kind]
       : /** @type {string} */ (built);
     if (path.resolve(native) === path.resolve(target)) return { tier: 'native', path: target, exists: true };
+    assertNotSymlink(target);
     if (!existsSync(target)) {
       try { fs.copyFileSync(native, target, fs.constants.COPYFILE_EXCL); }
       catch (error) { if (error.code !== 'EEXIST') throw error; }
@@ -516,20 +434,19 @@ export function resolveArtifactPath(kind, { slug, date, projectRoot = PROJECT_RO
   const existing = findExistingScratchArtifact(kind, slug, projectRoot);
   if (existing) return { tier: 'scratch-existing', path: existing, exists: true };
 
-  const paths = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(date ?? localDate(), slug));
+  const paths = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(slug));
   return { tier: 'scratch-new', path: paths[kind], exists: false };
 }
 
 /**
  * Resolves plan and/or walkthrough artifact paths together.
  *
- * @param {{ slug: string, slugSource?: string|null, date?: string, kinds?: ArtifactKind[], projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
- * @returns {{ slug: string, date: string, plan?: Record<string, any>, walkthrough?: Record<string, any> }}
+ * @param {{ slug: string, slugSource?: string|null, kinds?: ArtifactKind[], projectRoot?: string, repositoryRoot?: string|null, native?: NativeOptions }} options
+ * @returns {{ slug: string, plan?: Record<string, any>, walkthrough?: Record<string, any> }}
  */
 export function resolveArtifacts({
   slug,
   slugSource = null,
-  date,
   kinds = ['plan', 'walkthrough'],
   projectRoot = PROJECT_ROOT,
   repositoryRoot,
@@ -545,18 +462,12 @@ export function resolveArtifacts({
   if (kinds.some(kind => ['design', 'integration-walkthrough'].includes(kind)) && isReservedOrdinarySlug(slug)) {
     throw new Error(`Design root slug "${slug}" contains a reserved phased suffix; choose an unambiguous root slug.`);
   }
-  const resolvedDate = date ?? localDate();
-  if (!isValidDate(resolvedDate)) {
-    throw new Error(`Date "${resolvedDate}" must be a valid calendar date as yyyy-mm-dd`);
-  }
-
   const resolvedRepositoryRoot =
     repositoryRoot === undefined && ['explicit', 'branch'].includes(slugSource)
       ? getRepositoryRoot(projectRoot)
       : repositoryRoot ?? null;
   const result = {
     slug,
-    date: resolvedDate,
     ledgerPath: resolveLedgerPath({
       slug,
       slugSource,
@@ -565,7 +476,7 @@ export function resolveArtifacts({
     }),
   };
   for (const kind of kinds) {
-    result[kind] = resolveArtifactPath(kind, { slug, date: resolvedDate, projectRoot, repositoryRoot: resolvedRepositoryRoot ?? projectRoot, native });
+    result[kind] = resolveArtifactPath(kind, { slug, projectRoot, repositoryRoot: resolvedRepositoryRoot ?? projectRoot, native });
   }
   return result;
 }

@@ -81,7 +81,7 @@ describe('code review preparation', () => {
     // The resolver reads the active session's artifact directory for this repository.
     const artifacts = sessionArea('artifacts');
     fs.mkdirSync(artifacts, { recursive: true });
-    const existingWalkthrough = path.join(artifacts, '2026-09-20-feature-walkthrough.md');
+    const existingWalkthrough = path.join(artifacts, 'feature-walkthrough.md');
     fs.writeFileSync(existingWalkthrough, '# Walkthrough — Existing in Session\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
     try {
       const manifest = prepareCodeReview({
@@ -145,7 +145,7 @@ describe('code review preparation', () => {
         '## Review Findings & Resolutions',
         '*No reviews conducted yet.*',
       ].join('\n');
-      fs.writeFileSync(sessionArtifact(repo, '2026-09-20-demo-design.md'), design);
+      fs.writeFileSync(sessionArtifact(repo, 'demo-design.md'), design);
       return design;
     }
 
@@ -157,7 +157,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: sessionArtifact(repo, '2026-09-20-demo-design.md'),
+        designPath: sessionArtifact(repo, 'demo-design.md'),
         designRevision: null,
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
@@ -185,7 +185,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: sessionArtifact(repo, '2026-09-20-missing-design.md'),
+        designPath: sessionArtifact(repo, 'missing-design.md'),
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
       }, { repoRoot: repo }), /design/i);
@@ -254,7 +254,7 @@ describe('code review preparation', () => {
 
   it('reviews an existing metadata-less walkthrough', () => {
     const repo = makeRepo();
-    fs.writeFileSync(sessionArtifact(repo, '2026-09-17-feature-walkthrough.md'), '# Walkthrough — Old\n');
+    fs.writeFileSync(sessionArtifact(repo, 'feature-walkthrough.md'), '# Walkthrough — Old\n');
     const manifest = prepareCodeReview({ summary: 'New work' }, { repoRoot: repo });
     try {
       assert.equal('choices' in manifest, false);
@@ -272,7 +272,7 @@ describe('code review preparation', () => {
 
   it('accepts a minimum-contract baseline walkthrough without rewriting it', () => {
     const repo = makeRepo();
-    const walkthrough = sessionArtifact(repo, '2026-09-17-feature-walkthrough.md');
+    const walkthrough = sessionArtifact(repo, 'feature-walkthrough.md');
     fs.writeFileSync(walkthrough, [
       '# Walkthrough — Feature',
       '## Changes Made',
@@ -545,7 +545,7 @@ function prepareGenerated(repo, extra = {}) {
 describe('prepare-code walkthrough summary box and traceability', () => {
   it('prepare-code walkthrough table synthesizes Pending rows from paired-plan criteria', () => {
     const repo = makeRepo();
-    const plan = sessionArtifact(repo, '2026-09-20-feature.md');
+    const plan = sessionArtifact(repo, 'feature.md');
     fs.writeFileSync(plan, `${PAIRED_PLAN}\n`);
     const manifest = prepareGenerated(repo, { planPath: plan });
     try {
