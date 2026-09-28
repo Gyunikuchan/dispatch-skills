@@ -28,7 +28,8 @@ process.on('exit', () => {
 });
 
 if (!process.env[MARKER]) {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-test-'));
+  // NOTE: .native expands Windows 8.3 short names (e.g. RUNNER~1) so paths match git's long-form toplevel.
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'dispatch-test-'));
   process.env[MARKER] = dir;
   // NOTE: os.tmpdir() reads TMPDIR on POSIX and TEMP/TMP on Windows at call time.
   for (const key of ['TMPDIR', 'TEMP', 'TMP']) process.env[key] = dir;

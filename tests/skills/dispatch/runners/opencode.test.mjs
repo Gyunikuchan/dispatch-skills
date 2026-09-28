@@ -710,16 +710,13 @@ describe('opencode-run', () => {
       assert.equal(withoutEffort.args[mIndex2 + 1], 'lmstudio/m', 'no effort means no #suffix');
     });
 
-    it('returns the threaded binary as command (non-bwrap platforms)', { skip: process.platform === 'linux' }, () => {
-      // On Linux with bwrap installed the command becomes 'bwrap' (its tmpfs test covers that
-      // branch); this asserts the direct-spawn path everywhere else.
-      const res = buildCommand({ prompt: 'x', binary: '/custom/opencode', config: {} });
+    it('returns the threaded binary as command without bwrap', () => {
+      const res = buildCommand({ prompt: 'x', binary: '/custom/opencode', config: {}, hasBwrap: false });
       assert.equal(res.command, '/custom/opencode');
     });
 
-    it('falls back to the bare name when the threaded binary sits under a bwrap tmpfs overlay', { skip: process.platform !== 'linux' }, () => {
-      mock.method(cp, 'spawnSync', () => ({ status: 0, stdout: '/usr/bin/bwrap\n' }));
-      const res = buildCommand({ prompt: 'x', binary: '/tmp/x/opencode', config: {} });
+    it('falls back to the bare name when the threaded binary sits under a bwrap tmpfs overlay', () => {
+      const res = buildCommand({ prompt: 'x', binary: '/tmp/x/opencode', config: {}, hasBwrap: true });
       assert.equal(res.command, 'bwrap');
       const chdirIndex = res.args.indexOf('--chdir');
       assert.equal(res.args[chdirIndex + 2], 'opencode', 'tmpfs-overlayed path falls back to the bare name');
