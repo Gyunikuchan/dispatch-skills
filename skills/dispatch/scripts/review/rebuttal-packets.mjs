@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { scanResolutionLog } from './resolution-log.mjs';
-import { runTempDir } from '../lib/session-temp.mjs';
+import { runId } from '../lib/session-temp.mjs';
+import { runFile } from '../lib/session-paths.mjs';
 
 // SECTION: Context validation
 
@@ -92,20 +93,15 @@ export function buildRebuttalPackets(markdown, context) {
   }));
 }
 
-/** @param {{ artifact: string, context: string }} input */
-export function writeRebuttalPackets({ artifact, context }) {
+/** Writes each source's packet to `r<N>-<source>.packet.json` in the bound run. */
+/** @param {{ artifact: string, context: string, round?: number }} input */
+export function writeRebuttalPackets({ artifact, context, round = 1 }) {
   const markdown = fs.readFileSync(artifact, 'utf8');
   const contextValue = JSON.parse(fs.readFileSync(context === '-' ? 0 : context, 'utf8'));
   const packets = buildRebuttalPackets(markdown, contextValue);
-  const dir = runTempDir('packets', 'dispatch-rebuttal-packets-');
   const written = packets.map((group, index) => {
-    const safeSource = group.sourceKey.replace(/[^A-Za-z0-9._-]+/g, '-');
-    const packetPath = path.join(dir, `${String(index + 1).padStart(2, '0')}-${safeSource}.json`);
-    fs.writeFileSync(packetPath, `${JSON.stringify(group.packet, null, 2)}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-      flag: 'wx',
-    });
+    const source = group.sourceKey.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || `source-${index + 1}`;
+    const packetPath = runFile(runId('code-review'), { round, qualifier: source, kind: 'packet', ext: 'json', contents: `${JSON.stringify(group.packet, null, 2)}\n` });
     return {
       sourceKey: group.sourceKey,
       source: group.source,

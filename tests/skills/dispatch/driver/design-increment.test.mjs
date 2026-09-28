@@ -49,7 +49,7 @@ function setup() {
   fs.mkdirSync(path.join(repo.dir, 'tests'));
   fs.writeFileSync(path.join(repo.dir, 'tests/sample.test.mjs'), "import assert from 'node:assert/strict';\nimport { value } from '../src/app.js';\nassert.equal(value, 1);\n");
   repo.git('add', 'tests'); repo.git('commit', '--no-gpg-sign', '-qm', 'baseline tests');
-  const designPath = path.join(session, 'artifacts', 'root-design.md');
+  const designPath = path.join(session, 'root.design.md');
   const designRel = path.relative(repo.dir, designPath).split(path.sep).join('/');
   const source = designBody(); fs.mkdirSync(path.dirname(designPath), { recursive: true }); fs.writeFileSync(designPath, source);
   const hash = governingHash(source, { kind: 'design' }).hash;
@@ -167,7 +167,7 @@ describe('driver design increment segments', () => {
     assert.equal(entry.wave?.type, 'review');
     const entryState = readRunState(entry.stateFile);
     assert.equal(entryState.ordinary.phase, 'code-review');
-    assert.equal(entryState.runId, before[0].runId, 'resumes the same increment segment');
+    assert.equal(entryState.ledgerRunId, before[0].runId, 'resumes the same increment segment');
     const { done } = runIncrement(ctx, { extraArgs: ['--phases', 'from:code-review'] });
     assert.equal(done.outcome, 'complete', JSON.stringify(done));
     assertOneCompletedI01Segment(ctx);

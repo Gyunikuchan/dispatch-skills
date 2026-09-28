@@ -93,7 +93,7 @@ describe('design amendment transactions', { concurrency: false }, () => {
     fs.mkdirSync(path.dirname(designPath), { recursive: true });
     fs.writeFileSync(designPath, approvedDesign());
     const namespace = ensureLedgerNamespace();
-    ledgerPath = path.join(namespace, 'demo-ledger.md');
+    ledgerPath = path.join(namespace, 'demo.ledger.md');
     appendEvent(ledgerPath, {
       v: 2, seq: 1, type: 'run-start', runId, at,
       data: {

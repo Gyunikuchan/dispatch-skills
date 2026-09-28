@@ -40,6 +40,7 @@ import {
   parseCommonArgs,
   readStdin,
   parseRunnerModeArgs,
+  withLaunchScope,
 } from './runners/shared.mjs';
 
 import { isOpencodeAvailable, runOpencode } from './runners/opencode.mjs';
@@ -62,7 +63,8 @@ import {
   validateConfig,
 } from './lib/config.mjs';
 import { normalizePin, parsePins, resolveFlow } from './lib/resolve-flow.mjs';
-import { isSessionPath, runArea, consumeSessionFlag } from './lib/session-temp.mjs';
+import { isSessionPath, runId, consumeSessionFlag } from './lib/session-temp.mjs';
+import { runFile } from './lib/session-paths.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -75,6 +77,7 @@ const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
  * @typedef {object} DispatchTaskOptions
  * @property {string} [prompt] Required; validated at runtime.
  * @property {string|null} [promptFile] Message-only source path of `prompt`, cited in native-fallback guidance.
+ * @property {{ round: number, slot: number }} [scope] Names this launch's `r<N>-<provider>-<slot>` run files.
  * @property {string[]} [files]
  * @property {string|string[]} [model]
  * @property {string} [effort]
@@ -152,6 +155,7 @@ const DISPATCH_VALUE_FLAGS = [
   '--level-source',
   '--pins',
   '--slots-file',
+  '--round',
 ];
 const LEVEL_SOURCES = ['explicit', 'classified'];
 const INSPECTION_FLAGS = ['--validate-only', '--list-platforms', '--list-targets', '--doctor'];
@@ -209,6 +213,7 @@ export async function main() {
       '--level-source': 'levelSource',
       '--pins': 'pins',
       '--slots-file': 'slotsFile',
+      '--round': 'round',
     },
   });
   const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;
@@ -218,6 +223,7 @@ export async function main() {
   const rawLevelSource = dispatchValues.levelSource ?? null;
   const rawPins = dispatchValues.pins ?? null;
   const slotsFile = dispatchValues.slotsFile ?? null;
+  const round = dispatchValues.round === undefined || dispatchValues.round === null ? 1 : Number(dispatchValues.round);
   // NOTE: parseRunnerModeArgs maps an empty value to null, so presence is read from argv; an empty
   // list must not fall through to a plain cascade or silently widen to an `all` wave.
   const optionArgs = process.argv.slice(2);
@@ -322,6 +328,11 @@ export async function main() {
     process.exit(1);
   }
 
+  if (!Number.isInteger(round) || round < 1) {
+    console.error('Error: --round requires a positive integer.');
+    process.exit(1);
+  }
+
   if (slotsFile && !batchFile && rawPins === null) {
     console.error('Error: --slots-file requires --batch-file or --pins.');
     process.exit(1);
@@ -354,11 +365,13 @@ export async function main() {
         promptFile: pipedStdin ? null : options.promptFile,
         outputFile,
         slotsFile,
+        round,
       });
       return;
     }
     result = await dispatchTask({
       ...options,
+      scope: { round, slot: 1 },
       prompt: finalPrompt,
       level: levelArgs.level,
       responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,
@@ -575,7 +588,7 @@ function downgradeFields(source) {
 }
 
 /** Runs one wave slot and normalizes thrown and returned failures into one outcome. */
-async function runBatchEntry(entry, options, config, resolved, substitutesFor = null) {
+async function runBatchEntry(entry, options, config, resolved, substitutesFor = null, scope = { round: 1, slot: 1 }) {
   let result;
   let error;
   const startedAt = Date.now();
@@ -591,6 +604,7 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
       responseSchema: targetSupportsSchema ? options.responseSchema : null,
       config,
       configPath: options.configPath,
+      scope,
     });
   } catch (err) {
     error = err;
@@ -598,13 +612,14 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
   const record = batchRecord(entry, 'failed', result, error, substitutesFor, resolved);
   appendTelemetry({ result, error, startedAt });
   const exit = Number.isInteger(result?.exitCode) ? result.exitCode : null;
-  if (error) return { ok: false, terminal: error.code === 'INTEGRITY_VIOLATION', record, exit };
+  if (error) return { ok: false, terminal: error.code === 'INTEGRITY_VIOLATION', record, exit, scope };
   const ok = result.exitCode === 0 && !isEmptyResult(result);
   return {
     ok,
     terminal: false,
     record: { ...record, status: ok ? 'ok' : 'failed' },
     exit,
+    scope,
   };
 }
 
@@ -619,13 +634,21 @@ async function runBatchEntry(entry, options, config, resolved, substitutesFor = 
  * @returns {Promise<{ targets: Record<string, any>[], failures: Record<string, any>[], logDir: string|null, complete: boolean }>}
  */
 export async function dispatchBatch(batch, options, config) {
-  const { onSlot = null, ...taskOptions } = options;
+  const { onSlot = null, round = 1, ...taskOptions } = options;
+  // Slots count per provider within the wave, reserves included, so file names never collide.
+  const slots = new Map();
+  const scopeFor = (entry) => {
+    const slot = (slots.get(entry.platform) ?? 0) + 1;
+    slots.set(entry.platform, slot);
+    return { round, slot };
+  };
   const resolved = resolveReadDelegates(config, taskOptions.level ?? 'medium');
   const reserves = [...batch.reserves];
   const orchestrator = normalizeOrchestrator(taskOptions.orchestrator || detectOrchestrator());
-  const outcomes = await Promise.all(batch.targets.map(async entry => {
-    const outcome = await runBatchEntry(entry, taskOptions, config, resolved);
-    onSlot?.(outcome.record, outcome.exit);
+  const scoped = batch.targets.map(entry => ({ entry, scope: scopeFor(entry) }));
+  const outcomes = await Promise.all(scoped.map(async ({ entry, scope }) => {
+    const outcome = await runBatchEntry(entry, taskOptions, config, resolved, null, scope);
+    onSlot?.(outcome.record, outcome.exit, outcome.scope);
     return outcome;
   }));
   const records = [];
@@ -647,8 +670,8 @@ export async function dispatchBatch(batch, options, config) {
     let replacement = outcome;
     while (!replacement.ok && reserves.length > 0) {
       const reserve = reserves.shift();
-      replacement = await runBatchEntry(reserve, taskOptions, config, resolved, outcome.record.sourceKey);
-      onSlot?.(replacement.record, replacement.exit);
+      replacement = await runBatchEntry(reserve, taskOptions, config, resolved, outcome.record.sourceKey, scopeFor(reserve));
+      onSlot?.(replacement.record, replacement.exit, replacement.scope);
       if (replacement.terminal) throw integrityStop();
       if (!replacement.ok) failures.push(replacement.record);
     }
@@ -737,15 +760,13 @@ export function buildPinsWave(resolved, rawPins, { orchestrator = null, orchestr
 }
 
 /**
- * Formats one R8 per-slot stdout line and writes a successful slot's report to an session file
- * (mode 0600) so stdout carries paths, never report bodies.
+ * Formats one R8 per-slot stdout line and writes a successful slot's report to
+ * `r<N>-<provider>-<slot>.report.md` (mode 0600) so stdout carries paths, never report bodies.
  */
-function slotLine(record, exit, reportDir) {
+function slotLine(record, exit, scope) {
   let output = null;
   if (record.status === 'ok' && record.report) {
-    const file = path.join(reportDir, `${record.sourceKey.replace(/[^a-zA-Z0-9.-]/g, '_')}.md`);
-    fs.writeFileSync(file, record.report, { encoding: 'utf8', mode: 0o600 });
-    output = file;
+    output = runFile(runId('ask'), { round: scope.round, provider: record.platform, slot: scope.slot, kind: 'report', ext: 'md', contents: record.report });
   }
   return JSON.stringify({
     slot: record.sourceKey,
@@ -944,6 +965,7 @@ export async function dispatchTask(options = {}) {
     // Message-only: the CLI already folded this file into `prompt`, but the native-fallback
     // guidance cites the path so the subagent reuses the identical brief.
     promptFile = null,
+    scope = { round: 1, slot: 1 },
   } = options;
 
   assertSkillIntegrity();
@@ -1115,6 +1137,7 @@ export async function dispatchTask(options = {}) {
       verbose,
       model: candidate.model,
       effort: candidate.effort,
+      scope,
     };
     if (SANDBOX_SUPPORTED_PROVIDERS.includes(candidate.provider)) runnerOptions.sandbox = candidate.sandbox;
     return runnerOptions;
@@ -1406,7 +1429,7 @@ function loadValidConfigOrExit() {
  * successful report in an session file, and the full envelope in `--output-file` when given.
  * Exits 0 only when every slot resolved.
  */
-async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, responseSchema, promptFile, outputFile, slotsFile = null }) {
+async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, responseSchema, promptFile, outputFile, slotsFile = null, round = 1 }) {
   if (batchFile) {
     const conflicts = [];
     if (options.provider !== null) conflicts.push('--provider');
@@ -1435,16 +1458,16 @@ async function runWave({ options, noConfig, batchFile, rawPins, level, prompt, r
     batch = wave;
   }
 
-  const reportDir = fs.mkdtempSync(path.join(runArea('reports'), 'dispatch-slots-'));
   const envelope = await dispatchBatch(batch, {
     ...options,
+    round,
     prompt,
     level,
     responseSchema,
     configPath: loaded.path,
     promptFile,
-    onSlot: (record, exit) => {
-      process.stdout.write(`${slotLine(record, exit, reportDir)}\n`);
+    onSlot: (record, exit, scope) => {
+      process.stdout.write(`${slotLine(record, exit, scope)}\n`);
       if (slotsFile) {
         fs.appendFileSync(slotsFile, `${JSON.stringify({ slot: record.sourceKey, platform: record.platform, status: record.status, exit, session: record.session })}\n`);
       }
@@ -1485,6 +1508,7 @@ Options:
   --batch-file <path>         Execute caller-resolved targets/reserves from a temporary JSON file;
                               prints one JSON line per slot
   --output-file <path>        Write the report (or wave envelope) to this file instead of stdout
+  --round <n>                 Review round naming this launch's run files (default: 1)
   --response-schema-file <path>
                               Require provider-native structured output matching this JSON Schema
   --provider <name>           Force specific provider (${KNOWN_PROVIDERS.join(', ')})
@@ -1705,7 +1729,8 @@ export async function executeProvider(provider, runnerOptions) {
   if (!runner) {
     throw new Error(`Unhandled provider: ${provider}`);
   }
-  return await runner(runnerOptions);
+  const { scope = { round: 1, slot: 1 }, ...options } = runnerOptions;
+  return await withLaunchScope({ ...scope, provider }, () => runner(options));
 }
 
 // SECTION: Process entry point

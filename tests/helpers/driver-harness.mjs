@@ -169,19 +169,22 @@ export function fixtureSessionDir(repoDir) {
   return fixture.sessionDir;
 }
 
+const DELIVERABLE = /\.(?:spec|design|plan|walkthrough|report)\.md$/;
+
+/** The session root, where deliverables live. */
 function artifactsDirectory(repoDir) {
-  const directory = path.join(fixtureSessionDir(repoDir), 'artifacts');
+  const directory = fixtureSessionDir(repoDir);
   fs.mkdirSync(directory, { recursive: true });
   return directory;
 }
 
-export function writePlan(repoDir, name = 'sample.md', body = PLAN_BODY) {
+export function writePlan(repoDir, name = 'sample.plan.md', body = PLAN_BODY) {
   const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;
 }
 
-export function writeDesign(repoDir, name = 'sample-design.md', body = DESIGN_BODY) {
+export function writeDesign(repoDir, name = 'sample.design.md', body = DESIGN_BODY) {
   const file = path.join(artifactsDirectory(repoDir), name);
   fs.writeFileSync(file, body);
   return file;
@@ -212,7 +215,7 @@ export function writeOutcomeReply(action, envelope) {
 export function artifactSnapshot(repoDir) {
   const root = artifactsDirectory(repoDir);
   if (!fs.existsSync(root)) return {};
-  return Object.fromEntries(fs.readdirSync(root).sort().map((name) => [
+  return Object.fromEntries(fs.readdirSync(root).filter((name) => DELIVERABLE.test(name)).sort().map((name) => [
     name,
     fs.readFileSync(path.join(root, name), 'utf8')
       .replaceAll(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, '<time>')
@@ -226,14 +229,14 @@ function removeDriverState(action) {
 
 export function walkthroughPath(repoDir) {
   const root = artifactsDirectory(repoDir);
-  const names = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.endsWith('-walkthrough.md')) : [];
+  const names = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.endsWith('.walkthrough.md')) : [];
   assert.equal(names.length, 1, `expected one walkthrough, found: ${names.join(', ')}`);
   return path.join(root, names[0]);
 }
 
 export function readHandoffWalkthrough(done) {
-  const root = path.join(done.handoff.destinations[0], 'artifacts');
-  const files = fs.readdirSync(root).filter(name => name.endsWith('-walkthrough.md'));
+  const root = done.handoff.destinations[0];
+  const files = fs.readdirSync(root).filter(name => name.endsWith('.walkthrough.md'));
   assert.equal(files.length, 1, 'one walkthrough in the final chat folder');
   return fs.readFileSync(path.join(root, files[0]), 'utf8');
 }
@@ -310,7 +313,7 @@ export function runDispatch(fixture, args, { cwd, results, live, env } = {}) {
     const action = JSON.parse(stdout.trim());
     const stateFile = path.resolve(action.stateFile ?? '');
     if (action.v === 1 && path.basename(stateFile) === 'state.json' && path.basename(path.dirname(path.dirname(stateFile))) === 'runs') {
-      const currentRoot = path.dirname(path.dirname(path.dirname(stateFile)));
+      const currentRoot = path.dirname(path.dirname(path.dirname(path.dirname(stateFile))));
       const manifest = JSON.parse(fs.readFileSync(path.join(currentRoot, 'manifest.json'), 'utf8'));
       if (session && manifest.sessionId === session.sessionId) {
         session.sessionDir = fs.realpathSync(currentRoot);

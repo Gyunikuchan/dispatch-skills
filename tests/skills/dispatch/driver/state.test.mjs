@@ -39,7 +39,7 @@ describe('driver state in a movable chat folder', () => {
   it('stores session-owned paths relative to the root and resolves them after terminal movement and reactivation', () => {
     const invocation = { verb: 'implement', argument: 'move session state', orchestrator: 'codex', levelSource: 'default', terminalHandoff: true };
     const state = createRunState({ invocation, repoRoot: repositoryRoot, dispatchScript: 'dispatch.mjs', ordinary: {}, pending: null, cleanup: [] });
-    state.planPath = path.join(sessionDir(), 'artifacts', 'plan.md');
+    state.planPath = path.join(sessionDir(), 'plan.plan.md');
     fs.mkdirSync(path.dirname(state.planPath), { recursive: true });
     fs.writeFileSync(state.planPath, '# plan');
     state.resumeCommand = resumeCommand(invocation);
@@ -57,13 +57,13 @@ describe('driver state in a movable chat folder', () => {
     assert.equal(fs.existsSync(scratchRoot), false);
 
     const persisted = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
-    assert.equal(persisted.planPath, '@session/artifacts/plan.md');
+    assert.equal(persisted.planPath, '@session/plan.plan.md');
     assert.match(persisted.resumeCommand, /--session-dir @session/);
 
     const rebound = readRunState(action.stateFile);
     const workspaceRoot = sessionDir();
-    assert.equal(path.dirname(path.dirname(path.dirname(rebound.stateFile))), workspaceRoot);
-    assert.equal(normalized(rebound.planPath), normalized(path.join(workspaceRoot, 'artifacts', 'plan.md')));
+    assert.equal(path.dirname(path.dirname(path.dirname(path.dirname(rebound.stateFile)))), workspaceRoot);
+    assert.equal(normalized(rebound.planPath), normalized(path.join(workspaceRoot, 'plan.plan.md')));
     assert.match(rebound.resumeCommand, new RegExp(workspaceRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(normalized(rebound.pending.handoff.destinations[0]), normalized(workspaceRoot));
   });
@@ -77,7 +77,7 @@ describe('driver state in a movable chat folder', () => {
   });
 
   it('rejects artifacts outside the bound chat session', () => {
-    const artifact = path.join(repositoryRoot, '.scratch', 'other', 'new-chat-walkthrough.md');
+    const artifact = path.join(repositoryRoot, '.scratch', 'other', 'new-chat.walkthrough.md');
     fs.mkdirSync(path.dirname(artifact), { recursive: true });
     fs.writeFileSync(artifact, '# New chat walkthrough\n');
     process.env.DISPATCH_CHAT_ID = `new-chat-${process.pid}-${Date.now()}`;
@@ -89,8 +89,8 @@ describe('driver state in a movable chat folder', () => {
     const first = createRunState({ invocation: { verb: 'ask' }, repoRoot: repositoryRoot, ordinary: {}, pending: null, cleanup: [] });
     const firstRoot = sessionDir();
     const second = createRunState({ invocation: { verb: 'plan' }, repoRoot: repositoryRoot, ordinary: {}, pending: null, cleanup: [] });
-    assert.equal(path.dirname(path.dirname(first.stateFile)), path.join(firstRoot, 'runs'));
-    assert.equal(path.dirname(path.dirname(second.stateFile)), path.join(firstRoot, 'runs'));
+    assert.equal(path.dirname(path.dirname(first.stateFile)), path.join(firstRoot, '.state', 'runs'));
+    assert.equal(path.dirname(path.dirname(second.stateFile)), path.join(firstRoot, '.state', 'runs'));
     assert.notEqual(first.runId, second.runId);
   });
 
@@ -98,7 +98,7 @@ describe('driver state in a movable chat folder', () => {
     const invocation = { verb: 'review', argument: 'plan', orchestrator: 'codex', levelSource: 'default', terminalHandoff: true };
     const parent = createRunState({ invocation, repoRoot: repositoryRoot, dispatchScript: 'dispatch.mjs', ordinary: {}, pending: null, cleanup: [] });
     const originalRoot = sessionDir();
-    const artifact = path.join(originalRoot, 'artifacts', 'plan.md');
+    const artifact = path.join(originalRoot, 'plan.md');
     fs.mkdirSync(path.dirname(artifact), { recursive: true });
     fs.writeFileSync(artifact, '# Plan\n');
     const created = createInvocationState({ kind: 'plan', artifactPath: artifact, snapshot: { contentHash: 'sha256:abc' } });
@@ -111,7 +111,7 @@ describe('driver state in a movable chat folder', () => {
     const rebound = readRunState(action.stateFile);
     const reviewState = readInvocationState(rebound.invocationContext);
     const activeRoot = sessionDir();
-    assert.equal(path.resolve(reviewState.artifactPath), path.resolve(path.join(activeRoot, 'artifacts', 'plan.md')));
+    assert.equal(path.resolve(reviewState.artifactPath), path.resolve(path.join(activeRoot, 'plan.md')));
     assert.equal(path.resolve(reviewState.statePath), path.resolve(rebound.invocationContext.statePath));
     assert.match(JSON.parse(fs.readFileSync(reviewState.statePath, 'utf8')).statePath, /^@session\//);
   });

@@ -89,8 +89,7 @@ export function approve(state, reply, actor = 'user') {
   if (segment?.approved) { state.ledgerRunId = segment.runId; return; }
   if (segment && segment.tasks.size) throw new Error('Unapproved ledger contains task activity; reconcile first.');
   const design = state.designPath && { path: relative(state, state.designPath), revision: state.designRevision };
-  // Increment segments share the driver run identity, as design segments do.
-  state.ledgerRunId = segment?.runId ?? (design ? state.runId : crypto.randomUUID());
+  state.ledgerRunId = segment?.runId ?? crypto.randomUUID();
   if (!segment) append(state, 'run-start', design
     ? { governingPath: design.path, governingHash: design.revision, rootSlug: designSlug(state.designPath), action: 'increment', design, baseline: data.baseline,
       increment: { id: state.increment.id, planPath: relative(state, state.planPath), walkthroughPath: relative(state, state.walkthroughPath), planHash: state.governingHash } }

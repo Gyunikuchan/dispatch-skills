@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { governingHash, resumeDesign, designRootSlug, readLedger, appendEvent } from '../ledger/ledger.mjs';
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { buildScratchPaths, resolveLedgerPath, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
-import { runStatePath } from '../lib/session-temp.mjs';
+import { claimDeliverable } from '../lib/session-paths.mjs';
 import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
 import { updateExecutionStatus } from '../design/status.mjs';
 import { DriverError, emitAction } from './actions.mjs';
@@ -21,7 +21,7 @@ import { refuse, relative, restoreEvidence } from './implement-state.mjs';
 export function designSlug(file) {
   const named = designRootSlug(file);
   if (named) return named;
-  const base = path.basename(file, '.md').replace(/-design$/, '');
+  const base = path.basename(file, '.md').replace(/\.design$/, '');
   return base || 'design';
 }
 
@@ -38,9 +38,10 @@ export function incrementPaths(state, id) {
 /** Starts canonical technical-design authoring. */
 export function startDesign(state) {
   const argument = state.invocation.argument;
-  state.designPath = argument.endsWith('-design.md')
+  state.designPath = argument.endsWith('.design.md')
     ? path.resolve(state.repoRoot, argument)
-    : buildScratchPaths(sanitizeSlug(argument).slice(0, 64) || 'design', 'design');
+    // A different objective never overwrites a same-slug design earlier in this session.
+    : claimDeliverable(sanitizeSlug(argument) || 'design', 'design', argument);
   state.planPath = state.designPath;
   state.ordinary.phase = 'design';
   state.ordinary.step = 'design-author';
@@ -80,7 +81,7 @@ export async function advanceDesign(state, reply) {
     const now = new Date();
     const metadata = { schemaVersion: 1, kind: 'design', slug: designSlug(state.designPath), invocationId: crypto.randomUUID(), contentHash: snapshot.contentHash, sectionHashes: snapshot.sectionHashes, reviewedAt: now.toISOString(), approvedContentHash: state.governingHash, approvedAt: now.toISOString() };
     writeArtifactMetadata(state.designPath, metadata);
-    state.ledgerRunId = state.runId;
+    state.ledgerRunId = crypto.randomUUID();
     const baseline = repositoryBaseline(state);
     appendEvent(state.ledgerPath, { v: 2, type: 'run-start', runId: state.ledgerRunId, at: now.toISOString(), data: { governingPath: relative(state, state.designPath), governingHash: state.governingHash, rootSlug: designSlug(state.designPath), action: 'design', baseline } });
     appendEvent(state.ledgerPath, { v: 2, type: 'approval', runId: state.ledgerRunId, at: now.toISOString(), data: { governingHash: state.governingHash, decision: 'approved', actor: 'user' } });
@@ -150,12 +151,6 @@ export function resumeDesignPath(state) {
     state.governingHash = planHash.hash;
     try {
       const restored = restoreEvidence(state);
-      // The driver run adopts the bound increment segment's run identity.
-      if (state.ledgerRunId) {
-        state.runId = state.ledgerRunId;
-        state.stateFile = runStatePath(state.runId);
-        writeRunSidecar(state, state.invocation);
-      }
       return enterPhase(state, from ?? (restored ? state.ordinary.phase ?? 'implementation' : 'plan-review')).catch(error => refuse(state, error.message));
     } catch (error) {
       return refuse(state, error.message);

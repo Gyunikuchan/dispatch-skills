@@ -388,7 +388,7 @@ function prepareDocumentReview(entry, request, {
     throw new Error('rebuttal review requires findingPacketPath.');
   }
   // Every round reads the projection, so round-1 and re-review briefs share one shape.
-  const view = createReviewView({ artifact: resolved.path, nextRound: round });
+  const view = createReviewView({ artifact: resolved.path, nextRound: round, runKind: `${entry.kind}-review` });
   const reviewPath = view.viewPath;
   const derivedScope = reviewMode === 'rebuttal'
     ? `Finding keys only: ${(request.findingKeys ?? []).join(', ')}${request.retryNote ? ` — ${request.retryNote}` : ''}`
@@ -450,11 +450,13 @@ function prepareDocumentReview(entry, request, {
       artifactPath: resolved.path,
       snapshot,
       expectedSourceKeys: keys,
+      round,
     });
     invocation = advanceInvocationState(created.context, { repoRoot, slug: resolved.slug, round });
   }
   const batch = mode === 'orchestrated' ? { targets, reserves } : null;
   const files = createDispatchFiles({
+    round,
     prompt,
     batch,
     attachments: [

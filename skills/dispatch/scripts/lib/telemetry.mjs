@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { sessionArea } from './session-temp.mjs';
+import { stateFile } from './session-paths.mjs';
 
 const MAX_BYTES = 1024 * 1024;
 const FILE_NAME = 'telemetry.jsonl';
@@ -35,8 +35,7 @@ export function userSlug({ env = process.env, userInfo = () => os.userInfo() } =
  * @returns {string}
  */
 export function telemetryPath({ dir } = {}) {
-  const base = dir ?? sessionArea('telemetry');
-  return path.join(base, FILE_NAME);
+  return dir ? path.join(dir, FILE_NAME) : stateFile(FILE_NAME);
 }
 
 // SECTION: Secure persistence

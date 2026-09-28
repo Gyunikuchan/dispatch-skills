@@ -6,7 +6,8 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { loadDispatchConfig } from '../lib/config.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { readArtifact } from '../review/preparation.mjs';
-import { buildScratchPaths, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { sanitizeSlug } from '../artifacts/resolve-paths.mjs';
+import { claimDeliverable } from '../lib/session-paths.mjs';
 import { DriverError, emitAction } from './actions.mjs';
 import { position } from './state.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
@@ -39,9 +40,9 @@ export function authorPlan(state) {
   state.ordinary.phase = 'plan';
   const spec = state.specPath;
   if (!state.planPath) {
-    const seed = spec ? path.basename(spec, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-design$/, '') : state.invocation.argument;
-    const slug = sanitizeSlug(seed).slice(0, 64) || 'implementation';
-    state.planPath = /** @type {Record<string, string>} */ (buildScratchPaths(slug)).plan;
+    const seed = spec ? path.basename(spec, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/\.(?:spec|design)$/, '') : state.invocation.argument;
+    // A different spec or objective never overwrites a same-slug plan earlier in this session.
+    state.planPath = claimDeliverable(sanitizeSlug(seed) || 'implementation', 'plan', spec ? path.relative(state.repoRoot, spec) : state.invocation.argument);
   }
   return emitAction(state, 'author', { path: state.planPath, template: 'plan', defects: [] }, [
     spec ? `Author the canonical plan from the spec at ${spec}; its settled decisions are inputs, not open questions.` : `Author the canonical plan for: ${state.invocation.argument}`,

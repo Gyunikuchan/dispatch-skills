@@ -39,7 +39,7 @@ describe('driver plan authoring', () => {
     };
     const action = authorPlan(state);
     assert.equal(action.action, 'author');
-    assert.equal(normalized(path.dirname(action.path)), normalized(path.join(session, 'artifacts')));
-    assert.match(path.basename(action.path), /^implement-the-plan-session-behavior\.md$/);
+    assert.equal(normalized(path.dirname(action.path)), normalized(session));
+    assert.match(path.basename(action.path), /^implement-the-plan-session-behavior\.plan\.md$/);
   });
 });

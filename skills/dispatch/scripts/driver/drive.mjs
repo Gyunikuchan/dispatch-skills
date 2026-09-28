@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { bindStateSession, readRunState } from './state.mjs';
+import { bindStateSession, readRunState, runFile } from './state.mjs';
 import { runVerification } from './verify-run.mjs';
 
 // Guards a driver bug from looping forever; a real run stops for judgment far sooner.
@@ -37,7 +37,7 @@ function needsEvidence(action) {
 
 function launch(action, stderr) {
   const state = readRunState(action.stateFile);
-  const logPath = path.join(path.dirname(path.resolve(action.stateFile)), `${state.runId}-drive-${action.wave.type}-r${action.wave.round}-${Date.now()}.log`);
+  const logPath = runFile(state, { round: action.wave.round, kind: 'drive', ext: 'log' });
   const fd = fs.openSync(logPath, 'w', 0o600);
   const start = Date.now();
   let result;

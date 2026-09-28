@@ -9,7 +9,7 @@
  *      when the orchestrator actually is that platform; scoped to the exact active
  *      conversation when its id is known, else a same-platform recency guess.
  *   2. Existing scratch artifact matching the slug — reuse, don't re-author.
- *   3. Session-new: the deterministic `<session>/artifacts/<slug>[-walkthrough].md` path.
+ *   3. Session-new: the deterministic `<session>/<slug>.<plan|walkthrough>.md` path.
  *
  * Usage:
  *   node artifacts/resolve-paths.mjs [--slug <kebab-slug>] [--kind plan|walkthrough|both] [--orchestrator <name>]
@@ -40,14 +40,14 @@ import { showToplevel } from '../lib/git-root.mjs';
 import { PROJECT_ROOT, spawnCliSync } from '../lib/platform.mjs';
 import { detectOrchestrator } from '../lib/providers.mjs';
 import { AGY_MODE_DATA_DIRS } from '../runners/agy.mjs';
-import { assertWorkflowSession, sessionArea } from '../lib/session-temp.mjs';
+import { assertWorkflowSession, sessionDir } from '../lib/session-temp.mjs';
+import { compoundDeliverable, deliverable, stateDir, stateFile, truncateSlug } from '../lib/session-paths.mjs';
 
 /** @typedef {'design'|'plan'|'increment-plan'|'walkthrough'|'increment-walkthrough'|'integration-walkthrough'} ArtifactKind */
 /** @typedef {'native'|'session-import'|'scratch-existing'|'scratch-new'} ArtifactTier */
 /** @typedef {{ roots?: string[], orchestrator?: string|null, conversationId?: string|null }} NativeOptions */
 /** @typedef {{ tier: ArtifactTier, path: string, exists: boolean, scratchOnly?: boolean }} ResolvedArtifact */
 
-export const SCRATCH_DIR = 'artifacts';
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const PHASED_KINDS = /** @type {readonly ArtifactKind[]} */ (Object.freeze(['design', 'increment-plan', 'increment-walkthrough', 'integration-walkthrough']));
 export const RESERVED_SLUG_PATTERN = /(?:-design|-integration(?:-walkthrough)?|-i\d{2}-.+)$/;
@@ -55,14 +55,13 @@ export const RESERVED_SLUG_PATTERN = /(?:-design|-integration(?:-walkthrough)?|-
 const CONVERSATION_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 const PROTECTED_BRANCHES = new Set(['main', 'master', 'develop', 'trunk', 'head']);
 const BRANCH_PREFIX_PATTERN = /^(feature|feat|fix|bugfix|hotfix|chore|refactor|release)\//;
-const MAX_SLUG_LENGTH = 60;
 const NATIVE_ARTIFACT_ORCHESTRATORS = new Set(['agy']);
 const NATIVE_FILENAME = Object.freeze({
   design: 'technical_design.md',
   plan: 'implementation_plan.md',
   walkthrough: 'walkthrough.md',
 });
-const INCREMENT_ARTIFACT_PATTERN = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)-(plan|walkthrough)\.md$/;
+const INCREMENT_ARTIFACT_PATTERN = /(?:^|\/)([a-z0-9]+(?:-[a-z0-9]+)*?)-i(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)\.(plan|walkthrough)\.md$/;
 
 /** Env vars carrying conversation/session identity, scoped to the detected orchestrator. */
 const CONVERSATION_ID_ENV_VARS = Object.freeze({
@@ -89,17 +88,19 @@ export function isReservedOrdinarySlug(slug) {
  * @returns {Record<ArtifactKind, string>|string}
  */
 export function buildScratchPaths(slug, kind = 'plan') {
-  const artifacts = sessionArea('artifacts');
-  const paths = {
-    plan: path.join(artifacts, `${slug}.md`),
-    walkthrough: path.join(artifacts, `${slug}-walkthrough.md`),
-    design: path.join(artifacts, `${slug}-design.md`),
-    'increment-plan': path.join(artifacts, `${slug}-plan.md`),
-    'increment-walkthrough': path.join(artifacts, `${slug}-walkthrough.md`),
-    'integration-walkthrough': path.join(artifacts, `${slug}-integration-walkthrough.md`),
+  const root = sessionDir();
+  // Single-slug deliverables go through the central builder; increment names are compound scopes.
+  const builders = {
+    plan: () => deliverable(slug, 'plan', { root }),
+    walkthrough: () => deliverable(slug, 'walkthrough', { root }),
+    design: () => deliverable(slug, 'design', { root }),
+    'increment-plan': () => compoundDeliverable(slug, 'plan', { root }),
+    'increment-walkthrough': () => compoundDeliverable(slug, 'walkthrough', { root }),
+    'integration-walkthrough': () => compoundDeliverable(`${slug}-integration`, 'walkthrough', { root }),
   };
-  if (!Object.hasOwn(paths, kind)) throw new Error(`Unknown artifact kind "${kind}"`);
-  return kind === 'plan' || kind === 'walkthrough' ? paths : paths[kind];
+  if (!Object.hasOwn(builders, kind)) throw new Error(`Unknown artifact kind "${kind}"`);
+  if (kind !== 'plan' && kind !== 'walkthrough') return builders[kind]();
+  return /** @type {Record<ArtifactKind, string>} */ (Object.fromEntries(['plan', 'walkthrough', 'design'].map(key => [key, builders[key]()])));
 }
 
 export function getRepositoryRoot(cwd = PROJECT_ROOT) {
@@ -110,10 +111,10 @@ export function getRepositoryRoot(cwd = PROJECT_ROOT) {
 export function resolveLedgerPath({ slug, slugSource, repositoryRoot } = {}) {
   if (!repositoryRoot || !['explicit', 'branch'].includes(slugSource)) return null;
   assertWorkflowSession({ repositoryRoot });
-  return path.join(ledgerNamespacePath(), `${slug}-ledger.md`);
+  return stateFile(`${slug}.ledger.md`);
 }
 
-export function ledgerNamespacePath() { return sessionArea('ledger'); }
+export function ledgerNamespacePath() { return stateDir(); }
 
 /**
  * Slug of this session's most recent ordinary run whose baseline commit lies within the reviewed
@@ -127,10 +128,10 @@ export function ledgerNamespacePath() { return sessionArea('ledger'); }
  */
 export function ledgerWalkthroughSlug(repoRoot, { baseSha = null, headSha = null } = {}) {
   let files;
-  try { files = readdirSync(ledgerNamespacePath()).filter((name) => name.endsWith('-ledger.md')); } catch { return null; }
+  try { files = readdirSync(ledgerNamespacePath()).filter((name) => name.endsWith('.ledger.md')); } catch { return null; }
   const candidates = [];
   for (const name of files) {
-    const slug = name.slice(0, -'-ledger.md'.length);
+    const slug = name.slice(0, -'.ledger.md'.length);
     if (!SLUG_PATTERN.test(slug) || isReservedOrdinarySlug(slug)) continue;
     let text;
     try { text = fs.readFileSync(path.join(ledgerNamespacePath(), name), 'utf8'); } catch { continue; }
@@ -160,19 +161,18 @@ export function ledgerWalkthroughSlug(repoRoot, { baseSha = null, headSha = null
 
 /**
  * Kebab-cases arbitrary text: lowercase, non-alphanumeric runs become a single
- * `-`, leading/trailing dashes trimmed, capped to MAX_SLUG_LENGTH.
+ * `-`, leading/trailing dashes trimmed, truncated to `SLUG_MAX` at a word boundary.
  *
  * @param {string} raw
  * @returns {string|null} null when nothing kebab-worthy remains
  */
 export function sanitizeSlug(raw) {
   if (!raw || typeof raw !== 'string') return null;
-  const slug = raw
+  let slug = raw
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, MAX_SLUG_LENGTH)
-    .replace(/-+$/g, '');
+    .replace(/^-+|-+$/g, '');
+  slug = truncateSlug(slug);
   return slug.length > 0 && SLUG_PATTERN.test(slug) ? slug : null;
 }
 
@@ -407,7 +407,7 @@ export function findExistingScratchArtifact(kind, slug, projectRoot = PROJECT_RO
 // ============================================================================
 
 /** Canonical increment artifact path:
- *  `<session>/artifacts/<design-slug>-i<NN>-<increment-slug>-plan|walkthrough>.md`.
+ *  `<session>/{design-slug}-i<NN>-{increment-slug}.<plan|walkthrough>.md`.
  *  Returns `{designRootSlug, incrementId, incrementSlug, kind}` or null. */
 export function parseIncrementArtifactPath(value) {
   const normalized = String(value ?? '').replaceAll('\\', '/').replace(/^\.\//, '');

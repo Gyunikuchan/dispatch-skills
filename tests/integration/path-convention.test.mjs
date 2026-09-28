@@ -13,7 +13,7 @@ import { RUN_ENV, SESSION_ENV } from '../../skills/dispatch/scripts/lib/session-
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const WORKSPACE_SESSION_PREFIX = '.scratch/dispatch-skills/';
-const ACTIVE_ARTIFACT_PREFIX = '<sessionDir>/artifacts/';
+const ACTIVE_ARTIFACT_PREFIX = '<sessionDir>/';
 
 /**
  * The canonical artifact filename shapes, as placeholder form (`<slug>.md`)
@@ -22,21 +22,18 @@ const ACTIVE_ARTIFACT_PREFIX = '<sessionDir>/artifacts/';
  * the drift guard across both.
  */
 const PLAN_SHAPES = [
-  /^<slug>\.md$/,
-  // Concrete plan filename; the lookbehind keeps walkthroughs out, since
-  // `-walkthrough` is otherwise just another kebab segment. A plan whose slug is
-  // literally `walkthrough` matches neither list and is reported as an offender —
-  // intentional, because that filename is genuinely ambiguous with a walkthrough.
-  /^[a-z0-9]+(-[a-z0-9]+)*(?<!-walkthrough)\.md$/,
+  /^<slug>\.plan\.md$/,
+  /^[a-z0-9]+(-[a-z0-9]+)*\.plan\.md$/,
   // Phased artifacts: technical designs, increment plans, integration walkthroughs.
-  /^<design-slug>-design\.md$/,
-  /^<design-slug>-i<nn>-<increment-slug>-plan\.md$/,
-  /^<design-slug>-integration-walkthrough\.md$/,
+  /^<design-slug>\.design\.md$/,
+  /^[a-z0-9]+(-[a-z0-9]+)*\.design\.md$/,
+  /^<design-slug>-i<nn>-<increment-slug>\.plan\.md$/,
+  /^<design-slug>-integration\.walkthrough\.md$/,
 ];
 
 const WALKTHROUGH_SHAPES = [
-  /^<slug>-walkthrough\.md$/,
-  /^[a-z0-9]+(-[a-z0-9]+)*-walkthrough\.md$/,
+  /^<slug>\.walkthrough\.md$/,
+  /^[a-z0-9]+(-[a-z0-9]+)*\.walkthrough\.md$/,
 ];
 
 const CANONICAL = [...PLAN_SHAPES, ...WALKTHROUGH_SHAPES];
@@ -61,7 +58,7 @@ const GUARDED = [
  * Mentions of a session root that name no artifact: the bare directory and the
  * abbreviated diagram label.
  */
-const ALLOWLIST = ['', '...'];
+const ALLOWLIST = ['', '...', '<slug>.spec.md', '<slug>.<type>.md'];
 
 const TRAILING = new Set(['`', "'", '"', ')', ']', ',', ';', ':', '.', '*']);
 
@@ -96,8 +93,9 @@ function sessionArtifactMentions(rel) {
   const mentions = [];
   text.split('\n').forEach((line, index) => {
     for (const [prefix, strip] of [
-      [WORKSPACE_SESSION_PREFIX, raw => raw.startsWith('<folder>/artifacts/') ? raw.slice('<folder>/artifacts/'.length) : raw.startsWith('<folder>/') ? '' : raw],
-      [ACTIVE_ARTIFACT_PREFIX, raw => raw],
+      [WORKSPACE_SESSION_PREFIX, raw => raw.startsWith('<folder>/') ? raw.slice('<folder>/'.length) : raw],
+      // `.state/` holds no deliverables, so only root mentions are shape-checked.
+      [ACTIVE_ARTIFACT_PREFIX, raw => raw.startsWith('.state/') ? '' : raw],
     ]) {
       let from = 0;
       for (;;) {
@@ -128,7 +126,7 @@ describe('artifact resolver path contract', () => {
         slug: 'auth-v2', projectRoot: repositoryRoot,
         repositoryRoot, native: { orchestrator: null },
       });
-      const artifactRoot = path.join(sessionDir, 'artifacts');
+      const artifactRoot = sessionDir;
       for (const [generated, shapes] of [
         [result.plan.path, PLAN_SHAPES],
         [result.walkthrough.path, WALKTHROUGH_SHAPES],
@@ -137,7 +135,7 @@ describe('artifact resolver path contract', () => {
         assert.ok(!relative.startsWith('../') && !path.isAbsolute(relative), `${generated} lives in the bound session artifacts/`);
         assert.ok(shapes.some(shape => shape.test(relative)), `${generated} matches its canonical shape`);
       }
-      assert.ok(result.walkthrough.path.endsWith('-walkthrough.md'));
+      assert.ok(result.walkthrough.path.endsWith('.walkthrough.md'));
     } finally {
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
@@ -172,7 +170,8 @@ describe('session artifact paths stay aligned across skill documentation', () =>
 
   it('keeps the shared reference doc naming the convention', () => {
     const text = readFileSync(path.join(REPO_ROOT, 'skills/dispatch/references/review.md'), 'utf8');
-    assert.match(text, /Active canonical artifacts live in `<sessionDir>\/artifacts\//);
+    assert.match(text, /Deliverables live at `<sessionDir>\/<slug>\.<type>\.md`/);
+    assert.match(text, /one `runs\/NNN-<kind>\/` folder per run/);
     assert.match(text, /Terminal handoff moves the whole folder/);
   });
 
@@ -180,8 +179,15 @@ describe('session artifact paths stay aligned across skill documentation', () =>
     const offenders = skillMarkdownFiles()
       .flatMap(sessionArtifactMentions)
       .filter(m => !ALLOWLIST.includes(m.token) && !CANONICAL.some(shape => shape.test(m.token)))
-      .map(m => `${m.rel}:L${m.line} — session artifacts/${m.token}`);
+      .map(m => `${m.rel}:L${m.line} — session root ${m.token}`);
     assert.deepEqual(offenders, []);
+  });
+
+  it('does not document the retired session subfolders', () => {
+    const docs = [...skillMarkdownFiles(), 'README.md', 'skills/dispatch/references/review.md', 'skills/dispatch/references/templates/plan.md'];
+    const retired = docs.flatMap(rel => readFileSync(path.join(REPO_ROOT, rel), 'utf8').split('\n')
+      .flatMap((line, index) => /(?<![\w.-])(?:artifacts|ledger)\/|(?<![\w.-])runs\/<run-id>\//.test(line) ? [`${rel}:L${index + 1}`] : []));
+    assert.deepEqual(retired, []);
   });
 
   it('does not document a retired artifact root', () => {

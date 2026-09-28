@@ -158,7 +158,7 @@ function artifactSlug(value, kind, repoRoot) {
     } catch { /* NOTE: the filename remains a deterministic fallback for uncheckpointed artifacts. */ }
   }
   const base = path.basename(String(value ?? '')).replace(/\.md$/i, '');
-  const withoutKind = kind === 'design' ? base.replace(/-design$/i, '') : base.replace(/-walkthrough$/i, '');
+  const withoutKind = base.replace(/\.(?:spec|design|plan|walkthrough)$/i, '');
   return sanitizeSlug(withoutKind)?.slice(0, 60) ?? null;
 }
 
@@ -166,7 +166,7 @@ function artifactSlug(value, kind, repoRoot) {
 function bindInvocationSession(invocation, cwd) {
   const repoRoot = path.resolve(gitRoot(cwd));
   let artifactKind = 'plan', slug = null;
-  if (invocation.verb === 'design' || (invocation.verb === 'implement' && /-design\.md$/i.test(invocation.argument ?? ''))) {
+  if (invocation.verb === 'design' || (invocation.verb === 'implement' && /\.design\.md$/i.test(invocation.argument ?? ''))) {
     artifactKind = 'design';
     slug = /\.md$/i.test(invocation.argument ?? '') ? artifactSlug(invocation.argument, 'design', repoRoot) : sanitizeSlug(invocation.argument)?.slice(0, 60);
   } else if (invocation.verb === 'review') {
@@ -295,7 +295,7 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });
         writeRunSidecar(state, invocation);
         action = save(state, startDesign(state));
-      } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('-design.md')) {
+      } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('.design.md')) {
         const repoRoot = requireToplevel(cwd);
         bindInvocationSession(invocation, cwd);
         const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });

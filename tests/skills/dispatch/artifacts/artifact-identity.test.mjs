@@ -36,25 +36,25 @@ describe('artifact identity is bound to the chat session', () => {
   });
 
   it('builds every canonical artifact under the active session artifacts area', () => {
-    const artifacts = path.join(session, 'artifacts');
+    const artifacts = session;
     const paths = buildScratchPaths('auth-v2');
-    assert.equal(normalized(paths.plan), normalized(path.join(artifacts, 'auth-v2.md')));
-    assert.equal(normalized(paths.walkthrough), normalized(path.join(artifacts, 'auth-v2-walkthrough.md')));
-    assert.equal(normalized(buildScratchPaths('auth', 'design')), normalized(path.join(artifacts, 'auth-design.md')));
-    assert.equal(normalized(buildScratchPaths('auth-i01-model', 'increment-plan')), normalized(path.join(artifacts, 'auth-i01-model-plan.md')));
-    assert.equal(normalized(buildScratchPaths('auth', 'integration-walkthrough')), normalized(path.join(artifacts, 'auth-integration-walkthrough.md')));
+    assert.equal(normalized(paths.plan), normalized(path.join(artifacts, 'auth-v2.plan.md')));
+    assert.equal(normalized(paths.walkthrough), normalized(path.join(artifacts, 'auth-v2.walkthrough.md')));
+    assert.equal(normalized(buildScratchPaths('auth', 'design')), normalized(path.join(artifacts, 'auth.design.md')));
+    assert.equal(normalized(buildScratchPaths('auth-i01-model', 'increment-plan')), normalized(path.join(artifacts, 'auth-i01-model.plan.md')));
+    assert.equal(normalized(buildScratchPaths('auth', 'integration-walkthrough')), normalized(path.join(artifacts, 'auth-integration.walkthrough.md')));
     const resolved = resolveArtifacts({ slug: 'auth-i01-model', slugSource: 'explicit', kinds: ['increment-plan'], repositoryRoot });
     assert.equal(normalized(resolved['increment-plan'].path), normalized(buildScratchPaths('auth-i01-model', 'increment-plan')));
   });
 
   it('parses increment identities from session paths and rejects ambiguous nested increments', () => {
-    const plan = path.join(session, 'artifacts', 'demo-i01-foundation-plan.md');
+    const plan = path.join(session, 'demo-i01-foundation.plan.md');
     assert.deepEqual(parseIncrementArtifactPath(plan), {
       designRootSlug: 'demo', incrementId: 'I01', incrementSlug: 'foundation', kind: 'increment-plan',
     });
-    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-i01-foundation-walkthrough.md')).kind, 'increment-walkthrough');
-    assert.equal(parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-design.md')), null);
-    assert.throws(() => parseIncrementArtifactPath(path.join(session, 'artifacts', 'demo-i01-foundation-i02-switch-plan.md')), /ambiguous|second/);
+    assert.equal(parseIncrementArtifactPath(path.join(session, 'demo-i01-foundation.walkthrough.md')).kind, 'increment-walkthrough');
+    assert.equal(parseIncrementArtifactPath(path.join(session, 'demo.design.md')), null);
+    assert.throws(() => parseIncrementArtifactPath(path.join(session, 'demo-i01-foundation-i02-switch.plan.md')), /ambiguous|second/);
   });
 
   it('stores each repository ledger inside its own chat root', () => {
@@ -66,8 +66,8 @@ describe('artifact identity is bound to the chat session', () => {
     const otherSession = bindWorkflowSession({ repositoryRoot: secondRepo, artifactKind: 'plan', slug: 'auth-v2' });
     const second = resolveLedgerPath({ slug: 'auth-v2', slugSource: 'explicit', repositoryRoot: secondRepo, artifactKind: 'plan' });
     assert.notEqual(first, second);
-    assert.equal(normalized(path.dirname(first)), normalized(path.join(session, 'ledger')));
-    assert.equal(normalized(path.dirname(second)), normalized(path.join(otherSession, 'ledger')));
+    assert.equal(normalized(path.dirname(first)), normalized(path.join(session, '.state')));
+    assert.equal(normalized(path.dirname(second)), normalized(path.join(otherSession, '.state')));
     assert.equal(resolveLedgerPath({ slug: 'conversation-abcd', slugSource: 'conversation', repositoryRoot }), null);
   });
 });

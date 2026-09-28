@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 
 import { extractFailureIdentifiers, testCounts } from '../verification/test-failures.mjs';
 import { diffRepositoryState } from '../verification/evidence.mjs';
-import { bindStateSession, readRunState } from './state.mjs';
+import { bindStateSession, readRunState, runFile } from './state.mjs';
 import { fingerprint, snapshot } from './verification.mjs';
 import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
 
@@ -58,9 +58,7 @@ export function runVerification(stateFile) {
   // A re-emitted gate (e.g. a reply that lacked criterion evidence) keeps its token; an unchanged tree reuses its results.
   const reused = reusableRecord(state, pending);
   if (reused) return summarize(pending, reused, { reused: true });
-  const logDir = path.join(path.dirname(state.stateFile), 'verify');
-  fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
-  const logFor = name => path.join(logDir, `${state.runId}-${pending.purpose}-${pending.token.slice(0, 8)}-${name}.log`);
+  const logFor = name => runFile(state, { stage: pending.stage, qualifier: name, kind: 'verify', ext: 'log' });
   let epoch = data.mutationEpoch ?? 0;
   let current = snapshot(state);
 
@@ -78,7 +76,7 @@ export function runVerification(stateFile) {
   const results = pending.commands.map((command, index) => {
     const ran = pending.substitutions?.[command] ?? command;
     const scopeHash = fingerprint(state, data.scopes?.[command]);
-    const logPath = logFor(String(index + 1));
+    const logPath = logFor(`cmd-${index + 1}`);
     const run = execute(ran, { cwd: state.repoRoot, logPath });
     const after = snapshot(state), changed = diffRepositoryState(current, after).changed;
     current = after;

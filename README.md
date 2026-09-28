@@ -128,7 +128,7 @@ Write a plan, then have other models attack it before you spend tokens on code:
 
 ```text
 /dispatch high (claude,agy) plan: Add webhook idempotency
-/dispatch review plan: .scratch/dispatch-skills/<folder>/artifacts/webhooks.md
+/dispatch review plan: .scratch/dispatch-skills/<folder>/webhooks.plan.md
 ```
 
 Review your working tree or a branch range:
@@ -149,7 +149,7 @@ Run the whole loop — plan, review, approval gate, implementation, code review 
 
 ```text
 /dispatch implement: Add CSV export
-/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/csv.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/csv.plan.md
 ```
 
 For work too big for one pass, `design:` splits it into increments and implements them one at a time:

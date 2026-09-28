@@ -7,7 +7,8 @@ import { afterEach, describe, it } from 'node:test';
 import { makeGitRepo, writePlan, fixtureSessionDir } from '../../../helpers/driver-harness.mjs';
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
-import { bindWorkflowSession, sessionArea, handoffCurrentSession, bindSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { bindWorkflowSession, sessionDir, handoffCurrentSession, bindSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { stateCache, stateDir } from '../../../../skills/dispatch/scripts/lib/session-paths.mjs';
 import { persistEvidence, restoreEvidence, save } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { afterImplementationVerification } from '../../../../skills/dispatch/scripts/driver/task-phase.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
@@ -208,12 +209,12 @@ describe('baseline reuse', () => {
     cleanup.push(repo.cleanup);
     bindTestWorkflow(repo.dir, 'plan', 'baseline-cache');
     const commands = ['node --test tests/a.test.mjs'];
-    return { repoRoot: repo.dir, ledgerPath: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-cache-')), 'sample-ledger.md'), ordinary: { commands, redCriteria: [], coverage: {}, scopes: { [commands[0]]: ['src/app.js'] } } };
+    return { repoRoot: repo.dir, ledgerPath: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'baseline-cache-')), 'sample.ledger.md'), ordinary: { commands, redCriteria: [], coverage: {}, scopes: { [commands[0]]: ['src/app.js'] } } };
   }
   const A = 'node --test tests/a.test.mjs', RED = 'node --test tests/new.test.mjs';
   const hitCommands = cache => cache.hits.map(item => item.command);
   /** A second plan's run on the same repository: another ledger path, a new red command. */
-  const nextRun = (state, extra = {}) => ({ ...state, ledgerPath: path.join(path.dirname(state.ledgerPath), 'other-ledger.md'),
+  const nextRun = (state, extra = {}) => ({ ...state, ledgerPath: path.join(path.dirname(state.ledgerPath), 'other.ledger.md'),
     ordinary: { commands: [A, RED], redCriteria: [{ commands: [RED] }], coverage: {}, scopes: { [A]: ['src/app.js'], [RED]: ['src/app.js'] }, ...extra } });
   it('reuses stored per-command results for identical content within a day and runs only the rest', () => {
     const state = baselineState(), results = [{ command: A, exitStatus: 0 }];
@@ -230,18 +231,18 @@ describe('baseline reuse', () => {
     storeBaseline(state, [{ command: A, exitStatus: 0 }]);
     const repoGit = (...args) => execFileSync('git', args, { cwd: state.repoRoot, stdio: 'pipe' });
     repoGit('add', 'src'); repoGit('commit', '--no-gpg-sign', '-qm', 'implemented');
-    fs.writeFileSync(path.join(sessionArea('artifacts'), 'next.md'), '# Next\n');
+    fs.writeFileSync(path.join(sessionDir(), 'next.md'), '# Next\n');
     assert.deepEqual(hitCommands(cachedBaseline(nextRun(state))), [A], 'same content after commit and scratch edit');
     fs.writeFileSync(path.join(state.repoRoot, 'src/app.js'), 'export const value = 3;\n');
     assert.deepEqual(cachedBaseline(nextRun(state)).misses, [A, RED], 'a changed tree reruns the baseline');
   });
   it('keeps cached verification log references portable through publication and reactivation', () => {
     const state = baselineState();
-    const logPath = path.join(sessionArea('artifacts'), 'baseline.log');
+    const logPath = path.join(sessionDir(), 'baseline.log');
     fs.writeFileSync(logPath, 'verified\n');
     storeBaseline(state, [{ command: A, exitStatus: 0, logPath }]);
-    const stored = JSON.parse(fs.readFileSync(path.join(sessionArea('cache'), 'baseline-cache.json'), 'utf8'));
-    assert.equal(Object.values(stored.entries)[0].result.logPath, '@session/artifacts/baseline.log');
+    const stored = JSON.parse(fs.readFileSync(stateCache('baseline.json'), 'utf8'));
+    assert.equal(Object.values(stored.entries)[0].result.logPath, '@session/baseline.log');
     const published = handoffCurrentSession(state.repoRoot);
     assert.equal(published.moved, true);
     bindSession(published.currentRoot);
@@ -276,7 +277,7 @@ describe('walkthrough evidence rendering', () => {
   it('renders the RED matrix into a CRLF walkthrough', () => {
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
-    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
+    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
     fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', '', '## Key Deviations', 'None.', ''].join('\r\n'));
     const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs | exit 1 test:a'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
     persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
@@ -287,7 +288,7 @@ describe('walkthrough evidence rendering', () => {
   it('prints a failure set shared by several RED rows once and references it', () => {
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
-    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
+    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
     fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', ''].join('\n'));
     const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs:a | exit 1 test:a; test:b', 'RED-MATRIX SC2 | tests/a.test.mjs:b | exit 1 test:a; test:b', 'RED-MATRIX SC3 | tests/c.test.mjs:c | exit 1 test:c'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
     persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
@@ -307,9 +308,9 @@ describe('walkthrough evidence restore', () => {
     cleanup.push(repo.cleanup);
     const planPath = writePlan(repo.dir);
     bindTestWorkflow(repo.dir, 'plan', 'sample');
-    const walkthroughPath = planPath.replace(/\.md$/, '-walkthrough.md');
+    const walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
     fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Ordinary execution evidence', '```json', JSON.stringify({ schemaVersion: 1, planPath: path.relative(repo.dir, planPath).split(path.sep).join('/'), ordinary: { step: 'failure-disposition' }, ...record }), '```', ''].join('\n'));
-    const state = { repoRoot: repo.dir, planPath, walkthroughPath, governingHash: governingHash(fs.readFileSync(planPath, 'utf8')).hash, ledgerPath: path.join(repo.dir, 'missing-ledger.md') };
+    const state = { repoRoot: repo.dir, planPath, walkthroughPath, governingHash: governingHash(fs.readFileSync(planPath, 'utf8')).hash, ledgerPath: path.join(repo.dir, 'missing.ledger.md') };
     return state;
   }
   it('ignores ordinary evidence of an earlier plan revision whose run is not live', () => {

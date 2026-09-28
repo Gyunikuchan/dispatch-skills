@@ -125,8 +125,8 @@ If the `brainstorming` skill is installed, dispatch first uses it to settle scop
 ### Resume from an existing artifact
 
 ```text
-/dispatch implement: .scratch/dispatch-skills/<folder>/artifacts/webhooks.md
-/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/webhooks.md
+/dispatch implement: .scratch/dispatch-skills/<folder>/webhooks.plan.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/webhooks.plan.md
 ```
 
 > [!NOTE]

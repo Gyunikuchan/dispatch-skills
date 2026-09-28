@@ -15,15 +15,15 @@ import { gitRoot } from './state.mjs';
 export function inferReviewKind(argument, { cwd = process.cwd() } = {}) {
   if (!argument) return { kind: 'code', range: null };
   const normalized = String(argument).replace(/\\/g, '/');
-  if (/-design\.md$/i.test(normalized)) return { kind: 'design', artifactPath: argument };
-  if (/-walkthrough\.md$/i.test(normalized)) return { kind: 'code', walkthroughPath: argument };
+  if (/\.design\.md$/i.test(normalized)) return { kind: 'design', artifactPath: argument };
+  if (/\.walkthrough\.md$/i.test(normalized)) return { kind: 'code', walkthroughPath: argument };
   if (/\.md$/i.test(normalized)) return { kind: 'plan', artifactPath: argument };
   try {
     resolveExplicitRange(gitRoot(cwd), argument);
     return { kind: 'code', range: argument };
   } catch {
     throw new Error(
-      `Cannot review "${argument}": pass a design (*-design.md), plan (*.md), or walkthrough (*-walkthrough.md) path, ` +
+      `Cannot review "${argument}": pass a design (*.design.md), plan (*.md), or walkthrough (*.walkthrough.md) path, ` +
       'a Git revision or range, or no argument for uncommitted changes.',
     );
   }

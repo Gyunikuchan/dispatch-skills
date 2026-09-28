@@ -220,7 +220,7 @@ describe('v2 phased ledger events', () => {
       design: { path: designPath, revision },
       increment: {
         id: 'I01',
-        planPath: 'artifacts/demo-i01-one-plan.md',
+        planPath: 'artifacts/demo-i01-one.plan.md',
         walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md',
         planHash: hash,
       },
@@ -269,12 +269,12 @@ describe('v2 phased ledger events', () => {
       design: { path: 'artifacts/other-design.md', revision },
     })]), /design\.path/);
     assert.throws(() => foldEvents([incrementStart(2, {
-      increment: { id: 'I01', planPath: 'artifacts/demo-i01-one-plan.md', walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md' },
+      increment: { id: 'I01', planPath: 'artifacts/demo-i01-one.plan.md', walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md' },
     })]), /planHash/);
     assert.throws(() => foldEvents([incrementStart(2, {
       design: { path: designPath, revision },
       increment: {
-        id: 'X1', planPath: 'artifacts/demo-i01-one-plan.md',
+        id: 'X1', planPath: 'artifacts/demo-i01-one.plan.md',
         walkthroughPath: 'artifacts/demo-i01-one-walkthrough.md', planHash: hash,
       },
     })]), /increment\.id/);
@@ -407,7 +407,7 @@ describe('v2 phased ledger events', () => {
     ];
     const secondId = '22222222-2222-4222-8222-222222222222';
     const reopened = [
-      { ...incrementStart(7, { increment: { id: 'I02', planPath: 'artifacts/demo-i02-two-plan.md', walkthroughPath: 'artifacts/demo-i02-two-walkthrough.md', planHash: hash } }), runId: secondId, v: 2 },
+      { ...incrementStart(7, { increment: { id: 'I02', planPath: 'artifacts/demo-i02-two.plan.md', walkthroughPath: 'artifacts/demo-i02-two-walkthrough.md', planHash: hash } }), runId: secondId, v: 2 },
       { ...event(8, 'run-complete', { result: 'complete', evidenceRefs: [] }), runId: secondId, v: 2 },
     ];
     const folded = foldDesignRun([designStart(), designApproval(2), ...completed, ...reopened]);

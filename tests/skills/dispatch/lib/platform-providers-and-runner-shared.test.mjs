@@ -59,7 +59,6 @@ import {
   MAX_ATTACHMENT_BYTES_PER_FILE,
   MAX_ATTACHMENT_BYTES_TOTAL,
 } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
-import { sessionTempDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 // SECTION: Diversity sort & Model comparison
 

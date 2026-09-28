@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_MANIFEST_NAME, skillDirInRepo } from '../lib/integrity.mjs';
 import { extractGeneratedPaths } from '../plan/structure.mjs';
-import { sessionArea, restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
+import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
+import { freeRunFilePath, stateCache } from '../lib/session-paths.mjs';
 import { captureRepositoryState, compareFailureIdentity, criterionMappings, diffRepositoryState, extractApprovedPathSet, failureIdentity, mapVerificationCommandsToPaths, outcomeFirstPacket } from '../verification/evidence.mjs';
 import { baselineFingerprint, contentTreeId, materializedFingerprint } from '../lib/git-state.mjs';
 import {
@@ -13,6 +14,7 @@ import {
   checkRedQuality,
 } from '../verification/red-quality.mjs';
 import { DriverError, emitAction } from './actions.mjs';
+import { nextStep, replyGuidance } from './state.mjs';
 import { source } from './implement-state.mjs';
 
 // SECTION: Verification policy
@@ -171,11 +173,13 @@ export function repositoryBaseline(state) {
 // argv and, at completion, supplies judgment evidence for verify/review criteria.
 export function beginVerification(state, purpose) {
   const data = state.ordinary, token = crypto.randomUUID();
+  const stage = nextStep(state, 'verify');
   data.verification = {
+    stage,
     purpose, token, commands: gateCommands(state, purpose),
     substitutions: purpose === 'red' ? redSubstitutions(state) : {},
     generators: purpose === 'final' ? data.generators ?? [] : [],
-    resultsPath: path.join(path.dirname(state.stateFile), `${state.runId}-verify-${purpose}-${token.slice(0, 8)}.json`),
+    resultsPath: freeRunFilePath(state.runId, { stage, kind: 'verify', ext: 'json' }),
   };
   return verificationAction(state);
 }
@@ -210,6 +214,7 @@ export function verificationAction(state) {
     judged.length
       ? `Then read its summary (and logs as needed) and call --next with --input {"criterionEvidence":[...]} holding one entry for each of ${judged.map(item => item.id).join(', ')}: {criterionId, evidenceClass, reviewer, scenario, inspectedRevision (the summary scopeHash of the criterion's command), observableResult, limitations, mutationEpoch (that command's summary mutationEpoch)}.`
       : 'Then call --next with no --input.',
+    ...(judged.length ? [replyGuidance(state, { stage: pending.stage, kind: 'evidence', ext: 'json' })] : []),
   ]);
 }
 export function acceptVerification(state, reply) {
@@ -271,7 +276,7 @@ export function acceptVerification(state, reply) {
 // repository-wide file lets a passing final gate seed the next plan's baseline.
 const BASELINE_TTL_MS = 24 * 60 * 60 * 1000;
 function baselineCachePath(state) {
-  return path.join(sessionArea('cache'), 'baseline-cache.json');
+  return stateCache('baseline.json');
 }
 function entryKey(tree, command) {
   return `sha256:${crypto.createHash('sha256').update(JSON.stringify({ tree, command, node: process.version, platform: process.platform })).digest('hex')}`;

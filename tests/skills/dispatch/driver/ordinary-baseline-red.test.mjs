@@ -22,15 +22,15 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     const ledger = readLedger(result.done.ledgerPath);
     assert.equal(ledger.status, 'ok', ledger.diagnostic);
     const sessionRoot = path.dirname(path.dirname(result.done.ledgerPath));
-    assert.equal(path.dirname(result.done.ledgerPath), path.join(sessionRoot, 'ledger'));
+    assert.equal(path.dirname(result.done.ledgerPath), path.join(sessionRoot, '.state'));
     assert.equal(readSessionManifest(sessionRoot).sessionId, fixture.repo.sessionId);
-    assert.match(path.basename(result.done.ledgerPath), /-ledger\.md$/);
+    assert.match(path.basename(result.done.ledgerPath), /\.ledger\.md$/);
     assert.deepEqual(ledger.events.slice(0, 2).map(event => event.type), ['run-start', 'approval']);
     assert.equal(ledger.events[0].data.baseline.commit, fixture.repo.git('rev-parse', 'HEAD').toString().trim());
     assert.equal(ledger.events.filter(event => event.type === 'approval').length, 1);
     assert.deepEqual(result.trace.filter(action => action.action === 'delegate-write').map(action => action.fields.stage), ['tests-only', 'production']);
     const testsOnly = result.trace.find(action => action.action === 'delegate-write');
-    const promptPath = path.join(sessionRoot, path.relative(path.dirname(path.dirname(path.dirname(testsOnly.stateFile))), testsOnly.fields.promptPath));
+    const promptPath = path.join(sessionRoot, path.relative(path.dirname(path.dirname(path.dirname(path.dirname(testsOnly.stateFile)))), testsOnly.fields.promptPath));
     const prompt = fs.readFileSync(promptPath, 'utf8');
     assert.equal(testsOnly.fields.promptHash, `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`);
     assert.match(testsOnly.guidance.join(' '), /Read .* fully/);
@@ -49,10 +49,10 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.equal(result.done.outcome, 'refused', JSON.stringify(result.done));
     assert.match(result.done.reason, /Plan approval rejected: Scope is wrong\..*--phases from:plan/);
     assert.equal(result.trace.some(action => action.action === 'delegate-write'), false);
-    const sessionRoot = path.dirname(path.dirname(path.dirname(result.done.stateFile)));
+    const sessionRoot = path.dirname(path.dirname(path.dirname(path.dirname(result.done.stateFile))));
     assert.equal(readSessionManifest(sessionRoot).sessionId, fixture.repo.sessionId);
-    const namespace = path.join(sessionRoot, 'ledger');
-    const ledgers = fs.existsSync(namespace) ? fs.readdirSync(namespace).filter(name => name.endsWith('-ledger.md')) : [];
+    const namespace = path.join(sessionRoot, '.state');
+    const ledgers = fs.existsSync(namespace) ? fs.readdirSync(namespace).filter(name => name.endsWith('.ledger.md')) : [];
     assert.deepEqual(ledgers, [], 'rejection writes no ledger');
   });
   it('relays the red-criterion test-path lint warning in the approval items', () => {
@@ -109,8 +109,8 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     assert.equal(packet.testsAsEvidence.label, 'evidence, not specification');
     assert.match(packet.governingOutcome.title, /Plan/);
     assert.equal(packet.criteria[0].evidenceClass, 'verify');
-    const artifacts = path.join(result.done.handoff.destinations[0], 'artifacts');
-    const walkthrough = fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts).find(file => file.endsWith('-walkthrough.md'))), 'utf8');
+    const artifacts = result.done.handoff.destinations[0];
+    const walkthrough = fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts).find(file => file.endsWith('.walkthrough.md'))), 'utf8');
     assert.match(walkthrough, /^\| SC1 \| delivered value=2 \|/m);
     assert.match(walkthrough, /reviewer: host/);
     assert.doesNotMatch(walkthrough, /^\| SC1 \|[^\n]*\| Pending/m);

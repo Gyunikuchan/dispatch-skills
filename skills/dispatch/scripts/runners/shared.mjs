@@ -7,10 +7,12 @@
  * Supports Windows, macOS, Linux (bash, zsh, PowerShell).
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isSessionPath, runArea, runTempDir } from '../lib/session-temp.mjs';
+import { isSessionPath, runId } from '../lib/session-temp.mjs';
+import { runFile } from '../lib/session-paths.mjs';
 import { PROJECT_ROOT, getAllowedBoundaryRoots, isBatchLauncher, isPathInside, spawnCliSync, terminateProcessTree } from '../lib/platform.mjs';
 
 // ============================================================================
@@ -981,17 +983,32 @@ export function getArgvByteLimit() {
   return process.platform === 'win32' ? 24000 : 100000;
 }
 
-/**
- * Spills an oversized prompt to a temp file and returns a short pointer prompt.
- *
- * Uses mkdtempSync to create a unique directory with restricted permissions,
- * preventing TOCTOU races on shared systems.
- */
-export function createBriefFile(prompt, providerName) {
-  const briefDir = runTempDir('prompts', `dispatch-brief-${providerName}-`);
+// SECTION: Launch scope
 
-  const briefFile = path.join(briefDir, 'brief.md');
-  fs.writeFileSync(briefFile, prompt, { encoding: 'utf8', mode: 0o600 });
+/** @typedef {{ round?: number, slot?: number, provider?: string }} LaunchScope */
+
+// Runners share one process, so each slot carries its file scope in its own async context.
+const launchScope = new AsyncLocalStorage();
+
+/** Runs `fn` with the launch scope that names its brief and trace files. */
+/** @template T @param {LaunchScope} scope @param {() => T} fn @returns {T} */
+export function withLaunchScope(scope, fn) { return launchScope.run(scope, fn); }
+
+/** @returns {LaunchScope} */
+export function currentLaunchScope() { return launchScope.getStore() ?? {}; }
+
+/** Creates `r<N>-<provider>-<slot>.<kind>.<ext>` exclusively in the bound run. */
+/** @param {string} providerName @param {LaunchScope} scope @param {string} kind @param {string} ext @param {string} contents */
+function launchFile(providerName, scope, kind, ext, contents) {
+  return runFile(runId('ask'), { round: scope.round ?? 1, provider: providerName, slot: scope.slot ?? 1, kind, ext, contents });
+}
+
+/**
+ * Spills an oversized prompt to `r<N>-<provider>-<slot>.brief.md` and returns a short pointer prompt.
+ * @param {string} prompt @param {string} providerName @param {LaunchScope} [scope]
+ */
+export function createBriefFile(prompt, providerName, scope = currentLaunchScope()) {
+  const briefFile = launchFile(providerName, scope, 'brief', 'md', prompt);
 
   // Single line with no `%`: the pointer itself must survive a Windows batch launcher's argv.
   const pointerPrompt =
@@ -1038,20 +1055,10 @@ export function preparePromptForArgv(prompt, providerName, { binary, reservedByt
 /**
  * Creates a dedicated session log file for this run to avoid context pollution.
  */
-export function createSessionLogger(providerName) {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const logDir = runArea('logs');
+/** @param {string} providerName @param {LaunchScope} [scope] */
+export function createSessionLogger(providerName, scope = currentLaunchScope()) {
   // Logs hold full delegate transcripts; owner-only modes (ignored on Windows) keep them private.
-  try {
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
-    }
-  } catch {}
-
-  const logFile = path.join(logDir, `${providerName}-${timestamp}-${process.pid}.log`);
-  try {
-    fs.writeFileSync(logFile, '', { flag: 'a', mode: 0o600 });
-  } catch {}
+  const logFile = launchFile(providerName, scope, 'trace', 'log', '');
   const logStream = fs.createWriteStream(logFile, { flags: 'a', encoding: 'utf8', mode: 0o600 });
   // An unwritable log must never crash the run: an unhandled stream 'error' would.
   logStream.on('error', () => {});

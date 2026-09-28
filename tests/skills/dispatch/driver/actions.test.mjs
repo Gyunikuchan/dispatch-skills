@@ -204,14 +204,14 @@ describe('driver reply handling end to end (SC2)', () => {
   it('re-emits the same action with an error and does not advance on an invalid reply', () => {
     const { plan, action } = adjudicateFor('invalid-reply.md', report([planFinding()]));
     assert.equal(action.action, 'adjudicate');
-    const planBefore = fs.readFileSync(action.stateFile.replace(/\.json$/, '.run.json'), 'utf8');
+    const planBefore = fs.readFileSync(path.join(path.dirname(action.stateFile), 'inputs.json'), 'utf8');
     const again = next(action.stateFile, { rulings: [{ key: action.findings[0].key, status: 'maybe' }] });
     assert.equal(again.action, 'adjudicate');
     assert.equal(again.error.kind, 'reply');
     assert.deepEqual(again.findings, action.findings);
     assert.equal(again.round, action.round);
     assert.doesNotMatch(fs.readFileSync(plan, 'utf8'), /### Round 1/, 'no rulings were written');
-    assert.equal(fs.readFileSync(action.stateFile.replace(/\.json$/, '.run.json'), 'utf8'), planBefore);
+    assert.equal(fs.readFileSync(path.join(path.dirname(action.stateFile), 'inputs.json'), 'utf8'), planBefore);
     // Nothing was written: the same finding is still adjudicable and a valid reply now advances.
     const [finding] = action.findings;
     const advanced = next(action.stateFile, {

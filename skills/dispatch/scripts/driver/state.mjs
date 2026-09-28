@@ -14,7 +14,8 @@ import { showToplevel } from '../lib/git-root.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
 import { loadSchema, toError, validateAgainstSchema } from './actions.mjs';
-import { bindRun, bindSession, handoffCurrentSession, isPublishedSessionDir, isWorkspaceSessionDir, openSession, pruneSessions, runStatePath, SESSION_ENV, sessionDir, storeSessionPaths, restoreSessionPaths } from '../lib/session-temp.mjs';
+import { bindRun, bindSession, handoffCurrentSession, isPublishedSessionDir, isWorkspaceSessionDir, openSession, pruneSessions, SESSION_ENV, sessionDir, storeSessionPaths, restoreSessionPaths } from '../lib/session-temp.mjs';
+import { createRun, runFile as createRunFile, runFilePath, runFolder, STATE_DIR } from '../lib/session-paths.mjs';
 
 // SECTION: State storage
 
@@ -24,15 +25,47 @@ export function gitRoot(cwd) {
   return path.resolve(root ?? cwd);
 }
 
-/** Writes a private run-scoped file beside the state file. */
-export function runFile(state, name, contents = '') {
-  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}`);
-  fs.writeFileSync(file, contents, { mode: 0o600 });
-  return file;
+/**
+ * Creates a private run file named by the session grammar, advancing `-a<N>` on collision.
+ * @param {Record<string, any>} state @param {import('../lib/session-paths.mjs').RunFileSpec & { contents?: string }} spec
+ */
+export function runFile(state, spec) {
+  return createRunFile(state.runId, spec);
 }
 
+/** Guidance naming where the host writes a reply file and its helpers; neither is created here. */
+/** @param {Record<string, any>} state @param {import('../lib/session-paths.mjs').RunFileSpec} spec */
+export function replyGuidance(state, spec) {
+  const reply = runFilePath(state.runId, spec);
+  return `Write the reply JSON to ${reply} and pass --input @${reply}; keep any helper files in ${path.join(runFolder(state.runId), 'scratch')}.`;
+}
+
+/** The invocation sidecar, written once beside `state.json`. */
 export function sidecarPathFor(stateFile) {
-  return stateFile.replace(/\.json$/, '.run.json');
+  return path.join(path.dirname(stateFile), 'inputs.json');
+}
+
+/**
+ * Allocates the `s<N>` scope of a new write or verify step. A verify following an unverified
+ * write shares its step; any other step takes the next `N`.
+ * @param {Record<string, any>} state @param {'write'|'verify'} kind
+ */
+export function nextStep(state, kind) {
+  const last = state.lastStep ?? null;
+  if (kind === 'verify' && last?.kind === 'write' && !last.verified) {
+    state.lastStep = { ...last, verified: true };
+    return last.n;
+  }
+  state.stepIndex = (state.stepIndex ?? 0) + 1;
+  state.lastStep = { n: state.stepIndex, kind, verified: kind === 'verify' };
+  return state.stepIndex;
+}
+
+/** The run kind a folder is named after: the verb, or `<kind>-review` for reviews. */
+function runKind(fields) {
+  const invocation = fields.invocation ?? {};
+  if (invocation.verb === 'review') return `${invocation.kind ?? fields.kind ?? 'code'}-review`;
+  return invocation.verb ?? 'ask';
 }
 
 function writeAtomic(file, value) {
@@ -46,15 +79,14 @@ function writeAtomic(file, value) {
 }
 
 /**
- * Creates a fresh run state with a new run ID. Top-level workflow binding happens before artifact
- * resolution; nested runs keep that session and receive their own `runs/<run-id>/` directory.
+ * Creates a fresh run state in a new `.state/runs/NNN-<kind>/` folder. Top-level workflow binding
+ * happens before artifact resolution; nested runs keep that session and allocate their own folder.
  */
 export function createRunState(fields) {
-  const runId = crypto.randomUUID();
   if (!process.env.DISPATCH_SESSION_DIR) openSession({ repositoryRoot: fields.repoRoot ?? null });
-  else sessionDir();
-  const stateFile = runStatePath(runId);
-  return { v: 1, runId, stateFile, ...fields };
+  const run = createRun(runKind(fields), sessionDir());
+  bindRun(run.id);
+  return { v: 1, runId: run.id, stateFile: path.join(run.dir, 'state.json'), stepIndex: 0, lastStep: null, ...fields };
 }
 
 /** Binds the session that holds `stateFile`, so a `--next` process and its children share it. */
@@ -75,7 +107,7 @@ export function readRunState(stateFile) {
   const boundSession = bindStateSession(resolved);
   const original = statePathParts(resolved);
   const actual = original && boundSession
-    ? path.join(boundSession, 'runs', original.runId, 'state.json')
+    ? path.join(boundSession, STATE_DIR, 'runs', original.runId, 'state.json')
     : resolved;
   let real = null;
   try { real = fs.realpathSync(actual); } catch { real = null; }
@@ -96,7 +128,7 @@ export function readRunState(stateFile) {
   if (!state || state.v !== 1 || !state.runId || state.runId !== pathRunId) {
     throw Object.assign(new Error(`Driver state ${stateFile} is missing or unreadable.`), { code: 'STATE_UNREADABLE' });
   }
-  const root = boundSession ?? path.dirname(path.dirname(path.dirname(real)));
+  const root = boundSession ?? path.dirname(path.dirname(path.dirname(path.dirname(real))));
   state = restoreSessionPaths(state, root);
   state.stateFile = actual;
   if (state.reviewState?.invocation) state.reviewState.invocation.terminalHandoff = false;
@@ -109,8 +141,9 @@ function statePathParts(stateFile) {
   if (path.basename(stateFile) !== 'state.json') return null;
   const runDir = path.dirname(stateFile);
   const runsDir = path.dirname(runDir);
-  if (path.basename(runsDir) !== 'runs') return null;
-  return { session: path.dirname(runsDir), runId: path.basename(runDir) };
+  const stateDir = path.dirname(runsDir);
+  if (path.basename(runsDir) !== 'runs' || path.basename(stateDir) !== STATE_DIR) return null;
+  return { session: path.dirname(stateDir), runId: path.basename(runDir) };
 }
 
 /** @param {string} session */

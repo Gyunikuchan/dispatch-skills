@@ -42,7 +42,7 @@ beforeEach(() => { delete process.env.DISPATCH_SESSION_DIR; delete process.env.D
 afterEach(() => { if (originalSession === undefined) delete process.env.DISPATCH_SESSION_DIR; else process.env.DISPATCH_SESSION_DIR = originalSession; delete process.env.DISPATCH_RUN_ID; });
 function designPath(root) {
   const session = bindWorkflowSession({ repositoryRoot: root, slug: 'platform' });
-  const file = path.join(session, 'artifacts', 'platform-design.md');
+  const file = path.join(session, 'platform.design.md');
   fs.mkdirSync(path.dirname(file), { recursive: true });
   return file;
 }
@@ -54,7 +54,7 @@ describe('design review preparation', () => {
       const result = prepareDesignReview({ action: 'prepare', slug: 'platform', requirement: 'large change' }, { repoRoot: root });
       assert.equal(result.kind, 'design');
       assert.equal(result.status, 'authoring-required');
-      assert.match(result.artifact.canonicalPath, /platform-design\.md$/);
+      assert.match(result.artifact.canonicalPath, /platform\.design\.md$/);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 

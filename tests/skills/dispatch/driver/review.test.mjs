@@ -8,7 +8,7 @@ import { after, afterEach, before, describe, it } from 'node:test';
 import { inferReviewKind, resolveReviewLevel } from '../../../../skills/dispatch/scripts/driver/review-policy.mjs';
 import { createStubDispatchFixture } from '../../../helpers/stub-dispatch-fixture.mjs';
 import { allProviders, codeFinding, drive, implementationOutcome, logEntries, makeGitRepo, parseAction, planFinding, readLog, report, runDispatch, writeOutcomeReply, writePlan, writeDesign } from '../../../helpers/driver-harness.mjs';
-import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation } from '../../../helpers/ordinary-driver-fixture.mjs';
+import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
 
@@ -23,13 +23,13 @@ describe('review kind inference (design order 1–6)', () => {
   const infer = (argument) => inferReviewKind(argument, { cwd: repo.dir });
 
   it('1: *-design.md → design', () => {
-    assert.equal(infer('artifacts/x-design.md').kind, 'design');
+    assert.equal(infer('artifacts/x.design.md').kind, 'design');
   });
 
   it('2: *-walkthrough.md → code scoped to the walkthrough (checked before the generic .md rule)', () => {
-    const result = infer('artifacts/x-walkthrough.md');
+    const result = infer('artifacts/x.walkthrough.md');
     assert.equal(result.kind, 'code');
-    assert.equal(result.walkthroughPath, 'artifacts/x-walkthrough.md');
+    assert.equal(result.walkthroughPath, 'artifacts/x.walkthrough.md');
   });
 
   it('3: any other *.md → plan', () => {
@@ -148,7 +148,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   const run = (args) => runDispatch(fixture, args, { cwd: repo.dir });
 
   it('ends in done/skipped when an explicit level disables the phase', () => {
-    const plan = writePlan(repo.dir, 'skip.md');
+    const plan = writePlan(repo.dir, 'skip.plan.md');
     const res = run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
@@ -156,11 +156,11 @@ describe('driver skip and inference through dispatch.mjs', () => {
     assert.equal(action.outcome, 'skipped');
     assert.match(action.reason, /medium/);
     assert.match(action.reason, /plan-review/);
-    assert.equal(fs.readFileSync(path.join(action.handoff.destinations[0], 'artifacts', path.basename(plan)), 'utf8').includes('### Round'), false, 'nothing was reviewed');
+    assert.equal(fs.readFileSync(path.join(action.handoff.destinations[0], path.basename(plan)), 'utf8').includes('### Round'), false, 'nothing was reviewed');
   });
 
   it('rejects a classified xhigh or max level before starting a run', () => {
-    const plan = writePlan(repo.dir, 'elevated.md');
+    const plan = writePlan(repo.dir, 'elevated.plan.md');
     for (const level of ['xhigh', 'max']) {
       const res = run(['--run', 'review', '--level', level, '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
       assert.equal(res.status, 2);
@@ -169,12 +169,12 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('raises a classified level and launches instead of skipping', () => {
-    const plan = writePlan(repo.dir, 'raise.md');
+    const plan = writePlan(repo.dir, 'raise.plan.md');
     const res = run(['--run', 'review', '--level', 'low', '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
     assert.equal(action.action, 'launch');
-    const sidecar = JSON.parse(fs.readFileSync(action.stateFile.replace(/\.json$/, '.run.json'), 'utf8'));
+    const sidecar = JSON.parse(fs.readFileSync(path.join(path.dirname(action.stateFile), 'inputs.json'), 'utf8'));
     assert.equal(sidecar.kind, 'plan', 'kind inferred from *.md');
   });
 
@@ -183,7 +183,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
     });
     try {
-      const design = writeDesign(repo.dir, 'fallback-design.md', '# Design\n');
+      const design = writeDesign(repo.dir, 'fallback.design.md', '# Design\n');
       const result = runDispatch(fallbackFixture, ['--run', 'review', '--orchestrator', 'claude', '--', design], { cwd: repo.dir });
       assert.equal(result.status, 0, result.stderr);
       const action = parseAction(result.stdout);
@@ -202,7 +202,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
   });
 
   it('skips a design review disabled at the explicit level (inferred from *-design.md)', () => {
-    const design = writeDesign(repo.dir, 'off-design.md', '# Design\n');
+    const design = writeDesign(repo.dir, 'off.design.md', '# Design\n');
     const action = parseAction(run(['--run', 'review', '--level', 'medium', '--level-source', 'explicit', '--orchestrator', 'claude', '--', design]).stdout);
     assert.equal(action.action, 'done');
     assert.equal(action.outcome, 'skipped');
@@ -250,6 +250,51 @@ describe('fix verification guidance (narrowest check)', () => {
     }
   });
 
+  it('names the reply path for adjudicate', () => {
+    const fixture = createStubDispatchFixture({
+      'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
+      phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } },
+    });
+    const local = makeGitRepo({ dirty: true });
+    try {
+      const run = drive(fixture, {
+        cwd: local.dir,
+        runArgs: ['review', '--kind', 'code', '--orchestrator', 'claude'],
+        policy: { waveResults: () => allProviders(report([codeFinding()])) },
+      });
+      const adjudicate = guidanceOf(run.trace, 'adjudicate').replaceAll('\\', '/');
+      assert.match(adjudicate, /\.state\/runs\/\d{3}-code-review\/r1\.rulings\.json and pass --input @/);
+      assert.match(adjudicate, /\.state\/runs\/\d{3}-code-review\/scratch\b/);
+    } finally {
+      local.cleanup();
+      fixture.cleanup();
+    }
+  });
+
+  it('names the reply path for verify', () => {
+    const ordinary = createOrdinaryDriverFixture();
+    try {
+      // A verify-only criterion is judged by the host, so its gate asks for criterion evidence.
+      fs.writeFileSync(ordinary.plan, fs.readFileSync(ordinary.plan, 'utf8').replace('Evidence: red', 'Evidence: verify'));
+      const base = ordinaryDriverPolicy(ordinary.repo);
+      const result = driveOrdinaryImplementation(ordinary, { policy: {
+        askUser(action) {
+          if (action.question === 'approval') return { answer: { decision: 'approved', governingHash: action.items[0].governingHash, testPaths: [], reason: 'Approve verify-only fixture.' } };
+          return base.askUser(action);
+        },
+      } });
+      const verify = result.trace.filter((action) => action.action === 'verify' && action.guidance.some((line) => line.includes('criterionEvidence')));
+      assert.ok(verify.length, 'a verify gate asks for criterion evidence');
+      for (const action of verify) {
+        const guidance = action.guidance.join('\n').replaceAll('\\', '/');
+        assert.match(guidance, /\.state\/runs\/\d{3}-implement\/s\d+\.evidence\.json and pass --input @/);
+        assert.match(guidance, /\.state\/runs\/\d{3}-implement\/scratch\b/);
+      }
+    } finally {
+      cleanupOrdinaryDriverFixtures();
+    }
+  });
+
   it('implementation-run code review guidance forbids aggregate suites in fix.verification', () => {
     const ordinary = createOrdinaryDriverFixture();
     try {
@@ -290,7 +335,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('checkpoint-only recovery does not allocate a review after the phase cap is spent', async () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, 'spent-review-budget.md');
+    const plan = writePlan(repo.dir, 'spent-review-budget.plan.md');
     const first = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
@@ -317,7 +362,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('applies and verifies an accepted bounded in-scope CONSIDER at the cap without another review', () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, 'consider-fix.md');
+    const plan = writePlan(repo.dir, 'consider-fix.plan.md');
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
@@ -333,7 +378,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('preserves rejected, unbounded, and declined-adjacent CONSIDER dispositions', () => {
     fixture = makeFixture(1);
-    const plan = writePlan(repo.dir, 'consider-dispositions.md');
+    const plan = writePlan(repo.dir, 'consider-dispositions.plan.md');
     const findings = [
       planFinding({ severity: 'CONSIDER', locus: '§ Success Criteria', defect: 'Rejected bounded.' }),
       planFinding({ severity: 'CONSIDER', locus: '§ Proposed Changes', defect: 'Unbounded accepted.' }),
@@ -365,7 +410,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('keeps an uncertain bounded CONSIDER pending through later waves and applies an accepted answer without a new review', () => {
     fixture = makeFixture(2);
-    const plan = writePlan(repo.dir, 'deferred-consider.md');
+    const plan = writePlan(repo.dir, 'deferred-consider.plan.md');
     let deferredAskCount = 0;
     const run = drive(fixture, {
       cwd: repo.dir,
@@ -401,7 +446,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
 
   it('keeps the same cumulative budget across adjacent opt-in and a bounded fix', () => {
     fixture = makeFixture(2);
-    const plan = writePlan(repo.dir, 'adjacent-opt-in.md');
+    const plan = writePlan(repo.dir, 'adjacent-opt-in.plan.md');
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],

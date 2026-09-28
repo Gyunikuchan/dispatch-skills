@@ -24,7 +24,7 @@ function designBody() {
 
 function setupLedger(repo, { amendment = null, complete = false } = {}) {
   process.env.DISPATCH_SESSION_DIR = repo.sessionDir;
-  const designPath = path.join(repo.sessionDir, 'artifacts', 'root-design.md');
+  const designPath = path.join(repo.sessionDir, 'root.design.md');
   const designRel = path.relative(repo.dir, designPath).split(path.sep).join('/');
   fs.mkdirSync(path.dirname(designPath), { recursive: true });
   const source = designBody(); fs.writeFileSync(designPath, source);
@@ -41,7 +41,7 @@ function setupLedger(repo, { amendment = null, complete = false } = {}) {
   }
   if (complete) for (const id of ['I01', 'I02']) {
     const rid = `${id === 'I01' ? '22222222' : '33333333'}-1111-4111-8111-111111111111`;
-    const data = { governingPath: start.data.governingPath, governingHash: hash, rootSlug: 'root', action: 'increment', baseline: start.data.baseline, design: { path: start.data.governingPath, revision: hash }, increment: { id, planPath: path.relative(repo.dir, path.join(repo.sessionDir, 'artifacts', `root-${id.toLowerCase()}-plan.md`)).split(path.sep).join('/'), walkthroughPath: path.relative(repo.dir, path.join(repo.sessionDir, 'artifacts', `root-${id.toLowerCase()}-walkthrough.md`)).split(path.sep).join('/'), planHash: hash } };
+    const data = { governingPath: start.data.governingPath, governingHash: hash, rootSlug: 'root', action: 'increment', baseline: start.data.baseline, design: { path: start.data.governingPath, revision: hash }, increment: { id, planPath: path.relative(repo.dir, path.join(repo.sessionDir, `root-${id.toLowerCase()}-plan.md`)).split(path.sep).join('/'), walkthroughPath: path.relative(repo.dir, path.join(repo.sessionDir, `root-${id.toLowerCase()}.walkthrough.md`)).split(path.sep).join('/'), planHash: hash } };
     appendEvent(ledgerPath, { v: 2, type: 'run-start', runId: rid, at, data });
     const task = { taskId: `${id}-task`, attemptBudget: 1, paths: [`src/${id.toLowerCase()}.js`], preState: state };
     appendEvent(ledgerPath, { v: 2, type: 'task-start', runId: rid, at, data: task }); appendEvent(ledgerPath, { v: 2, type: 'implementation-attempt', runId: rid, at, data: { taskId: task.taskId, attempt: 1, launch: 'full', target: { platform: 'opencode' }, terminalEnvelope: {}, evidence: ['done'], transition: 'verify' } }); appendEvent(ledgerPath, { v: 2, type: 'verification', runId: rid, at, data: { taskId: task.taskId, attempt: 1, result: 'pass', commandRefs: ['test'], transition: 'complete' } }); appendEvent(ledgerPath, { v: 2, type: 'task-complete', runId: rid, at, data: { taskId: task.taskId, paths: task.paths, head: oid, preState: state, resultState: state, diffHash: state } }); appendEvent(ledgerPath, { v: 2, type: 'run-complete', runId: rid, at, data: { result: 'complete', evidenceRefs: [] } });
@@ -103,8 +103,8 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
     assert.equal(res.status, 0, `SC2 design implement must be available: ${res.stderr}`);
     const action = parseAction(res.stdout);
     assert.equal(action.incrementId, 'I01');
-    assert.equal(action.planPath, path.join(repo.sessionDir, 'artifacts', 'root-i01-driver-plan.md'));
-    assert.equal(action.walkthroughPath, path.join(repo.sessionDir, 'artifacts', 'root-i01-driver-walkthrough.md'));
+    assert.equal(action.planPath, path.join(repo.sessionDir, 'root-i01-driver.plan.md'));
+    assert.equal(action.walkthroughPath, path.join(repo.sessionDir, 'root-i01-driver.walkthrough.md'));
     assert.ok(['author', 'launch'].includes(action.action), `expected selected-I01 entry action, got ${action.action}`);
   }));
 
@@ -145,7 +145,7 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
     assert.equal(runState.ledgerPath, ledgerPath);
   }));
 
-  it('RED-MATRIX SC3 | refuses schemaVersion-1 evidence with wrong parent revision and increment ID', () => withFixture((fixture, repo) => { const { designPath, designRel, ledgerPath, hash } = setupLedger(repo); const walkthroughPath = designPath.replace(/\.md$/, '-walkthrough.md'); const write = (revision, incrementId) => fs.writeFileSync(walkthroughPath, ['','## Ordinary execution evidence','```json', JSON.stringify({ schemaVersion: 1, governingHash: revision, planPath: designRel, incrementId, ordinary: {} }), '```',''].join('\n')); write(`sha256:${'f'.repeat(64)}`, 'I01'); const base = { repoRoot: repo.dir, planPath: designPath, walkthroughPath, governingHash: hash, ledgerPath }; assert.throws(() => restoreEvidence(base), /does not bind this governing plan/i); write(hash, 'I99'); assert.throws(() => restoreEvidence({ ...base }), /increment.*ID|increment.*identity/i); }));
+  it('RED-MATRIX SC3 | refuses schemaVersion-1 evidence with wrong parent revision and increment ID', () => withFixture((fixture, repo) => { const { designPath, designRel, ledgerPath, hash } = setupLedger(repo); const walkthroughPath = designPath.replace(/\.design\.md$/, '.walkthrough.md'); const write = (revision, incrementId) => fs.writeFileSync(walkthroughPath, ['','## Ordinary execution evidence','```json', JSON.stringify({ schemaVersion: 1, governingHash: revision, planPath: designRel, incrementId, ordinary: {} }), '```',''].join('\n')); write(`sha256:${'f'.repeat(64)}`, 'I01'); const base = { repoRoot: repo.dir, planPath: designPath, walkthroughPath, governingHash: hash, ledgerPath }; assert.throws(() => restoreEvidence(base), /does not bind this governing plan/i); write(hash, 'I99'); assert.throws(() => restoreEvidence({ ...base }), /increment.*ID|increment.*identity/i); }));
 
   it('RED-MATRIX SC4 | names amendment resolution and refuses before any production mutation', () => withFixture((fixture, repo) => {
     const { designPath, ledgerPath } = setupLedger(repo, { amendment: 'A01' });
@@ -157,14 +157,14 @@ describe('driver design contracts (SC1–SC5, SC7)', () => {
     assert.equal(action.outcome, 'refused');
     assert.equal(action.nextAction, 'resolve-amendment:A01', JSON.stringify(action));
     assert.match(action.reason ?? action.summary ?? '', /amendment.*A01.*before.*production/i);
-    assert.deepEqual({ design: fs.readFileSync(path.join(repo.sessionDir, 'artifacts', path.basename(designPath)), 'utf8'), ledger: fs.readFileSync(path.join(repo.sessionDir, 'ledger', path.basename(ledgerPath)), 'utf8'), source: fs.readFileSync(path.join(repo.dir, 'src', 'app.js'), 'utf8') }, before);
+    assert.deepEqual({ design: fs.readFileSync(path.join(repo.sessionDir, path.basename(designPath)), 'utf8'), ledger: fs.readFileSync(path.join(repo.sessionDir, '.state', path.basename(ledgerPath)), 'utf8'), source: fs.readFileSync(path.join(repo.dir, 'src', 'app.js'), 'utf8') }, before);
   }));
 
   it('RED-MATRIX SC5 | enters final integration with exact terminal lifecycle contract', () => withFixture((fixture, repo) => {
     const { designPath, ledgerPath } = setupLedger(repo, { complete: true });
-    const incrementArtifacts = ['root-i01-driver-plan.md', 'root-i01-driver-walkthrough.md', 'root-i02-driver-plan.md', 'root-i02-driver-walkthrough.md'];
-    const sources = [designPath, ...incrementArtifacts.map(file => path.join(repo.sessionDir, 'artifacts', file)), path.join(repo.sessionDir, 'artifacts', 'root-integration-walkthrough.md')];
-    for (const file of incrementArtifacts) fs.writeFileSync(path.join(repo.sessionDir, 'artifacts', file), file);
+    const incrementArtifacts = ['root-i01-driver.plan.md', 'root-i01-driver.walkthrough.md', 'root-i02-driver.plan.md', 'root-i02-driver.walkthrough.md'];
+    const sources = [designPath, ...incrementArtifacts.map(file => path.join(repo.sessionDir, file)), path.join(repo.sessionDir, 'root-integration.walkthrough.md')];
+    for (const file of incrementArtifacts) fs.writeFileSync(path.join(repo.sessionDir, file), file);
     const res = runDispatch(fixture, ['--run', 'implement', '--orchestrator', 'claude', '--', designPath], { cwd: repo.dir });
     assert.equal(res.status, 0, `SC5 design implement must enter final integration: ${res.stderr}`);
     const action = parseAction(res.stdout);

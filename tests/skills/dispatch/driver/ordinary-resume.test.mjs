@@ -201,7 +201,7 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     const active = reactivateDone(result.done);
     const ledger = readLedger(active.ledgerPath);
     assert.equal(ledger.events.filter(event => event.type === 'implementation-attempt' && event.data.launch === 'tests-only').length, 1);
-    const walkthroughPath = path.join(active.active, 'artifacts', `${path.basename(fixture.plan, '.md')}-walkthrough.md`);
+    const walkthroughPath = path.join(active.active, `${path.basename(fixture.plan, '.plan.md')}.walkthrough.md`);
     const evidence = JSON.parse(fs.readFileSync(walkthroughPath, 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   RUN_ENV, RUN_FLAG, SESSION_ENV, SESSION_FLAG, assertWorkflowSession, bindRun,
   bindWorkflowSession, consumeSessionFlag, isPublishedSessionDir, isWorkspaceSessionDir,
-  openSession, pruneSessions, readSessionManifest, runDir, runId, sessionArgs, sessionDir, sessionTempDir,
+  openSession, pruneSessions, readSessionManifest, runDir, runId, sessionArgs, sessionDir,
   publishedSessionRoot,
 } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
@@ -68,13 +68,15 @@ describe('chat session binding', () => {
     assert.equal(manifest.sessionId, 'chat-123');
     assert.equal(manifest.sessionTitle, 'build-the-first-task');
     assert.equal(manifest.location, 'workspace');
-    const firstRun = runId();
+    const firstRun = runId('plan');
+    assert.equal(firstRun, '001-plan');
 
     delete process.env[SESSION_ENV];
     delete process.env[RUN_ENV];
     const second = bindWorkflowSession({ repositoryRoot, artifactKind: 'design', slug: 'second-task', objective: 'Build a second task' });
     assert.equal(second, first);
-    assert.notEqual(runId(), firstRun);
+    assert.throws(() => runId(), /No dispatch run is bound/);
+    assert.equal(runId('design'), '002-design');
     assertWorkflowSession({ repositoryRoot, artifactKind: 'design', slug: 'second-task' });
   });
 
@@ -84,15 +86,15 @@ describe('chat session binding', () => {
     assert.ok(isWorkspaceSessionDir(dir, repositoryRoot));
     assert.ok(!isPublishedSessionDir(dir));
     assert.equal(process.env[SESSION_ENV], dir);
-    const temp = sessionTempDir('dispatch-test-');
-    assert.equal(path.dirname(temp), path.join(runDir(), 'tmp'));
+    const run = runId('ask');
+    assert.equal(runDir(), path.join(dir, '.state', 'runs', run));
     assert.deepEqual(sessionArgs(), [SESSION_FLAG, dir, RUN_FLAG, runId()]);
 
     delete process.env[SESSION_ENV];
     delete process.env[RUN_ENV];
-    assert.deepEqual(consumeSessionFlag([SESSION_FLAG, dir, RUN_FLAG, 'resume-1', '--', SESSION_FLAG, 'kept']), ['--', SESSION_FLAG, 'kept']);
+    assert.deepEqual(consumeSessionFlag([SESSION_FLAG, dir, RUN_FLAG, '004-code-review', '--', SESSION_FLAG, 'kept']), ['--', SESSION_FLAG, 'kept']);
     assert.equal(sessionDir(), dir);
-    assert.equal(process.env[RUN_ENV], 'resume-1');
+    assert.equal(process.env[RUN_ENV], '004-code-review');
     assert.equal(path.dirname(dir), path.join(repositoryRoot, '.scratch', 'dispatch-skills'));
     assert.equal(path.dirname(publishedSessionRoot()), fs.realpathSync(os.tmpdir()));
   });
@@ -111,13 +113,12 @@ describe('chat session binding', () => {
   it('prunes aged run data in another chat while the current chat stays bound', () => {
     const stale = openSession({ repositoryRoot, id: 'stale-chat' });
     ownedRoots.push(stale);
-    const staleRun = runDir();
+    const staleRun = runDir(runId('ask'));
     fs.writeFileSync(path.join(staleRun, 'old.log'), 'old');
-    const staleCache = path.join(stale, 'cache');
+    const staleCache = path.join(stale, '.state', 'cache');
     fs.mkdirSync(staleCache);
     fs.writeFileSync(path.join(staleCache, 'old.cache'), 'old');
-    const artifact = path.join(stale, 'artifacts', 'plan.md');
-    fs.mkdirSync(path.dirname(artifact));
+    const artifact = path.join(stale, 'task.plan.md');
     fs.writeFileSync(artifact, '# Plan');
     const markAged = (dir) => {
       const file = path.join(dir, 'manifest.json');
@@ -131,12 +132,12 @@ describe('chat session binding', () => {
     delete process.env[RUN_ENV];
     const active = openSession({ repositoryRoot, id: 'active-chat' });
     ownedRoots.push(active);
-    const activeRun = runDir();
+    const activeRun = runDir(runId('ask'));
     fs.writeFileSync(path.join(activeRun, 'live.log'), 'live');
     markAged(active);
 
     pruneSessions({ maxAgeMs: 1000, now: Date.now() });
-    assert.equal(fs.existsSync(path.join(stale, 'runs')), false);
+    assert.equal(fs.existsSync(path.join(stale, '.state', 'runs')), false);
     assert.equal(fs.existsSync(staleCache), false);
     assert.equal(fs.existsSync(artifact), true);
     assert.equal(fs.existsSync(path.join(stale, 'manifest.json')), true);
@@ -152,6 +153,7 @@ describe('chat session binding', () => {
     const dir = openSession({ repositoryRoot, id: 'safe-chat' });
     ownedRoots.push(dir);
     assert.throws(() => bindRun('..'), /Invalid run id/);
+    assert.throws(() => bindRun('resume-1'), /Invalid run id/);
     assert.throws(() => runDir('..'), /Invalid run id/);
     assert.throws(() => consumeSessionFlag([SESSION_FLAG, os.tmpdir()]), /outside the validated/);
     assert.equal(isPublishedSessionDir(os.tmpdir()), false);

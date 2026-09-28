@@ -10,7 +10,8 @@ import { parseImplementationOutcome, resolveImplementationTransition } from '../
 import { emitAction, loadSchema, validateAgainstSchema } from './actions.mjs';
 import { ledgerSegment } from './implement-state.mjs';
 import { SKILL_ROOT } from './plan-phase.mjs';
-import { bindStateSession, readRunState } from './state.mjs';
+import { bindStateSession, nextStep, readRunState, runFile } from './state.mjs';
+import { freeRunFilePath } from '../lib/session-paths.mjs';
 import { validateRedAdmission } from './verification.mjs';
 
 // SECTION: Write target and validation
@@ -118,8 +119,7 @@ function briefFile(state, name, document, kind) {
   });
   const content = `${JSON.stringify({ brief: prose, ...document })}\n`;
   const hash = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
-  const file = path.join(path.dirname(state.stateFile), `${state.runId}-${name}.json`);
-  fs.writeFileSync(file, content, { mode: 0o600 });
+  const file = runFile(state, { stage: state.ordinary.writeStep.n, kind: 'brief', ext: 'json', contents: content });
   return { path: file, hash };
 }
 let packetSchema;
@@ -158,7 +158,11 @@ export function writeAction(state) {
     data.previousEnvelopePaths ??= [];
     if (!data.previousEnvelopePaths.includes(data.expectedEnvelopePath)) data.previousEnvelopePaths.push(data.expectedEnvelopePath);
   }
-  const expectedEnvelopePath = path.join(path.dirname(state.stateFile), `${state.runId}-write-${crypto.randomUUID()}.json`);
+  // A retry or cascade hop of the same launch keeps its step and advances the attempt suffix,
+  // until that step's verification ran: a later write then opens a new stage.
+  const verified = state.lastStep?.kind === 'write' && state.lastStep.n === data.writeStep?.n && state.lastStep.verified;
+  if (data.writeStep?.launch !== data.launch || verified) data.writeStep = { launch: data.launch, n: nextStep(state, 'write') };
+  const expectedEnvelopePath = freeRunFilePath(state.runId, { stage: data.writeStep.n, kind: 'outcome', ext: 'json' }, data.previousEnvelopePaths ?? []);
   data.expectedEnvelopePath = expectedEnvelopePath;
   const testsOnly = data.launch === 'tests-only';
   const prompt = testsOnly ? testsOnlyPrompt(state, expectedEnvelopePath) : productionPrompt(state, expectedEnvelopePath);

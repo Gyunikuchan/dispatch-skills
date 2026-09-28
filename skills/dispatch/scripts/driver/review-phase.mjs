@@ -45,6 +45,7 @@ import {
   reemit,
   pruneFinishedStates,
   rebuildFromArtifact,
+  replyGuidance,
   runFile,
   unappliedFixesFromArtifact,
   writeRunSidecar,
@@ -195,7 +196,7 @@ function existingWalkthrough(state) {
 
 function kindTarget(kind, argument) {
   if (kind === 'code') {
-    return /-walkthrough\.md$/i.test(argument) ? { walkthroughPath: argument } : { range: argument };
+    return /\.walkthrough\.md$/i.test(argument) ? { walkthroughPath: argument } : { range: argument };
   }
   return { artifactPath: argument };
 }
@@ -433,12 +434,12 @@ function prepareWave(state, type, rebuttal = null) {
   const sourceKeyOf = (target) => `${manifest.roundId}:${target.platform}:${target.candidateIndex}`;
   const earlyFallbacks = cliTargets
     .filter((target) => target.platform === state.invocation.orchestrator && target.model && target.effort)
-    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, `early-fallback-${index + 1}.txt`)));
+    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, { round, provider: 'native', slot: index + 1, qualifier: 'early', kind: 'report', ext: 'md' })));
   // Resolution drops a native-subagents-only target unless the orchestrator shares its platform.
   const nativeLaunches = nativeTargets
-    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, `native-${index + 1}.txt`)));
+    .map((target, index) => nativeLaunch(target, sourceKeyOf(target), manifest.promptPath, runFile(state, { round, provider: 'native', slot: index + 1, kind: 'report', ext: 'md' })));
   if (selectedTargets.length === 0 && nativeLaunches.length === 0) return done(state, 'failed', 'No selected target is available for this review wave.');
-  const slotsPath = selectedTargets.length ? runFile(state, 'slots.jsonl') : null;
+  const slotsPath = selectedTargets.length ? runFile(state, { round, kind: 'slots', ext: 'jsonl' }) : null;
   state.wave = {
     type,
     round,
@@ -668,7 +669,7 @@ function nativeFallbackAction(state) {
     recordReviewFailure(state, slot.sourceKey, slot.models.length && slot.effort ? 'availability' : 'missing-configuration');
     return processCollected(state);
   }
-  const outputPath = runFile(state, `fallback-${state.collect.fallbackTried.length + 1}.txt`);
+  const outputPath = runFile(state, { round: state.wave.round, provider: 'native', slot: state.collect.fallbackTried.length + 1, qualifier: 'fallback', kind: 'report', ext: 'md' });
   const descriptor = {
     sourceKey: slot.sourceKey,
     agentType: NATIVE_AGENT_TYPES[slot.platform] ?? 'explore',
@@ -787,7 +788,7 @@ function processCollected(state) {
       parsed = parseReport(state.kind, report.text);
     } catch (err) {
       if (err instanceof InvalidReviewReportError && err.prose) {
-        const reportPath = runFile(state, `report-${findings.length + 1}.txt`, report.text);
+        const reportPath = runFile(state, { round: state.wave.round, qualifier: `prose-${findings.length + 1}`, kind: 'report', ext: 'md', contents: report.text });
         findings.push({ key: `P${findings.length + 1}`, restate: true, reportPath, sourceKeys: [report.sourceKey] });
         continue;
       }
@@ -854,6 +855,7 @@ function adjudicateAction(state) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
   if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; dependsOn lists this round's finding keys (F1) or earlier rounds' IDs (R1-F001); verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
+  guidance.push(replyGuidance(state, { round: state.adjudication.round, kind: 'rulings', ext: 'json' }));
   return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings, unfulfilledTargets: unfulfilledTargets(state) }, guidance);
 }
 
@@ -1175,12 +1177,12 @@ function prepareRebuttal(state, markdown, logRounds) {
   const findings = new Map();
   for (const group of packets) for (const finding of group.packet.findings) findings.set(finding.key, finding);
   const keys = [...findings.keys()];
-  const packetPath = runFile(state, `rebuttal-${logRounds}.json`, `${JSON.stringify({
+  const packetPath = runFile(state, { round: logRounds, kind: 'rebuttal', ext: 'json', contents: `${JSON.stringify({
     schemaVersion: 1,
     sourceKey: 'rebuttal',
     canonicalLogHash: packets[0]?.packet.canonicalLogHash ?? null,
     findings: [...findings.values()],
-  }, null, 2)}\n`);
+  }, null, 2)}\n` });
   const targets = [];
   const seen = new Set();
   for (const group of packets) {

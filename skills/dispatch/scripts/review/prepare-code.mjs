@@ -196,12 +196,12 @@ function resolvePair(request, repoRoot, scope) {
   let walkthroughPath = request.walkthroughPath;
   let planPath = request.planPath;
   if (request.artifactPath) {
-    if (/-walkthrough\.md$/i.test(request.artifactPath)) walkthroughPath = request.artifactPath;
+    if (/\.walkthrough\.md$/i.test(request.artifactPath)) walkthroughPath = request.artifactPath;
     else planPath = request.artifactPath;
   }
   // NOTE: increment slugs are reserved for phased artifacts, so an explicit increment pair skips ordinary resolution.
-  if (walkthroughPath && !planPath && /-i\d{2}-.+-walkthrough\.md$/i.test(walkthroughPath)) {
-    planPath = walkthroughPath.replace(/-walkthrough\.md$/i, '-plan.md');
+  if (walkthroughPath && !planPath && /-i\d{2}-.+\.walkthrough\.md$/i.test(walkthroughPath)) {
+    planPath = walkthroughPath.replace(/\.walkthrough\.md$/i, '.plan.md');
   }
   const explicitPair = (p) => ({ path: path.resolve(repoRoot, p), exists: fs.existsSync(path.resolve(repoRoot, p)), tier: 'explicit' });
   if (walkthroughPath && planPath && /-i\d{2}-/i.test(path.basename(walkthroughPath))) {
@@ -553,7 +553,7 @@ export function prepareCodeReview(request, {
     throw new Error('rebuttal review requires findingPacketPath.');
   }
   // Every round reads the projection, so round-1 and re-review briefs share one shape.
-  const view = createReviewView({ artifact: walkthroughPath, nextRound: round });
+  const view = createReviewView({ artifact: walkthroughPath, nextRound: round, runKind: 'code-review' });
   const reviewPath = view.viewPath;
   let planReviewPath = pair.plan.exists ? path.resolve(repoRoot, pair.plan.path) : null;
   if (planReviewPath) {
@@ -561,6 +561,9 @@ export function prepareCodeReview(request, {
     const planView = createReviewView({
       artifact: planReviewPath,
       nextRound: (planScan.rounds.at(-1)?.number ?? 0) + 1,
+      round,
+      qualifier: 'plan',
+      runKind: 'code-review',
     });
     planReviewPath = planView.viewPath;
   }
@@ -659,6 +662,7 @@ export function prepareCodeReview(request, {
       artifactPath: walkthroughPath,
       snapshot,
       expectedSourceKeys: keys,
+      round,
     });
     invocation = advanceInvocationState(created.context, {
       repoRoot,
@@ -671,6 +675,7 @@ export function prepareCodeReview(request, {
     });
   }
   const files = createDispatchFiles({
+    round,
     prompt: promptWithDesignContext,
     batch: mode === 'orchestrated' ? { targets, reserves } : null,
     attachments: [

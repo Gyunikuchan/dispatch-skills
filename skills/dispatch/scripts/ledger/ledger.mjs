@@ -27,8 +27,9 @@ import { captureRepositoryState } from '../verification/evidence.mjs';
 
 // SECTION: Artifact identity
 
-export const CANONICAL_PLAN = /(?:^|\/)artifacts\/(?!.*-walkthrough\.md$)([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
-export const CANONICAL_DESIGN = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*)-design\.md$/;
+// The type suffix marks a deliverable; ledgers record session-relative paths, so no folder is required.
+export const CANONICAL_PLAN = /(?:^|\/)([a-z0-9]+(?:-[a-z0-9]+)*)\.plan\.md$/;
+export const CANONICAL_DESIGN = /(?:^|\/)([a-z0-9]+(?:-[a-z0-9]+)*)\.design\.md$/;
 
 /** Returns a canonical design artifact's root slug, or null for invalid/reserved paths. */
 export function designRootSlug(planPath) {
@@ -42,7 +43,7 @@ export function slugFromPlanPath(planPath) {
   const match = CANONICAL_PLAN.exec(normalized);
   const slug = match?.[1];
   if (!slug) {
-    throw new Error('Resume plan path must be a canonical artifact under the active session artifacts/ directory.');
+    throw new Error('Resume plan path must be a canonical <slug>.plan.md deliverable at the active session root.');
   }
   if (isReservedOrdinarySlug(slug)) {
     throw new Error(`Resume plan slug "${slug}" is reserved for phased artifacts; use the explicit design-run artifact path.`);
@@ -73,7 +74,7 @@ export function ensureLedgerNamespace({
   const options = { platform, uid };
   const target = ledgerNamespacePath();
   const session = sessionDir();
-  if (path.dirname(target) !== session || path.basename(target) !== 'ledger') {
+  if (path.dirname(target) !== session || path.basename(target) !== '.state') {
     throw new Error(`Ledger directory must be owned by the bound workflow session: ${target}`);
   }
   inspectDirectory(session, options);
@@ -86,7 +87,7 @@ export function ensureLedgerNamespace({
 
 function validateLedgerParents(ledgerPath, options = {}) {
   const parent = path.resolve(path.dirname(ledgerPath));
-  const expected = path.resolve(sessionDir(), 'ledger');
+  const expected = path.resolve(sessionDir(), '.state');
   if (parent !== expected) throw new Error(`Ledger path must be in the bound workflow session: ${ledgerPath}`);
   inspectDirectory(sessionDir(), options);
   inspectDirectory(parent, options);

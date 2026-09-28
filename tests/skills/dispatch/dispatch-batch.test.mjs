@@ -11,7 +11,7 @@ import {
   providerRunners,
 } from '../../../skills/dispatch/scripts/dispatch.mjs';
 import { resolveReadDelegates } from '../../../skills/dispatch/scripts/lib/config.mjs';
-import { bindWorkflowSession } from '../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { bindWorkflowSession, runDir, runId } from '../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { createStubDispatchEnvironment, createStubDispatchFixture, parseSlotLines } from '../../helpers/stub-dispatch-fixture.mjs';
 
 /** Config: dispatchBatch takes it whole (it calls dispatchTask per slot). */
@@ -51,9 +51,9 @@ afterEach(() => {
 });
 
 function writeBatch(value) {
-  const directory = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'packets');
+  const directory = runDir(runId('ask'));
   fs.mkdirSync(directory, { recursive: true });
-  const batchPath = path.join(directory, 'batch.json');
+  const batchPath = path.join(directory, 'r1.batch.json');
   fs.writeFileSync(batchPath, JSON.stringify(value));
   return batchPath;
 }
@@ -407,7 +407,7 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   afterEach(() => fixture.cleanup());
 
   function writeFixtureBatch(value) {
-    const directory = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'packets');
+    const directory = runDir(runId('ask'));
     fs.mkdirSync(directory, { recursive: true });
     const file = path.join(directory, `batch-${Date.now()}.json`);
     fs.writeFileSync(file, JSON.stringify(value));
@@ -459,7 +459,7 @@ describe('dispatch --batch-file CLI (R8 per-slot stdout)', () => {
   });
 
   it('keeps the full envelope unchanged in --output-file', () => {
-    const outputFile = path.join(session, 'runs', process.env.DISPATCH_RUN_ID, 'reports', 'envelope.json');
+    const outputFile = path.join(runDir(runId('ask')), 'r1.output.log');
     fs.mkdirSync(path.dirname(outputFile), { recursive: true });
     const res = runFixtureDispatch(
       ['--batch-file', writeFixtureBatch(BATCH), '--orchestrator', 'opencode', '--output-file', outputFile, 'Review'],

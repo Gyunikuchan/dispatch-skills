@@ -50,7 +50,7 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
     return state.pending;
   }
 }
-const isSpecSource = (argument) => /\.md$/.test(argument ?? '') && (/-design\.md$/.test(argument) || !CANONICAL_PLAN.test(argument.replaceAll('\\', '/')));
+const isSpecSource = (argument) => /\.md$/.test(argument ?? '') && (/\.design\.md$/.test(argument) || !CANONICAL_PLAN.test(argument.replaceAll('\\', '/')));
 /** Once a plan is bound, the run resumes by its repository-relative path at its recorded phase. */
 function bindResume(state) {
   state.invocation = { ...state.invocation, argument: path.relative(state.repoRoot, state.planPath).split(path.sep).join('/'), phases: null };

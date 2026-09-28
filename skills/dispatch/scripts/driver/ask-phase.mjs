@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../lib/config.mjs';
 import { buildCliPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
-import { createTempFile } from '../review/preparation.mjs';
+import { createRunFile } from '../review/preparation.mjs';
 import { NATIVE_AGENT_TYPES, emitAction, toError } from './actions.mjs';
 import { createRunState, finish, gitRoot, reemit, runFile, writeRunSidecar } from './state.mjs';
 import { sessionArgs } from '../lib/session-temp.mjs';
@@ -73,9 +73,9 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
     return finish(state, emitAction(state, 'done', { outcome: 'failed', summary: 'No pinned read delegate has a launchable candidate.', command: resumeCommand },
       ['Report the summary to the user; the run is finished.']));
   }
-  const promptFile = createTempFile('dispatch-ask-prompt-', 'prompt.md', `${invocation.argument}\n`);
-  const batchFile = createTempFile('dispatch-ask-batch-', 'batch.json', `${JSON.stringify({ targets, reserves }, null, 2)}\n`);
-  const outputFile = createTempFile('dispatch-ask-output-', 'output.txt', '');
+  const promptFile = createRunFile({ round: 1, kind: 'prompt', ext: 'md', contents: `${invocation.argument}\n` });
+  const batchFile = createRunFile({ round: 1, kind: 'batch', ext: 'json', contents: `${JSON.stringify({ targets, reserves }, null, 2)}\n` });
+  const outputFile = createRunFile({ round: 1, kind: 'output', ext: 'log' });
   const argv = [
     process.execPath, DISPATCH_SCRIPT, ...sessionArgs(),
     '--batch-file', batchFile.path,
@@ -154,7 +154,7 @@ function nativeFallbackAction(state) {
     state.collect.failed.push({ wave: 'ask', round: 1, sourceKey: slot.sourceKey, kind: 'unresolved-model' });
     return processCollected(state);
   }
-  const outputPath = runFile(state, `ask-fallback-${state.collect.failed.length + state.collect.claims.length + 1}.txt`);
+  const outputPath = runFile(state, { round: 1, provider: 'native', slot: state.collect.failed.length + state.collect.claims.length + 1, kind: 'report', ext: 'md' });
   const descriptor = {
     sourceKey: slot.sourceKey,
     agentType: NATIVE_AGENT_TYPES[slot.platform] ?? 'explore',

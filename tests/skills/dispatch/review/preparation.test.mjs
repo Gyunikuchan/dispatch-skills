@@ -47,7 +47,7 @@ const makeInvocationArtifact = () => {
     }
   });
   const session = bindWorkflowSession({ repositoryRoot, slug: 'review-preparation' });
-  const artifact = path.join(session, 'artifacts', 'plan.md');
+  const artifact = path.join(session, 'plan.md');
   fs.mkdirSync(path.dirname(artifact), { recursive: true });
   return artifact;
 };
@@ -516,9 +516,9 @@ describe('fence-aware excluded-section stripping', () => {
 
 describe('slugFromPath', () => {
   it('strips the design and walkthrough suffixes for every review kind', () => {
-    assert.equal(slugFromPath('artifacts/cache-design.md'), 'cache');
-    assert.equal(slugFromPath(['.scratch', 'artifacts', 'cache-walkthrough.md'].join('\\')), 'cache');
-    assert.equal(slugFromPath('artifacts/cache.md'), 'cache');
+    assert.equal(slugFromPath('artifacts/cache.design.md'), 'cache');
+    assert.equal(slugFromPath(['.scratch', 'artifacts', 'cache.walkthrough.md'].join('\\')), 'cache');
+    assert.equal(slugFromPath('artifacts/cache.plan.md'), 'cache');
     assert.equal(slugFromPath('notes/cache.md'), null);
   });
 });

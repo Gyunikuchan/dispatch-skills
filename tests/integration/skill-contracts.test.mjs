@@ -88,16 +88,17 @@ describe('shared review reference', () => {
 describe('chat session artifact lifecycle', () => {
   const adr = read('docs/decisions/0003-chat-session-artifact-lifecycle.md');
 
-  it('keeps the accepted workspace root, durable artifact areas, and whole-folder handoff', () => {
-    assert.match(adr, /root is\s+`\.scratch\/dispatch-skills\/<timestamp>-<session-id>-<session-title>\/`/s);
-    assert.match(adr, /`artifacts\/` and\s+`runs\/<run-id>\/`/s);
-    assert.match(adr, /move the \*\*entire\*\* folder/);
+  it('keeps the accepted workspace root, root deliverables with .state runs, and whole-folder handoff', () => {
+    assert.match(adr, /`\.scratch\/dispatch-skills\/<timestamp>-<session-id>-<session-title>\/`/);
+    assert.match(adr, /└── \.state\//);
+    assert.match(adr, /runs\/NNN-<kind>\//);
+    assert.match(adr, /moves the \*\*entire\*\* folder/);
     assert.match(adr, /`<realpath\(os\.tmpdir\(\)\)>\/dispatch-skills\/<same-folder-name>\/`/);
   });
 
-  it('exposes the active artifacts root in the shipped contracts', () => {
-    assert.match(read('skills/dispatch/SKILL.md'), /`<sessionDir>\/artifacts\/`/);
-    assert.match(read('skills/dispatch/references/review.md'), /Active canonical artifacts live in `<sessionDir>\/artifacts\/`/);
+  it('exposes the session root layout in the shipped contracts', () => {
+    assert.match(read('skills/dispatch/SKILL.md'), /`<sessionDir>\/<slug>\.spec\.md`/);
+    assert.match(read('skills/dispatch/references/review.md'), /Deliverables live at `<sessionDir>\/<slug>\.<type>\.md`/);
   });
 });
 

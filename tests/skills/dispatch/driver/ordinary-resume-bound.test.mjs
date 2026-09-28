@@ -157,14 +157,14 @@ describe('ordinary driver: resume by bound plan path', () => {
 
   it('the plan verb authors from a non-canonical design spec instead of binding it', () => {
     const fixture = createOrdinaryDriverFixture();
-    const spec = 'specs/2026-09-28-sample-behavior-design.md';
+    const spec = 'specs/2026-09-28-sample-behavior.design.md';
     fs.mkdirSync(path.join(fixture.repo.dir, 'specs'), { recursive: true });
     fs.writeFileSync(path.join(fixture.repo.dir, spec), '# Sample behavior\n');
     const reply = runDispatch(fixture.fixture, ['--run', 'plan', '--orchestrator', 'claude', '--', spec], { cwd: fixture.repo.dir });
     assert.equal(reply.status, 0, reply.stderr);
     const action = JSON.parse(reply.stdout);
     assert.equal(action.action, 'author', reply.stdout);
-    assert.match(action.path.split(path.sep).join('/'), /\/artifacts\/sample-behavior\.md$/);
+    assert.match(action.path.split(path.sep).join('/'), /\/sample-behavior\.plan\.md$/);
     assert.ok(reply.stdout.includes(spec), reply.stdout);
   });
 });

@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-import { sessionArea } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { sessionDir } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
+import { stateCache, stateDir } from '../../../../skills/dispatch/scripts/lib/session-paths.mjs';
 import { bindWorkflowSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 import { prepareCodeReview } from '../../../../skills/dispatch/scripts/review/prepare.mjs';
 import { loadBatchFile } from '../../../../skills/dispatch/scripts/dispatch.mjs';
@@ -32,7 +33,7 @@ const makeRepo = () => {
 const sessionArtifact = (repo, filename) => {
   const sessionRoot = path.resolve(process.env.DISPATCH_SESSION_DIR ?? '');
   if (!sessionRoot.startsWith(`${path.resolve(repo)}${path.sep}`)) throw new Error('The test repository has no bound workflow session.');
-  const artifacts = path.join(sessionRoot, 'artifacts');
+  const artifacts = sessionRoot;
   fs.mkdirSync(artifacts, { recursive: true });
   return path.join(artifacts, filename);
 };
@@ -80,9 +81,9 @@ describe('code review preparation', () => {
   it('reuses an existing walkthrough in the active session rather than generating a new one', () => {
     const repo = makeRepo();
     // The resolver reads the active session's artifact directory for this repository.
-    const artifacts = sessionArea('artifacts');
+    const artifacts = sessionDir();
     fs.mkdirSync(artifacts, { recursive: true });
-    const existingWalkthrough = path.join(artifacts, 'feature-walkthrough.md');
+    const existingWalkthrough = path.join(artifacts, 'feature.walkthrough.md');
     fs.writeFileSync(existingWalkthrough, '# Walkthrough — Existing in Session\n\n## Changes Made\n- **[MODIFY]** `app.js` — Custom change description.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; Custom verification.\n');
     try {
       const manifest = prepareCodeReview({
@@ -106,12 +107,12 @@ describe('code review preparation', () => {
   it('falls back to the session implement run walkthrough named after its plan, not the branch', () => {
     const repo = makeRepo();
     const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-    const walkthroughFor = (slug) => sessionArtifact(repo, `${slug}-walkthrough.md`);
+    const walkthroughFor = (slug) => sessionArtifact(repo, `${slug}.walkthrough.md`);
     const writeRun = (slug, commit, at) => {
-      const ledger = sessionArea('ledger');
+      const ledger = stateDir();
       fs.mkdirSync(ledger, { recursive: true });
       const event = { at, data: { action: 'ordinary', baseline: { commit } }, runId: slug, seq: 1, type: 'run-start', v: 1 };
-      fs.writeFileSync(path.join(ledger, `${slug}-ledger.md`), `- event: ${JSON.stringify(event)}\n`);
+      fs.writeFileSync(path.join(ledger, `${slug}.ledger.md`), `- event: ${JSON.stringify(event)}\n`);
       fs.writeFileSync(walkthroughFor(slug), '# Walkthrough — Plan Run\n\n## Changes Made\n- **[MODIFY]** `app.js` — Plan change.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; ok.\n');
     };
     writeRun('plan-run', head, '2026-01-01T00:00:00.000Z');
@@ -141,12 +142,12 @@ describe('code review preparation', () => {
     fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
     git('commit', '--no-gpg-sign', '-qam', 'later change');
     const c2 = git('rev-parse', 'HEAD');
-    const ledger = sessionArea('ledger');
+    const ledger = stateDir();
     fs.mkdirSync(ledger, { recursive: true });
     for (const [slug, commit, at] of [['range-run', c0, '2026-01-01T00:00:00.000Z'], ['later-run', c2, '2026-02-01T00:00:00.000Z']]) {
       const event = { at, data: { action: 'ordinary', baseline: { commit } }, runId: slug, seq: 1, type: 'run-start', v: 1 };
-      fs.writeFileSync(path.join(ledger, `${slug}-ledger.md`), `- event: ${JSON.stringify(event)}\n`);
-      fs.writeFileSync(sessionArtifact(repo, `${slug}-walkthrough.md`), '# Walkthrough — Run\n\n## Changes Made\n- **[MODIFY]** `app.js` — Change.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; ok.\n');
+      fs.writeFileSync(path.join(ledger, `${slug}.ledger.md`), `- event: ${JSON.stringify(event)}\n`);
+      fs.writeFileSync(sessionArtifact(repo, `${slug}.walkthrough.md`), '# Walkthrough — Run\n\n## Changes Made\n- **[MODIFY]** `app.js` — Change.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; ok.\n');
     }
     const manifest = prepareCodeReview({
       mode: 'orchestrated',
@@ -157,7 +158,7 @@ describe('code review preparation', () => {
     }, { repoRoot: repo });
     try {
       assert.equal(manifest.status, 'ready');
-      assert.match(manifest.artifact.canonicalPath, /range-run-walkthrough\.md$/);
+      assert.match(manifest.artifact.canonicalPath, /range-run\.walkthrough\.md$/);
     } finally {
       cleanupManifest(manifest);
     }
@@ -206,7 +207,7 @@ describe('code review preparation', () => {
         '## Review Findings & Resolutions',
         '*No reviews conducted yet.*',
       ].join('\n');
-      fs.writeFileSync(sessionArtifact(repo, 'demo-design.md'), design);
+      fs.writeFileSync(sessionArtifact(repo, 'demo.design.md'), design);
       return design;
     }
 
@@ -218,7 +219,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: sessionArtifact(repo, 'demo-design.md'),
+        designPath: sessionArtifact(repo, 'demo.design.md'),
         designRevision: null,
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
@@ -246,7 +247,7 @@ describe('code review preparation', () => {
         slug: 'feature',
         summary: 'Update the exported value',
         verification: { command: 'npm test', result: 'Passed' },
-        designPath: sessionArtifact(repo, 'missing-design.md'),
+        designPath: sessionArtifact(repo, 'missing.design.md'),
         incrementId: 'I01',
         targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
       }, { repoRoot: repo }), /design/i);
@@ -315,7 +316,7 @@ describe('code review preparation', () => {
 
   it('reviews an existing metadata-less walkthrough', () => {
     const repo = makeRepo();
-    fs.writeFileSync(sessionArtifact(repo, 'feature-walkthrough.md'), '# Walkthrough — Old\n');
+    fs.writeFileSync(sessionArtifact(repo, 'feature.walkthrough.md'), '# Walkthrough — Old\n');
     const manifest = prepareCodeReview({ summary: 'New work' }, { repoRoot: repo });
     try {
       assert.equal('choices' in manifest, false);
@@ -333,7 +334,7 @@ describe('code review preparation', () => {
 
   it('accepts a minimum-contract baseline walkthrough without rewriting it', () => {
     const repo = makeRepo();
-    const walkthrough = sessionArtifact(repo, 'feature-walkthrough.md');
+    const walkthrough = sessionArtifact(repo, 'feature.walkthrough.md');
     fs.writeFileSync(walkthrough, [
       '# Walkthrough — Feature',
       '## Changes Made',
@@ -606,7 +607,7 @@ function prepareGenerated(repo, extra = {}) {
 describe('prepare-code walkthrough summary box and traceability', () => {
   it('prepare-code walkthrough table synthesizes Pending rows from paired-plan criteria', () => {
     const repo = makeRepo();
-    const plan = sessionArtifact(repo, 'feature.md');
+    const plan = sessionArtifact(repo, 'feature.plan.md');
     fs.writeFileSync(plan, `${PAIRED_PLAN}\n`);
     const manifest = prepareGenerated(repo, { planPath: plan });
     try {

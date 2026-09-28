@@ -10,6 +10,7 @@ import {
   findSession, handoffSession, initializeSession, isPublishedSessionDir, isWorkspaceSessionDir,
   publishedSessionRoot, readLifecycleManifest, reactivateSession, validateSessionRoot, workspaceSessionRoot,
 } from './session-lifecycle.mjs';
+import { RUN_ID_PATTERN, createRun, runFolder } from './session-paths.mjs';
 
 export const SESSION_ENV = 'DISPATCH_SESSION_DIR';
 export const SESSION_FLAG = '--session-dir';
@@ -18,9 +19,6 @@ export const RUN_FLAG = '--session-run-id';
 export const MANIFEST_NAME = 'manifest.json';
 
 const DEFAULT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const RUN_ID_PATTERN = /^(?!\.{1,2}$)[A-Za-z0-9._-]{1,120}$/;
-const DURABLE_AREAS = new Set(['artifacts', 'ledger', 'telemetry', 'cache']);
-const RUN_AREAS = new Set(['logs', 'prompts', 'packets', 'reports', 'verify', 'cache', 'tmp']);
 
 /** @param {string} dir */
 function isRealDirectory(dir) {
@@ -72,12 +70,13 @@ export function bindRun(id) {
   return id;
 }
 
-function randomRunId() { return crypto.randomBytes(8).toString('hex'); }
-
-/** The active run id, opening one for a stand-alone invocation when needed. */
-export function runId() {
+/** The bound run id; a stand-alone invocation passes `kind` to allocate its own `NNN-<kind>` run. */
+/** @param {string} [kind] */
+export function runId(kind) {
   const bound = process.env[RUN_ENV];
-  return bound && RUN_ID_PATTERN.test(bound) ? bound : bindRun(randomRunId());
+  if (bound && RUN_ID_PATTERN.test(bound)) return bound;
+  if (!kind) throw new Error('No dispatch run is bound.');
+  return bindRun(createRun(kind, sessionDir()).id);
 }
 
 /** @param {string|{id?: string, repositoryRoot?: string|null, artifactPath?: string|null, slug?: string|null, sessionTitle?: string|null, objective?: string|null, tempRoot?: string}} [value] */
@@ -101,7 +100,7 @@ export function openSession(value) {
     });
     setBoundSession(dir);
   }
-  bindRun(randomRunId());
+  delete process.env[RUN_ENV];
   return dir;
 }
 
@@ -120,7 +119,6 @@ export function bindWorkflowSession({ repositoryRoot, artifactPath, slug, object
     if (!dir) dir = initializeSession({ repositoryRoot, sessionTitle: sessionTitle ?? objective ?? slug ?? 'dispatch', objective: objective ?? artifactPath ?? slug ?? 'dispatch', ...(tempRoot ? { tempRoot } : {}) });
     setBoundSession(dir);
   }
-  if (!process.env[RUN_ENV]) bindRun(randomRunId());
   touchSession(dir);
   return dir;
 }
@@ -180,7 +178,6 @@ export function bindSession(dir) {
   const result = reactivateSession({ sessionDir: dir, repositoryRoot: manifest.repositoryRoot });
   const real = fs.realpathSync(result.currentRoot);
   setBoundSession(real);
-  if (!process.env[RUN_ENV]) bindRun(randomRunId());
   touchSession(real);
   return real;
 }
@@ -214,46 +211,8 @@ export function sessionDir() {
   throw new Error(`Bound session directory is invalid or unsafe: ${bound}`);
 }
 
-/** @param {string} area */
-function ensureSubdirectory(parent, area) {
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(area)) throw new Error(`Invalid dispatch path component "${area}".`);
-  const dir = path.join(parent, area);
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const stat = fs.lstatSync(dir);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`Unsafe dispatch directory: ${dir}`);
-  const real = fs.realpathSync(dir);
-  const relative = path.relative(path.resolve(parent), real);
-  if (relative !== area || path.isAbsolute(relative)) throw new Error(`Dispatch directory escaped its owner: ${dir}`);
-  return real;
-}
-
-/** Returns a durable area owned by the bound chat folder. */
-export function sessionArea(area) {
-  if (!DURABLE_AREAS.has(area)) throw new Error(`Unknown durable session area "${area}".`);
-  return ensureSubdirectory(sessionDir(), area);
-}
-
-/** Returns `<session>/runs/<run-id>`, creating it inside the active chat folder. */
-export function runDir(id = runId()) {
-  if (!RUN_ID_PATTERN.test(id)) throw new Error(`Invalid run id "${id}".`);
-  return ensureSubdirectory(ensureSubdirectory(sessionDir(), 'runs'), id);
-}
-
-/** @param {string} area @param {string} [id] */
-export function runArea(area, id = runId()) {
-  if (!RUN_AREAS.has(area)) throw new Error(`Unknown run area "${area}".`);
-  return ensureSubdirectory(runDir(id), area);
-}
-
-/** @param {string} area @param {string} prefix */
-export function runTempDir(area, prefix) {
-  if (!/^[A-Za-z0-9._-]+$/.test(prefix)) throw new Error('Temp directory prefix must be a safe filename prefix.');
-  const dir = fs.mkdtempSync(path.join(runArea(area), prefix));
-  return fs.realpathSync(dir);
-}
-
-/** @param {string} prefix */
-export function sessionTempDir(prefix) { return runTempDir('tmp', prefix); }
+/** Returns `<session>/.state/runs/<run-id>`, creating it inside the active chat folder. */
+export function runDir(id = runId()) { return runFolder(id, sessionDir()); }
 
 /** @param {string} target */
 export function isSessionPath(target) {
@@ -347,7 +306,7 @@ export function pruneSessions({ maxAgeMs = DEFAULT_MAX_AGE_MS, now = Date.now(),
         const lastUsed = Date.parse(manifest.lastUsedAt ?? '') || stat.mtimeMs;
         if (now - lastUsed < maxAgeMs || (bound && sameFilesystemPath(dir, bound))) continue;
         for (const area of ['runs', 'cache']) {
-          const target = path.join(dir, area);
+          const target = path.join(dir, '.state', area);
           if (fs.existsSync(target) && isRealDirectory(target)) fs.rmSync(target, { recursive: true, force: true });
         }
       } catch { /* Retention never blocks a run or follows an invalid session. */ }

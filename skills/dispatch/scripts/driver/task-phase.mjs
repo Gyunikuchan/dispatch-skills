@@ -24,6 +24,8 @@ import {
   validateRed,
 } from './verification.mjs';
 import { inspectEnvelope, missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
+import { nextStep } from './state.mjs';
+import { freeRunFilePath } from '../lib/session-paths.mjs';
 
 // SECTION: Task entry and write cascade
 
@@ -45,7 +47,7 @@ export function beginImplementation(state) {
       // NOTE: A restored walkthrough belongs to a fresh session, so recovery needs a path in that session.
       data.previousEnvelopePaths ??= [];
       data.previousEnvelopePaths.push(data.expectedEnvelopePath);
-      data.expectedEnvelopePath = path.join(path.dirname(state.stateFile), `${state.runId}-write-${crypto.randomUUID()}.json`);
+      data.expectedEnvelopePath = freeRunFilePath(state.runId, { stage: data.writeStep?.n ?? nextStep(state, 'write'), kind: 'outcome', ext: 'json' }, data.previousEnvelopePaths);
     }
     return ask(state, 'implementation-recovery', `A write was dispatched before interruption. Save its implementation-outcome JSON to ${data.expectedEnvelopePath}, then return {envelopePath:"${data.expectedEnvelopePath}"}. The driver validates the file; repair it at that path if validation reports defects.`, [{ taskId: data.taskId, attempt: data.attempt, paths, expectedEnvelopePath: data.expectedEnvelopePath }]);
   }

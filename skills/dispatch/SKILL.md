@@ -22,7 +22,7 @@ verb-clause = ask
 
 `ask` is the default. A colon separates the prefix from an argument. Prefix-only `design`, `plan`, and `implement` require an argument; `review` may infer its kind and scope. Standalone reviews are report-only unless the user explicitly supplied `--fix`. Start `implement` only for an explicit implementation request.
 
-Before a pre-driver spec, run `node <skill-path>/scripts/session.mjs init --objective "<objective>"`; carry its JSON `sessionDir` as `--session-dir` across brainstorming and dispatch, and write the spec under `<sessionDir>/artifacts/`. For a new design or plan, clarify scope with `brainstorming` if installed, then any user-invoked grilling skill. The driver writes the canonical design or plan and records settled choices with trade-offs and rationale.
+Before a pre-driver spec, run `node <skill-path>/scripts/session.mjs init --objective "<objective>"`; carry its JSON `sessionDir` as `--session-dir` across brainstorming and dispatch, and write the spec as `<sessionDir>/<slug>.spec.md`. For a new design or plan, clarify scope with `brainstorming` if installed, then any user-invoked grilling skill. The driver writes the canonical design or plan and records settled choices with trade-offs and rationale.
 
 Pins select configured candidates or breadth. Use `node <skill-path>/scripts/dispatch.mjs --help` as the authoritative CLI and flag reference.
 

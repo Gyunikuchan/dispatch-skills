@@ -1,3 +1,7 @@
-# Keep only chat artifacts; logs and runtime state stay local.
+# Keep only chat deliverables; the manifest, .state/, logs, and runtime state stay local.
 */*
-!*/artifacts/
+!*/*.spec.md
+!*/*.design.md
+!*/*.plan.md
+!*/*.walkthrough.md
+!*/*.report.md

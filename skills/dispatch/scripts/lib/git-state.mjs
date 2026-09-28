@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { runTempDir } from './session-temp.mjs';
+import { createCacheDir } from './session-paths.mjs';
 import { TextDecoder } from 'node:util';
 
 import { canonicalJson, sha256 } from '../ledger/events.mjs';
@@ -288,7 +288,7 @@ export function contentTreeId(repoRoot) {
   let dir;
   try {
     const gitDir = git(repoRoot, ['rev-parse', '--git-path', 'index']).toString('utf8').trim();
-    dir = runTempDir('cache', 'dispatch-tree-');
+    dir = createCacheDir('tree');
     const index = path.join(dir, 'index');
     const real = path.resolve(repoRoot, gitDir);
     if (fs.existsSync(real)) fs.copyFileSync(real, index);

@@ -26,7 +26,7 @@ const state = `sha256:${'b'.repeat(64)}`;
 const oid = 'c'.repeat(40);
 const at = '2026-09-20T00:00:00.000Z';
 
-function runStart(hash, plan = 'artifacts/example.md', rootSlug = 'example') {
+function runStart(hash, plan = 'example.plan.md', rootSlug = 'example') {
   return {
     v: 1, type: 'run-start', runId, at,
     data: {
@@ -59,7 +59,7 @@ describe('ledger I/O and resume', () => {
     for (const key of [SESSION_ENV, RUN_ENV, 'DISPATCH_SESSION_TERMINAL']) delete process.env[key];
     bindWorkflowSession({ repositoryRoot: repo, artifactKind: 'plan', slug: 'example' });
     const directory = ensureLedgerNamespace();
-    ledgerPath = path.join(directory, 'example-ledger.md');
+    ledgerPath = path.join(directory, 'example.ledger.md');
     fs.rmSync(ledgerPath, { force: true });
     fs.rmSync(`${ledgerPath}.lock`, { force: true });
   });
@@ -182,7 +182,7 @@ describe('ledger I/O and resume', () => {
 
   it('rejects hostile namespace components and escalates as a hard error', () => {
     const session = sessionDir();
-    const directory = path.join(session, 'ledger');
+    const directory = path.join(session, '.state');
     try {
       if (process.platform !== 'win32') {
         fs.chmodSync(session, 0o777);
@@ -232,20 +232,20 @@ describe('ledger I/O and resume', () => {
   // SECTION: Artifact identity and governing content
 
   it('derives only canonical session artifact plan slugs', () => {
-    assert.equal(slugFromPlanPath('artifacts/v0-4-phase2.md'), 'v0-4-phase2');
-    assert.throws(() => slugFromPlanPath('artifacts/v0-4-phase2-walkthrough.md'), /canonical artifact/);
-    assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /canonical artifact/);
+    assert.equal(slugFromPlanPath('v0-4-phase2.plan.md'), 'v0-4-phase2');
+    assert.throws(() => slugFromPlanPath('v0-4-phase2.walkthrough.md'), /canonical/);
+    assert.throws(() => slugFromPlanPath('/native/implementation_plan.md'), /canonical/);
   });
 
   it('derives design root slugs across path styles and rejects reserved roots', () => {
-    assert.equal(designRootSlug('artifacts/platform-design.md'), 'platform');
-    assert.equal(designRootSlug('artifacts\\platform-design.md'), 'platform');
-    assert.equal(designRootSlug('artifacts/root-i01-one-design.md'), null);
-    assert.equal(designRootSlug('artifacts/root-integration-design.md'), null);
+    assert.equal(designRootSlug('platform.design.md'), 'platform');
+    assert.equal(designRootSlug('artifacts\\platform.design.md'), 'platform');
+    assert.equal(designRootSlug('root-i01-one.design.md'), null);
+    assert.equal(designRootSlug('root-integration.design.md'), null);
   });
 
   it('requires artifact and ledger approval revisions for design resume', () => {
-    const designPath = 'artifacts/example-design.md';
+    const designPath = 'example.design.md';
     const source = '# Design\n\n## Architecture\nA\n\n## Execution Status\nReady\n';
     const hash = governingHash(source, { kind: 'design' }).hash;
     const designRunId = '22222222-2222-4222-8222-222222222222';
@@ -261,11 +261,11 @@ describe('ledger I/O and resume', () => {
   });
 
   it('rejects increment-shaped plans as ordinary resume artifacts', () => {
-    assert.throws(() => slugFromPlanPath('artifacts/root-i01-model-plan.md'), /reserved for phased artifacts/);
+    assert.throws(() => slugFromPlanPath('root-i01-model.plan.md'), /reserved for phased artifacts/);
   });
 
   it('blocks approval-less and aborted design segments', () => {
-    const designPath = 'artifacts/example-design.md';
+    const designPath = 'example.design.md';
     const source = '# Design\n\nBody\n';
     const hash = governingHash(source, { kind: 'design' }).hash;
     const metadata = { approvedContentHash: hash };
@@ -284,7 +284,7 @@ describe('ledger I/O and resume', () => {
 
   it('resumes after RED without repeating tests-only and preserves completion after commit', () => {
     fs.writeFileSync(path.join(repo, 'done.txt'), 'done\n');
-    const planPath = 'artifacts/example.md';
+    const planPath = 'example.plan.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     const resultState = materializedFingerprint(repo, ['done.txt']).digest;
@@ -308,7 +308,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('returns explicit missing and mismatched ledger states', () => {
-    const planPath = 'artifacts/example.md';
+    const planPath = 'example.plan.md';
     const plan = '# Plan\n\nBody\n';
     assert.equal(resumeOrdinary({ ledgerPath, planPath, planSource: plan, repoRoot: repo }).status, 'missing');
     appendEvent(ledgerPath, runStart(`sha256:${'d'.repeat(64)}`, planPath));
@@ -316,7 +316,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('prioritizes an open failure-disposition ruling over ordinary completion drift', () => {
-    const planPath = 'artifacts/example.md';
+    const planPath = 'example.plan.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'failed mutation\n');
@@ -334,7 +334,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('routes post-failure snapshot drift to reconciliation', () => {
-    const planPath = 'artifacts/example.md';
+    const planPath = 'example.plan.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     fs.writeFileSync(path.join(repo, 'active.txt'), 'changed after failure\n');
@@ -349,7 +349,7 @@ describe('ledger I/O and resume', () => {
   });
 
   it('keeps inspect-first open and resolves disposition with terminal stable-failure', () => {
-    const planPath = 'artifacts/example.md';
+    const planPath = 'example.plan.md';
     const plan = '# Plan\n\nBody\n';
     const hash = governingHash(plan).hash;
     const snapshot = { available: true, entries: {} };
@@ -369,7 +369,7 @@ describe('ledger I/O and resume', () => {
   // SECTION: Phased design resume
 
   describe('design-run resume across segments', () => {
-    const designPath = 'artifacts/demo-design.md';
+    const designPath = 'demo.design.md';
     const designBody = [
       '# Design',
       '',
@@ -405,8 +405,8 @@ describe('ledger I/O and resume', () => {
           baseline: { commit: oid, repositoryState: state, dirtyPaths: [] },
           design: { path: designPath, revision: designHash },
           increment: {
-            id, planPath: `artifacts/example-${slug}-plan.md`,
-            walkthroughPath: `artifacts/example-${slug}-walkthrough.md`,
+            id, planPath: `example-${slug}.plan.md`,
+            walkthroughPath: `example-${slug}.walkthrough.md`,
             planHash: designHash,
           },
         },

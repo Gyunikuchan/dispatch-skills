@@ -81,7 +81,7 @@ function unitState(text, ordinary = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'walkthrough-table-'));
   cleanup.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   const planPath = path.join(dir, 'plan.md');
-  const walkthroughPath = path.join(dir, 'plan-walkthrough.md');
+  const walkthroughPath = path.join(dir, 'plan.walkthrough.md');
   fs.writeFileSync(planPath, '# Plan\n');
   fs.writeFileSync(walkthroughPath, text);
   return {
@@ -167,7 +167,7 @@ describe('driver walkthrough table persistence', () => {
 describe('driver walkthrough table baseline and handoff', () => {
   it('scaffolds the summary box and a Pending table at baseline, then hands off through the table', () => {
     const fixture = createOrdinaryDriverFixture({ codeReview: false });
-    const walkthroughPath = fixture.plan.replace(/\.md$/, '-walkthrough.md');
+    const walkthroughPath = fixture.plan.replace(/\.plan\.md$/, '.walkthrough.md');
     let scaffold = null;
     const result = driveOrdinaryImplementation(fixture, {
       onAction(action) {
@@ -185,7 +185,7 @@ describe('driver walkthrough table baseline and handoff', () => {
 
   it('refuses baseline when the walkthrough it would use fails lint', () => {
     const fixture = createOrdinaryDriverFixture({ codeReview: false });
-    const walkthroughPath = fixture.plan.replace(/\.md$/, '-walkthrough.md');
+    const walkthroughPath = fixture.plan.replace(/\.plan\.md$/, '.walkthrough.md');
     fs.writeFileSync(walkthroughPath, walkthrough({ box: '', traceability: '- [SC1] Pending — evidence: red.' }).replace('\n\n\n', '\n\n'));
     const result = driveOrdinaryImplementation(fixture, { allowErrors: true });
     assert.equal(result.done.outcome, 'refused', JSON.stringify(result.done));
@@ -196,7 +196,7 @@ describe('driver walkthrough table baseline and handoff', () => {
 
   it('throws at handoff when the walkthrough fails lint', () => {
     const fixture = createOrdinaryDriverFixture({ codeReview: false });
-    const walkthroughPath = fixture.plan.replace(/\.md$/, '-walkthrough.md');
+    const walkthroughPath = fixture.plan.replace(/\.plan\.md$/, '.walkthrough.md');
     let production = false;
     let failure = '';
     try {

@@ -4,7 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { safeRenameSync } from '../lib/platform.mjs';
-import { isSessionPath, runTempDir, sessionArea, sessionArgs, sessionDir, sessionTempDir } from '../lib/session-temp.mjs';
+import { isSessionPath, runId, sessionArgs, sessionDir } from '../lib/session-temp.mjs';
+import { freeRunFilePath, RUN_ID_PATTERN, runFile, stateCache } from '../lib/session-paths.mjs';
+
+// Each preparation owns one invocation file; a re-preparation of the same round takes `-a<N>`.
+const INVOCATION_FILE = /^r\d+(?:-a\d+)?\.invocation\.json$/;
 import { RESPONSE_SCHEMA_PROVIDERS } from '../dispatch.mjs';
 import {
   scanResolutionLog,
@@ -113,7 +117,7 @@ export function validateRequestAction(request) {
 
 /** Artifact slug from a design, plan, or walkthrough filename. */
 export function slugFromPath(file) {
-  const match = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
+  const match = /(?:^|\/)([a-z0-9]+(?:-[a-z0-9]+)*)\.(?:spec|design|plan|walkthrough)\.md$/.exec(file.replace(/\\/g, '/'));
   return match?.[1] ?? null;
 }
 
@@ -280,7 +284,7 @@ export function readArtifact(file, expected = {}) {
  */
 export function writeArtifactMetadata(file, metadata, { expectedDocumentHash = null } = {}) {
   const resolved = path.resolve(file);
-  const lock = path.join(sessionArea('artifacts'), `dispatch-metadata-${rawSha256(resolved).slice(7)}.lock`);
+  const lock = stateCache(`${rawSha256(resolved).slice(7, 15)}.lock`);
   try {
     fs.mkdirSync(lock, { mode: 0o700 });
   } catch (err) {
@@ -448,25 +452,21 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
 
 // SECTION: Temporary review artifacts
 
-/** @param {string} prefix @param {string} filename @param {string} contents */
-export function createTempFile(prefix, filename, contents) {
-  const area = /prompt|review-view/i.test(prefix) ? 'prompts' : 'tmp';
-  const dir = runTempDir(area, prefix);
-  const file = path.join(dir, filename);
-  fs.writeFileSync(file, contents, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-  return { path: file };
+/**
+ * Writes one run file in the bound run, or in a fresh `<kind>` run for a stand-alone call.
+ * @param {import('../lib/session-paths.mjs').RunFileSpec & { contents?: string }} spec @param {string} [kind]
+ */
+export function createRunFile(spec, kind = 'ask') {
+  return { path: runFile(runId(kind), spec) };
 }
 
-export function createReviewView({ artifact, nextRound }) {
+/** @param {{ artifact: string, nextRound: number, round?: number, qualifier?: string, runKind?: string }} options */
+export function createReviewView({ artifact, nextRound, round = nextRound, qualifier, runKind }) {
   const built = buildReviewView(fs.readFileSync(artifact, 'utf8'), {
     canonicalPath: artifact,
     nextRound,
   });
-  const written = createTempFile(
-    'dispatch-review-view-',
-    `${path.basename(artifact, path.extname(artifact))}-review-view.md`,
-    built.contents,
-  );
+  const written = createRunFile({ round, ...(qualifier ? { qualifier } : {}), kind: 'view', ext: 'md', contents: built.contents }, runKind);
   return { ...built, viewPath: written.path };
 }
 
@@ -523,9 +523,8 @@ function restoreInvocationPaths(state, root) {
   return state;
 }
 
-export function createInvocationState({ kind, artifactPath, snapshot, expectedSourceKeys = [] }) {
-  const dir = sessionTempDir(`dispatch-${kind}-invocation-`);
-  const statePath = path.join(dir, 'state.json');
+export function createInvocationState({ kind, artifactPath, snapshot, expectedSourceKeys = [], round = 1 }) {
+  const statePath = freeRunFilePath(runId(`${kind}-review`), { round, kind: 'invocation', ext: 'json' });
   const state = {
     schemaVersion: 1,
     invocationId: crypto.randomUUID(),
@@ -554,8 +553,8 @@ function missingInvocationState(resolved) {
   }
   if (
     !isSessionPath(container) ||
-    path.basename(resolved) !== 'state.json' ||
-    !/^dispatch-(?:design|plan|code)-invocation-/.test(path.basename(dir))
+    !INVOCATION_FILE.test(path.basename(resolved)) ||
+    !RUN_ID_PATTERN.test(path.basename(dir))
   ) return new Error('invocationContext statePath is invalid.');
   return new Error(
     `Invocation state ${dir} no longer exists; it was removed before checkpoint. The prior checkpoint ` +
@@ -588,7 +587,7 @@ export function readInvocationState(context) {
   if (
     stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 ||
     parentStat.isSymbolicLink() || !parentStat.isDirectory() ||
-    !/^dispatch-(?:design|plan|code)-invocation-/.test(path.basename(parent))
+    !INVOCATION_FILE.test(path.basename(resolved)) || !RUN_ID_PATTERN.test(path.basename(parent))
   ) throw new Error('invocationContext statePath is invalid.');
   if (process.platform !== 'win32' && ((stat.mode & 0o077) !== 0 || (parentStat.mode & 0o077) !== 0)) {
     throw new Error('invocationContext state must be owner-only.');
@@ -755,6 +754,7 @@ export function governingDesignExcerpt(source, { revision = null, maxChars = 400
 // SECTION: Dispatch files
 
 export function createDispatchFiles({
+  round = 1,
   prompt,
   batch = null,
   attachments,
@@ -764,10 +764,10 @@ export function createDispatchFiles({
   orchestrator = null,
   orchestratorModel = null,
 }) {
-  const promptFile = createTempFile('dispatch-review-prompt-', 'prompt.md', prompt);
-  const argv = [process.execPath, path.resolve(dispatchScriptPath), ...sessionArgs()];
+  const promptFile = createRunFile({ round, kind: 'prompt', ext: 'md', contents: prompt });
+  const argv = [process.execPath, path.resolve(dispatchScriptPath), ...sessionArgs(), '--round', String(round)];
   if (batch) {
-    const batchFile = createTempFile('dispatch-review-batch-', 'batch.json', `${JSON.stringify(batch, null, 2)}\n`);
+    const batchFile = createRunFile({ round, kind: 'batch', ext: 'json', contents: `${JSON.stringify(batch, null, 2)}\n` });
     argv.push('--batch-file', batchFile.path);
   } else if (selector) {
     if (selector.provider) argv.push('--provider', selector.provider);
@@ -783,7 +783,7 @@ export function createDispatchFiles({
   for (const attachment of attachments) argv.push('-f', attachment);
   if (orchestrator) argv.push('--orchestrator', orchestrator);
   if (orchestratorModel) argv.push('--orchestrator-model', orchestratorModel);
-  const outputFile = createTempFile('dispatch-review-output-', 'output.txt', '');
+  const outputFile = createRunFile({ round, kind: 'output', ext: 'log' });
   argv.push('--output-file', outputFile.path);
   return {
     promptPath: promptFile.path,

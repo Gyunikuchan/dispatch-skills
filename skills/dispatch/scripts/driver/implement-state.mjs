@@ -19,12 +19,12 @@ export const relative = (state, file) => path.relative(state.repoRoot, file).spl
 export const source = state => fs.readFileSync(state.planPath, 'utf8');
 export function bindPlan(state, file) {
   state.planPath = path.resolve(state.repoRoot, file);
-  if (/-design\.md$/.test(state.planPath)) throw new Error('Design paths must be bound through resumeDesign.');
+  if (/\.design\.md$/.test(state.planPath)) throw new Error('Design paths must be bound through resumeDesign.');
   state.slug = slugFromPlanPath(relative(state, state.planPath));
   const hash = governingHash(source(state));
   if (hash.status !== 'ok') throw new Error(hash.diagnostic);
   state.governingHash = hash.hash;
-  state.walkthroughPath = state.planPath.replace(/\.md$/, '-walkthrough.md');
+  state.walkthroughPath = state.planPath.replace(/\.plan\.md$/, '.walkthrough.md');
   state.ledgerPath = resolveLedgerPath({ slug: state.slug, slugSource: 'explicit', repositoryRoot: state.repoRoot, artifactKind: 'plan' });
 }
 export function assertBinding(state) {
@@ -159,7 +159,7 @@ export function restoreEvidence(state) {
     if (state.increment?.id && record.incrementId !== state.increment.id) throw new Error('Walkthrough evidence increment ID does not bind the selected increment.');
     if (!state.increment?.id && record.incrementId && !/^I\d{2}$/.test(record.incrementId)) throw new Error('Walkthrough evidence increment ID is invalid.');
   } else if (record.designPath || record.designRevision) throw new Error('Walkthrough evidence contains an unbound parent design identity.');
-  if (!state.increment?.id && /-design\.md$/.test(state.planPath) && record.incrementId) {
+  if (!state.increment?.id && /\.design\.md$/.test(state.planPath) && record.incrementId) {
     const graphIds = new Set(parseIncrementGraph(fs.readFileSync(state.planPath, 'utf8')).increments.map(item => item.id));
     if (!graphIds.has(record.incrementId)) throw new Error('Walkthrough evidence increment ID does not bind a known design increment.');
   }

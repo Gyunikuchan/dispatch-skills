@@ -96,7 +96,7 @@ describe('driver-run verification', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.deepEqual(verifies.map(action => action.purpose), ['baseline', 'red', 'scoped', 'final']);
     const sessionRoot = result.done.handoff.destinations[0];
-    const resultFile = action => path.join(sessionRoot, path.relative(path.dirname(path.dirname(path.dirname(action.stateFile))), action.resultsPath));
+    const resultFile = action => path.join(sessionRoot, path.relative(path.dirname(path.dirname(path.dirname(path.dirname(action.stateFile)))), action.resultsPath));
     for (const action of verifies) {
       assert.deepEqual(action.argv.slice(-3, -1), ['--verify', '--state']);
       const stored = JSON.parse(fs.readFileSync(resultFile(action), 'utf8'));
@@ -106,7 +106,7 @@ describe('driver-run verification', () => {
       assert.equal(readSessionManifest(sessionRoot).sessionId, fixture.repo.sessionId);
       for (const item of record.results) {
         assert.ok(fs.existsSync(item.logPath), item.logPath);
-        assert.ok(path.relative(sessionRoot, item.logPath).startsWith(`runs${path.sep}`), item.logPath);
+        assert.ok(path.relative(sessionRoot, item.logPath).startsWith(path.join(".state", "runs") + path.sep), item.logPath);
       }
     }
     const completion = restoreSessionPaths(JSON.parse(fs.readFileSync(resultFile(verifies[3]), 'utf8')), sessionRoot);

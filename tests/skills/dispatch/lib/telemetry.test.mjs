@@ -130,8 +130,8 @@ describe('telemetry', () => {
     const second = openSession({ repositoryRoot: root, id: 'second' });
     const secondPath = telemetryPath();
     assert.notEqual(first, second);
-    assert.equal(path.dirname(firstPath), path.join(first, 'telemetry'));
-    assert.equal(path.dirname(secondPath), path.join(second, 'telemetry'));
+    assert.equal(path.dirname(firstPath), path.join(first, '.state'));
+    assert.equal(path.dirname(secondPath), path.join(second, '.state'));
     assert.ok(fs.existsSync(firstPath));
   });
 
@@ -159,7 +159,7 @@ describe('telemetry', () => {
     process.env.USER = '../ev il/..';
     const session = openSession({ repositoryRoot: root, id: 'username-one' });
     const file = telemetryPath();
-    assert.equal(path.dirname(file), path.join(session, 'telemetry'));
+    assert.equal(path.dirname(file), path.join(session, '.state'));
     assert.equal(path.dirname(session), path.join(root, '.scratch', 'dispatch-skills'));
     assert.equal(path.basename(file), 'telemetry.jsonl');
     for (const [index, value] of ['..', '.'].entries()) {
@@ -167,7 +167,7 @@ describe('telemetry', () => {
       delete process.env.DISPATCH_SESSION_DIR;
       const unknown = openSession({ repositoryRoot: root, id: `username-${index}` });
       assert.equal(path.dirname(unknown), path.join(root, '.scratch', 'dispatch-skills'));
-      assert.equal(path.dirname(telemetryPath()), path.join(unknown, 'telemetry'));
+      assert.equal(path.dirname(telemetryPath()), path.join(unknown, '.state'));
     }
   });
 });
