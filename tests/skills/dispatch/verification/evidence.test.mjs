@@ -306,6 +306,7 @@ describe('verification evidence', () => {
       '# Sample plan',
       '',
       '> **TL;DR:** Ship the boxed context sentence.',
+      '> **Parent:** user request',
       '> **Decide:** none',
       '> **Risk:** low — additive change',
       '> **Scope:** src/a.js',

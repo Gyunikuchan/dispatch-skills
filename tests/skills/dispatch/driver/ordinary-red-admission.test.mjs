@@ -44,8 +44,7 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
   it('excludes an aggregate command mapped to no red criterion from RED admission', () => {
     const fixture = createOrdinaryDriverFixture();
     const source = fs.readFileSync(fixture.plan, 'utf8')
-      .replace('## Proposed Changes', '- [SC2] Aggregate regression coverage.\n  - Changes: `src/app.js`\n  - Verify: `npm test`\n  - Evidence: verify\n  - Test rationale: The full suite is deterministic and needs no dedicated pre-change failure.\n\n## Proposed Changes')
-      .replace('- `node --test tests/sample.test.mjs`', '- `node --test tests/sample.test.mjs`\n- `npm test`');
+      .replace('## Proposed Changes', '- [SC2] Aggregate regression coverage.\n  - Changes: `src/app.js`\n  - Verify: `npm test`\n  - Evidence: verify\n  - Test rationale: The full suite is deterministic and needs no dedicated pre-change failure.\n\n## Proposed Changes');
     fs.writeFileSync(fixture.plan, source);
     const result = driveOrdinaryImplementation(fixture, { policy: {
       delegateWrite(action) {

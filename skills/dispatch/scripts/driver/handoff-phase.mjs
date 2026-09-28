@@ -49,7 +49,7 @@ export function handoff(state) {
   requireImplementation(state, 'handoff');
   persistEvidence(state);
   const walkthrough = readArtifact(state.walkthroughPath, { kind: 'code' }).source;
-  const trace = parseTraceability(sectionBody(walkthrough, 'Outcome Traceability') ?? []);
+  const trace = parseTraceability(sectionBody(walkthrough, 'Verification') ?? []);
   const rows = 'table' in trace ? trace.rows : [];
   for (const criterion of state.ordinary.criteria) {
     const row = rows.find(item => item.id === criterion.id);

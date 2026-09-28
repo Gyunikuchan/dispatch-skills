@@ -52,7 +52,7 @@ export function criterionMappings(source) {
 
 /** Plan-review headlines bounded for the implementation packet. @param {string} log */
 export function findingDigest(log) {
-  const entries = log.split('\n').filter(line => /^[-*]\s+\*\*\[/.test(line) && !/^[-*]\s+\*\*Sources:\*\*/.test(line))
+  const entries = log.split('\n').filter(line => /^[-*]\s+\*\*\[/.test(line))
     .map(line => (line.length > DIGEST_ENTRY_CHARS ? `${line.slice(0, DIGEST_ENTRY_CHARS - 1)}…` : line));
   if (!entries.length) return log.slice(0, DIGEST_TOTAL_CHARS);
   const kept = [];
@@ -87,7 +87,7 @@ export function outcomeFirstPacket(source, criteria) {
   const constraints = [section('Key Decisions & Context'), section('Open Questions & Assumptions')].filter(Boolean);
   const failures = section('Review Findings & Resolutions');
   return {
-    governingOutcome: { title, context: section('Context & Intent') || boxValue(source, 'TL;DR') || lines.slice(titleIndex + 1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
+    governingOutcome: { title, context: section('Context & Intent') || boxValue(source, 'TL;DR') || boxValue(source, 'Delivered') || lines.slice(titleIndex + 1).map(item => item.text.trim()).filter(Boolean).find(text => !/^##/.test(text)) || title },
     settledBoundary: { scope: proposed, nonScope: section('Out of Scope') || 'None.', invariants, rollback: section('Rollback & Blast Radius') || 'None.' },
     criteria: criteria.map(({ id, title: outcome, evidence, paths, commands, review }) => ({ id, outcome, evidenceClass: evidence, paths, commands, review: review ?? null })),
     repositoryContext: { constraints, priorFailures: failures && !/No reviews conducted yet/i.test(failures) ? findingDigest(failures) : 'None recorded.' },

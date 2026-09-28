@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { evaluateConsensus } from '../../../../skills/dispatch/scripts/review/consensus.mjs';
-import { findUnsettledResolutionLines as findUnsettled } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { findUnsettledResolutionLines as findUnsettled, formatSourceMapLine } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+const sourcesRecord = (map) => formatSourceMapLine(typeof map === 'string' ? JSON.parse(map) : map);
 
-const SOURCES = `- **Sources:** ${JSON.stringify({
+const SOURCES = `${sourcesRecord(JSON.stringify({
   'plan-review:R1:claude:0': {
     provider: 'claude', candidateIndex: 0, model: 'opus', effort: null, status: 'target', session: null, substitutesFor: null,
   },
-})}`;
+}))}`;
 const docNoSources = (...resolutionLines) =>
   ['# Plan', '', '## Proposed Changes', '- stuff', '', '## Review Findings & Resolutions', '### Round 1 — agy, 2026-09-14', ...resolutionLines].join('\n');
 const doc = (...resolutionLines) => docNoSources(SOURCES, ...resolutionLines);
@@ -156,7 +157,7 @@ describe('evaluateConsensus gate outcomes', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 1 — Claude',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — tag: x → y',
     ].join('\n'));
     assert.equal(enriched.exit, 1, enriched.error);
@@ -166,7 +167,7 @@ describe('evaluateConsensus gate outcomes', () => {
       severity: 'SHOULD',
       sourceKeys: ['plan-review:R1:claude:0'],
       status: 'pendingConfirmation',
-      lineNumber: 5,
+      lineNumber: 6,
       originalLine: '- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=plan-review:R1:claude:0] § A — tag: x → y',
     }]);
 

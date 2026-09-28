@@ -22,9 +22,9 @@ success criteria well, not merely whether it matches the plan.
 ## against
 
 - The task, the plan's `## Success Criteria` (with no plan, the task alone), and the walkthrough's
-  `## Outcome Traceability` table: every criterion row demonstrably met by the diff and its tests. A goal
+  `## Verification` table: every criterion row demonstrably met by the diff and its tests. A goal
   missed or met only on paper, such as a test passing without exercising it, is `intent`.
-- The walkthrough's verification results; when absent or unfilled, report a `test-gap` finding.
+- With a plan, an absent or unfilled table is a `test-gap`; a plan-less walkthrough carries only its `Final gate:` line.
 - An attached "Approved technical-design context" section: the increment's acceptance criteria.
 
 ## inspection

@@ -70,7 +70,7 @@ describe('code review preparation', () => {
       assert.equal(manifest.artifact.generated, true);
       const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
       assert.match(walkthrough, /Update the exported value/);
-      assert.match(walkthrough, /Command: `npm test` — exit unknown; Passed/);
+      assert.match(walkthrough, /Final gate: `npm test` — Passed/);
       assert.ok(manifest.dispatch.argv.includes('--batch-file'));
       assert.deepEqual(manifest.reviewRange.paths, ['app.js']);
     } finally {
@@ -371,20 +371,20 @@ describe('code review preparation', () => {
     const walkthrough = path.join(repo, prepared.artifact.canonicalPath);
     fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
     fs.writeFileSync(walkthrough, fs.readFileSync(walkthrough, 'utf8').replace(
-      '## Key Deviations\nNone.',
-      '## Key Deviations\nChanged the constant again.',
+      '## Deviations & Follow-ups\nNone.',
+      '## Deviations & Follow-ups\n- Follow-up: recheck the constant.',
     ));
     assert.throws(() => prepareCodeReview({
       action: 'checkpoint',
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 1, terminalSourceKeys: [] },
-      settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
+      settledWrites: { paths: ['app.js'], walkthroughSections: ['Deviations & Follow-ups'] },
     }, { repoRoot: repo }), /continue review rounds until consensus settles \(exit 0\)/);
     const checkpoint = prepareCodeReview({
       action: 'checkpoint',
       invocationContext: prepared.invocationContext,
       settlement: { consensusExit: 0, terminalSourceKeys: [] },
-      settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
+      settledWrites: { paths: ['app.js'], walkthroughSections: ['Deviations & Follow-ups'] },
     }, { repoRoot: repo, now: new Date('2026-09-17T00:00:00Z') });
     try {
       assert.equal(checkpoint.status, 'checkpointed');
@@ -512,7 +512,7 @@ describe('code review preparation', () => {
   it('hints the intended field for a guessed request key', () => {
     const repo = makeRepo();
     assert.throws(() => prepareCodeReview({ walkthrough: 'x.md' }, { repoRoot: repo }), /did you mean "walkthroughPath"\?/);
-    assert.throws(() => prepareCodeReview({ context: {} }, { repoRoot: repo }), /did you mean "invocationContext"\?/);
+    assert.throws(() => prepareCodeReview({ round: 1 }, { repoRoot: repo }), /did you mean "roundId"\?/);
   });
 
   it('previews exactly the checkpoint that succeeds, and a live log that it rejects', () => {
@@ -525,8 +525,8 @@ describe('code review preparation', () => {
     const walkthrough = path.join(repo, prepared.artifact.canonicalPath);
     fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
     fs.writeFileSync(walkthrough, fs.readFileSync(walkthrough, 'utf8').replace(
-      '## Key Deviations\nNone.',
-      '## Key Deviations\nChanged the constant again.',
+      '## Deviations & Follow-ups\nNone.',
+      '## Deviations & Follow-ups\n- Follow-up: recheck the constant.',
     ));
     try {
       assert.throws(() => prepareCodeReview({ action: 'checkpoint-preview', invocationContext: prepared.invocationContext, settlement: {} }, { repoRoot: repo }), /inapplicable field "settlement"/);
@@ -544,7 +544,7 @@ describe('code review preparation', () => {
         action: 'checkpoint-preview',
         status: 'preview',
         settlement: { consensusExit: 0, terminalSourceKeys: [] },
-        settledWrites: { paths: ['app.js'], walkthroughSections: ['Key Deviations'] },
+        settledWrites: { paths: ['app.js'], walkthroughSections: ['Deviations & Follow-ups'] },
         unsettled: [],
       });
       assert.equal(fs.readFileSync(walkthrough, 'utf8'), reviewed);
@@ -567,6 +567,7 @@ const PAIRED_PLAN = [
   '# Feature plan',
   '',
   '> **TL;DR:** Update the exported value.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — one module',
   '> **Scope:** app.js',
@@ -586,11 +587,11 @@ const PAIRED_PLAN = [
   '#### [MODIFY] app.js',
   '## Verification Plan',
   '### Automated Tests',
-  '- `npm test`',
+  '- `npm run lint`',
 ].join('\n');
 
 function traceabilitySection(walkthrough) {
-  return /## Outcome Traceability\n([\s\S]*?)\n## Key Deviations/.exec(walkthrough)?.[1] ?? '';
+  return /## Verification\n([\s\S]*?)\n## Deviations & Follow-ups/.exec(walkthrough)?.[1] ?? '';
 }
 
 function prepareGenerated(repo, extra = {}) {
@@ -613,20 +614,40 @@ describe('prepare-code walkthrough summary box and traceability', () => {
     try {
       assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
       const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
-      assert.match(walkthrough, /^# Walkthrough — Update the exported value\n\n> \*\*TL;DR:\*\* \S.*\n> \*\*Status:\*\* 0\/2 SC passing\n> \*\*Deviations:\*\* none\n\n## Changes Made/);
+      assert.match(walkthrough, /^# Review: `app\.js`\n\n> \*\*Delivered:\*\* Update the exported value\n> \*\*Parent:\*\* `[^`]*feature\.plan\.md`\n> \*\*Status:\*\* 0\/2 SC passing\n> \*\*Deviations:\*\* none\n\n## Changes Made\n- \*\*\[MODIFY\]\*\* `app\.js` — \+1 −1\n/);
+      assert.doesNotMatch(walkthrough, /## Context/);
       const section = traceabilitySection(walkthrough);
+      assert.match(section, /\nFinal gate: `npm test` — Passed\n/);
       const rows = section.split('\n').filter(line => line.startsWith('|'));
-      assert.equal(rows[0].replace(/\s+/g, ' '), '| SC | Behavior | Production path | Evidence |');
-      assert.match(rows[1], /^\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|$/);
+      assert.equal(rows[0].replace(/\s+/g, ' '), '| SC | Outcome | Evidence |');
+      assert.match(rows[1], /^\|\s*-+\s*\|\s*-+\s*\|\s*-+\s*\|$/);
       const cells = rows.slice(2).map(row => row.split('|').slice(1, -1).map(value => value.trim()));
       assert.deepEqual(cells.map(([id]) => id), ['SC1', 'SC2']);
       assert.match(cells[0][1], /Export the new value/);
       assert.match(cells[1][1], /Keep the module importable/);
-      for (const row of cells) assert.match(row[3], /^Pending\b/);
+      for (const row of cells) assert.match(row[2], /^Pending\b/);
       assert.doesNotMatch(walkthrough, /\[SC#\]|<delivered observable behavior>|<fresh record>/);
     } finally {
       cleanupManifest(manifest);
     }
+  });
+
+  it('plan-less readable walkthrough renders Context from the request and no scope filler', async () => {
+    const { lintWalkthrough } = await import('../../../../skills/dispatch/scripts/walkthrough/lint.mjs');
+    const repo = makeRepo();
+    const manifest = prepareGenerated(repo, { context: { ask: 'Bump the exported constant', decisions: ['Keep the name (user)'], outOfScope: ['Other modules'] } });
+    try {
+      assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
+      const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
+      assert.match(walkthrough, /^# Bump the exported constant\n\n> \*\*Delivered:\*\* Update the exported value\n/);
+      assert.match(walkthrough, /## Context\n- Ask: Bump the exported constant\n- Decisions: Keep the name \(user\)\n- Out of scope: Other modules\n\n## Changes Made/);
+      assert.doesNotMatch(walkthrough, /Included in the selected review scope|Assumptions:|Focus:/);
+      assert.deepEqual(lintWalkthrough(walkthrough).defects, []);
+    } finally {
+      cleanupManifest(manifest);
+    }
+    assert.throws(() => prepareGenerated(repo, { context: { ask: 'x', extra: [] } }), /unsupported field "extra"/);
+    assert.throws(() => prepareGenerated(repo, { context: { focus: 'x' } }), /context\.focus must be an array/);
   });
 
   it('prepare-code walkthrough plan-less form writes Status n/a and no table', () => {
@@ -635,8 +656,8 @@ describe('prepare-code walkthrough summary box and traceability', () => {
     try {
       assert.equal(manifest.status, 'ready', JSON.stringify(manifest));
       const walkthrough = fs.readFileSync(path.join(repo, manifest.artifact.canonicalPath), 'utf8');
-      assert.match(walkthrough, /^# Walkthrough — Update the exported value\n\n> \*\*TL;DR:\*\* \S.*\n> \*\*Status:\*\* n\/a\n> \*\*Deviations:\*\* none\n\n## Changes Made/);
-      assert.equal(traceabilitySection(walkthrough).trim(), 'None — no governing plan.');
+      assert.match(walkthrough, /^# Review: `app\.js`\n\n> \*\*Delivered:\*\* Update the exported value\n> \*\*Parent:\*\* user request\n> \*\*Status:\*\* n\/a\n> \*\*Deviations:\*\* none\n\n## Context\n- Ask: Update the exported value\n\n## Changes Made/);
+      assert.equal(traceabilitySection(walkthrough).trim(), 'Final gate: `npm test` — Passed');
       assert.doesNotMatch(walkthrough, /\[SC#\]|<delivered observable behavior>|<fresh record>/);
     } finally {
       cleanupManifest(manifest);

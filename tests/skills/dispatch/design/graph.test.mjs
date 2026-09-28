@@ -9,6 +9,7 @@ const base = [
   '# D',
   '',
   '> **TL;DR:** Two increments.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — fixture',
   '> **Increments:** 2',

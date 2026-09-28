@@ -8,7 +8,8 @@ import { DriverError } from './actions.mjs';
 import { append, ask, ledgerSegment, pendingRows, refuse, relative, ruling, source } from './implement-state.mjs';
 import { documentTitle } from '../lib/summary-box.mjs';
 import { lintWalkthrough } from '../walkthrough/lint.mjs';
-import { cell, renderTraceability } from '../walkthrough/traceability.mjs';
+import { cell, changeEntries, renderChangesMade, renderVerification } from '../walkthrough/traceability.mjs';
+import { extractChangeNotes } from '../plan/structure.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
@@ -21,15 +22,19 @@ export function beginBaseline(state) {
   Object.assign(state.ordinary, verificationPlan(state), { phase: 'baseline', step: 'baseline-verify', mutationEpoch: 0 });
   state.ordinary.baseline = repositoryBaseline(state);
   state.ordinary.baselineSnapshot = snapshot(state);
-  if (!fs.existsSync(state.walkthroughPath)) fs.writeFileSync(state.walkthroughPath, [
-    '# Implementation walkthrough', '',
-    `> **TL;DR:** ${cell(documentTitle(source(state)) ?? 'Implementation of the approved governing plan.')}`,
-    `> **Status:** 0/${state.ordinary.criteria.length} SC passing`, '> **Deviations:** none', '', '## Changes Made',
-    ...state.ordinary.approvedPaths.map(file => `- **[MODIFY]** \`${file}\` — Approved implementation scope.`), '',
-    '## Verification & Validation', 'Host verification is recorded in Ordinary execution evidence with evidence class, revision, result, and limitations.', '',
-    '## Outcome Traceability', renderTraceability(pendingRows(state.ordinary.criteria)), '',
-    '## Key Deviations', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '', '## Follow-ups', 'None.', '',
-  ].join('\n'));
+  if (!fs.existsSync(state.walkthroughPath)) {
+    // Planned notes until the writer reports what changed; `+0 −0` stands in for a heading with no note.
+    const notes = extractChangeNotes(source(state));
+    const planned = changeEntries({ paths: state.ordinary.approvedPaths, stats: new Map(), planNotes: notes });
+    fs.writeFileSync(state.walkthroughPath, [
+      `# ${cell(documentTitle(source(state)) ?? 'Implementation walkthrough')}`, '',
+      '> **Delivered:** pending', `> **Parent:** \`${relative(state, state.planPath)}\``,
+      `> **Status:** 0/${state.ordinary.criteria.length} SC passing`, '> **Deviations:** none', '',
+      '## Changes Made', renderChangesMade(planned), '',
+      '## Verification', renderVerification(pendingRows(state.ordinary.criteria), 'pending'), '',
+      '## Deviations & Follow-ups', 'None.', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*', '',
+    ].join('\n'));
+  }
   const scaffoldDefects = lintWalkthrough(fs.readFileSync(state.walkthroughPath, 'utf8'), { criteria: state.ordinary.criteria }).defects;
   if (scaffoldDefects.length) return refuse(state, `Walkthrough scaffold failed lint: ${[...new Set(scaffoldDefects.map(item => item.rule))].join(', ')}`);
   // Identical content reuses cached per-command results; the baseline runs only the misses.

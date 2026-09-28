@@ -70,6 +70,6 @@ describe('review-log escaping', () => {
     const record = { v: 1, findingId: 'R1-F001', state: 'unapplied', scope: 'in-scope', affectedPaths: ['src/a.js'], dependsOn: [], verification: [], reason: 'apply failed: missing <key>' };
     const line = formatApplicationRecord(record);
     assert.deepEqual(findPlaceholders(`- entry\n${line}\n`), []);
-    assert.equal(JSON.parse(line.replace(/^\s*- application: /, '')).reason, record.reason);
+    assert.equal(JSON.parse(/<!-- dispatch-application (.*) -->/.exec(line)[1]).reason, record.reason);
   });
 });

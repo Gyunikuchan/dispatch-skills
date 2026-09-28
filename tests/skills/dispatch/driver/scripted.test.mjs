@@ -1115,3 +1115,29 @@ describe('scripted review paths (SC5)', () => {
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 });
+
+// SECTION: SC5 — writer envelope files notes
+
+describe('envelope files notes', async () => {
+  const { parseImplementationOutcome } = await import('../../../../skills/dispatch/scripts/verification/implementation-outcome.mjs');
+  const envelope = files => JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Shipped.', evidence: ['CRITERION SC1 | src/a.js | works'], files });
+
+  it('envelope files notes: accepts one short note per changed file', () => {
+    assert.equal(parseImplementationOutcome(envelope([{ path: 'src/a.js', note: 'Adds the flag.' }, { path: 'tests/a.test.js', note: 'Covers the flag.' }])).files.length, 2);
+  });
+
+  it('envelope files notes: rejects malformed entries', () => {
+    const cases = {
+      missingPath: [{ note: 'Adds the flag.' }],
+      traversing: [{ path: '../a.js', note: 'Adds the flag.' }],
+      absolute: [{ path: '/src/a.js', note: 'Adds the flag.' }],
+      backslash: [{ path: 'src\\a.js', note: 'Adds the flag.' }],
+      emptyNote: [{ path: 'src/a.js', note: '' }],
+      fillerNote: [{ path: 'src/a.js', note: 'Approved implementation scope.' }],
+      duplicateNote: [{ path: 'src/a.js', note: 'Adds it.' }, { path: 'src/b.js', note: 'Adds it.' }],
+      unknownField: [{ path: 'src/a.js', note: 'Adds the flag.', tag: 'MODIFY' }],
+      notArray: { path: 'src/a.js', note: 'Adds the flag.' },
+    };
+    for (const [name, files] of Object.entries(cases)) assert.throws(() => parseImplementationOutcome(envelope(files)), /files/, name);
+  });
+});

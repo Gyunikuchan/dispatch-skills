@@ -26,7 +26,8 @@ import {
   writeArtifactMetadata,
 } from '../../../../skills/dispatch/scripts/review/preparation.mjs';
 import { bindWorkflowSession, RUN_ENV, SESSION_ENV } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
-import { formatApplicationRecord } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { formatApplicationRecord, formatSourceMapLine } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+const sourcesRecord = (map) => formatSourceMapLine(typeof map === 'string' ? JSON.parse(map) : map);
 
 const tempDirs = [];
 const sessionEnvRestorers = [];
@@ -122,7 +123,7 @@ describe('review preparation primitives', () => {
   });
 
   describe('projection transforms', () => {
-    const sources = `- **Sources:** ${JSON.stringify({ 'code-review:R1:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } })}`;
+    const sources = `${sourcesRecord(JSON.stringify({ 'code-review:R1:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } }))}`;
     const entry = (id, locus, tag) => `- **[Accepted]** [${id}] [SHOULD] [sources=code-review:R1:claude:0] ${locus} — ${tag}: x → y`;
     const application = (findingId, affectedPaths) => formatApplicationRecord({ v: 1, findingId, state: 'applied', scope: 'in-scope', affectedPaths, dependsOn: [], verification: [], reason: 'verified' });
     const artifact = (round = []) => [
@@ -139,47 +140,25 @@ describe('review preparation primitives', () => {
     ].join('\n');
     const view = (round, nextRound = 1) => buildReviewView(artifact(round), { canonicalPath: 'plan.md', nextRound }).contents;
 
-    it('collapses note-free approved-scope bullets and keeps annotated ones', () => {
-      const contents = view();
-      assert.match(contents, /- \*\*\[MODIFY\]\*\* Approved implementation scope: `a\.mjs`, `c\.mjs`/);
-      assert.match(contents, /`b\.mjs` — Adds the parser\./);
-      assert.equal(contents.match(/Approved implementation scope/g).length, 1);
-    });
-
-    it('drops Automated Tests commands that repeat a Verify line and keeps the rest', () => {
-      const contents = view();
-      const tests = /### Automated Tests\n([\s\S]*?)\n### Manual Verification/.exec(contents)[1];
-      assert.match(tests, /Every Success Criteria `Verify:` command/);
-      assert.doesNotMatch(tests, /`node --test a\.test\.mjs`/);
-      assert.match(tests, /extra\.test\.mjs/);
-      assert.match(contents, /- Run doctor\./);
-    });
-
-    it('drops an Automated Tests command that repeats a [FINAL] Verify line', () => {
-      const contents = buildReviewView(artifact().replace('  - Verify: `node --test a.test.mjs`', '  - Verify: `node --test a.test.mjs` [FINAL]'), { canonicalPath: 'plan.md', nextRound: 1 }).contents;
-      const tests = /### Automated Tests\n([\s\S]*?)\n### Manual Verification/.exec(contents)[1];
-      assert.match(tests, /Every Success Criteria `Verify:` command/);
-      assert.doesNotMatch(tests, /`node --test a\.test\.mjs`/);
-    });
-
     it('omits an empty preceding round and groups entries sharing locus and tag', () => {
       assert.doesNotMatch(view(['### Round 1 — 2026-09-23', sources], 2), /Immediately preceding round|### Round 1/);
       const round = ['### Round 1 — 2026-09-23', sources,
         entry('R1-F001', 'a.mjs:L1', 'reuse'), application('R1-F001', ['a.mjs']),
         entry('R1-F002', 'b.mjs:L2', 'runtime'),
         entry('R1-F003', 'a.mjs:L1', 'reuse'), application('R1-F003', ['a.mjs', 'b.mjs'])];
-      const order = [...view(round, 2).matchAll(/\[(R1-F00\d)\] \[SHOULD\]|"findingId":"(R1-F00\d)"/g)].map((match) => match[1] ?? `app:${match[2]}`);
-      assert.deepEqual(order, ['R1-F001', 'app:R1-F001', 'R1-F003', 'app:R1-F003', 'R1-F002']);
+      const order = [...view(round, 2).matchAll(/\[(R1-F00\d)\] \[SHOULD\]|Applied → (.+) ·/g)].map((match) => match[1] ?? `app:${match[2]}`);
+      assert.deepEqual(order, ['R1-F001', 'app:`a.mjs`', 'R1-F003', 'app:`a.mjs`, `b.mjs`', 'R1-F002']);
       assert.deepEqual(resolutionPaths(artifact(round)), ['a.mjs', 'b.mjs']);
     });
 
     it('failure records are redacted from delegate view', () => {
       const round = ['### Round 1 — 2026-09-23', sources,
-        '- failed-targets: [{"sourceKey":"code-review:R1:copilot:1","kind":"quota"}]',
+        '<!-- dispatch-failed-targets [{"sourceKey":"code-review:R1:copilot:1","kind":"quota"}] -->',
+        '- Failed: code-review:R1:copilot:1 (quota)',
         entry('R1-F001', 'a.mjs:L1', 'reuse')];
       const contents = view(round, 2);
-      assert.doesNotMatch(contents, /failed-targets|code-review:R1:copilot:1|"kind":"quota"/);
-      const older = artifact([...round, '### Round 2', `- **Sources:** ${JSON.stringify({ 'code-review:R2:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } })}`]);
+      assert.doesNotMatch(contents, /failed-targets|Failed:|Reviewers:|code-review:R1:copilot:1|quota/);
+      const older = artifact([...round, '### Round 2', `${sourcesRecord(JSON.stringify({ 'code-review:R2:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } }))}`]);
       assert.match(buildReviewView(older, { canonicalPath: 'plan.md', nextRound: 3 }).contents, /failed=1/);
     });
 
@@ -199,7 +178,7 @@ describe('review preparation primitives', () => {
       'the shared review prompt must forbid running test or build commands');
   });
 
-  it('builds a code-review view with a readable verification table and no Ordinary execution evidence block (SC1)', () => {
+  it('verification table from evidence sidecar', () => {
     const record = {
       schemaVersion: 1,
       ordinary: {
@@ -207,34 +186,22 @@ describe('review preparation primitives', () => {
         criteria: [{ id: 'SC1', commands: ['node --test tests/value.test.mjs'] }],
         completionResults: [
           { command: 'node --test tests/value.test.mjs', exitStatus: 0, pass: 3, fail: 0, identifiers: [], diagnostic: '', criterionEvidence: [], scopeHash: 'sha256:x', mutationEpoch: 1, changed: [] },
+          { command: 'npm test | tee log', exitStatus: 0, pass: 1, fail: 0, identifiers: [], diagnostic: '', criterionEvidence: [], scopeHash: 'sha256:x', mutationEpoch: 1, changed: [] },
         ],
       },
     };
-    const artifact = [
-      '---',
-      '{"dispatch":{"schemaVersion":1,"kind":"code","slug":"sample","contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}',
-      '---',
-      '# Walkthrough',
-      '',
-      '## Verification & Validation',
-      'Host verification is recorded in Ordinary execution evidence with evidence class, revision, result, and limitations.',
-      '',
-      '## Ordinary execution evidence',
-      '```json',
-      JSON.stringify(record),
-      '```',
-      '',
-      '## Review Findings & Resolutions',
-      '### Round 1',
-      '- *No actionable findings.*',
-    ].join('\n');
-    const view = buildReviewView(artifact, { canonicalPath: 'walkthrough.md', nextRound: 2, kind: 'code' });
-    assert.doesNotMatch(view.contents, /## Ordinary execution evidence/,
-      'the code-review walkthrough view must omit the ~145 KB Ordinary execution evidence JSON block');
-    assert.match(view.contents, /\|\s*Command\s*\|\s*Exit\s*\|/i,
-      'the review view must contain a readable verification table with a Command/Exit header');
-    assert.match(view.contents, /node --test tests\/value\.test\.mjs/,
-      'the rendered table must carry the actual verification command');
+    const dir = makeDir();
+    const walkthrough = path.join(dir, 'sample.walkthrough.md');
+    fs.mkdirSync(path.join(dir, '.state'));
+    fs.writeFileSync(path.join(dir, '.state', 'sample.evidence.json'), JSON.stringify(record));
+    const artifact = ['# Walkthrough', '', '## Verification', 'Final gate: pending', '', '## Review Findings & Resolutions', '*No reviews conducted yet.*'].join('\n');
+    const view = buildReviewView(artifact, { canonicalPath: walkthrough, nextRound: 1 });
+    assert.match(view.contents, /## Verification\nFinal gate: pending\n\n### Host verification results/);
+    assert.match(view.contents, /\|\s*Command\s*\|\s*Exit\s*\|/i);
+    assert.match(view.contents, /node --test tests\/value\.test\.mjs/);
+    assert.match(view.contents, /npm test \\\| tee log/, 'pipes in cells are escaped');
+    assert.doesNotMatch(buildReviewView(artifact, { canonicalPath: path.join(dir, 'sample.plan.md'), nextRound: 1 }).contents, /Host verification results/,
+      'only walkthrough views read the sidecar');
   });
 
   it('consumes invocation generations exactly once', () => {

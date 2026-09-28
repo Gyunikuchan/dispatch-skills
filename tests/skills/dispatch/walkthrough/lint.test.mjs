@@ -13,44 +13,38 @@ function lintWalkthrough(source, options) {
 // SECTION: Canonical fixtures and helpers
 
 const BOX = [
-  '> **TL;DR:** Feature shipped with pipe-safe parsing.',
+  '> **Delivered:** The parser splits on escaped pipes.',
+  '> **Parent:** `docs/feature.plan.md`',
   '> **Status:** 1/2 SC passing',
   '> **Deviations:** none',
 ].join('\n');
 
 const TABLE = [
-  '| SC | Behavior | Production path | Evidence |',
-  '| --- | --- | --- | --- |',
-  '| SC1 | Splits `a \\| b` on escaped pipes | `src/a.js` | exit 0 — 2 tests passed |',
-  '| SC2 | Documents the parser | `src/b.js` | Pending |',
+  '| SC | Outcome | Evidence |',
+  '| --- | --- | --- |',
+  '| SC1 | Splits `a \\| b` on escaped pipes | red→green `npm test` exit 0 |',
+  '| SC2 | Documents the parser | Pending |',
 ].join('\n');
 
 const VALID = [
-  '# Walkthrough — Feature',
+  '# Feature',
   '',
   BOX,
   '',
   '## Changes Made',
-  '### Core',
   '- **[MODIFY]** `src/a.js` — Escaped-pipe splitting.',
+  '- **[NEW]** `tests/a.test.js` — Covers escaped pipes.',
   '',
-  '## Verification & Validation',
-  '### Automated Tests',
-  '- Command: `npm test` — exit 0; 2 tests passed.',
-  '### Manual Verification',
-  '- None.',
-  '',
-  '## Outcome Traceability',
+  '## Verification',
   TABLE,
   '',
-  '## Key Deviations',
+  'Final gate: `npm test` exit 0',
+  '',
+  '## Deviations & Follow-ups',
   'None.',
   '',
   '## Review Findings & Resolutions',
   '*No reviews conducted yet.*',
-  '',
-  '## Follow-ups',
-  'None.',
 ].join('\n');
 
 const CRITERIA = [
@@ -61,7 +55,11 @@ const CRITERIA = [
 const rules = result => result.defects.map(({ rule }) => rule);
 const withBox = box => VALID.replace(BOX, box);
 const withTable = table => VALID.replace(TABLE, table);
-const PLANLESS = withTable('None — no governing plan.').replace('1/2 SC passing', 'n/a');
+const PLANLESS = VALID
+  .replace('> **Parent:** `docs/feature.plan.md`', '> **Parent:** user request')
+  .replace('1/2 SC passing', 'n/a')
+  .replace('## Changes Made', '## Context\n- Ask: Make the parser pipe-safe.\n\n## Changes Made')
+  .replace(`${TABLE}\n\n`, '');
 
 // SECTION: Accepted shapes
 
@@ -73,20 +71,76 @@ describe('walkthrough lint accepted shapes', () => {
     assert.deepEqual(lintWalkthrough(VALID, { criteria: CRITERIA }).defects, []);
   });
 
-  it('accepts the plan-less form with Status n/a', () => {
+  it('accepts the plan-less form with Context, a final-gate line, and Status n/a', () => {
     assert.deepEqual(lintWalkthrough(PLANLESS).defects, []);
-  });
-
-  it('accepts at most one intro line before the table', () => {
-    const intro = withTable(`*One row per plan criterion.*\n${TABLE}`);
-    assert.deepEqual(lintWalkthrough(intro, { criteria: CRITERIA }).defects, []);
-    const twoIntros = withTable(`*One row per plan criterion.*\nA second intro line.\n${TABLE}`);
-    assert.ok(rules(lintWalkthrough(twoIntros)).includes('traceability-not-table'));
   });
 
   it('accepts optional JSON frontmatter before the H1', () => {
     const framed = `---\n{"dispatch":{"schemaVersion":1,"kind":"code","slug":"feature"}}\n---\n${VALID}`;
     assert.deepEqual(lintWalkthrough(framed).defects, []);
+  });
+});
+
+// SECTION: Readable contract rules
+
+describe('readable walkthrough contract', () => {
+  it('dedupes cross-source notes by normalized form and exempts fixes suffixes on generated notes', async () => {
+    const { changeEntries } = await import('../../../../skills/dispatch/scripts/walkthrough/traceability.mjs');
+    const { isFillerNote, withFixes } = await import('../../../../skills/dispatch/scripts/lib/filler.mjs');
+    const stats = new Map([['a.mjs', { tag: 'MODIFY', added: 1, removed: 0 }], ['b.mjs', { tag: 'MODIFY', added: 2, removed: 0 }]]);
+    const entries = changeEntries({ paths: ['a.mjs', 'b.mjs'], stats, files: [{ path: 'a.mjs', note: 'Adds the parser.' }], planNotes: new Map([['b.mjs', { tag: 'MODIFY', note: 'adds the parser' }]]) });
+    assert.deepEqual(entries.map(item => item.note), ['Adds the parser.', '+2 −0']);
+    assert.equal(isFillerNote('+2 −2; fixes R1-F017', ['+2 −2; fixes R1-F017']), false);
+    assert.equal(isFillerNote('Adds x; fixes R1-F001', ['Adds x']), true, 'base notes still compare');
+    assert.equal(withFixes('Adds x; fixes R1-F002', ['R10-F1000', 'R2-F001', 'R1-F001']), 'Adds x; fixes R1-F001, R1-F002, R2-F001, R10-F1000');
+    assert.equal(isFillerNote('Adds  the\nparser', ['adds the parser']), true, 'whitespace variants compare as rendered');
+    const { renderChangesMade } = await import('../../../../skills/dispatch/scripts/walkthrough/traceability.mjs');
+    assert.equal(renderChangesMade([{ tag: 'MODIFY', path: 'a.mjs', note: 'Parses a | b' }]), '- **[MODIFY]** `a.mjs` — Parses a | b', 'bullets keep pipes unescaped');
+    const { withFixNotes } = await import('../../../../skills/dispatch/scripts/driver/review-phase.mjs');
+    const doc = '# T\n\n## Changes Made\n- **[MODIFY]** `src/a.mjs` — Adds x.\n\n## Verification\nFinal gate: ok\n';
+    const fixed = withFixNotes(doc, [{ id: 'R1-F001', fix: { affectedPaths: ['src/a.mjs', '.scratch/s/x.walkthrough.md'] } }]);
+    assert.match(fixed, /^- \*\*\[MODIFY\]\*\* `src\/a\.mjs` — Adds x\.; fixes R1-F001$/m);
+    assert.doesNotMatch(fixed, /\.scratch/, 'session artifacts are not listed');
+  });
+
+  it('requires a non-empty Final gate for table walkthroughs and at most one Context', () => {
+    assert.ok(rules(lintWalkthrough(PLANLESS.replace(/Final gate: .*/, 'Final gate:'))).includes('traceability-not-table'), 'plan-less too');
+    assert.ok(rules(lintWalkthrough(VALID.replace('\nFinal gate: `npm test` exit 0\n', '\n'))).includes('traceability-not-table'));
+    assert.ok(rules(lintWalkthrough(VALID.replace('Final gate: `npm test` exit 0', 'Final gate:'))).includes('traceability-not-table'));
+    assert.ok(rules(lintWalkthrough(PLANLESS.replace('## Changes Made', '## Context\n- Ask: again\n\n## Changes Made'))).includes('section-order'));
+  });
+
+  const cases = {
+    'context-required': [PLANLESS.replace(/## Context\n- Ask: .*\n\n/, ''), {}],
+    'context-forbidden': [VALID.replace('## Changes Made', '## Context\n- Ask: x\n\n## Changes Made'), {}],
+    'title-repeats-delivered': [VALID.replace('# Feature', '# The parser splits on escaped pipes'), {}],
+    'filler-note': [VALID.replace('Covers escaped pipes.', 'Approved implementation scope.'), {}],
+    'deviations-mismatch': [VALID.replace('## Deviations & Follow-ups\nNone.', '## Deviations & Follow-ups\n- Deviation: swapped the parser for a regex.'), {}],
+    'traceability-not-table': [withTable(TABLE.replace('| SC | Outcome | Evidence |', '| SC | Behavior | Production path | Evidence |')), {}],
+    'traceability-rows': [PLANLESS, { criteria: CRITERIA }],
+    'section-order': [VALID.replace('## Review Findings & Resolutions', '## Follow-ups'), {}],
+  };
+  for (const [rule, [source, options]] of Object.entries(cases)) {
+    it(`readable walkthrough contract: ${rule}`, () => {
+      assert.ok(rules(lintWalkthrough(source, options)).includes(rule), rules(lintWalkthrough(source, options)).join(', '));
+    });
+  }
+
+  it('readable walkthrough contract: a Deviation bullet with a summary box passes; Follow-up bullets alone keep none', () => {
+    const deviation = VALID.replace('## Deviations & Follow-ups\nNone.', '## Deviations & Follow-ups\n- Deviation: swapped the parser.').replace('> **Deviations:** none', '> **Deviations:** parser swapped');
+    assert.deepEqual(lintWalkthrough(deviation).defects, []);
+    const followUp = VALID.replace('## Deviations & Follow-ups\nNone.', '## Deviations & Follow-ups\n- Follow-up: [R1-F002] cache the split.');
+    assert.deepEqual(lintWalkthrough(followUp).defects, []);
+  });
+
+  it('readable walkthrough contract: legitimate repeated fix notes are not filler', () => {
+    const fixes = VALID.replace('Escaped-pipe splitting.', 'fixes R1-F001').replace('Covers escaped pipes.', 'fixes R1-F001');
+    assert.ok(!rules(lintWalkthrough(fixes)).includes('filler-note'));
+  });
+
+  it('readable walkthrough contract: the final-gate line must trail the table', () => {
+    const early = withTable(`Final gate: pending\n${TABLE}`);
+    assert.ok(rules(lintWalkthrough(early)).includes('traceability-not-table'));
   });
 });
 
@@ -98,24 +152,19 @@ describe('walkthrough lint diagnostics', () => {
   });
 
   it('summary-label for misordered, extra, duplicate, missing, empty, or malformed labels', () => {
-    const [tldr, status, deviations] = BOX.split('\n');
+    const [delivered, parent, status, deviations] = BOX.split('\n');
     const cases = {
-      misordered: [status, tldr, deviations].join('\n'),
+      misordered: [parent, delivered, status, deviations].join('\n'),
       extra: `${BOX}\n> **Risk:** low — extra`,
       duplicate: `${BOX}\n> **Status:** 1/2 SC passing`,
-      missing: [tldr, status].join('\n'),
+      missing: [delivered, parent, status].join('\n'),
       empty: BOX.replace('> **Deviations:** none', '> **Deviations:**'),
       status: BOX.replace('1/2 SC passing', '1 of 2 passing'),
-      casing: BOX.replace('**TL;DR:**', '**TLDR:**'),
+      casing: BOX.replace('**Delivered:**', '**delivered:**'),
     };
     for (const [name, box] of Object.entries(cases)) {
       assert.ok(rules(lintWalkthrough(withBox(box))).includes('summary-label'), name);
     }
-  });
-
-  it('traceability-not-table for bullet traceability', () => {
-    const bullets = withTable('- [SC1] Splits escaped pipes — production path: `src/a.js`; evidence: exit 0.\n- [SC2] Documents the parser — evidence: Pending.');
-    assert.ok(rules(lintWalkthrough(bullets)).includes('traceability-not-table'));
   });
 
   it('rejects rows with an unescaped extra pipe or rows that differ from criteria', () => {
@@ -135,44 +184,30 @@ describe('walkthrough lint diagnostics', () => {
       naWithTable: [withBox(BOX.replace('1/2 SC passing', 'n/a')), { criteria: CRITERIA }],
       countPlanless: [PLANLESS.replace('> **Status:** n/a', '> **Status:** 0/0 SC passing'), {}],
       deferred: [withTable(TABLE.replace('| Pending |', '| Deferred to final gate |')).replace('1/2', '2/2'), { criteria: CRITERIA }],
-      missingValidated: [withTable(TABLE.replace('exit 0 — 2 tests passed', 'missing validated evidence')), { criteria: CRITERIA }],
+      missingValidated: [withTable(TABLE.replace('red→green `npm test` exit 0', 'missing validated evidence')), { criteria: CRITERIA }],
     };
     for (const [name, [source, options]] of Object.entries(cases)) {
       assert.ok(rules(lintWalkthrough(source, options)).includes('status-mismatch'), name);
     }
   });
 
-  it('counts only the Evidence cell, so Behavior text mentioning Pending still passes', () => {
+  it('counts only the Evidence cell, so Outcome text mentioning Pending still passes', () => {
     const behavior = withTable(TABLE.replace('Splits `a \\| b` on escaped pipes', 'Clears the Pending queue'));
     assert.deepEqual(lintWalkthrough(behavior, { criteria: CRITERIA }).defects, []);
   });
 
-  it('deviations-mismatch when Deviations none-ness disagrees with Key Deviations', () => {
-    const authored = VALID.replace('## Key Deviations\nNone.', '## Key Deviations\nSwapped parser for a regex.');
-    assert.ok(rules(lintWalkthrough(authored)).includes('deviations-mismatch'));
-    const summarized = withBox(BOX.replace('> **Deviations:** none', '> **Deviations:** parser swapped'));
-    assert.ok(rules(lintWalkthrough(summarized)).includes('deviations-mismatch'));
-    const consistent = authored.replace('> **Deviations:** none', '> **Deviations:** parser swapped');
-    assert.ok(!rules(lintWalkthrough(consistent)).includes('deviations-mismatch'));
-  });
-
   it('section-order when minimum-contract sections are out of order or missing', () => {
-    const swapped = VALID.replace(
-      /(## Outcome Traceability\n[\s\S]*?\n)(## Key Deviations\nNone\.\n\n)/,
-      '$2$1',
-    );
-    assert.ok(swapped.indexOf('## Key Deviations') < swapped.indexOf('## Outcome Traceability'));
+    const swapped = VALID.replace(/(## Verification\n[\s\S]*?\n)(## Deviations & Follow-ups\nNone\.\n\n)/, '$2$1');
+    assert.ok(swapped.indexOf('## Deviations & Follow-ups') < swapped.indexOf('## Verification'));
     assert.ok(rules(lintWalkthrough(swapped)).includes('section-order'));
-    const missing = VALID.replace('## Follow-ups\nNone.', '');
-    assert.ok(rules(lintWalkthrough(missing)).includes('section-order'));
   });
 
   it('leftover-placeholder for template tokens in prose and inline code, not in fences', () => {
     const line = '- **[MODIFY]** `src/a.js` — Escaped-pipe splitting.';
-    for (const leftover of ['- **[MODIFY]** `<relative-path>` — Escaped-pipe splitting.', '- **[MODIFY]** `src/a.js` — for <Component Name>.']) {
+    for (const leftover of ['- **[MODIFY]** `<relative-path>` — Escaped-pipe splitting.', '- **[MODIFY]** `src/a.js` — <what changed in this file>']) {
       assert.ok(rules(lintWalkthrough(VALID.replace(line, leftover))).includes('leftover-placeholder'), leftover);
     }
-    const fenced = VALID.replace('- None.\n', '- None.\n```md\n<relative-path>\n```\n');
+    const fenced = VALID.replace('None.\n', 'None.\n```md\n<relative-path>\n```\n');
     assert.ok(!rules(lintWalkthrough(fenced)).includes('leftover-placeholder'));
   });
 });

@@ -11,9 +11,12 @@ const ENTRY = /^\s*[-*]\s+\*\*\[([^\]]+)\]\*\*(.*)$/;
 const REVIEW_BUDGET_MARKER = /^<!-- dispatch-review-budget (.+) -->$/;
 const REVIEW_PHASES = new Set(['design-review', 'plan-review', 'code-review']);
 const ENRICHED_PREFIX =
-  /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER)\]\s+\[sources=([^\]]+)\]\s+(.+)$/;
-const SOURCE_MAP = /^\s*[-*]\s+\*\*Sources:\*\*\s+(\{.*\})\s*$/;
-const APPLICATION_LINE = /^\s+[-*]\s+application:\s*(.*)$/;
+  /^\s+\[(R([1-9]\d*)-F([0-9]{3,}))\]\s+\[(MUST|SHOULD|CONSIDER)\]\s+\[sources=([^\]]+)\](?:\s+\[dup=(R[1-9]\d*-F[0-9]{3,})\])?\s+(.+)$/;
+// Machine records live in HTML comments; the visible line after each is derived and never parsed.
+const SOURCE_MAP = /^<!-- dispatch-sources (\{.*\}) -->$/;
+const FAILED_TARGETS = /^<!-- dispatch-failed-targets (\[.*\]) -->$/;
+const APPLICATION_LINE = /^ {2}<!-- dispatch-application (.*) -->$/;
+const LEGACY_RECORD = /^\s*[-*]\s+(?:\*\*Sources:\*\*|failed-targets:|application:)/;
 const SOURCE_KEY = /^(design-review|plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const SOURCE_STATUSES = new Set(['target', 'reserve', 'fallback', 'replacement']);
 const APPLICATION_STATES = new Set(['unapplied', 'materialized', 'applied', 'superseded']);
@@ -178,10 +181,17 @@ export function validateFailedTargets(value, roundNumber) {
   return value;
 }
 
+// `<` and `>` escape so a payload can neither close its comment nor trip placeholder lint; JSON.parse reverses both.
+const commentJson = (value) => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+
+/** Two lines: comment plus `- Failed:`; empty when none failed. */
 export function formatFailedTargetsLine(value, roundNumber) {
   validateFailedTargets(value, roundNumber);
-  return `- failed-targets: ${JSON.stringify(value.map(({ sourceKey, kind }) => ({ sourceKey, kind })))}`;
+  if (!value.length) return '';
+  const canonical = value.map(({ sourceKey, kind }) => ({ sourceKey, kind }));
+  return `<!-- dispatch-failed-targets ${commentJson(canonical)} -->\n${failedLine(canonical)}`;
 }
+const failedLine = (value) => `- Failed: ${value.map(({ sourceKey, kind }) => `${sourceKey} (${kind})`).join(', ')}`;
 
 /** Rebuttal failures follow a settled round but never become part of its round hash. */
 export function formatRebuttalFailuresLine(record) {
@@ -221,11 +231,17 @@ function sourceRecordProblem(key, source, roundNumber) {
   return null;
 }
 
-/** Renders a validated source map as the round's `- **Sources:**` resolution-log line. */
+/** Renders a validated source map as the round's `dispatch-sources` comment and `- Reviewers:` line. */
 export function formatSourceMapLine(map) {
-  return `- **Sources:** ${JSON.stringify(Object.fromEntries(Object.entries(map).map(([key, value]) => [key,
+  const canonical = Object.fromEntries(Object.entries(map).map(([key, value]) => [key,
     Object.fromEntries([...SOURCE_RECORD_FIELDS, 'launcherModel'].filter((field) => Object.hasOwn(value, field)).map((field) => [field, value[field]])),
-  ])))}`;
+  ]));
+  return `<!-- dispatch-sources ${commentJson(canonical)} -->\n${reviewersLine(canonical)}`;
+}
+function reviewersLine(map) {
+  const names = Object.values(map).map((source) =>
+    [source.provider, source.model, source.effort && `(${source.effort})`, source.status !== 'target' && `[${source.status}]`].filter(Boolean).join(' ').replace(/\s+/g, ' '));
+  return `- Reviewers: ${names.join(', ')}`;
 }
 
 export function validateSourceMap(value, roundNumber) {
@@ -319,8 +335,18 @@ export function formatApplicationRecord(record) {
     verification: [...record.verification],
     reason: record.reason,
   };
-  // `<` keeps the JSON equivalent while quoted template tokens (<key>) never trip placeholder lint.
-  return `  - application: ${JSON.stringify(canonical).replace(/</g, '\\u003c')}`;
+  return `  <!-- dispatch-application ${commentJson(canonical)} -->\n${applicationLine(canonical)}`;
+}
+/** @param {string} text */
+function codeSpan(text) {
+  const value = String(text).replace(/\s+/g, ' ').trim();
+  const fence = '`'.repeat(Math.max(0, ...(value.match(/`+/g) ?? []).map((run) => run.length)) + 1);
+  return fence.length > 1 ? `${fence} ${value} ${fence}` : `\`${value}\``;
+}
+function applicationLine(record) {
+  const verified = record.verification.length ? `verified by ${record.verification.map(codeSpan).join(', ')}` : 'no verification';
+  const label = `${record.state[0].toUpperCase()}${record.state.slice(1)}`;
+  return `  ${label} → ${record.affectedPaths.map(codeSpan).join(', ')} · ${verified}`;
 }
 
 // SECTION: Resolution-log scanning
@@ -370,6 +396,10 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   let previous = 0;
   let lastLineWasEntry = false;
   let afterRebuttalFailures = false;
+  /** @type {string | null} */
+  let derived = null;
+  /** @type {string | null} */
+  let previousRecord = null;
   for (let index = 1; index < sectionLines.length; index++) {
     const line = sectionLines[index];
     const nextFence = fenceTransition(line, fence);
@@ -411,16 +441,31 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         continue;
       }
       if (strict && afterRebuttalFailures && line.trim()) throw new Error('Only a new round may follow rebuttal-failures.');
-      if (/^\s*[-*]\s+failed-targets:/.test(line)) {
+      if (derived !== null) {
+        // The visible line re-renders its comment; strict parsing requires it verbatim, tolerant parsing skips it.
+        const expected = derived;
+        derived = null;
+        if (line === expected) {
+          current?.lines.push(line);
+          previousRecord = previousRecord === 'sources' ? 'sources-line' : null;
+          continue;
+        }
+        if (strict) throw new Error(`Derived line must immediately follow its record and read: ${expected}`);
+      }
+      if (strict && LEGACY_RECORD.test(line)) throw new Error('Legacy inline JSON review records are no longer supported; use dispatch comment records.');
+      const failedMatch = FAILED_TARGETS.exec(line);
+      if (failedMatch) {
         try {
-          if (!current || !current.sourceMap || current.hasFailedTargets || current.entries.length || current.lines.at(-1) !== sectionLines[index - 1] ||
-            !SOURCE_MAP.test(sectionLines[index - 1])) throw new Error('failed-targets must immediately follow Sources');
-          const value = JSON.parse(line.replace(/^\s*[-*]\s+failed-targets:\s*/, ''));
-          if (formatFailedTargetsLine(value, current.number) !== line) throw new Error('failed-targets is not canonical');
+          if (!current || !current.sourceMap || current.hasFailedTargets || current.entries.length || previousRecord !== 'sources-line') throw new Error('failed-targets must immediately follow Sources');
+          const value = JSON.parse(failedMatch[1]);
+          const canonical = formatFailedTargetsLine(value, current.number);
+          if (canonical.split('\n')[0] !== line) throw new Error('failed-targets is not canonical');
           current.failedTargets = value;
           current.hasFailedTargets = true;
+          derived = canonical.split('\n')[1];
         } catch (error) { if (strict) throw new Error(`Invalid failed-targets record: ${error.message}`); }
         if (current) current.lines.push(line);
+        previousRecord = null;
         lastLineWasEntry = false;
         continue;
       }
@@ -429,9 +474,12 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         if (current.sourceMap && strict) throw new Error(`Round ${current.number} contains duplicate source maps.`);
         current.sourceMap = sourceMap;
         current.lines.push(line);
+        derived = reviewersLine(sourceMap);
+        previousRecord = 'sources';
         lastLineWasEntry = false;
         continue;
       }
+      previousRecord = null;
       const appMatch = APPLICATION_LINE.exec(line);
       if (appMatch) {
         const lastEntry = current?.entries[current.entries.length - 1];
@@ -451,11 +499,12 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
           if (value) {
             if (strict) {
               validateApplicationRecord(value, lastEntry, current.number);
-              if (formatApplicationRecord(value).trimStart() !== line.trim()) {
+              if (formatApplicationRecord(value).split('\n')[0] !== line) {
                 throw new Error(`Round ${current.number} application record is not in canonical form.`);
               }
             }
             lastEntry.application = value;
+            try { derived = applicationLine(value); } catch { derived = null; }
           }
         }
         if (current) current.lines.push(line);
@@ -501,6 +550,10 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
           throw new Error(`Finding ${id} mixes canonical and non-canonical source keys.`);
         }
         const structured = canonicalSourceCount === sourceKeys.length;
+        const first = enriched[6] && current.entries.find((item) => item.id === enriched[6]);
+        if (strict && enriched[6] && (!first || first.duplicateOf)) {
+          throw new Error(`Finding ${id} dup tag must name an earlier untagged finding in Round ${current.number}.`);
+        }
         const entry = {
           id,
           key: id,
@@ -509,6 +562,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
           sourceKeys,
           status,
           application: null,
+          duplicateOf: enriched[6] ?? null,
           line: line.trim(),
           originalLine: line.trim(),
           lineNumber: lineOffset + index + 1,
@@ -522,6 +576,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
     lastLineWasEntry = false;
     if (current) current.lines.push(line);
   }
+  if (strict && derived !== null) throw new Error(`Derived line must immediately follow its record and read: ${derived}`);
   if (strict && fence) throw new Error('Resolution log contains an unterminated fence.');
   for (const round of rounds) {
     const ids = round.entries.map((entry) => entry.id).filter(Boolean);

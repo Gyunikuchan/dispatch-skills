@@ -15,6 +15,7 @@ import {
   scanResolutionLog,
 } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
 import { rebuildFromArtifact, unappliedFixesFromArtifact } from '../../../../skills/dispatch/scripts/driver/state.mjs';
+const sourcesRecord = (map) => formatSourceMapLine(typeof map === 'string' ? JSON.parse(map) : map);
 
 const sourceMap = JSON.stringify({
   'plan-review:R2:claude:0': {
@@ -37,11 +38,11 @@ const sourceMap = JSON.stringify({
   },
 });
 
-const roundSources = (n) => `- **Sources:** ${JSON.stringify({
+const roundSources = (n) => `${sourcesRecord(JSON.stringify({
   [`plan-review:R${n}:claude:0`]: {
     provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'medium', status: 'target', session: null, substitutesFor: null,
   },
-})}`;
+}))}`;
 const PENDING_B = '- **[Rejected — pending confirmation]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § B — scope: broad → retained';
 
 const document = [
@@ -231,7 +232,7 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2 — Claude and Copilot',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Rejected — pending confirmation]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0,plan-review:R2:copilot:0] § A — scope: text contains ] and → delimiters → retained',
       '- **[Disputed]** [R2-F002] [MUST] [sources=plan-review:R2:claude:0] § B — intent: x → y',
     ].join('\n');
@@ -243,7 +244,7 @@ describe('resolution log scanner', () => {
       'plan-review:R2:copilot:0',
     ]);
     assert.equal(scan.unsettledItems[0].key, 'R2-F001');
-    assert.equal(scan.unsettledItems[0].lineNumber, 5);
+    assert.equal(scan.unsettledItems[0].lineNumber, 6);
     assert.equal(nextFindingId(input, 2), 'R2-F003');
   });
 
@@ -287,7 +288,7 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Disputed]** [R2-F001] [MUST] [sources=plan-review:R2:claude:0] § A — tag: x → y',
     ].join('\n');
     assert.throws(() => scanResolutionLog(`${base}\n${base.split('\n').at(-1)}`), /duplicate finding IDs/);
@@ -300,7 +301,7 @@ describe('resolution log scanner', () => {
       /source absent/,
     );
     assert.throws(
-      () => scanResolutionLog(base.replace(`- **Sources:** ${sourceMap}\n`, '')),
+      () => scanResolutionLog(base.replace(`${sourcesRecord(sourceMap)}\n`, '')),
       /without a structured source map/,
     );
     assert.throws(
@@ -341,7 +342,7 @@ describe('resolution log scanner', () => {
       'Content',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
       formatApplicationRecord(appRecord),
     ].join('\n');
@@ -359,65 +360,65 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
     ].join('\n');
 
     // Mismatched findingId
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F002","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F002","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /findingId "R2-F002" does not match entry ID "R2-F001"/,
     );
 
     // Unsorted affectedPaths
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/z.ts","src/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/z.ts","src/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /affectedPaths must be sorted/,
     );
 
     // Invalid path format
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["../foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["../foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /normalized repository-relative slash path/,
     );
 
     // Non-canonical key order
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"findingId":"R2-F001","v":1,"state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"findingId":"R2-F001","v":1,"state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /canonical form/,
     );
 
     // dependsOn must hold finding IDs
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["src/foo.ts"],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["src/foo.ts"],"verification":["npm test"],"reason":"test"} -->`),
       /dependsOn entries must be finding IDs/,
     );
 
     // Multi-digit round IDs are valid dependsOn entries
     assert.doesNotThrow(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R10-F001"],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R10-F001"],"verification":["npm test"],"reason":"test"} -->\n  Unapplied → \`src/foo.ts\` · verified by \`npm test\``),
     );
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R1d-F001"],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":["R1d-F001"],"verification":["npm test"],"reason":"test"} -->`),
       /dependsOn entries must be finding IDs/,
     );
 
     // Invalid version
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":2,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":2,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /v must be 1/,
     );
 
     // Duplicate application record
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->\n  Unapplied → \`src/foo.ts\` · verified by \`npm test\`\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /duplicate application records/,
     );
 
     // Attached to non-accepted finding
     const rejectedEntry = validEntry.replace('[Accepted]', '[Rejected / Downgraded]');
     assert.throws(
-      () => scanResolutionLog(`${rejectedEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${rejectedEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /application record cannot be attached to finding with status "rejected"/,
     );
 
@@ -426,8 +427,8 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
-      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+      `${sourcesRecord(sourceMap)}`,
+      '  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->',
       '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
     ].join('\n');
     assert.throws(() => scanResolutionLog(beforeEntry), /Application record appears before any resolution entry/);
@@ -437,10 +438,10 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
       'Intervening comment text',
-      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+      '  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->',
     ].join('\n');
     assert.throws(() => scanResolutionLog(nonAdjacentEntry), /application record must immediately follow its resolution entry/);
 
@@ -449,16 +450,16 @@ describe('resolution log scanner', () => {
       '# Plan',
       '## Review Findings & Resolutions',
       '### Round 2',
-      `- **Sources:** ${sourceMap}`,
+      `${sourcesRecord(sourceMap)}`,
       '- **[Accepted]** [R2-F001] [SHOULD] [sources=plan-review:R2:claude:0] § A — tag: x → y',
       '',
-      '  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}',
+      '  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["src/foo.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->',
     ].join('\n');
     assert.throws(() => scanResolutionLog(blankLineEntry), /application record must immediately follow its resolution entry/);
 
     // Windows drive-letter absolute path rejected
     assert.throws(
-      () => scanResolutionLog(`${validEntry}\n  - application: {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"}`),
+      () => scanResolutionLog(`${validEntry}\n  <!-- dispatch-application {"v":1,"findingId":"R2-F001","state":"unapplied","scope":"in-scope","affectedPaths":["C:/w/a.ts"],"dependsOn":[],"verification":["npm test"],"reason":"test"} -->`),
       /normalized repository-relative slash path/,
     );
   });
@@ -529,5 +530,52 @@ describe('formatSourceMapLine', () => {
       '- **[Accepted]** [R2-F001] [MUST] [sources=plan-review:R2:agy:0] § Plan — correctness: gap → fixed.',
     ].join('\n');
     assert.equal(Object.keys(scanResolutionLog(doc, { strict: true }).rounds[1].sourceMap).length, 2);
+  });
+});
+
+describe('readable review log', () => {
+  const sources = { 'code-review:R1:claude:0': { provider: 'claude', candidateIndex: 0, model: 'opus', effort: 'high', status: 'target', session: null, substitutesFor: null } };
+  const failed = [{ sourceKey: 'code-review:R1:agy:1', kind: 'quota' }];
+  const application = { v: 1, findingId: 'R1-F001', state: 'applied', scope: 'in-scope', affectedPaths: ['src/a.mjs'], dependsOn: [], verification: ['npm test'], reason: 'uses <key> --> safely' };
+  const entry = '- **[Accepted]** [R1-F001] [MUST] [sources=code-review:R1:claude:0] src/a.mjs:L1 — correctness: x → y';
+  const doc = (...lines) => ['# Walkthrough', '## Review Findings & Resolutions', '### Round 1', ...lines].join('\n');
+
+  it('round-trips comment records and keeps visible lines free of JSON', () => {
+    const text = doc(formatSourceMapLine(sources), formatFailedTargetsLine(failed, 1), entry, formatApplicationRecord(application));
+    const round = scanResolutionLog(text).rounds[0];
+    assert.deepEqual(round.sourceMap, sources);
+    assert.deepEqual(round.failedTargets, failed);
+    assert.deepEqual(round.entries[0].application, application);
+    const visible = text.split('\n').filter((line) => !/^\s*<!--/.test(line));
+    assert.ok(visible.every((line) => !line.includes('{')), visible.join('\n'));
+    assert.match(text, /^- Reviewers: claude opus \(high\)$/m);
+    assert.match(text, /^- Failed: code-review:R1:agy:1 \(quota\)$/m);
+    assert.match(text, /^ {2}Applied → `src\/a\.mjs` · verified by `npm test`$/m);
+    assert.doesNotMatch(text.split('\n').find((line) => line.includes('dispatch-application')).slice(0, -3), /-->/);
+    assert.equal(formatFailedTargetsLine([], 1), '');
+  });
+
+  it('keeps the derived application line on one line with a valid code span', () => {
+    const record = formatApplicationRecord({ v: 1, findingId: 'R1-F001', state: 'applied', scope: 'in-scope', affectedPaths: ['src/a.mjs'], dependsOn: [], verification: ['node -e "a\nb" `x`'], reason: 'verified' });
+    const lines = record.split('\n');
+    assert.equal(lines.length, 2);
+    assert.match(lines[1], /verified by `` node -e "a b" `x` ``$/);
+    assert.match(formatApplicationRecord({ v: 1, findingId: 'R1-F001', state: 'applied', scope: 'in-scope', affectedPaths: ['src/a`b.mjs'], dependsOn: [], verification: [], reason: 'verified' }), /Applied → `` src\/a`b\.mjs `` · no verification$/);
+    assert.equal(formatSourceMapLine({ ...sources, [Object.keys(sources)[0]]: { ...Object.values(sources)[0], model: 'opus\nx' } }).split('\n').length, 2, 'reviewer fields stay on one line');
+  });
+
+  it('rejects legacy inline JSON records and edited derived lines in strict mode', () => {
+    assert.throws(() => scanResolutionLog(doc(`- **Sources:** ${JSON.stringify(sources)}`, entry)), /Legacy inline JSON/);
+    assert.throws(() => scanResolutionLog(doc(formatSourceMapLine(sources).replace('opus', 'sonnet'), entry)), /Derived line/);
+    assert.doesNotThrow(() => scanResolutionLog(doc(formatSourceMapLine(sources).replace('opus (high)', 'x'), entry), { strict: false }));
+  });
+
+  it('tags duplicates against an earlier untagged finding, tolerating diverged statuses', () => {
+    const dup = '- **[Accepted]** [R1-F002] [MUST] [sources=code-review:R1:claude:0] [dup=R1-F001] src/a.mjs:L1 → see R1-F001';
+    const scan = scanResolutionLog(doc(formatSourceMapLine(sources), entry, dup));
+    assert.equal(scan.rounds[0].entries[1].duplicateOf, 'R1-F001');
+    assert.equal(scan.rounds[0].entries[0].duplicateOf, null);
+    assert.doesNotThrow(() => scanResolutionLog(doc(formatSourceMapLine(sources), entry, dup.replace('[Accepted]', '[Disputed]'))), 'per-key rulings may diverge a pair');
+    assert.throws(() => scanResolutionLog(doc(formatSourceMapLine(sources), dup.replace('R1-F002', 'R1-F003'), entry)), /dup tag/);
   });
 });

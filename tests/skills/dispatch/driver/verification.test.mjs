@@ -8,7 +8,7 @@ import { makeGitRepo, writePlan, fixtureSessionDir } from '../../../helpers/driv
 import { appendEvent, ensureLedgerNamespace, governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 import { resolveLedgerPath } from '../../../../skills/dispatch/scripts/artifacts/resolve-paths.mjs';
 import { bindWorkflowSession, sessionDir, handoffCurrentSession, bindSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
-import { stateCache, stateDir } from '../../../../skills/dispatch/scripts/lib/session-paths.mjs';
+import { evidenceFile, stateCache, stateDir } from '../../../../skills/dispatch/scripts/lib/session-paths.mjs';
 import { persistEvidence, restoreEvidence, save } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { afterImplementationVerification } from '../../../../skills/dispatch/scripts/driver/task-phase.mjs';
 import { captureRepositoryState } from '../../../../skills/dispatch/scripts/verification/evidence.mjs';
@@ -274,31 +274,16 @@ describe('baseline reuse', () => {
 });
 
 describe('walkthrough evidence rendering', () => {
-  it('renders the RED matrix into a CRLF walkthrough', () => {
+  it('renders the Verification table into a CRLF walkthrough', () => {
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
     const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
-    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', '', '## Key Deviations', 'None.', ''].join('\r\n'));
-    const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs | exit 1 test:a'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
+    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '> **Delivered:** pending', '> **Parent:** `plan.md`', '> **Status:** 0/1 SC passing', '> **Deviations:** none', '', '## Verification', 'Final gate: pending', '', '## Deviations & Follow-ups', 'None.', ''].join('\r\n'));
+    const ordinary = { criteria: [{ id: 'SC1', title: 'Sample', evidence: 'red', commands: ['npm test'], paths: ['src/app.js'] }], redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs | exit 1 test:a'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
     persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
     const text = fs.readFileSync(walkthroughPath, 'utf8');
-    assert.match(text, /### RED matrix/);
-    assert.match(text, /\| SC1 \| `tests\/a\.test\.mjs` \| exit 1 test:a \|/);
-  });
-  it('prints a failure set shared by several RED rows once and references it', () => {
-    const repo = makeGitRepo();
-    cleanup.push(repo.cleanup);
-    const planPath = writePlan(repo.dir), walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
-    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Verification & Validation', 'Pending.', '', '## Outcome Traceability', 'Pending.', ''].join('\n'));
-    const ordinary = { redValidated: { evidence: ['RED-MATRIX SC1 | tests/a.test.mjs:a | exit 1 test:a; test:b', 'RED-MATRIX SC2 | tests/a.test.mjs:b | exit 1 test:a; test:b', 'RED-MATRIX SC3 | tests/c.test.mjs:c | exit 1 test:c'] }, redResults: [{ command: 'npm test', exitStatus: 1 }] };
-    persistEvidence({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: 'sha256:x', ordinary });
-    const text = fs.readFileSync(walkthroughPath, 'utf8');
-    assert.match(text, /\| SC1 \| `tests\/a\.test\.mjs:a` \| see S1 \|/);
-    assert.match(text, /\| SC2 \| `tests\/a\.test\.mjs:b` \| see S1 \|/);
-    assert.match(text, /\| SC3 \| `tests\/c\.test\.mjs:c` \| exit 1 test:c \|/);
-    const matrix = /### RED matrix\n[\s\S]*?(?=\n## )/.exec(text)[0];
-    assert.equal(matrix.match(/exit 1 test:a; test:b/g).length, 1);
-    assert.match(matrix, /Shared failure sets:\n- S1: exit 1 test:a; test:b/);
+    assert.match(text, /\| SC1 \| Sample \| Pending \|\r\n/);
+    assert.doesNotMatch(text.replace(/\r\n/g, ''), /\n/, 'line endings stay CRLF');
   });
 });
 
@@ -309,7 +294,9 @@ describe('walkthrough evidence restore', () => {
     const planPath = writePlan(repo.dir);
     bindTestWorkflow(repo.dir, 'plan', 'sample');
     const walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
-    fs.writeFileSync(walkthroughPath, ['# Walkthrough', '', '## Ordinary execution evidence', '```json', JSON.stringify({ schemaVersion: 1, planPath: path.relative(repo.dir, planPath).split(path.sep).join('/'), ordinary: { step: 'failure-disposition' }, ...record }), '```', ''].join('\n'));
+    fs.writeFileSync(walkthroughPath, '# Walkthrough\n');
+    fs.mkdirSync(path.join(path.dirname(walkthroughPath), '.state'), { recursive: true });
+    fs.writeFileSync(evidenceFile(walkthroughPath), JSON.stringify({ schemaVersion: 1, planPath: path.relative(repo.dir, planPath).split(path.sep).join('/'), ordinary: { step: 'failure-disposition' }, ...record }));
     const state = { repoRoot: repo.dir, planPath, walkthroughPath, governingHash: governingHash(fs.readFileSync(planPath, 'utf8')).hash, ledgerPath: path.join(repo.dir, 'missing.ledger.md') };
     return state;
   }

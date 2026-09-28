@@ -8,9 +8,13 @@ import { resolveLedgerPath } from '../artifacts/resolve-paths.mjs';
 import { DriverError, emitAction } from './actions.mjs';
 import { finish as persistAction } from './state.mjs';
 import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
-import { DEFERRED, cell, isPassing, renderTraceability, replaceBoxLine, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
-
-const MARKER = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
+import { FIXES_SUFFIX, withFixes } from '../lib/filler.mjs';
+import { captureRepositoryState } from '../verification/evidence.mjs';
+import { DEFERRED, cell, oneLine, changeEntries, hasDeviation, isPassing, parseChangesMade, renderChangesMade, renderVerification, replaceBoxLine, replaceSection, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
+import { evidenceFile } from '../lib/session-paths.mjs';
+import { changeStats } from '../lib/git-state.mjs';
+import { safeRenameSync } from '../lib/platform.mjs';
+import { extractChangeNotes } from '../plan/structure.mjs';
 
 // SECTION: Governing artifact binding
 
@@ -62,93 +66,96 @@ export function ruling(state, key, decision, reason, status = 'resolved') {
   state.ordinary.rulings ??= [];
   state.ordinary.rulings.push(data);
 }
-/** Readable RED gate evidence: reviewers inspect this table, not the JSON run state. */
-function redMatrix(ordinary) {
-  const rows = (ordinary.redValidated?.evidence ?? []).filter(item => typeof item === 'string' && item.startsWith('RED-MATRIX '))
-    .map(row => /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|\s*(.+)$/.exec(row)).filter(Boolean);
-  const exceptions = ordinary.redValidated?.exceptions ?? [];
-  if (!rows.length && !exceptions.length) return [];
-  // An accepted RED ruling renders one row per criterion; a missed join prints a placeholder so save and resume stay usable.
-  const ruled = new Set(exceptions.map(item => item.criterionId));
-  const exceptionRow = (item) => {
-    const cited = rows.find(([, id]) => id === item.criterionId);
-    const redException = (ordinary.criteria ?? []).find(criterion => criterion.id === item.criterionId)?.redException;
-    if (item.kind === 'carry-over' && cited) return `| ${item.criterionId} | carried over from ${cell(item.runId)}: ${cell(cited[2])} | ${cell(cited[3])} |`;
-    if (item.kind === 'no-failing-state' && redException) return `| ${item.criterionId} | N/A — ${cell(item.locus)} | exception (${cell(redException)}): ${cell(item.reason)} |`;
-    return `| ${item.criterionId} | exception evidence missing | — |`;
-  };
-  const observed = (ordinary.redResults ?? []).map(result => `\`${cell(result.ran ?? result.command)}\` exit ${result.exitStatus}${result.fail !== undefined ? `, ${result.fail} failing` : ''}`).join('; ');
-  // A shared command's failure set repeats per criterion; print each repeated set once as a label.
-  const counts = new Map();
-  for (const [, , , failure] of rows) counts.set(cell(failure), (counts.get(cell(failure)) ?? 0) + 1);
-  const labels = new Map([...counts].filter(([, count]) => count > 1).map(([failure], index) => [failure, `S${index + 1}`]));
-  const sets = [...labels].map(([failure, label]) => `- ${label}: ${failure}`);
-  return ['### RED matrix', `Host RED run: ${observed || 'not recorded'}.`, '', '| Criterion | Test | Expected failure |', '| --- | --- | --- |',
-    ...rows.filter(([, id]) => !ruled.has(id)).map(([, id, test, failure]) => `| ${id} | \`${cell(test)}\` | ${labels.has(cell(failure)) ? `see ${labels.get(cell(failure))}` : cell(failure)} |`),
-    ...exceptions.map(exceptionRow), '',
-    ...(sets.length ? ['Shared failure sets:', ...sets, ''] : [])];
-}
-function replaceVerification(text, lines) {
-  // NOTE: a host-authored walkthrough may use CRLF; an LF-only match would silently skip the rewrite.
-  return text.replace(/## Verification & Validation\r?\n[\s\S]*?\r?\n## Outcome Traceability/, () => `## Verification & Validation\n${lines.join('\n')}\n\n## Outcome Traceability`);
-}
 /** Pending rows until completion evidence exists; never bullets. */
-export const pendingRows = criteria => criteria.map(criterion => ({ id: criterion.id, behavior: criterion.title ?? criterion.text ?? '', path: 'pending implementation', evidence: 'Pending' }));
+export const pendingRows = criteria => criteria.map(criterion => ({ id: criterion.id, behavior: criterion.title ?? criterion.text ?? '', evidence: 'Pending' }));
+/** Red evidence names the failing test the RED gate observed, or the accepted exception. */
+function redEvidence(ordinary, criterion) {
+  const exception = (ordinary.redValidated?.exceptions ?? []).find(item => item.criterionId === criterion.id);
+  if (exception?.kind === 'no-failing-state') return `N/A — ${exception.locus ? `${exception.locus} — ` : ''}exception (${criterion.redException ?? 'ruled'}): ${exception.reason}`;
+  const row = (ordinary.redValidated?.evidence ?? []).map(item => typeof item === 'string' && /^RED-MATRIX\s+(SC\d+)\s*\|\s*([^|]+?)\s*\|/.exec(item)).find(match => match?.[1] === criterion.id);
+  const commands = criterion.commands.map(command => `\`${command}\``).join(', ');
+  return `red→green ${row ? `\`${row[2]}\` via ` : ''}${commands || 'mapped host verification'}${exception?.kind === 'carry-over' ? ` (carried over from ${exception.runId})` : ''}`;
+}
 function traceRows(ordinary, records) {
   if (!ordinary.implementationComplete || !ordinary.completionResults) return pendingRows(ordinary.criteria);
   return ordinary.criteria.map(criterion => {
     const row = ordinary.envelope?.evidence?.find(item => typeof item === 'string' && item.startsWith(`CRITERION ${criterion.id} |`));
     // Rows are `CRITERION SC# | <path> | <behavior>` (write.mjs); only the first two pipes delimit, so the behavior keeps its own.
-    const segments = row?.split('|') ?? [];
-    const parts = row ? [...segments.slice(0, 2), segments.slice(2).join('|')].map(item => item.trim()) : [];
+    const behavior = row ? row.split('|').slice(2).join('|').trim() : '';
     // Evidence at the current epoch; an earlier record for the same criterion is stale.
     const evidence = records.find(item => item.criterionId === criterion.id && item.mutationEpoch === (ordinary.mutationEpoch ?? 0));
-    const base = { id: criterion.id, behavior: parts[2] || criterion.title || '', path: parts[1] ? `\`${parts[1]}\`` : 'pending implementation' };
+    const base = { id: criterion.id, behavior: behavior || criterion.title || '' };
     if (row && !evidence && criterion.evidence !== 'red' && criterion.commands.length && criterion.commands.every(command => (ordinary.finalOnly ?? []).includes(command))) return { ...base, evidence: DEFERRED };
     if (!row || (criterion.evidence !== 'red' && !evidence)) return { ...base, evidence: `Pending — missing validated ${criterion.evidence} evidence.` };
-    const fresh = evidence ? `${evidence.evidenceClass}; ${evidence.reviewer}; ${evidence.scenario}; revision ${evidence.inspectedRevision}; ${evidence.observableResult}; limitations: ${evidence.limitations}` : `red; mutation epoch ${ordinary.mutationEpoch}`;
-    return { ...base, evidence: fresh };
+    return { ...base, evidence: evidence ? `${evidence.evidenceClass}; ${evidence.scenario}; ${evidence.observableResult}` : redEvidence(ordinary, criterion) };
   });
 }
-function renderValidatedEvidence(text, ordinary) {
-  if (!ordinary) return text;
-  const matrix = redMatrix(ordinary);
-  const records = (ordinary.completionResults ?? []).flatMap(result => result.criterionEvidence ?? []);
-  if (Array.isArray(ordinary.criteria)) text = renderTraceabilityBox(text, ordinary, records);
-  if (!ordinary.implementationComplete || !ordinary.completionResults) {
-    return matrix.length ? replaceVerification(text, [...matrix, 'Completion evidence pending.']) : text;
-  }
-  const manual = records.map(item => `- [${item.criterionId}] ${item.evidenceClass}; reviewer: ${item.reviewer}; scenario: ${item.scenario}; inspected revision: ${item.inspectedRevision}; observable result: ${item.observableResult}; limitations: ${item.limitations}; mutation epoch: ${item.mutationEpoch}.`);
-  return replaceVerification(text, [...matrix, '### Manual Verification', manual.length ? manual.join('\n') : '- RED evidence captured by mapped host verification.']);
+function finalGate(ordinary) {
+  if (!ordinary.finalVerified) return 'pending';
+  const finals = new Set(ordinary.finalOnly ?? []);
+  const results = (ordinary.completionResults ?? []).filter(item => !finals.size || finals.has(item.command));
+  return results.map(item => `\`${item.command}\` exit ${item.exitStatus}`).join('; ') || 'no final-only commands; scoped gates passed';
 }
-function renderTraceabilityBox(text, ordinary, records) {
+/** Changes Made from every path changed since the write baseline, keeping review `fixes <IDs>` suffixes. */
+function renderChanges(state, text) {
+  const data = state.ordinary;
+  if (data.envelope?.stage !== 'COMPLETE' || data.write?.baselineHead === undefined) return text;
+  const stats = changeStats(state.repoRoot, { base: data.write.baselineHead });
+  // Session artifacts and this run's own documents and sidecar are not production changes.
+  const own = new Set([state.planPath, state.walkthroughPath, evidenceFile(state.walkthroughPath)].filter(Boolean).map(file => path.relative(state.repoRoot, file).split(path.sep).join('/')));
+  // Paths already dirty at baseline and untouched since belong to the user, not this run.
+  const before = data.baselineSnapshot?.entries ?? {};
+  const now = Object.keys(before).length ? captureRepositoryState(state.repoRoot).entries : {};
+  const preexisting = file => before[file] && now[file]?.objectId === before[file].objectId;
+  const paths = [...stats.keys()].filter(file => !/^\.scratch(?:\/|$)/.test(file) && !own.has(file) && !preexisting(file)).sort();
+  const summary = oneLine(data.envelope.summary);
+  const same = (a, b) => a.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === b.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Walkthrough lint rejects a Delivered line that repeats the H1.
+  const delivered = same(summary, /^# (.+)$/m.exec(text)?.[1] ?? '') ? `Implemented: ${summary}` : summary;
+  if (!paths.length) return replaceBoxLine(text, 'Delivered', delivered);
+  const fixes = new Map(parseChangesMade(sectionBody(text, 'Changes Made') ?? []).flatMap(item => { const match = FIXES_SUFFIX.exec(item.note); return match ? [[item.path, match[1].split(', ')]] : []; }));
+  const entries = changeEntries({ paths, stats, files: data.envelope.files ?? [], planNotes: extractChangeNotes(source(state)) })
+    .map(entry => (fixes.has(entry.path) ? { ...entry, note: withFixes(entry.note, fixes.get(entry.path)) } : entry));
+  text = replaceSection(text, 'Changes Made', renderChangesMade(entries));
+  return replaceBoxLine(text, 'Delivered', delivered);
+}
+function renderValidatedEvidence(state, text) {
+  const ordinary = state.ordinary;
+  if (!ordinary || !Array.isArray(ordinary.criteria)) return text;
+  const records = (ordinary.completionResults ?? []).flatMap(result => result.criterionEvidence ?? []);
   const rows = traceRows(ordinary, records);
-  text = text.replace(/## Outcome Traceability\r?\n[\s\S]*?\r?\n## Key Deviations/, () => `## Outcome Traceability\n${renderTraceability(rows)}\n\n## Key Deviations`);
+  text = renderChanges(state, text);
+  text = replaceSection(text, 'Verification', renderVerification(rows, finalGate(ordinary)));
   text = replaceStatusLine(text, `${rows.filter(isPassing).length}/${ordinary.criteria.length} SC passing`);
   // The driver owns none-ness only; an authored one-line summary is kept (lint checks none-ness alone).
-  const noDeviations = (sectionBody(text, 'Key Deviations') ?? []).map(line => line.trim()).filter(Boolean).join('\n') === 'None.';
-  if (noDeviations) text = replaceBoxLine(text, 'Deviations', 'none');
-  else if (/^> \*\*Deviations:\*\* none\s*$/m.test(text)) throw new Error('Deviations summary required: Key Deviations records a deviation; replace "> **Deviations:** none" with a one-line summary.');
+  if (!hasDeviation(text)) text = replaceBoxLine(text, 'Deviations', 'none');
+  else if (/^> \*\*Deviations:\*\* none\s*$/m.test(text)) throw new Error('Deviations summary required: Deviations & Follow-ups records a "- Deviation:" bullet; replace "> **Deviations:** none" with a one-line summary.');
   return text;
 }
 // SECTION: Durable evidence
 
-/** Persists reconstructable ordinary evidence in the canonical walkthrough. */
+/** Persists reconstructable ordinary evidence in the walkthrough's `.state/` sidecar and re-renders the walkthrough. */
 export function persistEvidence(state) {
   if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return;
   // Final review metadata covers the walkthrough body; leave it unchanged after checkpoint.
   // A passed final gate renders its evidence before the deferred code-review checkpoint is recorded.
   if (state.ordinary.checkpoint || (state.reviewState?.kind === 'code' && !(state.ordinary.step === 'final-verify' && state.ordinary.finalVerified))) return;
   const record = { schemaVersion: 1, governingHash: state.governingHash, planPath: state.planPath, ...(state.designPath ? { designPath: state.designPath, designRevision: state.designRevision ?? state.governingHash } : {}), ...(state.increment?.id ? { incrementId: state.increment.id } : {}), ledgerRunId: state.ledgerRunId ?? null, ordinary: state.ordinary };
-  const block = `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify(storeSessionPaths(record))}\n\`\`\`\n`;
-  const text = renderValidatedEvidence(fs.readFileSync(state.walkthroughPath, 'utf8'), state.ordinary);
-  fs.writeFileSync(state.walkthroughPath, MARKER.test(text) ? text.replace(MARKER, () => block) : text + block);
+  const text = renderValidatedEvidence(state, fs.readFileSync(state.walkthroughPath, 'utf8'));
+  writeAtomic(evidenceFile(state.walkthroughPath), `${JSON.stringify(storeSessionPaths(record))}\n`);
+  fs.writeFileSync(state.walkthroughPath, text);
+}
+function writeAtomic(file, contents) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(temp, contents);
+  try { safeRenameSync(temp, file); } finally { fs.rmSync(temp, { force: true }); }
 }
 export function restoreEvidence(state) {
-  if (!fs.existsSync(state.walkthroughPath)) return false;
-  const match = MARKER.exec(fs.readFileSync(state.walkthroughPath, 'utf8'));
-  if (!match) return false;
-  const record = restoreSessionPaths(JSON.parse(match[1]));
+  if (!state.walkthroughPath || !fs.existsSync(state.walkthroughPath)) return false;
+  const sidecar = evidenceFile(state.walkthroughPath);
+  if (!fs.existsSync(sidecar)) return false;
+  const record = restoreSessionPaths(JSON.parse(fs.readFileSync(sidecar, 'utf8')));
   const planMatches = typeof record.planPath === 'string' && path.resolve(state.repoRoot, record.planPath) === path.resolve(state.planPath);
   // Ordinary evidence from a finished or never-approved run of an earlier plan revision has no authority over a restart.
   const ordinaryRecord = !state.designPath && !record.designPath && !record.incrementId;

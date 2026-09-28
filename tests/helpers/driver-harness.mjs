@@ -60,6 +60,7 @@ export const PLAN_BODY = [
   '# Plan',
   '',
   '> **TL;DR:** Implement and verify the sample.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — one sample module',
   '> **Scope:** src/app.js',
@@ -82,7 +83,7 @@ export const PLAN_BODY = [
   '',
   '### Automated Tests',
   '',
-  '- `node --test tests/sample.test.mjs`',
+  '- None: every command is a criterion Verify.',
   '',
   '## Review Findings & Resolutions',
   '',
@@ -96,6 +97,7 @@ export const DESIGN_BODY = [
   '# Design',
   '',
   '> **TL;DR:** One base increment.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — single increment',
   '> **Increments:** 1',
@@ -430,7 +432,7 @@ const DEFAULT_POLICY = {
       reasoningEffort: action.descriptor.reasoningEffort,
     } };
   },
-  author: () => { throw new Error('unexpected author action'); },
+  author: (action) => { throw new Error(`unexpected author action: ${JSON.stringify(action).slice(0, 1500)}`); },
 };
 
 function defaultRuling(finding, policy, action, ctx) {

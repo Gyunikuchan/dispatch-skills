@@ -13,6 +13,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 ### Outcome handoff
 - Write the complete implementation-outcome JSON to `<Expected Envelope Path>`.
 - Run `<Self Check Command>`; correct every listed defect before returning.
+- List each changed file in `files` with one short clause on what changed there.
 - In chat, return only the status, one-line summary, concerns, and envelope path. Keep evidence rows in the JSON file.
 
 <<slot:purpose>>

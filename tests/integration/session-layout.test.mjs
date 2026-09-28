@@ -16,6 +16,7 @@ const ALLOWED = [
   /^manifest\.json$/,
   /^[a-z0-9]+(?:-[a-z0-9]+)*\.(?:spec|design|plan|walkthrough|report)\.md$/,
   /^\.state\/[a-z0-9]+(?:-[a-z0-9]+)*\.ledger\.md$/,
+  /^\.state\/[a-z0-9]+(?:-[a-z0-9]+)*\.evidence\.json$/,
   /^\.state\/telemetry\.jsonl$/,
   /^\.state\/cache\/(?:baseline\.json|[0-9a-f]{8}\.lock)$/,
   /^\.state\/cache\/tree-\d+\/.+$/,

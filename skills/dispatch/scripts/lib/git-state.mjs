@@ -268,6 +268,37 @@ export function dirtyPaths(repoRoot) {
   return parseStatusPaths(git(repoRoot, ['status', '--porcelain=v1', '-z', '--untracked-files=all']));
 }
 
+/**
+ * Per-path change tag and line counts against `base` (working tree, untracked included) or across `range`.
+ * @param {string} repoRoot
+ * @param {{ base?: string | null, range?: string | null }} options
+ * @returns {Map<string, { tag: 'NEW' | 'MODIFY' | 'DELETE', added: number, removed: number }>}
+ */
+export function changeStats(repoRoot, { base = null, range = null }) {
+  const target = range ?? base ?? currentHead(repoRoot);
+  const fields = args => git(repoRoot, ['diff', '--no-renames', '-z', ...args, target]).toString('utf8').split('\0');
+  /** @type {Map<string, { tag: 'NEW' | 'MODIFY' | 'DELETE', added: number, removed: number }>} */
+  const stats = new Map();
+  const status = fields(['--name-status']);
+  for (let index = 0; index + 1 < status.length; index += 2) {
+    const tag = status[index] === 'A' ? 'NEW' : status[index] === 'D' ? 'DELETE' : 'MODIFY';
+    stats.set(status[index + 1], { tag, added: 0, removed: 0 });
+  }
+  for (const record of fields(['--numstat'])) {
+    const match = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(record);
+    const entry = match && stats.get(match[3]);
+    // Binary files report `-`; they keep zero counts.
+    if (entry) Object.assign(entry, { added: Number(match[1]) || 0, removed: Number(match[2]) || 0 });
+  }
+  if (range) return stats;
+  for (const file of git(repoRoot, ['ls-files', '--others', '--exclude-standard', '-z']).toString('utf8').split('\0').filter(Boolean)) {
+    let added = 0;
+    try { added = fs.readFileSync(path.join(repoRoot, file), 'utf8').split('\n').filter((line, index, all) => line || index < all.length - 1).length; } catch { /* unreadable: zero */ }
+    stats.set(file, { tag: 'NEW', added, removed: 0 });
+  }
+  return stats;
+}
+
 /** @param {string} repoRoot @returns {string} */
 export function currentHead(repoRoot) {
   const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: repoRoot, encoding: 'utf8' });

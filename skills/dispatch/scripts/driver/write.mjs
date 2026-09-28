@@ -104,7 +104,7 @@ function testsOnlyPrompt(state, expectedEnvelopePath) {
     purpose: repair ? 'tests-only-admission-repair' : 'tests-only-red',
     manifest: testsOnlyManifest(data),
     boundaries: { writeOnly: data.testsOnlyPaths, productionChanges: false, retainExistingTestChanges: Boolean(repair) },
-    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'array of strings: exactly one RED-MATRIX <SC#> | <approved test path>:<leaf test name> | exit <nonzero integer> test:<leaf test name>[; test:<leaf test name>...] per criterion (leaf name as the runner prints it, without describe/suite prefixes); N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS' },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS', stage: 'RED_READY', summary: 'non-empty string', evidence: 'array of strings: exactly one RED-MATRIX <SC#> | <approved test path>:<leaf test name> | exit <nonzero integer> test:<leaf test name>[; test:<leaf test name>...] per criterion (leaf name as the runner prints it, without describe/suite prefixes); N/A | <non-empty class reason> only with an evidence-backed exception ruling', concerns: 'array of non-empty strings, only with DONE_WITH_CONCERNS', files: 'optional array of {path, note} for each changed file; note is one short clause' },
     expectedEnvelopePath,
     selfCheck: selfCheck(state, expectedEnvelopePath),
     ...(repair ? { admissionDefects: repair.defects } : {}),
@@ -141,7 +141,7 @@ function productionPrompt(state, expectedEnvelopePath) {
   if (errors.length) throw new Error(`Invalid production packet: ${errors.join('; ')}`);
   return briefFile(state, `production-a${data.attempt}`, {
     schemaVersion: 1, purpose: 'production', packet,
-    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED', stage: 'COMPLETE', summary: 'non-empty string', evidence: 'array of strings holding one CRITERION <SC#> | <owning production path> | <delivered behavior> row per criterion', 'concerns|missingContext|blockers': 'array of non-empty strings, only with DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED respectively' },
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED', stage: 'COMPLETE', summary: 'non-empty string', evidence: 'array of strings holding one CRITERION <SC#> | <owning production path> | <delivered behavior> row per criterion', 'concerns|missingContext|blockers': 'array of non-empty strings, only with DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED respectively', files: 'optional array of {path, note} for each changed file; note is one short clause' },
     expectedEnvelopePath,
     selfCheck: selfCheck(state, expectedEnvelopePath),
   }, 'production');

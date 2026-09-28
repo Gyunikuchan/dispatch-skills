@@ -47,7 +47,7 @@ export function authorPlan(state) {
   }
   return emitAction(state, 'author', { path: state.planPath, template: 'plan', defects: [] }, [
     spec ? `Author the canonical plan from the spec at ${spec}; its settled decisions are inputs, not open questions.` : `Author the canonical plan for: ${state.invocation.argument}`,
-    'Use references/templates/plan.md. Map every success criterion to approved production and test paths and exact verification commands. Reply with the canonical path; do not modify production files.',
+    'Use references/templates/plan.md. Set Parent to the design increment, the spec (path · sha256), or `user request`; add Background with `file:line` pointers when current behaviour needs explaining. Map every success criterion to approved production and test paths and exact verification commands. Reply with the canonical path; do not modify production files.',
   ]);
 }
 export function acceptPlan(state, reply) {

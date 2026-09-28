@@ -8,7 +8,7 @@ import { sanitizeReplyText } from './actions.mjs';
 
 export const REPO_RELATIVE = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
 export const LOG_HEADING = /^##\s+Review Findings & Resolutions\b/;
-export const FOLLOW_UPS = /^##\s+Follow-ups\s*$/;
+export const DEVIATIONS_FOLLOW_UPS = /^##\s+Deviations & Follow-ups\s*$/;
 
 /** Reads the canonical review artifact without normalizing its line endings. */
 export function readArtifactText(state) {

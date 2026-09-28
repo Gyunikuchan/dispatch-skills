@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { safeRenameSync } from '../lib/platform.mjs';
 import { isSessionPath, runId, sessionArgs, sessionDir } from '../lib/session-temp.mjs';
-import { freeRunFilePath, RUN_ID_PATTERN, runFile, stateCache } from '../lib/session-paths.mjs';
+import { evidenceFile, freeRunFilePath, RUN_ID_PATTERN, runFile, stateCache } from '../lib/session-paths.mjs';
 
 // Each preparation owns one invocation file; a re-preparation of the same round takes `-a<N>`.
 const INVOCATION_FILE = /^r\d+(?:-a\d+)?\.invocation\.json$/;
@@ -327,12 +327,12 @@ function summaryLine(round) {
   return `- R${round.number} settled accepted=${accepted} rejected=${rejected} resolved=${resolvedDispute} disputed=${disputed + pendingConfirmation} unknown=${unknown} failed=${round.failedTargets.length} hash=${round.hash.slice(0, 12)}`;
 }
 
+// Drops machine comment records and reviewer identities; delegates see findings and their application lines only.
 function withoutSourceMap(roundText) {
-  return roundText.split('\n').filter((line) => !/^\s*[-*]\s+(?:\*\*Sources:\*\*|failed-targets:)/.test(line)).join('\n');
+  return roundText.split('\n').filter((line) => !/^\s*(?:<!--\s*dispatch-|[-*]\s+(?:Reviewers|Failed):)/.test(line)).join('\n');
 }
 
-// Walkthrough run state (~100 KB+) is driver cache, not review evidence; reviewers get a table instead.
-const EVIDENCE_BLOCK = /\n## Ordinary execution evidence\n```json\n([\s\S]*?)\n```\n?/;
+// Driver run state lives in the `.state/` evidence sidecar, not the walkthrough; reviewers get a table instead.
 const cell = (value) => String(value ?? '').replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
 function verificationTable(record) {
   const ordinary = record?.ordinary ?? {};
@@ -344,49 +344,22 @@ function verificationTable(record) {
       return `| ${cell(key.replace(/Results$/, ''))} | \`${cell(result.command)}\` | ${cell(result.exitStatus ?? result.exit)} | ${cell(result.pass)} | ${cell(result.fail)} | ${cell(result.mutationEpoch)} | ${cell(criteria.join(', '))} |`;
     }));
   if (!rows.length) return '';
-  return ['### Host verification results', '> Source: driver run-state evidence, not canonical walkthrough prose.', '', '| Purpose | Command | Exit | Pass | Fail | Epoch | Criteria |', '| --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n');
+  return ['### Host verification results', '> Source: driver evidence sidecar, not canonical walkthrough prose.', '', '| Purpose | Command | Exit | Pass | Fail | Epoch | Criteria |', '| --- | --- | --- | --- | --- | --- | --- |', ...rows].join('\n');
 }
-function withVerificationTable(body) {
-  const match = EVIDENCE_BLOCK.exec(body);
-  if (!match) return body;
+function withVerificationTable(body, walkthroughPath) {
+  if (!walkthroughPath || !/\.walkthrough\.md$/.test(walkthroughPath)) return body;
   let record = null;
-  try { record = JSON.parse(match[1]); } catch { /* malformed cache: drop the block without a table */ }
-  const stripped = body.replace(EVIDENCE_BLOCK, '\n');
+  try { record = JSON.parse(fs.readFileSync(evidenceFile(walkthroughPath), 'utf8')); } catch { /* absent or malformed sidecar: no table */ }
   const table = record ? verificationTable(record) : '';
-  if (!table) return stripped;
-  const section = /(\n## Verification & Validation\n[\s\S]*?)(?=\n## |$)/;
-  return section.test(stripped)
-    ? stripped.replace(section, (text) => `${text.trimEnd()}\n\n${table}\n`)
-    : `${stripped.trimEnd()}\n\n## Verification & Validation\n\n${table}\n`;
+  if (!table) return body;
+  const section = /(\n## Verification\n[\s\S]*?)(?=\n## |$)/;
+  return section.test(body)
+    ? body.replace(section, (text) => `${text.trimEnd()}\n\n${table}\n`)
+    : `${body.trimEnd()}\n\n## Verification\n\n${table}\n`;
 }
 
 // SECTION: Review projection
 // Pure text rewrites applied on every round, so round-1 and re-review briefs share one shape.
-
-const DEFAULT_SCOPE_NOTE = /^- \*\*\[MODIFY\]\*\* `([^`]+)` — Approved implementation scope\.$/;
-// Collapses note-free approved-scope bullets into one line; bullets with their own note stay.
-function collapseApprovedScope(body) {
-  const lines = body.split('\n');
-  const first = lines.findIndex((line) => DEFAULT_SCOPE_NOTE.test(line));
-  if (first === -1) return body;
-  const paths = lines.filter((line) => DEFAULT_SCOPE_NOTE.test(line)).map((line) => `\`${DEFAULT_SCOPE_NOTE.exec(line)[1]}\``);
-  const kept = lines.filter((line, index) => index === first || !DEFAULT_SCOPE_NOTE.test(line));
-  kept[first] = `- **[MODIFY]** Approved implementation scope: ${paths.join(', ')}`;
-  return kept.join('\n');
-}
-
-// Drops Automated Tests bullets that repeat a Success Criteria `Verify:` command verbatim.
-function dedupeAutomatedTests(body) {
-  const verify = new Set([...body.matchAll(/^\s+- Verify: `([^`]+)`\s*(?:\[FINAL\]\s*)?$/gm)].map((match) => match[1]));
-  if (!verify.size) return body;
-  return body.replace(/(\n### Automated Tests\n)([\s\S]*?)(?=\n#{2,3} |$)/, (_, heading, section) => {
-    const lines = section.split('\n');
-    const kept = lines.filter((line) => !verify.has(/^- `([^`]+)`\s*$/.exec(line)?.[1]));
-    if (kept.length === lines.length) return `${heading}${section}`;
-    const note = '- Every Success Criteria `Verify:` command.';
-    return `${heading}${[note, ...kept.filter((line) => line.trim())].join('\n')}\n`;
-  });
-}
 
 // Groups entries sharing locus and tag (first-occurrence order); application lines stay attached.
 function groupRoundEntries(roundText) {
@@ -435,7 +408,7 @@ export function buildReviewView(markdown, { canonicalPath, nextRound }) {
     `> Canonical artifact: ${canonicalPath}`,
     '> Apply adjudication and edits only to the canonical artifact.',
     '',
-    dedupeAutomatedTests(collapseApprovedScope(withVerificationTable(scan.semanticBody))),
+    withVerificationTable(scan.semanticBody, canonicalPath),
     '',
     '## Review Findings & Resolutions (bounded view)',
     '> Source: canonical resolution log, bounded to live and immediately preceding rounds.',

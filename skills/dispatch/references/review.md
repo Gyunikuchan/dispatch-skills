@@ -14,7 +14,7 @@ Standalone review is report-only unless the user supplied `--fix`. With `--fix`,
 
 ## Resolution log and settlement
 
-Append rounds beneath `## Review Findings & Resolutions` using the enriched finding and `application:` shapes emitted by the driver. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted in-scope `MUST`/`SHOULD` and bounded `CONSIDER` require immediate action under `--fix`; report-only acceptance records without edits. Unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
+Append rounds beneath `## Review Findings & Resolutions` using the shapes the driver emits. Source maps, failed targets, and application records are `dispatch-sources`, `dispatch-failed-targets`, and `dispatch-application` HTML comments, each followed by a derived visible line (`- Reviewers:`, `- Failed:`, `<State> →`); only comments are parsed, and a derived line must match its comment. A duplicate entry carries `[dup=<first ID>]` and body `<locus> → see <first ID>`. Preserve finding IDs and cite only reporting sources. Unknown statuses or malformed bullets never settle. Accepted in-scope `MUST`/`SHOULD` and bounded `CONSIDER` require immediate action under `--fix`; report-only acceptance records without edits. Unapplied accepted advice retains sorted paths, dependencies, verification, and reason.
 
 Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Persist one cumulative review-wave budget per logical phase identity in parser-owned log markers; carry it through parent/child transitions and artifact recovery. Without a marker, recovery keeps the supplied phase budget. Rebuttals, final verification, fix application, and checkpoints do not consume waves; adjacent opt-in and checkpoint drift do not reset the budget. Apply and verify accepted fixes before cap decisions. Only live `MUST` permits a cap extension. Disputed/unconfirmed findings still require a ruling. Checkpoint after terminal sources, recorded rulings and verification, and consensus `0`. Verify checkpoint preview before commit; drift restarts preparation within the same budget.
 
@@ -22,15 +22,16 @@ Consensus (`review/consensus.mjs`): `0` settled, `1` live, `2` invalid. Persist 
 
 A walkthrough exists before baseline verification and contains, in order:
 
-1. one H1, then the `TL;DR`, `Status`, `Deviations` summary box;
-2. `## Changes Made`;
-3. `## Verification & Validation`, including `Command: \`<command>\` — exit <status>; <evidence>` records;
-4. `## Outcome Traceability`, a `| SC | Behavior | Production path | Evidence |` table with one row per criterion;
-5. `## Key Deviations`;
-6. `## Review Findings & Resolutions`, initially `*No reviews conducted yet.*`; and
-7. `## Follow-ups`.
+1. one H1, then the `Delivered`, `Parent`, `Status`, `Deviations` summary box;
+2. `## Context`, only when Parent is `user request`;
+3. `## Changes Made`;
+4. `## Verification`, a `| SC | Outcome | Evidence |` table with one row per criterion, then a `Final gate:` line;
+5. `## Deviations & Follow-ups`, `- Deviation:` / `- Follow-up:` bullets or `None.`; and
+6. `## Review Findings & Resolutions`, initially `*No reviews conducted yet.*`.
 
-Passing commands alone do not prove the outcome.
+Run evidence lives in `.state/<slug>.evidence.json`, never in the walkthrough. Passing commands alone do not prove the outcome.
+
+For plan-less code review, fill the request `context` from the chat: ask, decisions tagged `(user)`, assumptions, out of scope, focus; omit empty fields.
 
 ## Wave and artifact lifecycle
 

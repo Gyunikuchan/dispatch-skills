@@ -40,6 +40,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     const reReview = run.trace.slice(iVerify).find((a) => a.action === 'launch' && a.wave.type === 'review');
     assert.ok(reReview, 'green verify with changed files starts a re-review round');
     assert.equal(reReview.wave.round, 2);
+    assert.match(fs.readFileSync(walkthroughIn(repo.dir), 'utf8'), /^- \*\*\[[A-Z]+\]\*\* `src\/app\.js` — .*fixes R1-F001, R1-F002$/m, 'applied fixes annotate Changes Made');
     assertSettledAndCheckpointed(walkthroughIn(repo.dir), run.done, 'code');
   });
 
@@ -158,7 +159,8 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     });
     const walkthrough = fs.readFileSync(walkthroughIn(repo.dir), 'utf8');
     assert.match(walkthrough, /"state":"unapplied"/);
-    const followUps = walkthrough.split(/^## Follow-ups\s*$/m)[1] ?? '';
+    assert.match(walkthrough, /^- Follow-up: \[R1-F001\] /m);
+    const followUps = walkthrough.split(/^## Deviations & Follow-ups\s*$/m)[1]?.split(/^## /m)[0] ?? '';
     assert.match(followUps, /needs-user defect/);
     assert.equal(run.done.outcome, 'complete');
   });
@@ -195,7 +197,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assert.ok(run.trace.slice(iFix).some((a) => a.action === 'verify'));
     assert.equal(run.trace.slice(iFix).some((a) => a.action === 'launch' && a.wave.type === 'review'), false, 'opt-in does not exceed the spent review budget');
     const walkthrough = fs.readFileSync(walkthroughIn(repo.dir), 'utf8');
-    const followUps = walkthrough.split(/^## Follow-ups\s*$/m)[1] ?? '';
+    const followUps = walkthrough.split(/^## Deviations & Follow-ups\s*$/m)[1]?.split(/^## /m)[0] ?? '';
     assert.match(followUps, /adjacent-two/);
     assert.doesNotMatch(followUps, /adjacent-one/);
     assert.equal(run.done.outcome, 'complete');
@@ -219,7 +221,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assert.ok(deferred, 'an application record is written');
     assert.equal(deferred.application.state, 'unapplied');
     assert.match(deferred.application.reason, /same failure/);
-    assert.match(fs.readFileSync(walkthroughPath, 'utf8'), /^## Follow-ups\s*$/m);
+    assert.match(fs.readFileSync(walkthroughPath, 'utf8'), /^## Deviations & Follow-ups\s*$/m);
     assert.equal(run.done.outcome, 'complete');
   });
 

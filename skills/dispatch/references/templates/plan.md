@@ -8,12 +8,16 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 # <Goal Description>
 
 > **TL;DR:** <problem and outcome>
+> **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>
 > **Decide:** <reader decision, or none>
 > **Risk:** <low|med|high> — <reason>
 > **Scope:** <paths or components>
 
+## Background
+*Optional: current behaviour a fresh reader needs, with `file:line` pointers.*
+
 ## Key Decisions & Context
-*Settled architectural choices with trade-offs, rationale, and rejected alternatives; reviews treat entries as settled.*
+*Settled architectural choices with trade-offs, rationale, and rejected alternatives; tag user-made choices `(user)`. Reviews treat entries as settled.*
 
 ## User Review Required
 *Breaking changes or trade-offs needing user attention (or "None").*
@@ -22,7 +26,6 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 *Questions, assumptions, or defaults (or "None").*
 
 ## Technical-Design Traceability
-- Parent design: exact runtime path to the approved design at the active session root; filename format: `<design-slug>.design.md`
 - Approved revision: `sha256:<64 hex>`
 - Increment ID and inherited contract: I<nn> — <inherited outcome, invariants, rollback boundary>
 - Prerequisite evidence: <prerequisite completion evidence>

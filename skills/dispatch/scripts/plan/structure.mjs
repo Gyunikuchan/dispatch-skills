@@ -63,6 +63,37 @@ export function extractApprovedPathSet(source) {
 }
 
 /**
+ * Maps each Proposed Changes path to its action tag and one-line note: the `Changes:` or `Purpose:`
+ * bullet, or the first sub-bullet when that bullet opens a list, else the first bullet.
+ * @param {string} source
+ * @returns {Map<string, { tag: string, note: string }>}
+ */
+export function extractChangeNotes(source) {
+  const lines = structuralLines(source);
+  const records = extractActionHeadingRecords(source).filter(({ path: value }) => value);
+  /** @type {Map<string, { tag: string, note: string }>} */
+  const notes = new Map();
+  for (const record of records) {
+    const start = lines.findIndex(({ line }) => line === record.line);
+    const body = [];
+    for (const entry of lines.slice(start + 1)) {
+      if (/^#{2,4}\s+/.test(entry.text)) break;
+      body.push(entry.text);
+    }
+    const labelled = body.findIndex(text => /^[-*+]\s+(?:Changes|Purpose):/.test(text));
+    let note = '';
+    if (labelled !== -1) {
+      note = body[labelled].replace(/^[-*+]\s+(?:Changes|Purpose):\s*/, '').trim();
+      if (!note) note = (body.slice(labelled + 1).find(text => /^\s+[-*+]\s+\S/.test(text)) ?? '').replace(/^\s+[-*+]\s+/, '').trim();
+    } else {
+      note = (body.find(text => /^[-*+]\s+\S/.test(text)) ?? '').replace(/^[-*+]\s+/, '').trim();
+    }
+    notes.set(/** @type {string} */ (record.path), { tag: record.action === 'GENERATED' ? 'MODIFY' : record.action, note: note.replace(/;$/, '') });
+  }
+  return notes;
+}
+
+/**
  * Extracts `[GENERATED]` paths and the first generator command under each heading.
  * @param {string} source
  * @returns {Array<{path: string | null, command: string | null, line: number}>}

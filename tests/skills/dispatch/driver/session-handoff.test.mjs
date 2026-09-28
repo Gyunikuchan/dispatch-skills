@@ -79,7 +79,7 @@ describe('terminal session handoff', () => {
   });
 
   it('stores walkthrough execution paths relative to the chat and restores them after handoff', () => {
-    const walkthroughPath = path.join(activeRoot, 'artifacts', 'walkthrough.md');
+    const walkthroughPath = path.join(activeRoot, 'artifacts', 'sample.walkthrough.md');
     const logPath = path.join(activeRoot, 'runs', 'run-handoff', 'result.log');
     const current = state({ planPath: path.join(activeRoot, 'artifacts', 'plan.md'), walkthroughPath,
       governingHash: 'hash', ledgerPath: path.join(activeRoot, 'ledger', 'missing.md'),
@@ -89,13 +89,12 @@ describe('terminal session handoff', () => {
     persistEvidence(current);
     const action = finish(current, emitAction(current, 'done', { outcome: 'complete', summary: 'verified' }));
     const published = action.handoff.destinations[0];
-    const source = fs.readFileSync(path.join(published, 'artifacts', 'walkthrough.md'), 'utf8');
-    const stored = JSON.parse(source.match(/```json\n(.+)\n```/)[1]);
+    const stored = JSON.parse(fs.readFileSync(path.join(published, 'artifacts', '.state', 'sample.evidence.json'), 'utf8'));
     assert.equal(stored.planPath, '@session/artifacts/plan.md');
     assert.equal(stored.ordinary.redResults[0].logPath, '@session/runs/run-handoff/result.log');
     const restoredRoot = bindSession(published);
     const restored = { ...current, planPath: path.join(restoredRoot, 'artifacts', 'plan.md'),
-      walkthroughPath: path.join(restoredRoot, 'artifacts', 'walkthrough.md'), ledgerPath: path.join(restoredRoot, 'ledger', 'missing.md') };
+      walkthroughPath: path.join(restoredRoot, 'artifacts', 'sample.walkthrough.md'), ledgerPath: path.join(restoredRoot, 'ledger', 'missing.md') };
     assert.equal(restoreEvidence(restored), true);
     assert.equal(fs.readFileSync(restored.ordinary.redResults[0].logPath, 'utf8'), 'result\n');
   });

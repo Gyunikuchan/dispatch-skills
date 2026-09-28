@@ -19,6 +19,7 @@ const DESIGN_BODY = [
   '# Demo design',
   '',
   '> **TL;DR:** Three increments switch the demo over.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — demo fixture',
   '> **Increments:** 3',
@@ -210,7 +211,7 @@ describe('summary box governance', () => {
     updateExecutionStatus({ designPath: file, states: { I01: 'complete' } });
     const after = fs.readFileSync(file, 'utf8');
     assert.equal(governingHash(after, { kind: 'design' }).hash, before);
-    assert.match(after, /^# Demo design\n\n> \*\*TL;DR:\*\* Three increments switch the demo over\.\n> \*\*Decide:\*\* none\n> \*\*Risk:\*\* low — demo fixture\n> \*\*Increments:\*\* 3\n\n## /);
+    assert.match(after, /^# Demo design\n\n> \*\*TL;DR:\*\* Three increments switch the demo over\.\n> \*\*Parent:\*\* user request\n> \*\*Decide:\*\* none\n> \*\*Risk:\*\* low — demo fixture\n> \*\*Increments:\*\* 3\n\n## /);
     assert.deepEqual(boxCodes(after), []);
     const boxless = after.replace(/^> .*\n/gm, '');
     assert.deepEqual(boxCodes(boxless), ['missing-summary-box']);

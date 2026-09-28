@@ -57,6 +57,7 @@ const planBody = [
   '# Plan',
   '',
   '> **TL;DR:** Implement and verify the sample.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — one sample module',
   '> **Scope:** src/sample.js',
@@ -79,7 +80,7 @@ const planBody = [
   '',
   '### Automated Tests',
   '',
-  '- `node --test tests/sample.test.mjs`',
+  '- None: every command is a criterion Verify.',
   '',
   '## Review Findings & Resolutions',
   '',
@@ -189,7 +190,7 @@ describe('plan review preparation', () => {
     const plan = planArtifact(repo, 'warning.plan.md');
     const warned = planBody
       .replace(/## Success Criteria[\s\S]*?(?=## Proposed Changes)/, '')
-      .replace('- `node --test tests/sample.test.mjs`', '- None: no compatible runner')
+      .replace('- None: every command is a criterion Verify.', '- None: no compatible runner')
       .replace('- First.', '- First. TBD');
     fs.writeFileSync(plan, warned);
     const packet = path.join(repo, 'findings.json');

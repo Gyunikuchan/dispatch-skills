@@ -12,6 +12,7 @@ import { requiredDesignSections } from '../../../helpers/design-document-fixture
 const validDesign = `# Design
 
 > **TL;DR:** One base increment.
+> **Parent:** user request
 > **Decide:** none
 > **Risk:** low — single increment
 > **Increments:** 1

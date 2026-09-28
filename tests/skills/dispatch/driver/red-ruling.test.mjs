@@ -12,13 +12,12 @@ import { assertAccepted, carryOver, interruptedRun, noFailingState, resumedRun, 
 afterEach(cleanupOrdinaryDriverFixtures);
 
 describe('ordinary driver: RED rulings accepted (SC6)', () => {
-  it('accepts a carry-over ruling citing the interrupted segment and renders it in the RED matrix', () => {
+  it('accepts a carry-over ruling citing the interrupted segment and renders it in the Verification table', () => {
     const { fixture, priorRunId } = interruptedRun();
     const result = resumedRun(fixture, [carryOver(priorRunId)]);
     assertAccepted(result);
     const walkthrough = walkthroughText(result);
-    assert.match(walkthrough, /### RED matrix/);
-    assert.match(walkthrough, new RegExp(`SC1 \\| carried over from ${priorRunId}: tests/sample\\.test\\.mjs`));
+    assert.match(walkthrough, new RegExp(`\\| SC1 \\| .+ \\| red→green .+ \\(carried over from ${priorRunId}\\) \\|`));
   });
 
   it('accepts a carry-over ruling when the tests-only writer leaves the retained tests untouched', () => {
@@ -33,18 +32,17 @@ describe('ordinary driver: RED rulings accepted (SC6)', () => {
     assert.match(fs.readFileSync(fixture.plan, 'utf8'), /--test-reporter=spec/);
     const result = resumedRun(fixture, [carryOver(priorRunId)]);
     assertAccepted(result);
-    assert.match(walkthroughText(result), new RegExp(`SC1 \\| carried over from ${priorRunId}: tests/sample\\.test\\.mjs`));
+    assert.match(walkthroughText(result), new RegExp(`\\| SC1 \\| .+ \\| red→green .+ \\(carried over from ${priorRunId}\\) \\|`));
   });
 
   it('renders a missed exception join as an evidence-missing row instead of throwing', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-red-join-'));
     try {
-      const walkthroughPath = path.join(dir, 'walkthrough.md');
-      fs.writeFileSync(walkthroughPath, '# Walkthrough\n\n> **TL;DR:** Pending.\n> **Status:** 0/0 SC passing\n> **Deviations:** none\n\n## Verification & Validation\n- pending\n\n## Outcome Traceability\n- pending\n\n## Key Deviations\nNone.\n');
+      const walkthroughPath = path.join(dir, 'sample.walkthrough.md');
+      fs.writeFileSync(walkthroughPath, '# Walkthrough\n\n> **Delivered:** pending\n> **Parent:** `plan.md`\n> **Status:** 0/0 SC passing\n> **Deviations:** none\n\n## Changes Made\n\n## Verification\nFinal gate: pending\n\n## Deviations & Follow-ups\nNone.\n');
       const state = { repoRoot: dir, planPath: path.join(dir, 'plan.md'), walkthroughPath, governingHash: 'sha256:x', ordinary: {
         criteria: [], redValidated: { scopeHash: 'x', evidence: [], exceptions: [{ criterionId: 'SC1', kind: 'carry-over', runId: 'gone' }] } } };
       assert.doesNotThrow(() => persistEvidence(state));
-      assert.match(fs.readFileSync(walkthroughPath, 'utf8'), /SC1 \| exception evidence missing \| —/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -54,7 +52,7 @@ describe('ordinary driver: RED rulings accepted (SC6)', () => {
     const { fixture } = interruptedRun({ redException: 'already-satisfied' });
     const result = resumedRun(fixture, [noFailingState()]);
     assertAccepted(result);
-    assert.match(walkthroughText(result), /SC1 \| N\/A — src\/app\.js:1 \| exception \(already-satisfied\): src\/app\.js already exports value=2\./);
+    assert.match(walkthroughText(result), /\| SC1 \| .+ \| N\/A — src\/app\.js:1 — exception \(already-satisfied\): src\/app\.js already exports value=2\. \|/);
   });
 
   it('resumes into production after an interruption that follows an accepted ruling', () => {

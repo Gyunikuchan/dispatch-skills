@@ -3,44 +3,43 @@
 Strict rendering of the [minimum walkthrough contract](../review.md#minimum-walkthrough-contract).
 
 ````markdown
-# Walkthrough — <Goal Description>
+# <task title>
 
-> **TL;DR:** <what changed>
+> **Delivered:** <what changed, in one sentence>
+> **Parent:** <plan path, or user request>
 > **Status:** 0/1 SC passing
 > **Deviations:** none
 
+## Context
+- Ask: <original request>
+- Decisions: <choice> (user)
+- Assumptions: <assumption>
+- Out of scope: <excluded item>
+- Focus: <review focus>
+
 ## Changes Made
+- **[MODIFY]** `<relative-path>` — <what changed in this file>
 
-### <Component Name>
-- **[NEW]** `<relative-path>` — Purpose and interface.
-- **[MODIFY]** `<relative-path>` — Changes and preserved invariants.
-- **[DELETE]** `<relative-path>` — Removed symbols.
+## Verification
+| SC | Outcome | Evidence |
+| --- | --- | --- |
+| SC1 | <delivered observable behavior> | <fresh record> |
 
-## Verification & Validation
-### Automated Tests
-- Command: `<test command>` — exit <status>; results.
-### Manual Verification
-- Per `verify`/`review` criterion: class, revision, scenario/result, limitations.
+Final gate: `<command>` exit <status>
 
-## Outcome Traceability
-| SC | Behavior | Production path | Evidence |
-| --- | --- | --- | --- |
-| SC1 | <delivered observable behavior> | `<relative-path>` | <fresh record> |
-
-## Key Deviations
+## Deviations & Follow-ups
 None.
 
 ## Review Findings & Resolutions
 <!-- Populated during code review cycles -->
 <!-- Rounds use the source-map and entry format in dispatch references/review.md § Resolution log. -->
 *No reviews conducted yet.*
-
-## Follow-ups
-None.
 ````
 
 ## Field notes
 
-- Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria. Plan-less: traceability `None — no governing plan.`, Status `n/a`.
-- Deviations: one-line summary unless Key Deviations is `None.`.
-- Follow-ups: unapplied SHOULD / CONSIDER items, reasoned.
+- Context: only when Parent is `user request`; omit empty bullets. A plan or design parent already holds the context.
+- Changes Made: every file changed in the session. Note precedence: writer `files[].note`, then the plan's Proposed Changes line, then `+N −M`; review fixes append `fixes <IDs>`.
+- Verification: Evidence is `red→green` plus the command for red criteria, or `<class>; <scenario>; <result>` for verify/review. Plan-less: only the `Final gate:` line, Status `n/a`.
+- Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria.
+- Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box is a one-line summary exactly when a `- Deviation:` bullet exists.

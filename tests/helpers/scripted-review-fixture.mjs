@@ -52,7 +52,7 @@ export function assertSettledAndCheckpointed(artifact, done, kind) {
   assert.equal(done.checkpointed, true);
   const markdown = fs.readFileSync(artifact, 'utf8');
   assert.match(markdown, /### Round 1\b/);
-  assert.match(markdown, /\*\*Sources:\*\* \{/);
+  assert.match(markdown, /^<!-- dispatch-sources \{.*\} -->\n- Reviewers: /m);
   assert.equal(evaluateConsensus(markdown).exit, 0);
   if (kind !== 'code') {
     const { metadata } = splitDispatchFrontmatter(markdown);

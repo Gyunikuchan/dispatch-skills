@@ -1,4 +1,5 @@
 // @ts-check
+import { isFillerNote } from '../lib/filler.mjs';
 
 // SECTION: Outcome policy
 
@@ -20,7 +21,23 @@ const COMMON_FIELDS = new Set([
   'concerns',
   'missingContext',
   'blockers',
+  'files',
 ]);
+// Mirrors driver/review-artifact.mjs REPO_RELATIVE: no absolute, drive, `./`, `//`, `..`, control, or backslash forms.
+const REPO_RELATIVE = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
+
+/** @param {unknown} value */
+function validateFiles(value) {
+  if (!Array.isArray(value)) throw new Error('files must be an array of {path, note}');
+  const notes = value.map(item => item?.note);
+  value.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`files[${index}] must be an object {path, note}`);
+    const extra = Object.keys(item).find(key => key !== 'path' && key !== 'note');
+    if (extra) throw new Error(`files[${index}] has unknown field "${extra}"`);
+    if (typeof item.path !== 'string' || !REPO_RELATIVE.test(item.path)) throw new Error(`files[${index}].path must be a repository-relative slash path`);
+    if (typeof item.note !== 'string' || isFillerNote(item.note, notes.filter((_, other) => other !== index))) throw new Error(`files[${index}].note must be one short clause saying what changed in ${item.path}`);
+  });
+}
 
 /** @param {unknown} value @param {string} field */
 function requireString(value, field) {
@@ -57,6 +74,7 @@ function validateEnvelope(value) {
     throw new Error(`RED_READY is illegal with status ${value.status}`);
   }
   requireString(value.summary, 'summary');
+  if (value.files !== undefined) validateFiles(value.files);
   requireStringArray(value.evidence, 'evidence', {
     nonEmpty: ['DONE', 'DONE_WITH_CONCERNS'].includes(value.status),
   });

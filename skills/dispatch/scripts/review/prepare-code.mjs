@@ -11,11 +11,13 @@ import { normalizePath } from '../lib/platform.mjs';
 import { fileURLToPath } from 'node:url';
 
 import { evaluateConsensus } from './consensus.mjs';
-import { assembleTemplate, extractTemplate, fillTemplate } from './fill-template.mjs';
+import { assembleTemplate, fillTemplate } from './fill-template.mjs';
 import { PROMPT_FRAME, REBUTTAL_FRAME, REVIEW_KINDS } from './kinds.mjs';
 import { criterionMappings } from '../verification/evidence.mjs';
 import { lintWalkthrough } from '../walkthrough/lint.mjs';
-import { PLANLESS, cell, renderTraceability } from '../walkthrough/traceability.mjs';
+import { changeEntries, renderChangesMade, renderVerification } from '../walkthrough/traceability.mjs';
+import { changeStats } from '../lib/git-state.mjs';
+import { extractChangeNotes } from '../plan/structure.mjs';
 import {
   getCurrentBranch,
   ledgerWalkthroughSlug,
@@ -64,8 +66,10 @@ const REQUEST_KEYS = [
   'roundId', 'consensus', 'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'range', 'verification', 'invocationContext',
   'settlement', 'settledWrites', 'designPath', 'designRevision', 'incrementId',
-  'allowedPaths', 'baseRevision',
+  'allowedPaths', 'baseRevision', 'context',
 ];
+const CONTEXT_LISTS = ['decisions', 'assumptions', 'outOfScope', 'focus'];
+const CONTEXT_LABELS = { decisions: 'Decisions', assumptions: 'Assumptions', outOfScope: 'Out of scope', focus: 'Focus' };
 
 // SECTION: Shared preparation helpers
 
@@ -108,6 +112,17 @@ function sourceKeys(roundId, targets = []) {
 
 // SECTION: Request validation
 
+/** Plan-less review context the orchestrator fills from chat (references/review.md). */
+function validateContext(context) {
+  assertObjectKeys(context, ['ask', ...CONTEXT_LISTS], 'context');
+  if (context.ask !== undefined && (typeof context.ask !== 'string' || !context.ask.trim())) throw new Error('context.ask must be a non-empty string.');
+  for (const key of CONTEXT_LISTS) {
+    if (context[key] !== undefined && (!Array.isArray(context[key]) || context[key].some((value) => typeof value !== 'string' || !value.trim()))) {
+      throw new Error(`context.${key} must be an array of non-empty strings.`);
+    }
+  }
+}
+
 function validateRequest(request) {
   assertObjectKeys(request, REQUEST_KEYS, 'code review request', FIELD_HINTS);
   const action = validateRequestAction(request);
@@ -144,6 +159,7 @@ function validateRequest(request) {
       sources.add(source);
     }
   }
+  if (request.context !== undefined) validateContext(request.context);
   if (request.verification !== undefined) {
     assertObjectKeys(request.verification, ['command', 'result'], 'verification');
     if (typeof request.verification.command !== 'string' || typeof request.verification.result !== 'string') {
@@ -243,31 +259,52 @@ function resolvePair(request, repoRoot, scope) {
   };
 }
 
-/** Renders the template with the box filled and Pending rows from paired-plan criteria, or the plan-less form. */
-function renderWalkthrough({ summary, paths, verification, criteria }) {
-  const template = extractTemplate(fs.readFileSync(
-    path.join(DISPATCH_DIR, 'references', 'templates', 'walkthrough.md'),
-    'utf8',
-  ), 'Walkthrough template').template;
-  const changes = paths.length > 0
-    ? paths.map((file) => `- **[MODIFY]** \`${file}\` — Included in the selected review scope.`).join('\n')
+/**
+ * Renders a new walkthrough: Pending rows with the plan as Parent when a plan is paired, otherwise
+ * the plan-less form with Context and only the final-gate line.
+ */
+function renderWalkthrough({ summary, context, paths, stats, verification, criteria, planPath, planSource }) {
+  const oneLine = (value) => String(value).replace(/\s+/g, ' ').trim();
+  const ask = oneLine(context?.ask ?? summary);
+  const shown = paths.slice(0, 3).map((file) => `\`${file}\``).join(', ') || 'working tree';
+  // The H1 names the task and Delivered the outcome; a request without a separate ask names the scope instead.
+  const normalize = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const title = normalize(ask) === normalize(oneLine(summary)) ? `Review: ${shown}${paths.length > 3 ? ` and ${paths.length - 3} more` : ''}` : ask;
+  const changes = paths.length
+    ? renderChangesMade(changeEntries({ paths, stats, planNotes: planSource ? extractChangeNotes(planSource) : new Map() }))
     : '- No changed paths.';
-  const verificationResult = /^exit\s+\S+\s*;/i.test(verification.result)
-    ? verification.result
-    : `exit unknown; ${verification.result}`;
-  const trace = criteria
-    ? renderTraceability(criteria.map((item) => ({ id: item.id, behavior: item.title, path: item.paths.filter(Boolean).map((file) => `\`${file}\``).join(', ') || '—', evidence: 'Pending' })))
-    : PLANLESS;
-  const status = criteria ? `0/${criteria.length} SC passing` : 'n/a';
-  return `${template
-    .replaceAll('<Goal Description>', summary)
-    .replace(/^> \*\*TL;DR:\*\* .*$/m, `> **TL;DR:** ${cell(summary)}`)
-    .replace(/^> \*\*Status:\*\* .*$/m, `> **Status:** ${status}`)
-    .replace(/### <Component Name>[\s\S]*?(?=\n## Verification & Validation)/, `### Selected review scope\n${changes}\n`)
-    .replace(/^- Command: `<test command>`.*$/m, `- Command: \`${verification.command}\` — ${verificationResult}`)
-    .replace(/^- Per `verify`\/`review` criterion.*$/m, '- None recorded.')
-    .replace(/## Outcome Traceability\n[\s\S]*?(?=\n\n## Key Deviations)/, `## Outcome Traceability\n${trace}`)
-    .trim()}\n`;
+  const gate = `\`${verification.command}\` — ${oneLine(verification.result) || 'result not recorded'}`;
+  const rows = criteria ? criteria.map((item) => ({ id: item.id, behavior: item.title, evidence: 'Pending' })) : null;
+  const contextLines = criteria ? [] : [
+    '## Context',
+    `- Ask: ${ask}`,
+    ...CONTEXT_LISTS.filter((key) => context?.[key]?.length).map((key) => `- ${CONTEXT_LABELS[key]}: ${context[key].map(oneLine).join('; ')}`),
+    '',
+  ];
+  return [
+    `# ${title}`,
+    '',
+    `> **Delivered:** ${oneLine(summary)}`,
+    `> **Parent:** ${criteria ? `\`${planPath}\`` : 'user request'}`,
+    `> **Status:** ${criteria ? `0/${criteria.length} SC passing` : 'n/a'}`,
+    '> **Deviations:** none',
+    '',
+    ...contextLines,
+    '## Changes Made',
+    changes,
+    '',
+    '## Verification',
+    renderVerification(rows, gate),
+    '',
+    '## Deviations & Follow-ups',
+    'None.',
+    '',
+    '## Review Findings & Resolutions',
+    '<!-- Populated during code review cycles -->',
+    '<!-- Rounds use the source-map and entry format in dispatch references/review.md § Resolution log. -->',
+    '*No reviews conducted yet.*',
+    '',
+  ].join('\n');
 }
 
 function writeNewWalkthrough(file, contents) {
@@ -497,12 +534,17 @@ export function prepareCodeReview(request, {
         },
       };
     }
-    const criteria = pair.plan?.exists ? criterionMappings(fs.readFileSync(pair.plan.path, 'utf8')) : null;
+    const planSource = pair.plan?.exists ? fs.readFileSync(pair.plan.path, 'utf8') : null;
+    const criteria = planSource ? criterionMappings(planSource) : null;
     const rendered = renderWalkthrough({
       summary: request.summary,
+      context: request.context,
       paths: gitSnapshot.paths,
+      stats: changeStats(repoRoot, scopeResult.kind === 'working-tree' ? { base: gitSnapshot.baseSha } : { range: scopeResult.range }),
       verification: request.verification,
       criteria: criteria?.length ? criteria : null,
+      planPath: toManifestPath(pair.plan?.path, repoRoot),
+      planSource: criteria?.length ? planSource : null,
     });
     // Lint before writing so a defective walkthrough never lands.
     const lint = lintWalkthrough(rendered, criteria?.length ? { criteria } : {});
@@ -608,7 +650,7 @@ export function prepareCodeReview(request, {
   }
   const prompt = reviewMode === 'full'
     ? loadPrompt(PROMPT_FRAME, REVIEW_KINDS.code.promptBlock, {
-      'Task Summary': request.summary ?? walkthrough.body.match(/^# Walkthrough — (.+)$/m)?.[1] ?? 'Review the changes',
+      'Task Summary': request.summary ?? walkthrough.body.match(/^# (.+)$/m)?.[1] ?? 'Review the changes',
       'Walkthrough Path': toManifestPath(reviewPath, repoRoot),
       'Plan Path': toManifestPath(planReviewPath, repoRoot) ?? 'None',
       'User Focus Areas': request.focus ?? 'General review',

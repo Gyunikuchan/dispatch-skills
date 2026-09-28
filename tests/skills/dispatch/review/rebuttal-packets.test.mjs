@@ -8,7 +8,8 @@ import {
   buildRebuttalPackets,
   writeRebuttalPackets,
 } from '../../../../skills/dispatch/scripts/review/rebuttal-packets.mjs';
-import { scanResolutionLog } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+import { formatSourceMapLine, scanResolutionLog } from '../../../../skills/dispatch/scripts/review/resolution-log.mjs';
+const sourcesRecord = (map) => formatSourceMapLine(typeof map === 'string' ? JSON.parse(map) : map);
 
 const sourceMap = {
   'code-review:R1:claude:0': {
@@ -37,7 +38,7 @@ const artifact = [
   '- Kept.',
   '## Review Findings & Resolutions',
   '### Round 1 — Claude and Copilot',
-  `- **Sources:** ${JSON.stringify(sourceMap)}`,
+  `${sourcesRecord(JSON.stringify(sourceMap))}`,
   '- **[Rejected — pending confirmation]** [R1-F001] [SHOULD] [sources=code-review:R1:claude:0,code-review:R1:copilot:0] src/a.mjs:L4 — runtime: x → y',
   '- **[Accepted]** [R1-F002] [CONSIDER] [sources=code-review:R1:claude:0] src/b.mjs:L2 — tests: x → y',
 ].join('\n');
@@ -59,7 +60,7 @@ afterEach(() => {
 describe('rebuttal packet builder', () => {
   it('round hash includes failed target record', () => {
     const original = buildRebuttalPackets(artifact, context);
-    const changed = artifact.replace(`- **Sources:** ${JSON.stringify(sourceMap)}`, `- **Sources:** ${JSON.stringify(sourceMap)}\n- failed-targets: [{"sourceKey":"code-review:R1:agy:0","kind":"quota"}]`);
+    const changed = artifact.replace(`${sourcesRecord(JSON.stringify(sourceMap))}`, `${sourcesRecord(JSON.stringify(sourceMap))}\n<!-- dispatch-failed-targets [{"sourceKey":"code-review:R1:agy:0","kind":"quota"}] -->\n- Failed: code-review:R1:agy:0 (quota)`);
     const updated = buildRebuttalPackets(changed, context);
     assert.notEqual(updated[0].packet.canonicalLogHash, original[0].packet.canonicalLogHash);
     assert.notEqual(scanResolutionLog(changed).rounds[0].hash, scanResolutionLog(artifact).rounds[0].hash);

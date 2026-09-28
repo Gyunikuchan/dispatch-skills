@@ -2,8 +2,10 @@
 
 import { parseIncrementGraph } from './graph.mjs';
 import { findPlaceholders, lintSummaryBox } from '../lib/summary-box.mjs';
+import { isFillerNote } from '../lib/filler.mjs';
 
-const BOX_LABELS = ['TL;DR', 'Decide', 'Risk', 'Increments'];
+const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments'];
+const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · sha256:[0-9a-f]{64})$/;
 
 const REQUIRED_SECTIONS = [
   'Context & Intent',
@@ -87,11 +89,15 @@ export function lintDesign(source) {
         diagnostics.push({ code: 'missing-increment-field', id, field });
       }
     }
+    for (const line of block) {
+      const value = /^\s*[-*]\s+[^:]+:\s*(.*)$/.exec(line)?.[1];
+      if (value !== undefined && value.trim() && isFillerNote(value)) diagnostics.push({ code: 'filler-note', id, message: `Increment ${id} field "${line.trim()}" is filler.` });
+    }
   }
 
   const count = graph.increments.length;
   const countRule = value => (Number(value) === count ? null : `Summary Increments ${value} must equal the graph increment count ${count}.`);
-  for (const item of lintSummaryBox(source, BOX_LABELS, { valueRules: { Increments: value => (/^[1-9]\d*$/.test(value) ? countRule(value) : `Summary Increments value "${value}" must be a positive integer.`) } })) {
+  for (const item of lintSummaryBox(source, BOX_LABELS, { valueRules: { Parent: PARENT_VALUE, Increments: value => (/^[1-9]\d*$/.test(value) ? countRule(value) : `Summary Increments value "${value}" must be a positive integer.`) } })) {
     diagnostics.push({ code: item.rule, message: item.message });
   }
   for (const { token, line } of findPlaceholders(source)) diagnostics.push({ code: 'leftover-placeholder', message: `Leftover template placeholder ${token} at line ${line}.` });

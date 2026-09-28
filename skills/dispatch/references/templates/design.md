@@ -4,6 +4,7 @@
 # <Technical design>
 
 > **TL;DR:** <outcome>
+> **Parent:** <`<spec path>` · sha256:<hex> | user request>
 > **Decide:** <reader decision, or none>
 > **Risk:** <low|med|high> — <reason>
 > **Increments:** <count>
@@ -18,7 +19,7 @@
 *Constraints, components, invariants, ownership boundaries; optional Mermaid diagram.*
 
 ## Alternatives & Decisions
-*Settled architectural choices with trade-offs, rationale, and rejected alternatives, plus open questions; reviews treat settled entries as final.*
+*Settled architectural choices with trade-offs, rationale, and rejected alternatives, plus open questions; tag user-made choices `(user)`. Reviews treat settled entries as final.*
 
 ## Risks, Security & Operations
 *Failure modes, security, observability, migration, rollout, rollback.*

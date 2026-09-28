@@ -6,6 +6,7 @@ import { requiredDesignSections } from '../../../helpers/design-document-fixture
 
 const BOX = [
   '> **TL;DR:** Two increments deliver the demo.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** med — two dependent increments',
   '> **Increments:** 2',
@@ -119,5 +120,19 @@ describe('design template placeholder', () => {
   it('design template placeholder ignores fenced examples', () => {
     const fenced = base.replace('## Architecture & Boundaries\nx', '## Architecture & Boundaries\n```md\n<paths>\n```');
     assert.ok(!codes(fenced).includes('leftover-placeholder'));
+  });
+});
+
+describe('design parent and filler', () => {
+  it('parent and filler: accepts user request or a pinned spec and rejects other Parent values', () => {
+    assert.ok(!codes(withBox(BOX.replace('user request', `docs/s.spec.md · sha256:${'0'.repeat(64)}`))).includes('summary-label'));
+    for (const parent of ['docs/s.spec.md', 'a.design.md · I01', 'someone']) {
+      assert.ok(codes(withBox(BOX.replace('user request', parent))).includes('summary-label'), parent);
+    }
+  });
+
+  it('parent and filler: rejects a filler Increment Details field', () => {
+    assert.ok(!codes(base).includes('filler-note'));
+    assert.ok(codes(base.replace('- Parallel safety: x\n### I02', '- Parallel safety: n/a\n### I02')).includes('filler-note'));
   });
 });

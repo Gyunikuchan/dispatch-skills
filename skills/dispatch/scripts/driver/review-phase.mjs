@@ -22,10 +22,12 @@ import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, format
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
+import { parseChangesMade, renderChangesMade, replaceSection, sectionBody } from '../walkthrough/traceability.mjs';
+import { withFixes } from '../lib/filler.mjs';
 import { integrityDiagnostic, regenerateOwnedHashes, skillDirInRepo } from '../lib/integrity.mjs';
 import { DriverError, NATIVE_AGENT_TYPES, emitAction, loadSchema, toError, sanitizeReplyText, validateAgainstSchema } from './actions.mjs';
 import {
-  FOLLOW_UPS,
+  DEVIATIONS_FOLLOW_UPS,
   LOG_HEADING,
   REPO_RELATIVE,
   appendToSection,
@@ -972,7 +974,10 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   let markdown = readArtifactText(state);
   const first = Number(nextFindingId(markdown, round).split('-F')[1]);
   const byKey = new Map(findings.map((finding) => [finding.key, finding]));
-  const lines = [`### Round ${round} — ${today()}`, formatSourceMapLine(validateSourceMap(sourceMap, round)), formatFailedTargetsLine(currentFailures(state), round)];
+  const lines = [`### Round ${round} — ${today()}`, ...formatSourceMapLine(validateSourceMap(sourceMap, round)).split('\n'), ...formatFailedTargetsLine(currentFailures(state), round).split('\n').filter(Boolean)];
+  if (!rulings.length) lines.push('Clean — no findings.');
+  // A repeat of an earlier same-round ruling (locus, tag, resolution, status) collapses to a pointer.
+  const firstOf = new Map();
   const unfixable = [];
   const deferredUser = [];
   const unboundedConsider = [];
@@ -986,7 +991,13 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
     const sources = byKey.get(ruling.key).sourceKeys.filter((key) => Object.hasOwn(sourceMap, key));
     const defect = cleanText(ruling.defect, 'Restated finding.');
     const resolution = cleanText(ruling.resolution, 'Ruled by the host.');
-    lines.push(`- **[${statusLabel(state, ruling, userFinalKeys.has(ruling.key))}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] ${escapeLogText(ruling.locus)} — ${ruling.tag}: ${escapeLogText(defect)} → ${escapeLogText(resolution)}`);
+    const label = statusLabel(state, ruling, userFinalKeys.has(ruling.key));
+    const same = [ruling.locus, ruling.tag, resolution, label].join('\0');
+    const first = firstOf.get(same);
+    if (!first) firstOf.set(same, id);
+    lines.push(first
+      ? `- **[${label}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] [dup=${first}] ${escapeLogText(ruling.locus)} → see ${first}`
+      : `- **[${label}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] ${escapeLogText(ruling.locus)} — ${ruling.tag}: ${escapeLogText(defect)} → ${escapeLogText(resolution)}`);
     if (isDeferredConsider(state, ruling)) {
       deferredUser.push({ id, severity: ruling.severity, scope: ruling.scope, defect, fix: ruling.fix });
       return;
@@ -1032,10 +1043,13 @@ function appendOverruled(markdown, key, verdict) {
   return setEntryResolution(markdown, key, `${line.split(' → ').slice(1).join(' → ')} (overruled at gate: ${verdict})`);
 }
 
+// An application record is its comment plus the derived line after it.
+const APPLICATION_COMMENT = /^ {2}<!-- dispatch-application /;
+
 function removeEntryApplication(markdown, key) {
   const lines = markdown.split('\n');
   const index = lines.findIndex((line) => /^\s*[-*]\s+\*\*\[/.test(line) && line.includes(`[${key}]`));
-  if (index >= 0 && /^\s+[-*]\s+application:/.test(lines[index + 1] ?? '')) lines.splice(index + 1, 1);
+  if (index >= 0 && APPLICATION_COMMENT.test(lines[index + 1] ?? '')) lines.splice(index + 1, 2);
   return lines.join('\n');
 }
 
@@ -1043,8 +1057,8 @@ function replaceEntryApplication(markdown, key, record) {
   const lines = markdown.split('\n');
   const index = lines.findIndex((line) => /^\s*[-*]\s+\*\*\[/.test(line) && line.includes(`[${key}]`));
   if (index < 0) return markdown;
-  const hasRecord = /^\s+[-*]\s+application:/.test(lines[index + 1] ?? '');
-  lines.splice(index + 1, hasRecord ? 1 : 0, formatApplicationRecord(record));
+  const hasRecord = APPLICATION_COMMENT.test(lines[index + 1] ?? '');
+  lines.splice(index + 1, hasRecord ? 2 : 0, ...formatApplicationRecord(record).split('\n'));
   return lines.join('\n');
 }
 
@@ -1091,7 +1105,8 @@ function onDeferredConsider(state, reply) {
         id: entry.id,
         severity: entry.severity,
         scope: entry.application.scope,
-        defect: ENTRY_BODY.exec(entry.originalLine)?.[1]?.trim() ?? entry.id,
+        // A dup entry's body is only a pointer; its defect lives on the first finding.
+        defect: ENTRY_BODY.exec(((entry.duplicateOf && entries.find((candidate) => candidate.id === entry.duplicateOf)) || entry).originalLine)?.[1]?.trim() ?? entry.id,
         fix: {
           affectedPaths: entry.application.affectedPaths,
           dependsOn: entry.application.dependsOn,
@@ -1180,8 +1195,10 @@ function onAskUser(state, reply) {
     const entries = scanResolutionLog(markdown, { strict: true }).rounds.flatMap((round) => round.entries);
     const findings = accepted.map((key) => {
       const entry = entries.find((item) => item.key === key);
-      const locus = /\[sources=[^\]]*\]\s+(.+?)\s+—/.exec(entry.originalLine)?.[1] ?? '';
-      const defect = /\s+—\s+[^:]+:\s+(.*?)\s+→/.exec(entry.originalLine)?.[1] ?? key;
+      // A dup entry's body is only a pointer; its locus lives on the first finding.
+      const origin = (entry.duplicateOf && entries.find((item) => item.id === entry.duplicateOf)) || entry;
+      const locus = /\[sources=[^\]]*\]\s+(.+?)\s+—/.exec(origin.originalLine)?.[1] ?? '';
+      const defect = /\s+—\s+[^:]+:\s+(.*?)\s+→/.exec(origin.originalLine)?.[1] ?? key;
       return { id: key, severity: entry.severity, scope: 'in-scope', defect,
         fix: { affectedPaths: [locusPath(state, locus)], dependsOn: [], verification: [] } };
     });
@@ -1492,16 +1509,37 @@ function writeApplicationRecords(state, findings, applicationState, reason) {
       process.stderr.write(`[dispatch] application record skipped for ${finding.id}: ${err.message}\n`);
       continue;
     }
-    const hasRecord = /^\s+-\s+application:/.test(lines[index + 1] ?? '');
-    lines.splice(index + 1, hasRecord ? 1 : 0, record);
+    const hasRecord = APPLICATION_COMMENT.test(lines[index + 1] ?? '');
+    lines.splice(index + 1, hasRecord ? 2 : 0, ...record.split('\n'));
   }
   markdown = lines.join('\n');
+  if (applicationState === 'applied') markdown = withFixNotes(markdown, findings);
   writeArtifactText(state, markdown);
+}
+
+/** Appends `fixes <IDs>` to the walkthrough's Changes Made notes for fix-touched paths, adding rows for new paths. */
+export function withFixNotes(markdown, findings) {
+  const body = sectionBody(markdown, 'Changes Made');
+  if (!body) return markdown;
+  const ids = new Map();
+  // Session artifacts are not production changes; renderChanges excludes them too.
+  for (const finding of findings) for (const file of finding.fix.affectedPaths.filter((item) => !/^\.scratch(?:\/|$)/.test(item))) ids.set(file, [...(ids.get(file) ?? []), finding.id]);
+  const entries = parseChangesMade(body).map(({ tag, path: file, note }) => ({ tag, path: file, note }));
+  for (const [file, found] of ids) {
+    const entry = entries.find((item) => item.path === file) ?? entries[entries.push({ tag: 'MODIFY', path: file, note: '' }) - 1];
+    entry.note = withFixes(entry.note, found);
+  }
+  return replaceSection(markdown, 'Changes Made', renderChangesMade(entries));
 }
 
 function addFollowUps(state, bullets) {
   if (bullets.length === 0) return;
-  const markdown = appendToSection(readArtifactText(state), FOLLOW_UPS, '## Follow-ups', bullets.map(escapeLogText),/^(None\.?|Accepted SHOULD(-FIX)? \/ CONSIDER.*)$/);
+  // A walkthrough merges follow-ups with deviations; plans and designs keep their own Follow-ups section.
+  const walkthrough = /\.walkthrough\.md$/.test(state.artifactPath);
+  const lines = walkthrough ? bullets.map((bullet) => bullet.replace(/^- /, '- Follow-up: ')) : bullets;
+  const markdown = walkthrough
+    ? appendToSection(readArtifactText(state), DEVIATIONS_FOLLOW_UPS, '## Deviations & Follow-ups', lines.map(escapeLogText), /^None\.?$/)
+    : appendToSection(readArtifactText(state), /^##\s+Follow-ups\s*$/, '## Follow-ups', lines.map(escapeLogText), /^None\.?$/);
   writeArtifactText(state, markdown);
 }
 

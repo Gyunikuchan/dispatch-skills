@@ -37,7 +37,7 @@ describe('dispatch SKILL.md', () => {
 describe('recorded decisions', () => {
   it('templates hold decisions reviews treat as settled', () => {
     for (const file of ['design.md', 'plan.md']) {
-      assert.match(read(`skills/dispatch/references/templates/${file}`), /Settled architectural choices.*trade-offs, rationale, and rejected alternatives.*reviews treat (entries as settled|settled entries as final)/s, file);
+      assert.match(read(`skills/dispatch/references/templates/${file}`), /Settled architectural choices.*trade-offs, rationale, and rejected alternatives.*[Rr]eviews treat (entries as settled|settled entries as final)/s, file);
     }
   });
 
@@ -75,13 +75,13 @@ describe('shared review reference', () => {
   const text = read('skills/dispatch/references/review.md');
 
   it('keeps walkthrough sections', () => {
-    for (const heading of ['Changes Made', 'Verification & Validation', 'Outcome Traceability', 'Key Deviations', 'Review Findings & Resolutions', 'Follow-ups']) {
+    for (const heading of ['Context', 'Changes Made', 'Verification', 'Deviations & Follow-ups', 'Review Findings & Resolutions']) {
       assert.ok(text.includes(heading), heading);
     }
   });
 
   it('keeps finality and application records', () => {
-    for (const anchor of [/consensus: true/, /CONFIRM/, /application:/, /adjacent/]) assert.match(text, anchor);
+    for (const anchor of [/consensus: true/, /CONFIRM/, /dispatch-application/, /adjacent/]) assert.match(text, anchor);
   });
 });
 
@@ -149,10 +149,10 @@ describe('template reading aids', () => {
   const box = (text) => [...text.matchAll(/^> \*\*([^*]+):\*\* /gm)].map((match) => match[1]);
 
   it('template summary box labels match the lint grammar', () => {
-    assert.deepEqual(box(template('plan.md')), ['TL;DR', 'Decide', 'Risk', 'Scope']);
-    assert.deepEqual(box(template('design.md')), ['TL;DR', 'Decide', 'Risk', 'Increments']);
-    assert.deepEqual(box(template('walkthrough.md')), ['TL;DR', 'Status', 'Deviations']);
-    assert.match(read('skills/dispatch/references/review.md'), /`TL;DR`, `Status`, `Deviations` summary box/);
+    assert.deepEqual(box(template('plan.md')), ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope']);
+    assert.deepEqual(box(template('design.md')), ['TL;DR', 'Parent', 'Decide', 'Risk', 'Increments']);
+    assert.deepEqual(box(template('walkthrough.md')), ['Delivered', 'Parent', 'Status', 'Deviations']);
+    assert.match(read('skills/dispatch/references/review.md'), /`Delivered`, `Parent`, `Status`, `Deviations` summary box/);
   });
 
   it('detailed plan criteria and walkthrough traceability use their intended formats', () => {
@@ -160,9 +160,9 @@ describe('template reading aids', () => {
     assert.match(plan, /## Success Criteria\s+- \[SC1\]/);
     assert.doesNotMatch(plan, /\| SC \| Outcome \| Evidence \| Verify \|/);
     const walkthrough = template('walkthrough.md');
-    assert.ok(walkthrough.indexOf('| SC | Behavior | Production path | Evidence |') > walkthrough.indexOf('## Outcome Traceability'));
-    assert.match(walkthrough, /None — no governing plan\./);
-    assert.match(read('skills/dispatch/references/review.md'), /\| SC \| Behavior \| Production path \| Evidence \|/);
+    assert.ok(walkthrough.indexOf('| SC | Outcome | Evidence |') > walkthrough.indexOf('## Verification'));
+    assert.match(walkthrough, /Plan-less: only the `Final gate:` line/);
+    assert.match(read('skills/dispatch/references/review.md'), /\| SC \| Outcome \| Evidence \|/);
     for (const file of ['design.md', 'plan.md', 'walkthrough.md']) {
       const text = template(file);
       assert.match(text, /^````markdown$/m, file);

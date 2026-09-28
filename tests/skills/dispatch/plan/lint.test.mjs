@@ -9,6 +9,7 @@ const VALID_PLAN = [
   '# Plan',
   '',
   '> **TL;DR:** Change and test the feature.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — one module and its test',
   '> **Scope:** src/a.js, tests/a.test.js',
@@ -24,7 +25,7 @@ const VALID_PLAN = [
   '#### [NEW] tests/a.test.js',
   '## Verification Plan',
   '### Automated Tests',
-  '- `node --test tests/a.test.js`',
+  '- `npm run lint`',
 ].join('\n');
 
 const rules = result => result.defects.map(({ rule }) => rule);
@@ -72,39 +73,39 @@ describe('deterministic plan lint', () => {
     assert.ok(rules(lintPlan(VALID_PLAN.replace('### Automated Tests', '### Manual Tests'))).includes('automated-tests'));
     assert.ok(rules(lintPlan(`${VALID_PLAN}\n### Automated Tests\n- \`npm test\``)).includes('automated-tests'));
     assert.ok(rules(lintPlan(VALID_PLAN.replace('## Success Criteria', '### Automated Tests\n- `npm test`\n## Success Criteria'))).includes('automated-tests-owner'));
-    assert.ok(rules(lintPlan(VALID_PLAN.replace('- `node --test tests/a.test.js`', 'Some prose with `npm test`.'))).includes('automated-command'));
+    assert.ok(rules(lintPlan(VALID_PLAN.replace('- `npm run lint`', 'Some prose with `npm test`.'))).includes('automated-command'));
   });
 
   it('extracts commands only from direct single-span bullets or non-comment fenced lines', () => {
     const ambiguous = lintPlan(VALID_PLAN.replace(
-      '- `node --test tests/a.test.js`',
+      '- `npm run lint`',
       '- `npm test` and `npm run lint`\n- `npm test` then `npm run check`',
     )).warnings.filter(({ rule }) => rule === 'ambiguous-command');
-    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 19', 'line 20']);
+    assert.deepEqual(ambiguous.map(({ locus }) => locus), ['line 20', 'line 21']);
     assert.ok(rules(lintPlan(VALID_PLAN.replace(
-      '- `node --test tests/a.test.js`',
+      '- `npm run lint`',
       '```sh\n# explanation\n\n```',
     ))).includes('automated-command'));
     assert.deepEqual(lintPlan(VALID_PLAN.replace(
-      '- `node --test tests/a.test.js`',
+      '- `npm run lint`',
       '```sh\n# explanation\nnpm test\n```',
     )).defects, []);
     for (const hidden of [
       '<!-- - `npm test` -->',
       '> - `npm test`',
     ]) {
-      assert.ok(rules(lintPlan(VALID_PLAN.replace('- `node --test tests/a.test.js`', hidden))).includes('automated-command'));
+      assert.ok(rules(lintPlan(VALID_PLAN.replace('- `npm run lint`', hidden))).includes('automated-command'));
     }
   });
 
   it('treats a direct None item as warning-only and requires a reason', () => {
-    const unavailable = lintPlan(VALID_PLAN.replace('- `node --test tests/a.test.js`', '- None: runner unavailable'));
+    const unavailable = lintPlan(VALID_PLAN.replace('- `npm run lint`', '- None: runner unavailable'));
     assert.deepEqual(unavailable.defects, []);
     assert.ok(unavailable.warnings.some(({ rule }) => rule === 'automated-tests-unavailable'));
-    assert.deepEqual(lintPlan(VALID_PLAN.replace('- `node --test tests/a.test.js`', '- None: x')).defects, []);
-    assert.ok(rules(lintPlan(VALID_PLAN.replace('- `node --test tests/a.test.js`', '- None:'))).includes('automated-command'));
+    assert.deepEqual(lintPlan(VALID_PLAN.replace('- `npm run lint`', '- None: x')).defects, []);
+    assert.ok(rules(lintPlan(VALID_PLAN.replace('- `npm run lint`', '- None:'))).includes('automated-command'));
     assert.ok(rules(lintPlan(VALID_PLAN.replace(
-      '- `node --test tests/a.test.js`',
+      '- `npm run lint`',
       '<!-- - None: runner unavailable -->',
     ))).includes('automated-command'));
   });
@@ -168,7 +169,7 @@ We reimplement latership and refill in bulk.`);
     const source = `${VALID_PLAN}\n<!-- TODO hidden -->\n> TBD quoted\n\`implement later\`\nProse says fill in this detail.`;
     const result = lintPlan(source);
     assert.equal(result.warnings.filter(({ rule }) => rule === 'placeholder').length, 1);
-    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 23/i);
+    assert.match(result.warnings.find(({ rule }) => rule === 'placeholder').locus, /line 24/i);
   });
 });
 
@@ -206,6 +207,7 @@ describe('plan lint: RED exception field', () => {
 
 const BOX = [
   '> **TL;DR:** Change and test the feature.',
+  '> **Parent:** user request',
   '> **Decide:** none',
   '> **Risk:** low — one module and its test',
   '> **Scope:** src/a.js, tests/a.test.js',
@@ -284,7 +286,7 @@ describe('plan detailed criteria', () => {
 
 describe('plan template placeholder', () => {
   it('plan template placeholder rejects leftover template tokens in prose and inline code', () => {
-    for (const leftover of ['Touch <relative-path> next.', 'Run `<test command>` now.', 'Slug `<design-slug>`.']) {
+    for (const leftover of ['Touch <relative-path> next.', 'Run `<command>` now.', 'Parent `<design path>`.']) {
       const result = lintPlan(`${VALID_PLAN}\n## Out of Scope\n${leftover}`);
       assert.ok(rules(result).includes('leftover-placeholder'), leftover);
     }
@@ -293,5 +295,35 @@ describe('plan template placeholder', () => {
   it('plan template placeholder ignores fenced blocks, non-template tokens, and machine-managed comments', () => {
     const clean = `${VALID_PLAN}\n## Out of Scope\n\`\`\`md\n<relative-path>\n\`\`\`\nGeneric <T> stays. Increment plans use \`-i<nn>-\` and \`<nn>\` numbering; \`\`<nn>\`\` too.\n<!-- Populated during plan review cycles -->`;
     assert.ok(!rules(lintPlan(clean)).includes('leftover-placeholder'));
+  });
+});
+
+describe('plan parent and filler', () => {
+  const hex = 'a'.repeat(64);
+  it('parent and filler: accepts the three Parent forms and rejects others', () => {
+    for (const parent of ['user request', `docs/spec.md · sha256:${hex}`, '`a/b.design.md` · I02']) {
+      assert.deepEqual(boxRules(lintPlan(withBox(BOX.replace('user request', parent)))), [], parent);
+    }
+    for (const parent of ['the user', 'docs/spec.md', `docs/spec.md · sha256:${hex.slice(1)}`, 'a.design.md · I2']) {
+      assert.ok(boxRules(lintPlan(withBox(BOX.replace('user request', parent)))).includes('summary-label'), parent);
+    }
+  });
+
+  it('parent and filler: rejects filler and duplicate change notes but not legitimate repeats', () => {
+    const noted = notes => VALID_PLAN.replace('#### [MODIFY] src/a.js\n#### [NEW] tests/a.test.js', `#### [MODIFY] src/a.js\n- Changes: ${notes[0]}\n#### [NEW] tests/a.test.js\n- Changes: ${notes[1]}`);
+    for (const pair of [['Same', 'Adds the test.'], ['Approved implementation scope.', 'Adds the test.'], ['Adds the flag.', 'adds the flag']]) {
+      assert.ok(rules(lintPlan(noted(pair))).includes('filler-note'), pair.join(' / '));
+    }
+    for (const pair of [['fixes R1-F001', 'fixes R1-F001'], ['+3 −1', '+3 −1'], ['Keeps the same interface as before.', 'Adds the test.']]) {
+      assert.ok(!rules(lintPlan(noted(pair))).includes('filler-note'), pair.join(' / '));
+    }
+  });
+
+  it('parent and filler: rejects an Automated Tests command that repeats a Verify command', () => {
+    const duplicate = VALID_PLAN.replace('- `npm run lint`', '- `node --test tests/a.test.js`');
+    assert.ok(rules(lintPlan(duplicate)).includes('automated-test-duplicates-verify'));
+    assert.ok(!rules(lintPlan(VALID_PLAN)).includes('automated-test-duplicates-verify'));
+    const second = "- [SC2] Lint the feature.\n  - Changes: `src/a.js`\n  - Verify: `npm run lint`\n  - Evidence: verify\n\n## Proposed Changes";
+    assert.ok(rules(lintPlan(VALID_PLAN.replace(/\n## Proposed Changes/, `\n${second}`))).includes('automated-test-duplicates-verify'), 'multi-criterion plans too');
   });
 });

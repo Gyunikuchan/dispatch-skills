@@ -112,7 +112,7 @@ describe('ordinary driver canonical contracts: baseline and RED', () => {
     const artifacts = result.done.handoff.destinations[0];
     const walkthrough = fs.readFileSync(path.join(artifacts, fs.readdirSync(artifacts).find(file => file.endsWith('.walkthrough.md'))), 'utf8');
     assert.match(walkthrough, /^\| SC1 \| delivered value=2 \|/m);
-    assert.match(walkthrough, /reviewer: host/);
+    assert.match(walkthrough, /^\| SC1 \| delivered value=2 \| verify; /m);
     assert.doesNotMatch(walkthrough, /^\| SC1 \|[^\n]*\| Pending/m);
   });
 });

@@ -6,8 +6,11 @@ import {
   structuralLines,
 } from './structure.mjs';
 import { findPlaceholders, lintSummaryBox } from '../lib/summary-box.mjs';
+import { isFillerNote } from '../lib/filler.mjs';
 
-const BOX_LABELS = ['TL;DR', 'Decide', 'Risk', 'Scope'];
+const BOX_LABELS = ['TL;DR', 'Parent', 'Decide', 'Risk', 'Scope'];
+/** Parent forms: the user's request, an external spec pinned by checksum, or a design increment. */
+export const PARENT_VALUE = /^(?:user request|`?[^`\s]+`? · (?:sha256:[0-9a-f]{64}|I\d{2}))$/;
 const ACCEPTED_EVIDENCE = ['red', 'verify', 'review'];
 // Mirrors lib/git-state.mjs normalizeTaskPath: approval rejects these, so lint fails them first.
 const EXCLUDED_CHANGE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
@@ -29,7 +32,9 @@ export function lintPlan(source) {
   lintSuccessCriteria(context);
   lintGeneratedPaths(context);
   lintPlaceholders(context);
-  for (const item of lintSummaryBox(source, BOX_LABELS)) context.defects.push(diagnostic(item.rule, item.line, item.message));
+  lintFillerNotes(context);
+  lintDuplicateAutomatedTests(context);
+  for (const item of lintSummaryBox(source, BOX_LABELS, { valueRules: { Parent: PARENT_VALUE } })) context.defects.push(diagnostic(item.rule, item.line, item.message));
   for (const { token, line } of findPlaceholders(source)) context.defects.push(diagnostic('leftover-placeholder', line, `Leftover template placeholder ${token}.`));
   return { defects: context.defects, warnings: context.warnings };
 }
@@ -103,6 +108,38 @@ function lintPlaceholders({ lines, warnings }) {
   for (const entry of lines) {
     const prose = entry.text.replace(/`[^`]*`/g, '');
     if (PLACEHOLDER.test(prose)) warnings.push(diagnostic('placeholder', entry.line, 'Plan contains a prose placeholder.', 'warning'));
+  }
+}
+
+function lintFillerNotes({ lines, proposed, defects }) {
+  if (proposed.length !== 1) return;
+  /** @type {Array<{note: string, line: number}>} */
+  const notes = [];
+  for (const entry of lines.slice(proposed[0].start + 1, proposed[0].end)) {
+    const bullet = /^[-*+]\s+(?:Changes|Purpose):[ \t]*(.*)$/.exec(entry.text);
+    if (bullet && bullet[1].trim()) notes.push({ note: bullet[1].trim(), line: entry.line });
+  }
+  notes.forEach(({ note, line }, index) => {
+    const siblings = notes.filter((_, other) => other !== index).map(item => item.note);
+    if (isFillerNote(note, siblings)) defects.push(diagnostic('filler-note', line, `Change note "${note}" is filler; say what changes in this file.`));
+  });
+}
+
+function lintDuplicateAutomatedTests(context) {
+  const { lines, verification, criteria, defects } = context;
+  if (verification.length !== 1 || !criteria.length) return;
+  const verifies = new Set();
+  for (const criterion of criteria) {
+    for (const entry of lines.slice(criterion.start + 1, criterion.end)) {
+      const verify = /^ {2,}[-*+] Verify:\s*`([^`]+)`/.exec(entry.text);
+      if (verify) verifies.add(verify[1].trim());
+    }
+  }
+  const automated = findExactHeadings(lines, '### Automated Tests').find(({ index }) => index > verification[0].start && index < verification[0].end);
+  if (!automated) return;
+  for (const entry of automatedTestLines(lines, verification[0], automated.index)) {
+    const command = /^-\s+`([^`]+)`\s*$/.exec(entry.text);
+    if (command && verifies.has(command[1].trim())) defects.push(diagnostic('automated-test-duplicates-verify', entry.line, `Automated test \`${command[1].trim()}\` repeats a criterion Verify command; list only extra commands.`));
   }
 }
 

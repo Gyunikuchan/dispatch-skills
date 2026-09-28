@@ -3,11 +3,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { governingHash, readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
+import { persistEvidence, restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
 import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
 import { bindSession, bindWorkflowSession, SESSION_ENV, RUN_ENV } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
-import { implementationOutcome, runDispatch, writeEnvelopeFile, writeOutcomeReply, readFixtureState } from '../../../helpers/driver-harness.mjs';
+import { implementationOutcome, makeGitRepo, writePlan, runDispatch, writeEnvelopeFile, writeOutcomeReply, readFixtureState } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy, withCriterionEvidence } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 let savedSessionEnv;
@@ -202,8 +203,37 @@ describe('ordinary driver canonical contracts: resume and repair', () => {
     const ledger = readLedger(active.ledgerPath);
     assert.equal(ledger.events.filter(event => event.type === 'implementation-attempt' && event.data.launch === 'tests-only').length, 1);
     const walkthroughPath = path.join(active.active, `${path.basename(fixture.plan, '.plan.md')}.walkthrough.md`);
-    const evidence = JSON.parse(fs.readFileSync(walkthroughPath, 'utf8').match(/## Ordinary execution evidence\n```json\n(.+)\n```/s)[1]);
+    const evidence = JSON.parse(fs.readFileSync(path.join(path.dirname(walkthroughPath), '.state', `${path.basename(fixture.plan, '.plan.md')}.evidence.json`), 'utf8'));
+    assert.doesNotMatch(fs.readFileSync(walkthroughPath, 'utf8'), /Ordinary execution evidence/);
     assert.equal(evidence.ordinary.testsOnlyAttempts, 2);
     assert.equal(evidence.ordinary.testsOnlyAdmitted, true);
+  });
+});
+
+describe('evidence sidecar', () => {
+  it('persists to and restores from the evidence sidecar; a legacy in-file block counts as no evidence', () => {
+    const repo = makeGitRepo();
+    try {
+      const planPath = writePlan(repo.dir);
+      const walkthroughPath = planPath.replace(/\.plan\.md$/, '.walkthrough.md');
+      fs.writeFileSync(walkthroughPath, ['# Sample', '', '> **Delivered:** pending', '> **Parent:** `plan.md`', '> **Status:** 0/0 SC passing', '> **Deviations:** none', '',
+        '## Verification', 'Final gate: pending', '', '## Deviations & Follow-ups', 'None.', ''].join('\n'));
+      const hash = governingHash(fs.readFileSync(planPath, 'utf8')).hash;
+      const state = () => ({ repoRoot: repo.dir, planPath, walkthroughPath, governingHash: hash, ledgerPath: path.join(repo.dir, 'missing.ledger.md') });
+      const ordinary = { criteria: [], mutationEpoch: 0, step: 'failure-disposition', testsOnlyAttempts: 2 };
+      persistEvidence({ ...state(), ordinary });
+      const sidecar = path.join(path.dirname(walkthroughPath), '.state', `${path.basename(walkthroughPath, '.walkthrough.md')}.evidence.json`);
+      assert.ok(fs.existsSync(sidecar), 'sidecar written');
+      assert.doesNotMatch(fs.readFileSync(walkthroughPath, 'utf8'), /Ordinary execution evidence|```json/);
+      const restored = state();
+      assert.equal(restoreEvidence(restored), true);
+      assert.deepEqual(restored.ordinary, ordinary);
+
+      fs.rmSync(sidecar);
+      fs.appendFileSync(walkthroughPath, `\n## Ordinary execution evidence\n\`\`\`json\n${JSON.stringify({ schemaVersion: 1, governingHash: hash, ordinary })}\n\`\`\`\n`);
+      assert.equal(restoreEvidence(state()), false);
+    } finally {
+      repo.cleanup();
+    }
   });
 });

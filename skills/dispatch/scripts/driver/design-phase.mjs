@@ -48,7 +48,7 @@ export function startDesign(state) {
   state.ordinary.step = 'design-author';
   return emitAction(state, 'author', { path: state.designPath, template: 'design', defects: [] }, [
     `Author the canonical technical design for: ${argument}`,
-    'Reply with the canonical design path; design approval stops durably at design-approved-stop.',
+    'Use references/templates/design.md; set Parent to the spec (path · sha256) or `user request`. Reply with the canonical design path; design approval stops durably at design-approved-stop.',
   ]);
 }
 

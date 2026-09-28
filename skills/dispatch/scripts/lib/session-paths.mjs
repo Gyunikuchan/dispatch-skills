@@ -122,6 +122,17 @@ export function stateFile(name, root = sessionDir()) {
   return path.join(stateDir(root), name);
 }
 
+/**
+ * The run-evidence sidecar `<dir>/.state/<slug>.evidence.json` for `<dir>/<slug>.walkthrough.md`.
+ * Keyed by walkthrough, not run, so a resumed run finds the previous run's evidence; never creates directories.
+ * @param {string} walkthroughPath
+ */
+export function evidenceFile(walkthroughPath) {
+  const match = /^(.+)\.walkthrough\.md$/.exec(path.basename(walkthroughPath));
+  if (!match) throw new Error(`Evidence sidecars belong to walkthroughs; got "${walkthroughPath}".`);
+  return path.join(path.dirname(walkthroughPath), STATE_DIR, `${match[1]}.evidence.json`);
+}
+
 /** An entry under `.state/cache/`. */
 /** @param {string} name @param {string} [root] */
 export function stateCache(name, root = sessionDir()) {
