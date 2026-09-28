@@ -17,6 +17,7 @@ import { lintWalkthrough } from '../walkthrough/lint.mjs';
 import { PLANLESS, cell, renderTraceability } from '../walkthrough/traceability.mjs';
 import {
   getCurrentBranch,
+  ledgerWalkthroughSlug,
   resolveArtifacts,
   resolveSlug,
 } from '../artifacts/resolve-paths.mjs';
@@ -189,7 +190,8 @@ function validateTargets(entries, roundId, label) {
 
 // SECTION: Artifact and prompt resolution
 
-function resolvePair(request, repoRoot) {
+/** @param {{ baseSha?: string, headSha?: string }} scope - selected review bounds; working-tree scopes carry none. */
+function resolvePair(request, repoRoot, scope) {
   let walkthroughPath = request.walkthroughPath;
   let planPath = request.planPath;
   if (request.artifactPath) {
@@ -210,14 +212,23 @@ function resolvePair(request, repoRoot) {
     branch: getCurrentBranch(repoRoot),
     orchestrator: request.orchestrator,
   });
-  const resolvedSlug = derived.slug;
+  let resolvedSlug = derived.slug;
+  let slugSource = derived.slugSource;
+  const native = request.orchestrator ? { orchestrator: request.orchestrator } : undefined;
+  // A derived slug with no walkthrough defers to the session's implement run, which names artifacts after its plan.
+  if (slugSource !== 'explicit' && !walkthroughPath && !(resolvedSlug && resolveArtifacts({
+    slug: resolvedSlug, slugSource, kinds: ['walkthrough'], projectRoot: repoRoot, native,
+  }).walkthrough.exists)) {
+    const fromLedger = ledgerWalkthroughSlug(repoRoot, { baseSha: scope.baseSha, headSha: scope.headSha });
+    if (fromLedger) { resolvedSlug = fromLedger; slugSource = 'explicit'; }
+  }
   if (!resolvedSlug) throw new Error('Could not derive an artifact slug; set request.slug.');
   const resolved = resolveArtifacts({
     slug: resolvedSlug,
-    slugSource: derived.slugSource,
+    slugSource,
     kinds: ['plan', 'walkthrough'],
     projectRoot: repoRoot,
-    native: request.orchestrator ? { orchestrator: request.orchestrator } : undefined,
+    native,
   });
   return {
     slug: resolvedSlug,
@@ -461,7 +472,7 @@ export function prepareCodeReview(request, {
   }
   const gitSnapshot = captureReviewSnapshot({ repoRoot, scope: scopeResult });
   const overlaySnapshot = captureReviewSnapshot({ repoRoot, scope: workingScope() });
-  const pair = resolvePair(request, repoRoot);
+  const pair = resolvePair(request, repoRoot, scopeResult);
   const walkthroughPath = path.resolve(repoRoot, pair.walkthrough.path);
   let generated = false;
   if (!pair.walkthrough.exists) {

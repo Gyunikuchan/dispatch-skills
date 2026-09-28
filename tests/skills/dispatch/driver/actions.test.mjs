@@ -101,7 +101,8 @@ describe('driver reply validation (SC2)', () => {
   it('accepts well-formed replies for each reply contract', () => {
     const ok = [
       ['adjudicate', { rulings: [ruling, { ...ruling, key: 'k2', status: 'needs-user', fix: { affectedPaths: ['a.js'], dependsOn: [], verification: ['npm test'] } }] }],
-      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'applied' }, { clusterId: 'c2', status: 'failed', note: 'conflict' }] }],
+      ['adjudicate', { rulings: [{ ...ruling, fix: { affectedPaths: ['a.js'], dependsOn: ['F2', 'R1-F001'], verification: [] } }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'applied' },{ clusterId: 'c2', status: 'failed', note: 'conflict' }] }],
       ['verify', { results: [{ command: 'npm test', exit: 0, evidence: 'pass' }] }],
       ['ask-user', { answer: 'include O1' }],
       ['ask-user', { answer: { summary: 's', verification: { command: 'npm test', result: 'ok' } } }],
@@ -123,6 +124,7 @@ describe('driver reply validation (SC2)', () => {
       ['adjudicate', { rulings: [{ ...ruling, tag: undefined }] }],
       ['adjudicate', { rulings: [{ ...ruling, scope: 'elsewhere' }] }],
       ['adjudicate', { rulings: [ruling], extra: true }],
+      ['adjudicate', { rulings: [{ ...ruling, fix: { affectedPaths: ['a.js'], dependsOn: ['R2-F1'], verification: [] } }] }],
       ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'half' }] }],
       ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'failed' }] }],
       ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'failed', note: ' ' }] }],

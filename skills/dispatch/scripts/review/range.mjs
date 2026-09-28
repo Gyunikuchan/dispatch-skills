@@ -344,3 +344,8 @@ export function resolveReviewScope({ repoRoot = process.cwd(), explicitRange = n
     ...(rangeOwned?.restricted ? { disclosure: `Owned-path restriction: ${union.join(', ')}; unrelated range paths excluded; working-tree owned changes included.` } : {}),
   };
 }
+
+/** Base and head commits of an explicit range expression, for matching ledger runs to a review. */
+export function explicitRangeBounds(repoRoot, expression) {
+  return resolveRangeShas(repoRoot, resolveExplicitRange(repoRoot, expression));
+}

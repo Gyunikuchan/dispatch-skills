@@ -16,7 +16,8 @@ import { inferReviewKind, resolveReviewLevel } from './review-policy.mjs';
 import { createIndependenceClusters, formatOptInSections, parseOptInResponse } from '../review/fix-clustering.mjs';
 import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
 import { prepareReview } from '../review/prepare.mjs';
-import { getCurrentBranch, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
+import { explicitRangeBounds } from '../review/range.mjs';
+import { getCurrentBranch, ledgerWalkthroughSlug, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
 import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatReviewBudgetMarker, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
@@ -178,12 +179,14 @@ function existingWalkthrough(state) {
   if (state.kind !== 'code') return null;
   try {
     const { slug, slugSource } = resolveSlug({ branch: getCurrentBranch(state.repoRoot), orchestrator: state.invocation.orchestrator });
-    if (!slug) return null;
-    const { walkthrough } = resolveArtifacts({
-      slug, slugSource, kinds: ['walkthrough'], projectRoot: state.repoRoot,
-      native: { orchestrator: state.invocation.orchestrator },
-    });
-    return walkthrough.exists ? path.resolve(state.repoRoot, walkthrough.path) : null;
+    const native = { orchestrator: state.invocation.orchestrator };
+    const walkthrough = slug && resolveArtifacts({ slug, slugSource, kinds: ['walkthrough'], projectRoot: state.repoRoot, native }).walkthrough;
+    if (walkthrough?.exists) return path.resolve(state.repoRoot, walkthrough.path);
+    // Mirrors preparation's fallback to the session implement run's plan-named walkthrough.
+    const fromLedger = ledgerWalkthroughSlug(state.repoRoot, state.target?.range ? explicitRangeBounds(state.repoRoot, state.target.range) : {});
+    if (!fromLedger) return null;
+    const ledgerWalkthrough = resolveArtifacts({ slug: fromLedger, slugSource: 'explicit', kinds: ['walkthrough'], projectRoot: state.repoRoot, native }).walkthrough;
+    return ledgerWalkthrough.exists ? path.resolve(state.repoRoot, ledgerWalkthrough.path) : null;
   } catch {
     // NOTE: an unresolvable slug only means there is nothing to resume; preparation reports it.
     return null;
@@ -807,7 +810,7 @@ function adjudicateAction(state) {
   if (state.adjudication.findings.some((finding) => finding.restate)) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
-  if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
+  if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; dependsOn lists this round's finding keys (F1) or earlier rounds' IDs (R1-F001); verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
   return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings, unfulfilledTargets: unfulfilledTargets(state) }, guidance);
 }
 
@@ -898,8 +901,13 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
   const unfixable = [];
   const deferredUser = [];
   const unboundedConsider = [];
+  const idOf = (index) => `R${round}-F${String(first + index).padStart(3, '0')}`;
+  // IDs follow ruling order, so same-round dependencies arrive as finding keys and map here.
+  const idByKey = new Map(rulings.map((ruling, index) => [ruling.key, idOf(index)]));
+  const withIds = (fix) => fix && { ...fix, dependsOn: fix.dependsOn.map((dep) => idByKey.get(dep) ?? dep) };
   rulings.forEach((ruling, index) => {
-    const id = `R${round}-F${String(first + index).padStart(3, '0')}`;
+    const id = idOf(index);
+    ruling = { ...ruling, fix: withIds(ruling.fix) };
     const sources = byKey.get(ruling.key).sourceKeys.filter((key) => Object.hasOwn(sourceMap, key));
     const defect = cleanText(ruling.defect, 'Restated finding.');
     const resolution = cleanText(ruling.resolution, 'Ruled by the host.');

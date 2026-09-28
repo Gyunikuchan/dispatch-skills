@@ -43,6 +43,22 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assertSettledAndCheckpointed(walkthroughIn(repo.dir), run.done, 'code');
   });
 
+  it('code --fix maps same-round dependsOn finding keys to the finding IDs it writes', () => {
+    const { fixture, repo } = setup(config({ rounds: 1 }), { dirty: true });
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--kind', 'code', '--fix', '--orchestrator', 'claude'],
+      policy: {
+        waveResults: firstReview(report([codeFinding(), codeFinding({ locus: 'src/app.js:L2', defect: 'Second defect.' })])),
+        fix: (finding, action) => ({ ...CODE_FIX, dependsOn: finding.key === action.findings[1].key ? [action.findings[0].key] : [] }),
+        applyFixes: editApp(repo.dir),
+      },
+    });
+    const records = logEntries(walkthroughIn(repo.dir)).filter((entry) => entry.application);
+    assert.deepEqual(records.map((entry) => entry.application.dependsOn), [[], ['R1-F001']]);
+    assert.equal(run.done.outcome, 'complete');
+  });
+
   it('plan --fix verifies with the in-process lint: no verify action and no host command', () => {
     const { fixture, repo } = setup(config({ rounds: 2 }));
     const plan = writePlan(repo.dir);

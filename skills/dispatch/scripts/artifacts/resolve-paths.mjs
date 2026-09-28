@@ -115,6 +115,47 @@ export function resolveLedgerPath({ slug, slugSource, repositoryRoot } = {}) {
 
 export function ledgerNamespacePath() { return sessionArea('ledger'); }
 
+/**
+ * Slug of this session's most recent ordinary run whose baseline commit lies within the reviewed
+ * bounds (`baseSha` ancestor-or-equal, `headSha` descendant-or-equal) and whose walkthrough exists,
+ * so a code review finds an implement run's plan-named walkthrough. Working-tree reviews pass no
+ * bounds, which requires the baseline to equal HEAD.
+ *
+ * @param {string} repoRoot
+ * @param {{ baseSha?: string|null, headSha?: string|null }} [bounds]
+ * @returns {string|null}
+ */
+export function ledgerWalkthroughSlug(repoRoot, { baseSha = null, headSha = null } = {}) {
+  let files;
+  try { files = readdirSync(ledgerNamespacePath()).filter((name) => name.endsWith('-ledger.md')); } catch { return null; }
+  const candidates = [];
+  for (const name of files) {
+    const slug = name.slice(0, -'-ledger.md'.length);
+    if (!SLUG_PATTERN.test(slug) || isReservedOrdinarySlug(slug)) continue;
+    let text;
+    try { text = fs.readFileSync(path.join(ledgerNamespacePath(), name), 'utf8'); } catch { continue; }
+    // NOTE: parsed inline because ledger.mjs imports this module; torn or malformed lines are skipped.
+    for (const line of text.split('\n')) {
+      const json = /^- event: (\{.*\})$/.exec(line)?.[1];
+      if (!json) continue;
+      let event;
+      try { event = JSON.parse(json); } catch { continue; }
+      const commit = event?.data?.baseline?.commit;
+      if (event.type === 'run-start' && event.data.action === 'ordinary' && typeof commit === 'string') {
+        candidates.push({ slug, at: String(event.at ?? ''), commit });
+      }
+    }
+  }
+  candidates.sort((a, b) => b.at.localeCompare(a.at));
+  const isAncestor = (older, newer) => spawnCliSync('git', ['merge-base', '--is-ancestor', older, newer], { cwd: repoRoot, encoding: 'utf8', timeout: 5000 }).status === 0;
+  for (const { slug, commit } of candidates) {
+    const walkthrough = /** @type {Record<ArtifactKind, string>} */ (buildScratchPaths(slug)).walkthrough;
+    if (!existsSync(walkthrough)) continue;
+    if (isAncestor(commit, headSha ?? 'HEAD') && isAncestor(baseSha ?? 'HEAD', commit)) return slug;
+  }
+  return null;
+}
+
 // SECTION: Slug derivation
 
 /**

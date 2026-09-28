@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -99,6 +100,66 @@ describe('code review preparation', () => {
       fs.rmSync(existingWalkthrough, { force: true });
       // Non-recursive: removes only the now-empty per-test namespace directories.
       for (const dir of [artifacts, path.dirname(artifacts)]) { try { fs.rmdirSync(dir); } catch { /* not empty or gone */ } }
+    }
+  });
+
+  it('falls back to the session implement run walkthrough named after its plan, not the branch', () => {
+    const repo = makeRepo();
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const walkthroughFor = (slug) => sessionArtifact(repo, `${slug}-walkthrough.md`);
+    const writeRun = (slug, commit, at) => {
+      const ledger = sessionArea('ledger');
+      fs.mkdirSync(ledger, { recursive: true });
+      const event = { at, data: { action: 'ordinary', baseline: { commit } }, runId: slug, seq: 1, type: 'run-start', v: 1 };
+      fs.writeFileSync(path.join(ledger, `${slug}-ledger.md`), `- event: ${JSON.stringify(event)}\n`);
+      fs.writeFileSync(walkthroughFor(slug), '# Walkthrough — Plan Run\n\n## Changes Made\n- **[MODIFY]** `app.js` — Plan change.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; ok.\n');
+    };
+    writeRun('plan-run', head, '2026-01-01T00:00:00.000Z');
+    // Newer, but its baseline is not an ancestor of HEAD, so it belongs to another line of work.
+    writeRun('other-run', '0'.repeat(40), '2026-02-01T00:00:00.000Z');
+    const manifest = prepareCodeReview({
+      mode: 'orchestrated',
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.equal(manifest.artifact.generated, false);
+      assert.equal(manifest.artifact.canonicalPath, path.relative(repo, walkthroughFor('plan-run')).split(path.sep).join('/'));
+    } finally {
+      cleanupManifest(manifest);
+    }
+  });
+
+  it('matches the ledger run to an explicit range, skipping a newer run based after the range head', () => {
+    const repo = makeRepo();
+    const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+    const c0 = git('rev-parse', 'HEAD');
+    git('commit', '--no-gpg-sign', '-qam', 'range change');
+    const c1 = git('rev-parse', 'HEAD');
+    fs.writeFileSync(path.join(repo, 'app.js'), 'export const value = 3;\n');
+    git('commit', '--no-gpg-sign', '-qam', 'later change');
+    const c2 = git('rev-parse', 'HEAD');
+    const ledger = sessionArea('ledger');
+    fs.mkdirSync(ledger, { recursive: true });
+    for (const [slug, commit, at] of [['range-run', c0, '2026-01-01T00:00:00.000Z'], ['later-run', c2, '2026-02-01T00:00:00.000Z']]) {
+      const event = { at, data: { action: 'ordinary', baseline: { commit } }, runId: slug, seq: 1, type: 'run-start', v: 1 };
+      fs.writeFileSync(path.join(ledger, `${slug}-ledger.md`), `- event: ${JSON.stringify(event)}\n`);
+      fs.writeFileSync(sessionArtifact(repo, `${slug}-walkthrough.md`), '# Walkthrough — Run\n\n## Changes Made\n- **[MODIFY]** `app.js` — Change.\n\n## Verification & Validation\n### Automated Tests\n- Command: `npm test` — exit 0; ok.\n');
+    }
+    const manifest = prepareCodeReview({
+      mode: 'orchestrated',
+      range: `${c0}..${c1}`,
+      summary: 'Update the exported value',
+      verification: { command: 'npm test', result: 'Passed' },
+      targets: [{ candidateId: 'code-review:claude:0', platform: 'claude', model: 'opus', effort: 'medium' }],
+    }, { repoRoot: repo });
+    try {
+      assert.equal(manifest.status, 'ready');
+      assert.match(manifest.artifact.canonicalPath, /range-run-walkthrough\.md$/);
+    } finally {
+      cleanupManifest(manifest);
     }
   });
 
