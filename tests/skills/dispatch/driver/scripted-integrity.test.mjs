@@ -57,7 +57,7 @@ describe('scripted driver: skill integrity (SC3, SC4)', () => {
   const editSkill = (fixture, extra = []) => (action) => {
     fs.appendFileSync(path.join(fixture.skillDir, 'SKILL.md'), '\n<!-- fixed -->\n');
     for (const file of extra) fs.appendFileSync(path.join(fixture.skillDir, file), '\n<!-- foreign -->\n');
-    return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+    return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
   };
 
   it('SC4: apply-fixes regenerates skill-hashes.json when every violation is an applied affected path', () => {
@@ -114,7 +114,7 @@ describe('scripted driver: skill integrity (SC3, SC4)', () => {
         applyFixes: (action) => {
           fs.appendFileSync(path.join(fixture.dir, 'src', 'app.js'), '// fixed\n');
           fs.appendFileSync(path.join(fixture.skillDir, 'references', 'review.md'), '\n<!-- stale -->\n');
-          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
         },
       },
     });

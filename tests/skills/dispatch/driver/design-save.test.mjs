@@ -82,7 +82,7 @@ describe('driver design state persistence', () => {
         fix: () => ({ affectedPaths: [path.relative(repo.dir, designPath).split(path.sep).join('/')], dependsOn: [], verification: ['node --version'] }),
         applyFixes: (action) => {
           fs.writeFileSync(designPath, fs.readFileSync(designPath, 'utf8').replace('## Final Integration\n', '## Final Integration\nReview-applied change.\n'));
-          return { clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })) };
+          return { clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })) };
         },
       },
       onAction: (action) => { if (action.action === 'ask-user' && action.question === 'approval') { approval = action; throw stop; } },

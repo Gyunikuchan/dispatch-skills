@@ -221,7 +221,7 @@ describe('fix verification guidance (narrowest check)', () => {
   const guidanceOf = (trace, name) => trace.filter((action) => action.action === name).flatMap((action) => action.guidance).join('\n');
   const applyEdit = (repoDir) => (action) => {
     fs.appendFileSync(path.join(repoDir, 'src', 'app.js'), '// fixed\n');
-    return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+    return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
   };
 
   it('standalone --fix review guidance names the narrowest check without forbidding aggregate suites', () => {

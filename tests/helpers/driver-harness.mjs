@@ -393,7 +393,7 @@ const DEFAULT_POLICY = {
     return { answer: { summary: 'Update the exported value', verification: { command: 'node --version', result: 'Passed' } } };
   },
   applyFixes: (action) => ({
-    clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })),
+    clusters: action.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'applied' })),
   }),
   delegateWrite: (action) => writeOutcomeReply(action, implementationOutcome({
     stage: action.fields?.stage === 'tests-only' ? 'RED_READY' : 'COMPLETE',

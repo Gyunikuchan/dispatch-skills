@@ -14,9 +14,7 @@
         "additionalProperties": false,
         "required": [
           "clusterId",
-          "status",
-          "paths",
-          "note"
+          "status"
         ],
         "properties": {
           "clusterId": {
@@ -29,14 +27,25 @@
               "failed"
             ]
           },
-          "paths": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "note": {
             "type": "string"
+          }
+        },
+        "if": {
+          "properties": {
+            "status": {
+              "const": "failed"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "note"
+          ],
+          "properties": {
+            "note": {
+              "minLength": 1
+            }
           }
         }
       }

@@ -225,7 +225,7 @@ describe('scripted review paths (SC5)', () => {
     fix: () => ({ affectedPaths: [path.relative(repoDir, plan).split(path.sep).join('/')], dependsOn: [], verification: [] }),
     applyFixes: (action) => {
       fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- `node --test tests/sample.test.mjs`\n\n## Review', '- `node --test tests/sample.test.mjs`\n- Failure path: `node --test tests/fail.test.mjs`\n\n## Review'));
-      return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+      return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
     },
   });
 

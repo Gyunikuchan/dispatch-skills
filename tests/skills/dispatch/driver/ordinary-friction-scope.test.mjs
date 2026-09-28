@@ -128,7 +128,7 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
       applyFixes(action) {
         fs.appendFileSync(path.join(fixture.repo.dir, 'src/app.js'), '// fixed\n');
         fixed = true;
-        return { clusters: action.clusters.map(cluster => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })) };
+        return { clusters: action.clusters.map(cluster => ({ clusterId: cluster.clusterId, status: 'applied' })) };
       },
       askUser(action) {
         if (action.question !== 'failure-disposition') return base.askUser(action);

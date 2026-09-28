@@ -41,7 +41,7 @@ describe('driver payloads are never truncated (AC4)', () => {
         fix: () => ({ affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --version'] }),
         applyFixes: (action) => {
           fs.appendFileSync(path.join(repo.dir, 'src', 'app.js'), '// fixed\n');
-          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
         },
       },
     });

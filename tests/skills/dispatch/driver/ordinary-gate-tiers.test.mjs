@@ -34,7 +34,7 @@ describe('ordinary driver verification gate tiers', () => {
       applyFixes(action) {
         fs.appendFileSync(path.join(fixture.repo.dir, 'src/app.js'), '// fixed\n');
         fixed = true;
-        return { clusters: action.clusters.map(cluster => ({ clusterId: cluster.clusterId, status: 'applied', paths: cluster.affectedPaths, note: 'edited' })) };
+        return { clusters: action.clusters.map(cluster => ({ clusterId: cluster.clusterId, status: 'applied' })) };
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));

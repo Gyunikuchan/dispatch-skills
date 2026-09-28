@@ -15,7 +15,7 @@ after(disposeScriptedFixtures);
 const CODE_FIX = { affectedPaths: ['src/app.js'], dependsOn: [], verification: ['node --version'] };
 const editApp = (repoDir) => (action) => {
   fs.appendFileSync(path.join(repoDir, 'src', 'app.js'), '// fixed\n');
-  return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+  return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
 };
 
 describe('scripted --fix reviews (SC5, SC6)', () => {
@@ -54,7 +54,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
         fix: () => ({ affectedPaths: [path.relative(repo.dir, plan).split(path.sep).join('/')], dependsOn: [], verification: [] }),
         applyFixes: (action) => {
           fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- `node --test tests/sample.test.mjs`\n\n## Review', '- `node --test tests/sample.test.mjs`\n- Failure path: `node --test tests/fail.test.mjs`\n\n## Review'));
-          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied', paths: c.affectedPaths, note: 'edited' })) };
+          return { clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) };
         },
       },
     });

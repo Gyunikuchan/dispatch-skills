@@ -802,6 +802,7 @@ function adjudicateAction(state) {
     'Verify each finding against the cited locus before ruling; accept verified defects regardless of how many delegates raised them.',
     'For accepted structured findings, omit defect text; the driver reuses the sanitized delegate defect. For accepted prose findings or an empty sanitized delegate defect, provide a host defect restatement. For rejected or downgraded findings, provide full defect reasoning and resolution.',
     'Use status needs-user only when the ruling needs a user decision.',
+    `Every ruling locus must match ${reviewKind(state.kind).locusDescription}; cite the reviewed artifact, not supporting evidence.`,
   ];
   if (state.adjudication.findings.some((finding) => finding.restate)) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
@@ -1267,6 +1268,7 @@ function nextStep(state) {
 // SECTION: fixes
 
 const NARROWEST_CHECK = 'Run at most the narrowest check for the touched locus; the driver runs the gates.';
+const CLUSTER_REPLY = 'Reply {clusters: [{clusterId, status: "applied" | "failed", note}]}; note is required when failed.';
 
 function applyFixesAction(state, findings) {
   const clusters = createIndependenceClusters(findings.map((finding) => ({
@@ -1285,7 +1287,8 @@ function applyFixesAction(state, findings) {
   return emitAction(state, 'apply-fixes', {
     clusters: state.fix.active.map(({ clusterId, findingIds, affectedPaths, verification }) => ({ clusterId, findingIds, affectedPaths, verification })),
   }, [
-    'Edit inline (no subagent) to resolve each cluster, touching only its affectedPaths; reply with each cluster status.',
+    'Edit inline (no subagent) to resolve each cluster, touching only its affectedPaths.',
+    CLUSTER_REPLY,
     NARROWEST_CHECK,
   ]);
 }
@@ -1293,7 +1296,7 @@ function applyFixesAction(state, findings) {
 function reapplyAction(state) {
   return emitAction(state, 'apply-fixes', {
     clusters: state.fix.active.map(({ clusterId, findingIds, affectedPaths, verification }) => ({ clusterId, findingIds, affectedPaths, verification })),
-  }, ['Verification failed for these clusters; fix them again and reply with each cluster status.', NARROWEST_CHECK]);
+  }, ['Verification failed for these clusters; fix them again.', CLUSTER_REPLY, NARROWEST_CHECK]);
 }
 
 function onApplyFixes(state, reply) {

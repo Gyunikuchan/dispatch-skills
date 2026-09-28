@@ -99,7 +99,7 @@ describe('driver reply validation (SC2)', () => {
   it('accepts well-formed replies for each reply contract', () => {
     const ok = [
       ['adjudicate', { rulings: [ruling, { ...ruling, key: 'k2', status: 'needs-user', fix: { affectedPaths: ['a.js'], dependsOn: [], verification: ['npm test'] } }] }],
-      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'applied', paths: ['a.js'], note: 'done' }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'applied' }, { clusterId: 'c2', status: 'failed', note: 'conflict' }] }],
       ['verify', { results: [{ command: 'npm test', exit: 0, evidence: 'pass' }] }],
       ['ask-user', { answer: 'include O1' }],
       ['ask-user', { answer: { summary: 's', verification: { command: 'npm test', result: 'ok' } } }],
@@ -121,7 +121,10 @@ describe('driver reply validation (SC2)', () => {
       ['adjudicate', { rulings: [{ ...ruling, tag: undefined }] }],
       ['adjudicate', { rulings: [{ ...ruling, scope: 'elsewhere' }] }],
       ['adjudicate', { rulings: [ruling], extra: true }],
-      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'half', paths: [], note: '' }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'half' }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'failed' }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'failed', note: ' ' }] }],
+      ['apply-fixes', { clusters: [{ clusterId: 'c1', status: 'applied', paths: ['a.js'] }] }],
       ['verify', { results: [{ command: 'npm test' }] }],
       ['native-fallback', { slot: 's', captured: false }],
       ['author', {}],
@@ -280,6 +283,7 @@ describe('driver reply handling end to end (SC2)', () => {
     const prose = action.findings.find((f) => f.restate === true);
     assert.ok(prose, 'prose report surfaces as a restate entry');
     assert.ok(prose.reportPath && fs.existsSync(prose.reportPath), 'restate entry carries its report path');
+    assert.ok(action.guidance.some((line) => line.includes('"§ <Plan heading>"')), 'guidance states the locus format up front');
     const base = { key: prose.key, status: 'accepted', severity: 'SHOULD', scope: 'in-scope', defect: 'No failure test.', resolution: 'Added.' };
 
     const badLocus = next(action.stateFile, { rulings: [{ ...base, locus: 'src/app.js:L3', tag: 'testability' }] });
