@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -35,6 +35,15 @@ describe('chat session lifecycle identity', () => {
     const expectedRoot = fs.realpathSync(repositoryRoot).replaceAll('\\', '/');
     assert.equal(manifest.repositoryRoot, process.platform === 'win32' ? expectedRoot.toLowerCase() : expectedRoot);
     assert.equal(manifest.location, 'workspace');
+  });
+
+  it('session.mjs runs when invoked through a symlinked skill directory', () => {
+    const skillDir = fileURLToPath(new URL('../../../../skills/dispatch', import.meta.url));
+    const link = path.join(tempRoot, 'linked-dispatch');
+    // NOTE: a junction needs no Windows symlink privilege; elsewhere the type is ignored.
+    fs.symlinkSync(skillDir, link, 'junction');
+    const stdout = execFileSync(process.execPath, [path.join(link, 'scripts', 'session.mjs'), 'lookup', '--repository-root', repositoryRoot, '--temp-root', tempRoot], { encoding: 'utf8' });
+    assert.equal(JSON.parse(stdout).command, 'lookup');
   });
 
   it('reuses the first title for the same chat and keeps separate chat identities apart', () => {

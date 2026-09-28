@@ -4,6 +4,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isMainModule } from './lib/platform.mjs';
 import { findSession, handoffSession, initializeSession, reactivateSession } from './lib/session-lifecycle.mjs';
 
 const SCRIPT_PATH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'dispatch.mjs');
@@ -56,7 +57,8 @@ export function runSessionCommand(argv = process.argv.slice(2)) {
   return { schemaVersion: 1, command, ...result, dispatchScript: SCRIPT_PATH };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// NOTE: isMainModule compares real paths so symlinked skill installs still run.
+if (isMainModule(import.meta.url)) {
   try { process.stdout.write(`${JSON.stringify(runSessionCommand())}\n`); }
   catch (error) {
     process.stderr.write(`[dispatch session] ${error instanceof Error ? error.message : String(error)}\n`);

@@ -222,6 +222,58 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assert.match(fs.readFileSync(walkthroughPath, 'utf8'), /^## Follow-ups\s*$/m);
     assert.equal(run.done.outcome, 'complete');
   });
+
+  it('--fix re-emits adjudicate when verification names a missing test file the fix does not create', () => {
+    const { fixture, repo } = setup(config({ rounds: 2 }), { dirty: true });
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--kind', 'code', '--fix', '--orchestrator', 'claude'],
+      policy: {
+        waveResults: firstReview(report([codeFinding()])),
+        fix: (finding, action) => (action.error ? CODE_FIX : { ...CODE_FIX, verification: ['node --test tests/missing.test.mjs'] }),
+        applyFixes: editApp(repo.dir),
+      },
+    });
+    const errored = run.trace.filter((a) => a.action === 'adjudicate' && a.error);
+    assert.equal(errored.length, 1);
+    assert.match(errored[0].error.message, /missing test file tests\/missing\.test\.mjs/);
+    assert.equal(run.done.outcome, 'complete');
+  });
+
+  it('a second apply failure defers the cluster even when the notes differ', () => {
+    const { fixture, repo } = setup(config({ rounds: 3 }), { dirty: true });
+    let attempt = 0;
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--kind', 'code', '--fix', '--orchestrator', 'claude'],
+      policy: {
+        waveResults: firstReview(report([codeFinding()])),
+        fix: () => CODE_FIX,
+        applyFixes: (action) => ({ clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'failed', note: `attempt ${++attempt}` })) }),
+      },
+    });
+    assert.equal(run.trace.filter((a) => a.action === 'apply-fixes').length, 2, 'stops after the second apply failure');
+    const deferred = logEntries(walkthroughIn(repo.dir)).find((entry) => entry.application);
+    assert.equal(deferred.application.state, 'unapplied');
+    assert.match(deferred.application.reason, /apply failed: attempt 2/);
+  });
+
+  it('plan --fix escapes template tokens quoted in findings so the log passes placeholder lint', () => {
+    const { fixture, repo } = setup(config({ rounds: 1 }));
+    const plan = writePlan(repo.dir);
+    const run = drive(fixture, {
+      cwd: repo.dir,
+      runArgs: ['review', '--fix', '--orchestrator', 'claude', '--', plan],
+      policy: {
+        waveResults: firstReview(report([planFinding({ defect: 'Replace <key> and <command> with real values.' })])),
+        fix: () => ({ affectedPaths: [path.relative(repo.dir, plan).split(path.sep).join('/')], dependsOn: [], verification: [] }),
+        applyFixes: (action) => ({ clusters: action.clusters.map((c) => ({ clusterId: c.clusterId, status: 'applied' })) }),
+      },
+    });
+    assert.match(fs.readFileSync(plan, 'utf8'), /Replace &lt;key> and &lt;command>/);
+    assert.equal(run.trace.filter((a) => a.action === 'apply-fixes').length, 1, 'lint verification passes first time');
+    assert.equal(run.done.outcome, 'complete');
+  });
 });
 
 // SECTION: follow-ups (R1-F009, R3-F004)

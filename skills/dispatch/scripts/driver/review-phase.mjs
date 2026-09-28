@@ -30,6 +30,7 @@ import {
   REPO_RELATIVE,
   appendToSection,
   cleanText,
+  escapeLogText,
   readArtifactText,
   setEntryResolution,
   setEntryStatus,
@@ -52,6 +53,29 @@ import {
 } from './state.mjs';
 
 const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const SCRIPT_FILE = /\.(?:[cm]?[jt]sx?|py)$/;
+// Test-runner options whose separate next word is a name pattern, never a file (node, jest, vitest, mocha, pytest).
+const PATTERN_OPTIONS = new Set(['--test-name-pattern', '--test-skip-pattern', '--testNamePattern', '-t', '--grep', '-g', '-k']);
+
+/**
+ * Script-file arguments of a verification command that exist neither on disk nor in `created`;
+ * glob arguments are skipped because the runner expands them.
+ * @param {string} repoRoot
+ * @param {string} command
+ * @param {string[]} [created] repository-relative paths the fix itself writes
+ * @returns {string[]}
+ */
+export function missingVerificationFiles(repoRoot, command, created = []) {
+  // Shell words: quoted runs and escaped whitespace join their word (`--opt="a b"`, `a\ b`); separators end it.
+  // NOTE: only `\` before whitespace is an escape, so Windows `tests\x.mjs` keeps its separator.
+  const words = [...command.matchAll(/(?:"[^"]*"|'[^']*'|\\\s|[^\s;|&<>()"'])+/g)]
+    .map(([word]) => word.replace(/"([^"]*)"|'([^']*)'|\\(\s)/g, (_, dq, sq, ws) => dq ?? sq ?? ws));
+  return words
+    .filter((word, index) => !word.startsWith('-') && !PATTERN_OPTIONS.has(words[index - 1]))
+    .map((word) => path.posix.normalize(word.replace(/\\/g, '/')))
+    .filter((token) => SCRIPT_FILE.test(token) && !/[*?[\]{}]/.test(token))
+    .filter((file) => !created.includes(file) && !fs.existsSync(path.resolve(repoRoot, file)));
+}
 const NATIVE_MAPPINGS = JSON.parse(fs.readFileSync(path.join(DISPATCH_DIR, 'references', 'native-model-mappings.json'), 'utf8'));
 if (!Array.isArray(NATIVE_MAPPINGS) || new Set(NATIVE_MAPPINGS.map((entry) => entry.configuredModel)).size !== NATIVE_MAPPINGS.length ||
   NATIVE_MAPPINGS.some((entry) => !entry.configuredModel || !/^[^/]+\/.+/.test(entry.launcherModel) || !entry.provider || !entry.provenance ||
@@ -849,12 +873,12 @@ function adjudicateAction(state) {
     'Verify each finding against the cited locus before ruling; accept verified defects regardless of how many delegates raised them.',
     'For accepted structured findings, omit defect text; the driver reuses the sanitized delegate defect. For accepted prose findings or an empty sanitized delegate defect, provide a host defect restatement. For rejected or downgraded findings, provide full defect reasoning and resolution.',
     'Use status needs-user only when the ruling needs a user decision.',
-    `Every ruling locus must match ${reviewKind(state.kind).locusDescription}; cite the reviewed artifact, not supporting evidence.`,
+    `Every ruling locus must match ${reviewKind(state.kind).locusDescription}; cite the reviewed artifact, not supporting evidence. Tag is one of: ${[...reviewKind(state.kind).tags].join(', ')}.`,
   ];
   if (state.adjudication.findings.some((finding) => finding.restate)) {
     guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key; if it contains none, return {key, empty: true}.');
   }
-  if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; dependsOn lists this round's finding keys (F1) or earlier rounds' IDs (R1-F001); verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
+  if (state.invocation.fix) guidance.push(`For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}; affectedPaths are repository-relative slash paths; dependsOn lists this round's finding keys (F1) or earlier rounds' IDs (R1-F001); verification names the narrowest commands covering affectedPaths${state.invocation.implementation ? ', never an aggregate suite: driver gates re-verify' : ''}.`);
   guidance.push(replyGuidance(state, { round: state.adjudication.round, kind: 'rulings', ext: 'json' }));
   return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings, unfulfilledTargets: unfulfilledTargets(state) }, guidance);
 }
@@ -889,7 +913,7 @@ function onAdjudicate(state, reply) {
     ruled.add(ruling.key);
     const locus = normalizeLocus(entry.kind, ruling.locus);
     if (!entry.locusPattern.test(locus)) errors.push(`${ruling.key}: locus must match ${entry.locusDescription}`);
-    if (!entry.tags.has(ruling.tag)) errors.push(`${ruling.key}: tag "${ruling.tag}" is not a ${entry.kind} review tag`);
+    if (!entry.tags.has(ruling.tag)) errors.push(`${ruling.key}: tag "${ruling.tag}" is not a ${entry.kind} review tag (${[...entry.tags].join(', ')})`);
     const delegateDefect = sanitizeReplyText(finding.defect);
     const hostDefect = sanitizeReplyText(ruling.defect);
     if (ruling.status === 'accepted' && (finding.restate || !delegateDefect) && !hostDefect) {
@@ -905,6 +929,12 @@ function onAdjudicate(state, reply) {
       }
       const badPath = (ruling.fix?.affectedPaths ?? []).find((p) => !REPO_RELATIVE.test(p));
       if (badPath !== undefined) errors.push(`${ruling.key}: fix.affectedPaths entry "${badPath}" must be a repository-relative slash path`);
+      // A command naming an absent test file can never pass; the fix itself may create it.
+      for (const command of ruling.fix?.verification ?? []) {
+        for (const file of missingVerificationFiles(state.repoRoot, command, ruling.fix.affectedPaths)) {
+          errors.push(`${ruling.key}: verification "${command}" names missing test file ${file}`);
+        }
+      }
     }
   }
   if (errors.length) return reemit(state, errors.join('; '));
@@ -956,7 +986,7 @@ function writeRound(state, rulings, userFinalKeys = new Set()) {
     const sources = byKey.get(ruling.key).sourceKeys.filter((key) => Object.hasOwn(sourceMap, key));
     const defect = cleanText(ruling.defect, 'Restated finding.');
     const resolution = cleanText(ruling.resolution, 'Ruled by the host.');
-    lines.push(`- **[${statusLabel(state, ruling, userFinalKeys.has(ruling.key))}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] ${ruling.locus} — ${ruling.tag}: ${defect} → ${resolution}`);
+    lines.push(`- **[${statusLabel(state, ruling, userFinalKeys.has(ruling.key))}]** [${id}] [${ruling.severity}] [sources=${sources.join(',')}] ${escapeLogText(ruling.locus)} — ${ruling.tag}: ${escapeLogText(defect)} → ${escapeLogText(resolution)}`);
     if (isDeferredConsider(state, ruling)) {
       deferredUser.push({ id, severity: ruling.severity, scope: ruling.scope, defect, fix: ruling.fix });
       return;
@@ -1418,7 +1448,9 @@ function settleVerification(state, failureOf) {
     state.fix.failureCounts ??= {};
     const count = (state.fix.failureCounts[cluster.clusterId] ?? 0) + 1;
     state.fix.failureCounts[cluster.clusterId] = count;
-    if (state.fix.attempts[cluster.clusterId] === failure || count >= MAX_VERIFY_FAILURES) {
+    // A host-reported apply failure recurs with varying notes, so its second occurrence escalates.
+    const repeatedApply = cluster.applyFailure && state.fix.attempts[cluster.clusterId]?.startsWith('apply failed:');
+    if (state.fix.attempts[cluster.clusterId] === failure || repeatedApply || count >= MAX_VERIFY_FAILURES) {
       deferCluster(state, cluster, `verification failed ${count} times: ${failure}`);
     } else {
       state.fix.attempts[cluster.clusterId] = failure;
@@ -1469,7 +1501,7 @@ function writeApplicationRecords(state, findings, applicationState, reason) {
 
 function addFollowUps(state, bullets) {
   if (bullets.length === 0) return;
-  const markdown = appendToSection(readArtifactText(state), FOLLOW_UPS, '## Follow-ups', bullets, /^(None\.?|Accepted SHOULD(-FIX)? \/ CONSIDER.*)$/);
+  const markdown = appendToSection(readArtifactText(state), FOLLOW_UPS, '## Follow-ups', bullets.map(escapeLogText),/^(None\.?|Accepted SHOULD(-FIX)? \/ CONSIDER.*)$/);
   writeArtifactText(state, markdown);
 }
 

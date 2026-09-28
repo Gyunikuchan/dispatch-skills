@@ -69,8 +69,10 @@
     "codex": {
       "sandbox": true,
       "targets": [
-        { "low": { "model": "gpt-6-sol", "effort": "medium" } },
-        { "max": { "model": "gpt-6-sol", "effort": "high" } },
+        {
+          "low": { "model": "gpt-6-sol", "effort": "medium" },
+          "max": { "model": "gpt-6-sol", "effort": "high" },
+        },
       ],
     },
   },

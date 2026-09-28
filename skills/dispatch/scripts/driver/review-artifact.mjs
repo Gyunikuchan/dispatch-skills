@@ -54,7 +54,12 @@ export function setEntryStatus(markdown, id, label) {
 export function setEntryResolution(markdown, id, text) {
   const escaped = id.replace(/[-]/g, '\\-');
   const entry = new RegExp(`^(\\s*[-*]\\s+\\*\\*\\[[^\\]]+\\]\\*\\*\\s+\\[${escaped}\\].*? → )([^\\r\\n]*)`, 'm');
-  return markdown.replace(entry, (_, head, existing) => `${head}${cleanText(text, existing)}`);
+  return markdown.replace(entry, (_, head, existing) => `${head}${escapeLogText(cleanText(text, existing))}`);
+}
+
+/** Entity-escapes `<` so quoted template tokens (<key>, <id>) render verbatim but never trip placeholder lint; idempotent. */
+export function escapeLogText(text) {
+  return text.replace(/</g, '&lt;');
 }
 
 /** Sanitizes host-provided prose and supplies a stable fallback when nothing remains. */
