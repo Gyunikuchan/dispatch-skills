@@ -5,7 +5,7 @@ import { appendEvent, governingHash, readLedger, resumeOrdinary, slugFromPlanPat
 import { parseIncrementGraph } from '../design/graph.mjs';
 import { foldSegments } from '../ledger/events.mjs';
 import { resolveLedgerPath } from '../artifacts/resolve-paths.mjs';
-import { emitAction } from './actions.mjs';
+import { DriverError, emitAction } from './actions.mjs';
 import { finish as persistAction } from './state.mjs';
 import { restoreSessionPaths, storeSessionPaths } from '../lib/session-temp.mjs';
 import { DEFERRED, cell, isPassing, renderTraceability, replaceBoxLine, replaceStatusLine, sectionBody } from '../walkthrough/traceability.mjs';
@@ -28,7 +28,7 @@ export function bindPlan(state, file) {
   state.ledgerPath = resolveLedgerPath({ slug: state.slug, slugSource: 'explicit', repositoryRoot: state.repoRoot, artifactKind: 'plan' });
 }
 export function assertBinding(state) {
-  if (governingHash(source(state)).hash !== state.governingHash) throw new Error('Plan changed: return to plan-review and approval.');
+  if (governingHash(source(state)).hash !== state.governingHash) throw new DriverError('state', 'Plan changed.', 'return to plan-review and approval.');
 }
 /**
  * @param {any} state

@@ -67,7 +67,7 @@ describe('driver CLI (SC1)', () => {
     const next = parseAction(res.stdout);
     assert.equal(next.stateFile, first.stateFile);
     assert.equal(next.action, 'launch');
-    assert.equal(typeof next.error, 'string');
+    assert.equal(typeof next.error?.message, 'string');
   });
 
   it('accepts --input as inline JSON text and as @file', () => {
@@ -146,5 +146,131 @@ describe('driver CLI (SC1)', () => {
     for (const flag of ['--run', '--next', '--state', '--input', '--kind', '--fix', '--phases', '--verbose']) {
       assert.ok(res.stdout.includes(flag) || res.stderr.includes(flag), `--help lists ${flag}`);
     }
+  });
+});
+
+describe('driver stop diagnostics', () => {
+  const FATAL = /^\[dispatch driver\] (reply|state|fault): .+/m;
+  const start = (name) => parseAction(run(['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', writePlan(repo.dir, name)]).stdout);
+
+  it('error kind reply: malformed --input exits 2 and leaves state bytes unchanged', () => {
+    const first = start('kind-reply.md');
+    const before = fs.readFileSync(first.stateFile);
+    const res = run(['--next', '--state', first.stateFile, '--input', '{ not json']);
+    assert.equal(res.status, 2);
+    assert.equal(res.stdout.trim(), '');
+    assert.match(res.stderr, /^\[dispatch driver\] reply: /m);
+    assert.deepEqual(fs.readFileSync(first.stateFile), before);
+  });
+
+  it('error kind state: a stale advance lock names its recovery step', () => {
+    const first = start('kind-state.md');
+    const lock = `${path.resolve(first.stateFile)}.advance.lock`;
+    fs.writeFileSync(lock, '');
+    try {
+      const res = run(['--next', '--state', first.stateFile]);
+      assert.equal(res.status, 2);
+      assert.equal(res.stdout.trim(), '');
+      assert.match(res.stderr, /^\[dispatch driver\] state: .+ \| next: .+/m);
+    } finally { fs.rmSync(lock, { force: true }); }
+  });
+
+  it('error kind fault: toError classifies untyped throws as fault', async () => {
+    // Dynamic import keeps the file loadable while toError is absent, so each case fails on its own.
+    const { toError } = await import('../../../../skills/dispatch/scripts/driver/actions.mjs');
+    assert.equal(typeof toError, 'function', 'actions.mjs exports toError');
+    assert.deepEqual(toError(new TypeError('boom')), { kind: 'fault', message: 'boom' });
+  });
+
+  it('error kind fault: corrupted phase data surfaces as a fault', () => {
+    const first = start('kind-fault.md');
+    const state = JSON.parse(fs.readFileSync(first.stateFile, 'utf8'));
+    state.wave = 42;
+    state.phase = { corrupted: true };
+    fs.writeFileSync(first.stateFile, JSON.stringify(state));
+    const res = run(['--next', '--state', first.stateFile]);
+    assert.equal(res.status, 2, res.stdout);
+    assert.equal(res.stdout.trim(), '');
+    assert.match(res.stderr, /^\[dispatch driver\] fault: /m);
+  });
+
+  it('fatal line: a usage error without --state names reply and no state path', () => {
+    const res = run(['--run', 'deploy', '--orchestrator', 'claude']);
+    assert.equal(res.status, 2);
+    assert.equal(res.stdout.trim(), '');
+    assert.match(res.stderr, FATAL);
+    assert.match(res.stderr, /^\[dispatch driver\] reply: /m);
+    assert.doesNotMatch(res.stderr, /state: /);
+  });
+
+  it('error kind state: a missing state file without a sidecar names a next step', () => {
+    const missing = path.join(fixture.dir, 'missing', 'state.json');
+    const res = run(['--next', '--state', missing]);
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /^\[dispatch driver\] state: .+ \| next: .+ \| state: /m);
+  });
+
+  it('fatal line: a parse failure after --state still names the state path', () => {
+    const res = run(['--next', '--state', 'some/state.json', '--bogus']);
+    assert.equal(res.status, 2);
+    assert.equal(res.stdout.trim(), '');
+    assert.match(res.stderr, /^\[dispatch driver\] reply: .+ \| state: some\/state\.json$/m);
+  });
+
+  it('fatal line: --state=<path> survives a parse failure with its spaces intact', () => {
+    const res = run(['--next', '--state=dir  two/state.json', '--bogus']);
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /^\[dispatch driver\] reply: .+ \| state: dir {2}two\/state\.json$/m);
+  });
+
+  it('fatal line: a flag-shaped --input value is not mistaken for --state', () => {
+    const res = run(['--next', '--state', 'real.json', '--input', '--state=other.json', '--bogus']);
+    assert.equal(res.status, 2);
+    assert.match(res.stderr, /\| state: real\.json$/m);
+  });
+
+  it('error kind state: --drive returns a state-errored verify without rerunning it', async () => {
+    const { drive } = await import('../../../../skills/dispatch/scripts/driver/drive.mjs');
+    const stale = { v: 1, action: 'verify', argv: ['node', '-e', 'process.exit(9)'], stateFile: 'x', guidance: [], error: { kind: 'state', message: 'Plan changed.', next: 'return to plan-review' } };
+    const result = await drive({ state: 'x', input: {} }, { advance: async () => stale, stderr: { write() { throw new Error('verify ran'); } } });
+    assert.equal(result, stale);
+  });
+
+  it('error kind reply: --drive returns a re-emitted launch without relaunching it', async () => {
+    const { drive } = await import('../../../../skills/dispatch/scripts/driver/drive.mjs');
+    const rejected = { v: 1, action: 'launch', argv: ['node', '-e', 'process.exit(9)'], stateFile: 'x', guidance: [], error: { kind: 'reply', message: 'bad' } };
+    const result = await drive({ state: 'x', input: {} }, { advance: async () => rejected, stderr: { write() { throw new Error('launch ran'); } } });
+    assert.equal(result, rejected);
+  });
+
+  it('fatal line: a multiline argument stays on one stderr line', () => {
+    const res = run(['--next', '--state', 'a.json', '--bogus\ninjected']);
+    assert.equal(res.status, 2);
+    assert.equal(res.stderr.trim().split('\n').length, 1, res.stderr);
+    assert.match(res.stderr, FATAL);
+  });
+
+  it('error kind fault: --drive returns a faulted mechanical action without rerunning it', async () => {
+    const { drive } = await import('../../../../skills/dispatch/scripts/driver/drive.mjs');
+    const faulted = { v: 1, action: 'verify', argv: ['node', '-e', 'process.exit(9)'], stateFile: 'x', guidance: [], error: { kind: 'fault', message: 'boom' } };
+    let advances = 0;
+    const result = await drive({ state: 'x', input: {} }, { advance: async () => { advances++; return faulted; }, stderr: { write() { throw new Error('verify ran'); } } });
+    assert.equal(result, faulted);
+    assert.equal(advances, 1);
+  });
+
+  it('fatal line: a stale lock with --state names the state path', () => {
+    const first = start('fatal-state.md');
+    const lock = `${path.resolve(first.stateFile)}.advance.lock`;
+    fs.writeFileSync(lock, '');
+    try {
+      const res = run(['--next', '--state', first.stateFile]);
+      assert.equal(res.status, 2);
+      assert.equal(res.stdout.trim(), '');
+      assert.match(res.stderr, FATAL);
+      assert.match(res.stderr, /^\[dispatch driver\] state: /m);
+      assert.ok(res.stderr.includes(`state: ${first.stateFile}`), `names the state path:
+${res.stderr}`);
+    } finally { fs.rmSync(lock, { force: true }); }
   });
 });

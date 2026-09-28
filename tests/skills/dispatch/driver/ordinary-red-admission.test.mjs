@@ -38,8 +38,8 @@ describe('ordinary driver canonical contracts: RED admission and cascade', () =>
     assert.equal(completionReplies, 3);
     const rejected = result.trace.filter(action => action.action === 'verify' && action.purpose === 'scoped' && action.error);
     assert.equal(rejected.length, 2);
-    assert.match(rejected[0].error, /fresh structured verify evidence/);
-    assert.match(rejected[1].error, /fresh structured verify evidence/);
+    assert.match(rejected[0].error.message, /fresh structured verify evidence/);
+    assert.match(rejected[1].error.message, /fresh structured verify evidence/);
   });
   it('excludes an aggregate command mapped to no red criterion from RED admission', () => {
     const fixture = createOrdinaryDriverFixture();

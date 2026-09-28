@@ -7,7 +7,8 @@ import { loadDispatchConfig } from '../lib/config.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { readArtifact } from '../review/preparation.mjs';
 import { buildScratchPaths, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
-import { emitAction } from './actions.mjs';
+import { DriverError, emitAction } from './actions.mjs';
+import { position } from './state.mjs';
 import { governingHash } from '../ledger/ledger.mjs';
 import { bindPlan, persistEvidence, source } from './implement-state.mjs';
 import { advanceReview, regenerateRepoHashes, startReview } from './review-phase.mjs';
@@ -48,7 +49,7 @@ export function authorPlan(state) {
   ]);
 }
 export function acceptPlan(state, reply) {
-  if (path.resolve(state.repoRoot, reply.path) !== state.planPath) throw new Error('Author reply must name the requested canonical plan.');
+  if (path.resolve(state.repoRoot, reply.path) !== state.planPath) throw new DriverError('reply', 'Author reply must name the requested canonical plan.');
   rebindPlan(state, reply.path);
 }
 export async function beginReview(state, kind) {
@@ -75,7 +76,7 @@ export function continueReview(state, reply) {
   if (state.reviewState.pending.action === 'adjudicate') {
     const allowed = reviewsGoverningArtifact(state) ? [path.relative(state.repoRoot, state.planPath).split(path.sep).join('/')] : state.ordinary.approvedPaths;
     for (const item of reply.rulings) for (const file of item.fix?.affectedPaths ?? []) {
-      if (!allowed.includes(file)) throw new Error(`Review fix path is outside approved scope: ${file}`);
+      if (!allowed.includes(file)) throw new DriverError('reply', `Review fix path is outside approved scope: ${file}`);
     }
   }
   return forwardReview(state, advanceReview(state.reviewState, reply));
@@ -86,7 +87,8 @@ function forwardReview(state, action) {
     const target = path.relative(state.repoRoot, state.planPath).split(path.sep).join('/');
     if (action.clusters.some(cluster => cluster.affectedPaths.some(file => file !== target))) throw new Error('Plan review may only amend the governing plan before approval.');
   }
-  return { ...action, stateFile: state.stateFile };
+  // Nested review actions report the parent implement flow.
+  return { ...action, stateFile: state.stateFile, position: position(state) };
 }
 export function captureReviewBudget(state) {
   const child = state.reviewState;

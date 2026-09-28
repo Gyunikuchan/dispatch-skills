@@ -9,7 +9,7 @@ import { currentHead, diffHash, indexFingerprint, materializedFingerprint, snaps
 import { diffRepositoryState } from '../verification/evidence.mjs';
 import { readLedger } from '../ledger/ledger.mjs';
 import { foldSegments } from '../ledger/events.mjs';
-import { emitAction, sanitizeReplyText } from './actions.mjs';
+import { DriverError, emitAction, sanitizeReplyText } from './actions.mjs';
 import { append, ask, ledgerSegment, ruling } from './implement-state.mjs';
 import {
   beginVerification,
@@ -177,9 +177,9 @@ function ruleScope(state, answer) {
   if (answer.decision === 'stop') return openFailure(state, `Delegate changed paths outside its approved write scope: ${extras.join(', ')}`);
   const approve = Array.isArray(answer.approve) ? answer.approve : [], revert = Array.isArray(answer.revert) ? answer.revert : [];
   const ruled = [...approve, ...revert];
-  if (ruled.length !== extras.length || extras.some(file => !ruled.includes(file))) throw new Error(`write-scope requires exactly one ruling per path: ${extras.join(', ')}`);
+  if (ruled.length !== extras.length || extras.some(file => !ruled.includes(file))) throw new DriverError('reply', `write-scope requires exactly one ruling per path: ${extras.join(', ')}`);
   const blocked = revert.filter(file => !revertable(state, file));
-  if (blocked.length) throw new Error(`Paths dirty at task start, or with a changed index since, cannot be reverted: ${blocked.join(', ')}`);
+  if (blocked.length) throw new DriverError('reply', `Paths dirty at task start, or with a changed index since, cannot be reverted: ${blocked.join(', ')}`);
   for (const file of revert) {
     const tracked = spawnSync('git', ['-C', state.repoRoot, 'cat-file', '-e', `HEAD:${file}`]).status === 0;
     const absent = data.taskStart.entries[file]?.objectId === 'absent';
@@ -216,7 +216,7 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const inspected = inspectEnvelope(state, reply.envelopePath);
   if (inspected.errors.length) {
     const expected = data.expectedEnvelopePath ?? state.pending?.fields?.expectedEnvelopePath ?? '(no expected path)';
-    throw new Error(`Delegate-write envelope rejected: ${inspected.errors.join('; ')} Repair the envelope at ${expected} and reply {"envelopePath":"${expected}"}. Resume command: ${state.resumeCommand}`);
+    throw new DriverError('reply', `Delegate-write envelope rejected: ${inspected.errors.join('; ')} Repair the envelope at ${expected} and reply {"envelopePath":"${expected}"}. Resume command: ${state.resumeCommand}`);
   }
   data.writeReceipt = {
     status: inspected.envelope.status,
@@ -378,10 +378,10 @@ export function acceptImplementationDecision(state, reply) {
   const data = state.ordinary, answer = reply.answer;
   if (data.step === 'failure-disposition') return resolveFailure(state, answer);
   if (state.pending.question === 'implementation-recovery') {
-    if (typeof answer?.envelopePath !== 'string') throw new Error(`Interrupted write requires its exact envelope path ${data.expectedEnvelopePath ?? '(missing)'}.`);
+    if (typeof answer?.envelopePath !== 'string') throw new DriverError('reply', `Interrupted write requires its exact envelope path ${data.expectedEnvelopePath ?? '(missing)'}.`);
     return acceptWrite(state, { envelopePath: answer.envelopePath });
   }
-  if (!answer?.reason?.trim()) throw new Error('Decision requires a nonempty reason.');
+  if (!answer?.reason?.trim()) throw new DriverError('reply', 'Decision requires a nonempty reason.');
   if (data.step === 'write-scope') return ruleScope(state, answer);
   if (data.step === 'concern-ruling') {
     if (answer.decision !== 'accept') return openFailure(state, 'Implementation concerns were not accepted.');
@@ -394,7 +394,7 @@ export function acceptImplementationDecision(state, reply) {
     ruling(state, 'blocking-condition', 'changed', answer.reason);
     return retryOrFail(state, data.lastTransition);
   }
-  throw new Error('Unknown implementation decision.');
+  throw new DriverError('reply', 'Unknown implementation decision.');
 }
 /** `verification` marks a failure raised by host evidence alone, which `re-verify` may replace. */
 export function openFailure(state, reason, verification = null) {
@@ -414,7 +414,7 @@ function failureQuestion(state) {
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry', 'red-ruling'].includes(answer?.decision) || !answer.reason?.trim()) throw new Error('Failure disposition requires a typed decision and reason.');
+  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry', 'red-ruling'].includes(answer?.decision) || !answer.reason?.trim()) throw new DriverError('reply', 'Failure disposition requires a typed decision and reason.');
   if (answer.decision === 'manual-complete') return manualComplete(state, answer);
   if (answer.decision === 'red-ruling') return redRuling(state, answer);
   if (answer.decision === 'retry') return retryFailure(state, answer);
@@ -423,7 +423,7 @@ function resolveFailure(state, answer) {
   if (answer.decision === 'revert-attributable') {
     const taskStart = data.taskStart?.entries ?? data.baselineSnapshot.entries;
     const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
-    if (!attribution.allowed) throw new Error(`Reversion refused: ${attribution.reason}`);
+    if (!attribution.allowed) throw new DriverError('reply', `Reversion refused: ${attribution.reason}`);
     if (indexFingerprint(state.repoRoot).digest !== data.indexStart) throw new Error('Index changed after task start; manual attribution is required before reversion.');
     for (const file of attribution.paths) {
       const entry = data.preEntries?.find(item => item.path === file);
@@ -494,7 +494,7 @@ function checkLocus(state, entry, defects) {
 /** Accepts a driver-verified RED exception, records canonical RED, and continues to production. */
 function redRuling(state, answer) {
   const data = state.ordinary;
-  if (!redRulingOffered(state)) throw new Error('red-ruling applies only at the RED verification gate before RED validates.');
+  if (!redRulingOffered(state)) throw new DriverError('reply', 'red-ruling applies only at the RED verification gate before RED validates.');
   const entries = Array.isArray(answer.rulings) ? answer.rulings : [];
   const defects = [];
   if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) defects.push('The tree changed after the failure; a ruling applies to the unchanged tree only.');
@@ -522,7 +522,7 @@ function redRuling(state, answer) {
   // A resumed run whose tests already exist changes nothing in tests-only; out-of-scope changes still reject.
   if (!diffRepositoryState(data.taskStart, snapshot(state)).changed.length) answered.add('Tests-only mutation must change only classified approved test paths.');
   defects.push(...validateRed(state, data.envelope).filter(defect => !answered.has(defect)));
-  if (defects.length) throw new Error(`red-ruling rejected: ${defects.join(' ')}`);
+  if (defects.length) throw new DriverError('reply', `red-ruling rejected: ${defects.join(' ')}`);
   const exceptions = entries.map(entry => (entry.kind === 'carry-over' ? { criterionId: entry.criterionId, kind: entry.kind, runId: entry.runId }
     : { criterionId: entry.criterionId, kind: entry.kind, locus: entry.locus.trim(), reason: entry.reason.trim() }));
   // Resolving the failure first keeps a resume after acceptance from reopening it.
@@ -543,7 +543,7 @@ function retryable(state) {
 /** Continues the open segment: the ruling travels to the next writer as context, so a fixable failure needs no new run. */
 function retryFailure(state, answer) {
   const data = state.ordinary;
-  if (!retryable(state)) throw new Error('retry needs a dispatched task with an attempt left, before implementation completes; choose another disposition.');
+  if (!retryable(state)) throw new DriverError('reply', 'retry needs a dispatched task with an attempt left, before implementation completes; choose another disposition.');
   const reason = data.failure.reason, context = (typeof answer.context === 'string' && answer.context.trim()) || answer.reason.trim();
   ruling(state, 'failure-disposition', 'retry', answer.reason);
   delete data.failure;
@@ -563,8 +563,8 @@ function retryFailure(state, answer) {
 /** Replaces host evidence the user ruled wrong; the tree must still match the failure snapshot. */
 function reverify(state, answer) {
   const data = state.ordinary, verification = data.failure.verification;
-  if (!verification) throw new Error('re-verify applies only to a failure raised by host verification evidence.');
-  if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) throw new Error('The tree changed after the failure; re-verify reruns unchanged work only.');
+  if (!verification) throw new DriverError('reply', 're-verify applies only to a failure raised by host verification evidence.');
+  if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) throw new DriverError('reply', 'The tree changed after the failure; re-verify reruns unchanged work only.');
   ruling(state, 'failure-disposition', 're-verify', answer.reason);
   delete data.failure;
   // Merged scoped/final records of the rerun gate's commands must not count as fresh.
@@ -579,7 +579,7 @@ function manualComplete(state, answer) {
   const evidence = Array.isArray(answer.criterionEvidence) ? answer.criterionEvidence : [];
   const missing = data.criteria.filter(criterion => !evidence.some(item => item?.criterionId === criterion.id && typeof item.evidence === 'string' && item.evidence.trim()));
   if (!answer.reviewer?.trim() || missing.length || (data.redCriteria.length && !answer.redEvidence?.trim())) {
-    throw new Error(`manual-complete requires reviewer, reason, criterionEvidence for every criterion${missing.length ? ` (missing ${missing.map(item => item.id).join(', ')})` : ''}, and redEvidence when red criteria exist.`);
+    throw new DriverError('reply', `manual-complete requires reviewer, reason, criterionEvidence for every criterion${missing.length ? ` (missing ${missing.map(item => item.id).join(', ')})` : ''}, and redEvidence when red criteria exist.`);
   }
   const criterionEvidence = data.criteria.map(criterion => ({ criterionId: criterion.id, evidence: evidence.find(item => item.criterionId === criterion.id).evidence.trim() }));
   append(state, 'manual-complete', { reviewer: answer.reviewer.trim(), reason: answer.reason.trim(), redEvidence: data.redCriteria.length ? answer.redEvidence.trim() : null, criterionEvidence, fingerprint: repositoryBaseline(state) });

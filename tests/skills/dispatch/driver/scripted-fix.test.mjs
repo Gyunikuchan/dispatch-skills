@@ -120,7 +120,7 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     });
     const errored = run.trace.filter((a) => a.action === 'adjudicate' && a.error);
     assert.ok(errored.length >= 1, 'first reply without fix is rejected');
-    assert.match(errored[0].error, /fix\.affectedPaths/);
+    assert.match(errored[0].error.message, /fix\.affectedPaths/);
     assert.equal(run.done.outcome, 'complete');
   });
 

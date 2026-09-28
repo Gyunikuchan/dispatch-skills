@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { position } from './state.mjs';
+
 // SECTION: Action contracts
 
 const SCHEMA_DIR = path.resolve(
@@ -111,10 +113,43 @@ export function validateReply(action, reply) {
 /** Builds one action object; payload keys follow the fixed envelope keys. */
 export function emitAction(state, action, payload = {}, guidance = []) {
   if (!ACTIONS.includes(action)) throw new Error(`Unknown driver action "${action}".`);
-  const envelope = { ...payload, v: 1, action, stateFile: state.stateFile, guidance: [...guidance] };
+  const envelope = { ...payload, v: 1, action, stateFile: state.stateFile, guidance: [...guidance], position: position(state) };
   const errors = validateAgainstSchema(loadSchema(action), envelope);
   if (errors.length) throw new Error(`Invalid ${action} action: ${errors.join('; ')}`);
   return envelope;
+}
+
+// SECTION: Typed errors
+
+export const ERROR_KINDS = Object.freeze(['reply', 'state', 'fault']);
+
+/** A classified driver failure: `reply` rejects the host reply, `state` names a recovery step in `next`. */
+export class DriverError extends Error {
+  /** @param {'reply'|'state'|'fault'} kind @param {string} message @param {string} [next] */
+  constructor(kind, message, next) {
+    super(message);
+    this.name = 'DriverError';
+    this.kind = kind;
+    this.next = next;
+  }
+}
+
+/**
+ * Classifies any thrown value as `{kind, message, next?}`; strings are reply rejections and untyped
+ * errors are faults. `UsageError` matches by name because importing index.mjs would cycle.
+ * @param {unknown} err
+ * @returns {{ kind: 'reply'|'state'|'fault', message: string, next?: string }}
+ */
+export function toError(err) {
+  if (typeof err === 'string') return { kind: 'reply', message: err };
+  const e = /** @type {any} */ (err);
+  const message = String(e?.message ?? e ?? 'unknown error').trim() || 'unknown error';
+  if (e instanceof DriverError && ERROR_KINDS.includes(e.kind)) {
+    if (e.kind === 'state' && !e.next) return { kind: 'fault', message };
+    return e.next ? { kind: e.kind, message, next: e.next } : { kind: e.kind, message };
+  }
+  if (e?.name === 'UsageError') return { kind: 'reply', message };
+  return { kind: 'fault', message };
 }
 
 // SECTION: sanitization

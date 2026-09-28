@@ -101,6 +101,6 @@ export function assertAccepted(result) {
 export function assertRejected(result, pattern) {
   assert.ok(result.questions.length >= 2, `failure-disposition re-asked after rejection (${result.questions.length})`);
   const retry = result.questions[1];
-  assert.match(retry.error ?? '', pattern);
+  assert.match(retry.error?.message ?? '', pattern);
   assert.equal(result.trace.some(action => action.action === 'delegate-write' && action.fields.stage === 'production'), false);
 }

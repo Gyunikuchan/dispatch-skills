@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { loadDispatchConfig, resolveLevelScalar, resolveReadDelegates } from '../lib/config.mjs';
 import { buildPinsWave, resolveConfiguredTargets } from '../dispatch.mjs';
 import { createTempFile } from '../review/preparation.mjs';
-import { NATIVE_AGENT_TYPES, emitAction } from './actions.mjs';
+import { NATIVE_AGENT_TYPES, emitAction, toError } from './actions.mjs';
 import { createRunState, finish, gitRoot, reemit, runFile, writeRunSidecar } from './state.mjs';
 import { sessionArgs } from '../lib/session-temp.mjs';
 
@@ -85,7 +85,7 @@ export async function startAsk({ invocation, cwd, resumeCommand }) {
     ...(invocation.orchestratorModel ? ['--orchestrator-model', invocation.orchestratorModel] : []),
     '--output-file', outputFile.path,
   ];
-  state.wave = { argv, outputPath: outputFile.path, promptPath: promptFile.path,
+  state.wave = { type: 'ask', round: 1, argv, outputPath: outputFile.path, promptPath: promptFile.path,
     selectedTargets: targets.map(({ roundId, platform, candidateIndex }) => ({
       sourceKey: `${roundId}:${platform}:${candidateIndex}`, platform, candidateIndex,
     })),
@@ -98,7 +98,7 @@ function launchAction(state, error) {
     argv: state.wave.argv,
     wave: { type: 'ask', round: 1 },
     selectedTargets: state.wave.selectedTargets,
-    ...(error ? { error } : {}),
+    ...(error ? { error: toError(error) } : {}),
   }, ['Run argv as one background command, wait for it to exit, then call --next with no --input.']);
 }
 

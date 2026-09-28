@@ -85,7 +85,7 @@ describe('manual-complete recovery decision (SC5)', () => {
       verify: (action) => realVerify(fixture.repo, action),
       askUser(action) {
         if (action.question !== 'failure-disposition') return baseAskUser(action);
-        if (action.error) { errors.push(action.error); return { answer: { decision: 'keep-for-repair', reason: 'Evidence incomplete.' } }; }
+        if (action.error) { errors.push(action.error.message); return { answer: { decision: 'keep-for-repair', reason: 'Evidence incomplete.' } }; }
         return { answer: { decision: 'manual-complete', reason: 'Close it.', reviewer: 'host-orchestrator', redEvidence: 'observed', criterionEvidence: [] } };
       },
     } });

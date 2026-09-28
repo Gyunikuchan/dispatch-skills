@@ -12,7 +12,7 @@ import {
   stripIdentifierSpans,
   checkRedQuality,
 } from '../verification/red-quality.mjs';
-import { emitAction } from './actions.mjs';
+import { DriverError, emitAction } from './actions.mjs';
 import { source } from './implement-state.mjs';
 
 // SECTION: Verification policy
@@ -214,16 +214,16 @@ export function verificationAction(state) {
 }
 export function acceptVerification(state, reply) {
   const data = state.ordinary, pending = data.verification;
-  if (reply?.results) throw new Error('This gate runs on the driver: run the verify argv, then call --next without results.');
+  if (reply?.results) throw new DriverError('reply', 'This gate runs on the driver: run the verify argv, then call --next without results.');
   let file;
-  try { file = restoreSessionPaths(JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8'))); } catch { throw new Error('Verification results are missing: run the verify argv, wait for it to exit, then call --next.'); }
-  if (file.token !== pending.token || file.purpose !== pending.purpose) throw new Error('Verification results belong to another gate; rerun the verify argv.');
+  try { file = restoreSessionPaths(JSON.parse(fs.readFileSync(pending.resultsPath, 'utf8'))); } catch { throw new DriverError('state', 'Verification results are missing.', 'run the verify argv, wait for it to exit, then call --next.'); }
+  if (file.token !== pending.token || file.purpose !== pending.purpose) throw new DriverError('state', 'Verification results belong to another gate.', 'rerun the verify argv.');
   // Edits after the runner finished postdate every result, so they mark the last one changed.
   const drift = diffRepositoryState(file.final, snapshot(state)).changed;
   const criterionEvidence = reply?.criterionEvidence ?? [];
   const records = pending.commands.map((command) => {
     const result = file.results.find(item => item.command === command);
-    if (!result) throw new Error(`Verification results lack ${command}; rerun the verify argv.`);
+    if (!result) throw new DriverError('state', `Verification results lack ${command}.`, 'rerun the verify argv.');
     const mapped = commandCriteria(data, command).map(item => item.id);
     return {
       command, ...(result.ran !== command ? { ran: result.ran } : {}), exitStatus: result.exit, ...(result.counts ?? {}),
@@ -242,7 +242,7 @@ export function acceptVerification(state, reply) {
       if (!evidence && carriers.every(record => record.exitStatus !== 0)) continue;
       if (!evidence || evidence.evidenceClass !== criterion.evidence || !evidence.reviewer?.trim() || !evidence.scenario?.trim() || !evidence.observableResult?.trim() || !evidence.limitations?.trim()
         || !carriers.some(record => evidence.inspectedRevision === record.scopeHash && evidence.mutationEpoch === record.mutationEpoch)) {
-        throw new Error(`Completion requires fresh structured ${criterion.evidence} evidence for ${criterion.id}.`);
+        throw new DriverError('reply', `Completion requires fresh structured ${criterion.evidence} evidence for ${criterion.id}.`);
       }
     }
   }

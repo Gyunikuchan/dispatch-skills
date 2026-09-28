@@ -22,7 +22,7 @@ import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-fl
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
 import { integrityDiagnostic, regenerateOwnedHashes, skillDirInRepo } from '../lib/integrity.mjs';
-import { NATIVE_AGENT_TYPES, emitAction, loadSchema, sanitizeReplyText, validateAgainstSchema } from './actions.mjs';
+import { DriverError, NATIVE_AGENT_TYPES, emitAction, loadSchema, toError, sanitizeReplyText, validateAgainstSchema } from './actions.mjs';
 import {
   FOLLOW_UPS,
   LOG_HEADING,
@@ -436,7 +436,7 @@ function launchReplyAction(state, error) {
   const action = {
     ...state.pending,
     replyOnly: true,
-    error,
+    error: toError(error),
     guidance: ['The wave is complete; do not rerun argv. Correct only the earlyFallbacks reply and call --next again.'],
   };
   REEMITTED.add(action);
@@ -462,7 +462,7 @@ function launchAction(state, error) {
     ...(state.wave.slotsPath ? { slotsPath: state.wave.slotsPath } : {}),
     ...(state.wave.keys ? { keys: state.wave.keys } : {}),
     ...(state.wave.earlyFallbacks.length > 0 ? { earlyFallbacks: state.wave.earlyFallbacks } : {}),
-    ...(error ? { error } : {}),
+    ...(error ? { error: toError(error) } : {}),
   }, guidance);
 }
 
@@ -480,7 +480,7 @@ function onLaunch(state, reply) {
     if (integrity) return done(state, 'failed', integrity, { command: state.resumeCommand });
     if (!state.wave.retried) {
       state.wave.retried = true;
-      return launchAction(state, 'The wave envelope is missing: relaunch argv and wait for the process to exit before --next.');
+      return launchAction(state, new DriverError('state', 'The wave envelope is missing.', 'relaunch argv and wait for the process to exit before --next.'));
     }
     return done(state, 'failed', 'The wave envelope is missing after one relaunch.', { command: state.resumeCommand });
   }

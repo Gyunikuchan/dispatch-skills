@@ -86,7 +86,7 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
       askUser(action) {
         if (action.question !== 'write-scope') return base.askUser(action);
         asked.push(action.items);
-        if (action.error) { error = action.error; return { answer: { approve: ['stray.md'], reason: 'Keep it after all.' } }; }
+        if (action.error) { error = action.error.message; return { answer: { approve: ['stray.md'], reason: 'Keep it after all.' } }; }
         return { answer: { revert: ['stray.md'], reason: 'Out of scope.' } };
       },
       delegateWrite(action) {

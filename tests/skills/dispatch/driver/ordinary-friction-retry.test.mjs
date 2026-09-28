@@ -49,7 +49,7 @@ describe('ordinary driver friction relief: retries', () => {
         if (action.question === 'write-scope') return { answer: { decision: 'stop', reason: 'Unexpected edit.' } };
         if (action.question !== 'failure-disposition') return base.askUser(action);
         offered ??= action.text;
-        if (action.error) { error = action.error; return base.askUser(action); }
+        if (action.error) { error = action.error.message; return base.askUser(action); }
         return { answer: { decision: 're-verify', reason: 'Try again.' } };
       },
       delegateWrite: stray(fixture, 'stray.md'),

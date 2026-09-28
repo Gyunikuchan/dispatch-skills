@@ -13,7 +13,7 @@ import { evaluateConsensus } from '../review/consensus.mjs';
 import { showToplevel } from '../lib/git-root.mjs';
 import { safeRenameSync } from '../lib/platform.mjs';
 import { scanResolutionLog } from '../review/resolution-log.mjs';
-import { loadSchema, validateAgainstSchema } from './actions.mjs';
+import { loadSchema, toError, validateAgainstSchema } from './actions.mjs';
 import { bindRun, bindSession, handoffCurrentSession, isPublishedSessionDir, isWorkspaceSessionDir, openSession, pruneSessions, runStatePath, SESSION_ENV, sessionDir, storeSessionPaths, restoreSessionPaths } from '../lib/session-temp.mjs';
 
 // SECTION: State storage
@@ -316,7 +316,25 @@ function rebaseSessionRoot(value, from, to) {
 }
 
 export function reemit(state, error) {
-  const action = { ...state.pending, error };
+  const action = { ...state.pending, error: toError(error) };
   REEMITTED.add(action);
   return action;
+}
+
+/**
+ * The run's position for every emitted action: a pure read that omits absent keys.
+ * @param {any} state
+ * @returns {{ flow: string, phase: string, step?: string, wave?: { type: string, round: number } }}
+ */
+export function position(state) {
+  const flow = String(state?.invocation?.verb ?? 'unknown');
+  const phase = state?.ordinary?.phase ?? (typeof state?.phase === 'string' ? state.phase : null) ?? (flow === 'ask' ? 'ask' : flow);
+  /** @type {any} */
+  const out = { flow, phase: String(phase) };
+  if (typeof state?.ordinary?.step === 'string' && state.ordinary.step) out.step = state.ordinary.step;
+  const wave = [state?.wave, state?.reviewState?.wave].find(item => item && typeof item.type === 'string' && Number.isInteger(item.round))
+    ?? (state?.adjudication && typeof state.adjudication.waveType === 'string' && Number.isInteger(state.adjudication.round)
+      ? { type: state.adjudication.waveType, round: state.adjudication.round } : null);
+  if (wave) out.wave = { type: wave.type, round: wave.round };
+  return out;
 }

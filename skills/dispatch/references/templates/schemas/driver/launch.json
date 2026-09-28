@@ -8,6 +8,7 @@
     "action",
     "stateFile",
     "guidance",
+    "position",
     "argv",
     "wave",
     "selectedTargets"
@@ -29,8 +30,82 @@
         "type": "string"
       }
     },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "flow",
+        "phase"
+      ],
+      "properties": {
+        "flow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "step": {
+          "type": "string",
+          "minLength": 1
+        },
+        "wave": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "round"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "round": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
     "error": {
-      "type": "string"
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "reply",
+            "state",
+            "fault"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "next": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "state"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "next"
+        ]
+      }
     },
     "argv": {
       "type": "array",

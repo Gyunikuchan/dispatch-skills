@@ -2,8 +2,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { requireToplevel } from '../lib/git-root.mjs';
-import { emitAction } from './actions.mjs';
-import { createRunState, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
+import { emitAction, toError } from './actions.mjs';
+import { createRunState, position, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { writeCheckpoint } from './review-phase.mjs';
 import { acceptPlan, authorPlan, beginReview, captureReviewBudget, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
@@ -145,7 +145,7 @@ async function afterFinalVerification(state) {
   if (!finishCodeReview(state, action)) {
     // A drifted checkpoint restarts a review wave inside the retained review.
     if (action.action !== 'done') data.step = 'code-review';
-    return { ...action, stateFile: state.stateFile };
+    return { ...action, stateFile: state.stateFile, position: position(state) };
   }
   delete state.reviewState;
   data.phase = 'handoff';
@@ -204,6 +204,6 @@ export async function advanceImplement(state, reply) {
   } catch (error) {
     // Invalid or stale host replies cannot advance the durable state machine or its artifacts.
     restoreArtifacts(artifacts);
-    return { ...state.pending, error: error.message };
+    return { ...state.pending, error: toError(error) };
   }
 }

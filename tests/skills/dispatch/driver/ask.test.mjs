@@ -70,7 +70,7 @@ describe('`--run ask` (SC4)', () => {
       },
     });
     assert.equal(attempts, 2);
-    assert.match(run.trace.find((a) => a.action === 'native-fallback' && a.error).error, /mappings are review-only/);
+    assert.match(run.trace.find((a) => a.action === 'native-fallback' && a.error).error.message, /mappings are review-only/);
   });
   it('emits launch, hops to native-fallback on a wave failure, then done with the collected claims', () => {
     const { fixture, repo } = setup();
@@ -359,7 +359,7 @@ describe('`--run ask` terminal branches', () => {
       if (action.action === 'native-fallback' && action.error && !reemitted) reemitted = action;
     });
     assert.ok(reemitted, 'the mismatch re-emits native-fallback');
-    assert.match(reemitted.error, /slot must be/);
+    assert.match(reemitted.error.message, /slot must be/);
     assert.equal(reemitted.descriptor.cascadePosition, 0, 'a mismatch does not advance the cascade');
     assert.equal(run.done.outcome, 'complete');
   });

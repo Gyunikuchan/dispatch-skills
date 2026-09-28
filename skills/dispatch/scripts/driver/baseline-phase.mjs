@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { lintPlan } from '../plan/lint.mjs';
+import { DriverError } from './actions.mjs';
 import { append, ask, ledgerSegment, pendingRows, refuse, relative, ruling, source } from './implement-state.mjs';
 import { documentTitle } from '../lib/summary-box.mjs';
 import { lintWalkthrough } from '../walkthrough/lint.mjs';
@@ -61,7 +62,7 @@ export function baselineDecision(state) {
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;
-  if (answer?.decision !== 'accept' || typeof answer.reason !== 'string' || !answer.reason.trim()) throw new Error('Baseline ruling requires {decision:"accept", reason}; fix-first returns to plan-review.');
+  if (answer?.decision !== 'accept' || typeof answer.reason !== 'string' || !answer.reason.trim()) throw new DriverError('reply', 'Baseline ruling requires {decision:"accept", reason}; fix-first returns to plan-review.');
   state.ordinary.baselineAccepted = { reason: answer.reason };
   return baselineDecision(state);
 }
@@ -76,10 +77,10 @@ export function autoApproval(state) {
 }
 export function approve(state, reply, actor = 'user') {
   const answer = reply.answer, data = state.ordinary;
-  if (answer?.decision !== 'approved' || answer.governingHash !== state.governingHash || !answer.reason?.trim()) throw new Error('Approval requires the current governingHash, decision approved, and reason.');
-  if (JSON.stringify(repositoryBaseline(state)) !== JSON.stringify(data.approvalSnapshot)) throw new Error('Repository drifted during approval; recapture baseline.');
+  if (answer?.decision !== 'approved' || answer.governingHash !== state.governingHash || !answer.reason?.trim()) throw new DriverError('reply', 'Approval requires the current governingHash, decision approved, and reason.');
+  if (JSON.stringify(repositoryBaseline(state)) !== JSON.stringify(data.approvalSnapshot)) throw new DriverError('state', 'Repository drifted during approval.', 'recapture baseline.');
   const redPaths = new Set(data.redCriteria.flatMap(item => item.paths));
-  if (!Array.isArray(answer.testPaths) || (data.redCriteria.length > 0 && !answer.testPaths.length) || answer.testPaths.some(file => !data.approvedPaths.includes(file) || !redPaths.has(file))) throw new Error('Approval must classify tests-only paths mapped to red criteria; nonempty paths are required only for red criteria.');
+  if (!Array.isArray(answer.testPaths) || (data.redCriteria.length > 0 && !answer.testPaths.length) || answer.testPaths.some(file => !data.approvedPaths.includes(file) || !redPaths.has(file))) throw new DriverError('reply', 'Approval must classify tests-only paths mapped to red criteria; nonempty paths are required only for red criteria.');
   data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
   data.testPaths = data.testsOnlyPaths;
   data.baselineSnapshot = snapshot(state);

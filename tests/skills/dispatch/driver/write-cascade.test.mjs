@@ -115,8 +115,8 @@ describe('delegate-write envelope path', () => {
     const first = driveToFirstWrite(fx);
     const retried = next(fx.fixture, fx.repo, first.stateFile, { envelopePath: first.fields.expectedEnvelopePath });
     assert.equal(retried.action, 'delegate-write');
-    assert.match(retried.error, /Expected envelope file is missing/);
-    assert.match(retried.error, /Repair the envelope at/);
+    assert.match(retried.error.message, /Expected envelope file is missing/);
+    assert.match(retried.error.message, /Repair the envelope at/);
   });
 
   it('refuses malformed JSON at the exact path', () => {
@@ -125,7 +125,7 @@ describe('delegate-write envelope path', () => {
     fs.writeFileSync(first.fields.expectedEnvelopePath, '{broken');
     const retried = next(fx.fixture, fx.repo, first.stateFile, { envelopePath: first.fields.expectedEnvelopePath });
     assert.equal(retried.action, 'delegate-write');
-    assert.match(retried.error, /Expected envelope file is invalid/);
+    assert.match(retried.error.message, /Expected envelope file is invalid/);
   });
 
   it('routes a structurally valid RED envelope with missing admission evidence to repair', () => {
@@ -136,8 +136,8 @@ describe('delegate-write envelope path', () => {
     assert.equal(selfCheck.status, 1, selfCheck.stderr);
     assert.equal(JSON.parse(selfCheck.stdout).ok, false);
     const repaired = next(fx.fixture, fx.repo, first.stateFile, { envelopePath: first.fields.expectedEnvelopePath });
-    assert.equal(repaired.action, 'delegate-write', repaired.error);
-    assert.ok(readFixtureState(repaired.stateFile).ordinary.testsOnlyRepair, repaired.error);
+    assert.equal(repaired.action, 'delegate-write', repaired.error?.message);
+    assert.ok(readFixtureState(repaired.stateFile).ordinary.testsOnlyRepair, repaired.error?.message);
     assert.match(repaired.guidance.join(' '), /Previous write outcome/);
   });
 
@@ -188,7 +188,7 @@ describe('delegate-write envelope path', () => {
     save(first.fields.expectedEnvelopePath);
     const retried = next(fx.fixture, fx.repo, second.stateFile, { envelopePath: first.fields.expectedEnvelopePath });
     assert.equal(retried.action, 'delegate-write');
-    assert.match(retried.error, /stale envelope path/);
+    assert.match(retried.error.message, /stale envelope path/);
   });
 
   it('rejects a foreign path even when it names a valid file in the session', () => {
@@ -198,7 +198,7 @@ describe('delegate-write envelope path', () => {
     save(foreign);
     const retried = next(fx.fixture, fx.repo, first.stateFile, { envelopePath: foreign });
     assert.equal(retried.action, 'delegate-write');
-    assert.match(retried.error, /foreign envelope path/);
+    assert.match(retried.error.message, /foreign envelope path/);
   });
 });
 
@@ -212,8 +212,8 @@ describe('write cascade advances on failed without consuming attempt (SC3)', () 
 
     const second = next(fixture.fixture, fixture.repo, first.stateFile, { failed: { kind: 'quota', reason: 'Transient provider failure.' } });
 
-    assert.equal(second.action, 'delegate-write', second.error);
-    assert.equal(second.error, undefined, second.error);
+    assert.equal(second.action, 'delegate-write', second.error?.message);
+    assert.equal(second.error, undefined, second.error?.message);
     assert.equal(second.fields.model, 'second-model');
     assert.equal(second.fields.cascadePosition, 1);
     assert.equal(second.fields.attempt, first.fields.attempt, 'a transport hop must not consume an implementation attempt');
@@ -231,7 +231,7 @@ describe('write cascade advances on failed without consuming attempt (SC3)', () 
 
     const second = next(fixture.fixture, fixture.repo, first.stateFile, { failed: { kind: 'quota', reason: 'Transient provider failure.' } });
 
-    assert.equal(second.action, 'delegate-write', second.error);
+    assert.equal(second.action, 'delegate-write', second.error?.message);
     assert.ok(second.fields.restore, 'restore must be present when the partial diff leaves the approved paths');
     assert.ok(JSON.stringify(second.fields.restore).includes('src/rogue.js'));
   });
@@ -249,7 +249,7 @@ describe('write cascade advances on failed without consuming attempt (SC3)', () 
     const fixture = setup();
     const first = driveToFirstWrite(fixture);
     const second = next(fixture.fixture, fixture.repo, first.stateFile, { failed: { kind: 'quota', reason: 'Transient provider failure 1.' } });
-    assert.equal(second.action, 'delegate-write', second.error);
+    assert.equal(second.action, 'delegate-write', second.error?.message);
     const third = next(fixture.fixture, fixture.repo, second.stateFile, { failed: { kind: 'quota', reason: 'Transient provider failure 2.' } });
     assert.equal(third.action, 'done', JSON.stringify(third));
     const text = JSON.stringify(third);

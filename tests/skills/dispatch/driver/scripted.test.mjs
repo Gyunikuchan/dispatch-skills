@@ -142,7 +142,7 @@ describe('scripted review paths (SC5)', () => {
     const repeated = parseAction(invalid.stdout);
     assert.equal(repeated.action, 'ask-user');
     assert.equal(repeated.question, 'inputs');
-    assert.match(repeated.error, /extend is only available at the round cap/);
+    assert.match(repeated.error.message, /extend is only available at the round cap/);
     assert.equal(JSON.parse(fs.readFileSync(pending.stateFile, 'utf8')).pending.question, 'inputs');
   });
 
@@ -824,7 +824,7 @@ describe('scripted review paths (SC5)', () => {
         },
       },
     });
-    assert.match(launches(run.trace)[1].error, /failed-slot identity/);
+    assert.match(launches(run.trace)[1].error.message, /failed-slot identity/);
     assert.equal(run.argvLog.filter((argv) => argv.includes('--batch-file')).length, 1);
     assert.equal(run.done.outcome, 'complete');
   });
@@ -890,7 +890,7 @@ describe('scripted review paths (SC5)', () => {
     });
     const fallbacks = run.trace.filter((action) => action.action === 'native-fallback');
     assert.equal(fallbacks.length, 2);
-    assert.match(fallbacks[1].error, /must match the descriptor exactly/);
+    assert.match(fallbacks[1].error.message, /must match the descriptor exactly/);
     assert.equal(run.done.outcome, 'complete');
   });
 
@@ -1028,7 +1028,7 @@ describe('scripted review paths (SC5)', () => {
     });
     assert.deepEqual(actions(run.trace), ['launch', 'launch', 'done']);
     assert.equal(run.trace[0].error, undefined);
-    assert.equal(typeof run.trace[1].error, 'string');
+    assert.equal(typeof run.trace[1].error.message, 'string');
     assert.deepEqual(run.trace[1].argv, run.trace[0].argv, 'the same wave is relaunched');
     assert.equal(run.done.outcome, 'failed');
     assert.match(run.done.command, /--run review/);

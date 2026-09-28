@@ -8,7 +8,7 @@ import { buildScratchPaths, resolveLedgerPath, sanitizeSlug } from '../artifacts
 import { runStatePath } from '../lib/session-temp.mjs';
 import { semanticSectionHashes, writeArtifactMetadata } from '../review/preparation.mjs';
 import { updateExecutionStatus } from '../design/status.mjs';
-import { emitAction } from './actions.mjs';
+import { DriverError, emitAction } from './actions.mjs';
 import { writeRunSidecar } from './state.mjs';
 import { beginReview, captureReviewBudget, continueReview } from './plan-phase.mjs';
 import { repositoryBaseline } from './verification.mjs';
@@ -65,7 +65,7 @@ export async function advanceDesign(state, reply) {
     return emitAction(state, 'ask-user', { question: 'approval', text: 'Approve this settled technical design at its current revision.', items: [{ governingHash: state.governingHash }] }, ['Relay the question; answer with {"answer": {"decision": "approved", "governingHash": "<displayed hash>"}}.']);
   }
   if (state.ordinary.step === 'design-author') {
-    if (path.resolve(state.repoRoot, reply.path) !== state.designPath) throw new Error('Author reply must name the requested canonical design.');
+    if (path.resolve(state.repoRoot, reply.path) !== state.designPath) throw new DriverError('reply', 'Author reply must name the requested canonical design.');
     const source = fs.readFileSync(state.designPath, 'utf8');
     const hash = governingHash(source, { kind: 'design' });
     if (hash.status !== 'ok') throw new Error(hash.diagnostic);
@@ -75,7 +75,7 @@ export async function advanceDesign(state, reply) {
   }
   if (state.ordinary.step === 'design-approval') {
     const answer = reply.answer ?? {};
-    if (answer.decision !== 'approved' || answer.governingHash !== state.governingHash) throw new Error('Design approval must bind the current governingHash.');
+    if (answer.decision !== 'approved' || answer.governingHash !== state.governingHash) throw new DriverError('reply', 'Design approval must bind the current governingHash.');
     const snapshot = semanticSectionHashes(fs.readFileSync(state.designPath, 'utf8'));
     const now = new Date();
     const metadata = { schemaVersion: 1, kind: 'design', slug: designSlug(state.designPath), invocationId: crypto.randomUUID(), contentHash: snapshot.contentHash, sectionHashes: snapshot.sectionHashes, reviewedAt: now.toISOString(), approvedContentHash: state.governingHash, approvedAt: now.toISOString() };

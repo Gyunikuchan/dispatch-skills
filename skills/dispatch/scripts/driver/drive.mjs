@@ -23,6 +23,8 @@ const elapsed = (start) => {
 };
 
 function mechanical(action) {
+  // Errors need the host before work resumes, except a state-kind launch re-emit (missing wave envelope), whose recovery is the relaunch.
+  if (action.error && !(action.action === 'launch' && action.error.kind === 'state')) return false;
   if (action.action === 'launch') return !action.replyOnly && !action.earlyFallbacks?.length;
   return action.action === 'verify' && Array.isArray(action.argv);
 }
@@ -80,7 +82,7 @@ export async function drive({ state: stateFile, input }, { advance, stderr }) {
     }
     const next = await advance(action.stateFile, undefined);
     // The same gate failing twice is not transient; hand it to the host.
-    if (next.error && action.error && next.action === action.action) return next;
+    if (next.error && action.error && next.action === action.action && next.error.kind === action.error.kind) return next;
     action = next;
   }
   return action;

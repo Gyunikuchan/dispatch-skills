@@ -15,7 +15,7 @@ import { CLASSIFIABLE_LEVELS, LEVELS, assertClassifiableLevel } from '../lib/con
 import { KIND_NAMES } from '../review/kinds.mjs';
 import { getCurrentBranch, parseIncrementArtifactPath, resolveSlug, sanitizeSlug } from '../artifacts/resolve-paths.mjs';
 import { bindWorkflowSession, openSession } from '../lib/session-temp.mjs';
-import { validateReply } from './actions.mjs';
+import { DriverError, toError, validateReply } from './actions.mjs';
 import { advanceReview, startReview } from './review-phase.mjs';
 import { advanceImplement, startImplement } from './implement-phase.mjs';
 import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs';
@@ -61,10 +61,12 @@ export const DRIVER_HELP = `Driver (script-driven phases; each call prints one J
   -- <argument>               Artifact path, Git range, or the ask question
 `;
 
-class UsageError extends Error {}
+// Named so toError classifies it as `reply` without importing this module.
+class UsageError extends Error { name = 'UsageError'; }
 
-function parseDriverArgs(args) {
-  const out = { fix: false, next: false, verbose: false, argument: null };
+/** Fills `out` as it parses, so a later failure still exposes the flags consumed before it. */
+function parseDriverArgs(args, out = /** @type {any} */ ({})) {
+  Object.assign(out, { fix: false, next: false, verbose: false, argument: null });
   for (let index = 0; index < args.length; index++) {
     const raw = args[index];
     if (raw === '--') {
@@ -211,7 +213,7 @@ async function next(parsed) {
     fd = fs.openSync(lock, 'wx', 0o600);
     fs.writeFileSync(fd, `${process.pid}\n`);
   } catch (error) {
-    if (error.code === 'EEXIST') throw new UsageError(`Driver advance lock exists at ${lock}; verify no process owns it, then remove the stale lock and resume with --next.`);
+    if (error.code === 'EEXIST') throw new DriverError('state', `Driver advance lock exists at ${lock}.`, 'verify no process owns it, then remove the stale lock and resume with --next.');
     throw error;
   }
   try { return await advanceLocked(parsed); }
@@ -223,9 +225,9 @@ async function advanceLocked(parsed) {
     state = readRunState(parsed.state);
   } catch (err) {
     const invocation = readRunSidecar(parsed.state);
-    throw new UsageError(invocation
-      ? `${err.message} Resume the run with: ${resumeCommand(invocation)}`
-      : err.message);
+    if (!invocation && err?.code === 'STATE_UNREADABLE') throw new DriverError('state', err.message, "check that --state names this run's state.json, or start a new run with --run.");
+    if (!invocation) throw err;
+    throw new DriverError('state', err.message, `Resume the run with: ${resumeCommand(invocation)}`);
   }
   const expected = state.pending;
   if (!expected || expected.action === 'done') throw new UsageError('This run has finished; start a new one with --run.');
@@ -233,9 +235,9 @@ async function advanceLocked(parsed) {
   if (expected.action === 'delegate-write' && !expected.fields?.expectedEnvelopePath) throw new UsageError('Pending delegate-write has no expected envelope path.');
   const checked = validateReply(expected.action, reply);
   // An invalid reply re-emits the pending action unchanged; state does not advance.
-  if (!checked.ok) return { ...expected, error: checked.errors.join('; ') };
+  if (!checked.ok) return { ...expected, error: { kind: 'reply', message: checked.errors.join('; ') } };
   if (expected.action === 'ask-user' && (reply?.extend === true || reply?.stop === true) && !expected.options?.includes(reply.extend ? 'extend' : 'stop')) {
-    return { ...expected, error: `${reply.extend ? 'extend' : 'stop'} is only available at the round cap.` };
+    return { ...expected, error: { kind: 'reply', message: `${reply.extend ? 'extend' : 'stop'} is only available at the round cap.` } };
   }
   if (state.invocation?.verb === 'ask') return advanceAsk(state, checked.value);
   if (state.invocation?.verb === 'design') return advanceDesign(state, checked.value).then((action) => save(state, action));
@@ -253,8 +255,10 @@ async function advanceLocked(parsed) {
  * @param {{ cwd?: string, stdout?: NodeJS.WritableStream, stderr?: NodeJS.WritableStream }} [options]
  */
 export async function runDriver(argv, { cwd = process.cwd(), stdout = process.stdout, stderr = process.stderr } = {}) {
+  /** @type {any} */
+  const parsed = {};
   try {
-    const parsed = parseDriverArgs(argv);
+    parseDriverArgs(argv, parsed);
     let action;
     if (parsed.verify) {
       if (parsed.run !== undefined || parsed.next || parsed.input !== undefined) throw new UsageError('--verify takes only --state.');
@@ -307,7 +311,13 @@ export async function runDriver(argv, { cwd = process.cwd(), stdout = process.st
     stdout.write(`${JSON.stringify(action)}\n`);
     return 0;
   } catch (err) {
-    stderr.write(`[dispatch driver] ${err.message}\n`);
+    // Fatal exits keep stdout empty and leave the persisted pending action untouched.
+    const error = toError(err);
+    // parsed holds what the parser consumed before any failure, so --state is named only when it was parsed.
+    const stateArg = /** @type {any} */ (parsed).state;
+    // One line per fatal exit: replace only line breaks, so paths with repeated spaces stay exact.
+    const flat = (/** @type {unknown} */ text) => String(text).replace(/[\r\n\u2028\u2029]+/g, ' ');
+    stderr.write(`[dispatch driver] ${error.kind}: ${flat(error.message)}${error.next ? ` | next: ${flat(error.next)}` : ''}${stateArg ? ` | state: ${flat(stateArg)}` : ''}\n`);
     return 2;
   }
 }

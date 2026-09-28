@@ -6,7 +6,8 @@
  * `launch` argv, and each host verify command.
  *
  * Driver action contract pinned here (schema `v: 1`):
- * - every action: `{ v: 1, action, stateFile, guidance: string[], error? }`;
+ * - every action: `{ v: 1, action, stateFile, guidance: string[], position: { flow, phase, step?, wave? },
+ *   error?: { kind: 'reply'|'state'|'fault', message, next? } }`; `launch` and `adjudicate` carry `position.wave`;
  * - `launch`: `{ argv: string[], wave: { type: 'review'|'rebuttal'|'final', round }, keys? }`
  *   (`keys` lists the pending resolution-log keys on a rebuttal wave);
  * - `native-fallback`: `{ slot, promptPath, outputPath }`;
@@ -319,6 +320,16 @@ export function runDispatch(fixture, args, { cwd, results, live, env } = {}) {
   return { status: res.status, stdout, stderr: res.stderr ?? '' };
 }
 
+/** Asserts the run position every action carries; review and adjudication actions also name their wave. */
+export function assertActionPosition(action) {
+  assert.equal(typeof action.position?.flow, 'string', `${action.action} carries position.flow`);
+  assert.equal(typeof action.position?.phase, 'string', `${action.action} carries position.phase`);
+  if (['launch', 'adjudicate'].includes(action.action)) {
+    assert.equal(typeof action.position.wave?.type, 'string', `${action.action} carries position.wave.type`);
+    assert.equal(typeof action.position.wave?.round, 'number', `${action.action} carries position.wave.round`);
+  }
+}
+
 /** Asserts stdout is exactly one compact JSON line and returns the parsed action. */
 export function parseAction(stdout) {
   const lines = stdout.split(/\r?\n/).filter((line) => line.trim());
@@ -329,6 +340,7 @@ export function parseAction(stdout) {
   assert.ok(DRIVER_ACTIONS.includes(action.action), `unknown action ${action.action}`);
   assert.equal(typeof action.stateFile, 'string');
   assert.ok(Array.isArray(action.guidance), 'every action carries a guidance array');
+  assertActionPosition(action);
   return action;
 }
 
