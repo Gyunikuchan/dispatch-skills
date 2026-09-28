@@ -829,8 +829,8 @@ export function resolveOpencodeConfigSources({ projectRoot, homeDir, env }) {
     path.join(projectRoot, 'opencode.jsonc'),
     // Tier 5: .opencode directories — home first (broader), then project (more specific), then
     // an explicit OPENCODE_CONFIG_DIR override. Folded after tier 4 (project root), so a
-    // personal ~/.opencode/opencode.json(c) outranks a bare project-root opencode.json(c) for
-    // repos that haven't migrated to .opencode — an intentional consequence of the doc's own
+    // personal ~/.opencode/opencode.json(c) outranks a project-root opencode.json(c) that has no
+    // .opencode override — an intentional consequence of the doc's own
     // numbered order (project is tier 4, .opencode dirs are tier 5), not an ordering bug here.
     path.join(homeDir, '.opencode', 'opencode.json'),
     path.join(homeDir, '.opencode', 'opencode.jsonc'),

@@ -111,7 +111,7 @@ export function validateRequestAction(request) {
   return action;
 }
 
-/** Artifact slug from a dated design, plan, or walkthrough filename. */
+/** Artifact slug from a design, plan, or walkthrough filename. */
 export function slugFromPath(file) {
   const match = /(?:^|\/)artifacts\/([a-z0-9]+(?:-[a-z0-9]+)*?)(?:-design|-walkthrough)?\.md$/.exec(file.replace(/\\/g, '/'));
   return match?.[1] ?? null;

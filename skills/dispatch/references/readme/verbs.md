@@ -126,8 +126,8 @@ flowchart LR
 
 | Review | Typical argument | Example |
 |---|---|---|
-| Design | Design path | `/dispatch review design: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-billing-design.md` |
-| Plan | Plan path | `/dispatch review plan: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md` |
+| Design | Design path | `/dispatch review design: .scratch/dispatch-skills/<folder>/artifacts/billing-design.md` |
+| Plan | Plan path | `/dispatch review plan: .scratch/dispatch-skills/<folder>/artifacts/export.md` |
 | Code | Git range, or no argument | `/dispatch review code: main..HEAD` |
 
 Reviews verify cited evidence rather than accepting findings by vote. Findings are reconciled across rounds until settled or the configured cap needs your decision.
@@ -153,8 +153,8 @@ Use `implement` when you want dispatch to carry a requirement or existing artifa
 
 ```text
 /dispatch implement: Add CSV export to the transactions page
-/dispatch high implement: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md
-/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/2026-09-24-export-plan.md
+/dispatch high implement: .scratch/dispatch-skills/<folder>/artifacts/export.md
+/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/artifacts/export.md
 ```
 
 The complete delivery loop is shown below. A plain-language `implement` request starts at planning; design-driven work enters through its increment plan.
