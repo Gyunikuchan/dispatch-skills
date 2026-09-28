@@ -11,6 +11,7 @@ import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBas
 import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, scopedResult } from './verification.mjs';
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
+import { CANONICAL_PLAN } from '../ledger/ledger.mjs';
 
 // SECTION: Phase entry
 
@@ -23,7 +24,10 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
   const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });
   writeRunSidecar(state, invocation);
   const from = invocation.phases?.slice(5);
-  if (invocation.argument?.endsWith('.md')) {
+  if (invocation.verb === 'plan' && isSpecSource(invocation.argument)) {
+    // A plan run over a spec or design authors a new plan; only canonical ordinary plans bind for resume.
+    state.specPath = invocation.argument.replaceAll('\\', '/');
+  } else if (invocation.argument?.endsWith('.md')) {
     const fromCwd = path.resolve(cwd, invocation.argument);
     // A repository-relative resume argument run from a subdirectory resolves against the root.
     bindPlan(state, fs.existsSync(fromCwd) ? fromCwd : path.resolve(repoRoot, invocation.argument));
@@ -46,6 +50,7 @@ export async function startImplement({ invocation, cwd, resumeCommand, dispatchS
     return state.pending;
   }
 }
+const isSpecSource = (argument) => /\.md$/.test(argument ?? '') && (/-design\.md$/.test(argument) || !CANONICAL_PLAN.test(argument.replaceAll('\\', '/')));
 /** Once a plan is bound, the run resumes by its repository-relative path at its recorded phase. */
 function bindResume(state) {
   state.invocation = { ...state.invocation, argument: path.relative(state.repoRoot, state.planPath).split(path.sep).join('/'), phases: null };

@@ -36,12 +36,14 @@ export function requireSettledPlan(state) {
 }
 export function authorPlan(state) {
   state.ordinary.phase = 'plan';
+  const spec = state.specPath;
   if (!state.planPath) {
-    const slug = sanitizeSlug(state.invocation.argument).slice(0, 64) || 'implementation';
+    const seed = spec ? path.basename(spec, '.md').replace(/^\d{4}-\d{2}-\d{2}-/, '').replace(/-design$/, '') : state.invocation.argument;
+    const slug = sanitizeSlug(seed).slice(0, 64) || 'implementation';
     state.planPath = /** @type {Record<string, string>} */ (buildScratchPaths(slug)).plan;
   }
   return emitAction(state, 'author', { path: state.planPath, template: 'plan', defects: [] }, [
-    `Author the canonical plan for: ${state.invocation.argument}`,
+    spec ? `Author the canonical plan from the spec at ${spec}; its settled decisions are inputs, not open questions.` : `Author the canonical plan for: ${state.invocation.argument}`,
     'Use references/templates/plan.md. Map every success criterion to approved production and test paths and exact verification commands. Reply with the canonical path; do not modify production files.',
   ]);
 }
