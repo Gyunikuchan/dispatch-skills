@@ -47,7 +47,7 @@
   "scripts/artifacts/resolve-paths.mjs": "48147baff3835f86310cd4b9d978b5dc4fd413afadf5e38531282eb7dd3d935e",
   "scripts/design/amendment.mjs": "17fb2326c8a231d214babcdeb529fc0f5d16ebdb3bb3040326f4cb5e1ab94947",
   "scripts/design/graph.mjs": "1a5d96f9928165373aee6b3733478f196f99622848e2e773a04ecc4ab2558d0e",
-  "scripts/design/lint.mjs": "a580224e7570d6f3063ba8583db1ad0f45f357636e43ae0b1a591e57a68797c2",
+  "scripts/design/lint.mjs": "3163c56eb8d31eb946adb09b4de75ec159836d211433be5c87d18aba6dd114b6",
   "scripts/design/status.mjs": "2724b1172330cfeae737e98c6bee63ea38166b9dc3daca5cac3a1e66ab316867",
   "scripts/dispatch.mjs": "bbcf01becc4eaf33af5a17d227616913efd25743816f0e4b778d8cb11a98a80e",
   "scripts/driver/actions.mjs": "b805577db0e9dc8a0db18d70d9aa925e7fb4abc3a3ffc81f1b98cd01fcdf6d90",

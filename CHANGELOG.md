@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-09-30
+
+- Implementation runs can resolve unexpected stalls or localized test failures with fast hot fixes instead of heavy restart loops.
+- Reverting changes now requires explicit user confirmation, with automatic patch backups saved before any work is discarded.
+- Verification and reviews finish faster by skipping redundant checks when files have not changed and limiting re-reviews to applied must-fix items.
+- Autonomous review waves run more reliably in the background, recovering smoothly from interruptions without duplicating completed reviews.
+
 ## [0.6.0] - 2026-09-29
 
 - Plans, technical designs, and walkthroughs are easier to read and follow, with decisions from early discussions carried into reviews.
