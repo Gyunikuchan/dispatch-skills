@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
+- Plans, technical designs, and walkthroughs are easier to read and follow, with decisions from early discussions carried into reviews.
+- Review and implementation runs handle findings and interruptions more reliably while using less output and fewer tokens.
+- Codex can now contribute as a read-only delegate; native subagents are also available when a provider CLI cannot be used.
+- Work from each chat stays together in a movable artifact folder, making handoffs and follow-up work easier to manage.
+
 ## [0.5.0] - 2026-09-25
 
 - Unified delegation, planning, design, review, and implementation under the `dispatch` skill, while retaining familiar slash commands as compatibility aliases.
