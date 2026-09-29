@@ -65,6 +65,7 @@ import {
 import { normalizePin, parsePins, resolveFlow } from './lib/resolve-flow.mjs';
 import { isSessionPath, runId, consumeSessionFlag } from './lib/session-temp.mjs';
 import { runFile } from './lib/session-paths.mjs';
+import { readFailedSlots } from './driver/wave-process.mjs';
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const SKILL_DIR = path.resolve(path.dirname(currentFilePath), '..');
@@ -777,17 +778,6 @@ function slotLine(record, exit, scope) {
     output,
     ...downgradeFields(record),
   });
-}
-
-/** Reads a `--slots-file` NDJSON log and returns only the slots recorded as failed so far. */
-function readFailedSlots(file) {
-  let text;
-  try {
-    text = fs.readFileSync(file, 'utf8');
-  } catch {
-    return [];
-  }
-  return text.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line)).filter((record) => record.status !== 'ok');
 }
 
 // SECTION: Diagnostics and schemas

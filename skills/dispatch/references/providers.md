@@ -181,9 +181,8 @@ make no file edits.
 `outputPath` or its reply carries `failed`.
 
 For an orchestrated multi-dispatch review wave, the launch action precomputes same-platform
-fallback descriptors at `cascadePosition: 0` (the target's first model). After launch, run
-`node dispatch.mjs --slots <slotsPath>` once and inspect the failed slots it prints; start all
-matching failures as parallel native fallbacks while the wave continues, then never poll again.
+fallback descriptors at `cascadePosition: 0` (the target's first model). `--drive` watches the
+wave and returns the failed ones while it continues; start them as parallel native fallbacks.
 An omitted or empty early capture retries its slot post-wave at position 0; a confirmed mapping
 rejection resumes at position 1. A successful early capture is final. Targets without a same-platform
 fallback may use ordered reserves instead; use each reserve at most once per wave and record

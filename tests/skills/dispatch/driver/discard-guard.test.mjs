@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 
 const DRIVER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../skills/dispatch/scripts/driver');
-// Reviewed write/remove sites: walkthrough scaffold, artifact restore, temp/state files, lock files.
-const ALLOWED = new Set(['baseline-phase.mjs', 'implement-phase.mjs', 'implement-state.mjs', 'index.mjs', 'review-artifact.mjs', 'state.mjs', 'verification.mjs', 'verify-run.mjs']);
+// Reviewed write/remove sites: walkthrough scaffold, artifact restore, temp/state files, lock files, wave pid files.
+const ALLOWED = new Set(['baseline-phase.mjs', 'implement-phase.mjs', 'implement-state.mjs', 'index.mjs', 'review-artifact.mjs', 'state.mjs', 'verification.mjs', 'verify-run.mjs', 'wave-process.mjs']);
 const WRITE = /\b(?:rmSync|writeFileSync|chmodSync|unlinkSync)\(/;
 
 describe('discard guard', () => {

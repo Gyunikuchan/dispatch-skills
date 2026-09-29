@@ -494,6 +494,25 @@ function launchReplyAction(state, error) {
   return action;
 }
 
+const NATIVE_BRIEF = 'as a read-only native subagent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; tell it to Read promptPath in full and follow it, and write its final reply verbatim to outputPath.';
+const CAPTURE_RULE = 'Return only successful non-empty captures with exact descriptor metadata. Omit an unproductive launch so ordinary post-wave fallback can retry it.';
+const REBUTTAL_RULE = 'Delegates answer each key: CONFIRM accepts the rejection, REBUT keeps the finding live, INTENT-DISPUTE records a dispute.';
+const replyRule = (after, covering, command = 'call --next') => `After ${after} finish, ${command} once with {"earlyFallbacks":[...]} covering ${covering} (empty when none succeeded).`;
+
+/**
+ * Guidance for a launch `--drive` started and left running: the host launches only the native entries.
+ * @param {Record<string, any>} action the driver-run launch, already narrowed to the entries to launch
+ */
+export function runningWaveGuidance(action) {
+  const lists = [action.earlyFallbacks?.length && 'earlyFallbacks', action.nativeLaunches?.length && 'nativeLaunches'].filter(Boolean);
+  return [
+    `The driver started argv and the wave is still running; never run argv. In one parallel tool-call round, launch every ${lists.join(' and ')} entry ${NATIVE_BRIEF}`,
+    CAPTURE_RULE,
+    `${replyRule('the subagents', lists.join(' and '), 'run --drive')} The driver waits for the wave itself.`,
+    ...(action.wave.type === 'rebuttal' ? [REBUTTAL_RULE] : []),
+  ];
+}
+
 function launchAction(state, error) {
   const early = state.wave.earlyFallbacks.length > 0;
   const native = (state.wave.nativeLaunches ?? []).length > 0;
@@ -501,15 +520,13 @@ function launchAction(state, error) {
     ? [
       ...(early ? ['Run argv as one background command. Once, run `node dispatch.mjs --slots <slotsPath>` after launch and inspect the failed slots it prints; do not poll again.']
         : state.wave.argv ? ['Run argv as one background command.'] : []),
-      ...(native ? [`${state.wave.argv ? 'In the same tool-call round as argv, launch' : 'Launch'} every nativeLaunches entry as a read-only native subagent using descriptor.agentType, descriptor.model, and descriptor.reasoningEffort exactly; tell it to Read promptPath in full and follow it, and write its final reply verbatim to outputPath.`] : []),
+      ...(native ? [`${state.wave.argv ? 'In the same tool-call round as argv, launch' : 'Launch'} every nativeLaunches entry ${NATIVE_BRIEF}`] : []),
       ...(early ? ['For every failed slot matching earlyFallbacks, immediately launch its native fallback in one parallel tool-call round while the wave continues.'] : []),
-      'Return only successful non-empty captures with exact descriptor metadata. Omit an unproductive launch so ordinary post-wave fallback can retry it.',
-      `After ${state.wave.argv ? 'the wave and ' : ''}launched subagents finish, call --next once with {"earlyFallbacks":[...]} covering ${[early && 'earlyFallbacks', native && 'nativeLaunches'].filter(Boolean).join(' and ')} (empty when none succeeded).`,
+      CAPTURE_RULE,
+      replyRule(`${state.wave.argv ? 'the wave and ' : ''}launched subagents`, [early && 'earlyFallbacks', native && 'nativeLaunches'].filter(Boolean).join(' and ')),
     ]
     : ['Run argv as one background command, wait for it to exit, then call --next with no --input.'];
-  if (state.wave.type === 'rebuttal') {
-    guidance.push('Delegates answer each key: CONFIRM accepts the rejection, REBUT keeps the finding live, INTENT-DISPUTE records a dispute.');
-  }
+  if (state.wave.type === 'rebuttal') guidance.push(REBUTTAL_RULE);
   return emitAction(state, 'launch', {
     ...(state.wave.argv ? { argv: state.wave.argv } : {}),
     wave: { type: state.wave.type, round: state.wave.round },

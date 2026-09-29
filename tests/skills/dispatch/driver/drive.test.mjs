@@ -238,6 +238,95 @@ describe('settled plan at implement start', () => {
   });
 });
 
+describe('--drive with early fallbacks', () => {
+  it('runs the wave, hands only the failed early-fallback slots to the host, and waits for the wave on the reply', () => {
+    const fixture = createStubDispatchFixture({
+      'read-delegates': {
+        claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
+        copilot: { targets: [{ low: { model: 'copilot-a', effort: 'low' } }] },
+      },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+    });
+    const repo = makeGitRepo();
+    try {
+      const plan = writePlan(repo.dir);
+      // The same-platform slot fails at once while the other keeps the wave running.
+      const results = { ...allProviders(report()), claude: { exit: 1, failureKind: 'quota', stdout: '' }, copilot: { stdout: report(), delayMs: 4000 } };
+      const first = runDispatch(fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan], { cwd: repo.dir, results });
+      assert.equal(first.status, 0, first.stderr);
+      const launch = parseAction(first.stdout);
+      assert.equal(launch.earlyFallbacks.length, 1);
+
+      const started = runDispatch(fixture, ['--drive', '--state', launch.stateFile], { cwd: repo.dir, results });
+      assert.equal(started.status, 0, started.stderr);
+      const host = parseAction(started.stdout);
+      assert.equal(host.action, 'launch');
+      assert.equal(host.argv, undefined, 'the host never sees argv to rebuild');
+      assert.deepEqual(host.earlyFallbacks.map(item => item.slot), [launch.earlyFallbacks[0].slot]);
+      assert.match(started.stderr, /launch review R1: still running after .*1 early-fallback slot\(s\) failed/);
+      assert.match(host.guidance[0], /never run argv/);
+      assert.match(host.guidance.join(' '), /run --drive once/);
+      // Re-driving the pending launch adopts the running wave instead of spawning another.
+      const redriven = runDispatch(fixture, ['--drive', '--state', launch.stateFile], { cwd: repo.dir, results });
+      assert.equal(redriven.status, 0, redriven.stderr);
+      assert.deepEqual(parseAction(redriven.stdout).earlyFallbacks.map(item => item.slot), [launch.earlyFallbacks[0].slot]);
+      const logOf = text => text.match(/; log (.+)$/m)?.[1];
+      assert.equal(logOf(redriven.stderr), logOf(started.stderr));
+      const [fallback] = host.earlyFallbacks;
+      fs.writeFileSync(fallback.outputPath, report());
+      const reply = { earlyFallbacks: [{ slot: fallback.slot, outputPath: fallback.outputPath, captured: true, actual: {
+        agentType: fallback.descriptor.agentType, model: fallback.descriptor.model, reasoningEffort: fallback.descriptor.reasoningEffort,
+      } }] };
+      const next = runDispatch(fixture, ['--drive', '--state', launch.stateFile, '--input', JSON.stringify(reply)], { cwd: repo.dir, results });
+      assert.equal(next.status, 0, next.stderr);
+      const after = parseAction(next.stdout);
+      assert.notEqual(after.action, 'launch', `the reply waited for the wave envelope: ${JSON.stringify(after.error ?? after.guidance)}`);
+    } finally {
+      repo.cleanup();
+      fixture.cleanup();
+    }
+  });
+  it('reaps a tracked wave whose envelope is written instead of rerunning it', () => {
+    const fixture = createStubDispatchFixture({
+      'read-delegates': {
+        claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
+        copilot: { targets: [{ low: { model: 'copilot-a', effort: 'low' } }] },
+      },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+    });
+    const repo = makeGitRepo();
+    try {
+      const plan = writePlan(repo.dir);
+      // The same-platform slot fails at once while the other keeps the wave running.
+      const results = { ...allProviders(report()), claude: { exit: 1, failureKind: 'quota', stdout: '' }, copilot: { stdout: report(), delayMs: 4000 } };
+      const first = runDispatch(fixture, ['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan], { cwd: repo.dir, results });
+      assert.equal(first.status, 0, first.stderr);
+      const launch = parseAction(first.stdout);
+      assert.equal(launch.earlyFallbacks.length, 1);
+
+      const started = runDispatch(fixture, ['--drive', '--state', launch.stateFile], { cwd: repo.dir, results });
+      assert.equal(started.status, 0, started.stderr);
+      const host = parseAction(started.stdout);
+      assert.equal(host.action, 'launch');
+      assert.equal(host.argv, undefined, 'the host never sees argv to rebuild');
+      assert.deepEqual(host.earlyFallbacks.map(item => item.slot), [launch.earlyFallbacks[0].slot]);
+      const logOf = text => text.match(/; log (.+)$/m)?.[1];
+      // Once the wave writes its envelope, a re-drive reaps it rather than rerunning the wave.
+      const envelope = launch.argv[launch.argv.indexOf('--output-file') + 1];
+      const deadline = Date.now() + 30000;
+      const written = () => { try { return Array.isArray(JSON.parse(fs.readFileSync(envelope, 'utf8')).targets); } catch { return false; } };
+      while (!written() && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+      const reaped = runDispatch(fixture, ['--drive', '--state', launch.stateFile], { cwd: repo.dir, results });
+      assert.equal(reaped.status, 0, reaped.stderr);
+      assert.match(reaped.stderr, /launch review R1: exit none/);
+      assert.equal(logOf(reaped.stderr.split('\n')[0]), logOf(started.stderr));
+    } finally {
+      repo.cleanup();
+      fixture.cleanup();
+    }
+  });
+});
+
 describe('--drive with native-subagents-only launches', () => {
   it('nativeSubagentsOnly all-native launch is handed to the host instead of run', () => {
     const fixture = createStubDispatchFixture({

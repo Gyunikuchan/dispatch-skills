@@ -1,15 +1,11 @@
 // @ts-check
-import crypto from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { currentHead, indexFingerprint, snapshotContent, snapshotEntries } from '../lib/git-state.mjs';
 import { diffRepositoryState } from '../verification/evidence.mjs';
-import { SENSITIVE_DIR_PATTERNS, SENSITIVE_FILE_BASENAME_PATTERNS, SENSITIVE_FILE_PATTERNS } from '../runners/shared.mjs';
 import { DriverError } from './actions.mjs';
+import { captureLimits, inRedWindow, limitViolations, startContent } from './hotfix-limits.mjs';
 import { append, ask, ledgerSegment, ruling } from './implement-state.mjs';
 import { beginVerification, gateCommands, snapshot } from './verification.mjs';
-import { changedLines, headContent } from './discard.mjs';
+import { changedLines } from './discard.mjs';
 import { writeAction } from './write.mjs';
 import { beginImplementation, continueWriter, failureQuestion, retryable, retryOrFail } from './task-phase.mjs';
 import { baselineDecision } from './baseline-phase.mjs';
@@ -49,36 +45,6 @@ export function checkProgress(state, source = 'failure') {
 
 // SECTION: Start
 
-const stashList = repoRoot => spawnSync('git', ['-C', repoRoot, 'stash', 'list', '--format=%H'], { encoding: 'utf8' }).stdout ?? '';
-// Git status omits ignored files. Collapsed ignored entries (one per ignored directory) expose deletions;
-// secrets files are listed at any depth and hashed, so nested, created, and edited secrets are all visible.
-function ignoredManifest(repoRoot) {
-  const list = args => {
-    const run = spawnSync('git', ['-C', repoRoot, 'ls-files', '--others', '--ignored', '--exclude-standard', ...args, '-z'], { encoding: 'utf8', maxBuffer: 1 << 28 });
-    // A partial listing would report false deletions or miss secrets.
-    if (run.error || run.status !== 0) throw new Error(`Ignored-path listing failed: ${run.error?.message ?? run.stderr}`);
-    return run.stdout.split('\0').filter(Boolean);
-  };
-  const manifest = Object.fromEntries(list(['--directory']).map(file => [file, 'present']));
-  for (const file of list([]).filter(file => sensitive(file))) {
-    // An unreadable or vanishing file is still compared for presence.
-    try { manifest[file] = crypto.createHash('sha256').update(fs.readFileSync(path.join(repoRoot, file))).digest('hex'); } catch { manifest[file] = 'present'; }
-  }
-  return manifest;
-}
-// Git reports nothing under .git/, so its mutable configuration is fingerprinted directly.
-function gitMetadata(repoRoot) {
-  const gitDir = path.resolve(repoRoot, spawnSync('git', ['-C', repoRoot, 'rev-parse', '--git-dir'], { encoding: 'utf8' }).stdout.trim());
-  const hash = crypto.createHash('sha256');
-  const visit = rel => {
-    const full = path.join(gitDir, rel), stat = fs.statSync(full, { throwIfNoEntry: false });
-    if (stat?.isDirectory()) for (const name of fs.readdirSync(full).sort()) visit(path.join(rel, name));
-    else if (stat) hash.update(`${rel}\0`).update(fs.readFileSync(full));
-  };
-  for (const rel of ['config', 'hooks', 'info']) visit(rel);
-  return hash.digest('hex');
-}
-const inRedWindow = data => data.phase === 'implementation' && data.redCriteria?.length > 0 && !data.redValidated;
 function repoPath(value) {
   const file = typeof value === 'string' ? path.posix.normalize(value.replace(/\\/g, '/')).replace(/^\.\//, '') : '';
   if (!file || path.posix.isAbsolute(file) || /^[A-Za-z]:/.test(file) || file.split('/').includes('..')) throw new DriverError('reply', `external path must be repository-relative inside the repository: ${value}`);
@@ -103,7 +69,7 @@ export function beginHotfix(state, answer, source) {
     mode: answer.mode, rootCause: answer.rootCause.trim(), reason: answer.reason.trim(), source, openStep: data.step,
     external: external.map(item => ({ path: repoPath(item.path), reason: item.reason.trim() })),
     target: failureKey(state, source), failureReason: baseline ? 'Baseline commands failed or changed the repository.' : data.failure?.reason ?? data.envelope?.summary ?? source,
-    start: { state: start, entries: snapshotEntries(state.repoRoot, Object.keys(start.entries)), head: currentHead(state.repoRoot), index: indexFingerprint(state.repoRoot).digest, stash: stashList(state.repoRoot), git: gitMetadata(state.repoRoot), ignored: ignoredManifest(state.repoRoot) },
+    start: captureLimits(state.repoRoot, start),
   };
   if (!baseline) {
     // The resolving ruling precedes hotfix-start, so the ledger fold sees the hot fix as open until it settles.
@@ -167,41 +133,6 @@ export function acceptHotfixWrite(state, reply, inspect) {
 
 // SECTION: Apply
 
-const sensitive = file => SENSITIVE_FILE_PATTERNS.some(pattern => pattern.test(file)) || SENSITIVE_FILE_BASENAME_PATTERNS.some(pattern => pattern.test(path.posix.basename(file))) || SENSITIVE_DIR_PATTERNS.some(pattern => pattern.test(`/${file}`));
-function existedAtTaskStart(state, file, before) {
-  const entry = state.ordinary.taskStart?.entries?.[file];
-  if (!state.ordinary.taskStart) return before !== null;
-  return entry ? entry.objectId !== 'absent' : headContent(state.repoRoot, file) !== null;
-}
-function startContent(state, file) {
-  const entry = state.ordinary.hotfix.start.entries.find(item => item.path === file);
-  if (entry) return entry.mode === 'absent' ? null : snapshotContent(state.repoRoot, entry);
-  return headContent(state.repoRoot, file);
-}
-/** Hard-limit violations in the tree since the hot fix started. */
-function limitViolations(state, touched) {
-  const data = state.ordinary, fix = data.hotfix, repoRoot = state.repoRoot;
-  // The driver sees effects, not commands: HEAD, index, and stash fingerprints expose git writes.
-  const violations = [
-    ...(currentHead(repoRoot) !== fix.start.head ? ['HEAD moved (history-writing git command)'] : []),
-    ...(indexFingerprint(repoRoot).digest !== fix.start.index ? ['index changed (staging or restore)'] : []),
-    ...(stashList(repoRoot) !== fix.start.stash ? ['stash list changed'] : []),
-    ...(gitMetadata(repoRoot) !== fix.start.git ? ['.git/ config, hooks, or info changed'] : []),
-  ];
-  const ignored = ignoredManifest(repoRoot), started = fix.start.ignored ?? {};
-  for (const [file, stamp] of Object.entries(started)) {
-    if (!(file in ignored)) violations.push(`${file}: deleted an ignored path`);
-    else if (ignored[file] !== stamp) violations.push(`${file}: secrets path (ignored)`);
-  }
-  for (const file of Object.keys(ignored)) if (!(file in started) && sensitive(file)) violations.push(`${file}: created an ignored secrets path`);
-  for (const file of touched) {
-    if (sensitive(file)) violations.push(`${file}: secrets path`);
-    const content = startContent(state, file);
-    if (content !== null && !fs.existsSync(path.join(repoRoot, file)) && existedAtTaskStart(state, file, content)) violations.push(`${file}: deleted a file that existed at task start`);
-    if (inRedWindow(data) && !data.testsOnlyPaths.includes(file)) violations.push(`${file}: production path before RED validates`);
-  }
-  return violations;
-}
 /** A host reply is refused in place; a writer's violations hand the tree to the host to undo. */
 function limitAsk(state, violations) {
   const fix = state.ordinary.hotfix;

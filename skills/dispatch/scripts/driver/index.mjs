@@ -22,6 +22,7 @@ import { advanceDesign, resumeDesignPath, startDesign } from './design-phase.mjs
 import { advanceAsk, startAsk } from './ask-phase.mjs';
 import { inferReviewKind } from './review-policy.mjs';
 import { save } from './implement-state.mjs';
+import { awaitWave } from './wave-process.mjs';
 import { bindStateSession, createRunState, gitRoot, readRunSidecar, readRunState, resumeCommand, writeRunSidecar } from './state.mjs';
 
 export { resumeCommand };
@@ -231,6 +232,8 @@ async function advanceLocked(parsed) {
   }
   const expected = state.pending;
   if (!expected || expected.action === 'done') throw new UsageError('This run has finished; start a new one with --run.');
+  // A wave `--drive` left running must exit before its envelope is read.
+  await awaitWave(state);
   const reply = readInput(parsed.input);
   if (expected.action === 'delegate-write' && !expected.fields?.expectedEnvelopePath) throw new UsageError('Pending delegate-write has no expected envelope path.');
   const checked = validateReply(expected.action, reply);

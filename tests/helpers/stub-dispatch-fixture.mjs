@@ -5,7 +5,7 @@
  *
  * Stub behaviour is driven by environment variables read inside the spawned child:
  * - `DISPATCH_STUB_RESULTS`: JSON map keyed `<provider>:<model>` or `<provider>` to
- *   `{ exit, stdout, stderr, session, failureKind }`; unmatched runs succeed.
+ *   `{ exit, stdout, stderr, session, failureKind, delayMs }`; unmatched runs succeed.
  * - `DISPATCH_STUB_LIVE`: JSON map `<provider>: boolean` for the availability probes (default true).
  * - `DISPATCH_STUB_LOG`: file each runner call appends one JSON line `{ provider, model, effort }` to.
  */
@@ -49,6 +49,7 @@ export async function run${suffix}(options = {}) {
   }
   const results = JSON.parse(process.env.DISPATCH_STUB_RESULTS || '{}');
   const r = results[PROVIDER + ':' + model] ?? results[PROVIDER] ?? {};
+  if (r.delayMs) await new Promise((resolve) => setTimeout(resolve, r.delayMs));
   const exitCode = r.exit ?? 0;
   return {
     provider: PROVIDER,
