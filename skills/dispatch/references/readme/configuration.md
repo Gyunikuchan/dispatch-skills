@@ -21,7 +21,7 @@ files are alternatives, not merged layers.
 |---|---|---|
 | `read-delegates` | Models for questions and reviews | Yes |
 | `write-subagents` | Host-native writer for implementation | For implementation |
-| `phases` | Review target counts, rounds, consensus, and provider filters | No |
+| `phases` | Review target counts, rounds, and provider filters | No |
 
 ## Read delegates
 
@@ -69,7 +69,7 @@ levels. If a model rejects effort options, omit `effort` to use the provider def
 
 Automatic classification chooses `low`, `medium`, or `high`; users must request `xhigh` or `max`
 explicitly. Levels are routing choices, not universal model-quality labels: the active config
-determines the actual models, breadth, rounds, and consensus.
+determines the actual models, breadth, and rounds.
 
 ## Pins and target breadth
 
@@ -100,13 +100,13 @@ you implement from:
 ```
 
 Read delegates remain read-only; production edits require approval and use the host's native
-subagent. A missing writer entry blocks implementation, not questions or reviews.
+subagent (or the orchestrator directly for trivial writes). A missing writer entry blocks implementation, not questions or reviews.
 
 ## Review phase policy
 
 Technical design reviews keep their own `design-review` flow identity but use **all** `plan-review`
 settings. The `phases` table accepts two policy keys: `plan-review` and `code-review`. Changing the
-target count, rounds, consensus, or `only` list changes design and plan reviews.
+target count, rounds, or `only` list changes design and plan reviews.
 
 ```jsonc
 {
@@ -114,7 +114,6 @@ target count, rounds, consensus, or `only` list changes design and plan reviews.
     "plan-review": {
       "targets": { "low": 0, "medium": 1 },
       "rounds": { "low": 0, "medium": 2 },
-      "consensus": { "low": false, "medium": true },
       "only": ["claude", "copilot"]
     }
   }
@@ -122,8 +121,8 @@ target count, rounds, consensus, or `only` list changes design and plan reviews.
 ```
 
 `targets` selects a number of eligible review voices or `"all"`; `rounds` caps review/rebuttal
-waves; `consensus` controls multi-voice settlement; and optional `only` limits providers for the
-phase. An absent `plan-review` policy leaves design and plan review unconfigured in the resolved
+waves (code reviews that apply fixes follow [review rounds](../review.md#review-rounds) instead); and optional `only` limits providers for the
+phase. Configured reviewers always confirm rejected `MUST`/`SHOULD` findings. An absent `plan-review` policy leaves design and plan review unconfigured in the resolved
 flow; standalone reviews default to one target, one round, and host-final rulings. `rounds: 0`
 disables a phase at that level; unpinned `targets: 0` also disables it.
 

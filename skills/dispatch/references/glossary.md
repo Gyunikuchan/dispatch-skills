@@ -13,7 +13,7 @@ headings use these terms.
 | **Walkthrough** | Record of a completed implementation: changes, verification results, outcome traceability, review log. | | plan |
 | **Level** | Policy and model tier, `low` through `max`. | | effort (a provider setting) |
 | **Pin** | User selector fixing providers or breadth. | | |
-| **Orchestrator** | The host agent running `dispatch`: drives emitted actions, verifies delegate claims, owns rulings, and owns production writes through the native write subagent. | | driver, read delegate, write subagent |
+| **Orchestrator** | The host agent running `dispatch`: drives emitted actions, verifies delegate claims, owns rulings, and owns production writes (via native write subagent, or directly for trivial writes). | | driver, read delegate, write subagent |
 | **Read delegate** | A dispatched, structurally read-only provider CLI (the default candidate kind). | reviewer | |
 | **Write subagent** | A native host subagent that edits code; never dispatched. | implementer | |
 | **Candidate / Target / Reserve** | A configured provider entry; one selected for a wave; one held back to replace a failed target. | | |
@@ -22,12 +22,9 @@ headings use these terms.
 | **Change scope / Review Scope / Installation scope** | Implementation size; a review's evidence boundary; where skills are installed. | | |
 | **Run** | One driver invocation, with its state file. | | session (a provider handle) |
 | **Action** | One driver instruction to the agent (closed set). | | step, task |
-| **Finding / Ruling / Settlement / Checkpoint** | A delegate claim; the host's decision on it; the recorded final status of a round (consensus exit `0`, or host-final when `consensus: false`); the recorded freshness metadata. | verdict | |
+| **Finding / Ruling / Settlement / Checkpoint** | A delegate claim; the host's decision on it; the recorded final status of a round (consensus exit `0`); the recorded freshness metadata. | verdict | |
 
-Only the "Banned synonym" column is enforced (`scripts/check-terms.mjs`). A word that is itself a
-glossary term, config key, or provider field (`phase`, `increment`, `effort`, `session`, `mode`,
-`command`, `task`) is never banned; "Distinct from" is explanation only, and "step" stays allowed in
-plain prose. Code spans and fenced blocks are exempt.
+Only the "Banned synonym" column is enforced (`scripts/check-terms.mjs`). Terms, config keys, or provider fields (`phase`, `increment`, `effort`, `session`, `mode`, `command`, `task`) are never banned; "Distinct from" explains boundaries, and "step" remains allowed in plain prose. Code spans and fenced blocks are exempt.
 
 ## Ordinary phase inputs and outputs
 

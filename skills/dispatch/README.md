@@ -15,7 +15,7 @@ Bring independent agent perspectives into planning, implementation, and review w
 
 ## How dispatch works
 
-Your host agent remains the orchestrator. It asks configured delegates for independent analysis, checks their evidence, and decides what moves forward. During implementation, only the host's native write subagent edits production files—and only after approval.
+Your host agent remains the orchestrator. It asks configured delegates for independent analysis, checks their evidence, and decides what moves forward. During implementation, production edits require approval and go through the host's native write subagent (or the orchestrator directly for trivial writes).
 
 ```mermaid
 flowchart LR
@@ -140,7 +140,7 @@ The active configuration has three parts:
 |---|---|
 | `read-delegates` | Read-only targets used for questions and reviews |
 | `write-subagents` | Native writer used by each host platform during implementation |
-| `phases` | Target count, rounds, consensus, and optional provider filters for each review type |
+| `phases` | Target count, rounds, and optional provider filters for each review type |
 
 `config.local.jsonc` takes priority over `config.jsonc`; they are complete alternatives and are not merged. Every entry in a provider's `targets` array is an independent review voice. Model arrays are fallback aliases within one target, not extra voices.
 
@@ -149,7 +149,7 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 ## Safety and artifacts
 
 - Read delegates run with credentials stripped and provider-specific read-only controls.
-- Production edits require approval and use a configured native write subagent.
+- Production edits require approval and use a configured native write subagent (or the orchestrator for trivial writes).
 - Verification runs the commands approved in the plan; review fixes are verified and reviewed again.
 - Each chat keeps its artifacts together in one folder under workspace `.scratch/` while work is active. The handoff gives you the full folder path, normally in OS temp; if the move is blocked, the folder stays in scratch. Later work in the same chat reuses that folder. The OS may eventually purge temp data.
 - Dispatch never commits, pushes, or opens a pull request.
@@ -166,7 +166,8 @@ See [Configure dispatch](references/readme/configuration.md) for level resolutio
 | Implementation cannot start | Configure `write-subagents` for the host platform |
 | A prerequisite is missing | Resume from the producing phase named in the diagnostic |
 | A verification gate failed | Open the reported verification log; dispatch preserves the working tree for a recorded recovery decision |
-| Review reached its round cap with live MUST findings | Extend by another cap-sized block (default), or stop, rule live findings, and run one final verification wave; resume from the resolution log if interrupted |
+| A design or plan review reached its round cap with live MUST findings | Extend by another cap-sized block (default), or stop, rule live findings, and run one final verification wave; resume from the resolution log if interrupted |
+| A code review stopped with an escalation | A fix regressed or a dispute deadlocked; inspect the named findings in the resolution log and decide them yourself (see [review rounds](references/review.md#review-rounds)) |
 | A provider failed | Use the probe and failure guidance in the [provider reference](references/providers.md) |
 
 For complete configuration diagnostics, see [Validate and diagnose](references/readme/configuration.md#validate-and-diagnose).

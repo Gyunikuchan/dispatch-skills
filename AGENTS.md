@@ -6,23 +6,23 @@ Agent skills for cross-agent CLI delegation and review. Single source of truth f
 
 Deliver high-confidence collaborative development workflows across native agent harnesses, catching flawed assumptions before they become code — with minimal token overhead and zero human babysitting.
 
-- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Spend tokens verifying claims rather than guessing; optimize context hygiene and token density before raw speed.
+- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Verify claims instead of guessing; optimize context hygiene and token density before speed.
 - **Native Harness Collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs between them.
-- **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; have scripts emit mode- or state-specific instructions at the branch point rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
+- **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; emit mode- or state-specific instructions at branch points rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
-- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions exclusively for orchestrators or native subagents. Runner harnesses sanitize outputs.
-- **Context Hygiene & Token Density**: Stream execution traces and subprocess logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record full findings into artifacts. Progressive disclosure protects context windows.
+- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; as a general rule, all trivial writes that would have been done by a write subagent can be done by the orchestrator instead. Runner harnesses sanitize outputs.
+- **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
-- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules and fall back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
+- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Summarize findings compactly and link to artifacts/temp logs instead of relaying verbose traces or verbatim reports in chat.
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Summarize findings compactly, linking to artifacts/temp logs rather than relaying verbose traces or reports in chat.
 
 ## Ask Before You Assume
 
 Clarify requirements, constraints, or trade-offs with multiple viable interpretations before building. State assumptions explicitly; suggest simpler alternatives when available.
-For changes that affect backward compatibility, choose the simpler current behavior and remove legacy support by default; preserve compatibility only when instructed to do so.
+For backward-incompatible changes, choose the simpler current behavior and drop legacy support by default; preserve compatibility only when instructed.
 
 **Escalation triggers**:
 - Introducing new external dependencies or runtime prerequisites.
@@ -63,7 +63,7 @@ Classify each document by audience; keep each fact in one class:
 
 - **Human documentation**: Help users understand and operate the skills.
   - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
-  - **Dispatch documentation (`skills/dispatch/README.md` and its disclosed references)**: Purpose, concepts, prerequisites, realistic invocations, configuration, troubleshooting; write human guidance for users and cover referenced paths with path-convention guards.
+  - **Dispatch documentation (`skills/dispatch/README.md` and disclosed references)**: Purpose, concepts, prerequisites, invocations, configuration, troubleshooting; cover referenced paths with path-convention guards.
 - **Agent contracts** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep word count net-neutral or lower; expand only after exhausting rewording, leading words, and disclosure.
 - **Maintainer notes** (`docs/<skill>-notes.md`): Record implementation context that users and executing agents do not need; these files are not shipped.
 
@@ -77,7 +77,7 @@ Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, C
 - **Naming**: kebab-case for skill identifiers, filenames, and slugs.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
-- **Type checking**: Start every `skills/` and `scripts/` `.mjs` file with `// @ts-check`; type exported functions and destructured options with JSDoc. `npm test` runs `tsc` (`checkJs`, non-strict) first.
+- **Type checking**: Start every `skills/` and `scripts/` `.mjs` file with `// @ts-check`; type exported functions with JSDoc. `npm test` runs `tsc` (`checkJs`, non-strict) first.
 - **Scratch**: Do not commit files under `.scratch/` unless explicitly instructed.
 
 ### Comments
@@ -92,12 +92,12 @@ Explain non-obvious rationale ("why", CLI/subprocess quirks, cross-platform nuan
 Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
-- **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
+- **Edit**: Apply minimal, focused edits preserving existing comments and invariants; perform trivial writes directly rather than delegating to a subagent.
 - **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Shipped skills and development tooling require Node 22+.
 
 ### Long-running commands and delegates
 
-Start each command or delegate once and retain its handle. Use an event-driven wait with a 30-minute timeout as fallback, waking earlier for completion, a material blocker, or user input. Ask delegates to report only completion or material blockers; continue waiting through routine progress without another status request or narration. When an API caps waits, use its longest event-capable wait and reuse the same handle.
+Start each command or delegate once and retain its handle. Use an event-driven wait with a 30-minute fallback timeout, waking for completion, blockers, or user input. Ask delegates to report only completion or material blockers; continue waiting through routine progress without status requests or narration. When an API caps waits, use its longest event-capable wait and reuse the handle.
 
 ### Handoff Format
 
