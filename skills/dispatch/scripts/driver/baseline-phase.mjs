@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { assertClassifiableLevel } from '../lib/config.mjs';
 import { ensureLedgerNamespace } from '../ledger/ledger.mjs';
 import { lintPlan } from '../plan/lint.mjs';
 import { DriverError } from './actions.mjs';
@@ -68,7 +69,7 @@ export function baselineDecision(state) {
   data.approvalSnapshot = repositoryBaseline(state);
   // Surfaced here too because a low run skips the plan review that would otherwise relay it.
   const testPathWarnings = lintPlan(source(state)).warnings.filter(item => item.rule === 'criterion-red-test-path').map(item => item.message);
-  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence. To stop instead, return {decision:"rejected", reason}.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.hotfixes?.length ? { hotfixes: data.hotfixes.map(fix => ({ paths: fix.paths, rootCause: fix.rootCause, ledgerRef: 'hotfix (appended at approval)' })) } : {}), ...(data.generators?.length ? { generators: data.generators } : {}), ...(testPathWarnings.length ? { warnings: testPathWarnings } : {}) }]);
+  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason, level?}. testPaths may be empty only when no criterion uses red evidence. To stop instead, return {decision:"rejected", reason}.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.hotfixes?.length ? { hotfixes: data.hotfixes.map(fix => ({ paths: fix.paths, rootCause: fix.rootCause, ledgerRef: 'hotfix (appended at approval)' })) } : {}), ...(data.generators?.length ? { generators: data.generators } : {}), ...(testPathWarnings.length ? { warnings: testPathWarnings } : {}) }]);
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;
@@ -94,6 +95,17 @@ export function approve(state, reply, actor = 'user') {
   // Approved paths are POSIX repository-relative; replies may use backslashes or a leading "./".
   if (Array.isArray(answer.testPaths)) answer.testPaths = answer.testPaths.map(file => typeof file === 'string' ? path.posix.normalize(file.replace(/\\/g, '/')).replace(/^\.\//, '') : file);
   if (!Array.isArray(answer.testPaths) || (data.redCriteria.length > 0 && !answer.testPaths.length) || answer.testPaths.some(file => !data.approvedPaths.includes(file) || !redPaths.has(file))) throw new DriverError('reply', 'Approval must classify tests-only paths mapped to red criteria; nonempty paths are required only for red criteria.');
+  let reevaluatedLevel;
+  if (answer.level !== undefined && state.invocation.levelSource !== 'explicit') {
+    try {
+      assertClassifiableLevel(answer.level, 'classified');
+    } catch (err) {
+      throw new DriverError('reply', err.message);
+    }
+    state.invocation.level = answer.level;
+    state.invocation.levelSource = 'classified';
+    reevaluatedLevel = answer.level;
+  }
   data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
   data.testPaths = data.testsOnlyPaths;
   data.baselineSnapshot = snapshot(state);
@@ -110,9 +122,19 @@ export function approve(state, reply, actor = 'user') {
     ? { governingPath: design.path, governingHash: design.revision, rootSlug: designSlug(state.designPath), action: 'increment', design, baseline: data.baseline,
       increment: { id: state.increment.id, planPath: relative(state, state.planPath), walkthroughPath: relative(state, state.walkthroughPath), planHash: state.governingHash } }
     : { governingPath: relative(state, state.planPath), governingHash: state.governingHash, rootSlug: state.slug, action: 'ordinary', baseline: data.baseline });
-  append(state, 'approval', { governingHash: design?.revision ?? state.governingHash, decision: 'approved', actor });
+  append(state, 'approval', {
+    governingHash: design?.revision ?? state.governingHash,
+    decision: 'approved',
+    actor,
+    ...(reevaluatedLevel ? { level: reevaluatedLevel } : {}),
+  });
   if (data.baselineAccepted) ruling(state, 'baseline-red', 'accept', data.baselineAccepted.reason);
   // Hot fixes before approval had no ledger segment to record into.
   for (const { source, ...fix } of data.hotfixes ?? []) if (source === 'baseline') append(state, 'hotfix', fix);
-  data.approval = { governingHash: state.governingHash, reason: answer.reason, actor };
+  data.approval = {
+    governingHash: state.governingHash,
+    reason: answer.reason,
+    actor,
+    ...(reevaluatedLevel ? { level: reevaluatedLevel } : {}),
+  };
 }

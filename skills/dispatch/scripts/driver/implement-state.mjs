@@ -198,7 +198,12 @@ export function restoreEvidence(state) {
   state.ledgerRunId = record.ledgerRunId;
   const segment = ledgerSegment(state) ?? ledgerSegment(state, { terminal: true });
   if (state.ledgerRunId && segment?.runId !== state.ledgerRunId) throw new Error('Canonical ledger segment does not match walkthrough evidence.');
-  if (segment?.approved) state.ledgerRunId = segment.runId;
+  if (segment?.approved) {
+    state.ledgerRunId = segment.runId;
+    if (segment.approval?.level && state.invocation?.levelSource !== 'explicit') {
+      state.invocation = { ...state.invocation, level: segment.approval.level, levelSource: 'classified' };
+    }
+  }
   if (segment?.tasks.size && state.ordinary.step === 'approval') throw new Error('Ledger has dispatched work not present in walkthrough evidence; reconcile before continuing.');
   if (segment && !segment.terminal) {
     // resumeOrdinary only selects ordinary segments; increment segments were matched above.

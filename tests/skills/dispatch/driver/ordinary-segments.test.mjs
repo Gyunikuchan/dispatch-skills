@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
-import { validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
+import { repositoryBaseline, validateRedAdmission } from '../../../../skills/dispatch/scripts/driver/verification.mjs';
+import { approve } from '../../../../skills/dispatch/scripts/driver/baseline-phase.mjs';
+import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/implement-state.mjs';
+import { DriverError } from '../../../../skills/dispatch/scripts/driver/actions.mjs';
+import { bindSession } from '../../../../skills/dispatch/scripts/lib/session-temp.mjs';
 
 import { allProviders, codeFinding, implementationOutcome, report, runDispatch, writeEnvelopeFile, writeOutcomeReply } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
@@ -190,5 +194,94 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     assert.equal(ledger.events.at(-2).data.key, 'failure-disposition');
     assert.equal(ledger.events.at(-2).data.state, 'resolved');
     assert.equal(result.trace.filter(action => action.action === 'delegate-write').length, 1);
+  });
+
+  it('updates state invocation level when reply provides valid classified level re-classification', () => {
+    const fixture = createOrdinaryDriverFixture();
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, {
+      policy: {
+        askUser(action) {
+          if (action.question === 'approval') {
+            const reply = base.askUser(action);
+            return { answer: { ...reply.answer, level: 'high' } };
+          }
+          return base.askUser(action);
+        },
+      },
+    });
+    assert.equal(result.done.outcome, 'complete');
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok');
+    const approvalEvent = ledger.events.find(e => e.type === 'approval');
+    assert.equal(approvalEvent.data.level, 'high');
+    const state = JSON.parse(fs.readFileSync(result.done.stateFile, 'utf8'));
+    assert.equal(state.invocation.level, 'high');
+
+    bindSession(fixture.repo.sessionDir);
+    const testState = {
+      repoRoot: fixture.repo.dir,
+      planPath: fixture.plan,
+      walkthroughPath: path.join(fixture.repo.sessionDir, 'sample.walkthrough.md'),
+      governingHash: state.governingHash,
+      ledgerPath: result.done.ledgerPath,
+      invocation: { level: 'medium', levelSource: 'classified' },
+    };
+    assert.equal(restoreEvidence(testState), true);
+    assert.equal(testState.invocation.level, 'high');
+    assert.equal(testState.invocation.levelSource, 'classified');
+  });
+
+  it('rejects invalid level on reply re-classification with DriverError', () => {
+    const fixture = createOrdinaryDriverFixture();
+    const repoRoot = fixture.repo.dir;
+    const snapshot = repositoryBaseline({ repoRoot });
+    const state = {
+      repoRoot,
+      invocation: { level: 'low', levelSource: 'classified' },
+      governingHash: 'sha256:1111111111111111111111111111111111111111111111111111111111111111',
+      ordinary: {
+        approvalSnapshot: snapshot,
+        redCriteria: [],
+        approvedPaths: ['src/app.js'],
+      },
+    };
+    assert.throws(
+      () => approve(state, {
+        answer: {
+          decision: 'approved',
+          governingHash: state.governingHash,
+          testPaths: [],
+          reason: 'Approve',
+          level: 'xhigh',
+        },
+      }),
+      (err) => err instanceof DriverError && err.kind === 'reply' && /Classified levels must be one of/.test(err.message),
+    );
+  });
+
+  it('ignores reply level re-classification when invocation levelSource is explicit', () => {
+    const fixture = createOrdinaryDriverFixture();
+    const base = ordinaryDriverPolicy(fixture.repo);
+    const result = driveOrdinaryImplementation(fixture, {
+      runArgs: ['implement', '--level', 'low', '--level-source', 'explicit', '--orchestrator', 'claude', '--', fixture.plan],
+      policy: {
+        askUser(action) {
+          if (action.question === 'approval') {
+            const reply = base.askUser(action);
+            return { answer: { ...reply.answer, level: 'high' } };
+          }
+          return base.askUser(action);
+        },
+      },
+    });
+    assert.equal(result.done.outcome, 'complete');
+    const ledger = readLedger(result.done.ledgerPath);
+    assert.equal(ledger.status, 'ok');
+    const approvalEvent = ledger.events.find(e => e.type === 'approval');
+    assert.equal(approvalEvent.data.level, undefined);
+    const state = JSON.parse(fs.readFileSync(result.done.stateFile, 'utf8'));
+    assert.equal(state.invocation.level, 'low');
+    assert.equal(state.invocation.levelSource, 'explicit');
   });
 });

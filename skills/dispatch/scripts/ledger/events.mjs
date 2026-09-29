@@ -315,10 +315,11 @@ function validateData(event) {
       string(data.checkpointRef, 'review.data.checkpointRef');
       break;
     case 'approval':
-      exact(data, ['governingHash', 'decision', 'actor'], [], 'approval.data');
+      exact(data, ['governingHash', 'decision', 'actor'], ['level'], 'approval.data');
       if (!SHA256.test(data.governingHash)) throw new Error('approval governingHash must be sha256');
       enumeration(data.decision, ['approved', 'rejected'], 'approval.data.decision');
       enumeration(data.actor, ['user', 'driver'], 'approval.data.actor');
+      if (data.level !== undefined) enumeration(data.level, ['low', 'medium', 'high', 'xhigh', 'max'], 'approval.data.level');
       break;
   }
 }

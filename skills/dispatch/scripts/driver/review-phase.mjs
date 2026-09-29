@@ -105,7 +105,7 @@ export async function startReview({ invocation, cwd, resumeCommand, reviewBudget
     : inferReviewKind(invocation.argument, { cwd });
   const kind = inferred.kind;
   const { config } = loadDispatchConfig({ skillRoot: DISPATCH_DIR });
-  const levelInfo = resolveReviewLevel({ config, kind, level: invocation.level, levelSource: invocation.levelSource });
+  const levelInfo = resolveReviewLevel({ config, kind, level: invocation.level, levelSource: invocation.levelSource, pins: invocation.pins });
   /** @type {Record<string, any>} */
   const normalized = { ...invocation, kind };
   const state = createRunState({

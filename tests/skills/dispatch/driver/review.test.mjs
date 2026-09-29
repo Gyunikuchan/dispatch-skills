@@ -62,54 +62,69 @@ describe('review kind inference (design order 1–6)', () => {
   });
 });
 
-describe('review level resolution (raise rule)', () => {
+describe('review level resolution (configured skip rule)', () => {
   const config = (phase) => ({ 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'plan-review': phase } });
   const highOnly = { rounds: { low: 0, medium: 0, high: 2, xhigh: 2, max: 2 }, targets: ALL(1) };
 
-  it('raises a classified level to the lowest level that enables the phase', () => {
+  it('skips a classified level when disabled by config without auto-raising', () => {
     const result = resolveReviewLevel({ config: config(highOnly), kind: 'plan', level: 'low', levelSource: 'classified' });
-    assert.equal(result.level, 'high');
-    assert.equal(result.raised, true);
-    assert.equal(result.skipped, null);
+    assert.equal(result.level, 'low');
+    assert.equal(result.raised, undefined);
+    assert.ok(result.skipped);
+    assert.match(result.skipped.reason, /low/);
     assert.equal(result.phase, 'plan-review');
     assert.equal(result.configured, true);
   });
 
-  it('raises the default source like classified', () => {
+  it('skips the default source like classified without auto-raising', () => {
     const result = resolveReviewLevel({ config: config(highOnly), kind: 'plan', level: 'medium', levelSource: 'default' });
-    assert.equal(result.level, 'high');
-    assert.equal(result.raised, true);
+    assert.equal(result.level, 'medium');
+    assert.equal(result.raised, undefined);
+    assert.ok(result.skipped);
+    assert.match(result.skipped.reason, /medium/);
   });
 
-  it('does not escalate a classified level beyond high', () => {
+  it('skips when disabled at high without escalating to xhigh or max', () => {
     const elevatedOnly = { rounds: { low: 0, medium: 0, high: 0, xhigh: 2, max: 2 }, targets: ALL(1) };
     const result = resolveReviewLevel({ config: config(elevatedOnly), kind: 'plan', level: 'high', levelSource: 'classified' });
     assert.equal(result.level, 'high');
-    assert.equal(result.raised, false);
-    assert.match(result.skipped.reason, /explicit user selection/);
-    assert.match(result.skipped.reason, /stops at "high"/);
+    assert.equal(result.raised, undefined);
+    assert.ok(result.skipped);
+    assert.match(result.skipped.reason, /high/);
   });
 
   it('skips rather than demotes a classified level with no enabled level above it', () => {
     const lowOnly = { rounds: { low: 2, medium: 0, high: 0, xhigh: 0, max: 0 }, targets: ALL(1) };
     const result = resolveReviewLevel({ config: config(lowOnly), kind: 'plan', level: 'medium', levelSource: 'classified' });
     assert.equal(result.level, 'medium');
+    assert.equal(result.raised, undefined);
     assert.ok(result.skipped);
-    assert.match(result.skipped.reason, /higher level/);
+    assert.match(result.skipped.reason, /medium/);
   });
 
   it('honors an explicit level that disables the phase by skipping with the level and config key', () => {
     const result = resolveReviewLevel({ config: config(highOnly), kind: 'plan', level: 'medium', levelSource: 'explicit' });
     assert.equal(result.level, 'medium');
-    assert.equal(result.raised, false);
+    assert.equal(result.raised, undefined);
     assert.ok(result.skipped);
     assert.match(result.skipped.reason, /medium/);
     assert.match(result.skipped.reason, /phases\['plan-review'\]|plan-review/);
   });
 
-  it('treats targets: 0 as disabled too', () => {
+  it('treats targets: 0 as disabled too and skips', () => {
     const phase = { rounds: ALL(1), targets: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 } };
-    assert.equal(resolveReviewLevel({ config: config(phase), kind: 'plan', level: 'low', levelSource: 'classified' }).level, 'high');
+    const result = resolveReviewLevel({ config: config(phase), kind: 'plan', level: 'low', levelSource: 'classified' });
+    assert.equal(result.level, 'low');
+    assert.equal(result.raised, undefined);
+    assert.ok(result.skipped);
+  });
+
+  it('allows pinned reviews to run when targets: 0 but rounds > 0', () => {
+    const phase = { rounds: ALL(1), targets: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 } };
+    const result = resolveReviewLevel({ config: config(phase), kind: 'plan', level: 'low', levelSource: 'classified', pins: 'agy' });
+    assert.equal(result.level, 'low');
+    assert.equal(result.skipped, null);
+    assert.equal(result.configured, true);
   });
 
   it('uses shared plan-review policy for design review escalation and disablement', () => {
@@ -168,9 +183,20 @@ describe('driver skip and inference through dispatch.mjs', () => {
     }
   });
 
-  it('raises a classified level and launches instead of skipping', () => {
-    const plan = writePlan(repo.dir, 'raise.plan.md');
+  it('skips a classified level when disabled by config instead of raising', () => {
+    const plan = writePlan(repo.dir, 'skip-classified.plan.md');
     const res = run(['--run', 'review', '--level', 'low', '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
+    assert.equal(res.status, 0, res.stderr);
+    const action = parseAction(res.stdout);
+    assert.equal(action.action, 'done');
+    assert.equal(action.outcome, 'skipped');
+    assert.match(action.reason, /low/);
+    assert.match(action.reason, /plan-review/);
+  });
+
+  it('infers kind from *.md on an enabled level and launches', () => {
+    const plan = writePlan(repo.dir, 'launch.plan.md');
+    const res = run(['--run', 'review', '--level', 'high', '--level-source', 'classified', '--orchestrator', 'claude', '--', plan]);
     assert.equal(res.status, 0, res.stderr);
     const action = parseAction(res.stdout);
     assert.equal(action.action, 'launch');

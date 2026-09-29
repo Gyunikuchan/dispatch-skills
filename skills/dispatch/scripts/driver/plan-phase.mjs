@@ -24,7 +24,7 @@ export const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 /** Resolves the configured review policy for a governing artifact kind. */
 export function reviewPolicy(state, kind) {
   const { config } = loadDispatchConfig({ skillRoot: SKILL_ROOT });
-  return resolveReviewLevel({ config, kind, level: state.invocation.level, levelSource: state.invocation.levelSource });
+  return resolveReviewLevel({ config, kind, level: state.invocation.level, levelSource: state.invocation.levelSource, pins: state.invocation.pins });
 }
 export function requireSettledPlan(state) {
   const lint = lintPlan(source(state));
