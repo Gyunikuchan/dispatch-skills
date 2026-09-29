@@ -1,0 +1,146 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fold, MAX_STEPS, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { appendEvent, journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
+import { LOCK_FILE } from '../../../skills/dispatch/scripts/core/lock.ts';
+import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
+import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
+import { awaitingMachine, fakeHandlers, neverAwaitingMachine, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
+
+async function startAwaiting(ports: FakePorts) {
+  const runDir = path.join(tempDir(), 'runs', '001-ask');
+  const result = await start({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, runStarted: RUN_STARTED });
+  return { runDir, result };
+}
+
+const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
+const types = (ports: FakePorts, runDir: string) => readJournal(ports, runDir).lines.map((line) => line.type);
+
+test('start drives the machine to its await and returns one frame', async () => {
+  const ports = fakePorts();
+  const { runDir, result } = await startAwaiting(ports);
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(Object.keys(result.frame ?? {}), ['v', 'run', 'at', 'await', 'data', 'reply']);
+  assert.equal(result.frame?.await, 'author');
+  assert.match(result.frame?.reply ?? '', /send --run runs\/001-ask --event @/);
+  assert.deepEqual(types(ports, runDir), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT']);
+  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
+});
+
+test('start refuses an existing run folder', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  await assert.rejects(start({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, runStarted: RUN_STARTED }), /EEXIST/);
+});
+
+test('a valid host event is appended and the loop runs to the next await', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: '{"type":"AUTHORED","path":"plan.md"}' });
+  assert.equal(result.frame?.await, 'done');
+  assert.deepEqual(result.frame?.data, { outcome: 'complete', path: 'plan.md' });
+  assert.deepEqual(types(ports, runDir).slice(3), ['AUTHORED', 'EFFECT_STARTED', 'VERIFY_DONE']);
+});
+
+test('a bad event re-emits the same frame with a one-line error and appends nothing', async () => {
+  const ports = fakePorts();
+  const { runDir, result: before } = await startAwaiting(ports);
+  const journal = bytes(runDir);
+  for (const raw of [{ type: 'RULINGS', rulings: {} }, { type: 'AUTHORED' }, { type: 'AUTHORED', path: '../x' }, '{nope']) {
+    const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: raw, runRel: 'runs/001-ask' });
+    assert.equal(result.exitCode, 0);
+    const { error, ...frame } = result.frame ?? { error: undefined };
+    assert.deepEqual(frame, before.frame);
+    assert.match(error ?? '', /^event[.:]/);
+    assert.doesNotMatch(error ?? '', /\n/);
+  }
+  assert.deepEqual(bytes(runDir), journal);
+});
+
+test('dry-run validates and appends nothing', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  const journal = bytes(runDir);
+  const good = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' }, dryRun: true });
+  const bad = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 1 }, dryRun: true });
+  assert.equal(good.frame?.error, undefined);
+  assert.match(bad.frame?.error ?? '', /event\.path: expected non-empty string/);
+  assert.deepEqual(bytes(runDir), journal);
+});
+
+function waveJournal(ports: FakePorts, withProgress: boolean): string {
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
+  appendEvent(ports, runDir, 'EFFECT_STARTED', { effectId: 'fixture.wave.1', kind: 'wave', attempt: 1 });
+  if (withProgress) appendEvent(ports, runDir, 'WAVE_PROGRESS', { effectId: 'fixture.wave.1', slot: 'claude[0]', status: 'running' });
+  return runDir;
+}
+
+test('an effect with only non-terminal results is in flight', () => {
+  const ports = fakePorts();
+  const runDir = waveJournal(ports, true);
+  const folded = fold(waveMachine, readJournal(ports, runDir).lines);
+  assert.deepEqual(folded.inFlight, { effect: { kind: 'wave', id: 'fixture.wave.1', round: 1, roster: [], timeoutMs: 1000 }, attempt: 1 });
+});
+
+test('a started effect without a result relaunches as attempt 2 with exactly one terminal result', async () => {
+  const ports = fakePorts();
+  const runDir = waveJournal(ports, false);
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  assert.equal(result.frame?.await, 'done');
+  const lines = readJournal(ports, runDir).lines;
+  const starts = lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
+  assert.deepEqual(starts, [1, 2]);
+  assert.equal(lines.filter((line) => line.type === 'WAVE_DONE').length, 1);
+});
+
+test('a torn tail is dropped and its effect re-executed', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
+  const text = fs.readFileSync(journalPath(runDir), 'utf8');
+  fs.writeFileSync(journalPath(runDir), text.slice(0, text.length - 10));
+  const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
+  assert.equal(result.frame?.await, 'done');
+  const starts = readJournal(ports, runDir).lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
+  assert.deepEqual(starts, [1, 1, 2]);
+});
+
+test('a never-awaiting machine faults at MAX_STEPS with exit 2, a byte-identical journal, and no lock', async () => {
+  const ports = fakePorts();
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
+  const journal = bytes(runDir);
+  const result = await send({ runDir, machine: neverAwaitingMachine, handlers: fakeHandlers, ports });
+  assert.equal(result.exitCode, 2);
+  assert.equal(result.frame?.await, 'done');
+  assert.deepEqual(result.frame?.data, { outcome: 'fault' });
+  assert.match(result.frame?.error ?? '', new RegExp(`MAX_STEPS \\(${MAX_STEPS}\\)`));
+  assert.deepEqual(bytes(runDir), journal);
+  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
+  assert.equal(ports.timers, 0);
+});
+
+test('a handler exception faults with a byte-identical journal and no lock', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  const journal = bytes(runDir);
+  const handlers: Handlers = { ...fakeHandlers, verify: async () => { throw new Error('boom'); } };
+  const result = await send({ runDir, machine: awaitingMachine, handlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
+  assert.equal(result.exitCode, 2);
+  assert.match(result.frame?.error ?? '', /boom/);
+  assert.deepEqual(bytes(runDir), journal);
+  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
+});
+
+test('a handler returning no terminal result is an engine fault', async () => {
+  const ports = fakePorts();
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
+  const handlers: Handlers = { snapshot: async (effect) => [{ type: 'WAVE_PROGRESS', effectId: effect.id, slot: 's', status: 'x' }] };
+  const result = await send({ runDir, machine: awaitingMachine, handlers, ports });
+  assert.equal(result.exitCode, 2);
+  assert.match(result.frame?.error ?? '', /exactly one terminal result/);
+});

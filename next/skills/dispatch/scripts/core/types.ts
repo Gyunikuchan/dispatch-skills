@@ -1,0 +1,225 @@
+// Run types shared by every layer. Value-free except `assertNever`; imports nothing (dependency guard).
+
+// SECTION: Closed unions
+
+export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
+
+export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift';
+
+export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
+
+/** 0 frame printed, 1 usage/Node version, 2 engine fault, 3 lock held. */
+export type ExitCode = 0 | 1 | 2 | 3;
+
+export type EffectKind =
+  | 'parse-artifact' | 'prepare-review' | 'wave' | 'verify' | 'write-brief'
+  | 'check-envelope' | 'snapshot' | 'restore' | 'handoff';
+
+// NOTE: effect-handler failure classes; I03/I04 refine when handlers land.
+export type EffectFailureClass = 'io' | 'timeout' | 'crash' | 'invalid-output' | 'integrity' | 'config';
+
+/** Provider slot failure classes (spec §6.4). */
+export type FailureClass =
+  | 'quota' | 'context-overflow' | 'auth' | 'model-not-found' | 'cli-outdated' | 'model-not-loaded'
+  | 'sandbox-unsupported' | 'not-found' | 'timeout' | 'buffer' | 'empty-output' | 'refusal'
+  | 'truncated' | 'integrity' | 'config';
+
+export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
+export type Level = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export function assertNever(value: never, what = 'value'): never {
+  throw new Error(`unhandled ${what}: ${JSON.stringify(value)}`);
+}
+
+// SECTION: Placeholder payloads
+// NOTE: minimal structural placeholders; the owning increment (named per alias) refines each shape.
+
+type Payload = Readonly<Record<string, unknown>>;
+export type Platform = string; // I02
+export type Pins = Payload; // I02
+export type Overrides = Payload; // I02
+export type ResolvedConfig = Payload; // I02
+export type RepoIdentity = Payload; // I03
+export type NativeSlotResult = Payload; // I03
+export type FindingId = string; // I02
+export type Ruling = Payload; // I04
+export type FixClusterResult = Payload; // I04
+export type WriterFailureKind = string; // I05
+export type CriterionId = string; // I05
+export type CriterionEvidence = Payload; // I05
+export type DecisionAnswer = unknown; // I04–I07
+export type ParsedPlan = Payload; // I02
+export type ParsedDesign = Payload; // I07
+export type LintDefect = Payload; // I02
+export type ReviewScope = Payload; // I04
+export type SlotId = string; // I02
+export type SlotStatus = string; // I03
+export type SlotOutcome = Payload; // I03
+export type Finding = Payload; // I02
+export type VerifyPurpose = string; // I04
+export type CommandResult = Payload; // I04
+export type TreeFingerprint = Payload; // I04
+export type WriteStage = 'tests-only' | 'production'; // I05
+export type WriteEnvelope = Payload; // I05
+export type PathDiff = Payload; // I04
+export type ReviewSpec = Payload; // I04
+export type ScopeRequest = Payload; // I04
+export type RosterSlot = Payload; // I02
+export type VerifyCommand = Payload; // I04
+export type BriefInput = Payload; // I05
+export type PathSet = readonly string[]; // I05
+
+// SECTION: Events
+
+export type RunStartedEvent = {
+  type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
+  pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
+  overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;
+};
+
+export type LifecycleEvent =
+  | RunStartedEvent
+  | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
+  | { type: 'LOCK_BROKEN'; stalePid: number };
+
+export type HostEvent =
+  | { type: 'AUTHORED'; path: string }
+  | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
+  | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
+  | { type: 'FIXES_APPLIED'; clusters: FixClusterResult[] }
+  | { type: 'WRITE_ENVELOPE'; envelopePath: string }
+  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string }
+  | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence> }
+  | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
+  | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
+
+export type ResultEvent =
+  | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
+  | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
+  | { type: 'WAVE_PROGRESS'; effectId: string; slot: SlotId; status: SlotStatus }
+  | { type: 'WAVE_DONE'; effectId: string; round: number; slots: SlotOutcome[]; findings: Finding[] }
+  | { type: 'VERIFY_DONE'; effectId: string; purpose: VerifyPurpose; results: CommandResult[]; fingerprint: TreeFingerprint }
+  | { type: 'BRIEF_READY'; effectId: string; stage: WriteStage; path: string; sha256: string; envelopePath: string }
+  | { type: 'ENVELOPE_CHECKED'; effectId: string; envelope: WriteEnvelope | null; defects: string[]; diff: PathDiff }
+  | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
+  | { type: 'RESTORED'; effectId: string; paths: string[]; patchPath: string }
+  | { type: 'HANDOFF_DONE'; effectId: string; destination: string; warning: string | null }
+  | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string };
+
+export type Event = HostEvent | ResultEvent | LifecycleEvent;
+export type EventType = Event['type'];
+export type HostEventType = HostEvent['type'];
+export type ResultEventType = ResultEvent['type'];
+
+// SECTION: Effects
+
+export type Effect =
+  | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
+  | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
+  | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
+  | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[] }
+  | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
+  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet }
+  | { kind: 'snapshot'; id: string; since: TreeFingerprint | null }
+  | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }
+  | { kind: 'handoff'; id: string; terminal: boolean };
+
+/** Exactly one terminal result type per effect kind; `EFFECT_FAILED` is terminal for all. */
+export type TerminalResultMap = { readonly [K in EffectKind]: ResultEventType };
+
+// SECTION: Journal and frames
+
+export interface JournalLine {
+  seq: number;
+  v: 1;
+  at: string;
+  type: EventType;
+  data: Readonly<Record<string, unknown>>;
+}
+
+export type FrameData = Readonly<Record<string, unknown>>;
+
+export interface Frame {
+  v: 1;
+  run: string;
+  at: string;
+  await: Await;
+  data: FrameData;
+  reply: string;
+  error?: string;
+  progress?: FrameData;
+}
+
+// SECTION: Machines
+
+export interface Transition { from: string; on: string; to: string }
+
+export interface StepResult<S> { state: S; effects: readonly Effect[] }
+
+export interface Machine<S> {
+  initial(): S;
+  step(state: S, event: Event): StepResult<S>;
+  awaitOf(state: S): Await | null;
+  /** Breadcrumb and await-specific frame data (spec §11.2). */
+  project(state: S): { at: string; data: FrameData };
+  transitions: readonly Transition[];
+  /** Id/path context checks beyond await acceptance; returns a one-line error or null. */
+  validate?(state: S, event: HostEvent): string | null;
+  /** Idempotent rendering of driver-owned Markdown after each send (not an effect). */
+  render?(state: S, ports: Ports, runDir: string): void;
+}
+
+export interface HandlerContext { runDir: string; attempt: number }
+
+/** Returns zero or more non-terminal results followed by exactly one terminal result. */
+export type Handler<E extends Effect = Effect> = (effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>;
+
+export type Handlers = { readonly [K in EffectKind]?: Handler<Extract<Effect, { kind: K }>> };
+
+// SECTION: Ports
+
+export interface FsPort {
+  readText(file: string): string;
+  exists(file: string): boolean;
+  size(file: string): number;
+  mkdir(dir: string, options: { recursive: boolean }): void;
+  /** open(a) + write + fsync. */
+  appendDurable(file: string, text: string): void;
+  /** Exclusive create (`wx`); throws with code EEXIST when present. */
+  writeExclusive(file: string, text: string): void;
+  /** Temp file + fsync + rename. */
+  writeAtomic(file: string, text: string): void;
+  /** Truncate to length and fsync. */
+  truncate(file: string, length: number): void;
+  remove(file: string): void;
+}
+
+// NOTE: spawn and git shapes are placeholders; I03/I04 refine them with their handlers.
+export interface SpawnPort {
+  run(argv: readonly string[], options: { cwd: string }): Promise<{ exit: number; stdout: string; stderr: string }>;
+}
+export interface GitPort { run(args: readonly string[], cwd: string): Promise<string> }
+
+export interface ClockPort {
+  now(): number;
+  /** Starts a repeating timer; returns its stop function. */
+  every(ms: number, fn: () => void): () => void;
+}
+
+export interface EnvPort { get(name: string): string | undefined }
+
+export interface ProcPort {
+  pid: number;
+  host: string;
+  isAlive(pid: number): boolean;
+  stderr(text: string): void;
+}
+
+export interface Ports {
+  fs: FsPort;
+  spawn: SpawnPort;
+  git: GitPort;
+  clock: ClockPort;
+  env: EnvPort;
+  proc: ProcPort;
+}
