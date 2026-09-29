@@ -30,6 +30,7 @@ describe('dispatch SKILL.md', () => {
 
   it('clarifies before authoring and writes one artifact', () => {
     assert.match(text, /For a new design or plan, clarify scope with `brainstorming` if installed, then any user-invoked grilling skill/);
+    assert.match(text, /skip brainstorming if only creating a plan or walkthrough in retrospect/);
     assert.match(text, /The driver writes the canonical design or plan and records settled choices with trade-offs and rationale/);
   });
 });

@@ -120,7 +120,7 @@ Design is for work that should be delivered in dependency-aware increments. One 
 
 This starts at planning, reviews the plan, asks for approval, establishes a test baseline, delegates implementation, verifies approved checks, and reviews the resulting code.
 
-If the `brainstorming` skill is installed, dispatch first uses it to settle scope and solution in chat (followed by any grilling-style skill you invoke), then writes a single design or plan.
+If the `brainstorming` skill is installed, dispatch first uses it to settle scope and solution in chat (followed by any grilling-style skill you invoke), then writes a single design or plan. Skip brainstorming when only creating a plan or walkthrough in retrospect.
 
 ### Resume from an existing artifact
 
