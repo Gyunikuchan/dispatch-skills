@@ -111,7 +111,6 @@ export function validateRequestAction(request) {
   } else if (request.settlement !== undefined || request.settledWrites !== undefined) {
     throw new Error('prepare request cannot contain settlement or settledWrites.');
   }
-  if (request.consensus !== undefined && typeof request.consensus !== 'boolean') throw new Error('consensus must be boolean.');
   return action;
 }
 

@@ -13,7 +13,7 @@ const CONFIG = {
     opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }, { low: { model: 'lmstudio/qwen3.8-27b-ridge', effort: 'medium' } }] },
   },
   phases: {
-    'code-review': { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false }, only: ['claude'] },
+    'code-review': { rounds: { low: 1 }, targets: { low: 1 }, only: ['claude'] },
   },
 };
 

@@ -11,9 +11,9 @@ after(disposeScriptedFixtures);
 
 const GARBAGE = 'I think these findings are fine overall.';
 
-/** Runs a consensus plan review (orchestrator claude, delegate agy) whose rebuttal replies come from `rebuttals`. */
+/** Runs a configured plan review (orchestrator claude, delegate agy) whose rebuttal replies come from `rebuttals`. */
 function rebuttalRun(rebuttals) {
-  const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+  const { fixture, repo } = setup(config({ rounds: 1 }));
   const plan = writePlan(repo.dir);
   const prompts = [];
   let rebuttalCount = 0;

@@ -16,7 +16,8 @@ describe('ordinary driver canonical contracts: segment relaunch and termination'
     // An approved path that is a directory makes baseline fingerprinting throw after the round is written.
     fs.rmSync(path.join(fixture.repo.dir, 'src/app.js'));
     fs.mkdirSync(path.join(fixture.repo.dir, 'src/app.js'));
-    const finding = codeFinding({ locus: '§ Verification Plan', defect: 'Plan omits a negative case.' });
+    // CONSIDER rulings are host-final, so the adjudicate reply writes the round without a rebuttal wave.
+    const finding = codeFinding({ severity: 'CONSIDER', locus: '§ Verification Plan', defect: 'Plan omits a negative case.' });
     const before = fs.readFileSync(fixture.plan, 'utf8');
     const walkthrough = fixture.plan.replace(/.md$/, '-walkthrough.md');
     try {

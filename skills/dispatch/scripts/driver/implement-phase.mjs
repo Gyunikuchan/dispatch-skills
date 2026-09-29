@@ -6,6 +6,7 @@ import { emitAction, toError } from './actions.mjs';
 import { createRunState, position, resumeCommand, writeRunSidecar, writeRunState } from './state.mjs';
 import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restoreEvidence, save } from './implement-state.mjs';
 import { writeCheckpoint } from './review-phase.mjs';
+import { shouldReReview } from '../review/rounds.mjs';
 import { acceptPlan, authorPlan, beginReview, captureReviewBudget, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBaseline } from './baseline-phase.mjs';
 import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, purposeCommands, scopedResult } from './verification.mjs';
@@ -115,21 +116,28 @@ async function consumeReview(state, action) {
     delete state.reviewState;
   }
   const data = state.ordinary;
+  // The latest review's rounds summary is the implement handoff's completion output (ADR 0005 D7).
+  if (action.reviewRounds) data.reviewRounds = action.reviewRounds;
+  // The review-rounds policy decides whether the settled fixes and disputes earn another round.
+  const reReview = Boolean(state.reviewState?.roundSummary && shouldReReview(state.reviewState.roundSummary));
   if (scopedResult(state) === 'regression') {
     // Stale scoped commands the final gate also runs (directly or through their covering suite) are judged there.
     const finalSet = purposeCommands(data, 'final');
     if (!gateCommands(state, 'scoped').every(command => finalSet.includes(data.coverage?.[command] ?? command))) {
       delete data.checkpoint;
       data.step = 'post-review-verify';
+      if (reReview) data.reReviewPending = true;
       return beginVerification(state, 'scoped');
     }
-    if (state.reviewState?.mustApplied) {
-      delete state.reviewState;
-      delete data.checkpoint;
-      return consumeReview(state, await beginReview(state, 'code'));
-    }
   }
+  if (reReview) return reenterReview(state);
   return finalGate(state);
+}
+/** Starts the next code-review round; the settled round's state is superseded. */
+async function reenterReview(state) {
+  delete state.reviewState;
+  delete state.ordinary.checkpoint;
+  return consumeReview(state, await beginReview(state, 'code'));
 }
 /** Enters the final gate; the settled review state stays for its checkpoint. */
 async function finalGate(state) {
@@ -196,8 +204,8 @@ export async function advanceImplement(state, reply) {
             if (scopedResult(state) === 'regression') action = openFailure(state, 'Post-review verification failed or is stale.', { purpose: 'scoped', step: 'post-review-verify' });
             else {
               data.implementationComplete.scopeHash = fingerprint(state);
-              // Only an applied MUST fix earns another review; other fixes go straight to the final gate.
-              if (state.reviewState?.mustApplied) { delete state.reviewState; action = await consumeReview(state, await beginReview(state, 'code')); }
+              // Verified fixes the review-rounds policy flagged earn another review round.
+              if (data.reReviewPending) action = await reenterReview(state);
               else action = await finalGate(state);
             }
           } else {

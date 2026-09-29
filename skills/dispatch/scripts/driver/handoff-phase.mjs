@@ -74,6 +74,7 @@ export function handoff(state) {
   // Intermediate increments remain in the active chat folder until final integration.
   const retained = [...(state.designPath ? [state.planPath, state.walkthroughPath].map(file => ({ path: relative(state, file), reason: 'Intermediate increment; stays active until final integration' })) : []), ...(state.ordinary.retained ?? [])];
   return emitAction(state, 'done', { outcome: 'complete', summary: 'Implementation verified and code review settled.', checkpointed: Boolean(checkpoint),
+    ...(state.ordinary.reviewRounds ? { reviewRounds: state.ordinary.reviewRounds } : {}),
     ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { checkpoint, resumeCommand: state.resumeCommand, ledgerPath: state.ledgerPath,
       rulings: state.ordinary.rulings ?? [], warning: 'The complete chat folder is moved to its terminal handoff location.', retained, destinations: [], ...(disabled ? { reviewDisabled: disabled.reason } : {}) } });
 }

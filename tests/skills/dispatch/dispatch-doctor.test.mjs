@@ -18,8 +18,8 @@ const CONFIG = {
     copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
   },
   phases: {
-    'plan-review': { rounds: { low: 0, medium: 2, high: 3 }, targets: { low: 0, medium: 1, high: 2 }, consensus: { low: false, medium: true } },
-    'code-review': { rounds: { low: 1, medium: 3 }, targets: { low: 1, high: 'all' }, consensus: { low: false, medium: true } },
+    'plan-review': { rounds: { low: 0, medium: 2, high: 3 }, targets: { low: 0, medium: 1, high: 2 } },
+    'code-review': { rounds: { low: 1, medium: 3 }, targets: { low: 1, high: 'all' } },
   },
 };
 
@@ -92,20 +92,20 @@ describe('level and phase resolution', () => {
     const phase = (name) => report.phases[name];
     assert.deepEqual(Object.keys(report.phases), ['design-review', 'plan-review', 'code-review']);
     assert.deepEqual(
-      [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds, phase('plan-review').consensus],
-      [['agy', 'opencode'], ['claude'], 3, true],
+      [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds],
+      [['agy', 'opencode'], ['claude'], 3],
     );
     assert.deepEqual(
-      [platforms(phase('design-review').targets), platforms(phase('design-review').reserves), phase('design-review').rounds, phase('design-review').consensus],
-      [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds, phase('plan-review').consensus],
+      [platforms(phase('design-review').targets), platforms(phase('design-review').reserves), phase('design-review').rounds],
+      [platforms(phase('plan-review').targets), platforms(phase('plan-review').reserves), phase('plan-review').rounds],
     );
     assert.deepEqual(
       phase('design-review').targets.map(target => target.candidateId),
       phase('plan-review').targets.map(target => target.candidateId.replace('plan-review:', 'design-review:')),
     );
     assert.deepEqual(
-      [platforms(phase('code-review').targets), platforms(phase('code-review').reserves), phase('code-review').rounds, phase('code-review').consensus],
-      [['agy', 'opencode', 'claude'], [], 3, true],
+      [platforms(phase('code-review').targets), platforms(phase('code-review').reserves), phase('code-review').rounds],
+      [['agy', 'opencode', 'claude'], [], 3],
     );
 
     // --orchestrator narrows write-subagents to that entry.
@@ -123,7 +123,7 @@ describe('level and phase resolution', () => {
       const line = text.split('\n').find((l) => l.trim().startsWith(`${name}:`));
       assert.ok(line, `${name} line present`);
       assert.match(line, new RegExp(`rounds=${rounds}`));
-      assert.match(line, /consensus=true/);
+      assert.doesNotMatch(line, /consensus/);
       assert.match(line, /targets=/);
       assert.match(line, /reserves=/);
     }

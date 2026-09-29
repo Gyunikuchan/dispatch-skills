@@ -18,7 +18,7 @@ const CONFIG = {
   'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
   'write-subagents': { claude: { low: { model: ['first-model', 'second-model'], effort: 'low' } } },
   phases: Object.fromEntries(['plan-review', 'code-review'].map((key) => [
-    key, { rounds: levels, targets: levels, consensus: Object.fromEntries(Object.keys(levels).map((level) => [level, false])) },
+    key, { rounds: levels, targets: levels },
   ])),
 };
 

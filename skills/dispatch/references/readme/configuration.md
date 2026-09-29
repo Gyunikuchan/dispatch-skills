@@ -122,8 +122,8 @@ target count, rounds, or `only` list changes design and plan reviews.
 
 `targets` selects a number of eligible review voices or `"all"`; `rounds` caps review/rebuttal
 waves (code reviews that apply fixes follow [review rounds](../review.md#review-rounds) instead); and optional `only` limits providers for the
-phase. Configured reviewers always confirm rejected `MUST`/`SHOULD` findings. An absent `plan-review` policy leaves design and plan review unconfigured in the resolved
-flow; standalone reviews default to one target, one round, and host-final rulings. `rounds: 0`
+phase. Read delegates confirm rejected `MUST`/`SHOULD` findings; code reviews that apply fixes settle them through [review rounds](../review.md#review-rounds) instead. An absent `plan-review` policy leaves design and plan review unconfigured in the resolved
+flow; standalone reviews default to one target and one round. `rounds: 0`
 disables a phase at that level; unpinned `targets: 0` also disables it.
 
 If you have a `phases.design-review` entry, move its settings to `phases.plan-review` and reconcile

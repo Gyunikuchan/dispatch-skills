@@ -245,7 +245,7 @@ describe('--drive with early fallbacks', () => {
         claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
         copilot: { targets: [{ low: { model: 'copilot-a', effort: 'low' } }] },
       },
-      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 } } },
     });
     const repo = makeGitRepo();
     try {
@@ -292,7 +292,7 @@ describe('--drive with early fallbacks', () => {
         claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] },
         copilot: { targets: [{ low: { model: 'copilot-a', effort: 'low' } }] },
       },
-      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 } } },
     });
     const repo = makeGitRepo();
     try {
@@ -331,7 +331,7 @@ describe('--drive with native-subagents-only launches', () => {
   it('nativeSubagentsOnly all-native launch is handed to the host instead of run', () => {
     const fixture = createStubDispatchFixture({
       'read-delegates': { agy: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-only-a', effort: 'low' } }] } },
-      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } } },
     });
     const repo = makeGitRepo();
     try {

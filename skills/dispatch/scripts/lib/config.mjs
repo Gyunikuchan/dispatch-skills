@@ -5,7 +5,7 @@
  * One config (`config.local.jsonc`, else `config.jsonc`) holds three tables:
  * - `read-delegates`  provider → `{ sandbox?, nativeSubagentsOnly?, targets: [levelMap, ...] }` (required)
  * - `write-subagents` provider → level map (optional)
- * - `phases`          review phase → `targets`/`rounds`/`consensus` level maps + `only` (optional)
+ * - `phases`          review phase → `targets`/`rounds` level maps + `only` (optional)
  *
  * A level map maps levels to `{ model, effort? }`. Every level-keyed value resolves the same way:
  * exact → nearest lower → lowest higher, with no field inheritance across levels.
@@ -46,7 +46,7 @@ export function policyPhase(phase) {
 }
 
 export const TABLES = ['read-delegates', 'write-subagents', 'phases'];
-const PHASE_KNOBS = ['targets', 'rounds', 'consensus'];
+const PHASE_KNOBS = ['targets', 'rounds'];
 const DIFF_HINT = 'diff against config.sample.jsonc';
 
 function isPlainObject(value) {
@@ -83,7 +83,7 @@ export function selectLevel(definedLevels, level) {
 }
 
 /**
- * Resolves a level-keyed scalar (`targets`, `rounds`, `consensus`).
+ * Resolves a level-keyed scalar (`targets`, `rounds`).
  *
  * @param {Record<string, unknown>} knob
  * @param {string} level
@@ -358,8 +358,6 @@ function validateKnob(where, name, knob, problems) {
       problems.push(`${where}.${key} must be a non-negative integer (${DIFF_HINT}).`);
     } else if (name === 'targets' && value !== 'all' && !isNonNegativeInteger(value)) {
       problems.push(`${where}.${key} must be a non-negative integer or "all" (${DIFF_HINT}).`);
-    } else if (name === 'consensus' && typeof value !== 'boolean') {
-      problems.push(`${where}.${key} must be a boolean (${DIFF_HINT}).`);
     }
   }
 }

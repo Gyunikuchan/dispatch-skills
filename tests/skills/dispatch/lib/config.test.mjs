@@ -45,8 +45,8 @@ const VALID = {
     copilot: { low: { model: ['gpt-5.6-luna', 'bedrock.gpt-5.6-luna'], effort: 'max' } },
   },
   phases: {
-    'plan-review': { rounds: { low: 0, medium: 2 }, targets: { low: 0, medium: 1 }, consensus: { low: false, medium: true }, only: ['claude', 'antigravity'] },
-    'code-review': { rounds: { low: 1 }, targets: { low: 1, max: 'all' }, consensus: { low: false } },
+    'plan-review': { rounds: { low: 0, medium: 2 }, targets: { low: 0, medium: 1 }, only: ['claude', 'antigravity'] },
+    'code-review': { rounds: { low: 1 }, targets: { low: 1, max: 'all' } },
   },
 };
 
@@ -128,7 +128,7 @@ describe('validateConfig', () => {
   });
 
   it('rejects the obsolete design-review policy key', () => {
-    const config = { ...VALID, phases: { ...VALID.phases, 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
+    const config = { ...VALID, phases: { ...VALID.phases, 'design-review': { rounds: { medium: 1 }, targets: { medium: 1 } } } };
     assert.match(problemsOf(config), /unrecognized phase "design-review"\. Valid phases: plan-review, code-review/);
   });
 
@@ -250,7 +250,7 @@ describe('validateConfig', () => {
       assert.match(problemsOf(withTables({ phases: { 'bogus-review': { rounds: { low: 1 } } } })), /bogus-review/);
     });
 
-    it('requires targets, rounds, and consensus within a present phase', () => {
+    it('requires targets and rounds within a present phase', () => {
       const phase = { ...VALID.phases['code-review'] };
       delete phase.rounds;
       const config = { ...VALID, phases: { ...VALID.phases, 'code-review': phase } };
@@ -264,11 +264,10 @@ describe('validateConfig', () => {
 
     it('type-checks knob values and level keys', () => {
       const text = problemsOf(withTables({
-        phases: { 'code-review': { rounds: { low: -1 }, targets: { low: 'two' }, consensus: { low: 'yes' } } },
+        phases: { 'code-review': { rounds: { low: -1 }, targets: { low: 'two' } } },
       }));
       assert.match(text, /phases\.code-review\.rounds\.low must be a non-negative integer/);
       assert.match(text, /phases\.code-review\.targets\.low must be a non-negative integer or "all"/);
-      assert.match(text, /phases\.code-review\.consensus\.low must be a boolean/);
       assert.match(problemsOf(withTables({ phases: { 'code-review': { rounds: { lwo: 1 } } } })), /unrecognized level "lwo"/);
       assert.match(problemsOf(withTables({ phases: { 'code-review': { rounds: 3 } } })), /phases\.code-review\.rounds must be an object keyed by level/);
       assert.match(problemsOf(withTables({ phases: { 'code-review': { rounds: {} } } })), /at least one level/);
@@ -433,13 +432,13 @@ describe('shipped config.sample.jsonc', () => {
   // Liveness stub: claude is the orchestrator, copilot dead.
   const LIVE_ALL = { claude: true, agy: true, copilot: false, opencode: true };
 
-  /** Shipped review policy in `phases` (rounds/consensus per level). */
+  /** Shipped review policy in `phases` (rounds per level). */
   const LEVEL_PARITY = {
-    low: { 'plan-review': { rounds: 0, consensus: false }, 'code-review': { rounds: 1, consensus: false } },
-    medium: { 'plan-review': { rounds: 2, consensus: true }, 'code-review': { rounds: 3, consensus: true } },
-    high: { 'plan-review': { rounds: 3, consensus: true }, 'code-review': { rounds: 3, consensus: true } },
-    xhigh: { 'plan-review': { rounds: 3, consensus: true }, 'code-review': { rounds: 3, consensus: true } },
-    max: { 'plan-review': { rounds: 5, consensus: true }, 'code-review': { rounds: 5, consensus: true } },
+    low: { 'plan-review': { rounds: 0 }, 'code-review': { rounds: 1 } },
+    medium: { 'plan-review': { rounds: 2 }, 'code-review': { rounds: 3 } },
+    high: { 'plan-review': { rounds: 3 }, 'code-review': { rounds: 3 } },
+    xhigh: { 'plan-review': { rounds: 3 }, 'code-review': { rounds: 3 } },
+    max: { 'plan-review': { rounds: 5 }, 'code-review': { rounds: 5 } },
   };
 
   it('is a three-table config that validates with no problems', () => {
@@ -468,7 +467,6 @@ describe('shipped config.sample.jsonc', () => {
       const flow = resolveFlow({ platform: 'claude', level, implementationFields: 'model,effort' }, LIVE_ALL, SAMPLE_CONFIG);
       for (const [phase, expected] of Object.entries(phases)) {
         assert.equal(flow[phase].rounds, expected.rounds, `${phase} rounds`);
-        assert.equal(flow[phase].consensus, expected.consensus, `${phase} consensus`);
       }
       assert.equal(typeof flow['design-review'].rounds, 'number');
       assert.ok(flow.implementation.model, 'claude write-subagent resolves a model');

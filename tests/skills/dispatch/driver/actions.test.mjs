@@ -166,7 +166,7 @@ describe('driver reply validation (SC2)', () => {
 
 const CONFIG = {
   'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
-  phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
+  phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } } },
 };
 
 let fixture;

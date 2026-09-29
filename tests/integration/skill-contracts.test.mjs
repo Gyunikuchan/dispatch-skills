@@ -82,7 +82,7 @@ describe('shared review reference', () => {
   });
 
   it('keeps finality and application records', () => {
-    for (const anchor of [/consensus: true/, /CONFIRM/, /dispatch-application/, /adjacent/]) assert.match(text, anchor);
+    for (const anchor of [/Review rounds/, /CONFIRM/, /dispatch-application/, /adjacent/]) assert.match(text, anchor);
   });
 });
 

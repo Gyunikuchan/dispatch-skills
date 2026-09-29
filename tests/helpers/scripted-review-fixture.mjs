@@ -8,7 +8,7 @@ import { createStubDispatchFixture } from './stub-dispatch-fixture.mjs';
 import { allProviders, makeGitRepo, report, walkthroughPath } from './driver-harness.mjs';
 
 export const ALL = (value) => ({ low: value, medium: value, high: value, xhigh: value, max: value });
-export const phase = ({ rounds = 1, targets = 1, consensus = false } = {}) => ({ rounds: ALL(rounds), targets: ALL(targets), consensus: ALL(consensus) });
+export const phase = ({ rounds = 1, targets = 1 } = {}) => ({ rounds: ALL(rounds), targets: ALL(targets) });
 export const DELEGATES = {
   agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] },
   opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }] },

@@ -49,7 +49,7 @@ const DISPATCH_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 const DOCUMENT_REQUEST_KEYS = [
   'action', 'mode', 'reviewMode', 'artifactPath', 'slug', 'orchestrator',
   'orchestratorModel', 'requirement', 'focus', 'trailingText', 'reviewScope',
-  'toolTurnBudget', 'targets', 'nativeTargets', 'reserves', 'roundId', 'consensus',
+  'toolTurnBudget', 'targets', 'nativeTargets', 'reserves', 'roundId',
   'findingPacketPath', 'findingKeys', 'retryNote', 'selector',
   'invocationContext', 'settlement', 'settledWrites',
 ];

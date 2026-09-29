@@ -24,7 +24,7 @@ const CONFIG = {
     opencode: { targets: [{ low: { model: 'native-fallback-c', effort: 'low' } }] },
   },
   phases: {
-    'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false }, only: ['agy'] },
+    'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, only: ['agy'] },
   },
 };
 
@@ -94,7 +94,7 @@ describe('review-phase post-wave native fallback stays same-platform (SC3)', () 
         opencode: { targets: [{ low: { model: 'opencode-model', effort: 'medium' } }] },
       },
       phases: {
-        'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false }, only: ['claude', 'opencode'] },
+        'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, only: ['claude', 'opencode'] },
       },
     });
     const repo = makeGitRepo();
@@ -123,7 +123,7 @@ describe('same-platform early fallback and the one-shot --slots step (SC2)', () 
   it('launch guidance names the one-shot --slots step and carries slotsPath instead of a host timer', () => {
     const fixture = fixtureFor({
       'read-delegates': { claude: { targets: [{ low: { model: 'claude-opus-5', effort: 'medium' } }] } },
-      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } },
+      phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } } },
     });
     const repo = makeGitRepo();
     cleanup.push(repo.cleanup);
@@ -219,11 +219,11 @@ describe('nativeSubagentsOnly review waves', () => {
       agy: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-only-a', effort: 'low' } }] },
       opencode: { targets: [{ low: { model: 'cli-c', effort: 'low' } }] },
     },
-    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 }, consensus: { medium: false } } },
+    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 2 } } },
   };
   const ALL_NATIVE = {
     ...NATIVE,
-    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false }, only: ['agy'] } },
+    phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, only: ['agy'] } },
   };
 
   function nativeScenario(config) {

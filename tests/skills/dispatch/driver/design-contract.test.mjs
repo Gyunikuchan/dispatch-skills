@@ -12,7 +12,7 @@ import { restoreEvidence } from '../../../../skills/dispatch/scripts/driver/impl
 import { captureReviewBudget } from '../../../../skills/dispatch/scripts/driver/plan-phase.mjs';
 import { readRunState } from '../../../../skills/dispatch/scripts/driver/state.mjs';
 
-const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
+const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } } } };
 const RUN = '11111111-1111-4111-8111-111111111111';
 const at = '2026-09-22T00:00:00.000Z';
 const oid = 'c'.repeat(40);

@@ -81,7 +81,7 @@ describe('scripted standalone reviews, report-only (SC4, SC6)', () => {
 
 describe('scripted review paths (SC5)', () => {
   it('rebuttal wave: CONFIRM settles, REBUT stays live, INTENT-DISPUTE becomes disputed; cap asks then runs one final wave', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const findings = [
       planFinding({ locus: '§ Success Criteria', defect: 'alpha-confirm defect.' }),
@@ -203,7 +203,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('SHOULD confirmation settles rejected finding', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 3 }));
+    const { fixture, repo } = setup(config({ rounds: 3 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
@@ -275,7 +275,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('extends a live MUST by one cap-sized increment and stops extending after confirmation', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const prompts = [];
     let rebuttals = 0;
@@ -306,7 +306,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('requires rulings for disputed SHOULD without an extension prompt', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
@@ -327,7 +327,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('stop option leads to required rulings for unresolved MUST', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
@@ -347,7 +347,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('reports open severity counts for mixed pending cap findings', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
@@ -367,7 +367,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('stop under --fix records user-accepted unresolved finding as unapplied', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--kind', 'plan', '--fix', '--orchestrator', 'claude', '--', plan],
@@ -387,7 +387,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('stop at cap rules live findings then executes exactly one final wave', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     const run = drive(fixture, {
       cwd: repo.dir, runArgs: ['review', '--orchestrator', 'claude', '--', plan],
@@ -405,7 +405,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('persists the extended limit in state before the next wave', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+    const { fixture, repo } = setup(config({ rounds: 1 }));
     const plan = writePlan(repo.dir);
     let savedLimit;
     let rebuttals = 0;
@@ -671,7 +671,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('subset rebuttal wave accounts for failed selected targets', () => {
-    const { fixture, repo } = setup(config({ consensus: true }, { copilot: { targets: [
+    const { fixture, repo } = setup(config({}, { copilot: { targets: [
       { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
     ] } }));
     const plan = writePlan(repo.dir);
@@ -695,7 +695,7 @@ describe('scripted review paths (SC5)', () => {
     assert.ok(readLog(plan).rebuttalFailures.length);
     assert.ok(run.done.failed?.some((item) => item.wave === 'rebuttal'));
 
-    const unmatched = setup(config({ consensus: true }, { copilot: { targets: [
+    const unmatched = setup(config({}, { copilot: { targets: [
       { low: { model: 'gemini', effort: 'medium' } }, { low: { model: 'sol', effort: 'high' } },
     ] } }));
     const unmatchedPlan = writePlan(unmatched.repo.dir);
@@ -984,7 +984,7 @@ describe('scripted review paths (SC5)', () => {
   });
 
   it('state-cache loss: --next names the --run command, and --run resumes from the unsettled log', () => {
-    const { fixture, repo } = setup(config({ consensus: true, rounds: 2 }));
+    const { fixture, repo } = setup(config({ rounds: 2 }));
     const plan = writePlan(repo.dir);
     const runArgs = ['--run', 'review', '--kind', 'plan', '--orchestrator', 'claude', '--', plan];
     const call = (args) => {
@@ -1086,34 +1086,29 @@ describe('scripted review paths (SC5)', () => {
     assert.ok(run.done.summary.length > 0);
   });
 
-  it('phase not configured: one fallback target, one round, host-final rulings', () => {
+  it('phase not configured: one fallback target, one round, reviewer-confirmed rejections', () => {
     const { fixture, repo } = setup({ 'read-delegates': DELEGATES });
     const plan = writePlan(repo.dir);
     const batches = [];
     const run = drive(fixture, {
       cwd: repo.dir,
       runArgs: ['review', '--orchestrator', 'claude', '--', plan],
-      onAction: (action) => { if (action.action === 'launch') batches.push(readBatchFile(action.argv)); },
-      policy: { waveResults: firstReview(report([planFinding()])), rule: () => ({ status: 'rejected' }) },
+      onAction: (action) => { if (action.action === 'launch') batches.push({ type: action.wave.type, ...readBatchFile(action.argv) }); },
+      policy: {
+        waveResults: (action) => allProviders(action.wave.type === 'rebuttal'
+          ? rebuttal(action.keys.map((key) => [key, 'CONFIRM']))
+          : report(action.wave.round === 1 ? [planFinding()] : [])),
+        rule: () => ({ status: 'rejected' }),
+      },
     });
-    assert.equal(batches.length, 1, 'one round, no rebuttal wave');
+    // ADR 0005 D9: the fallback reviewer confirms rejections like a configured one.
+    assert.deepEqual(batches.map((batch) => batch.type), ['review', 'rebuttal'], 'one round plus its rebuttal wave');
     assert.equal(batches[0].targets.length, 1);
     assert.notEqual(batches[0].targets[0].platform, 'claude', 'orchestrator demoted');
-    assert.equal(logEntries(plan)[0].status, 'rejected', 'host ruling is final');
+    assert.equal(logEntries(plan)[0].status, 'rejected', 'reviewer confirmed the rejection');
     assertSettledAndCheckpointed(plan, run.done, 'plan');
   });
 
-  it('consensus: false keeps host rulings final (no rebuttal wave)', () => {
-    const { fixture, repo } = setup(config({ consensus: false, rounds: 3 }));
-    const plan = writePlan(repo.dir);
-    const run = drive(fixture, {
-      cwd: repo.dir,
-      runArgs: ['review', '--orchestrator', 'claude', '--', plan],
-      policy: { waveResults: firstReview(report([planFinding()])), rule: () => ({ status: 'rejected' }) },
-    });
-    assert.equal(launches(run.trace, 'rebuttal').length, 0);
-    assertSettledAndCheckpointed(plan, run.done, 'plan');
-  });
 });
 
 // SECTION: SC5 — writer envelope files notes

@@ -14,8 +14,8 @@ const CONFIG = {
     opencode: { targets: [{ low: { model: 'opencode-go/glm-5.3-flash', effort: 'max' } }] },
   },
   phases: {
-    'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },
-    'code-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } },
+    'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } },
+    'code-review': { rounds: { medium: 1 }, targets: { medium: 1 } },
   },
 };
 

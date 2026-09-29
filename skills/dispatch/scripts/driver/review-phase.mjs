@@ -18,7 +18,8 @@ import { parseRebuttal, parseReport } from '../review/parse-report.mjs';
 import { prepareReview } from '../review/prepare.mjs';
 import { explicitRangeBounds } from '../review/range.mjs';
 import { getCurrentBranch, ledgerWalkthroughSlug, resolveArtifacts, resolveSlug } from '../artifacts/resolve-paths.mjs';
-import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatReviewBudgetMarker, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
+import { FAILURE_KINDS, formatApplicationRecord, formatFailedTargetsLine, formatRebuttalFailuresLine, formatReviewBudgetMarker, formatRoundPolicyRecord, formatSourceMapLine, nextFindingId, scanResolutionLog, validateSourceMap } from '../review/resolution-log.mjs';
+import { adjudicate, convergence, parseLocus, reviewScope, shouldReReview } from '../review/rounds.mjs';
 import { defaultLiveness, probeCandidates, resolveFlow } from '../lib/resolve-flow.mjs';
 import { InvalidReviewReportError, normalizeLocus } from '../review/report.mjs';
 import { reviewKind } from '../review/kinds.mjs';
@@ -163,7 +164,7 @@ export async function startReview({ invocation, cwd, resumeCommand, reviewBudget
     state.pendingUser = rebuilt.pendingUser ?? [];
     return finish(state, nextStep(state));
   }
-  return finish(state, prepareWave(state, 'review'));
+  return finish(state, roundsPolicy(state) ? prepareRound(state) : prepareWave(state, 'review'));
 }
 
 function adoptReviewBudget(state, recovered, fallbackWaves, seed = null) {
@@ -280,11 +281,11 @@ function done(state, outcome, summary, extra = {}) {
 async function resolvePolicy(config, levelInfo, invocation) {
   const phase = levelInfo.phase;
   // An unconfigured phase falls back to one target through resolveFlow's own ordering (orchestrator
-  // demotion and liveness filter included), one round, host-final rulings.
+  // demotion and liveness filter included) and one round.
   const policyKey = policyPhase(phase);
   const effective = levelInfo.configured
     ? config
-    : { ...config, phases: { ...(config.phases ?? {}), [policyKey]: { rounds: { low: 1 }, targets: { low: 1 }, consensus: { low: false } } } };
+    : { ...config, phases: { ...(config.phases ?? {}), [policyKey]: { rounds: { low: 1 }, targets: { low: 1 } } } };
   const pins = invocation.pins ? invocation.pins.split(',').map((pin) => pin.trim()).filter(Boolean) : undefined;
   const options = {
     platform: invocation.orchestrator,
@@ -309,7 +310,6 @@ async function resolvePolicy(config, levelInfo, invocation) {
   return {
     configured: levelInfo.configured,
     rounds: flow.rounds,
-    consensus: levelInfo.configured ? Boolean(flow.consensus) : false,
     targets: flow.targets.map(entry),
     reserves: flow.reserves.map(entry),
   };
@@ -337,6 +337,10 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
     if (state.target.range) request.range = state.target.range;
     if (state.inputs) Object.assign(request, state.inputs);
     if (typeof state.invocation.focus === 'string' && state.invocation.focus) request.focus = state.invocation.focus;
+    if (reviewMode === 'full' && state.roundContext) {
+      const { scope, deltaPaths, disputes } = state.roundContext;
+      Object.assign(request, { scope, deltaPaths, disputes: disputes.map(({ id, severity, locus, tag, reason }) => ({ id, severity, locus, tag, reason })) });
+    }
   } else {
     request.artifactPath = state.artifactPath ?? state.target.artifactPath;
   }
@@ -386,7 +390,8 @@ function prepareCheckpointOnly(state) {
 }
 
 function prepareWave(state, type, rebuttal = null) {
-  if (type === 'review' && state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
+  // The review-rounds policy decides every round itself; MUST rounds are uncapped.
+  if (type === 'review' && !roundsPolicy(state) && state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
     return prepareCheckpointOnly(state);
   }
   if ((rebuttal?.targets ?? state.policy.targets).length === 0) {
@@ -479,6 +484,7 @@ function prepareWave(state, type, rebuttal = null) {
     selectedTargets,
     retried: false,
     keys: rebuttal?.keys ?? null,
+    disputes: type === 'review' ? (state.roundContext?.disputes ?? []) : [],
   };
   return launchAction(state);
 }
@@ -880,7 +886,11 @@ function processCollected(state) {
   if (Object.keys(state.collect.sourceMap).length === 0) {
     return done(state, 'failed', 'No delegate delivered a review in this wave.', { command: state.resumeCommand, unfulfilledTargets: unfulfilledTargets(state) });
   }
-  state.adjudication = { round: state.wave.round, findings, sourceMap: state.collect.sourceMap, waveType: state.wave.type };
+  if (roundsPolicy(state) && state.wave.type === 'review') {
+    const halted = checkConvergence(state, findings.filter((finding) => !finding.restate));
+    if (halted) return halted;
+  }
+  state.adjudication ={ round: state.wave.round, findings, sourceMap: state.collect.sourceMap, waveType: state.wave.type };
   if (findings.length === 0) {
     writeRound(state, []);
     return noticedNextStep(state);
@@ -982,7 +992,8 @@ function isDeferredConsider(state, ruling) {
 function statusLabel(state, ruling, userFinal) {
   if (ruling.status === 'accepted') return 'Accepted';
   if (isDeferredConsider(state, ruling)) return 'Pending User';
-  const pending = state.policy.consensus && !userFinal && state.adjudication.waveType === 'review' &&
+  // A reviewer confirms every in-scope MUST/SHOULD rejection, including an unconfigured phase's fallback (ADR 0005 D9).
+  const pending = state.policy.targets.length > 0 && !userFinal && state.adjudication.waveType === 'review' &&
     ruling.scope === 'in-scope' && ruling.severity !== 'CONSIDER';
   return pending ? 'Rejected — Pending Confirmation' : 'Rejected / Downgraded';
 }
@@ -1158,6 +1169,12 @@ function onAskUser(state, reply) {
     return prepareWave(state, 'review');
   }
   if (question === 'opt-in') return onOptIn(state, reply);
+  if (question === 'escalation') {
+    // Escalation halts the run; the findings stay open for the user's own decision.
+    if (reply.answer !== 'stop') return reemit(state, 'answer {"answer": "stop"}; an escalated review cannot continue.');
+    const { kind, reason, ids } = state.pending;
+    return done(state, 'failed', `Review escalated (${kind}): ${reason}`, roundsCompletion(state, { kind, reason, ids }));
+  }
   if (reply.extend === true) {
     if (state.rulings || !state.pending.options?.includes('extend')) return reemit(state, 'extend is only available at the round cap.');
     state.roundLimit = (state.roundLimit ?? state.policy.rounds) + state.policy.rounds;
@@ -1341,6 +1358,7 @@ function nextStep(state) {
   const markdown = readArtifactText(state);
   const consensus = evaluateConsensus(markdown);
   if (consensus.exit === 2) return done(state, 'failed', `The resolution log is invalid: ${consensus.error}`);
+  if (roundsPolicy(state)) return nextRoundStep(state);
   const cap = state.policy.rounds;
   const scan = scanResolutionLog(markdown, { strict: true });
   const rounds = scan.rounds;
@@ -1353,7 +1371,7 @@ function nextStep(state) {
   const hasLiveMust = open.some((item) => item.severity === 'MUST');
   if (consensus.exit === 1) {
     const hasPending = open.some((item) => item.status === 'pendingConfirmation');
-    if (!state.finalDone && state.policy.consensus && hasPending && state.rebuttalAt !== rounds.length) return prepareRebuttal(state, markdown, rounds.length);
+    if (!state.finalDone && hasPending && state.rebuttalAt !== rounds.length) return prepareRebuttal(state, markdown, rounds.length);
   }
   if (state.capAsked && !state.finalDone) {
     const pendingUser = rounds.flatMap((round) => round.entries.filter((entry) => entry.status === 'pendingUser'));
@@ -1381,6 +1399,212 @@ function nextStep(state) {
   if (pendingUser.length) return askDeferredConsider(state, pendingUser);
   if (state.invocation.fix && !state.optInOffered && state.adjacent.length > 0) return optInAction(state);
   return state.invocation.implementation ? settle(state) : checkpoint(state);
+}
+
+// SECTION: review rounds (ADR 0005)
+
+/** Code reviews that apply fixes follow the review-rounds policy; design, plan, and report-only reviews keep cap extension. */
+function roundsPolicy(state) {
+  return state.kind === 'code' && Boolean(state.invocation.fix || state.invocation.implementation);
+}
+
+const lastRound = (scan) => scan.rounds.at(-1)?.number ?? 0;
+const logEntries = (scan) => scan.rounds.flatMap((round) => round.entries);
+const unescapeLog = (text) => text.replace(/&lt;/g, '<');
+const slotOf = (sourceKey) => sourceKey.split(':').slice(2).join(':');
+const ENTRY_PARTS = /\[sources=[^\]]*\]\s+(.+?) — ([^:]+): (.*?) → (.*)$/;
+const ROUND_POLICY_COMMENT = /^ {2}<!-- dispatch-round-policy /;
+
+/** Round an applied fix landed in; records written before `appliedRound` existed use the entry's round. */
+function appliedRoundOf(entry) {
+  return entry.application?.appliedRound ?? Number(/^R(\d+)-/.exec(entry.id)[1]);
+}
+
+/** Locus, tag, defect, and resolution of a log entry; a duplicate's live on its origin entry. */
+function entryParts(entries, entry) {
+  const origin = (entry.duplicateOf && entries.find((candidate) => candidate.id === entry.duplicateOf)) || entry;
+  const match = ENTRY_PARTS.exec(origin.originalLine);
+  if (!match) return { locus: '', tag: '', defect: '', resolution: '' };
+  return { locus: unescapeLog(match[1]), tag: match[2], defect: unescapeLog(match[3]), resolution: unescapeLog(match[4]).trim() };
+}
+
+/**
+ * Convergence match key of a wave finding.
+ * @param {{ locus: string, tag: string, defect?: string }} finding
+ * @returns {import('../review/rounds.mjs').MatchKey}
+ */
+export function findingKey(finding) {
+  return { ...parseLocus(finding.locus), tag: finding.tag, text: finding.defect ?? '' };
+}
+
+/**
+ * Convergence history from the log: applied fixes and pending rejections with their re-raise counts.
+ * @param {ReturnType<typeof scanResolutionLog>} scan
+ * @returns {import('../review/rounds.mjs').HistoryEntry[]}
+ */
+export function roundHistory(scan) {
+  const entries = logEntries(scan);
+  return entries.filter((entry) => entry.application?.state === 'applied' || entry.status === 'pendingConfirmation').map((entry) => {
+    const { locus, tag, defect } = entryParts(entries, entry);
+    return {
+      id: entry.id,
+      status: entry.application?.state === 'applied' ? 'applied' : 'pendingConfirmation',
+      reraise: entry.roundPolicy?.reraise ?? 0,
+      ...parseLocus(locus),
+      tag,
+      text: defect,
+    };
+  });
+}
+
+/** Maps settled log entries onto `shouldReReview` states; `fixed` means applied since the latest review round. */
+function roundSummary(state, scan) {
+  const round = lastRound(scan);
+  const findings = logEntries(scan).map((entry) => {
+    const applied = ['accepted', 'resolvedDispute'].includes(entry.status) && entry.application?.state === 'applied';
+    const stateOf = applied ? (appliedRoundOf(entry) >= round ? 'fixed' : 'closed')
+      : ['pendingConfirmation', 'disputed'].includes(entry.status) ? 'pending-rejection'
+        : entry.status === 'rejected' ? 'rejected' : 'open';
+    return { id: entry.id, severity: entry.severity, state: stateOf };
+  });
+  return { round, cap: state.policy.rounds, findings };
+}
+
+/** Writes or merges a finding's round-policy record after its entry and any application record. */
+function setRoundPolicy(markdown, entry, patch) {
+  const lines = markdown.split('\n');
+  const index = lines.findIndex((line) => /^\s*[-*]\s+\*\*\[/.test(line) && line.includes(`[${entry.id}]`));
+  if (index < 0) return markdown;
+  const at = index + 1 + (APPLICATION_COMMENT.test(lines[index + 1] ?? '') ? 2 : 0);
+  const { id: _id, ...current } = entry.roundPolicy ?? {};
+  lines.splice(at, ROUND_POLICY_COMMENT.test(lines[at] ?? '') ? 2 : 0, ...formatRoundPolicyRecord({ id: entry.id, ...current, ...patch }).split('\n'));
+  return lines.join('\n');
+}
+
+/** Scope, delta paths, and open disputes for the round after the latest one. */
+function roundContext(state, scan) {
+  const round = lastRound(scan);
+  const scope = round ? reviewScope({ round, cap: state.policy.rounds }) : 'full';
+  const entries = logEntries(scan);
+  const deltaPaths = [...new Set(entries.filter((entry) => entry.application?.state === 'applied' && appliedRoundOf(entry) >= round)
+    .flatMap((entry) => entry.application.affectedPaths))].sort();
+  // Delta rounds carry only MUST disputes; SHOULD ones were finalized at the cap.
+  const disputes = entries.filter((entry) => entry.status === 'pendingConfirmation' && (scope === 'full' || entry.severity === 'MUST'))
+    .map((entry) => {
+      const { locus, tag, resolution } = entryParts(entries, entry);
+      return { id: entry.id, severity: entry.severity, locus, tag, reason: resolution || 'No reason recorded.' };
+    });
+  return { scope, deltaPaths, disputes };
+}
+
+function prepareRound(state) {
+  const scan = state.artifactPath && fs.existsSync(state.artifactPath) ? scanResolutionLog(readArtifactText(state), { strict: true }) : null;
+  state.roundContext = scan ? roundContext(state, scan) : null;
+  return prepareWave(state, 'review');
+}
+
+function escalate(state, kind, ids, reason) {
+  return emitAction(state, 'ask-user', {
+    question: 'escalation',
+    text: `${reason} The run stops here; the findings stay open for your decision.`,
+    kind,
+    reason,
+    ids,
+    options: ['stop'],
+  }, ['Relay the escalation to the user, then answer {"answer": "stop"}. Never finalize the findings; only the user may later choose manual completion.']);
+}
+
+/**
+ * Step 2, before any resolution: halts on a regressed fix or a second re-raise, closes disputes the
+ * reviewer accepted by omission, and counts first re-raises and unreachable reviewers.
+ */
+function checkConvergence(state, findings) {
+  let markdown = readArtifactText(state);
+  const scan = scanResolutionLog(markdown, { strict: true });
+  const result = convergence({ findings: findings.map(findingKey), history: roundHistory(scan) });
+  if (result.halt) {
+    return escalate(state, result.kind, result.ids, result.kind === 'regression'
+      ? `The review re-raised ${result.ids.join(', ')}, already fixed in an earlier round: the fix regressed or did not hold.`
+      : `The reviewer re-raised pending rejection ${result.ids.join(', ')} a second time: reviewer and orchestrator are deadlocked.`);
+  }
+  const entries = logEntries(scan);
+  const failed = new Set(currentFailures(state).map(({ sourceKey }) => slotOf(sourceKey)));
+  const reraisedIds = 'reraised' in result ? result.reraised : [];
+  const reraised = entries.filter((entry) => reraisedIds.includes(entry.id));
+  const accepted = [];
+  for (const dispute of state.wave.disputes ?? []) {
+    const entry = entries.find((item) => item.id === dispute.id);
+    if (!entry || entry.status !== 'pendingConfirmation' || reraised.includes(entry)) continue;
+    // Omission accepts the rejection unless the finding's own reviewer could not answer this round.
+    (entry.sourceKeys.some((key) => failed.has(slotOf(key))) ? reraised : accepted).push(entry);
+  }
+  const deadlocked = reraised.filter((entry) => (entry.roundPolicy?.reraise ?? 0) >= 1);
+  if (deadlocked.length) {
+    return escalate(state, 'deadlock', deadlocked.map((entry) => entry.id),
+      `Pending rejection ${deadlocked.map((entry) => entry.id).join(', ')} is still unconfirmed after its reviewer's second missed exchange: reviewer and orchestrator are deadlocked.`);
+  }
+  for (const entry of reraised) markdown = setRoundPolicy(markdown, entry, { reraise: (entry.roundPolicy?.reraise ?? 0) + 1 });
+  for (const entry of accepted) {
+    markdown = setEntryStatus(markdown, entry.id, 'Rejected / Downgraded');
+    markdown = setRoundPolicy(markdown, entry, { closer: 'reviewer' });
+  }
+  if (reraised.length || accepted.length) writeArtifactText(state, markdown);
+  return null;
+}
+
+/** Steps 4 and 5 once rulings and fixes settle: finalize below-threshold rejections, then decide on another round. */
+function nextRoundStep(state) {
+  state.changed = false;
+  state.skipReviewForDeferredConsider = false;
+  let markdown = readArtifactText(state);
+  let scan = scanResolutionLog(markdown, { strict: true });
+  if (!lastRound(scan)) return prepareRound(state);
+  const summary = roundSummary(state, scan);
+  const entries = logEntries(scan);
+  const closed = adjudicate(summary).filter((finding, index) => finding.closer === 'orchestrator' && summary.findings[index].state === 'pending-rejection');
+  for (const finding of closed) {
+    const entry = entries.find((item) => item.id === finding.id);
+    if (entry.status !== 'pendingConfirmation') continue;
+    markdown = setEntryStatus(markdown, entry.id, 'Rejected / Downgraded');
+    markdown = setRoundPolicy(markdown, entry, { closer: 'orchestrator' });
+  }
+  if (closed.length) {
+    writeArtifactText(state, markdown);
+    scan = scanResolutionLog(markdown, { strict: true });
+  }
+  state.roundSummary = roundSummary(state, scan);
+  if (shouldReReview(state.roundSummary)) {
+    // The implement driver verifies applied fixes before their round; a dispute alone re-enters here.
+    const pending = state.roundSummary.findings.some((finding) => finding.state === 'pending-rejection');
+    if (state.invocation.implementation && !pending) return settle(state);
+    return prepareRound(state);
+  }
+  const open = scan.unsettledItems;
+  if (open.length) return askCap(state, open, false);
+  const pendingUser = logEntries(scan).filter((entry) => entry.status === 'pendingUser');
+  if (pendingUser.length) return askDeferredConsider(state, pendingUser);
+  if (state.invocation.fix && !state.optInOffered && state.adjacent.length > 0) return optInAction(state);
+  return state.invocation.implementation ? settle(state) : checkpoint(state);
+}
+
+/** The completion output's `reviewRounds` for a review-rounds run; empty for other reviews. */
+function roundsCompletion(state, escalation = null) {
+  if (!roundsPolicy(state) || !state.artifactPath || !fs.existsSync(state.artifactPath)) return {};
+  const scan = scanResolutionLog(readArtifactText(state), { strict: true });
+  const count = lastRound(scan);
+  const entries = logEntries(scan);
+  return {
+    reviewRounds: {
+      count,
+      cap: state.policy.rounds,
+      capReached: count >= state.policy.rounds,
+      fixedUnreviewed: entries.filter((entry) => entry.application?.state === 'applied' && appliedRoundOf(entry) >= count)
+        .map((entry) => ({ id: entry.id, round: appliedRoundOf(entry) })),
+      rejected: entries.filter((entry) => entry.status === 'rejected')
+        .map((entry) => ({ id: entry.id, reason: entryParts(entries, entry).resolution, closer: entry.roundPolicy?.closer ?? 'orchestrator' })),
+      ...(escalation ? { escalation } : {}),
+    },
+  };
 }
 
 // SECTION: fixes
@@ -1421,11 +1645,9 @@ function onApplyFixes(state, reply) {
   const statuses = new Map(reply.clusters.map((cluster) => [cluster.clusterId, cluster]));
   const missing = state.fix.active.filter((cluster) => !statuses.has(cluster.clusterId)).map((c) => c.clusterId);
   if (missing.length) return reemit(state, `missing cluster status for ${missing.join(', ')}`);
-  const applied = state.fix.active.filter((cluster) => statuses.get(cluster.clusterId).status === 'applied');
-  const must = applied.some((cluster) => cluster.findings.some((finding) => finding.severity === 'MUST'));
-  // Implementation reviews re-review only MUST fixes; the final gate and code checkpoint cover the rest.
-  if (!state.invocation.implementation || must) state.changed = true;
-  if (must) state.mustApplied = true;
+  // The review-rounds policy reads applied fixes from the log; other reviews re-review any fix.
+  if (roundsPolicy(state)) state.fix.appliedRound = lastRound(scanResolutionLog(readArtifactText(state), { strict: true }));
+  else state.changed = true;
   for (const cluster of state.fix.active) {
     const status = statuses.get(cluster.clusterId);
     cluster.applyFailure = status.status === 'failed' ? `apply failed: ${cleanText(status.note, 'no detail')}` : null;
@@ -1525,6 +1747,7 @@ function writeApplicationRecords(state, findings, applicationState, reason) {
         dependsOn: [...new Set(finding.fix.dependsOn)].sort(),
         verification: [...new Set(finding.fix.verification)],
         reason,
+        ...(applicationState === 'applied' && state.fix.appliedRound ? { appliedRound: state.fix.appliedRound } : {}),
       });
     } catch (err) {
       // NOTE: e.g. an artifact outside the repo root has no repo-relative path; never wedge the run on a record.
@@ -1608,7 +1831,7 @@ function onOptIn(state, reply) {
 function settle(state) {
   const preview = prepareReview(state.kind, { action: 'checkpoint-preview', invocationContext: state.invocationContext }, { repoRoot: state.repoRoot });
   if (preview.settlement.consensusExit !== 0) return done(state, 'failed', 'Consensus did not settle before checkpoint.');
-  return done(state, 'complete', 'Review settled; checkpoint deferred to the final verification gate.', { checkpointed: false });
+  return done(state, 'complete', 'Review settled; checkpoint deferred to the final verification gate.', { checkpointed: false, ...roundsCompletion(state) });
 }
 
 /** Records the deferred checkpoint of a settled implementation code review. */
@@ -1626,16 +1849,17 @@ function checkpoint(state) {
       settlement: preview.settlement,
       settledWrites: preview.settledWrites,
     }, { repoRoot: state.repoRoot });
-    return done(state, 'complete', `Review settled and checkpointed (${result.artifactPath}).`, { checkpointed: true });
+    return done(state, 'complete', `Review settled and checkpointed (${result.artifactPath}).`, { checkpointed: true, ...roundsCompletion(state) });
   } catch (err) {
     // Drift restarts preparation once; the driver never forces a stale checkpoint.
     if (!state.driftRestarted) {
       state.driftRestarted = true;
       state.invocationContext = null;
-      if (state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
+      // The review-rounds policy has no wave budget; the once-only restart bounds drift.
+      if (!roundsPolicy(state) && state.reviewWaves >= (state.roundLimit ?? state.policy.rounds)) {
         return done(state, 'failed', `Checkpoint drift exhausted the ${state.roundLimit}-wave review budget.`, { command: state.resumeCommand });
       }
-      return prepareWave(state, 'review');
+      return roundsPolicy(state) ? prepareRound(state) : prepareWave(state, 'review');
     }
     return done(state, 'failed', `Checkpoint failed: ${err.message}`, { command: state.resumeCommand });
   }

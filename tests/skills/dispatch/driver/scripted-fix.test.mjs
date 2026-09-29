@@ -195,7 +195,8 @@ describe('scripted --fix reviews (SC5, SC6)', () => {
     assert.equal(fixes[0].clusters.flatMap((c) => c.findingIds).length, 1, 'only the chosen item is fixed');
     const iFix = run.trace.indexOf(fixes[0]);
     assert.ok(run.trace.slice(iFix).some((a) => a.action === 'verify'));
-    assert.equal(run.trace.slice(iFix).some((a) => a.action === 'launch' && a.wave.type === 'review'), false, 'opt-in does not exceed the spent review budget');
+    // Review rounds (ADR 0005): an applied MUST before the cap earns one re-review of the fix.
+    assert.equal(run.trace.slice(iFix).filter((a) => a.action === 'launch' && a.wave.type === 'review').length, 1);
     const walkthrough = fs.readFileSync(walkthroughIn(repo.dir), 'utf8');
     const followUps = walkthrough.split(/^## Deviations & Follow-ups\s*$/m)[1]?.split(/^## /m)[0] ?? '';
     assert.match(followUps, /adjacent-two/);

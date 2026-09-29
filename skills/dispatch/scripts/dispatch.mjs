@@ -829,8 +829,8 @@ export async function buildDoctorReport(config, configPath, {
     tolerateMissingImplementationModel: true,
   }, liveness, config);
   const phases = Object.fromEntries(['design-review', 'plan-review', 'code-review'].map(phase => {
-    const { targets: phaseTargets, reserves, rounds, consensus, configured } = flow[phase];
-    return [phase, { configured, targets: phaseTargets, reserves, rounds, consensus }];
+    const { targets: phaseTargets, reserves, rounds, configured } = flow[phase];
+    return [phase, { configured, targets: phaseTargets, reserves, rounds }];
   }));
 
   const entries = Object.fromEntries(
@@ -870,7 +870,7 @@ export function formatDoctorReport(report) {
       lines.push(`  ${phase}: off (not configured)`);
     } else {
       const state = info.rounds === 0 ? 'off ' : '';
-      lines.push(`  ${phase}: ${state}targets=${names(info.targets)} reserves=${names(info.reserves)} rounds=${info.rounds} consensus=${info.consensus}`);
+      lines.push(`  ${phase}: ${state}targets=${names(info.targets)} reserves=${names(info.reserves)} rounds=${info.rounds}`);
     }
   }
   const writeEntries = Object.entries(report.writeSubagents);

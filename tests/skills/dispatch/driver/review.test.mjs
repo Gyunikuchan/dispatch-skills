@@ -64,7 +64,7 @@ describe('review kind inference (design order 1–6)', () => {
 
 describe('review level resolution (raise rule)', () => {
   const config = (phase) => ({ 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'plan-review': phase } });
-  const highOnly = { rounds: { low: 0, medium: 0, high: 2, xhigh: 2, max: 2 }, targets: ALL(1), consensus: ALL(false) };
+  const highOnly = { rounds: { low: 0, medium: 0, high: 2, xhigh: 2, max: 2 }, targets: ALL(1) };
 
   it('raises a classified level to the lowest level that enables the phase', () => {
     const result = resolveReviewLevel({ config: config(highOnly), kind: 'plan', level: 'low', levelSource: 'classified' });
@@ -82,7 +82,7 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('does not escalate a classified level beyond high', () => {
-    const elevatedOnly = { rounds: { low: 0, medium: 0, high: 0, xhigh: 2, max: 2 }, targets: ALL(1), consensus: ALL(false) };
+    const elevatedOnly = { rounds: { low: 0, medium: 0, high: 0, xhigh: 2, max: 2 }, targets: ALL(1) };
     const result = resolveReviewLevel({ config: config(elevatedOnly), kind: 'plan', level: 'high', levelSource: 'classified' });
     assert.equal(result.level, 'high');
     assert.equal(result.raised, false);
@@ -91,7 +91,7 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('skips rather than demotes a classified level with no enabled level above it', () => {
-    const lowOnly = { rounds: { low: 2, medium: 0, high: 0, xhigh: 0, max: 0 }, targets: ALL(1), consensus: ALL(false) };
+    const lowOnly = { rounds: { low: 2, medium: 0, high: 0, xhigh: 0, max: 0 }, targets: ALL(1) };
     const result = resolveReviewLevel({ config: config(lowOnly), kind: 'plan', level: 'medium', levelSource: 'classified' });
     assert.equal(result.level, 'medium');
     assert.ok(result.skipped);
@@ -108,12 +108,12 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('treats targets: 0 as disabled too', () => {
-    const phase = { rounds: ALL(1), targets: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, consensus: ALL(false) };
+    const phase = { rounds: ALL(1), targets: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 } };
     assert.equal(resolveReviewLevel({ config: config(phase), kind: 'plan', level: 'low', levelSource: 'classified' }).level, 'high');
   });
 
   it('uses shared plan-review policy for design review escalation and disablement', () => {
-    const off = { rounds: ALL(0), targets: ALL(1), consensus: ALL(false) };
+    const off = { rounds: ALL(0), targets: ALL(1) };
     for (const levelSource of ['classified', 'default', 'explicit']) {
       const result = resolveReviewLevel({ config: config(off), kind: 'design', level: 'medium', levelSource });
       assert.ok(result.skipped, levelSource);
@@ -123,7 +123,7 @@ describe('review level resolution (raise rule)', () => {
   });
 
   it('maps review identity separately from shared policy key and reports configured:false when absent', () => {
-    const cfg = { 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } } };
+    const cfg = { 'read-delegates': { agy: { targets: [{ low: { model: 'm', effort: 'medium' } }] } }, phases: { 'code-review': { rounds: ALL(1), targets: ALL(1) } } };
     assert.equal(resolveReviewLevel({ config: cfg, kind: 'code', level: 'medium', levelSource: 'default' }).phase, 'code-review');
     const design = resolveReviewLevel({ config: cfg, kind: 'design', level: 'medium', levelSource: 'default' });
     assert.equal(design.phase, 'design-review');
@@ -140,7 +140,7 @@ describe('driver skip and inference through dispatch.mjs', () => {
     fixture = createStubDispatchFixture({
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
       phases: {
-        'plan-review': { rounds: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, targets: ALL(1), consensus: ALL(false) },
+        'plan-review': { rounds: { low: 0, medium: 0, high: 1, xhigh: 1, max: 1 }, targets: ALL(1) },
       },
     });
   });
@@ -193,7 +193,6 @@ describe('driver skip and inference through dispatch.mjs', () => {
       const state = JSON.parse(fs.readFileSync(action.stateFile, 'utf8'));
       assert.equal(state.policy.configured, false);
       assert.equal(state.policy.rounds, 1);
-      assert.equal(state.policy.consensus, false);
       assert.equal(state.policy.targets.length, 1);
       assert.match(state.policy.targets[0].candidateId, /^design-review:/);
     } finally {
@@ -227,7 +226,7 @@ describe('fix verification guidance (narrowest check)', () => {
   it('standalone --fix review guidance names the narrowest check without forbidding aggregate suites', () => {
     const fixture = createStubDispatchFixture({
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
-      phases: { 'code-review': { rounds: ALL(2), targets: ALL(1), consensus: ALL(false) } },
+      phases: { 'code-review': { rounds: ALL(2), targets: ALL(1) } },
     });
     const local = makeGitRepo({ dirty: true });
     try {
@@ -253,7 +252,7 @@ describe('fix verification guidance (narrowest check)', () => {
   it('names the reply path for adjudicate', () => {
     const fixture = createStubDispatchFixture({
       'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
-      phases: { 'code-review': { rounds: ALL(1), targets: ALL(1), consensus: ALL(false) } },
+      phases: { 'code-review': { rounds: ALL(1), targets: ALL(1) } },
     });
     const local = makeGitRepo({ dirty: true });
     try {
@@ -327,7 +326,7 @@ describe('cumulative review budgets and CONSIDER fixes', () => {
   afterEach(() => { fixture?.cleanup(); fixture = null; });
   const makeFixture = (rounds) => createStubDispatchFixture({
     'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
-    phases: { 'plan-review': { rounds: ALL(rounds), targets: ALL(1), consensus: ALL(false) } },
+    phases: { 'plan-review': { rounds: ALL(rounds), targets: ALL(1) } },
   });
   const fixAt = (file, repoDir) => ({
     affectedPaths: [path.relative(repoDir, file).split(path.sep).join('/')], dependsOn: [], verification: [],

@@ -166,13 +166,13 @@ describe('`--run ask` breadth and pins (SC4)', () => {
   });
 
   it('ask places surplus candidates in reserves', () => {
-    const { batch } = askBatch({ ...MULTI, phases: { 'code-review': { targets: { medium: 2 }, rounds: { medium: 1 }, consensus: { medium: true } } } });
+    const { batch } = askBatch({ ...MULTI, phases: { 'code-review': { targets: { medium: 2 }, rounds: { medium: 1 } } } });
     assert.equal(batch.targets.length, 2, JSON.stringify(batch));
     assert.equal(batch.reserves.length, 1, JSON.stringify(batch));
   });
 
   it('ask ignores a disabled code-review phase', () => {
-    const { batch, run } = askBatch({ ...MULTI, phases: { 'code-review': { rounds: { medium: 0 }, targets: { medium: 2 }, consensus: { medium: true }, only: ['agy'] } } });
+    const { batch, run } = askBatch({ ...MULTI, phases: { 'code-review': { rounds: { medium: 0 }, targets: { medium: 2 }, only: ['agy'] } } });
     assert.equal(batch.targets.length, 2, JSON.stringify(batch));
     assert.equal(batch.targets.length + batch.reserves.length, 3, 'the phase only filter does not narrow ask candidates');
     assert.equal(run.done.outcome, 'complete');
@@ -207,7 +207,7 @@ describe('`--run ask` breadth and pins (SC4)', () => {
   });
 
   it('a zero code-review targets scalar still yields one ask target', () => {
-    const { batch } = askBatch({ ...MULTI, phases: { 'code-review': { rounds: { medium: 0 }, targets: { medium: 0 }, consensus: { medium: true } } } });
+    const { batch } = askBatch({ ...MULTI, phases: { 'code-review': { rounds: { medium: 0 }, targets: { medium: 0 } } } });
     assert.deepEqual(batch.targets.map(platformOf), ['agy']);
     assert.deepEqual(batch.reserves.map(platformOf), ['opencode', 'copilot']);
   });

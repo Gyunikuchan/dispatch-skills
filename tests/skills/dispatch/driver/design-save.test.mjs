@@ -16,7 +16,7 @@ import { makeGitRepo, runDispatch, parseAction, DESIGN_BODY, drive, designFindin
 import { firstReview } from '../../../helpers/scripted-review-fixture.mjs';
 import { governingHash } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
-const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 }, consensus: { medium: false } } } };
+const config = { 'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } }, phases: { 'plan-review': { rounds: { medium: 1 }, targets: { medium: 1 } } } };
 
 function withFixture(test) {
   const fixture = createStubDispatchFixture(config);

@@ -16,12 +16,14 @@ const ENRICHED_PREFIX =
 const SOURCE_MAP = /^<!-- dispatch-sources (\{.*\}) -->$/;
 const FAILED_TARGETS = /^<!-- dispatch-failed-targets (\[.*\]) -->$/;
 const APPLICATION_LINE = /^ {2}<!-- dispatch-application (.*) -->$/;
+const ROUND_POLICY_LINE = /^ {2}<!-- dispatch-round-policy (.*) -->$/;
 const LEGACY_RECORD = /^\s*[-*]\s+(?:\*\*Sources:\*\*|failed-targets:|application:)/;
 const SOURCE_KEY = /^(design-review|plan-review|code-review):R[1-9]\d*:[a-z][a-z0-9-]*:[0-9]+$/;
 const SOURCE_STATUSES = new Set(['target', 'reserve', 'fallback', 'replacement']);
 const APPLICATION_STATES = new Set(['unapplied', 'materialized', 'applied', 'superseded']);
 const APPLICATION_SCOPES = new Set(['in-scope', 'adjacent']);
 const APPLICATION_FIELDS = ['affectedPaths', 'dependsOn', 'findingId', 'reason', 'scope', 'state', 'v', 'verification'];
+const ROUND_POLICY_CLOSERS = new Set(['reviewer', 'orchestrator']);
 const PATH_PATTERN = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
 
 function normalize(markdown) {
@@ -261,8 +263,12 @@ function isSortedUnique(arr) {
 
 function applicationRecordProblem(record, entry, roundNumber) {
   if (!record || Array.isArray(record) || typeof record !== 'object') return 'record must be an object';
-  if (Object.keys(record).sort().join('\0') !== APPLICATION_FIELDS.join('\0')) {
-    return `record fields must be exactly: ${APPLICATION_FIELDS.join(', ')}`;
+  const fields = Object.keys(record).filter((field) => field !== 'appliedRound').sort();
+  if (fields.join('\0') !== APPLICATION_FIELDS.join('\0')) {
+    return `record fields must be exactly: ${APPLICATION_FIELDS.join(', ')} (plus optional appliedRound)`;
+  }
+  if (Object.hasOwn(record, 'appliedRound') && (!Number.isSafeInteger(record.appliedRound) || record.appliedRound < 1)) {
+    return 'appliedRound must be a positive safe integer';
   }
   if (record.v !== 1) return 'v must be 1';
   if (typeof record.findingId !== 'string' || record.findingId.length === 0) return 'findingId must be a non-empty string';
@@ -334,9 +340,41 @@ export function formatApplicationRecord(record) {
     dependsOn: [...record.dependsOn],
     verification: [...record.verification],
     reason: record.reason,
+    ...(Object.hasOwn(record, 'appliedRound') ? { appliedRound: record.appliedRound } : {}),
   };
   return `  <!-- dispatch-application ${commentJson(canonical)} -->\n${applicationLine(canonical)}`;
 }
+function roundPolicyProblem(record, entry) {
+  if (!record || Array.isArray(record) || typeof record !== 'object') return 'record must be an object';
+  if (Object.keys(record).some((field) => !['id', 'closer', 'reraise'].includes(field))) return 'record fields must be id, closer?, reraise?';
+  if (typeof record.id !== 'string' || !/^R[1-9]\d*-F\d{3,}$/.test(record.id)) return 'id must be a finding ID (R<n>-F<nnn>)';
+  if (entry?.id && record.id !== entry.id) return `id "${record.id}" does not match entry ID "${entry.id}"`;
+  if (Object.hasOwn(record, 'closer') && !ROUND_POLICY_CLOSERS.has(record.closer)) return 'closer must be reviewer or orchestrator';
+  if (Object.hasOwn(record, 'reraise') && (!Number.isSafeInteger(record.reraise) || record.reraise < 0)) return 'reraise must be a non-negative safe integer';
+  if (!Object.hasOwn(record, 'closer') && !Object.hasOwn(record, 'reraise')) return 'record needs closer or reraise';
+  return null;
+}
+
+/**
+ * Formats a finding's review-rounds record (who closed a final rejection, re-raise count) as its
+ * comment plus derived line; it follows the entry, after any application record.
+ * @param {{ id: string, closer?: string, reraise?: number }} record
+ */
+export function formatRoundPolicyRecord(record) {
+  const problem = roundPolicyProblem(record, null);
+  if (problem) throw new Error(`Round policy record is invalid: ${problem}.`);
+  const canonical = {
+    id: record.id,
+    ...(Object.hasOwn(record, 'closer') ? { closer: record.closer } : {}),
+    ...(Object.hasOwn(record, 'reraise') ? { reraise: record.reraise } : {}),
+  };
+  return `  <!-- dispatch-round-policy ${commentJson(canonical)} -->\n${roundPolicyLine(canonical)}`;
+}
+function roundPolicyLine(record) {
+  const parts = [record.closer && `closed by ${record.closer}`, Object.hasOwn(record, 'reraise') && `re-raised ${record.reraise}×`];
+  return `  Round policy: ${parts.filter(Boolean).join(' · ')}`;
+}
+
 /** @param {string} text */
 function codeSpan(text) {
   const value = String(text).replace(/\s+/g, ' ').trim();
@@ -400,6 +438,11 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
   let derived = null;
   /** @type {string | null} */
   let previousRecord = null;
+  // The entry a round-policy record may attach to: set right after an entry's application record.
+  /** @type {Record<string, any> | null} */
+  let policyAnchor = null;
+  /** @type {Record<string, any> | null} */
+  let derivedAnchor = null;
   for (let index = 1; index < sectionLines.length; index++) {
     const line = sectionLines[index];
     const nextFence = fenceTransition(line, fence);
@@ -448,6 +491,8 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         if (line === expected) {
           current?.lines.push(line);
           previousRecord = previousRecord === 'sources' ? 'sources-line' : null;
+          policyAnchor = derivedAnchor;
+          derivedAnchor = null;
           continue;
         }
         if (strict) throw new Error(`Derived line must immediately follow its record and read: ${expected}`);
@@ -480,6 +525,34 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
         continue;
       }
       previousRecord = null;
+      const anchor = policyAnchor;
+      policyAnchor = null;
+      const policyMatch = ROUND_POLICY_LINE.exec(line);
+      if (policyMatch) {
+        const target = anchor ?? (lastLineWasEntry ? current?.entries.at(-1) : null);
+        if (!target) {
+          if (strict) throw new Error('Round policy record must immediately follow its resolution entry or application record.');
+        } else if (target.roundPolicy && strict) {
+          throw new Error(`Finding ${target.id} contains duplicate round policy records.`);
+        } else {
+          let value;
+          try {
+            value = JSON.parse(policyMatch[1].trim());
+          } catch (err) {
+            if (strict) throw new Error(`Round policy record is malformed JSON: ${err.message}`);
+          }
+          const problem = value ? roundPolicyProblem(value, target) : null;
+          if (strict && problem) throw new Error(`Round policy record for finding ${target.id} is invalid: ${problem}.`);
+          if (strict && value && formatRoundPolicyRecord(value).split('\n')[0] !== line) throw new Error(`Round policy record for finding ${target.id} is not in canonical form.`);
+          if (value && !problem) {
+            target.roundPolicy = value;
+            derived = roundPolicyLine(value);
+          }
+        }
+        if (current) current.lines.push(line);
+        lastLineWasEntry = false;
+        continue;
+      }
       const appMatch = APPLICATION_LINE.exec(line);
       if (appMatch) {
         const lastEntry = current?.entries[current.entries.length - 1];
@@ -504,7 +577,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
               }
             }
             lastEntry.application = value;
-            try { derived = applicationLine(value); } catch { derived = null; }
+            try { derived = applicationLine(value); derivedAnchor = lastEntry; } catch { derived = null; }
           }
         }
         if (current) current.lines.push(line);
@@ -562,6 +635,7 @@ function parseRounds(sectionLines, { strict, lineOffset = 0 }) {
           sourceKeys,
           status,
           application: null,
+          roundPolicy: null,
           duplicateOf: enriched[6] ?? null,
           line: line.trim(),
           originalLine: line.trim(),

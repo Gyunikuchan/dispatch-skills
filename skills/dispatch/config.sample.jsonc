@@ -98,7 +98,7 @@
       "low": { "model": "gpt-6-luna", "effort": "max" },
     },
   },
-  // Optional: set review size, rounds, and consensus by level.
+  // Optional: set review size and rounds by level.
   // Without a phase policy, standalone reviews use one target and one round.
   "phases": {
     // Also used for design reviews.
@@ -108,15 +108,12 @@
       "targets": { "low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": "all" },
       // Max review rounds; 0 disables this level.
       "rounds": { "low": 0, "medium": 2, "high": 3, "max": 5 },
-      // Require agreement between voices? False leaves the final call to the host.
-      "consensus": { "low": false, "medium": true },
       // Optional: use only these providers (and all their targets).
       "only": ["claude", "agy", "copilot"],
     },
     "code-review": {
       "targets": { "low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": "all" },
       "rounds": { "low": 1, "medium": 3, "max": 5 },
-      "consensus": { "low": false, "medium": true },
     },
   },
 }

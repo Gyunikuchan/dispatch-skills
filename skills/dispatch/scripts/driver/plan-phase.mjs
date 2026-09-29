@@ -57,6 +57,7 @@ export function acceptPlan(state, reply) {
 export async function beginReview(state, kind) {
   state.ordinary.phase = `${kind}-review`;
   const phase = `${kind}-review`;
+  if (kind === 'code') delete state.ordinary.reReviewPending;
   state.reviewBudgets ??= {};
   const priorBudget = state.reviewBudgets[phase];
   const reviewBudget = priorBudget ?? { phase, budgetId: `${state.ledgerRunId ?? state.runId}:${phase}` };

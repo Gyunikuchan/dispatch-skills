@@ -64,7 +64,7 @@ const lineFor = (plan, key) => fs.readFileSync(plan, 'utf8').split(/\r?\n/).find
 
 /** Round-cap run: host rejects, the delegate REBUTs, and the cap asks for rulings answered by `answerFor`. */
 function roundCapRun(answerFor) {
-  const { fixture, repo } = setup(config({ consensus: true, rounds: 1 }));
+  const { fixture, repo } = setup(config({ rounds: 1 }));
   const plan = writePlan(repo.dir);
   const asked = [];
   const run = drive(fixture, {

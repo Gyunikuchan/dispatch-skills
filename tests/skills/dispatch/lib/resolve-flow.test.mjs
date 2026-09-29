@@ -48,12 +48,10 @@ const BASE_CONFIG = {
     'plan-review': {
       rounds: { low: 0, medium: 1, max: 3 },
       targets: { low: 0, medium: 1, max: 'all' },
-      consensus: { low: false, high: true },
     },
     'code-review': {
       rounds: { low: 1, medium: 3, max: 5 },
       targets: { low: 1, high: 'all' },
-      consensus: { low: false, high: true },
     },
   },
 };
@@ -81,11 +79,11 @@ describe('resolveFlow', () => {
 
   it('resolves sparse phase policy, implementation, and orchestrator ordering across every level', () => {
     const expected = {
-      low:    { plan: [0, 0, false], code: [1, 1, false] },
-      medium: { plan: [1, 1, false], code: [1, 3, false] },
-      high:   { plan: [1, 1, true],  code: [3, 3, true] },
-      xhigh:  { plan: [1, 1, true],  code: [3, 3, true] },
-      max:    { plan: [3, 3, true],  code: [3, 5, true] },
+      low:    { plan: [0, 0], code: [1, 1] },
+      medium: { plan: [1, 1], code: [1, 3] },
+      high:   { plan: [1, 1], code: [3, 3] },
+      xhigh:  { plan: [1, 1], code: [3, 3] },
+      max:    { plan: [3, 3], code: [3, 5] },
     };
 
     for (const [level, policy] of Object.entries(expected)) {
@@ -95,10 +93,9 @@ describe('resolveFlow', () => {
         BASE_CONFIG,
       );
       for (const [phase, values] of [['plan-review', policy.plan], ['code-review', policy.code]]) {
-        const [targets, rounds, consensus] = values;
+        const [targets, rounds] = values;
         assert.equal(out[phase].targets.length, targets, `${level} ${phase} targets`);
         assert.equal(out[phase].rounds, rounds, `${level} ${phase} rounds`);
-        assert.equal(out[phase].consensus, consensus, `${level} ${phase} consensus`);
       }
       if (out['code-review'].targets.length > 0) {
         assert.equal(out['code-review'].targets[0].platform, 'agy', `${level} prefers a non-orchestrator`);
@@ -126,7 +123,6 @@ describe('resolveFlow', () => {
     const DESIGN = {
       rounds: { low: 1, high: 4 },
       targets: { low: 1, high: 2 },
-      consensus: { low: false, medium: true },
     };
 
     it('uses plan-review policy while retaining design-review candidate identity', () => {
@@ -134,7 +130,6 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'high' }, LIVE_ALL, config);
       assert.equal(out['plan-review'].rounds, 4);
       assert.equal(out['design-review'].rounds, 4);
-      assert.equal(out['design-review'].consensus, true);
       assert.deepEqual(out['design-review'].targets.map(t => t.platform), ['agy', 'opencode']);
       assert.deepEqual(out['design-review'].reserves.map(t => t.platform), ['claude']);
       assert.equal(out['design-review'].targets[0].candidateId, 'design-review:agy:0');
@@ -146,7 +141,6 @@ describe('resolveFlow', () => {
       const out = resolveFlow({ platform: 'claude', level: 'medium' }, LIVE_ALL, config);
       assert.equal(out['design-review'].rounds, 1);
       assert.equal(out['design-review'].targets.length, 1);
-      assert.equal(out['design-review'].consensus, true);
     });
 
     it('applies named pins to design-review', () => {
@@ -1109,9 +1103,9 @@ describe('flattened provider targets (strict config)', () => {
       opencode: { sandbox: false, targets: [lvl('opencode-go/glm-5.3-flash'), lvl('lmstudio/qwen3.8-27b-ridge')] },
     },
     'write-subagents': { claude: { low: { model: 'claude-opus-5', effort: 'low' } }, copilot: { low: { model: 'gpt-5.6-luna', effort: 'low' } } },
-    phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 'all' }, consensus: { low: false } } },
+    phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 'all' } } },
   };
-  const withPhase = extra => ({ ...MULTI, phases: { 'code-review': { rounds: { low: 1 }, consensus: { low: false }, ...extra } } });
+  const withPhase = extra => ({ ...MULTI, phases: { 'code-review': { rounds: { low: 1 }, ...extra } } });
   const ids = list => list.map(t => t.candidateId);
   const ORDER = ['code-review:claude:0', 'code-review:agy:0', 'code-review:opencode:0', 'code-review:opencode:1'];
 
@@ -1160,7 +1154,7 @@ describe('nativeSubagentsOnly resolution', () => {
   it('nativeSubagentsOnly drops the platform for another orchestrator and backfills from reserves', () => {
     const flow = resolveFlow({ platform: 'claude', level: 'medium' }, { ...LIVE, copilot: true }, {
       ...NATIVE_CONFIG,
-      phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 }, consensus: { low: false } } },
+      phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 2 } } },
     });
     const all = [...flow['code-review'].targets, ...flow['code-review'].reserves];
     assert.ok(all.every(target => target.platform !== 'copilot'), JSON.stringify(all));

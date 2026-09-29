@@ -29,7 +29,7 @@ import {
 } from './config.mjs';
 
 const LIB_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
-const PHASE_KNOBS = ['rounds', 'targets', 'consensus'];
+const PHASE_KNOBS = ['rounds', 'targets'];
 const IMPLEMENTATION_FIELDS = ['model', 'effort'];
 const LIVENESS_ENV_VAR = 'DISPATCH_LIVENESS_JSON';
 const TEST_MODE_ENV_VAR = 'DISPATCH_TEST_MODE';
@@ -407,13 +407,12 @@ export function resolveFlow(options, liveness, config) {
     const policy = config.phases?.[policyPhase(phase)];
     // An absent phase is off at every level; no pin revives it.
     if (!isPlainObject(policy)) {
-      return { targets: [], reserves: [], rounds: 0, consensus: false, configured: false };
+      return { targets: [], reserves: [], rounds: 0, configured: false };
     }
     let rounds = resolveLevelScalar(policy.rounds, level);
     // Count and "all" override the level's targets; named pins override breadth by naming
     // the complete explicit platform set.
     const targets = isAllPin ? 'all' : count ?? resolveLevelScalar(policy.targets, level);
-    const consensus = resolveLevelScalar(policy.consensus, level);
 
     // `targets: 0` means skip the phase; express it the way `rounds: 0` does so callers have a
     // single sentinel. Any pin overrides breadth, so a pinned phase still runs.
@@ -432,7 +431,7 @@ export function resolveFlow(options, liveness, config) {
       if (dropped.length > 0) droppedPins[phase] = dropped;
     }
 
-    return { ...selected, rounds, consensus, configured: true };
+    return { ...selected, rounds, configured: true };
   }
 
   const implementation = resolveImplementation(options, platform, level, writeSubagents);

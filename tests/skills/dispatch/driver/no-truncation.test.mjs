@@ -21,7 +21,7 @@ let repo;
 before(() => {
   fixture = createStubDispatchFixture({
     'read-delegates': { agy: { targets: [{ low: { model: 'gemini-3.7-flash', effort: 'medium' } }] } },
-    phases: { 'code-review': { rounds: ALL(2), targets: ALL(1), consensus: ALL(false) } },
+    phases: { 'code-review': { rounds: ALL(2), targets: ALL(1) } },
   });
   repo = makeGitRepo({ dirty: true });
 });
