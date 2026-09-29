@@ -1,6 +1,6 @@
 # ADR 0001: Strict dispatch config format
 
-- **Status**: Accepted; implemented in v0.5.0
+- **Status**: Accepted; implemented in v0.5.0; updated for [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-24
 
 ## Context
@@ -23,7 +23,7 @@ without serving current use.
 - Each provider is `{ sandbox?, targets: [...] }`. The non-empty `targets` array contains level
   maps, one per independent voice. Voices have positional identity `<provider>[<index>]`; provider
   declaration order, then target order, determines counts, `all`, reserves, completion, and
-  consensus. `only` selects providers, not individual targets. Names would add schema without
+  review affinity (ADR 0006 D31). `only` selects providers, not individual targets. Names would add schema without
   changing selection; structurally identical targets are rejected.
 - Level maps are non-empty and sparse, with keys drawn from `low`, `medium`, `high`, `xhigh`, and
   `max`. Resolution uses the exact level, otherwise the nearest lower, otherwise the lowest higher.
@@ -42,10 +42,12 @@ without serving current use.
 ### Sandbox and writers
 
 `sandbox` lives on the provider wrapper, defaults to `true`, and can be set to `false`; it is
-accepted for Claude, Copilot, and OpenCode, but not `agy`. If isolation is unavailable, the run
-continues unsandboxed with both stderr and structured downgrade warnings. This favors availability
-while making the security downgrade visible. OpenCode's Bubblewrap follows the effective sandbox
-value.
+accepted for Claude, Copilot, OpenCode, and Codex, but not `agy`. With `sandbox: true`, a provider
+that rejects or cannot activate its sandbox on the host fails the slot as `sandbox-unsupported`,
+and the cascade moves to reserves or native fallback; a delegate never reruns unsandboxed
+(ADR 0006 D28). Running without isolation requires an explicit `sandbox: false`. This favors least
+privilege over availability and makes every unsandboxed run a deliberate configuration choice.
+OpenCode's Bubblewrap follows the effective sandbox value.
 
 Write subagents instead use a bare level map—no `targets` or `sandbox`—because native implementation
 subagents need workspace writes and do not have independent review voices.
@@ -53,7 +55,8 @@ subagents need workspace writes and do not have independent review voices.
 ### Review policy
 
 Technical design reviews retain distinct `design-review` flow and candidate identities while using
-the same `plan-review` target count, rounds, consensus, and provider allowlist. The `phases` table
+the same `plan-review` target count, rounds, and provider allowlist, under the review rounds policy
+(ADR 0005) that governs every review kind. The `phases` table
 accepts `plan-review` and `code-review` only. Both artifacts need the same configurable review
 policy without collapsing their review records.
 
@@ -65,6 +68,8 @@ policy without collapsing their review records.
 - `phases.design-review` is rejected; move its settings to `phases.plan-review`. The shared policy
   then also applies to plan reviews, including any provider filter.
 - Runners omit the effort flag when the selected level omits `effort`. Validation, selection,
-  retries, consensus, sandbox reporting, doctor output, docs, and tests reflect the strict shape.
+  retries, sandbox reporting, `doctor` output, docs, and tests reflect the strict shape.
+- Providers that cannot sandbox on a given host (Claude on native Windows; OpenCode without Linux
+  Bubblewrap) need `sandbox: false` there; `doctor` reports the predicted failure and the fix.
 - Out of scope: per-target names, indexed `only` selectors, per-target/per-level sandbox,
   provider-specific effort enums, and automatic detection of which models accept effort.

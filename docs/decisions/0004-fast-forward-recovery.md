@@ -1,6 +1,6 @@
 # ADR 0004: Fast-forward recovery
 
-- **Status**: Accepted
+- **Status**: Accepted; updated for [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-29
 
 ## Context
@@ -26,28 +26,29 @@ The driver enforces these rules itself. Contract prose names only the decisions 
 | D6 | Wide scope with an audit trail; `external` paths, each with a reason, are left out of the budget | External drift must not stall the run; the final review covers every extension | Plan scope only |
 | D7 | Hard limits: outside the repository, `.git/`, secrets paths, deleting task-start files, git writes | These operations lose work or cross trust boundaries | — |
 | D8 | A violation re-asks and never reverts | A revert could discard substantial work | Auto-restore |
-| D9 | Revert requires `userApproved {by, quote}` and is listed last | Reverting is the user's call and a last resort | Agent-ruled reverts |
-| D10 | Save a patch before every discard, including cascade restores; a patch that cannot be saved stops the discard | Nothing is lost silently, and failover stays automatic | Gating cascade restores on approval |
+| D9 | Failure disposition offers only `hotfix`, `retry`, or `stop`; the driver never reverts on disposition, and reverting is the user's own git action after `stop`; `manual-complete` is accepted only at `stop`, with `userApproved {by, quote}` and per-criterion evidence | Reverting is the user's call and a last resort; a short menu keeps runs moving forward | Agent-ruled reverts; a driver revert option gated on user approval |
+| D10 | The driver's only discard is restoring a failed writer attempt's changes before the next model in a launcher cascade; it saves a patch first, and a patch that cannot be saved stops the discard and the run | Nothing is lost silently, and failover stays automatic | Gating cascade restores on approval; any other driver discard |
 | D11 | The orchestrator judges whether the evidence names a locus | The driver cannot classify failures reliably, and D4 bounds a wrong judgement | Driver-side classification |
 | D12 | Skip scoped commands whose fingerprint is unchanged, within the same run | The same content gives the same result | Reuse across runs |
-| D13 | Re-review only after an applied MUST fix | The final review still covers non-MUST fixes | Re-review after every fix round |
+| D13 | Re-review triggers follow the review rounds policy (ADR 0005 D3) | One policy decides every re-review | A recovery-specific re-review rule |
 | D14 | Skip the post-review scoped gate when the final gate re-runs its stale commands | Running the same commands twice in a row adds no evidence | — |
-| D15 | Not adopted: CONFIRM only for MUST, ask-at-cap as the default, one-round settlement for minor findings | Not selected; changing CONFIRM would silence reviewer dissent | — |
+| D15 | Not adopted: one-round settlement for minor findings or a user gate at the round cap; reviewer confirmation of rejections follows ADR 0005 D5 | Silencing reviewer dissent on findings that matter is not a recovery shortcut | — |
 | D16 | No writer merge | Merging with red criteria loses RED independence | — |
 | D17 | No legacy support | Old reply shapes are refused, not translated | Compatibility shims |
-| D18 | Offer a hot fix at every stall: failure disposition, blocked, missing context, and `baseline-red` (host only); list baseline hot fixes in the approval question | Unexpected stalls happen beyond verify failures, and disclosing them keeps approval informed | Verify failures only |
+| D18 | Offer a hot fix at every stall: `decide:failure` (verify failure, writer blocked, missing context) and `decide:baseline` (host only); list baseline hot fixes in the approval question | Unexpected stalls happen beyond verify failures, and disclosing them keeps approval informed | Verify failures only |
 | D19 | No production edits by a hot fix before RED validates | Preserves RED independence | Allowing them and re-running RED |
 | D20 | Enforce the git limits through HEAD, index, and stash fingerprints | The driver observes effects, not commands | Trusting the orchestrator |
 
 ### Implementation notes
 
-- **Ledger.** A `hotfix-start` event opens a hot fix and a `hotfix` event records it. A `hotfix`
-  event allows one new terminal verification for the current attempt, so a check whose
-  verification was already recorded can re-run on the hot-fixed tree.
-- **Baseline hot fixes.** They run before approval, when no ledger segment exists yet. They are
-  kept in run state and appended as `hotfix` events once approval opens the segment.
+- **Journal.** A hot fix is the event sequence `DECISION` (`hotfix`) → `SNAPSHOT` (the driver's
+  diff judgement against the budget and hard limits) → `VERIFY_DONE` (the re-run of the stalled
+  check). The re-run is a new verification of the current attempt, so a check whose verification
+  was already recorded runs again on the hot-fixed tree.
+- **Baseline hot fixes.** They are journaled like any other hot fix before approval; the approval
+  question lists them.
 - **Resuming after a hot fix.** A failure raised by verification re-runs that verification. A
   blocked, missing-context, or other stall continues the writer, which spends a writer attempt;
   the hot fix itself never does.
-- **Interrupted hot fixes.** An interrupted host hot fix re-asks its edit question. The kept tree is
+- **Interrupted hot fixes.** Replay returns the pending hot-fix `decide` frame; the kept tree is
   judged when the host replies.

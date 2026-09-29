@@ -1,13 +1,13 @@
 # ADR 0003: Chat session artifact governance
 
-- **Status**: Accepted
+- **Status**: Accepted; updated for [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-28
 
 ## Context
 
 Dispatch produces two audiences of files: deliverables a person reads (specs, designs, plans,
-walkthroughs, review reports) and machine state that agents and scripts consume (ledgers, run
-state, prompts, delegate reports, traces, telemetry). Sandboxed agents must reach all of it
+walkthroughs, review reports) and machine state that agents and scripts consume (run
+journals, prompts, delegate reports, briefs, traces). Sandboxed agents must reach all of it
 during work; a person must find the deliverables at a glance afterward. A single platform chat may
 run several workflows, including a pre-driver `brainstorming` spec, and several delegates in
 parallel, so names must stay unique without relying on randomness.
@@ -34,23 +34,23 @@ parallel, so names must stay unique without relying on randomness.
 ├── manifest.json
 ├── <slug>.<type>.md          deliverables
 └── .state/                   machine state
-    ├── <slug>.ledger.md
     ├── deliverables.json
-    ├── telemetry.jsonl
-    ├── cache/
-    └── runs/NNN-<kind>/      one folder per driver invocation, flat inside
+    └── runs/NNN-<kind>/      one folder per run, flat inside
+        ├── events.jsonl      the run journal: sole authority for run state
+        ├── progress.json     live progress of the in-flight effect
+        ├── lock              held while a `send` runs
         └── scratch/          orchestrator-authored helpers
 ```
 
 - The root holds only the manifest and human deliverables. Deliverable types are `spec`,
-  `design`, `plan`, `walkthrough`, and `report`. The ledger and every other machine file live under
+  `design`, `plan`, `walkthrough`, and `report`. The run journals and every other machine file live under
   `.state/`: hidden, because people rarely need it; named `.state` because the parent already says
   dispatch.
 - There is no handoff file. The handoff is the chat reply; walkthroughs are the durable per-slug
   record, so a file would duplicate both and cost tokens to read or restate.
-- A run is one driver invocation, which may span many rounds and non-review phases. Its folder is
+- A run is one `start` and its journal, which may span many `send` invocations, rounds, and phases. Its folder is
   `NNN-<kind>`: a three-digit per-session sequence, so runs sort chronologically across midnight,
-  and the run kind (`ask`, `plan-review`, `code-review`, `design`, `implement`), so a listing shows
+  and the run kind (`ask`, `plan`, `design`, `implement`, `plan-review`, `design-review`, `code-review`), so a listing shows
   what ran. The folder name is the run id.
 
 ### Naming grammar
@@ -61,14 +61,14 @@ parallel, so names must stay unique without relying on randomness.
 - Scopes: a deliverable slug; `r<N>` for a review round, `s<N>` for an implementation stage; an
   optional `-<provider>-<slot>` for one delegate launch; an optional `-<qualifier>`
   naming sibling files such as one log per command; an optional `-a<N>` for a relaunch.
-  Counters start at 1. Files describing the whole run (`state.json`, `inputs.json`) are unscoped.
+  Counters start at 1. Files describing the whole run (`events.jsonl`, `progress.json`, `lock`) are unscoped.
 - Kinds come from a closed set owned by one path module. Extensions carry format only: `.md` prose,
   `.json`/`.jsonl` data, `.log` traces.
 - Names never repeat what the path already states and never carry random suffixes, PIDs, epochs, or
   tool prefixes. Slugs are kebab-case, at most 40 characters, and undated; the session folder
   carries the date.
 - Folders exist only where they group a lifecycle (session, run) or isolate unstructured content
-  (`cache/`, `scratch/`); never to hold a single file.
+  (`scratch/`); never to hold a single file.
 
 ### Collision safety
 
@@ -85,10 +85,11 @@ parallel, so names must stay unique without relying on randomness.
 ### Ownership
 
 - One Node path module builds every name; callers never concatenate artifact paths. Central
-  lifecycle commands create, locate, reactivate, and hand off a session; `brainstorming`, drivers,
-  and standalone reviews use them.
-- The driver names every path it expects the orchestrator to write, such as a round's rulings, and
-  reads only those paths. Orchestrator-authored helpers go to the run's `scratch/`. Write
+  lifecycle commands (`dispatch.ts session`) create, locate, reactivate, and hand off a session;
+  `brainstorming`, runs, and standalone reviews use them.
+- Host decisions reach the driver as journaled events. For file outputs (native captures, write
+  envelopes, authored plans and designs) the driver names every path it expects and reads only
+  those paths. Orchestrator-authored helpers go to the run's `scratch/`. Write
   subagents return their outcome to the path the driver names.
 
 ### Movement and handoff
@@ -117,7 +118,7 @@ parallel, so names must stay unique without relying on randomness.
   invocations when the platform exposes none.
 - References inside the session are relative to its root; absolute paths, resume commands, and
   links are resolved from the current root when emitted, so moving the folder never strands them.
-  Work resumes from deliverables, the ledger, and run evidence, including after reactivation.
+  Work resumes by replaying the run journal, including after reactivation.
 
 ## Alternatives considered
 

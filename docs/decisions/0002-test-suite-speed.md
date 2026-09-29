@@ -1,6 +1,6 @@
 # ADR 0002: Test suite speed — cache git reads, keep subprocess tests
 
-- **Status**: Accepted; option 2 implemented
+- **Status**: Accepted; option 2 implemented; test architecture superseded by [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-26
 - **Evidence**: a retrospective of the 36-minute `implement` run `bb936cef` (the gate-resolution and
   rebuttal-retry fixes), plus spawn traces and CPU profiles of `npm test` on Windows (16 logical
@@ -95,11 +95,19 @@ suite's wait time. It was rejected because it weakens what the tests prove:
 
 ## Consequences
 
-- New repository-root lookups use `lib/git-root.mjs`, which the source guard test enforces.
-- New index reads go through `indexEntries`. The index cache must stay keyed on the index
-  content hash; do not replace it with stat identity or explicit invalidation.
-- The largest remaining savings are outside the tests:
-  - skip the baseline full-suite gate when the working-tree content id (`contentTreeId`) matches
-    the last green run of the same command (about 5 min per session);
-  - or run the baseline suite in the background while the tests-only stage runs.
-  Both change gate semantics and are not decided here.
+- Repository-root lookups and index reads go through the single git module in `effects/`
+  (ADR 0006), which keeps both caching rules: successful toplevel lookups are cached per process,
+  and index entries are cached by the index file's content hash, never by stat identity or
+  explicit invalidation. Working-tree-dependent reads stay uncached. The source guard test keeps
+  new `show-toplevel` spawns out of every other module.
+- The remaining gate savings are decided in ADR 0006: verify results are reused only within a run,
+  keyed by input fingerprint (D35); a cross-run baseline skip is not adopted.
+
+## Revisited by ADR 0006
+
+Option 3 was rejected because driving the CLI in-process would lose the command-line contract and
+leak module state between steps. ADR 0006 removes the cause instead of the symptom: workflow logic
+is pure reducers with no module state, so scenario tests call `step` directly without a process,
+and the command-line contract (argument parsing, one JSON frame on stdout, exit codes, stderr
+milestones, crash and resume) is covered by at most three end-to-end tests. A test preload makes
+spawning throw outside the end-to-end tier, so the process count cannot creep back.
