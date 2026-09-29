@@ -40,21 +40,21 @@
       "key": "grammar-pins",
       "clause": "pins `(a,b)`/`(3)`/`(all)`",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-only-filter",
       "clause": "`only` provider filter",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-diversity-sort",
       "clause": "diversity sort",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
@@ -68,28 +68,28 @@
       "key": "grammar-override-collapse",
       "clause": "`-m`/`-e` override collapse",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-native-subagents-only",
       "clause": "`nativeSubagentsOnly`",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-target-identity",
       "clause": "positional target identity `<provider>[<index>]`",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-sparse-level-maps",
       "clause": "sparse level maps with nearest-lower-then-lowest-higher resolution",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/roster.test.ts"],
       "checks": []
     },
     {
@@ -131,28 +131,28 @@
       "key": "delegates-failure-classes",
       "clause": "failure classes",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/cascade.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-model-array-cascade",
       "clause": "model-array cascade within a voice",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/cascade.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-mode-cascade",
       "clause": "mode cascade",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/cascade.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-reserves-once",
       "clause": "reserves once per wave",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/cascade.test.ts"],
       "checks": []
     },
     {
@@ -180,7 +180,7 @@
       "key": "delegates-one-report-parse",
       "clause": "one report parse path for all sources",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/report.test.ts"],
       "checks": []
     },
     {
@@ -201,7 +201,7 @@
       "key": "review-rounds-policy",
       "clause": "rounds policy (§7) incl. threshold, cap, uncapped MUST, full/delta/disputes-only scope, affinity, accept-by-omission, orchestrator closure below threshold, convergence escalation, `fixedUnreviewed`",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/policy/rounds.test.ts"],
       "checks": []
     },
     {
@@ -243,28 +243,28 @@
       "key": "review-fix-clustering",
       "clause": "fix clustering with bounded attempts",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/fix-clustering.test.ts"],
       "checks": []
     },
     {
       "key": "review-dedup",
       "clause": "dedup with `dupOf`",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/report.test.ts"],
       "checks": []
     },
     {
       "key": "review-sanitization",
       "clause": "sanitization",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/sanitize.test.ts", "tests/unit/domain/report.test.ts"],
       "checks": []
     },
     {
       "key": "implement-plan-lint",
       "clause": "plan lint",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/plan.test.ts"],
       "checks": []
     },
     {
@@ -460,7 +460,7 @@
       "key": "walkthrough-minimum-contract",
       "clause": "minimum contract (§10.2)",
       "increment": "I02",
-      "tests": [],
+      "tests": ["tests/unit/domain/render.test.ts"],
       "checks": []
     }
   ]

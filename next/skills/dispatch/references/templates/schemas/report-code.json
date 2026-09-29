@@ -1,0 +1,71 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["CLEAN", "FINDINGS"]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["MUST", "SHOULD", "CONSIDER"]
+          },
+          "locus": {
+            "type": "string",
+            "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))[^:\\\\\\r\\n]+:L[1-9]\\d*$"
+          },
+          "tag": {
+            "type": "string",
+            "enum": [
+              "a11y",
+              "adjacent",
+              "auth",
+              "breaking",
+              "compatibility",
+              "correctness",
+              "coupling",
+              "domain-logic",
+              "edge-case",
+              "intent",
+              "invariant",
+              "migration",
+              "partial-failure",
+              "perf",
+              "race",
+              "resource-leak",
+              "reuse",
+              "root-cause",
+              "runtime",
+              "scope-creep",
+              "seam",
+              "security",
+              "shallow",
+              "standards",
+              "test-gap",
+              "test-leak",
+              "type",
+              "ui",
+              "yagni"
+            ]
+          },
+          "defect": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requiredChange": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": ["severity", "locus", "tag", "defect", "requiredChange"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["status", "findings"],
+  "additionalProperties": false
+}
