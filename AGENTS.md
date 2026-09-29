@@ -10,7 +10,7 @@ Deliver high-confidence collaborative development workflows across native agent 
 - **Native Harness Collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs between them.
 - **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; emit mode- or state-specific instructions at branch points rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
-- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; as a general rule, all trivial writes that would have been done by a write subagent can be done by the orchestrator instead. Runner harnesses sanitize outputs.
+- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; Runner harnesses sanitize outputs.
 - **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
 - **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
@@ -92,7 +92,7 @@ Explain non-obvious rationale ("why", CLI/subprocess quirks, cross-platform nuan
 Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
-- **Edit**: Apply minimal, focused edits preserving existing comments and invariants; perform trivial writes directly rather than delegating to a subagent.
+- **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
 - **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Shipped skills and development tooling require Node 22+.
 
 ### Long-running commands and delegates
