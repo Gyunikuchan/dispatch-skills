@@ -135,7 +135,8 @@
           "enum": [
             "tests-only",
             "full",
-            "continuation"
+            "continuation",
+            "hotfix"
           ]
         },
         "attempt": {
@@ -522,6 +523,10 @@
                 "type": "string",
                 "minLength": 1
               }
+            },
+            "patchPath": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

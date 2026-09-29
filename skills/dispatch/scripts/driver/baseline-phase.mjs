@@ -12,12 +12,15 @@ import { cell, changeEntries, renderChangesMade, renderVerification } from '../w
 import { extractChangeNotes } from '../plan/structure.mjs';
 import { requireSettledPlan } from './plan-phase.mjs';
 import { designSlug } from './design-phase.mjs';
+import { beginHotfix, checkProgress, hotfixOption, resumeHotfix } from './hotfix.mjs';
 import { beginVerification, cachedBaseline, repositoryBaseline, snapshot, verificationPlan } from './verification.mjs';
 
 // SECTION: Baseline phase
 
 /** Enters baseline verification after requiring a settled governing plan. */
 export function beginBaseline(state) {
+  // An interrupted baseline hot fix settles before the baseline is re-captured.
+  if (state.ordinary.hotfix?.source === 'baseline') return resumeHotfix(state);
   state.ordinary.planReview = requireSettledPlan(state);
   Object.assign(state.ordinary, verificationPlan(state), { phase: 'baseline', step: 'baseline-verify', mutationEpoch: 0 });
   state.ordinary.baseline = repositoryBaseline(state);
@@ -56,18 +59,20 @@ export function baselineDecision(state) {
   const data = state.ordinary;
   const problematic = data.baselineResults.filter(result => result.exitStatus !== 0 || result.changed.length);
   if (problematic.length && !data.baselineAccepted) {
+    checkProgress(state, 'baseline');
     data.step = 'baseline-ruling';
-    return ask(state, 'baseline-red', 'Reconcile baseline failures/unavailable commands and command side effects before approval. Choose accept with reason, or fix-first.', problematic);
+    return ask(state, 'baseline-red', `Reconcile baseline failures/unavailable commands and command side effects before approval.${hotfixOption(state, { hostOnly: true })} Otherwise choose {decision:"accept", reason}, or fix-first.`, problematic);
   }
   data.phase = 'baseline';
   data.step = 'approval';
   data.approvalSnapshot = repositoryBaseline(state);
   // Surfaced here too because a low run skips the plan review that would otherwise relay it.
   const testPathWarnings = lintPlan(source(state)).warnings.filter(item => item.rule === 'criterion-red-test-path').map(item => item.message);
-  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence. To stop instead, return {decision:"rejected", reason}.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.generators?.length ? { generators: data.generators } : {}), ...(testPathWarnings.length ? { warnings: testPathWarnings } : {}) }]);
+  return ask(state, 'approval', 'Approve this governing plan and reconciled baseline; approval also authorizes the driver to run its commands and generators. Return {decision:"approved", governingHash, testPaths, reason}. testPaths may be empty only when no criterion uses red evidence. To stop instead, return {decision:"rejected", reason}.', [{ governingHash: state.governingHash, baseline: data.approvalSnapshot, approvedPaths: data.approvedPaths, redCriteria: data.redCriteria.map(item => ({ id: item.id, paths: item.paths })), commands: data.commands, ...(data.hotfixes?.length ? { hotfixes: data.hotfixes.map(fix => ({ paths: fix.paths, rootCause: fix.rootCause, ledgerRef: 'hotfix (appended at approval)' })) } : {}), ...(data.generators?.length ? { generators: data.generators } : {}), ...(testPathWarnings.length ? { warnings: testPathWarnings } : {}) }]);
 }
 export function acceptBaselineRuling(state, reply) {
   const answer = reply.answer;
+  if (answer?.decision === 'hotfix') return beginHotfix(state, answer, 'baseline');
   if (answer?.decision !== 'accept' || typeof answer.reason !== 'string' || !answer.reason.trim()) throw new DriverError('reply', 'Baseline ruling requires {decision:"accept", reason}; fix-first returns to plan-review.');
   state.ordinary.baselineAccepted = { reason: answer.reason };
   return baselineDecision(state);
@@ -92,6 +97,9 @@ export function approve(state, reply, actor = 'user') {
   data.testsOnlyPaths = [...new Set(answer.testPaths)].sort();
   data.testPaths = data.testsOnlyPaths;
   data.baselineSnapshot = snapshot(state);
+  // Baseline no-progress judgments do not carry into the implementation segment.
+  delete data.hotfixTarget;
+  delete data.hotfixWithdrawn;
   ensureLedgerNamespace();
   const segment = ledgerSegment(state);
   if (segment?.approved) { state.ledgerRunId = segment.runId; return; }
@@ -104,5 +112,7 @@ export function approve(state, reply, actor = 'user') {
     : { governingPath: relative(state, state.planPath), governingHash: state.governingHash, rootSlug: state.slug, action: 'ordinary', baseline: data.baseline });
   append(state, 'approval', { governingHash: design?.revision ?? state.governingHash, decision: 'approved', actor });
   if (data.baselineAccepted) ruling(state, 'baseline-red', 'accept', data.baselineAccepted.reason);
+  // Hot fixes before approval had no ledger segment to record into.
+  for (const { source, ...fix } of data.hotfixes ?? []) if (source === 'baseline') append(state, 'hotfix', fix);
   data.approval = { governingHash: state.governingHash, reason: answer.reason, actor };
 }

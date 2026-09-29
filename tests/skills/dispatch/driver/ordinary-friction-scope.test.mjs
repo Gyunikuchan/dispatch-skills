@@ -5,7 +5,7 @@ import { afterEach, describe, it } from 'node:test';
 import { readLedger } from '../../../../skills/dispatch/scripts/ledger/ledger.mjs';
 
 import { hashFile } from '../../../../skills/dispatch/scripts/lib/integrity.mjs';
-import { allProviders, codeFinding, report } from '../../../helpers/driver-harness.mjs';
+import { allProviders, codeFinding, readHandoffWalkthrough, report } from '../../../helpers/driver-harness.mjs';
 import { cleanupOrdinaryDriverFixtures, createOrdinaryDriverFixture, driveOrdinaryImplementation, ordinaryDriverPolicy } from '../../../helpers/ordinary-driver-fixture.mjs';
 
 afterEach(cleanupOrdinaryDriverFixtures);
@@ -48,7 +48,7 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     fixture.repo.git('add', 'docs'); fixture.repo.git('commit', '--no-gpg-sign', '-qm', 'docs');
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, { policy: {
-      askUser: action => action.question === 'write-scope' ? { answer: { revert: ['docs/keep.md', 'docs/stray.md'], reason: 'Out of plan scope.' } } : base.askUser(action),
+      askUser: action => action.question === 'write-scope' ? { answer: { revert: ['docs/keep.md', 'docs/stray.md'], reason: 'Out of plan scope.', userApproved: { by: 'user', quote: 'Yes, revert those two.' } } } : base.askUser(action),
       delegateWrite(action) {
         if (action.fields.stage === 'production') {
           fs.writeFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'edited\n');
@@ -60,6 +60,7 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
     assert.equal(fs.readFileSync(path.join(fixture.repo.dir, 'docs/keep.md'), 'utf8'), 'original\n');
     assert.equal(fs.existsSync(path.join(fixture.repo.dir, 'docs/stray.md')), false);
+    assert.match(readHandoffWalkthrough(result.done), /^- Deviation: Discarded — Discarded docs\/keep\.md, docs\/stray\.md \(write-scope; approved by user\); patch `[^`]+\.patch`\.$/m);
   });
   it('routes a stale integrity manifest to the ruling and stops on a stop ruling', () => {
     const fixture = createOrdinaryDriverFixture(); let items;
@@ -118,7 +119,7 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
     assert.equal(redCalls, 2);
     assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition'), [['failure-disposition', 'inspect-first'], ['failure-disposition', 're-verify']]);
   });
-  it('re-verifies a failed post-review completion and returns to code review', () => {
+  it('re-verifies a failed final gate after a review fix without a post-review scoped gate', () => {
     const fixture = createOrdinaryDriverFixture(); let fixed = false, postReviewCalls = 0, disposition = null, codeWaves = 0, production = false;
     const base = ordinaryDriverPolicy(fixture.repo);
     const result = driveOrdinaryImplementation(fixture, { policy: {
@@ -136,13 +137,12 @@ describe('ordinary driver friction relief: write scope and re-verify', () => {
         return { answer: { decision: 're-verify', reason: 'The host ran the command against a stale checkout.' } };
       },
       verify(action) {
-        if (fixed && action.purpose === 'scoped' && ++postReviewCalls === 1) return { results: action.commands.map(command => ({ command, exit: 1, evidence: 'pass 0 fail 1', identifiers: ['test:sample'], diagnostic: 'stale checkout', scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
+        if (fixed && action.purpose === 'final' && ++postReviewCalls === 1) return { results: action.commands.map(command => ({ command, exit: 1, evidence: 'pass 0 fail 1', identifiers: ['test:sample'], diagnostic: 'stale checkout', scopeHash: action.scopeHash, mutationEpoch: action.mutationEpoch })) };
         return base.verify(action);
       },
     } });
     assert.equal(result.done.outcome, 'complete', JSON.stringify(result.done));
-    assert.match(disposition, /reruns the scoped verification/);
-    assert.equal(postReviewCalls, 2);
+    assert.match(disposition, /reruns the final verification/);    assert.equal(postReviewCalls, 2);
     assert.deepEqual(rulings(readLedger(result.done.ledgerPath)).filter(([key]) => key === 'failure-disposition').map(([, decision]) => decision), ['inspect-first', 're-verify']);
   });
 });

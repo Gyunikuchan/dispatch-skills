@@ -43,12 +43,12 @@ describe('ordinary driver verification gate tiers', () => {
     assert.equal(purposes.includes('completion'), false, purposes.join(' → '));
     assert.equal(purposes.filter(purpose => purpose === 'final').length, 1, purposes.join(' → '));
     assert.equal(purposes.at(-1), 'final', 'the final gate is the last gate before handoff');
-    assert.ok(purposes.filter(purpose => purpose === 'scoped').length >= 2, 'attempt and post-review gates are scoped');
+    assert.ok(purposes.filter(purpose => purpose === 'scoped').length >= 1, 'attempt gates are scoped');
     assert.deepEqual(gates.filter(action => action.commands.includes(FINAL_COMMAND)).map(action => action.purpose), ['baseline', 'final']);
-    // The fix touched only src/app.js: the lint command, scoped to the test file, is skipped at the post-review gate.
-    const postReview = gates.filter(action => action.purpose === 'scoped').at(-1);
-    assert.ok(postReview.commands.includes(SAMPLE), JSON.stringify(postReview.commands));
-    assert.equal(postReview.commands.includes(LINT), false, JSON.stringify(postReview.commands));
+    // The fix's stale scoped command also runs at the final gate, so no post-review scoped gate runs.
+    const lastScoped = gates.map(action => action.purpose).lastIndexOf('scoped'), finalIndex = purposes.indexOf('final');
+    assert.ok(lastScoped < finalIndex && gates.slice(lastScoped + 1, finalIndex).every(action => action.purpose !== 'scoped'), purposes.join(' → '));
+    assert.ok(gates[finalIndex].commands.includes(SAMPLE), JSON.stringify(gates[finalIndex].commands));
     // Folded from the retired end-to-end defer case: the final gate defers nothing and the deferred SC2 renders final evidence.
     assert.equal(gates.find(action => action.purpose === 'final')?.deferred, undefined, 'the final gate defers nothing');
     const walkthrough = handoffWalkthrough(result.done);

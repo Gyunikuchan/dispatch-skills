@@ -84,7 +84,8 @@ export function inspectEnvelope(state, file) {
   catch (error) { return { errors: [`Expected envelope file is invalid: ${error.message}`] }; }
   if (data.launch !== 'tests-only' && ['DONE', 'DONE_WITH_CONCERNS'].includes(envelope.status)) {
     if (envelope.stage !== 'COMPLETE') errors.push(`A production DONE envelope must report stage COMPLETE (got ${envelope.stage}).`);
-    errors.push(...missingTrace(data.criteria, envelope).map(item => `Evidence needs a row "CRITERION ${item.id} | <one of: ${item.paths.join(', ')}> | <delivered behavior>".`));
+    // A hot fix repairs one locus; the stalled gate, not criterion rows, is its evidence.
+    if (data.launch !== 'hotfix') errors.push(...missingTrace(data.criteria, envelope).map(item => `Evidence needs a row "CRITERION ${item.id} | <one of: ${item.paths.join(', ')}> | <delivered behavior>".`));
   }
   return { envelope, errors };
 }
@@ -146,6 +147,16 @@ function productionPrompt(state, expectedEnvelopePath) {
     selfCheck: selfCheck(state, expectedEnvelopePath),
   }, 'production');
 }
+/** Single-shot hot-fix brief: the root cause and kept-tree scope replace the production packet. */
+function hotfixPrompt(state, expectedEnvelopePath, paths) {
+  const fix = state.ordinary.hotfix;
+  return briefFile(state, 'hotfix', {
+    schemaVersion: 1, purpose: 'hotfix', rootCause: fix.rootCause, failure: fix.failureReason, paths, external: fix.external,
+    envelope: { schemaVersion: 1, status: 'DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED', stage: 'COMPLETE', summary: 'non-empty string', evidence: 'array of strings naming the fix', 'concerns|missingContext|blockers': 'array of non-empty strings, only with DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED respectively', files: 'optional array of {path, note} for each changed file; note is one short clause' },
+    expectedEnvelopePath,
+    selfCheck: selfCheck(state, expectedEnvelopePath),
+  }, 'hotfix');
+}
 // SECTION: Delegation action
 
 /** Emits the next tests-only or production write delegation. */
@@ -167,8 +178,10 @@ export function writeAction(state) {
   if (data.writeStep?.launch !== data.launch || verified) data.writeStep = { launch: data.launch, n: nextStep(state, 'write') };
   const expectedEnvelopePath = freeRunFilePath(state.runId, { stage: data.writeStep.n, kind: 'outcome', ext: 'json' }, data.previousEnvelopePaths ?? []);
   data.expectedEnvelopePath = expectedEnvelopePath;
-  const testsOnly = data.launch === 'tests-only';
-  const prompt = testsOnly ? testsOnlyPrompt(state, expectedEnvelopePath) : productionPrompt(state, expectedEnvelopePath);
+  const testsOnly = data.launch === 'tests-only', hotfix = data.launch === 'hotfix';
+  // Before RED validates a hot fix stays inside the tests-only paths.
+  const paths = testsOnly || (hotfix && data.redCriteria?.length && !data.redValidated) ? data.testsOnlyPaths : data.approvedPaths;
+  const prompt = testsOnly ? testsOnlyPrompt(state, expectedEnvelopePath) : hotfix ? hotfixPrompt(state, expectedEnvelopePath, paths) : productionPrompt(state, expectedEnvelopePath);
   const cascadeContinuation = data.pendingCascadeContinuation ?? null;
   const restore = data.pendingRestore ?? null;
   delete data.pendingCascadeContinuation;
@@ -178,7 +191,7 @@ export function writeAction(state) {
     attempt: data.attempt, model: write.models[write.candidate], effort: write.effort ?? null,
     platform: write.platform, cascadePosition: write.candidate, modelCascade: write.models,
     planPath: state.planPath, walkthroughPath: state.walkthroughPath,
-    paths: testsOnly ? data.testsOnlyPaths : data.approvedPaths,
+    paths,
     expectedEnvelopePath,
     criteria: (testsOnly ? data.redCriteria : data.criteria).map(({ id, title, evidence, paths, commands, review }) => ({ id, outcome: title, evidence, paths, commands, ...(review ? { review } : {}) })),
     promptPath: prompt.path, promptHash: prompt.hash,
@@ -186,10 +199,10 @@ export function writeAction(state) {
     ...(restore ? { restore } : {}),
     // The production packet lives in promptPath: the host relays a path, not ~30 KB of packet.
     packet: null,
-    evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,
+    evidence: data.envelope?.evidence ?? [], context: hotfix ? `Hot fix: ${data.hotfix.rootCause}` : data.continuationContext ?? null,
   } }, [
     'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Give it promptPath with promptHash, paths, criteria, expectedEnvelopePath, and any evidence, context, continuation, or restore fields; do not restate the brief. Reply {"envelopePath": "<expectedEnvelopePath>"}, or {"rejected": true, "reason": "..."} if the launch is refused; never substitute launcher defaults.',
-    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
+    hotfix ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative single-shot hot-fix brief: fix only its rootCause on the kept tree.` : testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one \`CRITERION SC# | <paths> | <behavior>\` evidence row per criterion.`,
   ]);
 }
 export function outcomeTransition(state, reply, options = {}) {

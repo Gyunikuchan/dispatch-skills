@@ -336,6 +336,7 @@ function prepareRequest(state, { reviewMode = 'full', targets, reserves = [], pa
     if (state.target.walkthroughPath) request.walkthroughPath = state.target.walkthroughPath;
     if (state.target.range) request.range = state.target.range;
     if (state.inputs) Object.assign(request, state.inputs);
+    if (typeof state.invocation.focus === 'string' && state.invocation.focus) request.focus = state.invocation.focus;
   } else {
     request.artifactPath = state.artifactPath ?? state.target.artifactPath;
   }
@@ -1403,7 +1404,11 @@ function onApplyFixes(state, reply) {
   const statuses = new Map(reply.clusters.map((cluster) => [cluster.clusterId, cluster]));
   const missing = state.fix.active.filter((cluster) => !statuses.has(cluster.clusterId)).map((c) => c.clusterId);
   if (missing.length) return reemit(state, `missing cluster status for ${missing.join(', ')}`);
-  state.changed = true;
+  const applied = state.fix.active.filter((cluster) => statuses.get(cluster.clusterId).status === 'applied');
+  const must = applied.some((cluster) => cluster.findings.some((finding) => finding.severity === 'MUST'));
+  // Implementation reviews re-review only MUST fixes; the final gate and code checkpoint cover the rest.
+  if (!state.invocation.implementation || must) state.changed = true;
+  if (must) state.mustApplied = true;
   for (const cluster of state.fix.active) {
     const status = statuses.get(cluster.clusterId);
     cluster.applyFailure = status.status === 'failed' ? `apply failed: ${cleanText(status.note, 'no detail')}` : null;

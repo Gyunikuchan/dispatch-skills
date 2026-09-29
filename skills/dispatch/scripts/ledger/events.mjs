@@ -17,7 +17,7 @@ const TRANSITIONS = new Set([
 const EVENT_TYPES = new Set([
   'run-start', 'run-complete', 'task-start', 'implementation-attempt',
   'verification', 'task-complete', 'ruling', 'review', 'approval',
-  'increment-state', 'amendment', 'adjacent-fix', 'integration', 'manual-complete',
+  'increment-state', 'amendment', 'adjacent-fix', 'integration', 'manual-complete', 'hotfix-start', 'hotfix',
 ]);
 const INCREMENT_STATES = new Set([
   'pending', 'ready', 'active', 'complete', 'blocked', 'invalidated', 'reopened',
@@ -232,6 +232,30 @@ function validateData(event) {
         string(item.evidence, 'manual-complete evidence');
       });
       object(data.fingerprint, 'manual-complete.data.fingerprint');
+      break;
+    case 'hotfix-start':
+      exact(data, ['mode', 'failureSnapshot', 'head', 'index', 'stash', 'targetIdentity', 'openStep'], [], 'hotfix-start.data');
+      enumeration(data.mode, ['host', 'writer'], 'hotfix-start.data.mode');
+      object(data.failureSnapshot, 'hotfix-start.data.failureSnapshot');
+      if (data.head !== null) string(data.head, 'hotfix-start.data.head');
+      for (const key of ['index', 'openStep']) string(data[key], `hotfix-start.data.${key}`);
+      for (const key of ['stash', 'targetIdentity']) if (typeof data[key] !== 'string') throw new Error(`hotfix-start.data.${key} must be a string`);
+      break;
+    case 'hotfix':
+      exact(data, ['mode', 'paths', 'lines', 'rootCause', 'scopeExtensions', 'external', 'evidenceRef'], [], 'hotfix.data');
+      enumeration(data.mode, ['host', 'writer'], 'hotfix.data.mode');
+      strings(data.paths, 'hotfix.data.paths');
+      if (!Number.isSafeInteger(data.lines) || data.lines < 0) throw new Error('hotfix.data.lines must be a non-negative integer');
+      string(data.rootCause, 'hotfix.data.rootCause');
+      string(data.evidenceRef, 'hotfix.data.evidenceRef');
+      for (const key of ['scopeExtensions', 'external']) {
+        if (!Array.isArray(data[key])) throw new Error(`hotfix.data.${key} must be an array`);
+        data[key].forEach((item, index) => {
+          exact(item, ['path', 'reason'], [], `hotfix.data.${key}[${index}]`);
+          string(item.path, `hotfix.data.${key}[${index}].path`);
+          string(item.reason, `hotfix.data.${key}[${index}].reason`);
+        });
+      }
       break;
     case 'run-complete':
       exact(data, ['result', 'evidenceRefs'], [], 'run-complete.data');
@@ -457,6 +481,12 @@ export function foldEvents(events, context = {}) {
         state.completedTasks.set(event.data.taskId, event.data);
         break;
       }
+      case 'hotfix-start':
+        break;
+      case 'hotfix':
+        // The hot-fixed tree earns one fresh terminal verification for the current attempt.
+        for (const task of state.tasks.values()) task.terminalVerificationAttempt = null;
+        break;
       case 'ruling':
         state.rulings.set(event.data.key, event.data);
         if (event.data.key === 'reconciliation') state.needsReconciliation = event.data.state !== 'resolved';

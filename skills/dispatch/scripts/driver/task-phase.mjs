@@ -25,6 +25,8 @@ import {
 } from './verification.mjs';
 import { inspectEnvelope, missingTrace, outcomeTransition, resolveWrite, verificationTransition, writeAction } from './write.mjs';
 import { nextStep } from './state.mjs';
+import { discardPaths, savePatch } from './discard.mjs';
+import { acceptHotfixReply, acceptHotfixWrite, beginHotfix, checkProgress, hotfixOption, resumeHotfix } from './hotfix.mjs';
 import { freeRunFilePath } from '../lib/session-paths.mjs';
 
 // SECTION: Task entry and write cascade
@@ -36,9 +38,11 @@ export function beginImplementation(state) {
   if (!data.baselineResults || !data.testsOnlyPaths) throw new Error('Implementation requires reconciled baseline and test classification.');
   data.phase = 'implementation';
   data.write ??= resolveWrite(state);
-  if (data.failure) return failureQuestion(state);
+  if (data.hotfix && data.step !== 'write-pending') return resumeHotfix(state);
+  // A pending hot-fix write keeps its failure for reopen; recover the write first.
+  if (data.failure && !data.hotfix) return failureQuestion(state);
   if (data.step === 'concern-ruling') return ask(state, 'implementation-concerns', 'Resolve the captured implementation concerns before accepting the outcome.', (data.envelope?.concerns ?? []).map(reason => ({ reason })));
-  if (data.step === 'blocking-condition' || data.step === 'missing-context') return ask(state, data.step === 'blocking-condition' ? 'implementation-blocked' : 'implementation-context', 'Supply the changed blocking condition or missing context with {decision:"retry", reason, context}, or stop.');
+  if (data.step === 'blocking-condition' || data.step === 'missing-context') return ask(state, data.step === 'blocking-condition' ? 'implementation-blocked' : 'implementation-context', blockedText(state, 'Supply the changed blocking condition or missing context with {decision:"retry", reason, context}, or stop.'));
   if (data.step === 'write-scope') return scopeQuestion(state);
   if (data.step === 'write-pending') {
     const paths = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
@@ -128,7 +132,12 @@ function advanceWriteCascade(state, reply) {
     const allowed = data.launch === 'tests-only' ? data.testsOnlyPaths : data.approvedPaths;
     const changed = diffRepositoryState(data.taskStart, snapshot(state)).changed;
     const outside = changed.filter(file => !allowed.includes(file));
-    data.pendingRestore = outside.length ? { baseline: write.baselineHead, paths: outside } : null;
+    // The next hop restores these paths, so their content is saved first; an unsavable patch ends the cascade.
+    try {
+      data.pendingRestore = outside.length ? { baseline: write.baselineHead, paths: outside, patchPath: savePatch(state, outside, `write cascade: ${failedModel} (${kind}) changed paths outside its scope`) } : null;
+    } catch (error) {
+      return blockedWrite(state, `Write cascade integrity: ${error.message}`);
+    }
     data.pendingCascadeContinuation = { kind: 'cascade', failedModel, failureKind: kind };
   }
   if (write.candidate + 1 < write.models.length) {
@@ -171,7 +180,7 @@ function revertable(state, file) {
 }
 function scopeQuestion(state) {
   const data = state.ordinary;
-  return ask(state, 'write-scope', 'The write subagent changed paths outside its approved scope. Rule on every path: return {approve:[paths], revert:[paths], reason}, or {decision:"stop", reason} to open failure disposition. Approve widens the scope for this run; revert restores the task-start state and is offered only where recoverable.',
+  return ask(state, 'write-scope', 'The write subagent changed paths outside its approved scope. Rule on every path: return {approve:[paths], reason} to widen the scope for this run, or {decision:"stop", reason} to open failure disposition. Last resort; requires the user\'s explicit approval in chat: list paths under revert:[paths] with userApproved:{by, quote}; the driver saves a patch, then restores their task-start state, only where recoverable.',
     data.scopeExtras.map(file => ({ path: file, revertable: revertable(state, file) })));
 }
 function ruleScope(state, answer) {
@@ -182,15 +191,9 @@ function ruleScope(state, answer) {
   if (ruled.length !== extras.length || extras.some(file => !ruled.includes(file))) throw new DriverError('reply', `write-scope requires exactly one ruling per path: ${extras.join(', ')}`);
   const blocked = revert.filter(file => !revertable(state, file));
   if (blocked.length) throw new DriverError('reply', `Paths dirty at task start, or with a changed index since, cannot be reverted: ${blocked.join(', ')}`);
-  for (const file of revert) {
-    const tracked = spawnSync('git', ['-C', state.repoRoot, 'cat-file', '-e', `HEAD:${file}`]).status === 0;
-    const absent = data.taskStart.entries[file]?.objectId === 'absent';
-    // Worktree-only restore keeps the index fingerprint captured at task start.
-    if (tracked && !absent) {
-      const restored = spawnSync('git', ['-C', state.repoRoot, 'restore', '--source=HEAD', '--worktree', '--', file], { encoding: 'utf8' });
-      if (restored.status !== 0) throw new Error(`Could not restore ${file}: ${restored.stderr.trim()}`);
-    } else fs.rmSync(path.join(state.repoRoot, file), { force: true });
-    ruling(state, 'write-scope', 'revert', `${file}: ${answer.reason}`);
+  if (revert.length) {
+    const patch = discardPaths(state, revert, { userApproved: answer.userApproved, reason: answer.reason, key: 'write-scope' });
+    for (const file of revert) ruling(state, 'write-scope', 'revert', `${file}: ${answer.reason} (patch ${patch})`);
   }
   if (approve.length) {
     widenScope(state, approve);
@@ -214,6 +217,7 @@ function writeReceiptAction(state, action) {
  */
 export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   const data = state.ordinary;
+  if (data.launch === 'hotfix') return acceptHotfixWrite(state, reply, inspectEnvelope);
   if (reply?.rejected || reply?.failed) return advanceWriteCascade(state, reply);
   const inspected = inspectEnvelope(state, reply.envelopePath);
   if (inspected.errors.length) {
@@ -283,17 +287,23 @@ export function acceptWrite(state, reply, { concernsResolved = false } = {}) {
   if (data.launch === 'tests-only') return writeReceiptAction(state, openFailure(state, parsed.parseError ?? `Tests-only outcome: ${parsed.transition.action}`));
   if (parsed.envelope?.status === 'NEEDS_CONTEXT') {
     data.step = 'missing-context';
-    return writeReceiptAction(state, ask(state, 'implementation-context', 'Supply the missing context before a replacement launch. Return {decision:"retry", reason, context}, or stop.', parsed.envelope.missingContext.map(reason => ({ reason }))));
+    checkProgress(state, 'missing-context');
+    return writeReceiptAction(state, ask(state, 'implementation-context', blockedText(state, 'Supply the missing context before a replacement launch. Return {decision:"retry", reason, context}, or stop.'), parsed.envelope.missingContext.map(reason => ({ reason }))));
   }
   if (parsed.transition.action === 'change-blocking-condition') {
     data.step = 'blocking-condition';
-    return writeReceiptAction(state, ask(state, 'implementation-blocked', 'A blocking condition must change before another write. Return {decision:"retry", reason, context} with the changed condition, or stop.', (parsed.envelope?.blockers ?? []).map(reason => ({ reason }))));
+    checkProgress(state, 'blocking-condition');
+    return writeReceiptAction(state, ask(state, 'implementation-blocked', blockedText(state, 'A blocking condition must change before another write. Return {decision:"retry", reason, context} with the changed condition, or stop.'), (parsed.envelope?.blockers ?? []).map(reason => ({ reason }))));
   }
   return writeReceiptAction(state, retryOrFail(state, parsed.transition));
 }
-export function retryOrFail(state, transition) {
+/** Blocked and missing-context asks offer a hot fix before a replacement launch. */
+function blockedText(state, text) {
+  return `${text}${hotfixOption(state)}`;
+}
+export function retryOrFail(state, transition, verification = null) {
   const data = state.ordinary;
-  if (data.launch === 'tests-only' || data.attempt >= 3 || !['replace', 'escalate', 'change-blocking-condition'].includes(transition.action)) return openFailure(state, `Implementation stopped: ${transition.action}`);
+  if (data.launch === 'tests-only' || data.attempt >= 3 || !['replace', 'escalate', 'change-blocking-condition'].includes(transition.action)) return openFailure(state, `Implementation stopped: ${transition.action}`, verification);
   if (transition.action === 'change-blocking-condition' && data.attempt === 2) {
     if (data.write.escalation.status !== 'available') return openFailure(state, `Implementation escalation exhausted: ${data.write.escalation.reason}`);
     transition = { ...transition, action: 'escalate', target: data.write.escalation };
@@ -355,7 +365,8 @@ export async function afterImplementationVerification(state) {
   }
   const transition = verificationTransition(state, result, 'final');
   appendOrReplayTerminalVerification(state, { taskId: data.taskId, attempt: data.attempt, result, commandRefs: data.lastGate?.commands ?? [], transition: transition.action });
-  if (transition.action !== 'complete') return retryOrFail(state, transition);
+  // `terminal`: this attempt's verification is recorded, so only a hot fix (not re-verify) may rerun it.
+  if (transition.action !== 'complete') return retryOrFail(state, transition, { purpose: 'scoped', step: 'completion-verify', terminal: true });
   data.implementationComplete = { result, scopeHash: fingerprint(state), envelope: data.envelope };
   data.step = 'implemented';
   return null;
@@ -379,6 +390,7 @@ function relaunchTestsOnly(state, defects) {
 export function acceptImplementationDecision(state, reply) {
   const data = state.ordinary, answer = reply.answer;
   if (data.step === 'failure-disposition') return resolveFailure(state, answer);
+  if (data.step === 'hotfix-edit' || data.step === 'hotfix-budget') return acceptHotfixReply(state, reply);
   if (state.pending.question === 'implementation-recovery') {
     if (typeof answer?.envelopePath !== 'string') throw new DriverError('reply', `Interrupted write requires its exact envelope path ${data.expectedEnvelopePath ?? '(missing)'}.`);
     return acceptWrite(state, { envelopePath: answer.envelopePath });
@@ -391,6 +403,7 @@ export function acceptImplementationDecision(state, reply) {
     return acceptWrite(state, data.pendingOutcome, { concernsResolved: true });
   }
   if (data.step === 'blocking-condition' || data.step === 'missing-context') {
+    if (answer.decision === 'hotfix') return beginHotfix(state, answer, data.step);
     if (answer.decision !== 'retry') return openFailure(state, 'Blocking condition unchanged.');
     data.continuationContext = answer.context ?? answer.reason;
     ruling(state, 'blocking-condition', 'changed', answer.reason);
@@ -404,19 +417,22 @@ export function openFailure(state, reason, verification = null) {
   data.failure = { reason, failureSnapshot: snapshot(state), ...(verification ? { verification } : {}) };
   data.step = 'failure-disposition';
   ruling(state, 'failure-disposition', 'inspect-first', JSON.stringify(data.failure), 'open');
+  checkProgress(state);
   return failureQuestion(state);
 }
-function failureQuestion(state) {
+/** Options run in bias order: repair forward first, discard work last. */
+export function failureQuestion(state) {
   const data = state.ordinary;
   const attribution = failureAttribution({ baseline: data.baselineSnapshot.entries, taskStart: data.taskStart?.entries ?? data.baselineSnapshot.entries, failureSnapshot: data.failure.failureSnapshot.entries, currentState: snapshot(state).entries, authorized: true });
-  const reverify = data.failure.verification ? ` Only when the host evidence itself was wrong: {decision:"re-verify", reason} reruns the ${data.failure.verification.purpose} verification on the unchanged tree.` : '';
+  const reverify = data.failure.verification && !data.failure.verification.terminal ? ` Only when the host evidence itself was wrong: {decision:"re-verify", reason} reruns the ${data.failure.verification.purpose} verification on the unchanged tree.` : '';
   const redRuling = redRulingOffered(state) ? ' When RED cannot fail on this tree: {decision:"red-ruling", reason, rulings:[one per red criterion: {criterionId, kind:"carry-over", runId} citing one earlier segment of this plan that recorded RED, or {criterionId, kind:"no-failing-state", locus:"<repo path>[:line]", reason} where the plan declares its RED exception]}; the driver verifies each entry.' : '';
   const retry = retryable(state) ? ' To continue this segment instead: {decision:"retry", reason, context} keeps the tree and relaunches the writer (tests-only before a validated RED gate, production after) with context carrying the ruling, consuming one attempt.' : '';
-  return ask(state, 'failure-disposition', `Choose {decision:"keep-for-repair"|"revert-attributable"|"inspect-first", reason}.${reverify}${redRuling}${retry} Reversion is limited to separately attributable paths; inspect-first keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
+  return ask(state, 'failure-disposition', `Choose one decision.${hotfixOption(state)} {decision:"keep-for-repair", reason} ends the segment with the tree kept.${retry}${reverify}${redRuling} {decision:"inspect-first", reason} keeps the ledger segment open. Only when the user decides to close the run on manual review: {decision:"manual-complete", reason, reviewer, criterionEvidence:[{criterionId, evidence}] for every criterion, redEvidence (host RED observation; required when red criteria exist)}. Last resort; requires the user's explicit approval in chat: {decision:"revert-attributable", reason, userApproved:{by, quote}} saves a patch, then restores separately attributable paths.`, [{ reason: data.failure.reason, paths: attribution.paths, nonSeparable: attribution.nonSeparable, revertAllowed: attribution.allowed }]);
 }
 function resolveFailure(state, answer) {
   const data = state.ordinary;
-  if (!['keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry', 'red-ruling'].includes(answer?.decision) || !answer.reason?.trim()) throw new DriverError('reply', 'Failure disposition requires a typed decision and reason.');
+  if (!['hotfix', 'keep-for-repair', 'revert-attributable', 'inspect-first', 'manual-complete', 're-verify', 'retry', 'red-ruling'].includes(answer?.decision) || !answer.reason?.trim()) throw new DriverError('reply', 'Failure disposition requires a typed decision and reason.');
+  if (answer.decision === 'hotfix') return beginHotfix(state, answer, 'failure');
   if (answer.decision === 'manual-complete') return manualComplete(state, answer);
   if (answer.decision === 'red-ruling') return redRuling(state, answer);
   if (answer.decision === 'retry') return retryFailure(state, answer);
@@ -432,15 +448,11 @@ function resolveFailure(state, answer) {
       if (!entry) throw new Error(`No task-start content for ${file}; manual attribution required.`);
       if (!['absent', '100644', '100755'].includes(entry.mode)) throw new Error(`Unsupported revert mode for ${file}; manual attribution required.`);
     }
-    for (const file of attribution.paths) {
-      const entry = data.preEntries.find(item => item.path === file), absolute = path.join(state.repoRoot, file);
-      if (entry.mode === 'absent') fs.rmSync(absolute, { force: true });
-      else { fs.writeFileSync(absolute, snapshotContent(state.repoRoot, entry)); fs.chmodSync(absolute, entry.mode === '100755' ? 0o755 : 0o644); }
-    }
-  }
-  ruling(state, 'failure-disposition', answer.decision, answer.reason);
+    const patch = discardPaths(state, attribution.paths, { userApproved: answer.userApproved, reason: answer.reason, key: 'revert-attributable' });
+    ruling(state, 'failure-disposition', answer.decision, `${answer.reason} (patch ${patch})`);
+  } else ruling(state, 'failure-disposition', answer.decision, answer.reason);
   append(state, 'run-complete', { result: 'stable-failure', evidenceRefs: [path.relative(state.repoRoot, state.walkthroughPath).split(path.sep).join('/')] });
-  return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
+  return emitAction(state, 'done', { outcome: 'stable-failure', summary: data.failure.reason, ledgerPath: state.ledgerPath, command: state.resumeCommand, handoff: { rulings: data.rulings, retained: data.retained ?? [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
 }
 // SECTION: RED rulings
 
@@ -538,7 +550,7 @@ function redRuling(state, answer) {
   return startTask(state, 'full');
 }
 /** A failure inside the task, with an attempt left and implementation not yet complete, can continue in-segment. */
-function retryable(state) {
+export function retryable(state) {
   const data = state.ordinary, task = data.taskId ? ledgerSegment(state)?.tasks.get(data.taskId) : null;
   return Boolean(task && task.nextAttempt <= task.maxAttempt && !data.implementationComplete);
 }
@@ -555,7 +567,12 @@ function retryFailure(state, answer) {
     data.attempt = next - 1;
     return relaunchTestsOnly(state, [`Retry after failure: ${reason}. Ruling: ${context}`]);
   }
-  data.continuationContext = `Retry after failure: ${reason}. Ruling: ${context}`;
+  return continueWriter(state, `Retry after failure: ${reason}. Ruling: ${context}`);
+}
+/** Relaunches the production writer on the kept tree with `context`, consuming the ledger's next attempt. */
+export function continueWriter(state, context) {
+  const data = state.ordinary, next = ledgerSegment(state).tasks.get(data.taskId).nextAttempt;
+  data.continuationContext = context;
   data.attempt = next;
   data.launch = 'full';
   data.write.candidate = 0;
@@ -565,7 +582,7 @@ function retryFailure(state, answer) {
 /** Replaces host evidence the user ruled wrong; the tree must still match the failure snapshot. */
 function reverify(state, answer) {
   const data = state.ordinary, verification = data.failure.verification;
-  if (!verification) throw new DriverError('reply', 're-verify applies only to a failure raised by host verification evidence.');
+  if (!verification || verification.terminal) throw new DriverError('reply', 're-verify applies only to a failure raised by host verification evidence, before its attempt recorded a terminal verification.');
   if (JSON.stringify(snapshot(state).entries) !== JSON.stringify(data.failure.failureSnapshot.entries)) throw new DriverError('reply', 'The tree changed after the failure; re-verify reruns unchanged work only.');
   ruling(state, 'failure-disposition', 're-verify', answer.reason);
   delete data.failure;
@@ -587,7 +604,7 @@ function manualComplete(state, answer) {
   append(state, 'manual-complete', { reviewer: answer.reviewer.trim(), reason: answer.reason.trim(), redEvidence: data.redCriteria.length ? answer.redEvidence.trim() : null, criterionEvidence, fingerprint: repositoryBaseline(state) });
   ruling(state, 'failure-disposition', 'manual-complete', answer.reason);
   append(state, 'run-complete', { result: 'complete', evidenceRefs: [path.relative(state.repoRoot, state.walkthroughPath).split(path.sep).join('/'), 'manual-complete'] });
-  return emitAction(state, 'done', { outcome: 'complete', summary: `Closed by manual review (${answer.reviewer.trim()}): ${answer.reason.trim()}`, ledgerPath: state.ledgerPath, handoff: { rulings: data.rulings, retained: [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
+  return emitAction(state, 'done', { outcome: 'complete', summary: `Closed by manual review (${answer.reviewer.trim()}): ${answer.reason.trim()}`, ledgerPath: state.ledgerPath, handoff: { rulings: data.rulings, retained: data.retained ?? [], destinations: [], warning: 'The complete chat folder is moved to its terminal handoff location.' } });
 }
 export function completeTask(state) {
   const data = state.ordinary, segment = ledgerSegment(state);

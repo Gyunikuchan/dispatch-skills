@@ -124,7 +124,8 @@ describe('implement reference', () => {
 
   it('preserves failures and requires explicit rulings', () => {
     assert.match(text, /preserves and fingerprints the tree/);
-    assert.match(text, /keep for repair, revert attributable paths, inspect first/);
+    assert.match(text, /Prefer `hotfix` when evidence names a locus/);
+    assert.match(text, /Revert is a last resort: relay `userApproved/);
     assert.match(text, /stable-failure/);
   });
 });

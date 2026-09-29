@@ -118,7 +118,9 @@
         "implementation-concerns",
         "implementation-blocked",
         "implementation-context",
-        "write-scope"
+        "write-scope",
+        "hotfix-edit",
+        "hotfix-budget"
       ]
     },
     "text": {

@@ -66,7 +66,8 @@ export async function beginReview(state, kind) {
   const integrity = kind === 'code' ? regenerateRepoHashes(state.repoRoot, state.ordinary.approvedPaths) : null;
   if (integrity) return emitAction(state, 'done', { outcome: 'failed', summary: integrity, command: state.resumeCommand });
   const action = await startReview({
-    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, terminalHandoff: false, argument: ['design', 'plan'].includes(kind) ? state.planPath : state.walkthroughPath },
+    invocation: { ...state.invocation, verb: 'review', kind, fix: true, implementation: kind === 'code', phases: null, terminalHandoff: false, argument: ['design', 'plan'].includes(kind) ? state.planPath : state.walkthroughPath,
+      ...(kind === 'code' && state.ordinary.finalFocus?.length ? { focus: state.ordinary.finalFocus.map(item => `- ${item.path} — ${item.reason}`).join('\n') } : {}) },
     cwd: state.repoRoot, resumeCommand: state.resumeCommand, reviewBudget,
   });
   state.reviewState = readRunState(action.stateFile);

@@ -119,12 +119,36 @@ function renderChanges(state, text) {
   text = replaceSection(text, 'Changes Made', renderChangesMade(entries));
   return replaceBoxLine(text, 'Delivered', delivered);
 }
+// Driver-owned deviation bullets are re-rendered from run state; authored bullets are kept.
+const RECOVERY_BULLET = /^- Deviation: (?:Hot fix|Discarded)\b/;
+/** Discloses hot fixes, their scope extensions, and discard patches as Deviation bullets. */
+function renderRecovery(state, text) {
+  const data = state.ordinary, body = sectionBody(text, 'Deviations & Follow-ups');
+  if (!body) return text;
+  const extensions = fix => (fix.scopeExtensions.length ? `; scope extensions: ${fix.scopeExtensions.map(item => `${item.path} (${oneLine(item.reason)})`).join(', ')}` : '');
+  const bullets = [
+    ...(data.hotfixes ?? []).map(fix => `- Deviation: Hot fix (${fix.mode}) — ${oneLine(fix.rootCause)}; paths ${fix.paths.join(', ') || 'none'}${extensions(fix)}.`),
+    ...(data.retained ?? []).map(item => `- Deviation: Discarded — ${oneLine(item.reason)}; patch \`${item.path}\`.`),
+  ];
+  const kept = body.filter(line => !RECOVERY_BULLET.test(line.trim()) && !/^None\.?$/.test(line.trim()));
+  while (kept.length && !kept.at(-1).trim()) kept.pop();
+  while (kept.length && !kept[0].trim()) kept.shift();
+  if (!bullets.length && kept.length === body.filter(line => line.trim()).length) return text;
+  const lines = [...kept, ...bullets];
+  text = replaceSection(text, 'Deviations & Follow-ups', lines.length ? lines.join('\n') : 'None.');
+  if (bullets.length && /^> \*\*Deviations:\*\* none\s*$/m.test(text)) {
+    const parts = [data.hotfixes?.length ? `${data.hotfixes.length} hot fix(es)` : '', data.retained?.length ? `${data.retained.length} user-approved discard(s) with saved patches` : ''].filter(Boolean);
+    text = replaceBoxLine(text, 'Deviations', parts.join('; '));
+  }
+  return text;
+}
 function renderValidatedEvidence(state, text) {
   const ordinary = state.ordinary;
   if (!ordinary || !Array.isArray(ordinary.criteria)) return text;
   const records = (ordinary.completionResults ?? []).flatMap(result => result.criterionEvidence ?? []);
   const rows = traceRows(ordinary, records);
   text = renderChanges(state, text);
+  text = renderRecovery(state, text);
   text = replaceSection(text, 'Verification', renderVerification(rows, finalGate(ordinary)));
   text = replaceStatusLine(text, `${rows.filter(isPassing).length}/${ordinary.criteria.length} SC passing`);
   // The driver owns none-ness only; an authored one-line summary is kept (lint checks none-ness alone).

@@ -8,7 +8,8 @@ import { assertBinding, bindPlan, ledgerSegment, persistEvidence, refuse, restor
 import { writeCheckpoint } from './review-phase.mjs';
 import { acceptPlan, authorPlan, beginReview, captureReviewBudget, continueReview, finishPlanReview, requireSettledPlan } from './plan-phase.mjs';
 import { acceptBaselineRuling, approve, autoApproval, baselineDecision, beginBaseline } from './baseline-phase.mjs';
-import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, scopedResult } from './verification.mjs';
+import { acceptVerification, beginVerification, completionResult, fingerprint, gateCommands, purposeCommands, scopedResult } from './verification.mjs';
+import { acceptHotfixReply } from './hotfix.mjs';
 import { acceptImplementationDecision, acceptWrite, afterImplementationVerification, beginImplementation, openFailure } from './task-phase.mjs';
 import { finishCodeReview, handoff, requireImplementation } from './handoff-phase.mjs';
 import { CANONICAL_PLAN } from '../ledger/ledger.mjs';
@@ -115,12 +116,24 @@ async function consumeReview(state, action) {
   }
   const data = state.ordinary;
   if (scopedResult(state) === 'regression') {
-    // Accepted fixes changed scope: verify them, then review again.
-    delete state.reviewState;
-    delete data.checkpoint;
-    data.step = 'post-review-verify';
-    return beginVerification(state, 'scoped');
+    // Stale scoped commands the final gate also runs (directly or through their covering suite) are judged there.
+    const finalSet = purposeCommands(data, 'final');
+    if (!gateCommands(state, 'scoped').every(command => finalSet.includes(data.coverage?.[command] ?? command))) {
+      delete data.checkpoint;
+      data.step = 'post-review-verify';
+      return beginVerification(state, 'scoped');
+    }
+    if (state.reviewState?.mustApplied) {
+      delete state.reviewState;
+      delete data.checkpoint;
+      return consumeReview(state, await beginReview(state, 'code'));
+    }
   }
+  return finalGate(state);
+}
+/** Enters the final gate; the settled review state stays for its checkpoint. */
+async function finalGate(state) {
+  const data = state.ordinary;
   data.step = 'final-verify';
   data.finalVerified = false;
   // Every final-tier record is already fresh: the final gate has nothing to run.
@@ -170,7 +183,7 @@ export async function advanceImplement(state, reply) {
       acceptPlan(state, reply);
       bindResume(state);
       action = await enterBoundPlan(state);
-    } else if (state.reviewState && !['final-verify', 'failure-disposition'].includes(data.step)) {
+    } else if (state.reviewState && !['final-verify', 'post-review-verify', 'failure-disposition', 'hotfix-edit', 'hotfix-budget', 'write-pending'].includes(data.step)) {
       action = await consumeReview(state, continueReview(state, reply));
     } else {
       assertBinding(state);
@@ -181,13 +194,22 @@ export async function advanceImplement(state, reply) {
           else if (data.step === 'final-verify') action = await afterFinalVerification(state);
           else if (data.step === 'post-review-verify') {
             if (scopedResult(state) === 'regression') action = openFailure(state, 'Post-review verification failed or is stale.', { purpose: 'scoped', step: 'post-review-verify' });
-            else { data.implementationComplete.scopeHash = fingerprint(state); action = await consumeReview(state, await beginReview(state, 'code')); }
+            else {
+              data.implementationComplete.scopeHash = fingerprint(state);
+              // Only an applied MUST fix earns another review; other fixes go straight to the final gate.
+              if (state.reviewState?.mustApplied) { delete state.reviewState; action = await consumeReview(state, await beginReview(state, 'code')); }
+              else action = await finalGate(state);
+            }
           } else {
             action = await afterImplementationVerification(state);
             if (!action) action = await consumeReview(state, await beginReview(state, 'code'));
           }
         }
+        // A hot fix made progress once the check it re-ran settles anywhere but failure disposition.
+        action = await action;
+        if (data.step !== 'failure-disposition' && data.step !== 'baseline-ruling') delete data.hotfixTarget;
       } else if (state.pending.action === 'delegate-write') action = acceptWrite(state, reply);
+      else if (data.phase === 'baseline' && ['hotfix-edit', 'hotfix-budget'].includes(data.step)) action = passGate(state, acceptHotfixReply(state, reply));
       else if (data.step === 'baseline-ruling') {
         if (reply.answer?.decision === 'fix-first') { data.baselineAccepted = null; action = await consumeReview(state, await beginReview(state, 'plan')); }
         else action = acceptBaselineRuling(state, reply);

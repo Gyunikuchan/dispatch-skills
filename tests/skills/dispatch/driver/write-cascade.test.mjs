@@ -257,6 +257,24 @@ describe('write cascade advances on failed without consuming attempt (SC3)', () 
     assert.equal(second.action, 'delegate-write', second.error?.message);
     assert.ok(second.fields.restore, 'restore must be present when the partial diff leaves the approved paths');
     assert.ok(JSON.stringify(second.fields.restore).includes('src/rogue.js'));
+    // user-gated revert: the partial diff is saved before the next hop restores it.
+    const patch = path.join(fixture.repo.dir, second.fields.restore.patchPath);
+    assert.match(fs.readFileSync(patch, 'utf8'), /\+export const rogue = true;/);
+  });
+
+  it('user-gated revert: an unsavable cascade patch ends the cascade before any restore', () => {
+    const fixture = setup();
+    const first = driveToFirstWrite(fixture);
+    fs.writeFileSync(path.join(fixture.repo.dir, 'src/rogue.js'), 'export const rogue = true;\n');
+    // A file where the reverts directory belongs makes the patch unwritable.
+    const reverts = path.join(path.dirname(first.fields.walkthroughPath), 'reverts');
+    fs.rmSync(reverts, { recursive: true, force: true });
+    fs.writeFileSync(reverts, 'blocker');
+    const result = next(fixture.fixture, fixture.repo, first.stateFile, { failed: { kind: 'quota', reason: 'Transient provider failure.' } });
+    assert.equal(result.action, 'done', JSON.stringify(result));
+    assert.equal(result.outcome, 'failed');
+    assert.match(result.summary, /Write cascade integrity: Patch save failed/);
+    assert.equal(fs.existsSync(path.join(fixture.repo.dir, 'src/rogue.js')), true);
   });
 
   it('treats sandbox-unsupported as terminal, never cascading to a further configured model', () => {
