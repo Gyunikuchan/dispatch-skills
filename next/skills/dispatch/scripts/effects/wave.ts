@@ -13,6 +13,7 @@
 import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome } from '../core/types.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
 import { collectFindings, parseReport, type ReportFailureKind } from '../domain/report.ts';
+import { sanitizeText } from '../domain/sanitize.ts';
 import { hasReserve, next, reservePool, takeReserve, type Position, type ReservePool } from '../policy/cascade.ts';
 import { nativeDescriptor, type NativeDescriptor } from '../providers/native.ts';
 import type { DelegateRequest, ModeId, ProviderId, ProviderSpec, RunOutcome } from '../providers/types.ts';
@@ -49,7 +50,8 @@ export type WaveInput = {
   effectId: string;
   round: number;
   timeoutMs: number;
-  review: ReviewKind;
+  /** `ask` slots yield one sanitized raw-text claim instead of parsed findings. */
+  review: ReviewKind | 'ask';
   orchestratorPlatform: ProviderId | null;
   cwd: string;
   roster: readonly RosterSlot[];
@@ -57,7 +59,10 @@ export type WaveInput = {
 };
 
 /** Host context the handler cannot derive from the effect alone. */
-export type WaveContext = Omit<WaveInput, 'effectId' | 'round' | 'timeoutMs' | 'roster'>;
+export type WaveContext = Omit<WaveInput, 'effectId' | 'round' | 'timeoutMs' | 'roster'> & {
+  /** The host serves native slots through the machine's `native` frame (two-wave path). */
+  nativeHost?: boolean;
+};
 
 export function asRosterSlot(value: Readonly<Record<string, unknown>>): RosterSlot {
   const { slot, provider, index, model, effort, sandbox, native, reserve } = value;
@@ -73,12 +78,12 @@ const modelsOf = (slot: RosterSlot): string[] => (slot.model === undefined ? [] 
 
 // SECTION: Slot finals (closed union)
 
-type Success = { provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[] };
+type Success = { provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string };
 
 export type SlotFinal =
   | ({ state: 'success'; slot: string } & Success)
   | ({ state: 'reserve'; slot: string; by: string; record: string } & Success)
-  | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; drafts?: DraftFinding[] }
+  | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string }
   | { state: 'failed'; slot: string; cls: FailureClass | 'worker'; reason: string; records: string[] };
 
 export function slotStatus(final: SlotFinal): string {
@@ -167,7 +172,7 @@ export type WorkerDeps = {
   outputCapBytes?: number;
 };
 
-const REPORT_CLASS: Readonly<Record<ReportFailureKind, FailureClass>> = {
+export const REPORT_CLASS: Readonly<Record<ReportFailureKind, FailureClass>> = {
   'empty-output': 'empty-output', refusal: 'refusal', truncated: 'truncated', 'uncovered-scope': 'refusal', 'loose-locus': 'refusal',
 };
 
@@ -197,8 +202,13 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     const outcome = await deps.run(provider, req, mode);
     let cls: FailureClass;
     let reason: string;
-    if (outcome.status === 'ok') {
-      const report = parseReport({ kind: input.review, source: slot.slot, text: outcome.text });
+    if (outcome.status === 'ok' && input.review === 'ask') {
+      const claim = sanitizeText(outcome.text);
+      if (claim) return { ok: true, value: { provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim }, position };
+      cls = 'empty-output';
+      reason = 'empty-output: the delegate returned no text';
+    } else if (outcome.status === 'ok') {
+      const report = parseReport({ kind: input.review === 'ask' ? 'code' : input.review, source: slot.slot, text: outcome.text });
       if (report.ok) return { ok: true, value: { provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records }, position };
       cls = REPORT_CLASS[report.failure.kind];
       reason = `${report.failure.kind}: ${report.failure.detail}`;
@@ -311,22 +321,55 @@ function readFinals(deps: WaveDeps, runDir: string, id: string, n: number, roste
       ?? { state: 'failed', slot: slot.slot, cls: 'worker', reason: `attempt ${n} wrote no outcome for ${slot.slot}`, records: [] });
 }
 
-function waveDone(effect: WaveEffect, finals: readonly SlotFinal[]): ResultEvent[] {
+export function waveDone(effect: WaveEffect, finals: readonly SlotFinal[]): ResultEvent[] {
   const progress: ResultEvent[] = finals.map((final) => ({ type: 'WAVE_PROGRESS', effectId: effect.id, slot: final.slot, status: slotStatus(final) }));
   const drafts = finals.flatMap((final) => final.state === 'failed' ? [] : final.drafts ?? []);
   return [...progress, { type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: finals.map(slotOutcome), findings: collectFindings(effect.round, drafts) }];
 }
 
-/** Single-shot handler: CLI-only rosters. A runtime native fallback has no host to serve it, so it fails by name. */
+/**
+ * Single-shot handler. With `context.nativeHost` (the two-wave machine path, I04), native-needed slots come back
+ * `state: 'native'` with their descriptor for the host; otherwise native rosters are rejected and a runtime native
+ * fallback fails by name (no host serves it).
+ */
 export function createWaveHandler(deps: WaveDeps): Handler<Extract<Parameters<Handler>[0], { kind: 'wave' }>> {
   return async (effect, _ports, ctx) => {
     let roster: RosterSlot[];
     try { roster = effect.roster.map(asRosterSlot); } catch (error) { return [failed(effect.id, 'config', (error as Error).message)]; }
-    if (roster.some((slot) => slot.native)) return [failed(effect.id, 'config', 'roster has native slots; use startWave/finishWave')];
-    const n = await driveWorker(effect, roster, deps, ctx);
-    const finals = readFinals(deps, ctx.runDir, effect.id, n, roster).map((final): SlotFinal => final.state === 'native'
-      ? { state: 'failed', slot: final.slot, cls: 'worker', reason: `native fallback unavailable in single-shot mode (${final.reason})`, records: final.records }
-      : final);
+    const context = deps.context(effect);
+    const host = context.nativeHost === true && context.orchestratorPlatform !== null ? context.orchestratorPlatform : null;
+    if (host === null && roster.some((slot) => slot.native)) return [failed(effect.id, 'config', 'roster has native slots; use startWave/finishWave')];
+    const describe = (slot: string, substitutes: boolean, models: readonly string[], effort: string | null): NativeDescriptor | null => {
+      const paths = context.paths[slot];
+      if (!paths || host === null) return null;
+      return nativeDescriptor({
+        slot, platform: host, models, effort, substitutes, cascadePosition: 0, promptPath: paths.promptPath,
+        outputPath: outputOf(paths, substitutes ? `${slot}#fallback` : slot), attachments: paths.attachments,
+      });
+    };
+    const cli = roster.filter((slot) => !slot.native);
+    let cliFinals: SlotFinal[];
+    try {
+      const n = cli.some((slot) => !slot.reserve) ? await driveWorker(effect, cli, deps, ctx) : 0;
+      cliFinals = n > 0 ? readFinals(deps, ctx.runDir, effect.id, n, cli) : [];
+    } catch (error) {
+      return [failed(effect.id, 'io', `wave worker: ${error instanceof Error ? error.message : String(error)}`)];
+    }
+    const finals = roster.filter((slot) => !slot.reserve).flatMap((slot): SlotFinal[] => {
+      if (slot.native) {
+        const descriptor = describe(slot.slot, false, modelsOf(slot), slot.effort ?? null);
+        return [descriptor
+          ? { state: 'native', slot: slot.slot, sourceKey: descriptor.sourceKey, reason: 'nativeSubagentsOnly', records: [], descriptor }
+          : { state: 'failed', slot: slot.slot, cls: 'config', reason: `native slot ${slot.slot} has no prompt path`, records: [] }];
+      }
+      const final = cliFinals.find((entry) => entry.slot === slot.slot);
+      if (!final) return [];
+      if (final.state !== 'native') return [final];
+      const descriptor = describe(slot.slot, true, modelsOf(slot), slot.effort ?? null);
+      return [descriptor
+        ? { ...final, descriptor }
+        : { state: 'failed', slot: final.slot, cls: 'worker', reason: `native fallback unavailable in single-shot mode (${final.reason})`, records: final.records }];
+    });
     return waveDone(effect, finals);
   };
 }

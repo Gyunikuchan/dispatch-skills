@@ -19,14 +19,14 @@
       "key": "grammar-review-infers",
       "clause": "`review` infers kind and scope",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/root.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-fix-opt-in",
       "clause": "`--fix` opt-in",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/review-fix.test.ts"],
       "checks": []
     },
     {
@@ -208,35 +208,35 @@
       "key": "review-intent-needs-user",
       "clause": "`intent` → needs-user",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/review-rule.test.ts"],
       "checks": []
     },
     {
       "key": "review-recorded-decision",
       "clause": "recorded-decision rule",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/review-rule.test.ts"],
       "checks": []
     },
     {
       "key": "review-report-only-default",
       "clause": "standalone report-only default",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/root.test.ts", "tests/unit/machines/review-fix.test.ts", "tests/unit/core/flow-review.test.ts"],
       "checks": []
     },
     {
       "key": "review-consider-opt-in",
       "clause": "`--fix` `CONSIDER` handling and single opt-in ask",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/review-fix.test.ts"],
       "checks": []
     },
     {
       "key": "review-adjacent-follow-ups",
       "clause": "adjacent findings as follow-ups",
       "increment": "I04",
-      "tests": [],
+      "tests": ["tests/unit/machines/review-fix.test.ts"],
       "checks": []
     },
     {

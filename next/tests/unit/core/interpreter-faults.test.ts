@@ -28,33 +28,39 @@ function waveJournal(ports: FakePorts, withProgress: boolean): string {
   return runDir;
 }
 
-test('an effect with only non-terminal results is in flight', () => {
+test('a never-awaiting machine faults at MAX_STEPS with exit 2, a byte-identical journal, and no lock', async () => {
   const ports = fakePorts();
-  const runDir = waveJournal(ports, true);
-  const folded = fold(waveMachine, readJournal(ports, runDir).lines);
-  assert.deepEqual(folded.inFlight, { effect: { kind: 'wave', id: 'fixture.wave.1', round: 1, roster: [], timeoutMs: 1000 }, attempt: 1 });
-});
-
-test('a started effect without a result relaunches as attempt 2 with exactly one terminal result', async () => {
-  const ports = fakePorts();
-  const runDir = waveJournal(ports, false);
-  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
+  const journal = bytes(runDir);
+  const result = await send({ runDir, machine: neverAwaitingMachine, handlers: fakeHandlers, ports });
+  assert.equal(result.exitCode, 2);
   assert.equal(result.frame?.await, 'done');
-  const lines = readJournal(ports, runDir).lines;
-  const starts = lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
-  assert.deepEqual(starts, [1, 2]);
-  assert.equal(lines.filter((line) => line.type === 'WAVE_DONE').length, 1);
+  assert.deepEqual(result.frame?.data, { outcome: 'fault' });
+  assert.match(result.frame?.error ?? '', new RegExp(`MAX_STEPS \\(${MAX_STEPS}\\)`));
+  assert.deepEqual(bytes(runDir), journal);
+  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
+  assert.equal(ports.timers, 0);
 });
 
-test('a torn tail is dropped and its effect re-executed', async () => {
+test('a handler exception faults with a byte-identical journal and no lock', async () => {
   const ports = fakePorts();
   const { runDir } = await startAwaiting(ports);
-  await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
-  const text = fs.readFileSync(journalPath(runDir), 'utf8');
-  fs.writeFileSync(journalPath(runDir), text.slice(0, text.length - 10));
-  const result = await send({ runDir, machine: awaitingMachine, handlers: fakeHandlers, ports });
-  assert.equal(result.frame?.await, 'done');
-  const starts = readJournal(ports, runDir).lines.filter((line) => line.type === 'EFFECT_STARTED').map((line) => line.data['attempt']);
-  assert.deepEqual(starts, [1, 1, 2]);
+  const journal = bytes(runDir);
+  const handlers: Handlers = { ...fakeHandlers, verify: async () => { throw new Error('boom'); } };
+  const result = await send({ runDir, machine: awaitingMachine, handlers, ports, rawEvent: { type: 'AUTHORED', path: 'p.md' } });
+  assert.equal(result.exitCode, 2);
+  assert.match(result.frame?.error ?? '', /boom/);
+  assert.deepEqual(bytes(runDir), journal);
+  assert.equal(fs.existsSync(path.join(runDir, LOCK_FILE)), false);
 });
 
+test('a handler returning no terminal result is an engine fault', async () => {
+  const ports = fakePorts();
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined });
+  const handlers: Handlers = { snapshot: async (effect) => [{ type: 'WAVE_PROGRESS', effectId: effect.id, slot: 's', status: 'x' }] };
+  const result = await send({ runDir, machine: awaitingMachine, handlers, ports });
+  assert.equal(result.exitCode, 2);
+  assert.match(result.frame?.error ?? '', /exactly one terminal result/);
+});
