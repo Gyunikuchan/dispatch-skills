@@ -5,6 +5,7 @@ import type { Effect, Handler, Handlers } from '../core/types.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { ProviderId } from '../providers/types.ts';
 import type { Git } from './git.ts';
+import { createCheckEnvelope, changedPaths, pathHashes } from './check-envelope.ts';
 import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
 import { createPrepareReview } from './prepare-review.ts';
@@ -55,8 +56,20 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'prepare-review': createPrepareReview(deps),
     wave,
     verify: createVerify(deps),
+    'check-envelope': createCheckEnvelope(deps),
     'write-brief': createWriteBrief(deps),
-    snapshot: createSnapshot(deps),
+    snapshot: async (effect, ports, ctx) => {
+      const events = await createSnapshot(deps)(effect, ports, ctx);
+      for (const event of events) if (event.type === 'SNAPSHOT') {
+        try {
+          const hashes = await pathHashes(deps, ports);
+          return [{ ...event, fingerprint: { ...event.fingerprint, pathHashes: hashes }, diff: { paths: changedPaths(effect.since, hashes) } }];
+        } catch (error) {
+          return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `path snapshot: ${error instanceof Error ? error.message : String(error)}` }];
+        }
+      }
+      return events;
+    },
     handoff: createHandoff(deps),
   };
 }

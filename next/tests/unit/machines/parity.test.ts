@@ -5,6 +5,7 @@ import type { Effect, Event, Machine, RunStartedEvent, Verb } from '../../../ski
 import { askMachine } from '../../../skills/dispatch/scripts/machines/ask.ts';
 import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { implementMachine } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 
 // SECTION: Scenario vocabulary (each step answers the newest open effect)
@@ -40,6 +41,35 @@ const handed: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), 
 const authored: Step = { type: 'AUTHORED', path: 'x.plan.md' };
 const plan = { argument: 'x.plan.md', overrides: { kind: 'plan' } };
 const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(), prepared, wave([f(2)])];
+
+const IMPLEMENT_HASH = `sha256:${'a'.repeat(64)}`;
+const implementPlan = (withEvidence = false) => ({
+  title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
+  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
+  changes: withEvidence ? [{ action: 'MODIFY', path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
+});
+const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
+  argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
+  config: { 'write-subagents': { claude: { low: { model: 'writer' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } },
+});
+const implementSnapshot: Step = (effect) => ({ type: 'SNAPSHOT', effectId: id(effect), fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });
+const implementParsed = (withEvidence = false): Step => (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: IMPLEMENT_HASH, parsed: implementPlan(withEvidence), defects: [] });
+const implementBadParsed: Step = (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: IMPLEMENT_HASH, parsed: {}, defects: [] });
+const implementVerified: Step = (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: effect?.kind === 'verify' ? effect.purpose : 'baseline', results: [], fingerprint: { head: 'h', index: 'i', worktree: 'w' } });
+const implementBrief: Step = (effect) => ({ type: 'BRIEF_READY', effectId: id(effect), stage: 'production', path: 'run/brief.md', sha256: IMPLEMENT_HASH, envelopePath: 'run/outcome.json' });
+const implementEnvelope: Step = { type: 'WRITE_ENVELOPE', envelopePath: 'run/outcome.json' };
+const implementChecked = (withEvidence = false): Step => (effect) => ({ type: 'ENVELOPE_CHECKED', effectId: id(effect), envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented', evidence: withEvidence ? ['CRITERION SC1 | src/a.ts | delivered behavior'] : [] }, defects: [], diff: { paths: [] } });
+const implementApprovalStop: Step = { type: 'DECISION', kind: 'approval', answer: 'stop' };
+const implementApproval: Step = { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } };
+const implementEvidence: Step = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'reviewed behavior' } } };
+const implementHandoff: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null });
+
+function implementsToTerminal(withEvidence: boolean): Step[] {
+  return [implementRun(withEvidence), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementApproval,
+    implementBrief, implementSnapshot, implementEnvelope, implementChecked(withEvidence), implementSnapshot, implementSnapshot,
+    implementVerified, ...(withEvidence ? [implementEvidence] : [])];
+}
 
 // SECTION: Replay
 
@@ -123,7 +153,9 @@ test('plan transitions table matches step', () => {
 test('root transitions table matches step', () => {
   parity(rootMachine, [
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
-    [run('implement'), handed], [run('design'), failed],
+    [run('implement'), failed], [run('implement', { argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } }, config: implementRun().config }), implementSnapshot, implementBadParsed, implementSnapshot, { type: 'DECISION', kind: 'failure', answer: 'stop' }],
+    [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
+    implementsToTerminal(false), implementsToTerminal(true), [run('design'), failed],
     [run('plan', {}, 0), authored, parsed()], [run('plan'), authored, failed], [run('plan'), authored, parsed(), prepared, wave([])],
     [run('plan'), authored, parsed(), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('reject')],
     [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
@@ -133,6 +165,19 @@ test('root transitions table matches step', () => {
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, verified()],
     [run('review', { ...plan }, 1), prepared, wave([f(1, { severity: 'SHOULD' })]), rule('accept'), applied, parsed()],
   ]);
+});
+
+test('implementation transition declarations include every observed reducer boundary', () => {
+  const scenarios: readonly (readonly Step[])[] = [
+    [implementRun(), implementSnapshot, implementBadParsed, implementSnapshot],
+    [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
+  ];
+  const observed = new Set(scenarios.flatMap((scenario) => [...replay(implementMachine, scenario).triples]));
+  const declared = new Set(implementMachine.transitions.map((row) => `${row.from} --${row.on}--> ${row.to}`));
+  assert.deepEqual([...observed].filter((triple) => !declared.has(triple)), []);
+  assert.ok(declared.has('booting --RUN_STARTED--> starting'));
+  assert.ok(declared.has('parsing --ARTIFACT_PARSED--> baseline-preflight'));
+  assert.ok(declared.has('approval --DECISION--> stopped'));
 });
 
 test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a second review round', () => {

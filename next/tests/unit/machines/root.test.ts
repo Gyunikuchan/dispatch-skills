@@ -29,14 +29,22 @@ test('root selects each verb', () => {
   assert.deepEqual(review.effects.map((effect) => effect.id), ['review.prepare-review.1']);
 });
 
-test('implement and design are explicit failed stubs that still hand off', () => {
-  for (const verb of ['implement', 'design'] as const) {
-    const { effects } = drive([started(verb)]);
-    assert.deepEqual(effects, [{ kind: 'handoff', id: 'root.handoff.1', terminal: true }]);
-    const frame = play(rootMachine, [started(verb), handoffDone()]).at(-1);
-    assert.equal(frame?.await, 'done');
-    assert.deepEqual(frame?.data, { outcome: 'failed', summary: `verb ${verb} not available until I05/I07`, handoff: '/tmp/dispatch-skills/s' });
-  }
+test('implement routes into its reducer; design remains a deferred failed stub', () => {
+  const implementation = drive([started('implement')]);
+  assert.deepEqual(implementation.effects.map((effect) => effect.kind), ['snapshot']);
+  assert.equal(rootMachine.project(implementation.state).at, 'implement › starting');
+  const failed = { type: 'EFFECT_FAILED', effectId: implementation.effects[0]?.id ?? '', cls: 'io', detail: 'snapshot failed' } as const;
+  const frame = play(rootMachine, [started('implement'), failed, handoffDone()]).at(-1);
+  assert.equal(frame?.await, 'done');
+  assert.equal(frame?.data['outcome'], 'failed');
+  assert.equal(frame?.data['summary'], 'initial snapshot failed: io: snapshot failed');
+  assert.equal(frame?.data['handoff'], '/tmp/dispatch-skills/s');
+  assert.equal((frame?.data['completion'] as Record<string, unknown>)['planPath'], 'src-a-ts.plan.md');
+
+  const design = drive([started('design')]);
+  assert.deepEqual(design.effects, [{ kind: 'handoff', id: 'root.handoff.1', terminal: true }]);
+  const deferred = play(rootMachine, [started('design'), handoffDone()]).at(-1);
+  assert.deepEqual(deferred?.data, { outcome: 'failed', summary: 'verb design not available until I07', handoff: '/tmp/dispatch-skills/s' });
 });
 
 test('grammar-review-infers: --kind wins, then .plan.md / .design.md, else code', () => {

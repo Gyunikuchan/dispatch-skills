@@ -271,91 +271,91 @@
       "key": "implement-settled-plan-skip",
       "clause": "settled-plan skip",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-entry.test.ts"],
       "checks": []
     },
     {
       "key": "implement-baseline-known-red",
       "clause": "baseline with known-red acceptance",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-entry.test.ts"],
       "checks": []
     },
     {
       "key": "implement-approval-by-quote",
       "clause": "approval with `{by, quote}`",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-entry.test.ts"],
       "checks": []
     },
     {
       "key": "implement-red-gate",
       "clause": "tests-only stage and RED gate rules (one row per red criterion, pre-existing collisions, one quality repair, RED exceptions, narrowing)",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-red.test.ts"],
       "checks": []
     },
     {
       "key": "implement-production-brief",
       "clause": "production brief contents and hash",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/core/effects-brief.test.ts"],
       "checks": []
     },
     {
       "key": "implement-envelope-self-check",
       "clause": "envelope self-check",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/core/effects-envelope.test.ts", "tests/unit/core/effects-brief.test.ts"],
       "checks": []
     },
     {
       "key": "implement-writer-cascade",
       "clause": "writer launcher cascade",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-write.test.ts"],
       "checks": []
     },
     {
       "key": "implement-attempt-bound",
       "clause": "attempt bound",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-write.test.ts", "tests/unit/machines/implement-red.test.ts"],
       "checks": []
     },
     {
       "key": "implement-evidence-postdates",
       "clause": "evidence postdates mutation",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-verify.test.ts"],
       "checks": []
     },
     {
       "key": "implement-final-deferral",
       "clause": "`[FINAL]` deferral",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-verify.test.ts"],
       "checks": []
     },
     {
       "key": "implement-generated-rerun",
       "clause": "`[GENERATED]` rerun",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-verify.test.ts"],
       "checks": []
     },
     {
       "key": "implement-final-gate-coverage",
       "clause": "final gate coverage",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-verify.test.ts"],
       "checks": []
     },
     {
       "key": "implement-within-run-reuse",
       "clause": "within-run reuse",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-verify.test.ts", "tests/unit/core/effects-verify.test.ts"],
       "checks": []
     },
     {
@@ -383,7 +383,7 @@
       "key": "implement-completion-rules",
       "clause": "completion rules",
       "increment": "I05",
-      "tests": [],
+      "tests": ["tests/unit/core/flow-implement.test.ts", "tests/unit/machines/implement-verify.test.ts"],
       "checks": []
     },
     {
