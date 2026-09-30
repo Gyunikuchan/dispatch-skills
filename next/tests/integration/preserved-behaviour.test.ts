@@ -41,8 +41,8 @@ export function checkMatrix(matrix: unknown, read: ReadFile): string[] {
       if (text === null) errors.push(`${where} ${key} lists missing ${file}; fix the path or remove it`);
       else if (!text.includes(key)) errors.push(`${where} ${key} lists ${file}, which never mentions ${key}; name the key in the covering test`);
     }
-    if (matrix['complete'] === true && row['tests'].length + row['checks'].length === 0) {
-      errors.push(`${where} is complete but ${key} lists no test or check; cover the row or set complete: false`);
+    if ((matrix['complete'] === true || row['increment'] === 'I06') && row['tests'].length + row['checks'].length === 0) {
+      errors.push(`${where} ${matrix['complete'] === true ? 'is complete but' : 'I06 requires coverage but'} ${key} lists no test or check; cover the row or set complete: false`);
     }
   }
   return errors;

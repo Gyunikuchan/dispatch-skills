@@ -11,6 +11,10 @@ import { createHandlers } from '../../../skills/dispatch/scripts/effects/index.t
 import { governedPlanText } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { appendEvent, journalPath } from '../../../skills/dispatch/scripts/core/journal.ts';
+import { implementMachine } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { createRestore } from '../../../skills/dispatch/scripts/effects/restore.ts';
+import { approvalState, FP, HASH, RUN } from '../machines/implement-recovery.test.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const PLAN = `# Normalize values
@@ -107,4 +111,40 @@ test('implement-completion-rules: flow reaches complete, replays deterministical
   assert.equal(walkthroughs.length, 1);
   assert.match(fs.readFileSync(path.join(sessionRoot, walkthroughs[0] as string), 'utf8'), /## Verification/);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
+});
+
+test('implementation parked host replay and in-flight restore replay reuse durable binary patch', async () => {
+  const cwd = tempDir(), runDir = tempDir(), ports = fakePorts();
+  fs.mkdirSync(path.join(cwd, 'src')); fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), Buffer.from('before'));
+  const before = { ...FP, recovery: { ...(FP['recovery'] as import('../../../skills/dispatch/scripts/core/types.ts').RecoverySnapshot), entries: { 'src/a.ts': { kind: 'file' as const, mode: fs.statSync(path.join(cwd, 'src', 'a.ts')).mode & 0o7777, linkTarget: null } } } };
+  const c = { ...approvalState().c, lastFingerprint: before, startFingerprint: before };
+  const writer = { tag: 'write' as const, c, info: { stage: 'production' as const, attempt: 1, models: ['writer-a', 'writer-b'], modelIndex: 0, briefPath: 'brief', briefSha256: HASH, envelopePath: 'outcome', preFingerprint: before, repair: false } };
+  const machine = { ...implementMachine, initial: () => writer };
+  let seq = 1;
+  const record = (event: import('../../../skills/dispatch/scripts/core/types.ts').Event) => { const { type, ...data } = event; appendEvent(ports, runDir, type, data, seq++); };
+  record(RUN);
+  const failed = { type: 'WRITE_FAILED' as const, model: 'writer-a', kind: 'quota', reason: 'partial write' };
+  record(failed);
+  const parked = machine.step(writer, failed);
+  assert.equal(parked.state.tag, 'checking-host-event');
+  const handlers = {
+    snapshot: async (effect: Extract<Effect, { kind: 'snapshot' }>) => [{ type: 'SNAPSHOT' as const, effectId: effect.id, fingerprint: { ...before, worktree: 'changed' }, diff: { paths: ['src/a.ts'] } }],
+    restore: createRestore({ cwd }),
+  };
+  fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), Buffer.from([255, 0, 254]));
+  const result = await send({ runDir, machine, handlers, ports });
+  assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame)); assert.equal(result.frame?.data['model'], 'writer-b');
+  assert.equal(fs.readFileSync(path.join(cwd, 'src', 'a.ts'), 'utf8'), 'before');
+  const patch = fs.readdirSync(runDir).find((file) => file.endsWith('.restore.json'))!;
+  const published = fs.readFileSync(path.join(runDir, patch), 'utf8');
+  assert.ok(published.includes(Buffer.from([255, 0, 254]).toString('base64')));
+  // Simulate a process dying after durable EFFECT_STARTED by removing just the terminal restore journal line.
+  const journal = journalPath(runDir);
+  const lines = fs.readFileSync(journal, 'utf8').trimEnd().split('\n');
+  assert.ok(lines.at(-1)?.includes('RESTORED'));
+  fs.writeFileSync(journal, `${lines.slice(0, -1).join('\n')}\n`);
+  const replayed = await send({ runDir, machine, handlers, ports });
+  assert.equal(replayed.frame?.data['model'], 'writer-b');
+  assert.equal(fs.readFileSync(path.join(runDir, patch), 'utf8'), published);
+  assert.equal((await send({ runDir, machine, handlers, ports, dryRun: true })).frame?.data['model'], 'writer-b');
 });

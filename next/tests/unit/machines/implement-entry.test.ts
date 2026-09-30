@@ -17,7 +17,12 @@ const run = (overrides: Record<string, unknown> = {}): RunStartedEvent => ({
   orchestrator: 'claude', orchestratorModel: null, overrides, repo: {},
   config: { 'write-subagents': { claude: { low: { model: 'writer-a' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
 });
-const step = (state: ReturnType<typeof initialImplement>, event: Event) => stepImplement(state, event);
+const step = (state: ReturnType<typeof initialImplement>, event: Event) => {
+  const result = stepImplement(state, event);
+  if (result.state.tag !== 'checking-host-event') return result;
+  assert.equal(result.effects[0]?.kind, 'snapshot');
+  return stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: result.state.c.lastFingerprint ?? FP, diff: { paths: [] } });
+};
 const effectOf = (effects: readonly Effect[], kind: Effect['kind']): Effect => {
   const effect = effects.find((item) => item.kind === kind);
   assert.ok(effect, `expected ${kind} effect`);

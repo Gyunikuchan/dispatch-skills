@@ -10,6 +10,7 @@ import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
 import { createPrepareReview } from './prepare-review.ts';
 import { createSnapshot } from './snapshot.ts';
+import { createRestore } from './restore.ts';
 import { createVerify } from './verify.ts';
 import { createWaveHandler, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
 import { isNativeRoster, nativeWave } from './wave-native.ts';
@@ -63,13 +64,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       for (const event of events) if (event.type === 'SNAPSHOT') {
         try {
           const hashes = await pathHashes(deps, ports);
-          return [{ ...event, fingerprint: { ...event.fingerprint, pathHashes: hashes }, diff: { paths: changedPaths(effect.since, hashes) } }];
+          const recovery = event.fingerprint['recovery'] as { changed?: { path: string }[] } | undefined;
+          return [{ ...event, fingerprint: { ...event.fingerprint, pathHashes: hashes }, diff: { paths: [...new Set([...changedPaths(effect.since, hashes), ...(recovery?.changed?.map((row) => row.path) ?? [])])].sort() } }];
         } catch (error) {
           return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `path snapshot: ${error instanceof Error ? error.message : String(error)}` }];
         }
       }
       return events;
     },
+    restore: createRestore(deps),
     handoff: createHandoff(deps),
   };
 }

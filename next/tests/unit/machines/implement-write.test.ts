@@ -14,7 +14,12 @@ const PLAN = {
 };
 const started = (): RunStartedEvent => ({ type: 'RUN_STARTED', verb: 'implement', argument: PATH, level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null,
   overrides: { settledPlan: { path: PATH, hash: HASH, outcome: 'settled' } }, repo: {}, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } });
-const step = (state: ReturnType<typeof initialImplement>, event: Event) => stepImplement(state, event);
+const step = (state: ReturnType<typeof initialImplement>, event: Event) => {
+  const result = stepImplement(state, event);
+  if (result.state.tag !== 'checking-host-event') return result;
+  assert.equal(result.effects[0]?.kind, 'snapshot');
+  return stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: result.state.c.lastFingerprint ?? FP, diff: { paths: [] } });
+};
 function getEffect(effects: readonly Effect[], kind: Effect['kind']): Effect {
   const result = effects.find((item) => item.kind === kind);
   assert.ok(result, `expected ${kind}`);
@@ -89,7 +94,7 @@ test('envelope stage and changed paths are bound to the current production frame
   assert.equal(wrong.state.tag, 'failure-snapshot');
 
   const outside = checked(result.state, productionEnvelope(), ['src/example.ts', 'README.md']);
-  assert.equal(outside.state.tag, 'failure-snapshot');
+  assert.equal(outside.state.tag, 'drift');
 });
 
 test('writer concerns require a quoted user ruling and remain recorded for completion', () => {

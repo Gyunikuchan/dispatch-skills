@@ -50,7 +50,7 @@ const implementPlan = (withEvidence = false) => ({
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
 });
 const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
-  argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
+  argument: 'x.plan.md', overrides: { path: 'x.plan.md', sessionDir: '/session', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
   config: { 'write-subagents': { claude: { low: { model: 'writer' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } },
 });
 const implementSnapshot: Step = (effect) => ({ type: 'SNAPSHOT', effectId: id(effect), fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });
@@ -89,6 +89,15 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[]): Journal {
     state = result.state;
     open.push(...result.effects);
     ids.push(...result.effects.map((effect) => effect.id));
+    const pending = state as unknown as { tag: string; child?: { tag: string }; c?: { lastFingerprint?: Record<string, unknown> } };
+    if (pending.tag === 'checking-host-event' || pending.child?.tag === 'checking-host-event') {
+      const snapshot = result.effects.find((effect) => effect.kind === 'snapshot');
+      assert.ok(snapshot);
+      const resumed = machine.step(state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });
+      const nextTag = (resumed.state as Tagged).tag;
+      if (pending.tag !== nextTag) triples.add(`${pending.tag} --SNAPSHOT--> ${nextTag}`);
+      state = resumed.state; open.push(...resumed.effects); ids.push(...resumed.effects.map((effect) => effect.id));
+    }
   }
   return { triples, ids };
 }
@@ -152,6 +161,8 @@ test('plan transitions table matches step', () => {
 
 test('root transitions table matches step', () => {
   parity(rootMachine, [
+    [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot,
+      { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check report' }, { type: 'AUTHORED', path: '/session/revision-1.plan.md' }, implementParsed()],
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
     [run('implement'), failed], [run('implement', { argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } }, config: implementRun().config }), implementSnapshot, implementBadParsed, implementSnapshot, { type: 'DECISION', kind: 'failure', answer: 'stop' }],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
@@ -178,6 +189,9 @@ test('implementation transition declarations include every observed reducer boun
   assert.ok(declared.has('booting --RUN_STARTED--> starting'));
   assert.ok(declared.has('parsing --ARTIFACT_PARSED--> baseline-preflight'));
   assert.ok(declared.has('approval --DECISION--> stopped'));
+  assert.ok(declared.has('approval --DECISION--> checking-host-event'));
+  assert.ok(declared.has('cascade-snapshot --SNAPSHOT--> restoring'));
+  assert.ok(declared.has('restoring --RESTORED--> write'));
 });
 
 test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a second review round', () => {

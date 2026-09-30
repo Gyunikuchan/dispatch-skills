@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { CriterionEvidence, DecisionAnswer, Level, TreeFingerprint, VerifyCommand, WriteEnvelope } from '../core/types.ts';
+import type { CriterionEvidence, DecisionAnswer, Level, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord } from './types.ts';
@@ -39,6 +39,28 @@ export type WriterEnvelope = WriteEnvelope & {
   files?: readonly { path: string; note: string }[];
 };
 export type SettledPlanInput = { path: string; hash: string; outcome: 'settled' | 'skipped' };
+export type FailureAnswer = { action: 'stop' } | { action: 'retry'; rootCause: string } | { action: 'hotfix'; mode: 'inline' | 'writer'; rootCause: string; external: readonly { path: string; reason: string }[] }
+  | { action: 'manual-complete'; by: 'user'; quote: string; criteria: Readonly<Record<string, CriterionEvidence>> };
+export function failureAnswer(value: unknown): FailureAnswer | null {
+  if (value === 'stop') return { action: 'stop' };
+  if (!isRecord(value)) return null;
+  if (value['action'] === 'stop') return { action: 'stop' };
+  if (value['action'] === 'retry' && NON_EMPTY(value['rootCause'])) return { action: 'retry', rootCause: value['rootCause'] };
+  if (value['action'] === 'hotfix' && NON_EMPTY(value['rootCause'])) {
+    const hotfix = isRecord(value['hotfix']) ? value['hotfix'] : value;
+    const mode = hotfix['mode'] ?? 'writer';
+    if (mode !== 'inline' && mode !== 'writer') return null;
+    const external = hotfix['external'] ?? value['external'] ?? [];
+    if (!Array.isArray(external) || !external.every((v) => isRecord(v) && NON_EMPTY(v['path']) && NON_EMPTY(v['reason']))) return null;
+    return { action: 'hotfix', mode, rootCause: value['rootCause'], external: external as { path: string; reason: string }[] };
+  }
+  if ((value['action'] === 'manual-complete' || value['action'] === 'manual-completion') && value['by'] === 'user' && NON_EMPTY(value['quote']) && isRecord(value['criteria'])) return { action: 'manual-complete', by: 'user', quote: value['quote'], criteria: value['criteria'] as Record<string, CriterionEvidence> };
+  return null;
+}
+export function driftAnswer(value: unknown, paths: readonly string[]): Record<string, 'adopt' | 'stop'> | null {
+  if (!isRecord(value) || Object.keys(value).length !== paths.length || !paths.every((p) => value[p] === 'adopt' || value[p] === 'stop')) return null;
+  return value as Record<string, 'adopt' | 'stop'>;
+}
 
 const LEVELS: readonly Level[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
@@ -142,6 +164,25 @@ export function isFingerprint(value: unknown): value is TreeFingerprint {
   return isRecord(value) && (value['head'] === null || typeof value['head'] === 'string') && typeof value['index'] === 'string' && typeof value['worktree'] === 'string';
 }
 
+export function recoverySnapshot(value: unknown): RecoverySnapshot | null {
+  if (!isRecord(value) || !isRecord(value['recovery'])) return null;
+  const r = value['recovery'];
+  if (typeof r['repoRoot'] !== 'string') return null;
+  if (r['contentStore'] !== undefined && (r['contentStore'] !== 'recovery-contents' || !isRecord(r['contents']) || !Object.values(r['contents']).every((v) => v === null || typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)))) return null;
+  if (!isRecord(r['contents']) || !Object.values(r['contents']).every((v) => v === null || typeof v === 'string' && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(v))) return null;
+  if (!isRecord(r['entries']) || !Object.values(r['entries']).every((v) => v === null || isRecord(v) && ['file', 'symlink'].includes(String(v['kind'])) && Number.isInteger(v['mode']) && typeof v['mode'] === 'number' && v['mode'] >= 0 && v['mode'] <= 0o7777 && (v['linkTarget'] === null || typeof v['linkTarget'] === 'string'))) return null;
+  if (!['taskStartFiles', 'callerDirty', 'verifiedManifestDirs', 'hashManifestDirs'].every((key) => Array.isArray(r[key]) && (r[key] as unknown[]).every((v) => typeof v === 'string'))) return null;
+  if (!isRecord(r['git']) || !['head', 'index', 'stash', 'gitDir'].every((key) => typeof (r['git'] as Record<string, unknown>)[key] === 'string')) return null;
+  if (!Array.isArray(r['ignored']) || !r['ignored'].every((v) => isRecord(v) && typeof v['path'] === 'string' && typeof v['hash'] === 'string')) return null;
+  if (!Array.isArray(r['changed']) || !r['changed'].every((v) => isRecord(v) && typeof v['path'] === 'string' && typeof v['added'] === 'number' && v['added'] >= 0 && typeof v['removed'] === 'number' && v['removed'] >= 0 && typeof v['deleted'] === 'boolean' && typeof v['outsideRepo'] === 'boolean')) return null;
+  return r as RecoverySnapshot;
+}
+
+export function artifactRelative(fingerprint: unknown, file: string): string {
+  const root = recoverySnapshot(fingerprint)?.repoRoot.replace(/\\/g, '/').replace(/\/$/, '');
+  const normalized = file.replace(/\\/g, '/');
+  return root && normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`) ? normalized.slice(root.length + 1) : normalized;
+}
 export function sameFingerprint(left: TreeFingerprint, right: TreeFingerprint): boolean {
   return left['head'] === right['head'] && left['index'] === right['index'] && left['worktree'] === right['worktree'];
 }

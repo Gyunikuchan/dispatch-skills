@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent, Verb } from '../../../skills/dispatch/scripts/core/types.ts';
 import { inferKind, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
+import { approvalState, FP, HASH, PLAN } from './implement-recovery.test.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },
@@ -20,6 +21,22 @@ function drive(events: readonly Event[]): { state: RootState; effects: Effect[] 
   return { state, effects };
 }
 const handoffDone = (warning: string | null = null): Event => ({ type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/tmp/dispatch-skills/s', warning });
+
+test('root nested revision routes after parked snapshot and resumes original Context without approval growth', () => {
+  const parent = approvalState();
+  let r = rootMachine.step({ tag: 'implement', run: { verb: 'implement', argument: 'x.plan.md', slug: 'feature' }, child: parent }, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check failure' });
+  assert.equal(r.state.tag, 'implement');
+  r = rootMachine.step(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+  assert.equal(r.state.tag, 'revision'); if (r.state.tag !== 'revision') return;
+  const path = r.state.child.r.workingPath;
+  r = rootMachine.step(r.state, { type: 'AUTHORED', path });
+  r = rootMachine.step(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+  r = rootMachine.step(r.state, { type: 'ARTIFACT_PARSED', effectId: r.effects[0]!.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
+  assert.equal(r.state.tag, 'implement'); if (r.state.tag !== 'implement' || !('c' in r.state.child) || !r.state.child.c) return;
+  assert.equal(r.state.child.tag, 'approval'); assert.equal(r.state.child.c.attempts.production, parent.c.attempts.production);
+  assert.equal(r.state.child.c.revisions[0]?.reason, 'blocked-by-plan');
+  assert.deepEqual(r.state.child.c.startFingerprint, parent.c.startFingerprint);
+});
 
 test('root selects each verb', () => {
   assert.equal(rootMachine.project(drive([started('ask')]).state).at, 'ask › preparing');

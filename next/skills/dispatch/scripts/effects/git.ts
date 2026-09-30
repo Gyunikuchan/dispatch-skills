@@ -10,6 +10,7 @@ export type TreeFingerprint = { head: string | null; index: string; worktree: st
 export type PathDiff = { paths: string[] };
 
 export type Git = {
+  recoveryFiles?(cwd: string): Promise<{ files: string[]; dirty: string[]; ignored: string[]; stash: string; gitDir: string }>;
   toplevel(cwd: string): Promise<string>;
   /** `git ls-files --stage` output, cached by index content hash. */
   indexEntries(cwd: string): Promise<string>;
@@ -31,6 +32,16 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
   const indexCache = new Map<string, string>();
 
   const git: Git = {
+    async recoveryFiles(cwd) {
+      const root = await git.toplevel(cwd);
+      const listed = async (args: string[]) => (await port.run(args, root)).split('\0').filter(Boolean);
+      return {
+        files: [...new Set([...await listed(['ls-files', '-z']), ...await listed(['ls-files', '--others', '--exclude-standard', '-z'])])].sort(),
+        dirty: await git.diffNames(root, ''), ignored: await listed(['ls-files', '--others', '--ignored', '--exclude-standard', '-z']),
+        stash: await port.run(['rev-parse', '--verify', 'refs/stash'], root).then((s) => s.trim()).catch(() => ''),
+        gitDir: (await port.run(['rev-parse', '--absolute-git-dir'], root)).trim(),
+      };
+    },
     async toplevel(cwd) {
       const cached = toplevels.get(cwd);
       if (cached !== undefined) return cached;
@@ -68,7 +79,7 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const diff = await port.run(['diff', 'HEAD'], root).catch(() => '');
       // NOTE: status/diff omit untracked contents, so hash them to catch edits to already-untracked files.
       const untracked = lines(await port.run(['ls-files', '--others', '--exclude-standard'], root));
-      const blobs = untracked.length ? await port.run(['hash-object', '--', ...untracked], root) : '';
+      const blobs = port.fileContent ? JSON.stringify(untracked.map((file) => [file, port.fileContent!(file, root)])) : untracked.length ? await port.run(['hash-object', '--', ...untracked], root) : '';
       return { head, index, worktree: sha256(`${status}\0${diff}\0${blobs}`) };
     },
     async changedSince(cwd, since) {

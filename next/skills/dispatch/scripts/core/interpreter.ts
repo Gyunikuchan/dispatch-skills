@@ -240,7 +240,8 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
   const { ports, runDir } = options;
   ports.fs.mkdir(path.dirname(runDir), { recursive: true });
   ports.fs.mkdir(runDir, { recursive: false });
-  const { type, ...data } = options.runStarted;
+  const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
+  const { type, ...data } = { ...options.runStarted, overrides: { ...options.runStarted.overrides, sessionDir } };
   appendEvent(ports, runDir, type, data, 1);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;

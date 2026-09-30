@@ -16,7 +16,14 @@ export async function pathHashes(deps: CheckEnvelopeDeps, ports: Ports): Promise
     const file = entry.slice(entry.indexOf('\t') + 1);
     entries.set(file, [...(entries.get(file) ?? []), entry]);
   }
-  const existing = files.filter((file) => ports.fs.exists(path.resolve(deps.cwd, file)));
+  const links = new Map<string, string>();
+  const existing = files.filter((file) => {
+    let current = deps.cwd;
+    for (const part of file.split('/').slice(0, -1)) { current = path.join(current, part); if (ports.fs.inspectPath(current)?.kind === 'symlink') throw new Error(`Path snapshot ancestor escape: ${file}`); }
+    const absolute = path.resolve(deps.cwd, file), info = ports.fs.inspectPath(absolute);
+    if (info?.kind === 'symlink') { links.set(file, crypto.createHash('sha256').update(info.linkTarget ?? '').digest('hex')); return false; }
+    return info?.kind === 'file';
+  });
   const hashes: string[] = [];
   let batch: string[] = [], size = 0;
   const flush = async () => {
@@ -33,7 +40,7 @@ export async function pathHashes(deps: CheckEnvelopeDeps, ports: Ports): Promise
   if (hashes.length !== existing.length || hashes.some((hash) => !/^[a-f0-9]{40,64}$/.test(hash))) throw new Error('Path snapshot lacks Git blob hashes.');
   const blobs = new Map(existing.map((file, index) => [file, hashes[index]]));
   return Object.fromEntries(files.map((file) => {
-    const content = blobs.get(file) ?? '<deleted>';
+    const content = links.get(file) ?? blobs.get(file) ?? '<deleted>';
     const index = (entries.get(file) ?? []).join('\n');
     return [file, crypto.createHash('sha256').update(JSON.stringify([content, index])).digest('hex')];
   }));
@@ -179,11 +186,13 @@ export function createCheckEnvelope(deps: CheckEnvelopeDeps): Handler<CheckEffec
   return async (effect, ports) => {
     const defects: string[] = [];
     let envelope: ParsedEnvelope | null = null;
+    let testsOnly = false;
     if (!ports.fs.exists(effect.envelopePath)) defects.push(`Expected envelope file is missing: ${effect.envelopePath}`);
     else {
       try {
         const source = ports.fs.readText(effect.envelopePath);
         const parsed = JSON.parse(source) as unknown;
+        testsOnly = isRecord(parsed) && parsed['stage'] === 'RED_READY';
         const duplicate = duplicateKey(source);
         if (duplicate) defects.push(`Envelope has duplicate key ${duplicate}.`);
         const checked = parseEnvelope(parsed);
@@ -201,12 +210,12 @@ export function createCheckEnvelope(deps: CheckEnvelopeDeps): Handler<CheckEffec
     if (allowed.size !== effect.permitted.length) defects.push('Permitted paths must be unique repository-relative slash paths.');
     const changed = [...new Set(paths.map((file) => cleanRepoPath(file) ?? file))].sort();
     const outside = changed.filter((file) => !allowed.has(file));
-    if (outside.length) defects.push(`Writer changed paths outside the approved scope: ${outside.join(', ')}.`);
-    if (envelope?.stage === 'RED_READY' && effect.permitted.some((file) => !TEST_PATH.test(file))) defects.push('RED_READY envelopes require a tests-only permitted path set.');
+    if (outside.length && testsOnly) defects.push(`Tests-only writer changed paths outside the approved scope: ${outside.join(', ')}.`);
+    if (testsOnly && effect.permitted.some((file) => !TEST_PATH.test(file))) defects.push('RED_READY envelopes require a tests-only permitted path set.');
     if (envelope?.files) for (const file of envelope.files) {
       const normalized = cleanRepoPath(file.path);
-      if (normalized === null || !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
+      if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
     }
-    return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed } }];
+    return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };
 }

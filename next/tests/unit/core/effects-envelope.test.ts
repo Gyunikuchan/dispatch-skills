@@ -64,7 +64,7 @@ test('writer scope ignores caller dirt and still detects changes to that same di
   fs.writeFileSync(path.join(cwd, 'caller.txt'), 'writer touched caller edit');
   const bad = resultOf(await handler(effect, ports, { runDir, attempt: 1 }));
   assert.ok(bad.type === 'ENVELOPE_CHECKED');
-  if (bad.type === 'ENVELOPE_CHECKED') assert.match(bad.defects.join('\n'), /caller.txt/);
+  if (bad.type === 'ENVELOPE_CHECKED') { assert.deepEqual(bad.defects, []); assert.deepEqual(bad.diff['outside'], ['caller.txt']); }
 });
 
 
@@ -81,7 +81,7 @@ test('dirty path byte hashing batches argv below the Windows command-line limit'
   const { pathHashes } = await import('../../../skills/dispatch/scripts/effects/check-envelope.ts');
   const files = Array.from({ length: 400 }, (_, index) => `generated/${'long-directory-'.repeat(8)}${index}.bin`);
   const ports = fakePorts();
-  ports.fs = { ...ports.fs, exists: () => true };
+  ports.fs = { ...ports.fs, exists: () => true, inspectPath: (file) => ({ kind: files.some((f) => file.replace(/\\/g, '/').endsWith(f)) ? 'file' : 'directory', mode: 0o644, linkTarget: null, realPath: file }) };
   const batches: string[][] = [];
   ports.git = { run: async (argv) => { batches.push([...argv]); return argv.slice(2).map(() => 'a'.repeat(40)).join('\n'); } };
   const git: Git = { toplevel: async () => '/repo', indexEntries: async () => '', diffNames: async () => files, fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [] };
@@ -89,4 +89,17 @@ test('dirty path byte hashing batches argv below the Windows command-line limit'
   assert.equal(Object.keys(result).length, files.length);
   assert.ok(batches.length > 1);
   assert.ok(batches.every((argv) => argv.join(' ').length < 16000));
+});
+
+test('leaf symlinks cannot bypass ancestor containment in path fingerprints', async () => {
+  const { pathHashes } = await import('../../../skills/dispatch/scripts/effects/check-envelope.ts');
+  const cwd = tempDir(), ports = fakePorts();
+  let leafInspected = false;
+  ports.fs.inspectPath = (file) => {
+    if (file === path.join(cwd, 'linked', 'leaf')) leafInspected = true;
+    return { kind: 'symlink', mode: 0o777, linkTarget: Buffer.from('/outside').toString('base64'), realPath: '/outside' };
+  };
+  const git: Git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => ['linked/leaf'], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [] };
+  await assert.rejects(pathHashes({ cwd, git }, ports), /ancestor escape/);
+  assert.equal(leafInspected, false);
 });

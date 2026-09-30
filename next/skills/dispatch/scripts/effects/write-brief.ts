@@ -28,6 +28,10 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   rows.push(['Envelope schema', render(input['envelopeSchema'])]);
   if (input['existingRedMatrix'] !== undefined) rows.push(['Existing RED matrix', render(input['existingRedMatrix'])]);
   if (input['admissionDefects'] !== undefined) rows.push(['Admission defects', render(input['admissionDefects'])]);
+  if (input['retryContext']) rows.push(['Retry root cause and failure evidence', render(input['retryContext'])]);
+  if (input['rootCause']) rows.push(['Root cause', render(input['rootCause'])]);
+  if (input['stalledCheck']) rows.push(['Stalled check evidence', render(input['stalledCheck'])]);
+  if (input['hotfix']) rows.push(['Hotfix limits and single-shot writer', render(input['hotfix'])]);
   rows.push(['Repository rules', render(input['rules'])]);
   rows.push(['Prior review findings', render(input['priorFindings'])]);
   rows.push(['Verification evidence', `Evidence, not specification.\n${render(input['evidence'])}`]);

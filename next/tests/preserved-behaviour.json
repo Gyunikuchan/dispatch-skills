@@ -362,21 +362,21 @@
       "key": "implement-failure-disposition",
       "clause": "failure disposition (3)",
       "increment": "I06",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-recovery.test.ts", "tests/unit/core/effects-restore.test.ts"],
       "checks": []
     },
     {
       "key": "implement-hotfix",
       "clause": "hotfix budget, hard limits, no-progress, finalFocus, pre-RED restriction, stall coverage",
       "increment": "I06",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-recovery.test.ts"],
       "checks": []
     },
     {
       "key": "implement-out-of-scope",
       "clause": "out-of-scope handling",
       "increment": "I06",
-      "tests": [],
+      "tests": ["tests/unit/machines/implement-drift.test.ts"],
       "checks": []
     },
     {

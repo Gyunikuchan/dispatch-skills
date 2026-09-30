@@ -59,7 +59,22 @@ export type Finding = Payload; // I02
 export type VerifyPurpose = string; // I04
 export type CommandResult = Payload; // I04
 export type TreeFingerprint = Payload; // I04
-export type WriteStage = 'tests-only' | 'production'; // I05
+export type WriteStage = 'tests-only' | 'production' | 'hotfix';
+export type RecoverySnapshot = {
+  repoRoot: string;
+  contents: Readonly<Record<string, string | null>>;
+  contentStore?: 'recovery-contents';
+  entries: Readonly<Record<string, FileEntry | null>>;
+  taskStartFiles: readonly string[];
+  callerDirty: readonly string[];
+  ignored: readonly { path: string; hash: string }[];
+  git: { head: string; index: string; stash: string; gitDir: string };
+  changed: readonly { path: string; added: number; removed: number; deleted: boolean; outsideRepo: boolean }[];
+  verifiedManifestDirs: readonly string[];
+  hashManifestDirs: readonly string[];
+};
+export type FileEntry = { kind: 'file' | 'symlink'; mode: number; linkTarget: string | null };
+export type PathInfo = { kind: 'file' | 'symlink' | 'directory'; mode: number; linkTarget: string | null; realPath: string | null };
 export type WriteEnvelope = Payload; // I05
 export type PathDiff = Payload; // I04
 export type ReviewSpec = Payload; // I04
@@ -179,7 +194,17 @@ export type Handlers = { readonly [K in EffectKind]?: Handler<Extract<Effect, { 
 // SECTION: Ports
 
 export interface FsPort {
+  hashFile(file: string): string;
+  copyFileAtomic(source: string, destination: string): void;
+  listFiles(dir: string): string[];
+  inspectPath(file: string): PathInfo | null;
+  setMode(file: string, mode: number): void;
+  writeLinkAtomic(file: string, target: string): void;
   readText(file: string): string;
+  /** Byte-preserving content encoded for serializable recovery snapshots. */
+  readBase64(file: string): string;
+  /** Decode bytes, then temp file + fsync + rename. */
+  writeBase64Atomic(file: string, base64: string): void;
   exists(file: string): boolean;
   size(file: string): number;
   mkdir(dir: string, options: { recursive: boolean }): void;
@@ -198,7 +223,7 @@ export interface FsPort {
 export interface SpawnPort {
   run(argv: readonly string[], options: { cwd: string }): Promise<{ exit: number; stdout: string; stderr: string }>;
 }
-export interface GitPort { run(args: readonly string[], cwd: string): Promise<string> }
+export interface GitPort { run(args: readonly string[], cwd: string): Promise<string>; fileContent?(file: string, cwd: string): string }
 
 export interface ClockPort {
   now(): number;

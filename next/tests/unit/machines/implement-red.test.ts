@@ -18,7 +18,12 @@ const run = (preExisting = false): RunStartedEvent => ({
   orchestrator: 'claude', orchestratorModel: null, overrides: { settledPlan: { path: 'plans/feature.plan.md', hash: HASH, outcome: 'settled' } }, repo: {},
   config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
 });
-const drive = (state: ReturnType<typeof initialImplement>, event: Event) => stepImplement(state, event);
+const drive = (state: ReturnType<typeof initialImplement>, event: Event) => {
+  const result = stepImplement(state, event);
+  if (result.state.tag !== 'checking-host-event') return result;
+  assert.equal(result.effects[0]?.kind, 'snapshot');
+  return stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: result.state.c.lastFingerprint ?? FP, diff: { paths: [] } });
+};
 function effect(effects: readonly Effect[], kind: Effect['kind']): Effect {
   const found = effects.find((item) => item.kind === kind);
   assert.ok(found, `missing ${kind} effect`);

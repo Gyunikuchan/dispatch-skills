@@ -6,12 +6,15 @@ import type { ParsedPlan, PlanCriterion, WalkthroughView } from '../domain/types
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, redactOneLine, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type ImplementStage, type RedMatrixRow, type VerifyRecord, type WriterConfig, type WriterEnvelope } from './implement-types.ts';
 import { beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, never, nextId, stay, type Counters, type Step } from './types.ts';
+import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
+import { classifyDrift } from '../policy/drift.ts';
+import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 
 export const IMPLEMENT_TEMPLATE = 'references/templates/plan.md';
 export const MAX_WRITE_ATTEMPTS = 3;
 
 type PlanReviewResult = 'initial' | 'rebind';
-type Context = {
+export type Context = {
   run: RunStartedEvent;
   planPath: string;
   counters: Counters;
@@ -41,6 +44,14 @@ type Context = {
   changedPaths: readonly string[];
   finalGate: string;
   failureReason: string | null;
+  currentStage: ImplementStage;
+  adoptedPaths: readonly string[];
+  finalFocus: readonly string[];
+  withdrawnHotfix: readonly string[];
+  retryContext: { rootCause: string; failure: string } | null;
+  stalled: { purpose: 'baseline' | 'red' | 'scoped' | 'final'; rows: readonly VerifyRecord[] } | null;
+  revisions: readonly { artifact: 'plan'; reason: string; beforeHash: string; afterHash: string; rebind: { retained: readonly string[]; pending: readonly string[]; removed: readonly string[] } }[];
+  revisionReviewRound: number;
 };
 
 type WriteInfo = {
@@ -56,6 +67,15 @@ type WriteInfo = {
 };
 
 export type ImplementState =
+  | { tag: 'revision-request'; c: Context; parent: ImplementState; event: Extract<HostEvent, { type: 'REVISE' }> }
+  | { tag: 'checking-host-event'; c: Context; parent: ImplementState; parked: HostEvent; effectId: string }
+  | { tag: 'drift'; c: Context; parent: ImplementState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint }
+  | { tag: 'restoring'; c: Context; info: WriteInfo; effectId: string; nextModelIndex: number | null; reason: string; paths: readonly string[] }
+  | { tag: 'hotfix-brief'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
+  | { tag: 'hotfix-write'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; brief: { path: string; sha256: string; envelopePath: string }; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
+  | { tag: 'hotfix-envelope'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
+  | { tag: 'hotfix-snapshot'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; answer: Extract<FailureAnswer, { action: 'hotfix' }> }
+  | { tag: 'hotfix-verify'; c: Context; origin: RecoveryOrigin; before: TreeFingerprint; effectId: string; changedPaths: readonly string[] }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'starting'; c: Context; effectId: string; next: 'author' | 'parse' }
   | { tag: 'author'; c: Context; defects: readonly Readonly<Record<string, unknown>>[] }
@@ -90,6 +110,7 @@ export type ImplementState =
   | { tag: 'failed'; c: Context | null; summary: string };
 
 type S = Step<ImplementState>;
+type RecoveryOrigin = Extract<ImplementState, { tag: 'failure' | 'baseline-decision' }>;
 const emptyCounters: Counters = {};
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
@@ -119,6 +140,7 @@ function baseContext(run: RunStartedEvent): Context {
     mutationEpoch: 0, criterionMutation: {}, baseline: [], acceptedBaseline: [], records: {}, evidence: {}, redMatrix: [], concerns: [],
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, redQualityRepairUsed: false, activeRedWriterModel: null,
     attempts: { 'tests-only': 0, production: 0 }, approval: null, changedPaths: [], finalGate: 'pending', failureReason: null,
+    currentStage: 'production', adoptedPaths: [], finalFocus: [], withdrawnHotfix: [], retryContext: null, stalled: null, revisions: [], revisionReviewRound: 0,
   };
 }
 
@@ -238,7 +260,7 @@ function briefInput(c: Context, stage: ImplementStage, repair: boolean, admissio
   const selected = stage === 'tests-only' ? activeRedCriteria(c) : plan.criteria;
   const paths = stage === 'tests-only'
     ? [...new Set(selected.flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort()
-    : approvedPaths(plan);
+    : scopePaths(c);
   const evidenceFormat = stage === 'tests-only'
     ? 'RED-MATRIX <SC#> | <approved-test-path>:<leaf test> | exit <nonzero> test:<observed failure identifier>'
     : 'CRITERION <SC#> | <one path from that criterion Changes list> | <delivered behavior>';
@@ -249,7 +271,7 @@ function briefInput(c: Context, stage: ImplementStage, repair: boolean, admissio
   return {
     planPath: c.planPath, planHash: c.planHash,
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c.planPath },
-    settledScope: { paths, approvedPaths: stage === 'production' ? approvedPaths(plan) : paths, changes: stage === 'production' ? plan.changes : plan.changes.filter((change) => paths.includes(change.path)) },
+    settledScope: { paths, approvedPaths: stage === 'production' ? scopePaths(c) : paths, changes: stage === 'production' ? plan.changes : plan.changes.filter((change) => paths.includes(change.path)) },
     criteria: selected.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence, preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
     envelopeSchema: {
       schemaVersion: 1, stage: stage === 'tests-only' ? 'RED_READY' : 'COMPLETE',
@@ -263,6 +285,7 @@ function briefInput(c: Context, stage: ImplementStage, repair: boolean, admissio
     priorFindings: c.planReview && 'c' in c.planReview ? resolutionRounds(c.planReview.c) : [],
     evidence: stage === 'tests-only' ? [] : evidence,
     admissionDefects: repair ? admissionDefects : undefined,
+    retryContext: c.retryContext,
     selfCheck: typeof c.run.overrides['selfCheckCommand'] === 'string' ? c.run.overrides['selfCheckCommand'] : 'dispatch --check-envelope <Expected Envelope Path>',
   };
 }
@@ -273,7 +296,7 @@ function startWriter(c0: Context, stage: ImplementStage, repair: boolean, modelL
   const attempt = c0.attempts[stage] + 1;
   if (attempt > MAX_WRITE_ATTEMPTS) return beginFailure(c0, `${stage} writer exhausted the ${MAX_WRITE_ATTEMPTS}-attempt limit.`);
   const nextAttempts = { ...c0.attempts, [stage]: attempt };
-  const c = { ...c0, attempts: nextAttempts };
+  const c = { ...c0, attempts: nextAttempts, currentStage: stage };
   const { c: withId, id } = effectId(c, 'write-brief');
   const effect: Effect = { kind: 'write-brief', id, stage, input: briefInput(c, stage, repair, admissionDefects) };
   return { state: { tag: 'writing-brief', c: withId, effectId: id, stage, attempt, modelLimit, repair, admissionDefects }, effects: [effect] };
@@ -301,7 +324,7 @@ function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generat
   const mappings = commandMappings(c0.plan as ParsedPlan);
   const prepared: VerifyCommand[] = commands.map((item) => {
     const mapping = item.mapping ?? mappings.find((row) => row.command === item.command) ?? null;
-    const command = commandEffect(item.command, mapping, approvedPaths(c0.plan as ParsedPlan), environmentKey(c0));
+    const command = commandEffect(item.command, mapping, scopePaths(c0), environmentKey(c0));
     return { ...command, planHash: c0.planHash, ...(item.reuse && item.reuse.exit === 0 && item.reuse.mutationEpoch === c0.mutationEpoch ? { reuse: { inputFingerprint: item.reuse.inputFingerprint, exit: item.reuse.exit, logPath: item.reuse.logPath } } : {}) };
   });
   const { c, id } = effectId(c0, 'verify');
@@ -425,7 +448,7 @@ function continueAfterScopedEvidence(c: Context, _verify: readonly VerifyRecord[
 function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
-  const result = beginReview(built.spec, 'implement.code-review', c0.counters);
+  const result = beginReview({ ...built.spec, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, 'implement.code-review', c0.counters);
   return fromCodeReview(c0, result);
 }
 
@@ -502,7 +525,8 @@ function startFailureFromEffect(c: Context, cls: string, detail: string): S {
 
 export function initialImplement(): ImplementState { return { tag: 'booting', counters: emptyCounters }; }
 
-export function stepImplement(state: ImplementState, event: Event): S {
+function applyImplement(state: ImplementState, event: Event): S {
+  if (event.type === 'REVISE' && 'c' in state && state.c && !validateImplement(state, event)) return stay({ tag: 'revision-request', c: state.c, parent: state, event });
   switch (state.tag) {
     case 'booting': {
       if (event.type !== 'RUN_STARTED' || event.verb !== 'implement') return stay(state);
@@ -565,6 +589,8 @@ export function stepImplement(state: ImplementState, event: Event): S {
     case 'baseline-decision': {
       if (event.type !== 'DECISION' || event.kind !== 'baseline') return stay(state);
       if (event.answer === 'stop') return stop(state.c, 'User stopped after baseline failures; repository work is preserved.');
+      const recovery = failureAnswer(event.answer);
+      if (recovery?.action === 'hotfix') return beginHotfix(state, recovery);
       const available = failingBaselineIds(state.items);
       if (!isRecord(event.answer) || event.answer['action'] !== 'accept-known-red' || !Array.isArray(event.answer['ids'])) return stay(state);
       const ids = event.answer['ids'];
@@ -603,7 +629,7 @@ export function stepImplement(state: ImplementState, event: Event): S {
       if (event.type === 'WRITE_ENVELOPE') {
         if (event.envelopePath !== state.info.envelopePath) return stay(state);
         const { c, id } = effectId(state.c, 'check-envelope');
-        const effect = { kind: 'check-envelope' as const, id, envelopePath: state.info.envelopePath, permitted: state.info.stage === 'tests-only' ? redTestPaths(state.c) : approvedPaths(state.c.plan as ParsedPlan), since: state.info.preFingerprint };
+        const effect = { kind: 'check-envelope' as const, id, envelopePath: state.info.envelopePath, permitted: state.info.stage === 'tests-only' ? redTestPaths(state.c) : scopePaths(state.c), since: state.info.preFingerprint };
         return { state: { tag: 'checking-envelope', c, info: state.info, effectId: id }, effects: [effect] };
       }
       if (event.type === 'WRITE_FAILED') {
@@ -619,7 +645,18 @@ export function stepImplement(state: ImplementState, event: Event): S {
     case 'cascade-snapshot': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `writer-failure snapshot failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-      if (!sameFingerprint(event.fingerprint, state.info.preFingerprint) || diffPaths(event).length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Writer changed the repository before failing; stopped the cascade. ${diffPaths(event).join(', ')}`);
+      const pre = recoverySnapshot(state.info.preFingerprint), post = recoverySnapshot(event.fingerprint);
+      if (event.fingerprint['head'] !== state.info.preFingerprint['head'] || event.fingerprint['index'] !== state.info.preFingerprint['index'] || pre && post && JSON.stringify(pre.git) !== JSON.stringify(post.git)) return beginFailure(state.c, 'Failed writer changed Git state; restore and cascade stopped without mutating Git.');
+      if (!sameFingerprint(event.fingerprint, state.info.preFingerprint) || diffPaths(event).length) {
+        const paths = diffPaths(event);
+        if (!paths.length || !recoverySnapshot(state.info.preFingerprint)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'Cannot attribute or restore failed writer mutations.');
+        const { c, id } = effectId(state.c, 'restore');
+        const target = recoverySnapshot(state.info.preFingerprint)!;
+        const contents = { ...target.contents };
+        const entries = { ...target.entries };
+        for (const file of paths) if (!Object.hasOwn(contents, file)) { contents[file] = null; entries[file] = null; }
+        return { state: { tag: 'restoring', c, info: state.info, effectId: id, nextModelIndex: state.nextModelIndex, reason: state.reason, paths }, effects: [{ kind: 'restore', id, paths, to: { ...state.info.preFingerprint, recovery: { ...target, contents, entries } } }] };
+      }
       if (state.nextModelIndex === null) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Writer cascade exhausted or reached a terminal failure: ${state.reason}`);
       return stay({ tag: 'write', c: { ...state.c, lastFingerprint: event.fingerprint }, info: { ...state.info, modelIndex: state.nextModelIndex, preFingerprint: event.fingerprint } });
     }
@@ -628,9 +665,12 @@ export function stepImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
       const envelope = event.envelope;
       if (event.defects.length || !isWriterEnvelope(envelope)) return beginFailure(state.c, `Envelope rejected: ${event.defects.join('; ') || 'malformed envelope.'}`);
-      const permitted = state.info.stage === 'tests-only' ? redTestPaths(state.c) : approvedPaths(state.c.plan as ParsedPlan);
+      const permitted = state.info.stage === 'tests-only' ? redTestPaths(state.c) : scopePaths(state.c);
       const reportedOutside = diffPaths(event).filter((file) => !permitted.includes(file));
-      if (reportedOutside.length) return beginFailure(state.c, `Accepted writer changed out-of-scope paths: ${reportedOutside.join(', ')}.`);
+      if (reportedOutside.length) {
+        if (state.info.stage === 'tests-only') return beginFailure(state.c, `Tests-only writer changed production paths: ${reportedOutside.join(', ')}.`);
+        return stay({ tag: 'drift', c: state.c, parent: { tag: 'write', c: state.c, info: state.info }, parked: { type: 'WRITE_ENVELOPE', envelopePath: state.info.envelopePath }, paths: reportedOutside, fingerprint: state.c.lastFingerprint ?? state.info.preFingerprint });
+      }
       const expectedStage = state.info.stage === 'tests-only' ? 'RED_READY' : 'COMPLETE';
       if (envelope.stage !== expectedStage) return beginFailure(state.c, `Envelope stage must be ${expectedStage}; got ${envelope.stage}.`);
       if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return beginFailure(state.c, `Writer returned ${envelope.status}: ${envelope.summary}`);
@@ -660,7 +700,7 @@ export function stepImplement(state: ImplementState, event: Event): S {
     case 'snapshot-after-write': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `post-write snapshot failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
-      const allowed = state.stage === 'tests-only' ? redTestPaths(state.c) : approvedPaths(state.c.plan as ParsedPlan);
+      const allowed = state.stage === 'tests-only' ? redTestPaths(state.c) : scopePaths(state.c);
       const changed = diffPaths(event);
       const outside = changed.filter((file) => !allowed.includes(file));
       if (outside.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Accepted writer changed out-of-scope paths: ${outside.join(', ')}.`);
@@ -675,8 +715,9 @@ export function stepImplement(state: ImplementState, event: Event): S {
       if (state.c.lastFingerprint && !sameFingerprint(event.fingerprint, state.c.lastFingerprint)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'RED verification changed the repository.');
       const defects = actualRedDefects(state.c, state.rows, rows);
       if (defects.length) {
-        if (!state.c.redQualityRepairUsed) return redQuality(state.c, defects.join('; '));
-        return beginFailure(state.c, `RED verification still fails after quality repair: ${defects.join('; ')}`);
+        const c = { ...state.c, stalled: { purpose: 'red' as const, rows } };
+        if (!state.c.redQualityRepairUsed) return redQuality(c, defects.join('; '));
+        return beginFailure(c, `RED verification still fails after quality repair: ${defects.join('; ')}`);
       }
       const records = { ...state.c.records, ...Object.fromEntries(rows.map((row) => [row.command, row])) };
       return startWriter({ ...state.c, records, lastFingerprint: event.fingerprint }, 'production', false, null, []);
@@ -694,7 +735,7 @@ export function stepImplement(state: ImplementState, event: Event): S {
       if (!rows) return beginFailure(state.c, 'Scoped verification returned malformed command results.');
       if (!sameFingerprint(event.fingerprint, state.before)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'Scoped verification changed the repository; evidence is stale.');
       const regression = rows.filter((row) => row.status === 'regression');
-      if (regression.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Scoped verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
+      if (regression.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint, stalled: { purpose: 'scoped', rows: regression } }, `Scoped verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
       const c = { ...state.c, lastFingerprint: event.fingerprint, records: { ...state.c.records, ...Object.fromEntries(rows.map((row) => [row.command, row])) } };
       return askEvidence(c, 'scoped', state.changedPaths, rows);
     }
@@ -748,7 +789,7 @@ export function stepImplement(state: ImplementState, event: Event): S {
       if (!rows) return beginFailure(state.c, 'Final verification returned malformed command results.');
       if (!sameFingerprint(event.fingerprint, state.before)) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, 'Final verification changed the repository; evidence is stale.');
       const regression = rows.filter((row) => row.status === 'regression');
-      if (regression.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint }, `Final verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
+      if (regression.length) return beginFailure({ ...state.c, lastFingerprint: event.fingerprint, stalled: { purpose: 'final', rows: regression } }, `Final verification failed: ${regression.map((row) => `${row.command} (${row.failureId ?? row.logPath})`).join('; ')}`);
       const records = { ...state.c.records, ...Object.fromEntries(rows.map((row) => [row.command, row])) };
       const c = { ...state.c, lastFingerprint: event.fingerprint, records, finalGate: `${rows.length} commands checked; ${rows.filter((row) => row.status === 'pass' || row.status === 'known-red — unchanged').length} accepted.` };
       return completeVerification(c, rows);
@@ -759,15 +800,156 @@ export function stepImplement(state: ImplementState, event: Event): S {
       return stay({ tag: 'failure', c: isFingerprint(event.fingerprint) ? { ...state.c, lastFingerprint: event.fingerprint } : state.c, reason: state.reason, changedPaths: diffPaths(event) });
     }
     case 'failure': {
-      if (event.type !== 'DECISION' || event.kind !== 'failure' || event.answer !== 'stop') return stay(state);
-      return stop(state.c, `Stopped after failure: ${state.reason}. Work preserved; changed paths: ${state.changedPaths.join(', ') || 'none reported'}.`);
+      if (event.type !== 'DECISION' || event.kind !== 'failure') return stay(state);
+      const answer = failureAnswer(event.answer);
+      if (!answer) return stay(state);
+      if (answer.action === 'stop') return stop(state.c, `Stopped after failure: ${state.reason}. Work preserved; changed paths: ${state.changedPaths.join(', ') || 'none reported'}.`);
+      if (answer.action === 'retry') return startWriter({ ...state.c, retryContext: { rootCause: answer.rootCause, failure: state.reason } }, state.c.currentStage, false, null, []);
+      if (answer.action === 'hotfix') return beginHotfix(state, answer);
+      const c = recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria);
+      return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion: ${answer.quote}` }, summary: `User manually completed implementation: ${answer.quote}` }) : stay(state);
     }
-    case 'complete': case 'stopped': case 'failed': return stay(state);
+    case 'checking-host-event': case 'drift': case 'restoring': case 'hotfix-brief': case 'hotfix-write': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': return stepRecovery(state, event);
+    case 'complete': case 'stopped': case 'failed': case 'revision-request': return stay(state);
     default: return never(state, 'implement state');
   }
 }
 
 function redTestPaths(c: Context): string[] { return [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort(); }
+
+function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(c.plan) : [], ...c.adoptedPaths])].sort(); }
+function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
+const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'EVIDENCE', 'DECISION', 'REVISE']);
+
+export function stepImplement(state: ImplementState, event: Event): S {
+  if (state.tag === 'checking-host-event' || state.tag === 'drift' && event.type !== 'REVISE') return stepRecovery(state, event);
+  if (hostTypes.has(event.type) && 'c' in state && state.c && implementAwait(state) !== null && implementAwait(state) !== 'done') {
+    if (validateImplement(state, event as HostEvent)) return stay(state);
+    const { c, id } = effectId(state.c, 'snapshot');
+    return { state: { tag: 'checking-host-event', c, parent: state, parked: event as HostEvent, effectId: id }, effects: [{ kind: 'snapshot', id, since: state.c.lastFingerprint }] };
+  }
+  const result = applyImplement(state, event);
+  if (event.type === 'VERIFY_DONE' && 'c' in state && state.c?.lastFingerprint && sameFingerprint(state.c.lastFingerprint, event.fingerprint) && 'c' in result.state && result.state.c) {
+    return { ...result, state: withContext(result.state, { ...result.state.c, lastFingerprint: { ...state.c.lastFingerprint, ...event.fingerprint } }) };
+  }
+  return result;
+}
+
+function applyParked(parent: ImplementState, c: Context, parked: HostEvent): S {
+  const updated = withContext(parent, c);
+  if (validateImplement(updated, parked)) return beginFailure(c, 'Parked host event no longer matches its bound parent.');
+  return applyImplement(updated, parked);
+}
+
+function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { action: 'hotfix' }>): S {
+  const c0 = origin.c;
+  const stage = origin.tag === 'baseline-decision' ? 'baseline' : c0.currentStage;
+  if (c0.withdrawnHotfix.includes(stage)) return stay(origin);
+  if (!c0.lastFingerprint || !recoverySnapshot(c0.lastFingerprint)) return beginFailure(c0, 'Hotfix requires concrete snapshot metadata.');
+  if (origin.tag === 'baseline-decision' || answer.mode === 'inline') {
+    const { c, id } = effectId(c0, 'snapshot');
+    return { state: { tag: 'hotfix-snapshot', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'snapshot', id, since: c0.lastFingerprint }] };
+  }
+  if (!c0.writer?.models[0] || !c0.stalled) return stay(origin);
+  const { c, id } = effectId(c0, 'write-brief');
+  const preRed = c0.currentStage === 'tests-only' || activeRedCriteria(c0).length > 0 && !c0.redMatrix.length;
+  return { state: { tag: 'hotfix-brief', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'write-brief', id, stage: 'hotfix', input: {
+    ...briefInput(c0, c0.currentStage, false, []), rootCause: answer.rootCause, stalledCheck: c0.stalled,
+    hotfix: { maxFiles: HOTFIX_MAX_FILES, maxLines: HOTFIX_MAX_LINES, singleShot: true, model: c0.writer.models[0], external: answer.external, preRed, paths: preRed ? redTestPaths(c0) : scopePaths(c0) },
+  } }] };
+}
+
+function hotfixSnapshot(state: Extract<ImplementState, { tag: 'hotfix-write' | 'hotfix-envelope' }>): S {
+  const { c, id } = effectId(state.c, 'snapshot');
+  return { state: { tag: 'hotfix-snapshot', c, origin: state.origin, before: state.before, effectId: id, answer: state.answer }, effects: [{ kind: 'snapshot', id, since: state.before }] };
+}
+
+function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event' | 'drift' | 'restoring' | 'hotfix-brief' | 'hotfix-write' | 'hotfix-envelope' | 'hotfix-snapshot' | 'hotfix-verify' }>, event: Event): S {
+  switch (state.tag) {
+    case 'checking-host-event': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `Host-event snapshot failed: ${event.detail}`);
+      if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
+      const metadata = recoverySnapshot(event.fingerprint);
+      const changed = diffPaths(event);
+      const awaiting = implementAwait(state.parent) ?? 'done';
+      const testsOnly = state.parent.tag === 'write' && state.parent.info.stage === 'tests-only';
+      const hotfixDecision = (state.parent.tag === 'baseline-decision' || state.parent.tag === 'failure') && state.parked.type === 'DECISION' && failureAnswer(state.parked.answer)?.action === 'hotfix';
+      if (hotfixDecision) return applyParked(state.parent, state.c, state.parked);
+      if (state.parent.tag === 'hotfix-write') return applyParked(state.parent, state.c, state.parked);
+      const classified = classifyDrift({ awaiting, ctx: { stagePaths: scopePaths(state.c), testPaths: redTestPaths(state.c), testsOnly, artifactPath: artifactRelative(event.fingerprint, state.c.planPath) }, changed, callerDirty: recoverySnapshot(state.c.startFingerprint)?.callerDirty ?? [], hashManifestDirs: metadata?.hashManifestDirs ?? [] });
+      classified.drift.push(...classified.autoAdopt.filter((file) => !(metadata?.verifiedManifestDirs ?? []).includes(file.slice(0, -'skill-hashes.json'.length).replace(/\/$/, ''))));
+      classified.autoAdopt = classified.autoAdopt.filter((file) => !classified.drift.includes(file));
+      if (testsOnly && classified.drift.some((file) => !isTestPath(file))) return beginFailure(state.c, 'Tests-only production changes are forbidden.');
+      const adoptedPaths = [...new Set([...state.c.adoptedPaths, ...classified.autoAdopt])];
+      const c = { ...state.c, adoptedPaths, finalFocus: [...new Set([...state.c.finalFocus, ...classified.autoAdopt])] };
+      if (classified.drift.length) return stay({ tag: 'drift', c, parent: state.parent, parked: state.parked, paths: classified.drift, fingerprint: event.fingerprint });
+      // WRITE_FAILED still needs its original pre-write fingerprint to attribute and restore the failed attempt.
+      const next = state.parked.type === 'WRITE_FAILED' || state.parent.tag === 'write' ? c : { ...c, lastFingerprint: event.fingerprint };
+      return applyParked(state.parent, next, state.parked);
+    }
+    case 'drift': {
+      if (event.type !== 'DECISION' || event.kind !== 'drift') return stay(state);
+      const answer = driftAnswer(event.answer, state.paths);
+      if (!answer) return stay(state);
+      if (Object.values(answer).includes('stop')) return stop(state.c, 'User stopped at per-path drift reconciliation; files preserved.');
+      const c = markMutation({ ...state.c, adoptedPaths: [...new Set([...state.c.adoptedPaths, ...state.paths])], finalFocus: [...new Set([...state.c.finalFocus, ...state.paths])] }, state.paths);
+      return applyParked(state.parent, state.parent.tag === 'write' ? c : { ...c, lastFingerprint: state.fingerprint }, state.parked);
+    }
+    case 'restoring': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `Restore failed; cascade stopped: ${event.detail}`);
+      if (event.type !== 'RESTORED' || !answers(event, state.effectId) || [...event.paths].sort().join('\0') !== [...state.paths].sort().join('\0')) return stay(state);
+      const c = { ...state.c, lastFingerprint: state.info.preFingerprint };
+      return state.nextModelIndex === null ? beginFailure(c, state.reason) : stay({ tag: 'write', c, info: { ...state.info, modelIndex: state.nextModelIndex } });
+    }
+    case 'hotfix-brief': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
+      if (event.type !== 'BRIEF_READY' || !answers(event, state.effectId) || event.stage !== 'hotfix' || !/^sha256:[a-f0-9]{64}$/.test(event.sha256) || !nonEmpty(event.path) || !nonEmpty(event.envelopePath)) return stay(state);
+      return stay({ tag: 'hotfix-write', c: state.c, origin: state.origin, before: state.before, answer: state.answer, brief: { path: event.path, sha256: event.sha256, envelopePath: event.envelopePath } });
+    }
+    case 'hotfix-write': {
+      if (event.type === 'WRITE_FAILED') return stay(withContext(state.origin, state.c));
+      if (event.type !== 'WRITE_ENVELOPE' || event.envelopePath !== state.brief.envelopePath) return stay(state);
+      const { c, id } = effectId(state.c, 'check-envelope');
+      return { state: { tag: 'hotfix-envelope', c, origin: state.origin, before: state.before, effectId: id, answer: state.answer }, effects: [{ kind: 'check-envelope', id, envelopePath: state.brief.envelopePath, permitted: scopePaths(c) }] };
+    }
+    case 'hotfix-envelope': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
+      if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
+      if (event.defects.length || !isWriterEnvelope(event.envelope) || !['DONE', 'DONE_WITH_CONCERNS'].includes(event.envelope.status)) return stay(withContext(state.origin, state.c));
+      return hotfixSnapshot(state);
+    }
+    case 'hotfix-snapshot': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return beginFailure(state.c, `Hotfix snapshot failed: ${event.detail}`);
+      if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId)) return stay(state);
+      const before = recoverySnapshot(state.before), after = recoverySnapshot(event.fingerprint);
+      if (!before || !after) return beginFailure(state.c, 'Hotfix snapshot metadata is malformed.');
+      const preRed = state.c.currentStage === 'tests-only' || activeRedCriteria(state.c).length > 0 && !state.c.redMatrix.length;
+      const judgement = judgeHotfix({ repoRoot: '', changed: after.changed, external: state.answer.external, before: before.git, after: after.git, taskStartFiles: before.taskStartFiles, ignoredBefore: before.ignored, ignoredAfter: after.ignored, preRed, productionPaths: scopePaths(state.c).filter((file) => !isTestPath(file)), failureIdentityBefore: null, failureIdentityAfter: null });
+      const violations = [...judgement.violations, ...(preRed && after.changed.some((item) => !redTestPaths(state.c).includes(item.path)) ? ['Before RED validates, only approved test paths may change.'] : [])];
+      if (violations.length) return stay(withContext(state.origin, { ...state.c, concerns: [...state.c.concerns, ...violations] }));
+      const stalled = state.origin.tag === 'baseline-decision' ? { purpose: 'baseline' as const, rows: state.origin.items } : state.c.stalled;
+      if (!stalled?.rows.length) return beginFailure(state.c, 'No stalled check is available for hotfix verification.');
+      const changedPaths = after.changed.map((item) => item.path);
+      const c0 = markMutation({ ...state.c, lastFingerprint: event.fingerprint, stalled, adoptedPaths: [...new Set([...state.c.adoptedPaths, ...changedPaths])], finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, changedPaths);
+      const { c, id } = effectId(c0, 'verify');
+      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: event.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(c.plan as ParsedPlan).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
+    }
+    case 'hotfix-verify': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
+      if (event.type !== 'VERIFY_DONE' || !answers(event, state.effectId) || event.purpose !== 'hotfix') return stay(state);
+      const rows = recordsFrom(event.results, state.c, 'scoped');
+      if (!rows || !isFingerprint(event.fingerprint) || !sameFingerprint(state.before, event.fingerprint)) return beginFailure(state.c, 'Hotfix check mutated the tree or returned invalid results.');
+      if (state.c.stalled?.purpose === 'red' && !actualRedDefects(state.c, state.c.redMatrix, rows).length) return startWriter({ ...state.c, lastFingerprint: { ...state.before, ...event.fingerprint }, records: { ...state.c.records, ...Object.fromEntries(rows.map((row) => [row.command, row])) } }, 'production', false, null, []);
+      const unchanged = rows.some((row) => row.exit !== 0 && state.c.stalled?.rows.some((old) => old.command === row.command && old.failureId !== null && old.failureId === row.failureId));
+      const stage = state.origin.tag === 'baseline-decision' ? 'baseline' : state.c.currentStage;
+      const c = { ...state.c, withdrawnHotfix: unchanged ? [...new Set([...state.c.withdrawnHotfix, stage])] : state.c.withdrawnHotfix, lastFingerprint: event.fingerprint, records: { ...state.c.records, ...Object.fromEntries(rows.map((r) => [r.command, r])) } };
+      if (rows.some((row) => row.exit !== 0)) return stay(withContext(state.origin, c));
+      if (state.origin.tag === 'baseline-decision') return beginApproval({ ...c, baseline: c.baseline.map((old) => rows.find((r) => r.command === old.command) ?? old) });
+      return c.stalled?.purpose === 'final' ? startFinalVerify(c) : scopedSnapshot(c, state.changedPaths);
+    }
+    default: return never(state, 'recovery state');
+  }
+}
 
 function reviewPaths(event: Extract<Event, { type: 'FIXES_APPLIED' }>): string[] {
   return event.clusters.flatMap((cluster) => Array.isArray(cluster['affectedPaths']) ? cluster['affectedPaths'].filter((file): file is string => typeof file === 'string') : []);
@@ -781,14 +963,15 @@ export function implementAwait(state: ImplementState): Await | null {
   switch (state.tag) {
     case 'author': return 'author';
     case 'plan-review': case 'code-review': return reviewAwait(state.review);
-    case 'write': return 'write';
+    case 'write': case 'hotfix-write': return 'write';
     case 'baseline-decision': return 'decide';
-    case 'approval': case 'needs-user': case 'concerns': case 'failure': return 'decide';
+    case 'approval': case 'needs-user': case 'concerns': case 'failure': case 'drift': return 'decide';
     case 'evidence': return 'evidence';
     case 'complete': case 'stopped': case 'failed': return 'done';
     case 'booting': case 'starting': case 'parsing': case 'baseline-preflight': case 'baseline': case 'baseline-snapshot': case 'writing-brief': case 'snapshot-before-write':
     case 'cascade-snapshot': case 'checking-envelope': case 'snapshot-after-write': case 'red-verify': case 'scoped-snapshot': case 'scoped-verify':
-    case 'post-review-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot': return null;
+    case 'post-review-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
+    case 'checking-host-event': case 'restoring': case 'hotfix-brief': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': case 'revision-request': return null;
     default: return never(state, 'implement state');
   }
 }
@@ -800,13 +983,15 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     case 'write': return {
       stage: state.info.stage, attempt: state.info.attempt, briefPath: state.info.briefPath, briefSha256: state.info.briefSha256,
       envelopePath: state.info.envelopePath, models: state.info.models, model: state.info.models[state.info.modelIndex], effort: state.c.writer?.effort,
-      paths: state.info.stage === 'tests-only' ? redTestPaths(state.c) : approvedPaths(state.c.plan as ParsedPlan),
+      paths: state.info.stage === 'tests-only' ? redTestPaths(state.c) : scopePaths(state.c),
     };
     case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity as known red or stop.', ['accept-known-red', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
     case 'approval': return decideData('approval', 'Approve these plan paths and verification commands before any writer stage.', ['approve', 'stop'], [{ by: 'required', quote: 'required', paths: state.c.plan ? approvedPaths(state.c.plan) : [], commands: state.c.plan ? commandMappings(state.c.plan).map((row) => row.command) : [] }]);
     case 'needs-user': return decideData('needs-user', `Rule on RED exceptions for ${state.ids.join(', ')} before production work.`, ['accept', 'stop'], state.ids);
     case 'concerns': return decideData('concerns', 'Resolve the writer concerns before code review.', ['accept', 'stop'], state.items);
-    case 'failure': return decideData('failure', state.reason, ['stop'], [{ changedPaths: state.changedPaths, workPreserved: true }]);
+    case 'failure': return decideData('failure', state.reason, ['hotfix', 'retry', 'manual-complete', 'revise', 'stop'], [{ changedPaths: state.changedPaths, workPreserved: true, retryAttempts: state.c.attempts[state.c.currentStage], hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.currentStage) }]);
+    case 'drift': return decideData('drift', 'Rule adopt or stop for every changed path before applying the parked event.', ['adopt', 'stop'], state.paths);
+    case 'hotfix-write': return { stage: 'hotfix', singleShot: true, model: state.c.writer?.models[0], models: state.c.writer?.models.slice(0, 1), briefPath: state.brief.path, briefSha256: state.brief.sha256, envelopePath: state.brief.envelopePath, rootCause: state.answer.rootCause, limits: { files: HOTFIX_MAX_FILES, lines: HOTFIX_MAX_LINES } };
     case 'evidence': return {
       purpose: state.purpose,
       summary: state.verify.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, diagnostic: row.diagnostic, status: row.status, failureId: row.failureId })),
@@ -826,6 +1011,7 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
   const review = c.codeReview ? reviewData(c.codeReview) : {};
   return {
     planPath: c.planPath, planHash: c.planHash, mutationEpoch: c.mutationEpoch, acceptedBaseline: c.acceptedBaseline,
+    adoptedPaths: c.adoptedPaths, finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
     criteria: (c.plan?.criteria ?? []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
     review: review['completion'] ?? review, limitations: c.concerns, finalGate: c.finalGate,
@@ -833,25 +1019,47 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
 }
 
 export function validateImplement(state: ImplementState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return 'event.type: REVISE is not available in implement until I06.';
+  if (event.type === 'REVISE') return event.artifact !== 'plan' ? 'event.artifact: only plan revision is available.' : state.tag === 'write' || state.tag === 'hotfix-write' || implementAwait(state) === null ? 'event.type: outstanding write/effect must finish before REVISE.' : !('c' in state) || !state.c?.plan ? 'event.type: a governed plan must be bound before REVISE.' : null;
+  if (state.tag === 'hotfix-write' && event.type === 'WRITE_ENVELOPE' && event.envelopePath !== state.brief.envelopePath) return 'event.envelopePath: expected the exact hotfix envelope path.';
+  if (state.tag === 'hotfix-write' && event.type === 'WRITE_FAILED' && event.model !== state.c.writer?.models[0]) return 'event.model: expected the single-shot configured writer.';
+  if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !driftAnswer(event.answer, state.paths))) return 'event.answer: rule adopt or stop for each drift path.';
   if (state.tag === 'author' && event.type === 'AUTHORED' && event.path !== state.c.planPath) return `event.path: expected ${state.c.planPath}.`;
   if (state.tag === 'write' && event.type === 'WRITE_ENVELOPE' && event.envelopePath !== state.info.envelopePath) return 'event.envelopePath: expected the exact path from the current write frame.';
   if (state.tag === 'write' && event.type === 'WRITE_FAILED' && event.model !== state.info.models[state.info.modelIndex]) return 'event.model: expected the current configured model id.';
   if (state.tag === 'plan-review' || state.tag === 'code-review') return validateReview(state.review, event);
   if (state.tag === 'approval' && event.type === 'DECISION' && event.kind === 'approval' && event.answer !== 'stop' && !approvalAnswer(event.answer)) return 'event.answer: approval requires non-empty user-attributed by and quote.';
   if (state.tag === 'baseline-decision' && event.type === 'DECISION' && event.kind === 'baseline' && event.answer !== 'stop') {
+    if (isRecord(event.answer) && isRecord(event.answer['hotfix']) && event.answer['hotfix']['mode'] === 'writer') return 'event.answer: baseline hotfix is inline-only.';
+    if (failureAnswer(event.answer)?.action === 'hotfix') return null;
     const ids = isRecord(event.answer) && Array.isArray(event.answer['ids']) ? event.answer['ids'] : [];
     const available = failingBaselineIds(state.items);
     if (!isRecord(event.answer) || event.answer['action'] !== 'accept-known-red' || ids.length !== available.length || new Set(ids).size !== ids.length || available.some((id) => !ids.includes(id))) return 'event.answer: accept-known-red must name every distinct baseline failure identity.';
   }
   if (state.tag === 'needs-user' && event.type === 'DECISION' && event.kind === 'needs-user' && !needsUserRuling(state.c, state.ids, event.answer)) return 'event.answer: RED exception ruling requires accept or stop, by, and quote.';
   if (state.tag === 'concerns' && event.type === 'DECISION' && event.kind === 'concerns' && !needsUserRuling(state.c, state.items, event.answer)) return 'event.answer: concerns ruling requires accept or stop, by, and quote.';
-  if (state.tag === 'failure' && event.type === 'DECISION' && event.kind === 'failure' && event.answer !== 'stop') return 'event.answer: I05 supports stop at decide:failure.';
+  if (state.tag === 'failure' && event.type === 'DECISION' && event.kind === 'failure') {
+    const answer = failureAnswer(event.answer);
+    if (!answer) return 'event.answer: failure requires hotfix/retry with rootCause, user manual completion with quote and criteria, or stop.';
+    if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria)) return 'event.criteria: manual completion needs evidence for every criterion.';
+  }
   if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}.`;
   return null;
 }
 
 export const implementTransitions = [
+  ...['author', 'plan-review', 'code-review', 'write', 'hotfix-write', 'baseline-decision', 'approval', 'needs-user', 'concerns', 'failure', 'evidence'].flatMap((from) => ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'DECISION', 'EVIDENCE', 'REVISE'].map((on) => ({ from, on, to: 'checking-host-event' }))),
+  ...['parsing', 'plan-review', 'code-review', 'checking-envelope', 'cascade-snapshot', 'writing-brief', 'needs-user', 'approval', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'revision-request'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
+  { from: 'checking-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
+  ...['writing-brief', 'checking-envelope', 'cascade-snapshot', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'revision-request'].map((to) => ({ from: 'drift', on: 'DECISION', to })),
+  { from: 'drift', on: 'DECISION', to: 'stopped' }, { from: 'cascade-snapshot', on: 'SNAPSHOT', to: 'restoring' },
+  { from: 'restoring', on: 'RESTORED', to: 'write' }, { from: 'restoring', on: 'RESTORED', to: 'failure-snapshot' }, { from: 'restoring', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
+  { from: 'checking-envelope', on: 'ENVELOPE_CHECKED', to: 'drift' },
+  { from: 'hotfix-brief', on: 'BRIEF_READY', to: 'hotfix-write' }, { from: 'hotfix-brief', on: 'EFFECT_FAILED', to: 'failure' },
+  { from: 'hotfix-envelope', on: 'ENVELOPE_CHECKED', to: 'hotfix-snapshot' }, { from: 'hotfix-envelope', on: 'ENVELOPE_CHECKED', to: 'failure' }, { from: 'hotfix-envelope', on: 'EFFECT_FAILED', to: 'failure' },
+  ...['hotfix-verify', 'failure', 'baseline-decision', 'failure-snapshot'].map((to) => ({ from: 'hotfix-snapshot', on: 'SNAPSHOT', to })),
+  { from: 'hotfix-snapshot', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
+  ...['failure', 'baseline-decision', 'approval', 'scoped-snapshot', 'evidence', 'final-verify', 'failure-snapshot'].map((to) => ({ from: 'hotfix-verify', on: 'VERIFY_DONE', to })),
+  { from: 'hotfix-verify', on: 'EFFECT_FAILED', to: 'failure' }, { from: 'hotfix-verify', on: 'EFFECT_FAILED', to: 'baseline-decision' },
   { from: 'code-review', on: 'REVIEW_PREPARED', to: 'post-review-snapshot' },
   { from: 'code-review', on: 'VERIFY_DONE', to: 'post-review-snapshot' },
   { from: 'code-review', on: 'DECISION', to: 'post-review-snapshot' },
@@ -906,7 +1114,7 @@ export function implementWalkthrough(state: ImplementState): WalkthroughView | n
       return item ? [{ sc: criterion.id, outcome: String(item['outcome'] ?? 'recorded'), evidence: String(item['evidence'] ?? item.source) }] : [];
     }),
     finalGate: c.finalGate, deviations: c.concerns, followUps: plan.verification.manual,
-    revisions: [], rounds: [...planRounds, ...codeRounds],
+    revisions: c.revisions, rounds: [...planRounds, ...codeRounds],
   };
 }
 
