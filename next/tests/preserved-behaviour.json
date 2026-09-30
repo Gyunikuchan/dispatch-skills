@@ -61,7 +61,7 @@
       "key": "grammar-orchestrator-demotion",
       "clause": "orchestrator platform/model demotion and detection markers",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/lib/platform.test.ts"],
       "checks": []
     },
     {
@@ -96,35 +96,35 @@
       "key": "delegates-read-only",
       "clause": "structural read-only per provider",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/read-only.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-credential-stripping",
       "clause": "credential stripping",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/runner.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-sensitive-file-guardrail",
       "clause": "sensitive-file guardrail",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/runner.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-sandbox-strict",
       "clause": "sandbox default on, and unavailable isolation fails the slot instead of downgrading",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/read-only.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-resume-handles",
       "clause": "per-provider resume handles",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/parse.test.ts"],
       "checks": []
     },
     {
@@ -159,21 +159,21 @@
       "key": "delegates-native-fallback-descriptors",
       "clause": "native fallback descriptors and mapping verification",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/native.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-early-fallbacks",
       "clause": "early fallbacks",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/wave.test.ts", "tests/unit/providers/native.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-slots-reconciled",
       "clause": "every roster slot reconciled",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/wave.test.ts"],
       "checks": []
     },
     {
@@ -187,14 +187,14 @@
       "key": "delegates-fallback-triggers",
       "clause": "refusal/truncation/empty/uncovered/loose-locus → fallback",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/providers/wave.test.ts"],
       "checks": []
     },
     {
       "key": "delegates-integrity-check",
       "clause": "integrity check before dispatch",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/lib/integrity.test.ts"],
       "checks": []
     },
     {
@@ -453,7 +453,7 @@
       "key": "session-lifecycle",
       "clause": "ADR 0003 lifecycle unchanged (folder identity, layout, naming grammar, collision safety, handoff move, reactivation, relative references)",
       "increment": "I03",
-      "tests": [],
+      "tests": ["tests/unit/lib/session.test.ts"],
       "checks": []
     },
     {
