@@ -1,12 +1,16 @@
 // @ts-check
 
-import type { CriterionEvidence, DecisionAnswer, Level, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
+import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord } from './types.ts';
 
 export type EvidenceClass = 'red' | 'verify' | 'review';
 export type ImplementStage = 'tests-only' | 'production';
+export type DesignBinding = {
+  path: string; revision: string; increment: string; contract: Readonly<Record<string, string>>; paths: readonly string[];
+  approval: DesignApproval; repair: readonly string[];
+};
 export type ImplementOutcome = 'complete' | 'failed' | 'stopped';
 export type VerificationStatus = 'pass' | 'known-red — unchanged' | 'regression' | 'red' | 'quality-error';
 

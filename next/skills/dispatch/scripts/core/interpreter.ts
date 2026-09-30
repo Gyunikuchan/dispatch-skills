@@ -3,7 +3,7 @@
 
 import path from 'node:path';
 import { faultFrame, oneLine, projectFrame } from './frame.ts';
-import { appendEvent, EngineFault, journalPath, readJournal, type JournalRead } from './journal.ts';
+import { appendEvent, EngineFault, JOURNAL_FILE, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
 import { HEARTBEAT_MS, milestone, writeProgress } from './progress.ts';
 import type {
@@ -234,14 +234,83 @@ function dryRun<S>(options: SendOptions<S>, runRel: string): SendResult {
 export interface StartOptions<S> extends Omit<SendOptions<S>, 'rawEvent' | 'dryRun'> {
   runStarted: RunStartedEvent;
 }
+const designPathIdentity = (file: string) => {
+  const normalized = path.resolve(file.replace(/\\/g, '/')).replace(/\\/g, '/');
+  return path.sep === '\\' ? normalized.toLowerCase() : normalized;
+};
+function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
+  if (!ports.fs.exists(runsDir)) return undefined;
+  for (const file of ports.fs.listFiles(runsDir)) {
+    if (path.basename(file) !== JOURNAL_FILE) continue;
+    const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
+    const lines = readJournal(ports, runDir).lines;
+    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    if (!started || started.data['verb'] !== 'design') continue;
+    const folder = fold(machine, lines);
+    const projected = machine.project(folder.state).data;
+    if (machine.awaitOf(folder.state) !== 'done' || projected['outcome'] !== 'complete') continue;
+    const completion = projected['completion'];
+    if (typeof completion !== 'object' || completion === null) continue;
+    const binding = (completion as Record<string, unknown>)['governedDesign'];
+    if (typeof binding !== 'object' || binding === null) continue;
+    const governed = binding as Record<string, unknown>;
+    if (typeof governed['path'] !== 'string' || designPathIdentity(governed['path']) !== designPathIdentity(identity.path) || governed['revision'] !== identity.revision) continue;
+    const approval = (completion as Record<string, unknown>)['approval'];
+    if (typeof approval !== 'object' || approval === null) continue;
+    const a = approval as Record<string, unknown>;
+    if (a['by'] === 'user' && typeof a['quote'] === 'string' && a['quote'].trim() && a['hash'] === identity.revision) return { by: 'user', quote: a['quote'], hash: identity.revision };
+  }
+  return undefined;
+}
+export type DesignDeliveryIdentity = { path: string; revision: string };
+/** Same-session lookup folds journal payloads; mutable design files cannot supply approval or resumed state. */
+export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): { runDir: string; state: S; finished: boolean } | null {
+  if (!/^sha256:[a-f0-9]{64}$/.test(identity.revision)) throw new EngineFault('Design delivery identity requires a governed revision hash.');
+  if (!ports.fs.exists(runsDir)) return null;
+  let match: { runDir: string; state: S; finished: boolean } | null = null;
+  for (const file of ports.fs.listFiles(runsDir)) {
+    if (path.basename(file) !== JOURNAL_FILE) continue;
+    const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
+    const lines = readJournal(ports, runDir).lines;
+    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
+    const folder = fold(machine, lines);
+    const finished = machine.awaitOf(folder.state) === 'done';
+    const data = machine.project(folder.state).data;
+    const completion = data['completion'];
+    const binding = data['governedDesign'] ?? (typeof completion === 'object' && completion !== null ? (completion as Record<string, unknown>)['governedDesign'] : null);
+    if (typeof binding !== 'object' || binding === null) continue;
+    const revision = (binding as Record<string, unknown>)['revision'];
+    if (typeof revision !== 'string') continue;
+    if (revision !== identity.revision) {
+      if (!finished) throw new EngineFault('An unfinished same-session design delivery has an incompatible governed revision.');
+      continue;
+    }
+    if (match && !finished && !match.finished) throw new EngineFault('Competing unfinished same-session design deliveries.');
+    if (!match || !finished) match = { runDir, state: folder.state, finished };
+  }
+  return match;
+}
 
 /** Creates the run folder exclusively (ADR 0003), appends `RUN_STARTED`, and enters the send loop. */
 export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
   const { ports, runDir } = options;
+  const { designApproval: _untrustedApproval, ...requested } = options.runStarted;
+  let designApproval: RunStartedEvent['designApproval'];
+  const revision = requested.overrides['designRevision'];
+  if (requested.verb === 'implement' && /\.design\.md$/i.test(requested.argument) && typeof revision === 'string') {
+    const identity = { path: requested.argument, revision };
+    const existing = findDesignDelivery(ports, path.dirname(runDir), options.machine, identity);
+    if (existing) {
+      const runRel = options.runRel === undefined ? existing.runDir.replace(/\\/g, '/') : path.posix.join(path.posix.dirname(options.runRel.replace(/\\/g, '/')), path.basename(existing.runDir));
+      return existing.finished ? { frame: projectFrame(options.machine, existing.state, runRel), exitCode: 0 } : send({ ...options, runDir: existing.runDir, runRel });
+    }
+    designApproval = journalDesignApproval(ports, path.dirname(runDir), options.machine, identity);
+  }
   ports.fs.mkdir(path.dirname(runDir), { recursive: true });
   ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
-  const { type, ...data } = { ...options.runStarted, overrides: { ...options.runStarted.overrides, sessionDir } };
+  const { type, ...data } = { ...requested, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
   appendEvent(ports, runDir, type, data, 1);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;

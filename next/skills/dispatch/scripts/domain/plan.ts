@@ -556,3 +556,49 @@ function lintNotes(lines: readonly StructuralLine[], out: LintDefect[]): void {
     if (isFillerNote(note, siblings)) out.push(lint('filler-note', line, `Change note "${note}" is filler; say what changes in this file.`));
   });
 }
+export function incrementPathMatches(file: string, scope: string): boolean {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/^\.\//, '');
+  const target = normalize(file), pattern = normalize(scope);
+  if (target.split('/').some((part) => part === '.' || part === '..') || target.startsWith('/') || /^[a-z]:/i.test(target)) return false;
+  if (pattern.endsWith('/')) return target.startsWith(pattern);
+  const braces = /\{([^{}]+)\}/.exec(pattern);
+  if (braces) return braces[1]!.split(',').some((part) => incrementPathMatches(target, pattern.replace(braces[0], part)));
+  let expression = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i]!;
+    if (ch === '*' && pattern[i + 1] === '*') {
+      i++;
+      if (pattern[i + 1] === '/') { i++; expression += '(?:.*/)?'; }
+      else expression += '.*';
+    } else if (ch === '*') expression += '[^/]*';
+    else if (ch === '?') expression += '[^/]';
+    else expression += ch.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  }
+  return new RegExp(`^${expression}$`).test(target);
+}
+
+/** Admission uses the journal-owned design binding, never artifact metadata as approval. */
+export function validateDesignTraceability(plan: ParsedPlan, binding: { path: string; revision: string; increment: string; contract: Readonly<Record<string, string>>; paths?: readonly string[] }): string[] {
+  const trace = plan.traceability;
+  if (!trace) return ['Technical-Design Traceability is required for a design-bound plan.'];
+  const value = (name: string) => Object.entries(trace).find(([key]) => key.toLowerCase() === name.toLowerCase())?.[1]?.replace(/`/g, '').trim();
+  const defects: string[] = [];
+  for (const change of plan.changes ?? []) if (binding.paths && !binding.paths.some((owned) => incrementPathMatches(change.path, owned))) defects.push(`Plan path ${change.path} is outside increment ${binding.increment} scope.`);
+  if (value('Approved revision') !== undefined) {
+    const parent = plan.box?.['Parent']?.replace(/`/g, '').trim();
+    if (parent !== `${binding.path} · ${binding.increment}`) defects.push(`Parent must equal ${binding.path} · ${binding.increment}.`);
+    if (value('Approved revision') !== binding.revision) defects.push(`Approved revision must equal ${binding.revision}.`);
+    const inherited = value('Increment ID and inherited contract') ?? '';
+    if (!new RegExp(`^${binding.increment}(?:\\s|$)`).test(inherited)) defects.push(`Increment ID and inherited contract must name ${binding.increment}.`);
+    for (const [key, expected] of Object.entries(binding.contract)) if (!inherited.includes(expected)) defects.push(`Inherited contract must cover ${key}: ${expected}.`);
+    for (const key of ['Prerequisite evidence', 'Acceptance mapping']) if (!value(key)) defects.push(`Technical-Design Traceability requires ${key}.`);
+    return defects;
+  }
+  for (const [key, expected] of Object.entries({ Design: binding.path, Revision: binding.revision, Increment: binding.increment })) {
+    if (value(key) !== expected) defects.push(`Technical-Design Traceability ${key} must equal ${expected}.`);
+  }
+  for (const [key, expected] of Object.entries(binding.contract)) {
+    if (value(key) !== expected) defects.push(`Technical-Design Traceability must inherit ${key}: ${expected}.`);
+  }
+  return defects;
+}

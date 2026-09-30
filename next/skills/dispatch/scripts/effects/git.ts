@@ -10,6 +10,8 @@ export type TreeFingerprint = { head: string | null; index: string; worktree: st
 export type PathDiff = { paths: string[] };
 
 export type Git = {
+  ancestor?(cwd: string, baseline: string): Promise<boolean>;
+  baselineDiff?(cwd: string, baseline: string): Promise<string[]>;
   recoveryFiles?(cwd: string): Promise<{ files: string[]; dirty: string[]; ignored: string[]; stash: string; gitDir: string }>;
   toplevel(cwd: string): Promise<string>;
   /** `git ls-files --stage` output, cached by index content hash. */
@@ -32,6 +34,18 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
   const indexCache = new Map<string, string>();
 
   const git: Git = {
+    async ancestor(cwd, baseline) {
+      if (!/^[a-f0-9]{40,64}$/.test(baseline)) throw new Error('Integration baseline must be a concrete commit hash.');
+      const root = await git.toplevel(cwd);
+      try { await port.run(['merge-base', '--is-ancestor', baseline, 'HEAD'], root); return true; } catch { return false; }
+    },
+    async baselineDiff(cwd, baseline) {
+      if (!/^[a-f0-9]{40,64}$/.test(baseline)) throw new Error('Integration baseline must be a concrete commit hash.');
+      const root = await git.toplevel(cwd);
+      const tracked = (await port.run(['diff', '--name-only', '-z', baseline, '--'], root)).split('\0').filter(Boolean);
+      const untracked = (await port.run(['ls-files', '--others', '--exclude-standard', '-z'], root)).split('\0').filter(Boolean);
+      return [...new Set([...tracked, ...untracked])].sort();
+    },
     async recoveryFiles(cwd) {
       const root = await git.toplevel(cwd);
       const listed = async (args: string[]) => (await port.run(args, root)).split('\0').filter(Boolean);

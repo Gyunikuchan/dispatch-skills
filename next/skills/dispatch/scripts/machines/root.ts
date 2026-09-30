@@ -12,10 +12,12 @@ import {
 import { implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
 import { beginRevision, stepRevision, reboundRevision, revisionAwait, revisionData, validateRevision, type RevisionState } from './revision.ts';
+import { beginDesign, stepDesign, designAwait, designData, validateDesign, type DesignState } from './design.ts';
 
 export type RunInfo = { verb: Verb; argument: string; slug: string };
 
 export type RootState =
+  | { tag: 'design'; run: RunInfo; child: DesignState }
   | { tag: 'revision'; run: RunInfo; child: RevisionState }
   | { tag: 'booting' }
   | { tag: 'ask'; run: RunInfo; child: AskState }
@@ -25,7 +27,7 @@ export type RootState =
   | { tag: 'handoff'; run: RunInfo; last: Child | null; counters: Counters; effectId: string; done: DoneData }
   | { tag: 'done'; run: RunInfo; last: Child | null; counters: Counters; done: DoneData; handoff: string | null; warning: string | null };
 
-export type Child = { verb: 'ask'; state: AskState } | { verb: 'plan'; state: PlanState } | { verb: 'review'; state: ReviewState } | { verb: 'implement'; state: ImplementState };
+export type Child = { verb: 'design'; state: DesignState } | { verb: 'ask'; state: AskState } | { verb: 'plan'; state: PlanState } | { verb: 'review'; state: ReviewState } | { verb: 'implement'; state: ImplementState };
 
 type S = Step<RootState>;
 
@@ -45,6 +47,7 @@ export function inferKind(argument: string, overrides: Readonly<Record<string, u
 
 function childOf(state: RootState): Child | null {
   switch (state.tag) {
+    case 'design': return { verb: 'design', state: state.child };
     case 'ask': return { verb: 'ask', state: state.child };
     case 'plan': return { verb: 'plan', state: state.child };
     case 'review': return { verb: 'review', state: state.child };
@@ -64,6 +67,7 @@ function countersOf(child: Child): Counters {
 
 function terminal(child: Child): boolean {
   switch (child.verb) {
+    case 'design': return child.state.tag === 'complete' || child.state.tag === 'failed';
     case 'ask': return child.state.tag === 'done' || child.state.tag === 'failed';
     case 'plan': return child.state.tag === 'complete' || child.state.tag === 'escalated' || child.state.tag === 'failed';
     case 'review': return isReviewTerminal(child.state);
@@ -74,6 +78,7 @@ function terminal(child: Child): boolean {
 
 function childData(child: Child): Readonly<Record<string, unknown>> {
   switch (child.verb) {
+    case 'design': return designData(child.state);
     case 'ask': return askData(child.state);
     case 'plan': return planData(child.state);
     case 'review': return reviewData(child.state);
@@ -104,6 +109,7 @@ function wrap(run: RunInfo, child: Child, effects: Step<unknown>['effects']): S 
   }
   if (terminal(child)) return toHandoff(run, child, countersOf(child), doneOf(child));
   switch (child.verb) {
+    case 'design': return { state: { tag: 'design', run, child: child.state }, effects };
     case 'ask': return { state: { tag: 'ask', run, child: child.state }, effects };
     case 'plan': return { state: { tag: 'plan', run, child: child.state }, effects };
     case 'review': return { state: { tag: 'review', run, child: child.state }, effects };
@@ -137,10 +143,17 @@ function boot(event: RunStartedEvent): S {
       return wrap(run, { verb: 'review', state: result.state }, result.effects);
     }
     case 'implement': {
+      if (/\.design\.md$/i.test(event.argument.trim()) || event.overrides['kind'] === 'design') {
+        const result = beginDesign(event);
+        return wrap(run, { verb: 'design', state: result.state }, result.effects);
+      }
       const result = stepImplement(implementMachine.initial(), event);
       return wrap(run, { verb: 'implement', state: result.state }, result.effects);
     }
-    case 'design': return failed(run, `verb ${event.verb} not available until I07`);
+    case 'design': {
+      const result = beginDesign(event);
+      return wrap(run, { verb: 'design', state: result.state }, result.effects);
+    }
     default: return never(event.verb, 'verb');
   }
 }
@@ -149,6 +162,7 @@ function boot(event: RunStartedEvent): S {
 
 export function stepRoot(state: RootState, event: Event): S {
   switch (state.tag) {
+    case 'design': { const result = stepDesign(state.child, event); return wrap(state.run, { verb: 'design', state: result.state }, result.effects); }
     case 'booting': return event.type === 'RUN_STARTED' ? boot(event) : stay(state);
     case 'ask': { const result = stepAsk(state.child, event); return wrap(state.run, { verb: 'ask', state: result.state }, result.effects); }
     case 'plan': { const result = stepPlan(state.child, event); return wrap(state.run, { verb: 'plan', state: result.state }, result.effects); }
@@ -181,6 +195,7 @@ export function stepRoot(state: RootState, event: Event): S {
 
 function awaitOf(state: RootState): Await | null {
   switch (state.tag) {
+    case 'design': return designAwait(state.child);
     case 'ask': return askAwait(state.child);
     case 'plan': return planAwait(state.child);
     case 'review': return reviewAwait(state.child);
@@ -194,6 +209,7 @@ function awaitOf(state: RootState): Await | null {
 
 function project(state: RootState): { at: string; data: Readonly<Record<string, unknown>> } {
   switch (state.tag) {
+    case 'design': return { at: `design › ${state.child.tag}`, data: designData(state.child) };
     case 'booting': case 'handoff': return { at: `root › ${state.tag}`, data: {} };
     case 'ask': return { at: `ask › ${state.child.tag}`, data: askData(state.child) };
     case 'plan': return { at: `plan › ${state.child.tag}${state.child.tag === 'review' ? ` › ${state.child.review.tag}` : ''}`, data: planData(state.child) };
@@ -211,6 +227,7 @@ function project(state: RootState): { at: string; data: Readonly<Record<string, 
 
 function validate(state: RootState, event: HostEvent): string | null {
   switch (state.tag) {
+    case 'design': return validateDesign(state.child, event);
     case 'ask': return validateAsk(state.child, event);
     case 'plan': return validatePlan(state.child, event);
     case 'review': return validateReview(state.child, event);
@@ -241,6 +258,12 @@ function writeSection(ports: Ports, file: string, review: ReviewState): void {
   writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(resolutionRounds(review.c))));
 }
 
+function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string): void {
+  if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview);
+  const walkthrough = renderImplementWalkthrough(implementation);
+  if (walkthrough) writeIfChanged(ports, walkthroughPath, walkthrough);
+}
+
 function render(state: RootState, ports: Ports, runDir: string): void {
   if (state.tag === 'revision') {
     const r = state.child.r;
@@ -250,15 +273,37 @@ function render(state: RootState, ports: Ports, runDir: string): void {
   }
   const child = childOf(state);
   if (!child || state.tag === 'booting') return;
+  if (child.verb === 'design') {
+    const design = child.state;
+    if (design.c.designReview && 'c' in design.c.designReview) writeSection(ports, design.c.designReview.c.spec.target, design.c.designReview);
+    const integration = design.c.integrationReview;
+    if (integration && 'c' in integration) writeIfChanged(ports, reportPathOf(runDir, `${state.run.slug}-integration`), renderReport({ title: 'Design integration', kind: 'code', target: design.c.path, summary: `Integration of ${design.c.hash}`, rounds: resolutionRounds(integration.c) }));
+    if (design.tag === 'revision') {
+      const r = design.child;
+      if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.path));
+      if (r.tag === 'review') writeSection(ports, r.workingPath, r.review);
+    }
+    if (design.tag === 'plan-revision') {
+      const r = design.child.r;
+      if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.planPath));
+      if (design.child.tag === 'review') writeSection(ports, r.workingPath, design.child.review);
+    }
+    if (design.tag === 'review') writeSection(ports, design.c.path, design.review);
+    for (const [id, history] of Object.entries(design.c.histories)) {
+      renderImplementation(ports, history.at(-1)!, `${sessionDirOf(runDir)}/${state.run.slug}-${id.toLowerCase()}.walkthrough.md`);
+    }
+    if (design.tag === 'increment') {
+      renderImplementation(ports, design.child, `${sessionDirOf(runDir)}/${state.run.slug}-${design.increment.toLowerCase()}.walkthrough.md`);
+    }
+    return;
+  }
   if (child.verb === 'plan') {
     const plan = child.state;
     if ('review' in plan && plan.review !== null && 'c' in plan.review) writeSection(ports, plan.review.c.spec.target, plan.review);
     return;
   }
   if (child.verb === 'implement') {
-    if ('c' in child.state && child.state.c?.planReview) writeSection(ports, child.state.c.planPath, child.state.c.planReview);
-    const walkthrough = renderImplementWalkthrough(child.state);
-    if (walkthrough) writeIfChanged(ports, `${sessionDirOf(runDir)}/${state.run.slug}.walkthrough.md`, walkthrough);
+    renderImplementation(ports, child.state, `${sessionDirOf(runDir)}/${state.run.slug}.walkthrough.md`);
     return;
   }
   if (child.verb !== 'review') return;
@@ -275,6 +320,9 @@ function render(state: RootState, ports: Ports, runDir: string): void {
 // SECTION: Machine
 
 export const rootTransitions = [
+  { from: 'booting', on: 'RUN_STARTED', to: 'design' },
+  { from: 'design', on: 'DECISION', to: 'handoff' },
+  { from: 'design', on: 'EFFECT_FAILED', to: 'handoff' },
   { from: 'implement', on: 'SNAPSHOT', to: 'revision' },
   { from: 'revision', on: 'ARTIFACT_PARSED', to: 'implement' },
   { from: 'booting', on: 'RUN_STARTED', to: 'ask' },

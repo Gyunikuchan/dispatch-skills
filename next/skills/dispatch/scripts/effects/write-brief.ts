@@ -25,6 +25,8 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
   rows.push(['Governing outcome', render(input['governingOutcome'])]);
   rows.push(['Settled scope', render(input['settledScope'])]);
   rows.push(['Criteria', render(input['criteria'])]);
+  if (input['designBinding']) rows.push(['Governing design and inherited contract', render(input['designBinding'])]);
+  if (input['reopenedDefects']) rows.push(['Integration repair context', render(input['reopenedDefects'])]);
   rows.push(['Envelope schema', render(input['envelopeSchema'])]);
   if (input['existingRedMatrix'] !== undefined) rows.push(['Existing RED matrix', render(input['existingRedMatrix'])]);
   if (input['admissionDefects'] !== undefined) rows.push(['Admission defects', render(input['admissionDefects'])]);

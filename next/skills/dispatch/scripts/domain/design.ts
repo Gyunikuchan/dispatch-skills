@@ -112,6 +112,31 @@ function parseExecutionStatus(lines: readonly StructuralLine[], ids: ReadonlySet
 export type DesignResult =
   | { ok: true; design: ParsedDesign }
   | { ok: false; defects: LintDefect[] };
+/** Concrete design guard at journal-consuming machine boundaries. */
+export function asParsedDesign(value: unknown): ParsedDesign | null {
+  const record = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  if (!record(value) || !record(value['box']) || !Object.values(value['box']).every((v) => typeof v === 'string') || !record(value['details']) || typeof value['governedText'] !== 'string' || !Array.isArray(value['increments']) || !value['increments'].length) return null;
+  const details = value['details'];
+  if (typeof value['box']['TL;DR'] !== 'string' || !value['box']['TL;DR'].trim()) return null;
+  if (!Object.values(details).every((row) => record(row) && Object.values(row).every((v) => typeof v === 'string'))) return null;
+  if (!value['increments'].every((row) => record(row) && /^I\d{2}$/.test(String(row['id'])) && Number.isInteger(row['priority']) && typeof row['summary'] === 'string' && record(details[String(row['id'])]) && Array.isArray(row['prerequisites']) && row['prerequisites'].every((v) => typeof v === 'string') && Array.isArray(row['paths']) && row['paths'].length > 0 && row['paths'].every((v) => typeof v === 'string' && v.trim()))) return null;
+  const design = value as unknown as ParsedDesign;
+  const ids = new Set(design.increments.map((row) => row.id));
+  const priorities = design.increments.map((row) => row.priority).sort((a, b) => a - b);
+  if (ids.size !== design.increments.length || priorities.some((n, i) => n !== i + 1) || [...ids].sort().some((id, i) => id !== `I${String(i + 1).padStart(2, '0')}`)) return null;
+  if (design.increments.some((row) => row.prerequisites.some((id) => !ids.has(id)))) return null;
+  const graph = new Map(design.increments.map((row) => [row.id, row.prerequisites]));
+  const visited = new Set<string>(), visiting = new Set<string>();
+  const acyclic = (id: string): boolean => {
+    if (visiting.has(id)) return false;
+    if (visited.has(id)) return true;
+    visiting.add(id);
+    if (!(graph.get(id) ?? []).every(acyclic)) return false;
+    visiting.delete(id); visited.add(id);
+    return true;
+  };
+  return [...ids].every(acyclic) ? design : null;
+}
 
 export function governedDesignText(source: string): string {
   return withoutSections(source, [EXECUTION_STATUS_HEADING, RESOLUTION_HEADING]);

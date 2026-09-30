@@ -82,11 +82,17 @@ export type ScopeRequest = Payload; // I04
 export type RosterSlot = Payload; // I02
 export type VerifyCommand = Payload; // I04
 export type BriefInput = Payload; // I05
+export type IntegrationScope = { baseline: string; revision: string; ownership: Readonly<Record<string, readonly string[]>> };
 export type PathSet = readonly string[]; // I05
 
 // SECTION: Events
 
+export type DesignApproval =
+  | { by: 'user'; quote: string; hash: string }
+  | { by: 'revision'; quote: string; hash: string; basedOn: string; revisions: readonly { before: string; after: string }[] };
+
 export type RunStartedEvent = {
+  designApproval?: DesignApproval;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
   pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
   overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;

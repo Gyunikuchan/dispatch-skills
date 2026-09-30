@@ -5,6 +5,7 @@ import { asParsedPlan, approvedPaths, commandMappings, recoverySnapshot, driftAn
 import { classifyDrift } from '../policy/drift.ts';
 import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, nextId, stay, type Step } from './types.ts';
+import { validateDesignTraceability } from '../domain/plan.ts';
 
 export type RevisionContext = {
   parent: ImplementState; c: Context; original: ParsedPlan; originalHash: string; workingPath: string;
@@ -55,6 +56,10 @@ function applyRevision(state: RevisionState, event: Event): S {
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);
       const plan = asParsedPlan(event.parsed);
       if (!plan || event.defects.length || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', r: state.r, error: 'Revision parser rejected its concrete plan/hash.' });
+      if (state.r.c.designBinding) {
+        const defects = validateDesignTraceability(plan, state.r.c.designBinding);
+        if (defects.length) return stay({ tag: 'author', r: state.r, error: defects.join(' ') });
+      }
       if (plan.box['TL;DR'] !== state.r.original.box['TL;DR']) return stay({ tag: 'refused', r: state.r, error: 'TL;DR objective cannot change during plan revision.' });
       const r = { ...state.r, plan, hash: event.hash, ...revisionDelta(state.r.original, plan) };
       if (state.afterReview || event.hash === r.originalHash) return stay({ tag: 'resume', r });

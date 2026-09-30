@@ -7,6 +7,13 @@ import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.ts';
 import { implementMachine } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { beginRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
+import { started } from './design-delivery.test.ts';
+import { integration } from './design-integration.test.ts';
+import { hash as designHash, design, run as designRun, approval as designApproval } from './design.test.ts';
+import { beginDesign, stepDesign, transitions as designTransitions, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
+import { beginDesignRevision, stepDesignRevision, transitions as designRevisionTransitions, type DesignRevisionState } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
+import { beginReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
 
 // SECTION: Scenario vocabulary (each step answers the newest open effect)
 
@@ -45,8 +52,8 @@ const regression = [prepared, wave([f(1)]), rule('accept'), applied, verified(),
 const IMPLEMENT_HASH = `sha256:${'a'.repeat(64)}`;
 const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
-  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
-  changes: withEvidence ? [{ action: 'MODIFY', path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
+  criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
+  changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
 });
 const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
@@ -161,12 +168,14 @@ test('plan transitions table matches step', () => {
 
 test('root transitions table matches step', () => {
   parity(rootMachine, [
+    [run('ask', badPins)],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot,
       { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'check report' }, { type: 'AUTHORED', path: '/session/revision-1.plan.md' }, implementParsed()],
     [run('ask'), prepared, wave([]), handed], [run('ask'), failed, failed],
     [run('implement'), failed], [run('implement', { argument: 'x.plan.md', overrides: { path: 'x.plan.md', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } }, config: implementRun().config }), implementSnapshot, implementBadParsed, implementSnapshot, { type: 'DECISION', kind: 'failure', answer: 'stop' }],
     [implementRun(), implementSnapshot, implementParsed(), implementSnapshot, implementVerified, implementSnapshot, implementApprovalStop],
-    implementsToTerminal(false), implementsToTerminal(true), [run('design'), failed],
+    implementsToTerminal(false), implementsToTerminal(true), [run('design'), { type: 'AUTHORED', path: 'dispatch.design.md' }, failed],
+    [designRun(), { type: 'AUTHORED', path: 'x.design.md' }, (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'design', hash: designHash, parsed: design, defects: [] }), (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'design', hash: designHash, parsed: design, defects: [] }), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash: designHash } }],
     [run('plan', {}, 0), authored, parsed()], [run('plan'), authored, failed], [run('plan'), authored, parsed(), prepared, wave([])],
     [run('plan'), authored, parsed(), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('reject')],
     [run('plan'), authored, parsed(), ...regression.slice(0, 3), applied, parsed(), prepared, wave([f(2)]), decide('escalation', 'stop')],
@@ -200,4 +209,114 @@ test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a 
   for (const effectId of journal.ids) assert.match(effectId, EFFECT_ID_PATTERN);
   assert.equal(new Set(journal.ids).size, journal.ids.length);
   assert.equal(journal.ids.at(-1), 'root.handoff.1');
+});
+test('every design and design revision transition row has a reducer fixture', () => {
+  const authored = beginDesign(designRun()).state;
+  const parsing = stepDesign(authored, { type: 'AUTHORED', path: 'x.design.md' }).state;
+  if (parsing.tag !== 'parse') throw new Error('parse');
+  const good: Event = { type: 'ARTIFACT_PARSED', effectId: parsing.effectId, kind: 'design', hash: designHash, parsed: design, defects: [] };
+  const failure: Event = { type: 'EFFECT_FAILED', effectId: parsing.effectId, cls: 'io', detail: 'Read failed' };
+  const reviewRun = { ...designRun(), config: { ...designRun().config, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } } } } };
+  const approve: Event = { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash: designHash } };
+  const baseline = stepDesign(designApproval('implement'), approve).state;
+  if (baseline.tag !== 'baseline') throw new Error('baseline');
+  const pairs: readonly [DesignState, Event][] = [
+    [authored, { type: 'AUTHORED', path: 'x.design.md' }],
+    [parsing, { ...good, defects: [{ message: 'Lint' }] }], [parsing, failure],
+    [{ ...parsing, c: { ...parsing.c, run: reviewRun } }, good], [{ ...parsing, afterReview: true }, good],
+    [designApproval(), approve], [designApproval('implement'), approve], [designApproval(), { type: 'DECISION', kind: 'approval', answer: 'stop' }],
+    [baseline, { type: 'SNAPSHOT', effectId: baseline.effectId, fingerprint: { head: 'a'.repeat(40) }, diff: {} }],
+    [baseline, { type: 'SNAPSHOT', effectId: baseline.effectId, fingerprint: { head: null }, diff: {} }],
+    [baseline, { type: 'EFFECT_FAILED', effectId: baseline.effectId, cls: 'io', detail: 'Read failed' }],
+  ];
+  const observed = pairs.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesign(state, event).state.tag}`);
+  const c = { ...designApproval().c, run: reviewRun };
+  const author = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
+  const parse = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath }).state;
+  if (parse.tag !== 'parse') throw new Error('revision parse');
+  const revisionParsed: Event = { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parse.effectId, hash: `sha256:${'b'.repeat(64)}`, parsed: { ...design, details: { ...design.details, I02: { Outcome: 'Changed' } } }, defects: [] };
+  const begun = beginReview({ kind: 'design', mode: 'fix', target: author.workingPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.revision.review', c.counters).state;
+  if (!('c' in begun)) throw new Error('review context');
+  const rc = { ...begun.c, effectId: 'review-result', round: 1, optInAsked: true };
+  const review = (state: ReviewState): DesignRevisionState => ({ tag: 'review', c, workingPath: author.workingPath, reason: 'repair', evidence: 'finding', review: state });
+  const revisions: readonly [DesignRevisionState, Event][] = [
+    [author, { type: 'AUTHORED', path: author.workingPath }], [parse, revisionParsed],
+    [parse, { ...revisionParsed, defects: [{ message: 'Lint' }] }],
+    [parse, { ...revisionParsed, parsed: { ...design, box: { 'TL;DR': 'New objective' } } }],
+    [{ ...parse, afterReview: true }, revisionParsed],
+    [parse, { type: 'EFFECT_FAILED', effectId: parse.effectId, cls: 'io', detail: 'Read failed' }],
+    [review({ tag: 'wave', c: rc, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }],
+    [review({ tag: 'rule', c: rc }), { type: 'RULINGS', rulings: {} }],
+    [review({ tag: 'fix-verify', c: rc, clusters: [], pass: 'main' }), { type: 'ARTIFACT_PARSED', effectId: 'review-result', kind: 'design', hash: designHash, parsed: design, defects: [] }],
+    [review({ tag: 'decide-opt-in', c: rc, items: [] }), { type: 'DECISION', kind: 'opt-in', answer: [] }],
+    [review({ tag: 'prepare', c: rc }), { type: 'REVIEW_PREPARED', effectId: 'review-result', scope: { empty: true }, promptPaths: {} }],
+    [review({ tag: 'decide-escalation', c: rc, escalation: { kind: 'regression', ids: [] } }), { type: 'DECISION', kind: 'escalation', answer: 'stop' }],
+    [review({ tag: 'prepare', c: rc }), { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }],
+  ];
+  const seen = revisions.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesignRevision(state, event).state.tag}`);
+  assert.deepEqual(new Set(seen), new Set(designRevisionTransitions.map((row) => `${row.from} --${row.on}--> ${row.to}`)));
+
+  const extra: [DesignState, Event][] = [];
+  const dReview = (child: ReviewState): DesignState => ({ tag: 'review', c, review: child });
+  for (const [child, event] of [
+    [{ tag: 'wave', c: rc, phase: 'cli' }, { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }],
+    [{ tag: 'rule', c: rc }, { type: 'RULINGS', rulings: {} }],
+    [{ tag: 'fix-verify', c: rc, clusters: [], pass: 'main' }, { type: 'ARTIFACT_PARSED', effectId: 'review-result', kind: 'design', hash: designHash, parsed: design, defects: [] }],
+    [{ tag: 'decide-opt-in', c: rc, items: [] }, { type: 'DECISION', kind: 'opt-in', answer: [] }],
+    [{ tag: 'prepare', c: rc }, { type: 'REVIEW_PREPARED', effectId: 'review-result', scope: { empty: true }, promptPaths: {} }],
+    [{ tag: 'decide-escalation', c: rc, escalation: { kind: 'regression', ids: [] } }, { type: 'DECISION', kind: 'escalation', answer: 'stop' }],
+    [{ tag: 'prepare', c: rc }, { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }],
+  ] as readonly [ReviewState, Event][]) extra.push([dReview(child), event]);
+  extra.push([{ ...parsing, c: { ...parsing.c, run: { ...parsing.c.run, verb: 'implement' }, approval: { by: 'user', quote: 'Approved', hash: designHash } } }, good]);
+
+  const active = started();
+  if (active.tag !== 'increment' || !('c' in active.child) || !active.child.c) throw new Error('active increment');
+  const fingerprint = { head: 'h', index: 'i', worktree: 'w' };
+  const binding = active.child.c.designBinding!;
+  const boundPlan = { ...implementPlan(), traceability: { Design: binding.path, Revision: binding.revision, Increment: binding.increment, ...binding.contract } };
+  const context = { ...active.child.c, plan: boundPlan, planHash: IMPLEMENT_HASH, lastFingerprint: fingerprint, startFingerprint: fingerprint };
+  const activeParent: DesignState = { ...active, child: { tag: 'author', c: context, defects: [] } };
+  const planRevision = stepDesign(activeParent, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' });
+  extra.push([planRevision.state, { type: 'SNAPSHOT', effectId: planRevision.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
+  const stop = stepDesign({ ...active, child: { tag: 'failure', c: context, reason: 'Stop', changedPaths: [] } }, { type: 'DECISION', kind: 'failure', answer: { action: 'stop' } });
+  extra.push([stop.state, { type: 'SNAPSHOT', effectId: stop.effects[0]!.id, fingerprint, diff: { paths: [] } }]);
+  extra.push([{ ...active, c: { ...active.c, completed: ['I02'], ownership: { I02: ['src/b.ts'] } }, child: { tag: 'final-verify', c: { ...context, changedPaths: ['src/a.ts'] }, effectId: 'final', before: fingerprint } }, { type: 'VERIFY_DONE', effectId: 'final', purpose: 'final', results: [], fingerprint }]);
+  const revision = beginRevision({ tag: 'author', c: context, defects: [] }, { type: 'REVISE', artifact: 'plan', reason: 'repair', evidence: 'finding' }).state;
+  if (!('r' in revision)) throw new Error('revision context');
+  const planParent: DesignState = { tag: 'plan-revision', c: active.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'plan-result', afterReview: true } };
+  extra.push([planParent, { type: 'ARTIFACT_PARSED', kind: 'plan', effectId: 'plan-result', hash: IMPLEMENT_HASH, parsed: boundPlan, defects: [] }]);
+  extra.push([{ ...planParent, child: { tag: 'drift', r: revision.r, parent: revision, parked: { type: 'AUTHORED', path: revision.r.workingPath }, paths: ['caller.ts'], fingerprint } }, { type: 'DECISION', kind: 'drift', answer: { 'caller.ts': 'stop' } }]);
+
+  const integrated = integration();
+  if (integrated.tag !== 'integration' || !('c' in integrated.review)) throw new Error('integration');
+  const codeCtx = { ...rc, spec: { ...rc.spec, kind: 'code' as const, mode: 'report' as const } };
+  const iReview = (child: ReviewState): DesignState => ({ ...integrated, review: child });
+  extra.push([integrated, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
+  extra.push([{ ...integrated, c: { ...integrated.c, ownership: {} } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
+  extra.push([{ ...integrated, review: { ...integrated.review, c: { ...integrated.review.c, findings: integrated.review.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
+  extra.push([iReview({ tag: 'rule', c: codeCtx }), { type: 'RULINGS', rulings: {} }]);
+  extra.push([iReview({ tag: 'wave', c: codeCtx, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }]);
+  extra.push([iReview({ tag: 'decide-opt-in', c: codeCtx, items: [] }), { type: 'DECISION', kind: 'opt-in', answer: [] }]);
+  extra.push([iReview({ tag: 'decide-escalation', c: codeCtx, escalation: { kind: 'regression', ids: [] } }), { type: 'DECISION', kind: 'escalation', answer: 'stop' }]);
+  extra.push([iReview({ tag: 'prepare', c: codeCtx }), { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }]);
+  extra.push([iReview({ tag: 'prepare', c: codeCtx }), { type: 'REVIEW_PREPARED', effectId: 'review-result', scope: { empty: true }, promptPaths: {} }]);
+  const skipped: DesignState = { ...integrated, scopeEffectId: 'scope', review: { tag: 'skipped', c: codeCtx } };
+  extra.push([skipped, { type: 'REVIEW_PREPARED', effectId: 'scope', scope: { empty: false, paths: ['src/a.ts'] }, promptPaths: {} }]);
+
+  const request: Event = { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' };
+  for (const parent of [{ tag: 'author', c, defects: [] }, dReview({ tag: 'rule', c: rc }), designApproval(), activeParent, integrated] as DesignState[]) {
+    extra.push([parent, request]);
+    const begun = stepDesign(parent, request).state;
+    if (begun.tag !== 'revision') throw new Error('design revision');
+    const parsed = stepDesign(begun, { type: 'AUTHORED', path: begun.child.workingPath });
+    extra.push([parsed.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: parsed.effects[0]!.id, hash: designHash, parsed: { ...design, box: { 'TL;DR': 'Other objective' } }, defects: [] }]);
+  }
+  const rStart = beginDesignRevision(active.c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'finding' }).state;
+  const rParsed = stepDesignRevision(rStart, { type: 'AUTHORED', path: rStart.workingPath });
+  if (rParsed.state.tag !== 'parse') throw new Error('parse');
+  extra.push([{ tag: 'revision', c: active.c, child: rParsed.state }, { type: 'EFFECT_FAILED', effectId: rParsed.state.effectId, cls: 'io', detail: 'Read failed' }]);
+  extra.push([{ tag: 'revision', c: { ...active.c, approval: null }, child: { ...rParsed.state, c: { ...active.c, approval: null }, afterReview: true } }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rParsed.state.effectId, hash: designHash, parsed: design, defects: [] }]);
+  extra.push([{ tag: 'revision', c: integrated.c, child: { ...rParsed.state, c: integrated.c, afterReview: true } }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rParsed.state.effectId, hash: designHash, parsed: design, defects: [] }]);
+  const all = [...observed, ...extra.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesign(state, event).state.tag}`)];
+  assert.deepEqual(new Set(all), new Set(designTransitions.map((row) => `${row.from} --${row.on}--> ${row.to}`)));
 });

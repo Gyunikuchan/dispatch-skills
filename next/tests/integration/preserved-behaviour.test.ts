@@ -41,8 +41,8 @@ export function checkMatrix(matrix: unknown, read: ReadFile): string[] {
       if (text === null) errors.push(`${where} ${key} lists missing ${file}; fix the path or remove it`);
       else if (!text.includes(key)) errors.push(`${where} ${key} lists ${file}, which never mentions ${key}; name the key in the covering test`);
     }
-    if ((matrix['complete'] === true || row['increment'] === 'I06') && row['tests'].length + row['checks'].length === 0) {
-      errors.push(`${where} ${matrix['complete'] === true ? 'is complete but' : 'I06 requires coverage but'} ${key} lists no test or check; cover the row or set complete: false`);
+    if ((matrix['complete'] === true || ['I06', 'I07'].includes(row['increment'])) && row['tests'].length + row['checks'].length === 0) {
+      errors.push(`${where} ${matrix['complete'] === true ? 'is complete but' : `${row['increment']} requires coverage but`} ${key} lists no test or check; cover the row or set complete: false`);
     }
   }
   return errors;
@@ -76,4 +76,5 @@ test('violations name the rule and the fix', () => {
     'is complete but Bad_Key lists no test or check; cover the row or set complete: false',
   ]);
   assert.match(checkMatrix([], read)[0] ?? '', /must be \{ complete: boolean, rows: \[\] \}/);
+  assert.match(checkMatrix({ complete: false, rows: [{ key: 'design-revision', clause: 'c', increment: 'I07', tests: [], checks: [] }] }, read).join('\n'), /I07 requires coverage but/);
 });

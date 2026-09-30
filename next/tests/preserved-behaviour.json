@@ -390,63 +390,63 @@
       "key": "design-stops-at-approval",
       "clause": "`design` stops at approval",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design.test.ts"],
       "checks": []
     },
     {
       "key": "design-implement-delivers-all",
       "clause": "`implement: {design-path}` delivers all increments then integration",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-delivery.test.ts"],
       "checks": []
     },
     {
       "key": "design-governed-hash",
       "clause": "approval bound to governed hash",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design.test.ts"],
       "checks": []
     },
     {
       "key": "design-increment-selection",
       "clause": "increment selection by graph priority",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-delivery.test.ts"],
       "checks": []
     },
     {
       "key": "design-derived-approvals",
       "clause": "derived approvals",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-delivery.test.ts"],
       "checks": []
     },
     {
       "key": "design-traceability",
       "clause": "traceability section",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-delivery.test.ts"],
       "checks": []
     },
     {
       "key": "design-integration-ownership",
       "clause": "integration ownership and fail-closed rules",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-integration.test.ts"],
       "checks": []
     },
     {
       "key": "design-reopen-on-defect",
       "clause": "reopen on defect",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-integration.test.ts"],
       "checks": []
     },
     {
       "key": "design-revision",
       "clause": "revision",
       "increment": "I07",
-      "tests": [],
+      "tests": ["tests/unit/machines/design-revision.test.ts"],
       "checks": []
     },
     {

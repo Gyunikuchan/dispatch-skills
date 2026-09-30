@@ -46,7 +46,7 @@ test('root selects each verb', () => {
   assert.deepEqual(review.effects.map((effect) => effect.id), ['review.prepare-review.1']);
 });
 
-test('implement routes into its reducer; design remains a deferred failed stub', () => {
+test('implement routes into its reducer; design routes into authoring', () => {
   const implementation = drive([started('implement')]);
   assert.deepEqual(implementation.effects.map((effect) => effect.kind), ['snapshot']);
   assert.equal(rootMachine.project(implementation.state).at, 'implement › starting');
@@ -59,9 +59,10 @@ test('implement routes into its reducer; design remains a deferred failed stub',
   assert.equal((frame?.data['completion'] as Record<string, unknown>)['planPath'], 'src-a-ts.plan.md');
 
   const design = drive([started('design')]);
-  assert.deepEqual(design.effects, [{ kind: 'handoff', id: 'root.handoff.1', terminal: true }]);
-  const deferred = play(rootMachine, [started('design'), handoffDone()]).at(-1);
-  assert.deepEqual(deferred?.data, { outcome: 'failed', summary: 'verb design not available until I07', handoff: '/tmp/dispatch-skills/s' });
+  assert.deepEqual(design.effects, []);
+  assert.equal(rootMachine.awaitOf(design.state), 'author');
+  assert.equal(rootMachine.project(design.state).at, 'design › author');
+  assert.equal(rootMachine.project(design.state).data['artifact'], 'design');
 });
 
 test('grammar-review-infers: --kind wins, then .plan.md / .design.md, else code', () => {

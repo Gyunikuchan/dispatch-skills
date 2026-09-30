@@ -9,12 +9,16 @@ import { answers, isRecord, never, nextId, stay, type Counters, type Step } from
 import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
 import { classifyDrift } from '../policy/drift.ts';
 import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
+import { validateDesignTraceability } from '../domain/plan.ts';
+import type { DesignBinding } from './implement-types.ts';
 
 export const IMPLEMENT_TEMPLATE = 'references/templates/plan.md';
 export const MAX_WRITE_ATTEMPTS = 3;
 
 type PlanReviewResult = 'initial' | 'rebind';
 export type Context = {
+  designBinding?: DesignBinding;
+  machinePath?: string;
   run: RunStartedEvent;
   planPath: string;
   counters: Counters;
@@ -145,7 +149,7 @@ function baseContext(run: RunStartedEvent): Context {
 }
 
 function effectId(c: Context, kind: Effect['kind']): { c: Context; id: string } {
-  const next = nextId(c.counters, 'implement', kind);
+  const next = nextId(c.counters, c.machinePath ?? 'implement', kind);
   return { c: { ...c, counters: next.counters }, id: next.id };
 }
 
@@ -178,7 +182,8 @@ function reviewCtxCounters(review: ReviewState, fallback: Counters): Counters {
 function startReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'plan', 'fix', c0.planPath);
   if (!built.ok) return beginFailure(c0, built.error);
-  const result = beginReview(built.spec, 'implement.plan-review', c0.counters);
+  const spec = c0.designBinding ? { ...built.spec, context: `${built.spec.context}\nGoverning design binding: ${JSON.stringify(c0.designBinding)}` } : built.spec;
+  const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review`, c0.counters);
   return fromPlanReview(c0, result);
 }
 
@@ -241,7 +246,9 @@ function afterBaseline(c: Context, results: readonly VerifyRecord[]): S {
   return { state: { tag: 'baseline-snapshot', c: next, effectId: id, results }, effects: [{ kind: 'snapshot', id, since: c.startFingerprint }] };
 }
 
-function beginApproval(c: Context): S { return stay({ tag: 'approval', c }); }
+export function beginApproval(c: Context): S {
+  return c.designBinding ? beginPostApproval({ ...c, approval: { by: 'design', quote: `${c.designBinding.approval.quote} (${c.designBinding.revision}, ${c.designBinding.increment})` } }) : stay({ tag: 'approval', c });
+}
 
 function redCriteria(c: Context): PlanCriterion[] {
   return (c.plan?.criteria ?? []).filter((criterion) => criterion.evidence === 'red');
@@ -270,6 +277,7 @@ function briefInput(c: Context, stage: ImplementStage, repair: boolean, admissio
   ];
   return {
     planPath: c.planPath, planHash: c.planHash,
+    designBinding: c.designBinding, reopenedDefects: c.designBinding?.repair,
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c.planPath },
     settledScope: { paths, approvedPaths: stage === 'production' ? scopePaths(c) : paths, changes: stage === 'production' ? plan.changes : plan.changes.filter((change) => paths.includes(change.path)) },
     criteria: selected.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence, preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
@@ -448,7 +456,7 @@ function continueAfterScopedEvidence(c: Context, _verify: readonly VerifyRecord[
 function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
-  const result = beginReview({ ...built.spec, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, 'implement.code-review', c0.counters);
+  const result = beginReview({ ...built.spec, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
   return fromCodeReview(c0, result);
 }
 
@@ -524,6 +532,10 @@ function startFailureFromEffect(c: Context, cls: string, detail: string): S {
 }
 
 export function initialImplement(): ImplementState { return { tag: 'booting', counters: emptyCounters }; }
+export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters): S {
+  const c = { ...baseContext(run), counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement` };
+  return snapshot(c, 'author');
+}
 
 function applyImplement(state: ImplementState, event: Event): S {
   if (event.type === 'REVISE' && 'c' in state && state.c && !validateImplement(state, event)) return stay({ tag: 'revision-request', c: state.c, parent: state, event });
@@ -554,6 +566,10 @@ function applyImplement(state: ImplementState, event: Event): S {
       const plan = asParsedPlan(event.parsed);
       if (!plan || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return beginFailure(state.c, 'Plan parser returned an invalid payload or governed hash.');
       const c = { ...state.c, plan, planHash: event.hash, planPath: state.c.planPath };
+      if (c.designBinding) {
+        const defects = validateDesignTraceability(plan, c.designBinding);
+        if (defects.length) return authorPlan(c, defects.map((message) => ({ message })));
+      }
       const settled = settledPlanInput(state.c.run.overrides['settledPlan']);
       if (state.phase === 'initial' && settled && settled.path === c.planPath && settled.hash === event.hash) return beginBaseline(c);
       if (state.phase === 'rebind') return beginBaseline(c);

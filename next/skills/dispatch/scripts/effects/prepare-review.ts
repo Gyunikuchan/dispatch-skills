@@ -9,6 +9,7 @@ import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
 import type { Git } from './git.ts';
+import type { IntegrationScope } from '../core/types.ts';
 
 type PrepareEffect = Extract<Effect, { kind: 'prepare-review' }>;
 type Row = Readonly<Record<string, unknown>>;
@@ -19,6 +20,11 @@ type Carried = { id: string; slot: string | null; locus: string; defect: string;
 
 const isRecord = (value: unknown): value is Row => typeof value === 'object' && value !== null && !Array.isArray(value);
 const text = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
+export function integrationScope(value: unknown): IntegrationScope {
+  if (!isRecord(value) || typeof value['baseline'] !== 'string' || !/^[a-f0-9]{40,64}$/.test(value['baseline']) || typeof value['revision'] !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value['revision']) || !isRecord(value['ownership']) || !Object.keys(value['ownership']).length) throw new Error('Integration requires a recorded baseline, governed revision and journal-owned increment paths.');
+  for (const [id, paths] of Object.entries(value['ownership'])) if (!/^I\d{2}$/.test(id) || !Array.isArray(paths) || !paths.length || !paths.every((p) => typeof p === 'string' && !!p && !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]/).includes('..'))) throw new Error('Integration ownership is missing or unsafe.');
+  return value as IntegrationScope;
+}
 
 function carriedOf(scope: Row): Carried[] {
   const list = Array.isArray(scope['carried']) ? scope['carried'] : [];
@@ -70,6 +76,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     const carried = carriedOf(scope);
     const results: ResultEvent[] = [];
     let changed: string[] = [];
+    let integrationBound: IntegrationScope | null = null;
     let body: (slot: string) => string;
     try {
       if (kind === 'ask') {
@@ -77,7 +84,19 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         body = () => prompt;
       } else {
         if (kind === 'code') {
-          changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
+          let integration: unknown = scope['integration'];
+          if (integration === undefined && text(spec['context']).startsWith('{')) {
+            const context: unknown = JSON.parse(text(spec['context']));
+            if (isRecord(context)) integration = context['integration'];
+          }
+          if (integration !== undefined) {
+            const bound = integrationScope(integration);
+            integrationBound = bound;
+            if (!deps.git.ancestor || !deps.git.baselineDiff || !await deps.git.ancestor(deps.cwd, bound.baseline)) throw new Error('Integration baseline is not an ancestor of HEAD.');
+            const owned = new Set(Object.values(bound.ownership).flat());
+            changed = (await deps.git.baselineDiff(deps.cwd, bound.baseline)).filter((p) => owned.has(p));
+            if (!changed.length) throw new Error('Integration has an empty intersection with journal-owned paths.');
+          } else changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
         }
         const dir = path.join(deps.skillRoot, 'references', 'templates');
@@ -89,7 +108,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           ...kindValues(kind, spec, reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']))),
         };
         const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
-        body = (slot) => `${filled}${carriedSection(carried, slot)}`;
+        body = (slot) => `${filled}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;
       }
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];
