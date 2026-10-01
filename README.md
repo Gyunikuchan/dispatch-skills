@@ -72,7 +72,11 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 ## Install
 
 ```bash
+# Latest from main
 npx skills add Gyunikuchan/dispatch-skills -s '*'
+
+# Specific branch or tag
+npx skills add Gyunikuchan/dispatch-skills#<branch-or-tag> -s '*'
 ```
 
 Requires Node.js `^22.18 || >=23.6` with native TypeScript stripping and at least one supported agent CLI on your `PATH`:
