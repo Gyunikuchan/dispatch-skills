@@ -26,6 +26,6 @@ OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obt
 
 Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes.
 
-Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Handoff moves the entire folder to OS temp and reports its path; reactivate it before later work. Wave journals require protocol revision 2. Historical journals without that revision fail `unsupported-journal-protocol`; preserve their artifacts and start a new run rather than replaying incompatible events.
+Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Sessions remain in the workspace under `.scratch/dispatch-skills/` for the user to clean up. Wave journals require protocol revision 2. Historical journals without that revision fail `unsupported-journal-protocol`; preserve their artifacts and start a new run rather than replaying incompatible events.
 
 Sandbox failure is strict. An explicit `sandbox:false` opts out of OS isolation while native read-only tool controls remain. Ambient credential stripping and sensitive attachment checks do not isolate native authenticated profiles or enforce file-read permissions by themselves.

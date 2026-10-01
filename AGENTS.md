@@ -11,13 +11,13 @@ Deliver high-confidence collaborative development workflows across native agent 
 - **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; emit mode- or state-specific instructions at branch points rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
 - **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
 - **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; Runner harnesses sanitize outputs.
-- **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to OS temp. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
+- **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to the session scratch directory. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
 - **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
 
 ## Communication
 
-Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Summarize findings compactly, linking to artifacts/temp logs rather than relaying verbose traces or reports in chat.
+Terse, high-signal: fragments OK, omit filler/hedging, preserve exact terms, code, and units. Standard prose for security warnings, destructive actions, code, docs, commits, and PRs. Summarize findings compactly, linking to artifacts or run logs rather than relaying verbose traces or reports in chat.
 
 ## Ask Before You Assume
 

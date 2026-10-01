@@ -12,7 +12,7 @@ Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`
 
 ## Run loop
 
-1. Initialize this chat with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist returned `sessionDir` and `sessionId`; use `--session-id` for a fallback identity on later initialization. Reactivate a published folder with `session reactivate --session-dir <dir>` before later work.
+1. Initialize this chat with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist returned `sessionDir` and `sessionId`; use `--session-id` for a fallback identity on later initialization. Retain the folder across runs with `session reactivate --session-dir <dir>`.
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit one JSON frame; doctor emits a table or `--json` diagnostics.
 3. Run `send --run <dir> [--event @<event-file>]` in the background, retain its handle, and wait for completion or a blocker. Fill current `events` with observed evidence and user quotes; reply once per `await` until `done`. Eventless send resumes automatic work.
 

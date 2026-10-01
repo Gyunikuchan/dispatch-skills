@@ -13,7 +13,7 @@ test('handoff computes the destination without moving anything', async () => {
   const deps = { tempRoot: path.join(root, 'tmp'), workspaceRoot: path.join(root, 'ws') };
   assert.equal(sessionDirOf(runDir), session);
   const [terminal] = await createHandoff(deps)({ kind: 'handoff', id: 'root.handoff.1', terminal: true }, fakePorts(), { runDir, attempt: 1 });
-  assert.deepEqual(terminal, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: path.join(root, 'tmp', 'dispatch-skills', '20260101T0000Z-s-topic'), warning: null });
+  assert.deepEqual(terminal, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: session, warning: null });
   const [back] = await createHandoff(deps)({ kind: 'handoff', id: 'root.handoff.2', terminal: false }, fakePorts(), { runDir, attempt: 1 });
   assert.equal(back?.type === 'HANDOFF_DONE' && back.destination, session);
   assert.ok(fs.existsSync(runDir));

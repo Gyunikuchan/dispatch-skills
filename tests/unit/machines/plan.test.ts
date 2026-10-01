@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
+import { planInputFromRun, planMachine } from '../../../skills/dispatch/scripts/machines/plan.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
 
@@ -43,3 +43,36 @@ test('standalone plan revision diagnostic describes actual support', () => {
   const error = planMachine.validate!(state, { type: 'REVISE', artifact: 'plan', reason: 'change', evidence: 'observed' });
   assert.match(error ?? '', /standalone/);
 });
+
+test('plan: default plan path is scoped to sessionDir', () => {
+  const result = planInputFromRun({
+    ...started(),
+    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-plan' },
+  });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.input.path, '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-plan/add-a-cache.plan.md');
+  }
+
+  // Explicit path override is preserved
+  const explicit = planInputFromRun({
+    ...started(),
+    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-plan', path: 'custom/path.plan.md' },
+  });
+  assert.equal(explicit.ok, true);
+  if (explicit.ok) {
+    assert.equal(explicit.input.path, 'custom/path.plan.md');
+  }
+
+  // Explicit argument ending in .plan.md is preserved
+  const explicitArg = planInputFromRun({
+    ...started(),
+    argument: 'custom/arg.plan.md',
+    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-plan' },
+  });
+  assert.equal(explicitArg.ok, true);
+  if (explicitArg.ok) {
+    assert.equal(explicitArg.input.path, 'custom/arg.plan.md');
+  }
+});
+

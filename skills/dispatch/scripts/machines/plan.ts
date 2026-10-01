@@ -28,7 +28,14 @@ export function slugOf(text: string, fallback = 'dispatch'): string {
 }
 
 export function planInputFromRun(run: RunStartedEvent): { ok: true; input: PlanInput } | { ok: false; error: string } {
-  const path = isString(run.overrides['path']) ? run.overrides['path'] : /\.plan\.md$/i.test(run.argument.trim()) ? run.argument.trim() : `${slugOf(run.argument)}.plan.md`;
+  const sessionDir = typeof run.overrides['sessionDir'] === 'string' ? run.overrides['sessionDir'].replace(/[\\/]+$/, '') : null;
+  const path = isString(run.overrides['path'])
+    ? run.overrides['path']
+    : /\.plan\.md$/i.test(run.argument.trim())
+      ? run.argument.trim()
+      : sessionDir
+        ? `${sessionDir}/${slugOf(run.argument)}.plan.md`
+        : `${slugOf(run.argument)}.plan.md`;
   const built = reviewSpecFromRun(run, 'plan', 'fix', path);
   return built.ok ? { ok: true, input: { path, spec: built.spec } } : built;
 }

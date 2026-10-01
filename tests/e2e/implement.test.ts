@@ -63,7 +63,7 @@ test('implementation happy path runs real CLI approval, writer receipt, verifica
     frame = await f.reply(run, { type: 'WRITE_ENVELOPE', envelopePath }); assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'The scoped verification passed after mutation.' } } });
     assert.equal(frame.await, 'done', JSON.stringify(frame)); assert.equal(frame.data['outcome'], 'complete');
-    const published = String(frame.data['handoff']); assert.ok(fs.existsSync(published)); assert.ok(!fs.existsSync(session));
+    const published = String(frame.data['handoff']); assert.equal(published, session); assert.ok(fs.existsSync(session));
     assert.ok(fs.readdirSync(published).some((file) => file.endsWith('.walkthrough.md')));
     const journal = fs.readFileSync(path.join(frame.run, 'events.jsonl'), 'utf8'); const launches = f.launches().length;
     const replay = await f.cli(['send', '--run', frame.run, '--dry-run']); assert.equal(replay.data['outcome'], 'complete');

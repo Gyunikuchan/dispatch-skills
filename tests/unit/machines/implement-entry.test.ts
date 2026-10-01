@@ -111,3 +111,24 @@ test('writer configuration resolves sparse levels and rejects malformed cascades
   assert.equal(writerConfig({ 'write-subagents': { claude: { low: { model: ['a', 'a'] } } } }, 'claude', 'low').ok, false);
   assert.equal(writerConfig({ 'write-subagents': { claude: { low: { model: ['a', null] } } } }, 'claude', 'low').ok, false);
 });
+
+test('implement: default plan path is scoped to sessionDir', () => {
+  const result = stepImplement(initialImplement(), run({
+    sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-impl',
+  }));
+  assert.equal(result.state.tag, 'starting');
+  if (result.state.tag === 'starting') {
+    assert.equal(result.state.c.planPath, '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-impl/implement-example.plan.md');
+  }
+
+  // Explicit path override is preserved
+  const explicit = stepImplement(initialImplement(), run({
+    sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-impl',
+    path: 'custom/my.plan.md',
+  }));
+  assert.equal(explicit.state.tag, 'starting');
+  if (explicit.state.tag === 'starting') {
+    assert.equal(explicit.state.c.planPath, 'custom/my.plan.md');
+  }
+});
+

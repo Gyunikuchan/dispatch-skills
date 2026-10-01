@@ -60,3 +60,18 @@ test('guidance uses delivered APIs and describes migration boundaries', () => {
   assert.doesNotMatch(read('skills/dispatch/references/templates/walkthrough.md'), /Resolution log/);
   assert.doesNotMatch(read('skills/dispatch/scripts/machines/plan.ts'), /is not available in plan/);
 });
+
+test('operational contracts reflect workspace session retention and contain no temp migration instructions', () => {
+  const contract = read(`skills/dispatch/${contractName}`);
+  assert.doesNotMatch(contract, /published folder|temp folder/i);
+  assert.match(contract, /session reactivate/i);
+
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /\.scratch\/dispatch-skills/);
+  assert.doesNotMatch(config, /OS temp/i);
+
+  const planTemplate = read('skills/dispatch/references/templates/plan.md');
+  assert.match(planTemplate, /retaining the session in the workspace/);
+  assert.doesNotMatch(planTemplate, /OS temp/i);
+});
+

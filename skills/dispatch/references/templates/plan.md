@@ -2,7 +2,7 @@
 
 External delegates read the plan file with no other context.
 
-The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skills/<folder>/` and generated run files under that folder's `.state/runs/NNN-<kind>/`. At terminal handoff, it moves the whole folder under `<realpath(os.tmpdir())>/dispatch-skills/<folder>/` when possible and names the authoritative root.
+The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skills/<folder>/` and generated run files under that folder's `.state/runs/NNN-<kind>/`, retaining the session in the workspace.
 
 ````markdown
 # <Goal Description>

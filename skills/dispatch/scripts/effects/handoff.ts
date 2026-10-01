@@ -15,9 +15,8 @@ export function sessionDirOf(runDir: string): string {
   return stripped === runDir ? runDir.replace(/[\\/]+$/, '') : stripped;
 }
 
-export function handoffDestination(runDir: string, terminal: boolean, deps: HandoffDeps): string {
-  const root = terminal ? path.join(deps.tempRoot, 'dispatch-skills') : deps.workspaceRoot;
-  return path.join(root, path.basename(sessionDirOf(runDir)));
+export function handoffDestination(runDir: string, _terminal: boolean, deps: HandoffDeps): string {
+  return path.join(deps.workspaceRoot, path.basename(sessionDirOf(runDir)));
 }
 
 export function createHandoff(deps: HandoffDeps): Handler<HandoffEffect> {

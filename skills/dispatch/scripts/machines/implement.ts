@@ -126,8 +126,9 @@ function planPathFromRun(run: RunStartedEvent): string {
   if (/\.plan\.md$/i.test(argument)) return argument;
   const settled = settledPlanInput(run.overrides['settledPlan']);
   if (settled) return settled.path;
+  const sessionDir = typeof run.overrides['sessionDir'] === 'string' ? run.overrides['sessionDir'].replace(/[\\/]+$/, '') : null;
   const slug = argument.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/g, '') || 'implementation';
-  return `${slug}.plan.md`;
+  return sessionDir ? `${sessionDir}/${slug}.plan.md` : `${slug}.plan.md`;
 }
 
 function diffPaths(event: Event): string[] {

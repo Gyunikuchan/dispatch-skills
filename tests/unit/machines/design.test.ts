@@ -430,6 +430,30 @@ test('revert after invalidating revision resets binding index so later non-inval
   assert.ok('C01' in resumedChild.c.evidence);
 });
 
+test('design: default design path is scoped to sessionDir', () => {
+  const s = beginDesign({
+    ...run(),
+    argument: 'Deliver feature',
+    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design' },
+  });
+  assert.equal(s.state.tag, 'author');
+  if (s.state.tag === 'author') {
+    assert.equal(s.state.c.path, '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design/deliver-feature.design.md');
+  }
+
+  // Explicit argument ending in .design.md is preserved
+  const explicit = beginDesign({
+    ...run(),
+    argument: 'custom/external.design.md',
+    overrides: { sessionDir: '/workspace/.scratch/dispatch-skills/20261001T0000Z-my-design' },
+  });
+  assert.equal(explicit.state.tag, 'author');
+  if (explicit.state.tag === 'author') {
+    assert.equal(explicit.state.c.path, 'custom/external.design.md');
+  }
+});
+
+
 
 
 

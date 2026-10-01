@@ -99,24 +99,19 @@ function handlers(repo: string, orchestrator: ProviderId) {
 }
 function emit(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
 function activate(dir: string, repo: string): string {
-  const manifest = readManifest(dir);
-  if (manifest.repositoryRoot !== canonicalRepositoryRoot(repo)) throw new UsageError('Session belongs to another repository');
-  const expected = path.join(repo, '.scratch/dispatch-skills', manifest.folderName);
-  const normalize = (file: string) => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
-  return normalize(dir) === normalize(expected) ? fs.realpathSync(dir) : reactivateSession(dir, repo);
+  try {
+    return reactivateSession(dir, repo);
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
+  }
 }
-function publish(dir: string): string {
-  const expected = path.join(os.tmpdir(), 'dispatch-skills', path.basename(dir));
-  const normalize = (file: string) => process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file);
-  return normalize(dir) === normalize(expected) ? fs.realpathSync(dir) : handoffSession(dir);
+function publish(dir: string, repo: string): string {
+  return activate(dir, repo);
 }
 function finish(frame: Frame, runDir: string): Frame {
   if (frame.await !== 'done' || !frame.data['handoff']) return frame;
   const source = sessionDirOf(runDir);
-  try {
-    const destination = publish(source);
-    return { ...restoreSessionPaths(storeSessionPaths(frame, source), destination), run: path.join(destination, '.state/runs', path.basename(runDir)).replaceAll('\\', '/') };
-  } catch (error) { return { ...frame, data: { ...frame.data, handoff: source, warning: String(error) } }; }
+  return { ...frame, run: path.join(source, '.state/runs', path.basename(runDir)).replaceAll('\\', '/'), data: { ...frame.data, handoff: source } };
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
@@ -150,7 +145,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         const id = textFlag(command, 'session-id') ?? platformSessionId((name) => process.env[name]) ?? crypto.randomUUID();
         dir = initializeSession({ repositoryRoot: repo, sessionId: id, sessionTitle: textFlag(command, 'objective')!, now: new Date() });
       } else if (command.action === 'reactivate') dir = activate(path.resolve(textFlag(command, 'session-dir')!), repo);
-      else dir = publish(path.resolve(textFlag(command, 'session-dir')!));
+      else dir = publish(path.resolve(textFlag(command, 'session-dir')!), repo);
       emit({ v: 1, sessionDir: dir, sessionId: readManifest(dir).sessionId }); return 0;
     }
     const { ports } = runtime();
@@ -162,6 +157,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       const provider = textFlag(command, 'provider'), pins = textFlag(command, 'pins');
       if (provider && pins) throw new UsageError('Use --provider or --pins, not both');
       const overrides: Record<string, unknown> = {};
+      overrides['sessionDir'] = sessionDir;
       for (const key of ['model', 'effort', 'kind']) if (textFlag(command, key)) overrides[key] = textFlag(command, key);
       if (textFlag(command, 'timeout')) overrides['timeout'] = Number(command.flags['timeout']);
       const orchestrator = normalizeProvider(textFlag(command, 'orchestrator')!) as ProviderId;

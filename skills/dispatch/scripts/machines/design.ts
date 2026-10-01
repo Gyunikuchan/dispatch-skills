@@ -34,7 +34,14 @@ type S = Step<DesignState>;
 const sharedContractMarker = '[shared-contract]';
 const failed = (c: DesignContext, summary: string): S => stay({ tag: 'failed', c, summary });
 export function beginDesign(run: RunStartedEvent, counters: Counters = {}): S {
-  const path = typeof run.overrides['path'] === 'string' ? run.overrides['path'] : /\.design\.md$/i.test(run.argument) ? run.argument.trim() : `${slugOf(run.argument)}.design.md`;
+  const sessionDir = typeof run.overrides['sessionDir'] === 'string' ? run.overrides['sessionDir'].replace(/[\\/]+$/, '') : null;
+  const path = typeof run.overrides['path'] === 'string'
+    ? run.overrides['path']
+    : /\.design\.md$/i.test(run.argument)
+      ? run.argument.trim()
+      : sessionDir
+        ? `${sessionDir}/${slugOf(run.argument)}.design.md`
+        : `${slugOf(run.argument)}.design.md`;
   const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null };
   return run.verb === 'implement' ? parse(c, false) : stay({ tag: 'author', c, defects: [] });
 }
