@@ -245,7 +245,7 @@ test('every design and design revision transition row has a reducer fixture', ()
     [parse, { ...revisionParsed, parsed: { ...design, box: { 'TL;DR': 'New objective' } } }],
     [{ ...parse, afterReview: true }, revisionParsed],
     [parse, { type: 'EFFECT_FAILED', effectId: parse.effectId, cls: 'io', detail: 'Read failed' }],
-    [review({ tag: 'wave', c: rc, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }],
+    [review({ tag: 'wave', c: rc, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [{ slot: 'reviewer', state: 'success' }] }],
     [review({ tag: 'rule', c: rc }), { type: 'RULINGS', rulings: {} }],
     [review({ tag: 'fix-verify', c: rc, clusters: [], pass: 'main' }), { type: 'ARTIFACT_PARSED', effectId: 'review-result', kind: 'design', hash: designHash, parsed: design, defects: [] }],
     [review({ tag: 'decide-opt-in', c: rc, items: [] }), { type: 'DECISION', kind: 'opt-in', answer: [] }],
@@ -259,7 +259,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   const extra: [DesignState, Event][] = [];
   const dReview = (child: ReviewState): DesignState => ({ tag: 'review', c, review: child });
   for (const [child, event] of [
-    [{ tag: 'wave', c: rc, phase: 'cli' }, { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }],
+    [{ tag: 'wave', c: rc, phase: 'cli' }, { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [{ slot: 'reviewer', state: 'success' }] }],
     [{ tag: 'rule', c: rc }, { type: 'RULINGS', rulings: {} }],
     [{ tag: 'fix-verify', c: rc, clusters: [], pass: 'main' }, { type: 'ARTIFACT_PARSED', effectId: 'review-result', kind: 'design', hash: designHash, parsed: design, defects: [] }],
     [{ tag: 'decide-opt-in', c: rc, items: [] }, { type: 'DECISION', kind: 'opt-in', answer: [] }],
@@ -295,7 +295,7 @@ test('every design and design revision transition row has a reducer fixture', ()
   extra.push([{ ...integrated, c: { ...integrated.c, ownership: {} } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
   extra.push([{ ...integrated, review: { ...integrated.review, c: { ...integrated.review.c, findings: integrated.review.c.findings.map((row) => ({ ...row, fix: { paths: ['src/a.ts', 'src/b.ts'], dependencies: [], verification: [] } })) } } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } }]);
   extra.push([iReview({ tag: 'rule', c: codeCtx }), { type: 'RULINGS', rulings: {} }]);
-  extra.push([iReview({ tag: 'wave', c: codeCtx, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [] }]);
+  extra.push([iReview({ tag: 'wave', c: codeCtx, phase: 'cli' }), { type: 'WAVE_DONE', effectId: 'review-result', round: 1, findings: [], slots: [{ slot: 'reviewer', state: 'success' }] }]);
   extra.push([iReview({ tag: 'decide-opt-in', c: codeCtx, items: [] }), { type: 'DECISION', kind: 'opt-in', answer: [] }]);
   extra.push([iReview({ tag: 'decide-escalation', c: codeCtx, escalation: { kind: 'regression', ids: [] } }), { type: 'DECISION', kind: 'escalation', answer: 'stop' }]);
   extra.push([iReview({ tag: 'prepare', c: codeCtx }), { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }]);

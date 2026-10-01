@@ -163,3 +163,22 @@ test('batch launchers go through cmd.exe with escaped verbatim args, never a raw
   assert.ok(!/[^^]&/.test(line) && !/[^^]\|/.test(line), line);
   assert.throws(() => batchInvocation('x.cmd', ['a\nb']), /newline/);
 });
+
+
+for (const limit of ['timedOut', 'truncated'] as const) test(`rewrite SC4 parsed success retains ${limit} failure`, async () => {
+  const h = harness(posix); const pending = runDelegate(claude, req, 'cli', h.ports); await flush(); h.finish(ok({ [limit]: true }));
+  const result = await pending; assert.equal(result.outcome.status, 'fail'); assert.equal(result.outcome.status === 'fail' && result.outcome.cls, limit === 'timedOut' ? 'timeout' : 'buffer');
+});
+test('rewrite SC4 native config selectors survive while secrets remain stripped', () => {
+  assert.deepEqual(sanitizeEnv({ OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli', OPENCODE_API_KEY: 'secret' }), { OPENCODE_CONFIG: '/config', OPENCODE_CONFIG_DIR: '/dir', JETSKI_APP_DATA_DIR: 'antigravity-cli' });
+});
+
+test('review fix runner waits for asynchronous lease release before returning', async () => {
+  const h = harness(posix); let release!: () => void; let releasing = false; let settled = false;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  const spec = { ...claude, prepare: async () => ({ kind: 'launch' as const, env: {}, release: () => { releasing = true; return released; } }) };
+  h.ports.prepare = { fetchModels: async () => [], acquireGpuLock: async () => () => {} };
+  const pending = runDelegate(spec, req, 'cli', h.ports).then((value) => { settled = true; return value; });
+  await flush(); h.finish(ok()); await flush(); assert.equal(releasing, true); assert.equal(settled, false);
+  release(); assert.equal((await pending).outcome.status, 'ok');
+});

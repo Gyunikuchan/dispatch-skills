@@ -16,16 +16,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { isMainModule } from '../../../../skills/dispatch/scripts/lib/platform.mjs';
+import { pathToFileURL } from 'node:url';
+const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === url;
 import { auditGitStatus, diffStatus, resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
 // ============================================================================
 // SECTION: Main
 // ============================================================================
 
-function main() {
-  const root = resolveRepoRoot();
-  const { runId, reportPath, workDir, rel } = resolveRunDirs(root, process.argv);
+export function main(options = {}) {
+  const root = options.root ?? resolveRepoRoot();
+  const { runId, reportPath, workDir, rel } = resolveRunDirs(root, options.argv ?? process.argv);
   if (!fs.existsSync(reportPath)) {
     throw new Error(`${rel(reportPath)} not found; write the report before finalizing.`);
   }

@@ -14,7 +14,7 @@ Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`
 
 1. Initialize this chat with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist returned `sessionDir` and `sessionId`; use `--session-id` for a fallback identity on later initialization. Reactivate a published folder with `session reactivate --session-dir <dir>` before later work.
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit one JSON frame; doctor emits a table or `--json` diagnostics.
-3. Run `send --run <dir> [--event @<event-file>]` in the background, retain its handle, and wait for completion or a blocker. Match `await` below, reply once, and repeat until `done`. Eventless send resumes automatic work.
+3. Run `send --run <dir> [--event @<event-file>]` in the background, retain its handle, and wait for completion or a blocker. Fill current `events` with observed evidence and user quotes; reply once per `await` until `done`. Eventless send resumes automatic work.
 
 Before the selected branch, read [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [review](references/verbs/review.md), or [implement](references/verbs/implement.md). For adjudication and disputes read [review rules](references/review.md); for provider availability, native mapping, or sandbox failures read [providers](references/providers.md). Terms live in [glossary](references/glossary.md).
 
@@ -28,7 +28,7 @@ Launch every listed `data.slots` native subagent with its descriptor's prompt, m
 
 ## Await rule
 
-Verify each finding against code and the governing outcome. Reply `RULINGS` with an object keyed by finding id: `accept`, `reject`, `downgrade`, or `needs-user`. Include reasons for rejection and downgrade; apply the recorded-decision and dispute rules in the review reference.
+Verify each finding against code and the governing outcome. Reply `RULINGS` using `events`: finding-id objects containing `ruling` and scoped `fix`. Include reasons for rejection and downgrade; apply the recorded-decision and dispute rules in the review reference.
 
 ## Await fix
 
@@ -36,11 +36,11 @@ Apply accepted clusters only within each `affectedPaths`, run their bounded veri
 
 ## Await write
 
-Launch the configured native writer using the complete `briefPath` whose content matches `briefSha256`. Give it the expected `envelopePath` and scoped paths; preserve caller changes. Reply `WRITE_ENVELOPE` with `envelopePath` after its complete envelope arrives, or `WRITE_FAILED` with model, kind, and reason on a failed launch.
+Launch the configured native writer using the complete `briefPath` matching `briefSha256`. Give it the expected `envelopePath` and scoped paths; preserve caller changes. Reply `WRITE_ENVELOPE` with `envelopePath` after its envelope arrives, or `WRITE_FAILED` with model, kind, and reason on a failed launch.
 
 ## Await evidence
 
-Inspect the driver's command summary and logs; do not rerun already emitted gates. Independently establish every criterion and reply `EVIDENCE` with `criteria` keyed by id, each containing `outcome` and concrete `evidence`.
+Inspect the driver's command summary and logs; do not rerun already emitted gates. Independently establish every criterion and reply `EVIDENCE` with `criteria` keyed by id, each containing `outcome:"pass"` and concrete `evidence`.
 
 ## Await decide
 

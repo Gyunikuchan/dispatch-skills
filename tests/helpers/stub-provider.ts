@@ -13,6 +13,9 @@ export function recordedLaunches(file: string): StubLaunch[] {
   });
 }
 export async function stub(file: string, args: readonly string[]): Promise<void> {
+  if (args[0] === 'debug') {
+    process.stdout.write(JSON.stringify(args[1] === 'config' ? [] : [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }]) + '\n'); return;
+  }
   const scenario = JSON.parse(fs.readFileSync(file, 'utf8')) as Scenario;
   const dir = `${file}.launches`;
   fs.mkdirSync(dir, { recursive: true });

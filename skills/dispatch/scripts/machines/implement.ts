@@ -1,7 +1,7 @@
 // @ts-check
 
 import type { Await, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand } from '../core/types.ts';
-import { renderWalkthrough } from '../domain/render.ts';
+import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, redactOneLine, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type ImplementStage, type RedMatrixRow, type VerifyRecord, type WriterConfig, type WriterEnvelope } from './implement-types.ts';
 import { beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
@@ -10,6 +10,7 @@ import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type Fa
 import { classifyDrift } from '../policy/drift.ts';
 import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { validateDesignTraceability } from '../domain/plan.ts';
+import { slugOf } from './plan.ts';
 import type { DesignBinding } from './implement-types.ts';
 
 export const IMPLEMENT_TEMPLATE = 'references/templates/plan.md';
@@ -456,7 +457,8 @@ function continueAfterScopedEvidence(c: Context, _verify: readonly VerifyRecord[
 function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
-  const result = beginReview({ ...built.spec, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
+  const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: (c0.plan?.criteria ?? []).map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
+  const result = beginReview({ ...built.spec, governing, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
   return fromCodeReview(c0, result);
 }
 
@@ -499,20 +501,24 @@ function finishEvidence(c: Context, verify: readonly VerifyRecord[]): S {
   const plan = c.plan as ParsedPlan;
   const stale = plan.criteria.filter((criterion) => {
     const item = c.evidence[criterion.id];
-    return !item || item.planHash !== c.planHash || item.mutationEpoch < (c.criterionMutation[criterion.id] ?? 0);
+    return !item || item['outcome'] !== 'pass' || item.planHash !== c.planHash || item.mutationEpoch < (c.criterionMutation[criterion.id] ?? 0);
   });
   if (stale.length) return stay({ tag: 'evidence', c, purpose: 'final', ids: stale.map((criterion) => criterion.id), verify });
   const summary = `${plan.criteria.length}/${plan.criteria.length} criteria evidenced; ${Object.keys(c.records).filter((key) => !key.startsWith('__')).length} verification records current.`;
   return stay({ tag: 'complete', c, summary });
 }
 
-function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Record<string, unknown>>): Context | null {
+function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Record<string, unknown>>, waiver?: { by: 'user'; quote: string }): Context | null {
   if (Object.keys(values).length !== ids.length || ids.some((id) => !Object.prototype.hasOwnProperty.call(values, id))) return null;
   const evidence = { ...c.evidence };
   for (const id of ids) {
     const value = values[id];
-    if (!isRecord(value) || !nonEmpty(value['outcome']) || !nonEmpty(value['evidence'])) return null;
-    evidence[id] = { ...value, id, planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: c.plan?.criteria.find((criterion) => criterion.id === id)?.evidence ?? 'verify' } as EvidenceRecord;
+    if (!isRecord(value) || !(value['outcome'] === 'pass' || waiver && value['outcome'] === 'waived') || !nonEmpty(value['evidence'])) return null;
+    const criterion = c.plan?.criteria.find((criterion) => criterion.id === id);
+    const redProvenance = criterion?.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
+    const attribution = waiver ?? c.redExceptionRulings[id];
+    if (redProvenance === 'waived' && !attribution) return null;
+    evidence[id] = { id, outcome: value['outcome'], evidence: value['evidence'], planHash: c.planHash ?? '', mutationEpoch: c.mutationEpoch, source: criterion?.evidence ?? 'verify', redProvenance, ...(attribution && (value['outcome'] === 'waived' || redProvenance === 'waived') ? { waiver: attribution } : {}) } as EvidenceRecord;
   }
   return { ...c, evidence };
 }
@@ -822,8 +828,9 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (answer.action === 'stop') return stop(state.c, `Stopped after failure: ${state.reason}. Work preserved; changed paths: ${state.changedPaths.join(', ') || 'none reported'}.`);
       if (answer.action === 'retry') return startWriter({ ...state.c, retryContext: { rootCause: answer.rootCause, failure: state.reason } }, state.c.currentStage, false, null, []);
       if (answer.action === 'hotfix') return beginHotfix(state, answer);
-      const c = recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria);
-      return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion: ${answer.quote}` }, summary: `User manually completed implementation: ${answer.quote}` }) : stay(state);
+      const c = recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria, { by: 'user', quote: answer.quote });
+      const waived = c ? Object.values(c.evidence).filter((row) => row['outcome'] === 'waived').length : 0;
+      return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion by user: ${answer.quote}` }, summary: `User manually completed implementation: ${Object.keys(c.evidence).length - waived} passed; ${waived} waived. ${answer.quote}` }) : stay(state);
     }
     case 'checking-host-event': case 'drift': case 'restoring': case 'hotfix-brief': case 'hotfix-write': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': return stepRecovery(state, event);
     case 'complete': case 'stopped': case 'failed': case 'revision-request': return stay(state);
@@ -1030,7 +1037,7 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
     adoptedPaths: c.adoptedPaths, finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
     criteria: (c.plan?.criteria ?? []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
-    review: review['completion'] ?? review, limitations: c.concerns, finalGate: c.finalGate,
+    review: review['completion'] ?? review, limitations: [...c.concerns, ...Object.values(c.evidence).filter((item) => item['outcome'] === 'waived').map((item) => `${item.id}: user-waived criterion; ${item['evidence']}`)], finalGate: c.finalGate,
   };
 }
 
@@ -1056,7 +1063,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
   if (state.tag === 'failure' && event.type === 'DECISION' && event.kind === 'failure') {
     const answer = failureAnswer(event.answer);
     if (!answer) return 'event.answer: failure requires hotfix/retry with rootCause, user manual completion with quote and criteria, or stop.';
-    if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria)) return 'event.criteria: manual completion needs evidence for every criterion.';
+    if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
   }
   if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}.`;
   return null;
@@ -1114,12 +1121,12 @@ export const implementTransitions = [
 ] as const;
 
 export function implementWalkthrough(state: ImplementState): WalkthroughView | null {
-  if (state.tag !== 'complete' && state.tag !== 'stopped' && state.tag !== 'failed') return null;
+  if (state.tag !== 'complete' && state.tag !== 'stopped' && state.tag !== 'failed' && state.tag !== 'code-review') return null;
   if (!state.c || !state.c.plan) return null;
   const c = state.c;
   const plan = c.plan;
   if (!plan) return null;
-  const status = state.tag === 'complete' ? 'complete' : state.tag;
+  const status = state.tag === 'code-review' ? 'review pending' : state.tag;
   const planRounds = c.planReview && 'c' in c.planReview ? resolutionRounds(c.planReview.c) : [];
   const codeRounds = c.codeReview && 'c' in c.codeReview ? resolutionRounds(c.codeReview.c) : [];
   return {

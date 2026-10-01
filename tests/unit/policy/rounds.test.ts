@@ -7,6 +7,11 @@ import {
 
 const f = (id: string, severity: RoundFinding['severity'], state: RoundFinding['state']): RoundFinding => ({ id, severity, state });
 
+test('rewrite SC1 omission requires usable responsible coverage', () => {
+  assert.deepEqual(acceptByOmission(['F1', 'F2'], [], ['F2']), [{ id: 'F2', closedBy: 'reviewer' }]);
+  assert.deepEqual(acceptByOmission(['F1'], ['F1'], ['F1']), []);
+});
+
 test('review-rounds-policy: threshold is SHOULD below the cap and MUST at or after it', () => {
   assert.deepEqual([1, 2, 3, 4].map((round) => threshold(round, 3)), ['SHOULD', 'SHOULD', 'MUST', 'MUST']);
 });
@@ -34,7 +39,7 @@ test('review-rounds-policy: missing policy → one target, one round; zero disab
 test('review-rounds-policy: closures, affinity, and accept-by-omission', () => {
   const findings = [f('R1-F001', 'CONSIDER', 'pending-rejection'), f('R1-F002', 'MUST', 'pending-rejection')];
   assert.deepEqual(orchestratorClosures({ round: 1, cap: 3, findings }), [{ id: 'R1-F001', closedBy: 'orchestrator' }]);
-  assert.deepEqual(acceptByOmission(['R1-F002', 'R1-F003'], ['R1-F003']), [{ id: 'R1-F002', closedBy: 'reviewer' }]);
+  assert.deepEqual(acceptByOmission(['R1-F002', 'R1-F003'], ['R1-F003'], ['R1-F002', 'R1-F003']), [{ id: 'R1-F002', closedBy: 'reviewer' }]);
   assert.deepEqual(assignAffinity(
     [{ id: 'R1-F001', source: 'codex[0]' }, { id: 'R1-F002', source: 'agy[0]' }, { id: 'R1-F003', source: 'copilot[0]' }],
     [{ slot: 'codex[0]' }, { slot: 'claude[0]', substitutesFor: 'agy[0]' }],

@@ -31,7 +31,7 @@ test('review-report-only-default: report mode records acceptance without fix', (
   const { state, effects } = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]);
   assert.equal(state.tag, 'settled');
   assert.equal('c' in state && state.c.findings[0]?.status, 'accepted');
-  assert.deepEqual(effects.map((effect) => effect.kind), ['prepare-review', 'wave']);
+  assert.deepEqual(effects.map((effect) => effect.kind), ['prepare-review', 'wave-start']);
 });
 
 test('review-adjacent-follow-ups: only accepted adjacent findings become follow-ups', () => {

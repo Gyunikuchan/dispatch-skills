@@ -25,11 +25,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import {
-  isMainModule,
-  terminateProcessTree,
-} from '../../../../skills/dispatch/scripts/lib/platform.mjs';
-import { loadDispatchConfig, resolveReadDelegates } from '../../../../skills/dispatch/scripts/lib/config.mjs';
+import { currentPlatform } from '../../../../skills/dispatch/scripts/lib/platform.ts';
+import { loadConfig as loadNativeConfig } from '../../../../skills/dispatch/scripts/lib/config.ts';
+import { resolveLevel } from '../../../../skills/dispatch/scripts/policy/roster.ts';
+import { createDiscovery } from '../../../../skills/dispatch/scripts/providers/discovery.ts';
+import { SPECS } from '../../../../skills/dispatch/scripts/providers/index.ts';
+import { nodeProcess } from '../../../../skills/dispatch/scripts/providers/node-process.ts';
+import { runDelegate, classifyFailure, buildAttachmentBlock } from '../../../../skills/dispatch/scripts/providers/runner.ts';
+import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from '../../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
+import { nodePorts } from '../../../../skills/dispatch/scripts/core/ports.ts';
+const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === url;
+const resolveReadDelegates = (config, level) => ({ platforms: Object.fromEntries(Object.entries(config['read-delegates'] ?? {}).map(([id, value]) => [id, (value.targets ?? []).map((target) => resolveLevel(target, level)).filter(Boolean)])) });
 import { moveEntry } from './finalize.mjs';
 import { resolveRepoRoot, resolveRunDirs, toPosix } from './shared.mjs';
 
@@ -71,10 +77,11 @@ const RUNNER_MODE_FLAG = { claude: '--claude-mode', agy: '--agy-mode', copilot: 
 // SECTION: Main
 // ============================================================================
 
-async function main() {
-  const opts = parseArgs(process.argv.slice(2));
-  const repoRoot = resolveRepoRoot();
-  const { workDir, rel } = resolveRunDirs(repoRoot, process.argv);
+export async function main(options = {}) {
+  const argv = options.argv ?? process.argv;
+  const opts = parseArgs(argv.slice(2));
+  const repoRoot = options.root ?? resolveRepoRoot();
+  const { workDir, rel } = resolveRunDirs(repoRoot, argv);
   const scriptsDir = path.join(repoRoot, 'skills', 'dispatch', 'scripts');
   const mods = await loadDispatchModules(scriptsDir);
   const outDir = path.join(workDir, 'dispatch');
@@ -162,46 +169,10 @@ async function probe({ opts, repoRoot, rel, scriptsDir, mods, outDir }) {
  * filtering rows after every binary has already been shelled out to.
  * @returns {Promise<ModeRow[]>}
  */
-async function discover({ claude, agy, copilot, opencode }, providers = PROVIDERS) {
-  const wanted = new Set(providers);
-  const rows = [];
-
-  if (wanted.has('claude')) {
-    for (const r of claude.probeAllClaudeModes()) {
-      rows.push({ provider: 'claude', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.version || r.error || '' });
-    }
-  }
-
-  if (wanted.has('agy')) {
-    for (const r of agy.probeAllAgyModes()) {
-      rows.push({ provider: 'agy', mode: r.mode, bin: r.bin, reachable: r.reachable, detail: r.error || '' });
-    }
-  }
-
-  if (wanted.has('copilot')) {
-    const copilotModes = copilot.probeCopilotModes();
-    for (const mode of ['cli', 'desktop', 'vscode']) {
-      const r = copilotModes[mode] ?? {};
-      rows.push({ provider: 'copilot', mode, bin: r.binary ?? null, reachable: !!r.reachable, detail: r.version || r.error || '' });
-    }
-  }
-
-  if (wanted.has('opencode')) {
-    // opencode has one binary; its "mode" is whether the resolved endpoint is local.
-    const settings = opencode.resolveOpencodeSettings();
-    const hasBinary = opencode.isOpencodeBinaryAvailable();
-    rows.push({
-      provider: 'opencode',
-      mode: settings.isLocal ? 'local' : 'remote',
-      bin: hasBinary ? 'opencode (PATH)' : null,
-      reachable: hasBinary && (await opencode.isOpencodeAvailable(settings)),
-      detail: settings.rawModel
-        ? `${settings.rawModel}${settings.isLocal ? ` @ ${settings.baseURL}` : ''}`
-        : 'no model configured (CLI default)',
-    });
-  }
-
-  return rows;
+export async function discover(mods, providers = PROVIDERS) {
+  const platform = currentPlatform();
+  const discovery = createDiscovery(SPECS, platform, { list: (dir) => { try { return fs.readdirSync(dir); } catch { return []; } }, exists: fs.existsSync, executable: (file) => { try { return fs.statSync(file).isFile() && (platform.os === 'win32' || (fs.statSync(file).mode & 0o111) !== 0); } catch { return false; } } });
+  return discovery.doctor().filter((row) => providers.includes(row.provider)).map((row) => ({ provider: row.provider, mode: row.mode, bin: row.path, reachable: row.status === 'path', detail: `${row.status}; launch preparation and substantive coverage unverified` }));
 }
 
 /** @param {ModeRow} row @returns {'NOT FOUND'|'REACHABLE'|'UNREACHABLE'} */
@@ -220,63 +191,32 @@ export function statusOf(row) {
  * frequently resolve to the same executable and a duplicate prompt proves nothing new.
  * @returns {Target[]}
  */
-export function buildTargets(rows, { modes, config, scriptsDir }) {
-  const targets = [];
-  // Read delegates resolve at the runner's default level, the tier an unflagged dispatch uses.
+export function buildTargets(rows, { modes, config }) {
   const platforms = config ? resolveReadDelegates(config, 'medium').platforms : {};
-
-  for (const provider of PROVIDERS) {
-    const reachable = rows.filter((r) => r.provider === provider && r.reachable);
-    if (reachable.length === 0) continue;
-
-    if (!modes || !RUNNER_MODE_FLAG[provider]) {
-      // A provider missing from the config cannot be pinned without --no-config.
-      const configured = !!platforms[provider];
-      targets.push({
-        id: provider,
-        provider,
-        via: 'dispatch',
-        script: path.join(scriptsDir, 'dispatch.mjs'),
-        baseArgs: ['--provider', provider, ...(configured ? [] : ['--no-config'])],
-        aliases: reachable.map((r) => r.mode),
-      });
-      continue;
-    }
-
-    const entry = platforms[provider]?.[0] ?? {};
-    const model = Array.isArray(entry.model) ? entry.model[0] : entry.model;
-    const byBin = new Map();
-    for (const row of reachable) {
-      const key = path.resolve(row.bin).toLowerCase();
-      if (byBin.has(key)) {
-        byBin.get(key).aliases.push(row.mode);
-        continue;
-      }
-      byBin.set(key, {
-        id: `${provider}/${row.mode}`,
-        provider,
-        via: 'runner',
-        script: path.join(scriptsDir, `${provider}-run.mjs`),
-        baseArgs: [
-          RUNNER_MODE_FLAG[provider], row.mode,
-          ...(model ? ['-m', model] : []),
-          ...(entry.effort ? ['-e', entry.effort] : []),
-        ],
-        aliases: [row.mode],
-      });
-    }
-    targets.push(...byBin.values());
-  }
-
-  return targets;
+  return PROVIDERS.flatMap((provider) => {
+    const reachable = rows.filter((row) => row.provider === provider && row.reachable);
+    const selected = modes ? [...new Map(reachable.map((row) => [row.bin, row])).values()] : reachable.slice(0, 1);
+    const tier = platforms[provider]?.[0] ?? {};
+    return selected.map((row) => ({ id: modes ? `${provider}/${row.mode}` : provider, provider, via: 'runner', mode: row.mode, binary: row.bin, model: Array.isArray(tier.model) ? tier.model[0] : tier.model ?? null, effort: tier.effort ?? null, sandbox: config?.['read-delegates']?.[provider]?.sandbox ?? true, aliases: reachable.filter((other) => other.bin === row.bin).map((other) => other.mode) }));
+  });
 }
 
 async function runTarget(target, { repoRoot, stageDir, fixture, timeout, classifyFailure }) {
   const stem = target.id.replace(/[^a-z0-9.-]+/gi, '_');
   const invoke = async (kind, file, prompt) => {
     const started = Date.now();
-    const argv = [target.script, ...target.baseArgs, '-t', String(timeout), '-f', file, prompt];
-    const res = await spawnCapture(process.execPath, argv, { cwd: repoRoot, killAfterMs: timeout * 1000 + KILL_GRACE_MS });
+    const promptPath = path.join(stageDir, `${stem}.${kind}.prompt.md`); fs.writeFileSync(promptPath, prompt);
+    const ports = nodePorts(), platform = currentPlatform();
+    const runnerFs = { readText: (file) => fs.readFileSync(file, 'utf8'), writeText: (file, text) => fs.writeFileSync(file, text), realpath: (file) => { try { return fs.realpathSync(file); } catch { return null; } }, size: (file) => { try { const stat = fs.statSync(file); return stat.isFile() ? stat.size : null; } catch { return null; } }, readPrefix: (file, cap) => { const fd = fs.openSync(file, 'r'); try { const bytes = Buffer.alloc(cap); return bytes.subarray(0, fs.readSync(fd, bytes)).toString('utf8'); } finally { fs.closeSync(fd); } } };
+    const logPath = path.join(stageDir, `${stem}.${kind}.log`), deadline = Date.now() + timeout * 1000;
+    let req = { promptPath, model: target.model, effort: target.effort, sandbox: target.sandbox, schemaPath: null, resume: null, cwd: repoRoot, timeoutMs: timeout * 1000, outputCapBytes: 1024 * 1024, attachments: [file], logPath, briefPath: `${logPath}.brief.md` };
+    let res;
+    try {
+      if (target.provider === 'opencode') req = await resolveEffectiveOpencodeLaunch(req, nativeOpencodeIntrospection(target.binary, req, process.env, req.timeoutMs));
+      const attachments = buildAttachmentBlock([file], runnerFs, crypto.randomUUID);
+      const result = await runDelegate(SPECS[target.provider], { ...req, timeoutMs: Math.max(1, deadline - Date.now()) }, target.mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary: target.binary, nonce: crypto.randomUUID, workspaceRoot: repoRoot, prepare: createOpencodePreparePorts(deadline) });
+      res = { stdout: result.outcome.status === 'ok' ? result.outcome.text : '', stderr: `${attachments.notes.join('\n')}\n${result.outcome.status === 'fail' ? result.outcome.detail : ''}\n| Log: ${logPath}`, code: result.outcome.status === 'ok' ? 0 : 1 };
+    } catch (error) { res = { stdout: '', stderr: String(error), code: 1 }; }
     // Staged, not written into the run directory: see the staging note in main().
     fs.writeFileSync(path.join(stageDir, `${stem}.${kind}.stdout.txt`), res.stdout, 'utf8');
     fs.writeFileSync(path.join(stageDir, `${stem}.${kind}.stderr.txt`), res.stderr, 'utf8');
@@ -383,7 +323,7 @@ function createFixture(repoRoot) {
   const nonces = { attached: nonce(), sibling: nonce(), denylisted: nonce() };
   const attached = toPosix(path.join(dir, 'attached.md'));
   const sibling = toPosix(path.join(dir, 'sibling.md'));
-  const denylisted = toPosix(path.join(dir, 'probe-token.txt'));
+  const denylisted = toPosix(path.join(dir, '.env'));
 
   fs.writeFileSync(attached, `ATTACHED_NONCE: ${nonces.attached}\n`, 'utf8');
   fs.writeFileSync(sibling, `SIBLING_NONCE: ${nonces.sibling}\n`, 'utf8');
@@ -475,38 +415,10 @@ export function parseArgs(argv) {
   return opts;
 }
 
-async function loadDispatchModules(scriptsDir) {
-  const load = (name) => import(pathToFileURL(path.join(scriptsDir, name)).href);
-  const [shared, claude, agy, copilot, opencode] = await Promise.all(
-    ['runners/shared.mjs', 'runners/claude.mjs', 'runners/agy.mjs', 'runners/copilot.mjs', 'runners/opencode.mjs'].map(load),
-  );
-  return { shared, claude, agy, copilot, opencode };
-}
+export async function loadDispatchModules() { return { shared: { classifyFailure }, specs: SPECS }; }
 
-function loadConfig(repoRoot) {
-  try {
-    return loadDispatchConfig({ skillRoot: path.join(repoRoot, 'skills', 'dispatch') }).config;
-  } catch {
-    return null;
-  }
-}
-
-function spawnCapture(command, args, { cwd, killAfterMs }) {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
-    child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
-    const timer = setTimeout(() => {
-      stderr += `\n[probe] killed after ${killAfterMs}ms\n`;
-      terminateProcessTree(child);
-    }, killAfterMs);
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ stdout, stderr, code });
-    });
-  });
+export function loadConfig(repoRoot) {
+  try { return loadNativeConfig(path.join(repoRoot, 'skills', 'dispatch')).config; } catch { return null; }
 }
 
 // ============================================================================

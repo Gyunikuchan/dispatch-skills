@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { resolveEffectiveOpencodeLaunch } from '../../../skills/dispatch/scripts/providers/opencode-runtime.ts';
 import { opencode, prepareOpencode, PROXY_TRAP } from '../../../skills/dispatch/scripts/providers/opencode.ts';
 import { runDelegate, type RunnerPorts } from '../../../skills/dispatch/scripts/providers/runner.ts';
 import type { DelegateRequest, LaunchRequest, Launch, ProcessResult } from '../../../skills/dispatch/scripts/providers/types.ts';
@@ -8,7 +9,7 @@ import type { DelegateRequest, LaunchRequest, Launch, ProcessResult } from '../.
 const platform = { os: 'darwin', arch: 'arm64', wsl: false, bubblewrap: false, argvLimit: 100000, home: '/h', path: [], pathExt: [] } as const;
 const base: DelegateRequest = {
   promptPath: '/p.md', model: 'lmstudio/qwen', effort: 'high', sandbox: false, schemaPath: null, resume: null, cwd: '/repo', timeoutMs: 1000,
-  outputCapBytes: 1000, attachments: [], logPath: '/log', briefPath: '/brief',
+  agent: 'explore', readOnlyVerified: true, outputCapBytes: 1000, attachments: [], logPath: '/log', briefPath: '/brief',
 };
 const launchReq = (over: Partial<LaunchRequest> = {}): LaunchRequest => ({ ...base, binary: 'opencode', prompt: 'P', briefFile: null, schemaText: null, platform, ...over });
 
@@ -71,4 +72,13 @@ test('an offline local server is model-not-loaded without a launch; a remote end
   });
   assert.equal(touched, false);
   assert.deepEqual(remote.kind === 'launch' ? remote.env : null, {});
+});
+
+
+test('rewrite SC4 effective config merges selected model endpoint and verifies agent denial', async () => {
+  const inspect = async (command: 'config' | 'agents') => command === 'config' ? [{ type: 'document', info: { model: 'remote/model', providers: { local: { settings: { baseURL: 'http://localhost:1234/v1' } } } } }, { type: 'document', info: { providers: { local: { settings: { baseURL: 'http://127.0.0.1:1234/v1' } } } } }] : [{ id: 'plan', permissions: [{ action: '*', resource: '*', effect: 'allow' }, { action: 'edit', resource: '*', effect: 'ask' }] }, { id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'read', resource: '*', effect: 'allow' }] }];
+  const resolved = await resolveEffectiveOpencodeLaunch({ ...base, agent: null, model: 'local/qwen' }, inspect);
+  assert.equal(resolved.endpoint, 'http://127.0.0.1:1234/v1'); assert.equal(resolved.agent, 'explore'); assert.equal(resolved.readOnlyVerified, true);
+  await assert.rejects(resolveEffectiveOpencodeLaunch(base, async (command) => command === 'config' ? [] : [{ id: 'plan', permissions: [{ action: '*', resource: '*', effect: 'allow' }] }]), /read-only-agent-unavailable/);
+  const denied = await prepareOpencode(launchReq({ agent: null }), { fetchModels: async () => [], acquireGpuLock: async () => () => {} }); assert.equal(denied.kind, 'fail');
 });

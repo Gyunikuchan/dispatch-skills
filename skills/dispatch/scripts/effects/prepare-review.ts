@@ -8,7 +8,7 @@ import type { Effect, Handler, ResultEvent } from '../core/types.ts';
 import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
-import type { Git } from './git.ts';
+import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import type { IntegrationScope } from '../core/types.ts';
 
 type PrepareEffect = Extract<Effect, { kind: 'prepare-review' }>;
@@ -21,7 +21,7 @@ type Carried = { id: string; slot: string | null; locus: string; defect: string;
 const isRecord = (value: unknown): value is Row => typeof value === 'object' && value !== null && !Array.isArray(value);
 const text = (value: unknown, fallback = ''): string => (typeof value === 'string' ? value : fallback);
 export function integrationScope(value: unknown): IntegrationScope {
-  if (!isRecord(value) || typeof value['baseline'] !== 'string' || !/^[a-f0-9]{40,64}$/.test(value['baseline']) || typeof value['revision'] !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value['revision']) || !isRecord(value['ownership']) || !Object.keys(value['ownership']).length) throw new Error('Integration requires a recorded baseline, governed revision and journal-owned increment paths.');
+  if (!isRecord(value) || !isCommitHash(value['baseline']) || typeof value['revision'] !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(value['revision']) || !isRecord(value['ownership']) || !Object.keys(value['ownership']).length) throw new Error('Integration requires a recorded baseline, governed revision and journal-owned increment paths.');
   for (const [id, paths] of Object.entries(value['ownership'])) if (!/^I\d{2}$/.test(id) || !Array.isArray(paths) || !paths.length || !paths.every((p) => typeof p === 'string' && !!p && !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]/).includes('..'))) throw new Error('Integration ownership is missing or unsafe.');
   return value as IntegrationScope;
 }
@@ -37,7 +37,7 @@ function carriedOf(scope: Row): Carried[] {
 export function carriedSection(carried: readonly Carried[], slot: string): string {
   const mine = carried.filter((entry) => entry.slot === null || entry.slot === slot);
   if (!mine.length) return '';
-  const rows = mine.map((entry) => `- ${entry.id} ${entry.locus}: ${entry.defect} — orchestrator rejection: ${entry.reason || 'no reason recorded'}`);
+  const rows = mine.map((entry) => `- ${entry.id} ${entry.locus}: ${entry.defect} — orchestrator rejection: ${entry.reason || 'no reason recorded'}; responsible source: ${entry.slot ?? 'unavailable'}`);
   return `\n\n### Pending rejections\nRe-raise a finding below only with new evidence; omitting it accepts the rejection.\n${rows.join('\n')}\n`;
 }
 
@@ -52,9 +52,8 @@ export function askPrompt(question: string, context: string): string {
 }
 
 function reviewScopeText(round: number, scope: string, changed: readonly string[], target: string): string {
-  if (round <= 1 && scope === 'full') return 'Full review';
   const what = changed.length ? `changed paths: ${changed.join(', ')}` : 'no recorded changes';
-  return `Re-review round ${round} (${scope}) — ${what}${target ? `; ${target}` : ''}`;
+  return `Review round ${round} (${scope}): ${what}; comparison: ${target || 'working tree against HEAD'}`;
 }
 
 function kindValues(kind: string, spec: Row, scopeText: string): Record<string, string> {
@@ -63,7 +62,10 @@ function kindValues(kind: string, spec: Row, scopeText: string): Record<string, 
   switch (kind) {
     case 'plan': return { 'Plan Path': target, Requirement: requirement, 'Review Scope': scopeText };
     case 'design': return { 'Design Path': target, Requirement: requirement, 'Review Scope': scopeText };
-    default: return { 'Task Summary': requirement || 'Review the selected changes.', 'Walkthrough Path': 'None', 'Plan Path': 'None', 'Review Scope': scopeText };
+    default: {
+      const governing = isRecord(spec['governing']) ? spec['governing'] : {};
+      return { 'Task Summary': requirement || 'Review the selected changes.', 'Walkthrough Path': text(governing['walkthroughPath'], 'None'), 'Plan Path': text(governing['planPath'], 'None'), 'Review Scope': scopeText };
+    }
   }
 }
 
@@ -76,6 +78,9 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     const carried = carriedOf(scope);
     const results: ResultEvent[] = [];
     let changed: string[] = [];
+    let manifestPath: string | undefined;
+    let snapshot: ReviewSnapshot | undefined;
+    let governedPaths: string[] | undefined;
     let integrationBound: IntegrationScope | null = null;
     let body: (slot: string) => string;
     try {
@@ -86,7 +91,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         if (kind === 'code') {
           let integration: unknown = scope['integration'];
           if (integration === undefined && text(spec['context']).startsWith('{')) {
-            const context: unknown = JSON.parse(text(spec['context']));
+            let context: unknown;
+            try { context = JSON.parse(text(spec['context'])); } catch { context = undefined; }
             if (isRecord(context)) integration = context['integration'];
           }
           if (integration !== undefined) {
@@ -97,6 +103,21 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             changed = (await deps.git.baselineDiff(deps.cwd, bound.baseline)).filter((p) => owned.has(p));
             if (!changed.length) throw new Error('Integration has an empty intersection with journal-owned paths.');
           } else changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
+          if (typeof scope['priorManifest'] === 'string') {
+            const raw = ports.fs.readText(scope['priorManifest']);
+            if (!raw || !deps.git.reviewDelta) throw new Error('review-round-binding-unavailable');
+            const prior = JSON.parse(raw) as ReviewSnapshot;
+            governedPaths = [...new Set([...(prior.governedPaths ?? changed), ...(Array.isArray(scope['affectedPaths']) ? scope['affectedPaths'].filter((p): p is string => typeof p === 'string') : [])])];
+            snapshot = await deps.git.reviewSnapshot?.(deps.cwd, text(spec['target']), governedPaths);
+            const delta = await deps.git.reviewDelta(deps.cwd, prior, snapshot);
+            if (scope['scope'] === 'delta') { const owned = integrationBound ? new Set(Object.values(integrationBound.ownership).flat()) : null; changed = owned ? delta.paths.filter((p) => owned.has(p)) : delta.paths.filter((p) => governedPaths!.includes(p)); }
+          }
+          if (scope['scope'] === 'disputes-only') changed = [...new Set(carried.map((row) => row.locus.replace(/:L\d+.*$/, '')))];
+          if (deps.git.reviewSnapshot) {
+            manifestPath = path.join(ctx.runDir, `${effect.id}.scope.json`);
+            snapshot ??= await deps.git.reviewSnapshot(deps.cwd, text(spec['target']), governedPaths ?? changed);
+            ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...snapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
+          }
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
         }
         const dir = path.join(deps.skillRoot, 'references', 'templates');
@@ -108,7 +129,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           ...kindValues(kind, spec, reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']))),
         };
         const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
-        body = (slot) => `${filled}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;
+        body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;
       }
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];
@@ -122,7 +143,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
       }
       promptPaths[name] = file;
     }
-    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full') }, promptPaths });
+    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full'), ...(manifestPath ? { manifestPath } : {}) }, promptPaths });
     return results;
   };
 }

@@ -30,6 +30,8 @@ export type DelegateRequest = {
   /** OpenCode endpoint base URL (e.g. `http://127.0.0.1:1234/v1`); null for a remote or default provider. */
   endpoint?: string | null;
   agent?: string | null;
+  readOnlyVerified?: boolean;
+  configSelectors?: Readonly<Record<string, string>>;
 };
 
 /** What `argv` receives: the request plus the runner-prepared prompt and resolved binary. */
@@ -61,14 +63,14 @@ export type RunOutcome =
   | { status: 'fail'; cls: FailureClass; detail: string; retryWithoutEffort?: boolean };
 
 export type Prelaunch =
-  | { kind: 'launch'; env: Readonly<Record<string, string>>; release: () => void }
+  | { kind: 'launch'; env: Readonly<Record<string, string>>; release: () => void | Promise<void> }
   | { kind: 'fail'; outcome: Extract<RunOutcome, { status: 'fail' }> };
 
 export type PreparePorts = {
   /** GET `<endpoint>/models`: model ids, or null when the server is offline. */
   fetchModels(endpoint: string): Promise<readonly string[] | null>;
   /** Acquires the local GPU concurrency lock; resolves to its release. */
-  acquireGpuLock(): Promise<() => void>;
+  acquireGpuLock(): Promise<() => void | Promise<void>>;
 };
 
 export type SandboxSpec = {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { createWaveHandler, finishWave, runWaveWorker, startWave, type WaveDeps, type WaveContext, type WorkerDeps } from '../../../skills/dispatch/scripts/effects/wave.ts';
+import { createWaveHandler, createWaveStartHandler, createWaveFinishHandler, finishWave, runWaveWorker, startWave, type WaveDeps, type WaveContext, type WorkerDeps } from '../../../skills/dispatch/scripts/effects/wave.ts';
 import type { LinkFs } from '../../../skills/dispatch/scripts/lib/fs-ext.ts';
 import { SPECS } from '../../../skills/dispatch/scripts/providers/index.ts';
 import type { DelegateRequest, ModeId, ProviderId, RunOutcome } from '../../../skills/dispatch/scripts/providers/types.ts';
@@ -135,4 +135,33 @@ test('delegates-early-fallbacks: startWave returns progress, nativeSubagentsOnly
   const missing = setup({}, [slot('claude[1]', 'claude', { native: true })], 'claude');
   const bare = startWave(missing.effect, ctx, missing.deps);
   assert.deepEqual(states(await finishWave(missing.effect, ctx, bare, [], { ...missing.deps, review: 'code' })), [['claude[1]', 'failed']]);
+});
+
+
+test('rewrite SC3 start exposes native and early fallback before CLI completes and reconciles once', async () => {
+  const w = setup({ 'codex:gpt:cli': [ok(CLEAN)] }, [slot('codex[0]', 'codex', { model: 'gpt' }), slot('claude[0]', 'claude', { native: true })], 'codex');
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  const original = w.deps.awaitWorker;
+  w.deps.awaitWorker = async (...args) => { await barrier; await original(...args); };
+  const events = await createWaveStartHandler(w.deps)({ ...w.effect, kind: 'wave-start' }, fakePorts(), { runDir: '/run', attempt: 1 });
+  const started = events[0]; assert.equal(started?.type, 'WAVE_STARTED');
+  if (started?.type !== 'WAVE_STARTED') return;
+  assert.equal(started.native.length, 1); assert.equal(started.early.length, 1);
+  const finish = { ...w.effect, kind: 'wave-finish' as const, id: 'finish', waveKey: started.waveKey, attempt: started.attempt, captures: [{ sourceKey: 'claude[0]', text: CLEAN }, { sourceKey: 'codex[0]#fallback', text: FINDING }] };
+  const result = createWaveFinishHandler(w.deps)(finish, fakePorts(), { runDir: '/run', attempt: 1 });
+  release(); const completed = done(await result);
+  assert.deepEqual(completed.slots.map((row) => row['state']), ['success', 'native']); assert.equal(completed.findings.length, 0);
+  const replay = await createWaveStartHandler(w.deps)({ ...w.effect, kind: 'wave-start' }, fakePorts(), { runDir: '/run', attempt: 2 });
+  assert.equal(replay[0]?.type === 'WAVE_STARTED' && replay[0].attempt, started.attempt); assert.equal(w.calls.length, 1);
+});
+
+
+test('rewrite SC4 worker requests preserve injected native config launch selectors', async () => {
+  const w = setup({}, [slot('opencode[0]', 'opencode', { model: 'local/qwen' })]);
+  let request: DelegateRequest | undefined;
+  const worker: WorkerDeps = { configSelectors: { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }, fs: w.fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS, modes: () => ['cli'], run: async (_provider, req) => { request = req; return ok(CLEAN); } };
+  w.deps.launchWorker = (dir, id, attempt) => { void runWaveWorker(dir, id, attempt, worker); };
+  const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps); await start.attempt; await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(request?.model, 'local/qwen'); assert.deepEqual(request?.configSelectors, { OPENCODE_CONFIG: '/selected/config.json', OPENCODE_CONFIG_DIR: '/selected/native' }); assert.equal(request?.timeoutMs, 60000);
 });

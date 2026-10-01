@@ -119,6 +119,8 @@ export type ReviewCtx = {
   /** This round's reconciled wave rows and findings (wave 1, then merged native wave 2). */
   rows: readonly Row[];
   drafts: readonly Finding[];
+  priorManifest?: string;
+  waveBinding?: { waveKey: string; attempt: number; roster: readonly Row[] };
 };
 
 export type Pass = 'main' | 'opt-in';
@@ -166,16 +168,22 @@ export function beginReview(spec: ReviewSpec, path: string, counters: Counters):
 
 function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[]): S {
   const base = { ...c0, round, scope, carried, rows: [], drafts: [], promptPaths: {} };
-  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried } }));
+  const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, affectedPaths: [...new Set(base.findings.flatMap((finding) => finding.fix?.paths ?? []))], ...(base.priorManifest ? { priorManifest: base.priorManifest } : {}) } }));
   return { state: { tag: 'prepare', c }, effects: [effect] };
 }
 
 function launchWave(c0: ReviewCtx, roster: readonly Row[], phase: 'cli' | 'native'): S {
-  const { c, effect } = withEffect(c0, 'wave', (id) => ({ kind: 'wave', id, round: c0.round, roster: [...roster], timeoutMs: c0.spec.timeoutMs }));
+  const { c, effect } = withEffect(c0, 'wave', (id) => ({ kind: phase === 'native' ? 'wave' : 'wave-start', id, round: c0.round, roster: [...roster], timeoutMs: c0.spec.timeoutMs }));
   return { state: { tag: 'wave', c, phase }, effects: [effect] };
 }
 
 // SECTION: Wave → rule
+
+function finishReviewWave(c0: ReviewCtx, captures: readonly Row[]): S {
+  const binding = c0.waveBinding!;
+  const { c, effect } = withEffect(c0, 'wave-finish', (id) => ({ kind: 'wave-finish', id, round: c0.round, roster: [...binding.roster], timeoutMs: c0.spec.timeoutMs, waveKey: binding.waveKey, attempt: binding.attempt, captures: [...captures] }));
+  return { state: { tag: 'wave', c, phase: 'cli' }, effects: [effect] };
+}
 
 function renumber(round: number, base: number, findings: readonly Finding[]): Finding[] {
   const ids = new Map(findings.map((finding, index) => [finding.id, findingId(round, base + index + 1)]));
@@ -203,14 +211,18 @@ function onWaveDone(state: Extract<ReviewState, { tag: 'wave' }>, event: Extract
 
 function afterWave(c0: ReviewCtx): S {
   const round = c0.round;
-  const reviewers = c0.rows.filter((row) => row['state'] !== 'failed').map((row) => String(row['slot']));
+  const usable = c0.rows.filter((row) => ['success', 'reserve', 'native'].includes(String(row['state'])) && row['descriptor'] === undefined);
+  const reviewers = usable.map((row) => String(row['slot']));
   const failed = c0.rows.filter((row) => row['state'] === 'failed').map((row) => ({ slot: String(row['slot']), reason: String(row['reason'] ?? row['cls'] ?? 'failed') }));
   const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate' }));
   const c1: ReviewCtx = { ...c0, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed }] };
+  const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot));
+  if (!reviewers.length || uncovered.length) return stay({ tag: 'failed', c: c1, detail: `reviewer-coverage: ${uncovered.length ? `responsible reviewer unavailable for ${uncovered.map((entry) => entry.id).join(', ')}` : 'no usable reviewer capture'}` });
   const verdict = convergence(fresh.filter((finding) => finding.status === 'open').map(matchKey), c0.history);
   if (verdict.halt) return stay({ tag: 'decide-escalation', c: { ...c1, findings: [...c1.findings, ...fresh] }, escalation: verdict.escalation });
   const reraised = new Set(verdict.reraised);
-  const closed = new Set(acceptByOmission(c0.carried.map((entry) => entry.id), verdict.reraised).map((closure) => closure.id));
+  const covered = c0.carried.filter((entry) => !uncovered.includes(entry)).map((entry) => entry.id);
+  const closed = new Set(acceptByOmission(c0.carried.map((entry) => entry.id), verdict.reraised, covered).map((closure) => closure.id));
   const findings = c1.findings.map((finding): ReviewFinding => {
     if (closed.has(finding.id)) return { ...finding, status: 'closed-by-reviewer' };
     if (reraised.has(finding.id)) return { ...finding, status: 'superseded' };
@@ -355,7 +367,7 @@ function decideNext(c0: ReviewCtx): S {
   if (!next.run) return settleOrOptIn(c);
   const carriedIds = new Set(next.carry);
   const pending = findings.filter((finding) => carriedIds.has(finding.id));
-  const affinity = assignAffinity(pending.map((finding) => ({ id: finding.id, source: finding.sources[0] ?? '' })), c.spec.roster.filter((slot) => !slot.reserve));
+  const affinity = assignAffinity(pending.map((finding) => ({ id: finding.id, source: String(c.rows.find((row) => row['by'] === finding.sources[0])?.['slot'] ?? finding.sources[0] ?? '') })), c.spec.roster.filter((slot) => !slot.reserve));
   const carried = pending.map((finding): CarriedRejection => ({
     id: finding.id, slot: affinity[finding.id] ?? null, locus: finding.locus, defect: finding.defect, reason: finding.resolution ?? '',
   }));
@@ -414,7 +426,7 @@ function onDecision(state: ReviewState, answer: unknown): S {
 const DECIDE_KIND = { 'decide-escalation': 'escalation', 'decide-needs-user': 'needs-user', 'decide-opt-in': 'opt-in' } as const;
 
 export function validateReview(state: ReviewState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return 'event.type: REVISE is not available in review until revision lands (I06)';
+  if (event.type === 'REVISE') return 'event.type: REVISE is unavailable in standalone review; author a new artifact and start a new run';
   switch (state.tag) {
     case 'rule': return event.type === 'RULINGS' ? validateRulings(state.c, event.rulings) : null;
     case 'native': return event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots) : null;
@@ -455,10 +467,19 @@ export function stepReview(state: ReviewState, event: Event): S {
     case 'prepare':
       if (event.type !== 'REVIEW_PREPARED' || !answers(event, state.c.effectId)) return stay(state);
       if (event.scope['empty'] === true) return stay({ tag: 'empty', c: state.c });
-      return launchWave({ ...state.c, promptPaths: event.promptPaths }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
-    case 'wave': return event.type === 'WAVE_DONE' && answers(event, state.c.effectId) ? onWaveDone(state, event) : stay(state);
+      return launchWave({ ...state.c, promptPaths: event.promptPaths, ...(typeof event.scope['manifestPath'] === 'string' ? { priorManifest: event.scope['manifestPath'] } : {}) }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
+    case 'wave':
+      if (event.type === 'WAVE_STARTED' && answers(event, state.c.effectId)) {
+        const completed = (event as typeof event & { completed?: Extract<Event, { type: 'WAVE_DONE' }> }).completed;
+        if (completed) return onWaveDone(state, completed);
+        const slots = pendingNative([...event.native, ...event.early].map((descriptor) => ({ state: 'native', descriptor })));
+        const c = { ...state.c, waveBinding: { waveKey: event.waveKey, attempt: event.attempt, roster: event.roster } };
+        return slots.length ? stay({ tag: 'native', c, slots }) : finishReviewWave(c, []);
+      }
+      return event.type === 'WAVE_DONE' && answers(event, state.c.effectId) ? onWaveDone(state, event) : stay(state);
     case 'native':
       if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots) !== null) return stay(state);
+      if (state.c.waveBinding) return finishReviewWave(state.c, event.slots);
       return launchWave(state.c, nativeRoster(state.slots, event.slots, state.c.spec.kind), 'native');
     case 'rule': return event.type === 'RULINGS' ? onRulings(state.c, event.rulings) : stay(state);
     case 'fix':

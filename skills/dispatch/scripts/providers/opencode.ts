@@ -42,12 +42,14 @@ export function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[
 }
 
 export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch> {
+  if (!req.agent || req.readOnlyVerified !== true) return { kind: 'fail', outcome: failOutcome('config', 'read-only-agent-unavailable: verified native agent required') };
   const host = req.endpoint ? endpointHost(req.endpoint) : null;
   if (!req.endpoint || !host || !isLocalHost(host)) return { kind: 'launch', env: {}, release: () => {} };
   const models = await ports.fetchModels(req.endpoint);
   if (models === null) return { kind: 'fail', outcome: failOutcome('model-not-loaded', `SERVER_OFFLINE: ${req.endpoint}/models did not answer`) };
-  if (!models.length) return { kind: 'fail', outcome: failOutcome('model-not-loaded', `${req.endpoint} reports no models loaded`) };
-  const release = await ports.acquireGpuLock();
+  if (!models.length || req.model && !models.includes(req.model.split('/').slice(1).join('/') || req.model)) return { kind: 'fail', outcome: failOutcome('model-not-loaded', `${req.endpoint} reports no models loaded`) };
+  let release: () => void | Promise<void>;
+  try { release = await ports.acquireGpuLock(); } catch (error) { return { kind: 'fail', outcome: failOutcome('timeout', String(error)) }; }
   // Local dispatch has no legitimate WAN use: every proxy points at a dead port, with only the backend exempt.
   const exempt = [...new Set([host, 'localhost', '127.0.0.1', '::1'])].join(',');
   const env: Record<string, string> = { NO_PROXY: exempt, no_proxy: exempt };
@@ -70,8 +72,8 @@ export const opencode: ProviderSpec = {
   modeCascadeOn: [],
   resumeCommand: (id) => id,
   argv(req) {
-    // NOTE: accepted risk: headless runs cannot answer permission prompts, so `--auto` stays; off Linux,
-    // read-only rests on the guardrail. `--pure` and `--variant` are v1-only and never emitted.
+    // Headless `--auto` requires the effective deny-by-default read-only agent verified in preparation.
+    // `--pure` and `--variant` are v1-only and never emitted.
     const inner = [req.binary, 'run', '--auto'];
     if (req.agent) inner.push('--agent', req.agent);
     if (req.model) inner.push('-m', req.effort ? `${req.model}#${req.effort}` : req.model);

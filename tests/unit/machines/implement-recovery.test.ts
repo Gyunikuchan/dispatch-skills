@@ -8,7 +8,7 @@ export const HASH = `sha256:${'a'.repeat(64)}`;
 export const metadata: RecoverySnapshot = { repoRoot: '', contents: { 'src/a.ts': Buffer.from('before').toString('base64') }, entries: { 'src/a.ts': { kind: 'file', mode: 0o644, linkTarget: null } }, taskStartFiles: ['src/a.ts'], callerDirty: [], ignored: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
 export const FP: TreeFingerprint = { head: 'h', index: 'i', worktree: 'w', recovery: metadata };
 export const PLAN = { title: 'Feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], criteria: [{ id: 'SC1', title: 'works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'check', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'feature', command: null, line: 1 }], verification: { automated: ['check'], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: 'original governed text' };
-export const RUN: RunStartedEvent = { type: 'RUN_STARTED', verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {}, overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } };
+export const RUN: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: 2, verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {}, overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } };
 export const failedRow: VerifyRecord = { command: 'check', exit: 1, logPath: 'failure.log', failureId: 'same-failure', failedTests: ['test:behavior'], diagnostic: 'failed', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' };
 export function approvalState(): Extract<ImplementState, { tag: 'approval' }> {
   let r = stepImplement(initialImplement(), RUN);
@@ -47,6 +47,16 @@ test('user-only manual completion requires explicit quote and per-criterion evid
   assert.ok(validateImplement(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-completion', by: 'user', quote: 'done', criteria: {} } }));
   const r = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-completion', by: 'user', quote: 'I verified completion', criteria } });
   assert.equal(r.state.tag, 'complete');
+});
+
+test('rewrite SC1 manual waiver retains user attribution and RED provenance', () => {
+  const base = failure(); const f = { ...base, c: { ...base.c, plan: { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const })) } } };
+  const r = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'Waive SC1 and its RED requirement', criteria: { SC1: { outcome: 'waived', evidence: 'Accepted limitation' } } } });
+  assert.equal(r.state.tag, 'complete');
+  if (r.state.tag !== 'complete') return;
+  assert.deepEqual(r.state.c.evidence['SC1']?.['waiver'], { by: 'user', quote: 'Waive SC1 and its RED requirement' });
+  assert.equal(r.state.c.evidence['SC1']?.['redProvenance'], 'waived');
+  assert.match(r.state.summary, /0 passed; 1 waived/);
 });
 test('implement-hotfix: inline baseline hotfix immediately reruns stalled check and expands finalFocus', () => {
   const c = approvalState().c;
@@ -109,4 +119,12 @@ test('failed-writer Git mutation stops before restore and next launch', () => {
     const stopped = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } });
     assert.equal(stopped.state.tag, 'failure-snapshot'); assert.equal(stopped.effects.some((effect) => effect.kind === 'restore'), false);
   }
+});
+
+test('rewrite SC1 observed RED stays distinct from a manual waived RED requirement', () => {
+  const base = failure(); const plan = { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const })) };
+  const f = { ...base, c: { ...base.c, plan, redMatrix: [{ id: 'SC1', path: 'tests/a.test.ts', leaf: 'check', exit: 1, tests: ['expected failure'] }] } };
+  const result = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I observed the behavior pass', criteria: { SC1: { outcome: 'pass', evidence: 'Behavior passed' } } } });
+  assert.equal(result.state.tag, 'complete'); if (result.state.tag !== 'complete') return;
+  assert.equal(result.state.c.evidence['SC1']?.['redProvenance'], 'observed'); assert.equal(result.state.c.evidence['SC1']?.['waiver'], undefined);
 });

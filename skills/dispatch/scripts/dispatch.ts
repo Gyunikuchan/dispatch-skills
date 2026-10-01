@@ -24,6 +24,7 @@ import { canonicalRepositoryRoot, createRun, findRepoRoot, handoffSession, initi
 import { LEVELS, normalizeProvider, parsePins, resolveLevel, resolveRoster, selectLevel, type LevelMap, type ReadDelegate } from './policy/roster.ts';
 import { createDiscovery } from './providers/discovery.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
+import { createOpencodePreparePorts, nativeOpencodeIntrospection, resolveEffectiveOpencodeLaunch } from './providers/opencode-runtime.ts';
 import { nodeProcess } from './providers/node-process.ts';
 import { runDelegate, type RunnerFs } from './providers/runner.ts';
 import type { ProviderId } from './providers/types.ts';
@@ -55,11 +56,19 @@ function workerDeps(): WorkerDeps {
   const { ports, platform, discovery } = runtime();
   return {
     fs: nodeLinkFs, proc: ports.proc, clock: ports.clock, specs: SPECS,
+    configSelectors: Object.fromEntries(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'].flatMap((key) => { const value = ports.env.get(key); return typeof value === 'string' ? [[key, value]] : []; })),
     modes: (provider) => SPECS[provider].modes.filter((mode) => discovery.resolve(provider, mode.id).status === 'path').map((mode) => mode.id),
     async run(provider, request, mode) {
       const binary = discovery.resolve(provider, mode).path;
       if (!binary) return { status: 'fail', cls: 'not-found', detail: `${provider}: missing ${mode}` };
-      return (await runDelegate(SPECS[provider], request, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd })).outcome;
+      const deadline = Date.now() + request.timeoutMs;
+      let resolved = request;
+      if (provider === 'opencode') {
+        try { resolved = await resolveEffectiveOpencodeLaunch(request, nativeOpencodeIntrospection(binary, request, process.env, request.timeoutMs)); }
+        catch (error) { return { status: 'fail', cls: 'config', detail: String(error) }; }
+      }
+      resolved = { ...resolved, timeoutMs: Math.max(1, deadline - Date.now()) };
+      return (await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) })).outcome;
     },
   };
 }

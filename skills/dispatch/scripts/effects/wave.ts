@@ -10,7 +10,7 @@
 //   <id>.a<n>.<slot>.outcome.json   one SlotFinal per roster slot
 //   <id>.a<n>.done.json             written last
 
-import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome } from '../core/types.ts';
+import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect } from '../core/types.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
 import { collectFindings, parseReport, type ReportFailureKind } from '../domain/report.ts';
 import { sanitizeText } from '../domain/sanitize.ts';
@@ -22,7 +22,7 @@ import { publishExclusive, type LinkFs } from '../lib/fs-ext.ts';
 export const HEARTBEAT_MS = 30_000;
 export const STALE_GRACE_MS = 30_000;
 
-type WaveEffect = { kind: 'wave'; id: string; round: number; roster: readonly Readonly<Record<string, unknown>>[]; timeoutMs: number };
+type WaveEffect = { kind: 'wave' | 'wave-start' | 'wave-finish'; id: string; round: number; roster: readonly Readonly<Record<string, unknown>>[]; timeoutMs: number };
 
 const unreachable = (value: never, what: string): never => { throw new Error(`unhandled ${what}: ${JSON.stringify(value)}`); };
 
@@ -78,12 +78,12 @@ const modelsOf = (slot: RosterSlot): string[] => (slot.model === undefined ? [] 
 
 // SECTION: Slot finals (closed union)
 
-type Success = { provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string };
+type Success = { outputPath?: string; provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string };
 
 export type SlotFinal =
   | ({ state: 'success'; slot: string } & Success)
   | ({ state: 'reserve'; slot: string; by: string; record: string } & Success)
-  | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string }
+  | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; outputPath?: string; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string }
   | { state: 'failed'; slot: string; cls: FailureClass | 'worker'; reason: string; records: string[] };
 
 export function slotStatus(final: SlotFinal): string {
@@ -170,6 +170,7 @@ export type WorkerDeps = {
   modes(provider: ProviderId): readonly ModeId[];
   run(provider: ProviderId, req: DelegateRequest, mode: ModeId): Promise<RunOutcome>;
   outputCapBytes?: number;
+  configSelectors?: Readonly<Record<string, string>>;
 };
 
 export const REPORT_CLASS: Readonly<Record<ReportFailureKind, FailureClass>> = {
@@ -197,6 +198,7 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     const req: DelegateRequest = {
       promptPath: paths.promptPath, model, effort: slot.effort ?? null, sandbox: slot.sandbox ?? true, schemaPath: null, resume: null,
       cwd: input.cwd, timeoutMs: Math.min(input.timeoutMs, remaining), outputCapBytes: deps.outputCapBytes ?? 10 * 1024 * 1024,
+      configSelectors: deps.configSelectors ?? {},
       attachments: paths.attachments, logPath: paths.logPath, briefPath: `${paths.logPath}.brief.md`,
     };
     const outcome = await deps.run(provider, req, mode);
@@ -204,12 +206,12 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     let reason: string;
     if (outcome.status === 'ok' && input.review === 'ask') {
       const claim = sanitizeText(outcome.text);
-      if (claim) return { ok: true, value: { provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim }, position };
+      if (claim) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim }, position };
       cls = 'empty-output';
       reason = 'empty-output: the delegate returned no text';
     } else if (outcome.status === 'ok') {
       const report = parseReport({ kind: input.review === 'ask' ? 'code' : input.review, source: slot.slot, text: outcome.text });
-      if (report.ok) return { ok: true, value: { provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records }, position };
+      if (report.ok) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records }, position };
       cls = REPORT_CLASS[report.failure.kind];
       reason = `${report.failure.kind}: ${report.failure.detail}`;
     } else {
@@ -301,18 +303,29 @@ export type WaveDeps = ClaimDeps & {
 
 const failed = (effectId: string, cls: EffectFailureClass, detail: string): ResultEvent => ({ type: 'EFFECT_FAILED', effectId, cls, detail });
 
-async function driveWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): Promise<number> {
+function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): number {
   const file = inputPath(ctx.runDir, effect.id);
   if (deps.fs.readText(file) === null) {
     const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster };
     deps.fs.writeAtomic(file, JSON.stringify(input));
   }
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);
+  if (latest > 0 && deps.fs.readText(donePath(ctx.runDir, effect.id, latest)) !== null) return latest;
+  const launchFence = join(ctx.runDir, `${effect.id}.launch.json`);
+  if (latest === 0 && deps.fs.readText(launchFence) !== null) return 1;
   // A resumed send settles the newest attempt; a first send launches past any leftovers.
   const decision: Arbitration = ctx.attempt > 1 || latest > 0 ? arbitrate(deps, ctx.runDir, effect.id, Math.max(latest, 1), effect.timeoutMs) : { action: 'launch', attempt: 1 };
-  if (decision.action === 'launch') deps.launchWorker(ctx.runDir, effect.id, decision.attempt);
-  await deps.awaitWorker(ctx.runDir, effect.id, decision.attempt);
+  if (decision.action === 'launch') {
+    if (latest === 0 && !publishExclusive(deps.fs, launchFence, JSON.stringify({ attempt: decision.attempt, host: deps.proc.host, at: deps.clock.now() }))) return 1;
+    deps.launchWorker(ctx.runDir, effect.id, decision.attempt);
+  }
   return decision.attempt;
+}
+
+async function collectWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): Promise<number> {
+  const n = prepareWorker(effect, roster, deps, ctx);
+  await deps.awaitWorker(ctx.runDir, effect.id, n);
+  return n;
 }
 
 function readFinals(deps: WaveDeps, runDir: string, id: string, n: number, roster: readonly RosterSlot[]): SlotFinal[] {
@@ -350,7 +363,7 @@ export function createWaveHandler(deps: WaveDeps): Handler<Extract<Parameters<Ha
     const cli = roster.filter((slot) => !slot.native);
     let cliFinals: SlotFinal[];
     try {
-      const n = cli.some((slot) => !slot.reserve) ? await driveWorker(effect, cli, deps, ctx) : 0;
+      const n = cli.some((slot) => !slot.reserve) ? await collectWorker(effect, cli, deps, ctx) : 0;
       cliFinals = n > 0 ? readFinals(deps, ctx.runDir, effect.id, n, cli) : [];
     } catch (error) {
       return [failed(effect.id, 'io', `wave worker: ${error instanceof Error ? error.message : String(error)}`)];
@@ -400,7 +413,7 @@ export function startWave(effect: WaveEffect, ctx: HandlerContext, deps: WaveDep
   const progress: ResultEvent[] = roster.filter((slot) => !slot.reserve)
     .map((slot) => ({ type: 'WAVE_PROGRESS', effectId: effect.id, slot: slot.slot, status: slot.native ? 'native-pending' : 'launched' }));
   const cli = roster.filter((slot) => !slot.native);
-  const attempt = cli.some((slot) => !slot.reserve) ? driveWorker(effect, cli, deps, ctx) : Promise.resolve(0);
+  const attempt = cli.some((slot) => !slot.reserve) ? Promise.resolve(prepareWorker(effect, cli, deps, ctx)) : Promise.resolve(0);
   return { native, early, progress, attempt };
 }
 
@@ -415,16 +428,18 @@ function captureOf(value: Readonly<Record<string, unknown>>, fs: LinkFs): Captur
 }
 
 /** Reconciles the worker's finals with `NATIVE_RESULTS` captures by `sourceKey`; one `WAVE_DONE`. */
-export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start: WaveStart, nativeResults: readonly Readonly<Record<string, unknown>>[], deps: WaveDeps & { review: ReviewKind }): Promise<ResultEvent[]> {
+export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start: WaveStart, nativeResults: readonly Readonly<Record<string, unknown>>[], deps: WaveDeps & { review: ReviewKind | 'ask' }): Promise<ResultEvent[]> {
   const roster = effect.roster.map(asRosterSlot);
   const n = await start.attempt;
+  if (n > 0) await deps.awaitWorker(ctx.runDir, effect.id, n);
   const captures = new Map(nativeResults.map((value) => captureOf(value, deps.fs)).filter((capture): capture is Capture => capture !== null).map((capture) => [capture.sourceKey, capture.text]));
   const fromCapture = (slot: string, key: string, prior: string[]): SlotFinal | null => {
     const text = captures.get(key);
     if (text === undefined) return null;
+    if (deps.review === 'ask') return text.trim() ? { state: 'native', slot, sourceKey: key, ...(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)?.['outputPath'] ? { outputPath: String(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)!['outputPath']) } : {}), reason: 'native capture', records: prior, drafts: [], claim: sanitizeText(text) } : { state: 'failed', slot, cls: 'empty-output', reason: `empty native capture ${key}`, records: prior };
     const report = parseReport({ kind: deps.review, source: slot, text });
     return report.ok
-      ? { state: 'native', slot, sourceKey: key, reason: 'native capture', records: prior, drafts: report.findings }
+      ? { state: 'native', slot, sourceKey: key, ...(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)?.['outputPath'] ? { outputPath: String(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)!['outputPath']) } : {}), reason: 'native capture', records: prior, drafts: report.findings }
       : { state: 'failed', slot, cls: REPORT_CLASS[report.failure.kind], reason: `native ${key}: ${report.failure.kind}: ${report.failure.detail}`, records: prior };
   };
   const cliFinals = n > 0 ? readFinals(deps, ctx.runDir, effect.id, n, roster.filter((slot) => !slot.native)) : [];
@@ -447,4 +462,27 @@ export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start:
     }
   }
   return waveDone(effect, finals).filter((event) => event.type === 'WAVE_DONE');
+}
+
+
+export function createWaveStartHandler(deps: WaveDeps): Handler<Extract<Effect, { kind: 'wave-start' }>> {
+  return async (effect, _ports, ctx) => {
+    try {
+      const started = startWave(effect, ctx, deps);
+      const attempt = await started.attempt;
+      return [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt, roster: effect.roster,
+        native: started.native, early: started.early, claimPath: attempt ? claimPath(ctx.runDir, effect.id, attempt) : null, inputPath: inputPath(ctx.runDir, effect.id) }];
+    } catch (error) { return [failed(effect.id, 'io', `wave start: ${String(error)}`)]; }
+  };
+}
+
+export function createWaveFinishHandler(deps: WaveDeps): Handler<Extract<Effect, { kind: 'wave-finish' }>> {
+  return async (effect, _ports, ctx) => {
+    try {
+      const wave = { ...effect, id: effect.waveKey };
+      const context = deps.context(wave);
+      const events = await finishWave(wave, ctx, { native: [], early: [], progress: [], attempt: Promise.resolve(effect.attempt) }, effect.captures, { ...deps, review: context.review });
+      return events.map((event) => ({ ...event, effectId: effect.id }));
+    } catch (error) { return [failed(effect.id, 'io', `wave finish: ${String(error)}`)]; }
+  };
 }

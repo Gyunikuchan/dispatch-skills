@@ -4,6 +4,14 @@ import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/sc
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { initialImplement, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { approvalState, host } from './implement-recovery.test.ts';
+
+for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(`rewrite SC1 ordinary evidence ${outcome || 'empty'} cannot falsely complete`, () => {
+  const c = approvalState().c;
+  const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
+  const result = host(state, { type: 'EVIDENCE', criteria: { SC1: { outcome, evidence: 'observed behavior' } } });
+  assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence');
+});
 
 const HASH = `sha256:${'a'.repeat(64)}`;
 type Fingerprint = { head: string; index: string; worktree: string };

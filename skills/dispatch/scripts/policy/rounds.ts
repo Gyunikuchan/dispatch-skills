@@ -75,8 +75,8 @@ export function orchestratorClosures({ round, cap, findings }: { round: number; 
 }
 
 /** A carried pending rejection its reviewer did not re-raise is accepted by omission (closed by reviewer). */
-export function acceptByOmission(carried: readonly FindingId[], reraised: readonly FindingId[]): Closure[] {
-  return carried.filter((id) => !reraised.includes(id)).map((id) => ({ id, closedBy: 'reviewer' }));
+export function acceptByOmission(carried: readonly FindingId[], reraised: readonly FindingId[], covered: readonly FindingId[]): Closure[] {
+  return carried.filter((id) => covered.includes(id) && !reraised.includes(id)).map((id) => ({ id, closedBy: 'reviewer' }));
 }
 
 /** Each pending rejection rides to its source slot, or that slot's substitute; null when neither is on the roster. */

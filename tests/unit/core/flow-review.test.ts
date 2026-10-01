@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import type { Effect, Handler, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { createHandlers } from '../../../skills/dispatch/scripts/effects/index.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
@@ -21,7 +22,7 @@ function setup(fix: boolean) {
     type: 'WAVE_DONE', effectId: effect.id, round: effect.round, slots: [{ slot: 'codex[0]', state: 'success' }], findings: effect.round === 1 ? [FINDING] : [],
   }];
   const tmp = tempDir();
-  const git = createGit({ run: async (args) => (args[1] === '--show-toplevel' ? `${tmp}\n` : args[0] === 'diff' && args[1] === '--name-only' ? 'src/a.ts\n' : '') });
+  const { reviewSnapshot: _snapshot, reviewDelta: _delta, ...git } = createGit({ run: async (args) => (args[1] === '--show-toplevel' ? `${tmp}\n` : args[0] === 'diff' && args[1] === '--name-only' ? 'src/a.ts\n' : '') });
   const handlers = createHandlers({ skillRoot: SKILL_ROOT, cwd: tmp, os: 'linux', git, tempRoot: path.join(tmp, 'tmp'), workspaceRoot: tmp, orchestratorPlatform: 'claude', wave });
   const ports = fakePorts();
   const commands: string[] = [];
@@ -58,4 +59,49 @@ test('review --fix: fix → FIXES_APPLIED runs fix-verify, and the run settles',
   const completion = done.frame?.data['completion'] as { exitSummary: { rounds: number; fixedUnreviewed: unknown[] } };
   assert.deepEqual([completion.exitSummary.rounds, completion.exitSummary.fixedUnreviewed], [2, []]);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
+});
+
+
+test('rewrite SC2 prompt preserves comparison independently of context', async () => {
+  const { options, runStarted, runDir } = setup(false);
+  const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Check the boundary' } } });
+  assert.equal(result.frame?.await, 'rule', JSON.stringify(result));
+  const file = fs.readdirSync(runDir).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt = fs.readFileSync(path.join(runDir, file), 'utf8');
+  assert.match(prompt, /main\.\.HEAD/);
+  assert.match(prompt, /src\/a\.ts/);
+  assert.match(prompt, /Check the boundary/);
+});
+
+
+test('rewrite SC3 incompatible journals fail explicitly', () => {
+  const { runStarted } = setup(false); const { type, ...data } = runStarted;
+  assert.throws(() => fold(rootMachine, [{ seq: 1, v: 1, at: 'now', type, data }]), /unsupported-journal-protocol/);
+});
+
+test('rewrite SC2 later delta remains within manifest and accepted fix paths', async () => {
+  const ports = fakePorts(); const runDir = tempDir(); const priorPath = path.join(runDir, 'prior.json'); const snapshot = { head: 'a', target: 'main..HEAD', comparison: 'a', index: {}, working: {}, untracked: {}, governedPaths: ['src/a.ts'] };
+  ports.fs.writeAtomic(priorPath, JSON.stringify(snapshot));
+  const git = { ...createGit({ run: async () => '' }), diffNames: async () => ['src/a.ts'], reviewSnapshot: async () => snapshot, reviewDelta: async () => ({ paths: ['src/a.ts', 'src/new.ts', 'unrelated.ts'], staged: [], unstaged: [], untracked: [], deleted: [] }) };
+  const handler = createPrepareReview({ cwd: '/repo', skillRoot: SKILL_ROOT, git });
+  const events = await handler({ kind: 'prepare-review', id: 'round2', round: 2, review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'delta', priorManifest: priorPath, affectedPaths: ['src/new.ts'] } }, ports, { runDir, attempt: 1 });
+  const prepared = events[0]; assert.equal(prepared?.type, 'REVIEW_PREPARED');
+  if (prepared?.type === 'REVIEW_PREPARED') assert.deepEqual(prepared.scope['paths'], ['src/a.ts', 'src/new.ts']);
+});
+
+test('review fix retried prepare refreshes its manifest and later round reuses one capture', async () => {
+  const runDir = tempDir(), ports = fakePorts(); let head = 'first'; let names = ['src/a.ts']; const requests: (readonly string[] | undefined)[] = [];
+  const git = { ...createGit({ run: async () => '' }), diffNames: async () => names,
+    reviewSnapshot: async (_cwd: string, _target: string, paths?: readonly string[]) => { requests.push(paths); return { head, target: '', comparison: head, index: {}, working: {}, untracked: {} }; },
+    reviewDelta: async (_cwd: string, _prior: unknown, current?: unknown) => { assert.ok(current); return { paths: names, staged: [], unstaged: [], untracked: [], deleted: [] }; } };
+  const handler = createPrepareReview({ cwd: '/repo', skillRoot: SKILL_ROOT, git });
+  const effect = { kind: 'prepare-review' as const, id: 'prepare', round: 1, review: { kind: 'code', target: '', roster: [{ slot: 'codex[0]' }] }, scope: { scope: 'full' } };
+  const invoke = async (attempt: number) => { const event = (await handler(effect, ports, { runDir, attempt }))[0]; assert.equal(event?.type, 'REVIEW_PREPARED'); return event; };
+  const first = await invoke(1); head = 'second'; names = ['src/a.ts', 'src/new.ts']; const second = await invoke(2);
+  if (first?.type !== 'REVIEW_PREPARED' || second?.type !== 'REVIEW_PREPARED') throw new Error('prepared');
+  const manifestPath = String(second.scope['manifestPath']); const manifest = JSON.parse(ports.fs.readText(manifestPath));
+  assert.equal(manifest.head, 'second'); assert.deepEqual(manifest.governedPaths, names);
+  const before = requests.length;
+  const event = (await handler({ ...effect, id: 'round2', round: 2, scope: { scope: 'delta', priorManifest: manifestPath } }, ports, { runDir, attempt: 1 }))[0];
+  assert.equal(event?.type, 'REVIEW_PREPARED'); assert.equal(requests.length - before, 1); assert.deepEqual(requests.at(-1), names);
 });

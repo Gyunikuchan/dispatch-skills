@@ -56,6 +56,8 @@ test('real nested two-increment delivery replays author, write and native integr
     'write-brief': async (effect) => { writes++; return [{ type: 'BRIEF_READY', effectId: effect.id, stage: effect.stage, path: 'brief', sha256: hash, envelopePath: `${effect.id}.outcome.json` }]; },
     'check-envelope': async (effect) => [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered', evidence: [] }, defects: [], diff: { paths: [effect.id.includes('i02') ? 'src/b.ts' : 'src/a.ts'] } }],
     'prepare-review': async (effect) => [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { paths: ['src/a.ts', 'src/b.ts'] }, promptPaths: { 'codex[0]': 'prompt' } }],
+    'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 0, roster: effect.roster, native: effect.id === 'design.integration.wave.1' ? [{ sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' }] : [], early: [], claimPath: null, inputPath: 'input' }],
+    'wave-finish': async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     wave: async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: effect.id === 'design.integration.wave.1' ? [{ slot: 'codex[0]', state: 'native', descriptor: { sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' } }] : [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     handoff: async (effect) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: '/handoff', warning: null }],
   };

@@ -32,8 +32,8 @@ test('prepare → wave → rule: frames per transition', () => {
   assert.deepEqual((frames[2]?.data['findings'] as { id: string }[]).map((entry) => entry.id), ['R1-F001']);
   const { effects } = drive([started(), prepared(1)]);
   const wave = effects[0];
-  assert.equal(wave?.kind, 'wave');
-  assert.deepEqual(wave?.kind === 'wave' && wave.roster.map((slot) => [slot['slot'], slot['promptPath'], slot['review']]), [['codex[0]', 'p0', 'code'], ['agy[0]', 'p1', 'code']]);
+  assert.equal(wave?.kind, 'wave-start');
+  assert.deepEqual(wave?.kind === 'wave-start' && wave.roster.map((slot) => [slot['slot'], slot['promptPath'], slot['review']]), [['codex[0]', 'p0', 'code'], ['agy[0]', 'p1', 'code']]);
 });
 
 test('disputes-only round when nothing was fixed; affinity carries the rejection to its source slot', () => {
@@ -43,7 +43,7 @@ test('disputes-only round when nothing was fixed; affinity carries the rejection
   const next = effects[0];
   assert.equal(next?.kind === 'prepare-review' && next.id, 'review.prepare-review.2');
   assert.deepEqual(next?.kind === 'prepare-review' && next.scope, {
-    scope: 'disputes-only', carried: [{ id: 'R1-F001', slot: 'agy[0]', locus: 'src/a.ts:L3', defect: 'defect R1-F001', reason: 'by design' }],
+    scope: 'disputes-only', affectedPaths: [], carried: [{ id: 'R1-F001', slot: 'agy[0]', locus: 'src/a.ts:L3', defect: 'defect R1-F001', reason: 'by design' }],
   });
 });
 
@@ -80,4 +80,19 @@ test('an active review phase with zero resolved reviewers fails; rounds zero sti
   assert.equal(play(reviewMachine, [started({ config: none })]).at(-1)?.at, 'review › failed');
   const skip = { ...none, phases: { 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } };
   assert.equal(play(reviewMachine, [started({ config: skip })]).at(-1)?.at, 'review › skipped');
+});
+
+for (const coverage of ['failed', 'missing', 'clean'] as const) test(`rewrite SC1 responsible reviewer ${coverage} controls omission`, () => {
+  const events = [started({ fix: true }), prepared(1), waveDone(1, [finding('R1-F001')]),
+    { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'by design' } } } as Event, prepared(2),
+    { ...waveDone(2, []), slots: coverage === 'clean' ? rows : [rows[0]!, ...(coverage === 'failed' ? [{ slot: 'agy[0]', state: 'failed', reason: 'timeout' }] : [])] } as Event];
+  const { state } = drive(events);
+  assert.equal(state.tag, coverage === 'clean' ? 'settled' : 'failed');
+  assert.equal('c' in state && state.c.findings[0]?.status, coverage === 'clean' ? 'closed-by-reviewer' : 'pending-rejection');
+});
+
+test('rewrite SC1 all-failed review reports coverage failure', () => {
+  const { state } = drive([started(), prepared(1), { ...waveDone(1, []), slots: rows.map((row) => ({ ...row, state: 'failed' })) } as Event]);
+  assert.equal(state.tag, 'failed');
+  assert.match(state.tag === 'failed' ? state.detail : '', /reviewer-coverage/);
 });

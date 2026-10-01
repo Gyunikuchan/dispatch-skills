@@ -17,8 +17,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { isMainModule } from '../../../../skills/dispatch/scripts/lib/platform.mjs';
-import { measureText } from '../../../../skills/dispatch/scripts/runners/shared.mjs';
+const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === url;
+const measureText = (text) => ({ characters: text.length, estimate: Math.ceil(text.length / 4) });
 import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
 
 // ============================================================================
@@ -28,10 +28,10 @@ import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolve
 const SKIP_DIRS = new Set(['node_modules', '.git', '.scratch', 'worktrees']);
 const TEST_TIMEOUT_MS = 10 * 60 * 1000;
 const TEST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const TEST_GLOB = 'tests/**/*.test.mjs';
+const TEST_GLOB = 'tests/**/*.test.ts';
 const COVERAGE_INCLUDES = [
-  'skills/**/*.mjs',
-  'scripts/**/*.mjs',
+  'skills/**/*.ts',
+  'scripts/**/*.ts',
   '.agents/skills/audit-dispatch-skills/**/*.mjs',
 ];
 
@@ -39,14 +39,15 @@ const COVERAGE_INCLUDES = [
 // SECTION: Main
 // ============================================================================
 
-async function main() {
-  const root = resolveRepoRoot();
-  const { workDir, rel } = resolveRunDirs(root, process.argv);
+export async function main(options = {}) {
+  const root = options.root ?? resolveRepoRoot();
+  const argv = options.argv ?? process.argv;
+  const { workDir, rel } = resolveRunDirs(root, argv);
 
   // Re-running step 1 to resume an audit used to overwrite the baseline it was resuming from,
   // silently replacing the pre-audit git status and test output the finalize step compares against.
   const existing = fs.existsSync(path.join(workDir, 'git-status.txt'));
-  if (existing && !process.argv.includes('--force')) {
+  if (existing && !argv.includes('--force')) {
     throw new Error(
       `A baseline already exists at ${rel(workDir)}.\n` +
         'Resuming an audit should reuse it — re-running this step would replace the pre-audit ' +
@@ -59,10 +60,10 @@ async function main() {
 
   fs.writeFileSync(path.join(workDir, 'git-status.txt'), auditGitStatus(root) ?? '', 'utf8');
 
-  const tests = runTests(root);
+  const tests = (options.runTests ?? runTests)(root);
   fs.writeFileSync(path.join(workDir, 'tests.txt'), tests.output, 'utf8');
 
-  const metrics = await buildMetrics(root);
+  const metrics = await (options.buildMetrics ?? buildMetrics)(root);
   fs.writeFileSync(path.join(workDir, 'metrics.md'), metrics.markdown, 'utf8');
 
   process.stdout.write(
@@ -79,16 +80,18 @@ async function main() {
 // SECTION: Tests & Coverage
 // ============================================================================
 
-function runTests(root) {
+export function runTests(root, spawn = spawnSync) {
   // Node < 22 treats the quoted glob as a literal path and runs nothing; report that, not a false 0/0.
   if (Number(process.versions.node.split('.')[0]) < 22) {
     return { output: '', status: null, totals: 'skipped: Node <22 cannot expand the test glob' };
   }
   // Node expands the quoted glob itself, so the same argv works under bash, zsh, and PowerShell.
-  const res = spawnSync(
+  const res = spawn(
     process.execPath,
     [
       '--test',
+      '--import=./tests/helpers/isolated-temp.ts',
+      '--import=./tests/helpers/block-spawn.ts',
       '--experimental-test-coverage',
       // Installed CLIs spawned by tests would otherwise flood the coverage report.
       ...COVERAGE_INCLUDES.map((pattern) => `--test-coverage-include=${pattern}`),
@@ -113,8 +116,8 @@ async function buildMetrics(root) {
     ...walk(path.join(root, 'skills')),
     ...walk(path.join(root, 'scripts')),
     ...authoredSkillDirs(root).flatMap(walk),
-  ].filter((f) => f.endsWith('.mjs'));
-  const tests = walk(path.join(root, 'tests')).filter((f) => f.endsWith('.test.mjs'));
+  ].filter((f) => /\.(?:ts|mjs)$/.test(f));
+  const tests = walk(path.join(root, 'tests')).filter((f) => f.endsWith('.test.ts'));
   const testText = tests.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
   const out = ['# Audit Metrics', ''];
@@ -146,12 +149,12 @@ async function buildMetrics(root) {
     out.push(`| ${rel(file)} | ${loc(text)} | ${(text.match(/^\s*(?:it|test)\(/gm) ?? []).length} |`);
   }
 
-  const { verifySkillIntegrity } = await import(pathToFileURL(path.join(root, 'skills/dispatch/scripts/lib/integrity.mjs')).href);
+  const { checkIntegrity } = await import(pathToFileURL(path.join(root, 'skills/dispatch/scripts/lib/integrity.ts')).href);
   const hashLines = fs.readdirSync(path.join(root, 'skills')).map((dir) => {
     const skillDir = path.join(root, 'skills', dir);
     if (!fs.existsSync(path.join(skillDir, 'skill-hashes.json'))) return `Hashes skills/${dir}: no manifest`;
-    const result = verifySkillIntegrity(skillDir);
-    return `Hashes skills/${dir}: ${result.valid ? 'in sync' : `DRIFT in ${result.violations.join(', ')}`}`;
+    const result = checkIntegrity(skillDir);
+    return `Hashes skills/${dir}: ${result.status === 'ok' ? 'in sync' : result.status === 'drift' ? `DRIFT in ${result.violations.join(', ')}` : result.warning}`;
   });
   out.push('', '## Skill hash drift', '', ...hashLines.map((l) => `- ${l}`));
 

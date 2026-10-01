@@ -47,3 +47,16 @@ test('branch references and manuals resolve every local link and use portable re
   }
   assert.match(read('skills/dispatch/README.md'), /\^22\.18 \|\| >=23\.6/);
 });
+
+
+test('rewrite SC5 aliases forward explicit fix intent and host contract uses emitted envelopes', () => {
+  for (const name of ['dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) assert.match(read(`skills/${name}/SKILL.md`), /--fix/);
+  assert.match(read('skills/dispatch/SKILL.md'), /`events`/); assert.match(read('skills/dispatch/SKILL.md'), /outcome:"pass"/);
+});
+
+
+test('rewrite SC6 guidance uses delivered APIs and describes migration boundaries', () => {
+  const root = read('README.md'); assert.doesNotMatch(root, /--phases|clean tree falls back/i); assert.match(root, /Ambient credential/); assert.match(root, /invoke `implement:`/);
+  const config = read('skills/dispatch/references/readme/configuration.md'); for (const term of ['nativeSubagentsOnly', 'write-subagents', 'unsupported-journal-protocol', 'OPENCODE_CONFIG_DIR', 'sandbox:false']) assert.ok(config.includes(term), term);
+  assert.doesNotMatch(read('skills/dispatch/references/templates/plan.md'), /Resolution log/);
+});

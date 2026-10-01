@@ -64,7 +64,7 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 
 | What dispatch does | Why it matters |
 |---|---|
-| **🛡️ Keeps read delegates read-only** | Read delegates run without credentials or access to sensitive files. Supported platforms add an OS sandbox for another layer of protection. After plan approval, production edits go through the host's native write agent/subagent.
+| **🛡️ Keeps read delegates read-only** | Ambient credential variables are stripped; sensitive attachments are rejected. Native authenticated state remains available, and prompt guardrails guide file reads. Supported platforms add an OS sandbox for another layer of protection. After plan approval, production edits go through the host's native write agent/subagent.
 | **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in session files, while structured handoffs preserve cited findings and progress for the next phase. |
 | **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
 | **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |
@@ -144,7 +144,7 @@ Review your working tree or a branch range:
 ```
 
 > [!NOTE]
-> With no range, a dirty tree is reviewed as its uncommitted changes alone — staged, unstaged, and untracked — and your committed branch work is left out. A clean tree falls back to a branch comparison against `origin/HEAD`, else `main` or `master`. Name a range explicitly when you want commits and uncommitted edits reviewed together.
+> With no range, a dirty tree is reviewed as its uncommitted changes alone — staged, unstaged, and untracked — and your committed branch work is left out. A clean tree has no reviewable changes. Name a range explicitly to review committed changes.
 
 > [!NOTE]
 > Reviews are report-only. Add `--fix` to let verified findings be applied.
@@ -153,10 +153,10 @@ Run the whole loop — plan, review, approval gate, implementation, code review 
 
 ```text
 /dispatch implement: Add CSV export
-/dispatch implement --phases from:code-review: .scratch/dispatch-skills/<folder>/csv.plan.md
+/dispatch implement: .scratch/dispatch-skills/<folder>/csv.plan.md
 ```
 
-For work too big for one pass, `design:` splits it into increments and implements them one at a time:
+For work too big for one pass, `design:` creates and reviews an increment graph. Approve the design, then invoke `implement:` on its artifact to deliver the increments:
 
 ```text
 /dispatch design: Migrate the billing state machine

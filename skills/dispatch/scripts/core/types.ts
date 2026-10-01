@@ -12,7 +12,7 @@ export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-revi
 export type ExitCode = 0 | 1 | 2 | 3;
 
 export type EffectKind =
-  | 'parse-artifact' | 'prepare-review' | 'wave' | 'verify' | 'write-brief'
+  | 'parse-artifact' | 'prepare-review' | 'wave' | 'wave-start' | 'wave-finish' | 'verify' | 'write-brief'
   | 'check-envelope' | 'snapshot' | 'restore' | 'handoff';
 
 // NOTE: effect-handler failure classes; I03/I04 refine when handlers land.
@@ -93,6 +93,7 @@ export type DesignApproval =
 
 export type RunStartedEvent = {
   designApproval?: DesignApproval;
+  protocolRevision?: 2;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
   pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
   overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;
@@ -117,6 +118,7 @@ export type HostEvent =
 export type ResultEvent =
   | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
+  | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
   | { type: 'WAVE_PROGRESS'; effectId: string; slot: SlotId; status: SlotStatus }
   | { type: 'WAVE_DONE'; effectId: string; round: number; slots: SlotOutcome[]; findings: Finding[] }
   | { type: 'VERIFY_DONE'; effectId: string; purpose: VerifyPurpose; results: CommandResult[]; fingerprint: TreeFingerprint }
@@ -137,6 +139,8 @@ export type ResultEventType = ResultEvent['type'];
 export type Effect =
   | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
   | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
+  | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
+  | { kind: 'wave-finish'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number; waveKey: string; attempt: number; captures: NativeSlotResult[] }
   | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[] }
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
@@ -167,6 +171,7 @@ export interface Frame {
   await: Await;
   data: FrameData;
   reply: string;
+  events?: readonly HostEvent[];
   error?: string;
   progress?: FrameData;
 }

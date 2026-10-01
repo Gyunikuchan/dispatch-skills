@@ -13,7 +13,7 @@ import { createPrepareReview } from './prepare-review.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRestore } from './restore.ts';
 import { createVerify } from './verify.ts';
-import { createWaveHandler, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
+import { createWaveStartHandler, createWaveFinishHandler, createWaveHandler, type SlotPaths, type WaveContext, type WaveDeps } from './wave.ts';
 import { isNativeRoster, nativeWave } from './wave-native.ts';
 import { createWriteBrief } from './write-brief.ts';
 
@@ -39,7 +39,7 @@ const reviewOf = (roster: readonly Row[]): WaveContext['review'] => {
 };
 
 /** Wave context from the roster: each slot's `promptPath` (copied from `REVIEW_PREPARED`) and a log beside it. */
-export function waveContext(effect: WaveEffect, deps: Pick<HandlerDeps, 'cwd' | 'orchestratorPlatform'>): WaveContext {
+export function waveContext(effect: { roster: readonly Row[] }, deps: Pick<HandlerDeps, 'cwd' | 'orchestratorPlatform'>): WaveContext {
   const paths: Record<string, SlotPaths> = {};
   for (const slot of effect.roster) {
     const name = slot['slot'];
@@ -58,6 +58,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'parse-artifact': parseArtifact,
     'prepare-review': createPrepareReview(deps),
     wave,
+    'wave-start': typeof deps.wave === 'function'
+      ? (effect, ports, ctx) => cli({ ...effect, kind: 'wave' }, ports, ctx).then((events) => events.map((event) => event.type === 'WAVE_DONE' ? { type: 'WAVE_STARTED' as const, effectId: effect.id, waveKey: effect.id, attempt: 0, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: '', completed: event } : event))
+      : createWaveStartHandler({ ...deps.wave, context: (effect) => waveContext(effect, deps) }),
+    'wave-finish': typeof deps.wave === 'function'
+      ? (effect, ports, ctx) => cli({ ...effect, kind: 'wave' }, ports, ctx)
+      : createWaveFinishHandler({ ...deps.wave, context: (effect) => waveContext(effect, deps) }),
     verify: createVerify(deps),
     'check-envelope': createCheckEnvelope(deps),
     'write-brief': async (effect, ports, ctx) => {

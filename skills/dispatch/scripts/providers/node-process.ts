@@ -16,7 +16,7 @@ export const nodeProcess: ProcessPort = {
     const batch = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)
       ? batchInvocation(command, args, process.env['ComSpec'] || 'cmd.exe') : null;
     // Open the log first so a failure cannot orphan a running child.
-    const log = fs.openSync(io.logPath, 'w');
+    const log = fs.openSync(io.logPath, 'w', 0o600);
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(batch ? batch.command : command, batch ? batch.args : args, {
@@ -37,14 +37,26 @@ export const nodeProcess: ProcessPort = {
     let written = 0;
     let truncated = false;
     let stderr = '';
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    const cancelCap = () => {
+      if (capTimer) return;
+      if (child.pid) {
+        if (process.platform === 'win32') {
+          const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          killer.on('error', () => child.kill('SIGKILL'));
+        } else { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
+      }
+      capTimer = setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); child.kill('SIGKILL'); }, 1000);
+    };
     child.stdout?.on('data', (chunk: Buffer) => {
       const room = io.capBytes - written;
-      if (room <= 0) { truncated = true; return; }
+      if (room <= 0) { truncated = true; cancelCap(); return; }
       const piece = chunk.length > room ? chunk.subarray(0, room) : chunk;
       if (piece.length < chunk.length) truncated = true;
       fs.writeSync(log, piece);
       chunks.push(piece);
       written += piece.length;
+      if (truncated) cancelCap();
     });
     child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(-STDERR_TAIL); });
     const done = new Promise<ProcessResult>((resolve) => {
@@ -53,6 +65,7 @@ export const nodeProcess: ProcessPort = {
       const finish = (exit: number | null, signal: string | null, extra = ''): void => {
         if (settled) return;
         settled = true;
+        if (capTimer) clearTimeout(capTimer);
         fs.closeSync(log);
         resolve({
           exit, signal, stdout: Buffer.concat(chunks).toString('utf8'), stdoutPath: io.logPath,

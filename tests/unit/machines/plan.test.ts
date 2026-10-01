@@ -36,3 +36,10 @@ test('plan: review skipped (rounds 0) → done complete with the skip summary', 
   const frame = play(rootMachine, [started(0), authored, { ...parsed(1, []) }, { type: 'HANDOFF_DONE', effectId: 'root.handoff.1', destination: '/t', warning: null }]).at(-1);
   assert.deepEqual(frame?.data, { outcome: 'complete', summary: 'plan review skipped (rounds 0)', handoff: '/t' });
 });
+
+
+test('rewrite SC5 standalone plan revision diagnostic describes actual support', () => {
+  const state = planMachine.step(planMachine.initial(), started()).state;
+  const error = planMachine.validate!(state, { type: 'REVISE', artifact: 'plan', reason: 'change', evidence: 'observed' });
+  assert.match(error ?? '', /standalone/); assert.doesNotMatch(error ?? '', /I06/);
+});

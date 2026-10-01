@@ -27,7 +27,7 @@ export const SAFE_ENV_WHITELIST: ReadonlySet<string> = new Set([
   // Reachability and identity: endpoints and paths, never tokens.
   'HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy', 'NO_PROXY', 'no_proxy',
   'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME',
-  'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'USER', 'USERNAME', 'LOGNAME', 'TZ',
+  'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'JETSKI_APP_DATA_DIR', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'USER', 'USERNAME', 'LOGNAME', 'TZ',
 ]);
 
 // NOTE: redundant with the whitelist by construction; catches a credential-shaped name added to it by mistake.
@@ -261,6 +261,7 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
  * signature, yields `sandbox-unsupported` (never a downgrade). `retryWithoutEffort` reruns once without effort.
  */
 export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts): Promise<DelegateRun> {
+  const deadline = ports.clock.now() + req.timeoutMs;
   const sandbox = req.sandbox && spec.sandbox !== undefined;
   if (req.sandbox && spec.sandbox && !spec.sandbox.supported(ports.platform)) {
     return { outcome: failOutcome('sandbox-unsupported', `${spec.id} sandbox is unsupported on this host; set sandbox: false to run unsandboxed`), result: null, attempts: 0, briefFile: null };
@@ -286,14 +287,17 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
   for (;;) {
     const pre = spec.prepare && ports.prepare ? await spec.prepare(current, ports.prepare) : null;
     if (pre?.kind === 'fail') return { outcome: pre.outcome, result: null, attempts, briefFile };
-    const launch = spec.argv(current, mode);
-    const env = { ...sanitizeEnv(ports.env), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
-    attempts++;
+    const remaining = deadline - ports.clock.now();
+    if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return { outcome: failOutcome('timeout', 'preparation exhausted delegate deadline'), result: null, attempts, briefFile }; }
+    current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
     try {
+      const launch = spec.argv(current, mode);
+      const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
+      attempts++;
       result = await launchOnce({ ...launch, env }, current, ports);
     } finally {
-      if (pre?.kind === 'launch') pre.release();
+      if (pre?.kind === 'launch') await pre.release();
     }
     const outcome = settle(spec, current, result);
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
@@ -309,11 +313,9 @@ function settle(spec: ProviderSpec, req: LaunchRequest, result: ProcessResult): 
   if (req.sandbox && spec.sandbox?.inactive.test(result.stderrTail)) {
     return failOutcome('sandbox-unsupported', `${spec.id} reported its sandbox inactive; set sandbox: false to run unsandboxed`);
   }
-  const outcome = spec.parse(result, req);
-  if (outcome.status === 'ok') return outcome;
   if (result.timedOut) return failOutcome('timeout', `timed out after ${req.timeoutMs} ms; partial output at ${result.stdoutPath}`);
   if (result.truncated) return failOutcome('buffer', `output exceeded ${req.outputCapBytes} bytes; partial output at ${result.stdoutPath}`);
-  return outcome;
+  return spec.parse(result, req);
 }
 
 // SECTION: Windows batch launchers

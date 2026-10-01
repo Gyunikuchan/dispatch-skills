@@ -42,6 +42,8 @@ export const TERMINAL_RESULT: TerminalResultMap = {
   'parse-artifact': 'ARTIFACT_PARSED',
   'prepare-review': 'REVIEW_PREPARED',
   wave: 'WAVE_DONE',
+  'wave-start': 'WAVE_STARTED',
+  'wave-finish': 'WAVE_DONE',
   verify: 'VERIFY_DONE',
   'write-brief': 'BRIEF_READY',
   'check-envelope': 'ENVELOPE_CHECKED',
@@ -105,6 +107,8 @@ export function toEvent(line: JournalLine): Event {
 
 /** Folds journal lines; `inFlight` is the head effect when it started without a terminal result. */
 export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sessionRoot?: string): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
+  const run = lines.find((line) => line.type === 'RUN_STARTED');
+  if (machine === rootMachine as unknown as Machine<S> && run && run.data['protocolRevision'] !== 2) throw new EngineFault('unsupported-journal-protocol: expected revision 2; start a new run');
   const folder = createFolder(machine);
   for (const line of lines) folder.apply(toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line));
   const head = folder.queue[0];
@@ -354,7 +358,7 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
     if (!ports.fs.exists(runDir) || ports.fs.listFiles(runDir).length) throw new EngineFault('Reserved run must be an empty directory');
   } else ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
-  const { type, ...data } = { ...requested, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
+  const { type, ...data } = { ...requested, protocolRevision: 2, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
   appendEvent(ports, runDir, type, runSession(runDir) ? storeSessionPaths(data, sessionDir) : data, 1);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;

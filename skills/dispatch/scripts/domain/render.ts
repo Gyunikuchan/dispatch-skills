@@ -5,6 +5,9 @@ import { RESOLUTION_HEADING } from './plan.ts';
 import { neutralizeComments, sanitizeText } from './sanitize.ts';
 import type { ReportView, ResolutionRound, ResolutionStatus, WalkthroughView } from './types.ts';
 
+export const walkthroughPathOf = (sessionDir: string, slug: string, increment?: string): string =>
+  `${sessionDir}/${slug}${increment ? `-${increment.toLowerCase()}` : ''}.walkthrough.md`;
+
 const unreachable = (value: never): never => { throw new Error(`unhandled resolution status: ${String(value)}`); };
 
 export function statusLabel(status: ResolutionStatus): string {

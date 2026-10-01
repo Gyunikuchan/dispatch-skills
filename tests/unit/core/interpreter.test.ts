@@ -22,7 +22,7 @@ test('start drives the machine to its await and returns one frame', async () => 
   const ports = fakePorts();
   const { runDir, result } = await startAwaiting(ports);
   assert.equal(result.exitCode, 0);
-  assert.deepEqual(Object.keys(result.frame ?? {}), ['v', 'run', 'at', 'await', 'data', 'reply']);
+  assert.deepEqual(Object.keys(result.frame ?? {}), ['v', 'run', 'at', 'await', 'data', 'reply', 'events']);
   assert.equal(result.frame?.await, 'author');
   assert.match(result.frame?.reply ?? '', /send --run runs\/001-ask --event @/);
   assert.deepEqual(types(ports, runDir), ['RUN_STARTED', 'EFFECT_STARTED', 'SNAPSHOT']);

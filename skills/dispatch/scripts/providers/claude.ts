@@ -46,7 +46,7 @@ function parseEnvelope(stdout: string): Envelope | null {
 export const claude: ProviderSpec = {
   id: 'claude',
   modes: [
-    { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'claude.exe' : 'claude', join(env, env.home, '.local', 'bin', `claude${exe(env)}`), join(env, env.home, '.claude', 'local', `claude${exe(env)}`)] },
+    { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'claude.exe' : 'claude', ...(env.os === 'win32' ? ['claude.cmd'] : []), join(env, env.home, '.local', 'bin', `claude${exe(env)}`), join(env, env.home, '.claude', 'local', `claude${exe(env)}`)] },
     { id: 'desktop', candidates: (env) => env.os === 'darwin'
       ? ['/Applications/Claude.app/Contents/Resources/claude-code/claude', join(env, env.home, 'Applications/Claude.app/Contents/Resources/claude-code/claude')]
       : env.os === 'win32' ? [join(env, env.home, 'AppData', 'Roaming', 'Claude', 'claude-code', '*', 'claude.exe')] : [] },

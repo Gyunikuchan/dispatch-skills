@@ -6,7 +6,7 @@ import { answers, isString, never, nextId, stay, type AskSpec, type Claim, type 
 
 type Row = Readonly<Record<string, unknown>>;
 
-export type AskCtx = { spec: AskSpec; path: string; counters: Counters; effectId: string | null; rows: readonly Row[] };
+export type AskCtx = { spec: AskSpec; path: string; counters: Counters; effectId: string | null; rows: readonly Row[]; waveBinding?: { waveKey: string; attempt: number; roster: readonly Row[] } };
 
 export type AskState =
   | { tag: 'booting'; counters: Counters }
@@ -34,7 +34,13 @@ export function beginAsk(spec: AskSpec, path: string, counters: Counters): S {
 function launch(c0: AskCtx, roster: readonly Row[], phase: 'cli' | 'native'): S {
   const { id, counters } = nextId(c0.counters, c0.path, 'wave');
   const c = { ...c0, counters, effectId: id };
-  return { state: { tag: 'wave', c, phase }, effects: [{ kind: 'wave', id, round: 1, roster: [...roster], timeoutMs: c0.spec.timeoutMs }] };
+  return { state: { tag: 'wave', c, phase }, effects: [{ kind: phase === 'native' ? 'wave' : 'wave-start', id, round: 1, roster: [...roster], timeoutMs: c0.spec.timeoutMs }] };
+}
+
+function finishAskWave(c0: AskCtx, captures: readonly Row[]): S {
+  const binding = c0.waveBinding!;
+  const { id, counters } = nextId(c0.counters, c0.path, 'wave-finish');
+  return { state: { tag: 'wave', c: { ...c0, counters, effectId: id }, phase: 'cli' }, effects: [{ kind: 'wave-finish', id, round: 1, roster: [...binding.roster], timeoutMs: c0.spec.timeoutMs, waveKey: binding.waveKey, attempt: binding.attempt, captures: [...captures] }] };
 }
 
 function finish(c: AskCtx): S {
@@ -53,6 +59,13 @@ export function stepAsk(state: AskState, event: Event): S {
       if (event.type !== 'REVIEW_PREPARED' || !answers(event, state.c.effectId)) return stay(state);
       return launch(state.c, waveRoster(state.c.spec.roster, 'ask', event.promptPaths), 'cli');
     case 'wave': {
+      if (event.type === 'WAVE_STARTED' && answers(event, state.c.effectId)) {
+        const completed = (event as typeof event & { completed?: Extract<Event, { type: 'WAVE_DONE' }> }).completed;
+        if (completed) return finish({ ...state.c, rows: completed.slots });
+        const slots = pendingNative([...event.native, ...event.early].map((descriptor) => ({ state: 'native', descriptor })));
+        const c = { ...state.c, waveBinding: { waveKey: event.waveKey, attempt: event.attempt, roster: event.roster } };
+        return slots.length ? stay({ tag: 'native', c, slots }) : finishAskWave(c, []);
+      }
       if (event.type !== 'WAVE_DONE' || !answers(event, state.c.effectId)) return stay(state);
       if (state.phase === 'native') return finish({ ...state.c, rows: [...state.c.rows, ...event.slots] });
       const pending = pendingNative(event.slots);
@@ -61,6 +74,7 @@ export function stepAsk(state: AskState, event: Event): S {
     }
     case 'native':
       if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots) !== null) return stay(state);
+      if (state.c.waveBinding) return finishAskWave(state.c, event.slots);
       return launch(state.c, nativeRoster(state.slots, event.slots, 'ask'), 'native');
     case 'done': case 'failed': return stay(state);
     default: return never(state, 'ask state');
@@ -79,7 +93,7 @@ export function askAwait(state: AskState) {
 export function askData(state: AskState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
     case 'native': return { round: 1, slots: state.slots };
-    case 'done': return { outcome: 'complete', summary: `${state.claims.length} claim(s), ${state.failed.length} failed slot(s)`, claims: state.claims, failed: state.failed };
+    case 'done': return { outcome: 'complete', summary: `${state.claims.length} claim(s), ${state.failed.length} failed slot(s)`, claims: state.claims.map((claim) => ({ ...claim, text: claim.text.slice(0, 512) })), failed: state.failed, coverage: 'unknown', transport: state.failed.length ? 'partial' : 'success', captures: state.c.rows.flatMap((row) => typeof row['outputPath'] === 'string' ? [row['outputPath']] : []) };
     case 'failed': return { outcome: 'failed', summary: state.detail };
     case 'booting': case 'preparing': case 'wave': return {};
     default: return never(state, 'ask state');

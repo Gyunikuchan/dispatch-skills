@@ -2,7 +2,9 @@
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
 import { classifyFailure, failOutcome } from './runner.ts';
-import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import type { ModeId, PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+
+export const AGY_MODE_PROFILES: Readonly<Record<ModeId, string>> = { cli: 'antigravity-cli', desktop: 'antigravity', vscode: 'antigravity-ide' };
 
 const TOKEN_OR_SUBSCRIPTION = /\b(not signed in|no tokens?|subscription|license|selfassignlicense)/i;
 
@@ -36,14 +38,14 @@ export const agy: ProviderSpec = {
   // token/subscription → quota or auth; execution → not-found (mode unreachable or crashed).
   modeCascadeOn: ['quota', 'auth', 'not-found'],
   resumeCommand: (id) => `conversation://${id}`,
-  argv(req) {
+  argv(req, mode) {
     const seconds = Math.max(1, Math.ceil(req.timeoutMs / 1000));
     const argv = [req.binary, '--print', req.prompt, '--output-format', 'json', `--print-timeout=${seconds}s`];
     if (req.briefFile) argv.push('--add-dir', dirname(req.briefFile));
     if (req.model) argv.push('--model', req.model);
     if (req.effort) argv.push('--effort', req.effort);
     argv.push('--mode', 'plan', '--dangerously-skip-permissions');
-    return { argv, stdin: null, env: {}, cwd: req.cwd };
+    return { argv, stdin: null, env: { JETSKI_APP_DATA_DIR: AGY_MODE_PROFILES[mode] }, cwd: req.cwd };
   },
   parse(out): RunOutcome {
     const envelope = parseEnvelope(out.stdout);

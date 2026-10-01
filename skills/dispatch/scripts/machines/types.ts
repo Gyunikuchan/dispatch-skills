@@ -38,18 +38,21 @@ export const answers = (event: Event, effectId: string | null): boolean => 'effe
 // SECTION: Specs
 
 export type ReviewMode = 'fix' | 'report';
+export type CriterionOutcome = 'pass' | 'waived';
+export type CriterionProvenance = { outcome: CriterionOutcome; waiver?: { by: 'user'; quote: string }; redProvenance: 'observed' | 'waived' | 'not-required' };
 
 /** Spec §5.5 input; `breadth` is the roster target count and `roster` the resolved targets then reserves. */
 export type ReviewSpec = {
   kind: ReviewKind; mode: ReviewMode; target: string; cap: number; breadth: number | 'all'; context: string;
   roster: readonly RosterSlot[]; timeoutMs: number;
+  governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
 };
 
 /** `ask` is not a `ReviewKind`; `prepare-review` builds its bounded prompt inline. */
 export type AskSpec = { kind: 'ask'; target: string; breadth: number | 'all'; context: string; roster: readonly RosterSlot[]; timeoutMs: number };
 
 export type CarriedRejection = { id: FindingId; slot: SlotId | null; locus: string; defect: string; reason: string };
-export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; sinceHash?: string };
+export type ScopeRequest = { scope: RoundScope; carried: readonly CarriedRejection[]; sinceHash?: string; priorManifest?: string };
 
 // SECTION: Rulings and findings
 

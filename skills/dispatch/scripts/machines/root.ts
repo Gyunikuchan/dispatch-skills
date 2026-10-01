@@ -2,7 +2,7 @@
 // validation, and driver-owned Markdown rendering (resolution sections and the standalone report; not an effect).
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
-import { renderReport, renderResolutionSection, replaceResolutionSection } from '../domain/render.ts';
+import { renderReport, renderResolutionSection, replaceResolutionSection, walkthroughPathOf } from '../domain/render.ts';
 import type { ReviewKind } from '../domain/types.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
@@ -122,6 +122,7 @@ const failed = (run: RunInfo, summary: string): S => toHandoff(run, null, {}, { 
 
 function boot(event: RunStartedEvent): S {
   const run: RunInfo = { verb: event.verb, argument: event.argument, slug: slugOf(event.argument, event.verb) };
+  event = { ...event, overrides: { ...event.overrides, artifactSlug: run.slug } };
   switch (event.verb) {
     case 'ask': {
       const built = askSpecFromRun(event);
@@ -290,10 +291,10 @@ function render(state: RootState, ports: Ports, runDir: string): void {
     }
     if (design.tag === 'review') writeSection(ports, design.c.path, design.review);
     for (const [id, history] of Object.entries(design.c.histories)) {
-      renderImplementation(ports, history.at(-1)!, `${sessionDirOf(runDir)}/${state.run.slug}-${id.toLowerCase()}.walkthrough.md`);
+      renderImplementation(ports, history.at(-1)!, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, id));
     }
     if (design.tag === 'increment') {
-      renderImplementation(ports, design.child, `${sessionDirOf(runDir)}/${state.run.slug}-${design.increment.toLowerCase()}.walkthrough.md`);
+      renderImplementation(ports, design.child, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, design.increment));
     }
     return;
   }
@@ -303,7 +304,7 @@ function render(state: RootState, ports: Ports, runDir: string): void {
     return;
   }
   if (child.verb === 'implement') {
-    renderImplementation(ports, child.state, `${sessionDirOf(runDir)}/${state.run.slug}.walkthrough.md`);
+    renderImplementation(ports, child.state, walkthroughPathOf(sessionDirOf(runDir), state.run.slug));
     return;
   }
   if (child.verb !== 'review') return;
