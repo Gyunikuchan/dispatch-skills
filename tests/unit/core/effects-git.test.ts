@@ -68,3 +68,41 @@ test('the worktree fingerprint changes when an untracked file changes', async ()
   blob = 'bbb';
   assert.notEqual((await git.fingerprint('/repo')).worktree, first.worktree);
 });
+
+test('git-log: extracts commit messages and handles failures gracefully', async () => {
+  const calls: string[] = [];
+  const port = {
+    run: async (args: readonly string[]) => {
+      calls.push(args.join(' '));
+      if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return '/repo\n';
+      if (args[0] === 'log') {
+        if (args[2] === 'error..range') throw new Error('git log failed');
+        if (args[2] === 'empty..range') return '\n';
+        return 'commit message subject\n\ncommit message body\n';
+      }
+      return '';
+    },
+  };
+  const git = createGit(port);
+  assert.ok(git.log);
+
+  const msg = await git.log('/repo', 'main..HEAD');
+  assert.equal(msg, 'commit message subject\n\ncommit message body');
+  assert.ok(calls.includes('log --format=%s%n%b main..HEAD'));
+
+  // Three-dot comparison translated to two-dot log range to exclude left-only commits
+  const msgThreeDot = await git.log('/repo', 'main...HEAD');
+  assert.equal(msgThreeDot, 'commit message subject\n\ncommit message body');
+  assert.ok(calls.includes('log --format=%s%n%b main..HEAD'));
+
+  const optionLike = await git.log('/repo', '--output=foo');
+  assert.equal(optionLike, '');
+  assert.equal(calls.filter((c) => c.startsWith('log --format=%s%n%b --output=foo')).length, 0);
+
+  const errorMsg = await git.log('/repo', 'error..range');
+  assert.equal(errorMsg, '');
+
+  const emptyMsg = await git.log('/repo', 'empty..range');
+  assert.equal(emptyMsg, '');
+});
+

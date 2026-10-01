@@ -5,7 +5,7 @@
 
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, ResultEvent } from '../core/types.ts';
+import type { Effect, Handler, Ports, ResultEvent } from '../core/types.ts';
 import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
 import { structuralLines } from '../domain/plan.ts';
 import { safeSlot } from './wave.ts';
@@ -99,15 +99,61 @@ function reviewScopeText(round: number, scope: string, changed: readonly string[
   return `Review round ${round} (${scope}): ${what}; comparison: ${target || 'working tree against HEAD'}`;
 }
 
-function kindValues(kind: string, spec: Row, scopeText: string): Record<string, string> {
+async function kindValues(kind: string, spec: Row, scopeText: string, deps: PrepareDeps, ports: Pick<Ports, 'fs'>): Promise<Record<string, string>> {
   const target = text(spec['target']);
   const requirement = text(spec['context'], target);
   switch (kind) {
     case 'plan': return { 'Plan Path': target, Requirement: requirement, 'Review Scope': scopeText };
     case 'design': return { 'Design Path': target, Requirement: requirement, 'Review Scope': scopeText };
     default: {
+      let taskSummary: string;
+      const explicitContext = typeof spec['context'] === 'string' && spec['context'].trim() ? spec['context'].trim() : null;
+      if (explicitContext) {
+        taskSummary = explicitContext;
+      } else if (target.includes('..')) {
+        let commitLog = '';
+        try {
+          commitLog = deps.git.log ? await deps.git.log(deps.cwd, target) : '';
+        } catch {
+          commitLog = '';
+        }
+        taskSummary = commitLog.trim() || 'Review the selected changes.';
+      } else {
+        taskSummary = 'Review the selected changes.';
+      }
+
       const governing = isRecord(spec['governing']) ? spec['governing'] : {};
-      return { 'Task Summary': requirement || 'Review the selected changes.', 'Walkthrough Path': text(governing['walkthroughPath'], 'None'), 'Plan Path': text(governing['planPath'], 'None'), 'Review Scope': scopeText };
+      let planPath = typeof governing['planPath'] === 'string' && governing['planPath'] ? governing['planPath'] : null;
+      let walkthroughPath = typeof governing['walkthroughPath'] === 'string' && governing['walkthroughPath'] ? governing['walkthroughPath'] : null;
+
+      const sessionDir = typeof spec['sessionDir'] === 'string' && spec['sessionDir'] ? spec['sessionDir'] : null;
+      if (sessionDir && (!planPath || !walkthroughPath)) {
+        let entries: string[] = [];
+        try {
+          entries = ports.fs.listFiles(sessionDir).filter((file) => !file.includes('/') && !file.includes('\\'));
+        } catch {
+          entries = [];
+        }
+        if (!planPath) {
+          const plans = entries.filter((f) => f.endsWith('.plan.md'));
+          if (plans.length === 1) {
+            planPath = path.join(sessionDir, plans[0]!).replace(/\\/g, '/');
+          }
+        }
+        if (!walkthroughPath) {
+          const walkthroughs = entries.filter((f) => f.endsWith('.walkthrough.md'));
+          if (walkthroughs.length === 1) {
+            walkthroughPath = path.join(sessionDir, walkthroughs[0]!).replace(/\\/g, '/');
+          }
+        }
+      }
+
+      return {
+        'Task Summary': taskSummary,
+        'Walkthrough Path': text(walkthroughPath, 'None'),
+        'Plan Path': text(planPath, 'None'),
+        'Review Scope': scopeText,
+      };
     }
   }
 }
@@ -205,7 +251,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const template = assembleTemplate(frame, block);
         const values: Record<string, string> = {
           'User Focus Areas': text(spec['context'], 'General review') || 'General review', 'Tool Turn Budget': 'Unspecified',
-          ...kindValues(kind, spec, scopeText),
+          ...(await kindValues(kind, spec, scopeText, deps, ports)),
         };
         const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
         body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;

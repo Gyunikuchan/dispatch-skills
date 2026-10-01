@@ -146,3 +146,16 @@ test('review fix GPU release awaits a busy guard without blocking timers or losi
     await release(); assert.equal(fs.existsSync(`${file}.guard`), false);
   } finally { if (timer) clearTimeout(timer); f.cleanup(); }
 });
+
+test('review code with --context passes semantic intent through CLI to reviewer prompt', async () => {
+  const f = fixture({ responses: [CLEAN] });
+  try {
+    const session = await f.initialize();
+    fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'export const value = 2;\n');
+    const frame = await f.begin('review', session, '', ['--kind', 'code', '--context', 'CLI semantic intent']);
+    assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
+    assert.ok(f.launches().length >= 1);
+    assert.match(f.launches()[0]!.prompt, /- Task: CLI semantic intent/);
+  } finally { f.cleanup(); }
+});
+

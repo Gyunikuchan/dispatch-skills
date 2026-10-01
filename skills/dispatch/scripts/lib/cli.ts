@@ -9,7 +9,7 @@ export const ALIASES: Readonly<Record<string, string>> = {
 };
 const VERBS: readonly Verb[] = ['ask', 'design', 'plan', 'review', 'implement'];
 const FLAGS: Readonly<Record<string, readonly string[]>> = {
-  start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'fix', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose'],
+  start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'fix', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'context'],
   send: ['run', 'event', 'dry-run'], status: ['run'], doctor: ['level', 'json'],
   session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
 };
@@ -56,6 +56,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
     if (out.flags['provider'] && out.verb !== 'ask') throw new UsageError('--provider is for ask');
     if (out.flags['kind'] && !['code', 'design', 'plan'].includes(String(out.flags['kind']))) throw new UsageError('Invalid --kind');
     if (out.flags['kind'] && out.verb !== 'review') throw new UsageError('--kind is for review');
+    if (out.flags['context'] && out.verb !== 'review') throw new UsageError('--context is for review');
     if (out.flags['timeout'] && (!Number.isFinite(Number(out.flags['timeout'])) || Number(out.flags['timeout']) <= 0)) throw new UsageError('--timeout must be positive seconds');
   }
   if (command === 'doctor' && out.flags['level'] && !policy.levels.includes(String(out.flags['level']))) throw new UsageError('Invalid level');

@@ -178,6 +178,7 @@ test('rewrite SC2 implementation review carries governing artifacts and criteria
   if (prepared?.type !== 'REVIEW_PREPARED') return;
   const prompt = fs.readFileSync(Object.values(prepared.promptPaths)[0]!, 'utf8');
   assert.match(prompt, /feature\.plan\.md/); assert.match(prompt, /x\.walkthrough\.md/); assert.match(prompt, /SC1/); assert.match(prompt, /check/);
+  assert.doesNotMatch(prompt, /- Task: null/); assert.match(prompt, /- Task: x/);
 });
 
 test('review fix design walkthrough uses the originating slug once for each increment', () => {

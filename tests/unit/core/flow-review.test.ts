@@ -168,4 +168,68 @@ test('delta review attributes changes inside fenced code blocks with heading syn
   assert.deepEqual(r2?.scope['paths'], ['Proposed Changes']);
 });
 
+test('flow-review-context: start review forwards --context into run spec context and review prompt', async () => {
+  const { options, runStarted, runDir } = setup(false);
+  const result = await start({ ...options, runStarted: { ...runStarted, overrides: { context: 'Semantic intent from chat' } } });
+  assert.equal(result.frame?.await, 'rule');
+  const file = fs.readdirSync(runDir).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt = fs.readFileSync(path.join(runDir, file), 'utf8');
+  assert.match(prompt, /- Task: Semantic intent from chat/);
+  assert.match(prompt, /- Focus: Semantic intent from chat/);
+});
+
+test('flow-review-discovery: discovers unique session deliverables and respects explicit paths and ambiguity', async () => {
+  const tmp = tempDir();
+  const sessionDir = path.join(tmp, 'session');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(path.join(sessionDir, 'feat.plan.md'), '# Plan');
+  fs.writeFileSync(path.join(sessionDir, 'feat.walkthrough.md'), '# Walkthrough');
+
+  // 1. Unique candidates discovered through RUN_STARTED event and reviewSpecFromRun
+  const { options, runStarted } = setup(false);
+  const runDir1 = path.join(sessionDir, '.state/runs/001-code-review');
+  const r1 = await start({ ...options, runDir: runDir1, runStarted });
+  assert.equal(r1.frame?.await, 'rule');
+  const file1 = fs.readdirSync(runDir1).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt1 = fs.readFileSync(path.join(runDir1, file1), 'utf8');
+  const expectedPlan = path.join(sessionDir, 'feat.plan.md').replace(/\\/g, '/');
+  const expectedWalkthrough = path.join(sessionDir, 'feat.walkthrough.md').replace(/\\/g, '/');
+  assert.match(prompt1, new RegExp(`- Plan: ${expectedPlan.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(prompt1, new RegExp(`- Walkthrough: ${expectedWalkthrough.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+  // 2. Absent deliverables in empty sessionDir -> leaves as None
+  const emptyDir = path.join(tmp, 'empty-session');
+  fs.mkdirSync(emptyDir, { recursive: true });
+  const runDirEmpty = path.join(emptyDir, '.state/runs/001-code-review');
+  const r2 = await start({ ...options, runDir: runDirEmpty, runStarted });
+  assert.equal(r2.frame?.await, 'rule');
+  const file2 = fs.readdirSync(runDirEmpty).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt2 = fs.readFileSync(path.join(runDirEmpty, file2), 'utf8');
+  assert.match(prompt2, /- Plan: None/);
+  assert.match(prompt2, /- Walkthrough: None/);
+
+  // 3. Ambiguity: multiple plan candidates in sessionDir -> leaves Plan as None
+  fs.writeFileSync(path.join(sessionDir, 'other.plan.md'), '# Other Plan');
+  const runDirAmbig = path.join(sessionDir, '.state/runs/002-code-review');
+  const r3 = await start({ ...options, runDir: runDirAmbig, runStarted });
+  assert.equal(r3.frame?.await, 'rule');
+  const file3 = fs.readdirSync(runDirAmbig).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt3 = fs.readFileSync(path.join(runDirAmbig, file3), 'utf8');
+  assert.match(prompt3, /- Plan: None/);
+  assert.match(prompt3, new RegExp(`- Walkthrough: ${expectedWalkthrough.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+  // 4. Explicit path preserved over discovered or ambiguous
+  const runDirExplicit = path.join(sessionDir, '.state/runs/003-code-review');
+  const r4 = await start({
+    ...options, runDir: runDirExplicit,
+    runStarted: { ...runStarted, overrides: { governing: { planPath: 'docs/explicit.plan.md', walkthroughPath: 'docs/explicit.walkthrough.md' } } },
+  });
+  assert.equal(r4.frame?.await, 'rule');
+  const file4 = fs.readdirSync(runDirExplicit).find((name) => name.endsWith('.prompt.md'))!;
+  const prompt4 = fs.readFileSync(path.join(runDirExplicit, file4), 'utf8');
+  assert.match(prompt4, /- Plan: docs\/explicit\.plan\.md/);
+  assert.match(prompt4, /- Walkthrough: docs\/explicit\.walkthrough\.md/);
+});
+
+
 

@@ -43,8 +43,8 @@ export type CriterionProvenance = { outcome: CriterionOutcome; waiver?: { by: 'u
 
 /** Spec §5.5 input; `breadth` is the roster target count and `roster` the resolved targets then reserves. */
 export type ReviewSpec = {
-  kind: ReviewKind; mode: ReviewMode; target: string; cap: number; breadth: number | 'all'; context: string;
-  roster: readonly RosterSlot[]; timeoutMs: number;
+  kind: ReviewKind; mode: ReviewMode; target: string; cap: number; breadth: number | 'all'; context: string | null;
+  roster: readonly RosterSlot[]; timeoutMs: number; sessionDir?: string;
   governing?: { planPath: string; walkthroughPath: string; designPath?: string; criteria: readonly { id: string; changes: readonly string[]; verify: readonly string[] }[] };
 };
 

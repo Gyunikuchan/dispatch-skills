@@ -26,6 +26,8 @@ export type Git = {
   fingerprint(cwd: string): Promise<TreeFingerprint>;
   /** Paths changed since a fingerprint's HEAD (tracked and untracked). */
   changedSince(cwd: string, since: TreeFingerprint | null): Promise<string[]>;
+  /** Formatted commit log (%s%n%b) for a range, or empty string on failure or option-like range. */
+  log?(cwd: string, range: string): Promise<string>;
 };
 
 /** Reads the index file's bytes; null when git is redirected or the work tree is linked (read uncached). */
@@ -152,6 +154,16 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const tracked = lines(await port.run(['diff', '--name-only', since?.head ?? 'HEAD'], root));
       const untracked = lines(await port.run(['ls-files', '--others', '--exclude-standard'], root));
       return [...new Set([...tracked, ...untracked])].sort();
+    },
+    async log(cwd, range) {
+      if (range.trim().startsWith('-')) return '';
+      const root = await git.toplevel(cwd);
+      try {
+        const query = range.includes('...') ? range.replace('...', '..') : range.trim();
+        return (await port.run(['log', '--format=%s%n%b', query], root)).trim();
+      } catch {
+        return '';
+      }
     },
   };
   return git;

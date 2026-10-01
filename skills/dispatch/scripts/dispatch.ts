@@ -158,7 +158,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       if (provider && pins) throw new UsageError('Use --provider or --pins, not both');
       const overrides: Record<string, unknown> = {};
       overrides['sessionDir'] = sessionDir;
-      for (const key of ['model', 'effort', 'kind']) if (textFlag(command, key)) overrides[key] = textFlag(command, key);
+      for (const key of ['model', 'effort', 'kind', 'context']) if (textFlag(command, key)) overrides[key] = textFlag(command, key);
       if (textFlag(command, 'timeout')) overrides['timeout'] = Number(command.flags['timeout']);
       const orchestrator = normalizeProvider(textFlag(command, 'orchestrator')!) as ProviderId;
       const orchestratorModel = detectOrchestrator((name) => process.env[name], { platform: orchestrator, ...(textFlag(command, 'orchestrator-model') ? { model: textFlag(command, 'orchestrator-model')! } : {}) })?.model ?? null;

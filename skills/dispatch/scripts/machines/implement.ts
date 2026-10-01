@@ -459,7 +459,8 @@ function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
   const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: (c0.plan?.criteria ?? []).map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
-  const result = beginReview({ ...built.spec, governing, context: `${built.spec.context}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
+  const baseContext = built.spec.context ?? c0.run.argument;
+  const result = beginReview({ ...built.spec, governing, context: `${baseContext}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
   return fromCodeReview(c0, result);
 }
 

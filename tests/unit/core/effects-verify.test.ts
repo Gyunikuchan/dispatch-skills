@@ -12,6 +12,7 @@ const FP = { head: 'abc', index: 'i', worktree: 'w' };
 const git: Git = {
   toplevel: async () => '/repo', indexEntries: async () => '', diffNames: async () => [],
   fingerprint: async () => FP, changedSince: async (_cwd, since) => (since ? ['src/a.ts'] : []),
+  log: async () => '',
 };
 const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1); return events[0] as ResultEvent; };
 

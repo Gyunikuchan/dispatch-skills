@@ -75,3 +75,21 @@ test('operational contracts reflect workspace session retention and contain no t
   assert.doesNotMatch(planTemplate, /OS temp/i);
 });
 
+test('review-context-contract: documents --context and alias forwarder parity', () => {
+  const verbRef = read('skills/dispatch/references/verbs/review.md');
+  assert.match(verbRef, /\[--context <text>\]/);
+  assert.match(verbRef, /Pass `--context` to supply semantic intent/);
+
+  const reviewRef = read('skills/dispatch/references/review.md');
+  assert.match(reviewRef, /Review prompt context composes two channels/);
+  assert.match(reviewRef, /git log --format="%s%n%b" <range>/);
+  assert.match(reviewRef, /sessionDir/);
+
+  const codeReviewSkill = read('skills/dispatch-code-review/SKILL.md');
+  assert.match(codeReviewSkill, /distill active chat intent and intentional deviations into `--context "<intent>"`/);
+
+  const agentCodeReviewSkill = read('.agents/skills/dispatch-code-review/SKILL.md');
+  assert.equal(codeReviewSkill, agentCodeReviewSkill);
+});
+
+

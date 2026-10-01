@@ -63,8 +63,10 @@ export const phaseOf = (kind: ReviewKind): 'plan-review' | 'code-review' => (kin
 export function reviewSpecFromRun(run: RunStartedEvent, kind: ReviewKind, mode: ReviewMode, target: string): { ok: true; spec: ReviewSpec } | { ok: false; error: string } {
   const slots = resolveSlots(run, phaseOf(kind));
   if (!slots.ok) return slots;
-  const context = isString(run.overrides['context']) ? run.overrides['context'] : run.argument;
-  return { ok: true, spec: { kind, mode, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs } };
+  const context = isString(run.overrides['context']) ? run.overrides['context'] : (run.verb === 'review' && kind === 'code' ? null : run.argument);
+  const sessionDir = isString(run.overrides['sessionDir']) ? run.overrides['sessionDir'] : undefined;
+  const governing = isRecord(run.overrides['governing']) ? run.overrides['governing'] as ReviewSpec['governing'] : undefined;
+  return { ok: true, spec: { kind, mode, target, cap: slots.cap, breadth: slots.breadth, context, roster: slots.roster, timeoutMs: slots.timeoutMs, ...(sessionDir ? { sessionDir } : {}), ...(governing ? { governing } : {}) } };
 }
 
 // SECTION: Waves (shared with ask)

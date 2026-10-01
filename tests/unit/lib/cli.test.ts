@@ -33,3 +33,11 @@ test('compatibility alias parity uses public start mappings', () => {
   assert.deepEqual(Object.values(ALIASES), ['start review --kind code', 'start review --kind design', 'start review --kind plan', 'start implement']);
   for (const line of Object.values(ALIASES)) assert.equal(parseCommand([...line.split(' '), '--session-dir', 'chat', '--orchestrator', 'codex', '--', 'target'], policy).command, 'start');
 });
+test('cli-start-review-context: start review accepts --context and non-review verbs reject it', () => {
+  const parsed = parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'distilled chat intent', '--', 'main..HEAD'], policy);
+  assert.equal(parsed.flags['context'], 'distilled chat intent');
+  for (const verb of ['ask', 'design', 'plan', 'implement']) {
+    assert.throws(() => parseCommand(['start', verb, '--session-dir', 'chat', '--orchestrator', 'codex', '--context', 'intent', '--', 'target'], policy), /--context is for review/);
+  }
+});
+

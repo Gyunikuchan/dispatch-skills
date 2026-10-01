@@ -14,7 +14,7 @@ function setup(changed: string[]) {
   const cwd = tempDir();
   const runDir = path.join(cwd, 'run');
   fs.mkdirSync(runDir);
-  const git: Git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => changed, fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => changed };
+  const git: Git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => changed, fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => changed, log: async () => '' };
   return { cwd, runDir, handler: createCheckEnvelope({ cwd, git }), ports: fakePorts() };
 }
 const complete = { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented.', evidence: ['CRITERION SC1 | src/a.ts | handles the valid input'] };

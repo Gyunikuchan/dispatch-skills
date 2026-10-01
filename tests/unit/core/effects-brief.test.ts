@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
+import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
+import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
@@ -46,3 +48,66 @@ test('hotfix template renders concrete limits, single-shot identity, external re
   const retry = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.3', stage: 'production', input: { retryContext: { rootCause: 'wrong branch', failure: 'failed check identity f1' } } }, ports, { runDir, attempt: 1 }));
   assert.equal(retry.type, 'BRIEF_READY'); if (retry.type === 'BRIEF_READY') assert.match(fs.readFileSync(retry.path, 'utf8'), /wrong branch[\s\S]*failed check identity f1/);
 });
+
+test('prepare-review-git-log: extracts commit messages and falls back on error or empty', async () => {
+  const tmp = tempDir();
+  const runDir = tempDir();
+  const ports = fakePorts();
+  let logResult = 'feat: commit title\n\ncommit description';
+  let logCalledWith: string | null = null;
+  const git = {
+    ...createGit({ run: async () => '' }),
+    diffNames: async () => ['src/a.ts'],
+    log: async (_cwd: string, range: string) => {
+      logCalledWith = range;
+      if (range === 'error..range') throw new Error('git log failed');
+      return logResult;
+    },
+  };
+  const handler = createPrepareReview({ cwd: tmp, skillRoot: SKILL_ROOT, git });
+
+  // 1. Extracts commit messages for commit range without context
+  const [res1] = await handler({
+    kind: 'prepare-review', id: 'p1', round: 1,
+    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: null },
+    scope: { scope: 'full' },
+  }, ports, { runDir, attempt: 1 });
+  assert.equal(res1?.type, 'REVIEW_PREPARED');
+  const prompt1 = ports.fs.readText(res1?.promptPaths['codex[0]']!);
+  assert.match(prompt1, /- Task: feat: commit title\n\ncommit description/);
+  assert.equal(logCalledWith, 'main..HEAD');
+
+  // 2. Explicit context bypasses git log
+  logCalledWith = null;
+  const [res2] = await handler({
+    kind: 'prepare-review', id: 'p2', round: 1,
+    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: 'Explicit intent' },
+    scope: { scope: 'full' },
+  }, ports, { runDir, attempt: 1 });
+  assert.equal(res2?.type, 'REVIEW_PREPARED');
+  const prompt2 = ports.fs.readText(res2?.promptPaths['codex[0]']!);
+  assert.match(prompt2, /- Task: Explicit intent/);
+  assert.equal(logCalledWith, null);
+
+  // 3. Empty log falls back to default
+  logResult = '';
+  const [res3] = await handler({
+    kind: 'prepare-review', id: 'p3', round: 1,
+    review: { kind: 'code', target: 'main..HEAD', roster: [{ slot: 'codex[0]' }], context: null },
+    scope: { scope: 'full' },
+  }, ports, { runDir, attempt: 1 });
+  assert.equal(res3?.type, 'REVIEW_PREPARED');
+  const prompt3 = ports.fs.readText(res3?.promptPaths['codex[0]']!);
+  assert.match(prompt3, /- Task: Review the selected changes\./);
+
+  // 4. Git error falls back to default
+  const [res4] = await handler({
+    kind: 'prepare-review', id: 'p4', round: 1,
+    review: { kind: 'code', target: 'error..range', roster: [{ slot: 'codex[0]' }], context: null },
+    scope: { scope: 'full' },
+  }, ports, { runDir, attempt: 1 });
+  assert.equal(res4?.type, 'REVIEW_PREPARED');
+  const prompt4 = ports.fs.readText(res4?.promptPaths['codex[0]']!);
+  assert.match(prompt4, /- Task: Review the selected changes\./);
+});
+
