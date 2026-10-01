@@ -2,7 +2,7 @@
 
 [![Version](https://img.shields.io/badge/version-v0.6.1-blue.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen.svg)](package.json)
+[![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
 
 Build with more confidence by catching flawed assumptions before they become code. `dispatch-skills` brings independent agents into one development workflow for planning, implementation, and review — without leaving the agent IDE or CLI you prefer. Agents work through their native harnesses, while your host verifies their findings against the real code and carries the work forward.
 
@@ -75,7 +75,7 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 npx skills add Gyunikuchan/dispatch-skills -s '*'
 ```
 
-Requires Node.js `>=22` and at least one supported agent CLI on your `PATH`:
+Requires Node.js `^22.18 || >=23.6` with native TypeScript stripping and at least one supported agent CLI on your `PATH`:
 
 - Claude Code
 - Antigravity
@@ -86,14 +86,14 @@ Requires Node.js `>=22` and at least one supported agent CLI on your `PATH`:
 Nothing is enabled until you create a config. Copy `skills/dispatch/config.sample.jsonc` to `config.jsonc` (or `config.local.jsonc`) beside it, then keep only the models you actually want to use. Check the resulting configuration with:
 
 ```bash
-node skills/dispatch/scripts/dispatch.mjs --doctor --level high
+node skills/dispatch/scripts/dispatch.ts doctor --level high
 ```
 
 > [!NOTE]
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
-> OS sandboxing degrades rather than fails. Where it is unavailable — native Windows for Claude, Linux without Bubblewrap, or a provider that rejects the flag — the delegate still runs unsandboxed, prints a `[dispatch] WARNING:` line, and records `sandboxDowngraded` in structured output. Read-only controls remain in place where the provider supports them. Use WSL2 for Claude's sandbox on Windows. Antigravity has no OS sandbox; plan mode is its write boundary.
+> OS sandboxing fails closed when unavailable. `doctor` reports unsupported sandboxes; set `sandbox: false` in the local config only for providers you intend to run without isolation. Read-only controls remain in place. Use WSL2 for Claude's sandbox on Windows. Antigravity uses plan mode as its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tables, levels, sandboxing, and CLI flags.
 
@@ -101,7 +101,7 @@ See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tabl
 
 | Skill | Use it for |
 |---|---|
-| [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. Model- and user-invoked. |
+| [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. User-invoked. |
 | [`dispatch-plan-review`](skills/dispatch/README.md) | Alias for `/dispatch review plan:` |
 | [`dispatch-design-review`](skills/dispatch/README.md) | Alias for `/dispatch review design:` |
 | [`dispatch-code-review`](skills/dispatch/README.md) | Alias for `/dispatch review code:` |

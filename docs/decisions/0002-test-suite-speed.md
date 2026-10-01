@@ -57,11 +57,11 @@ A driver step is one short-lived process. Changes made by subagents or the orche
 between steps, so a cache that lives only inside one process cannot go stale because of them. The
 implementation:
 
-- **`lib/git-root.mjs`**: `showToplevel` and `requireToplevel` replace seven scattered
+- **Legacy `lib/git-root.mjs` (now `skills/dispatch/scripts/effects/git.ts`)**: `showToplevel` and `requireToplevel` replace seven scattered
   `rev-parse --show-toplevel` spawns and evidence's `--is-inside-work-tree` probe. Only successful
   lookups are cached: a work-tree root cannot move within a process, but a directory may become a
   repository. A source guard test keeps new `show-toplevel` spawns out of shipped scripts.
-- **`indexEntries` in `lib/git-state.mjs`**:
+- **Legacy `indexEntries` in `lib/git-state.mjs` (now `skills/dispatch/scripts/effects/git.ts`)**:
   - One `ls-files -v --stage -z` call replaces the separate tag and stage listings. A test pins the
     result to the old two-call digest, so fingerprints stored in existing run state stay valid.
   - The result is cached against a SHA-256 hash of the index file's bytes. Any index write changes

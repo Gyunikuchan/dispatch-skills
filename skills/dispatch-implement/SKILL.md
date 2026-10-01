@@ -1,11 +1,11 @@
 ---
 name: dispatch-implement
-description: Use only when the user explicitly invokes `/dispatch-implement`.
+description: Compatibility alias for dispatch implementation.
 disable-model-invocation: true
 ---
 
-# Implementation alias
+# dispatch-implement
 
-Forward the user's argument to `/dispatch implement: <argument>`, inserting any level and pins before `implement` and any `--phases from:<phase>` after it (`/dispatch <prefix> implement --phases from:<phase>: <argument>`).
+Require sibling `dispatch`. If missing, report `Missing dependency: dispatch is required by dispatch-implement` and stop.
 
-If `dispatch` is unavailable, stop with: `dispatch-implement requires the dispatch skill; install or enable dispatch, then retry.`
+Read [dispatch](../dispatch), map this invocation to `start implement`, and forward the user's level, pins, model, effort, and argument through its run loop. All host-await judgment and write boundaries belong to that contract.

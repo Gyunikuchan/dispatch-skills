@@ -34,7 +34,7 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 ## Success Criteria
 - [SC1] <checkable outcome>
   - Changes: <relative-path>[, <relative-path>...]
-  - Verify: `<command>`
+  - Verify: `<command>` [FINAL]
   - Evidence: <red|verify|review>
   - Pre-existing: <yes|no>
   - RED exception: <behavior-preserving|already-satisfied>
@@ -71,8 +71,6 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 - Manual steps, edge cases, and failure scenarios.
 
 ## Review Findings & Resolutions
-<!-- Populated during plan review cycles -->
-<!-- Rounds use the source-map and entry format in dispatch references/review.md § Resolution log. -->
 *No reviews conducted yet.*
 
 ## Out of Scope
@@ -82,6 +80,7 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 ## Field notes
 
 - Technical-Design Traceability: increment plans only.
-- Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` marks a broad run for required gates only.
+- Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
+- Review Findings & Resolutions: driver-rendered; rounds use the entry format in dispatch references/review.md § Resolution log.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - `[GENERATED]`: the driver reruns Command before completion verification.

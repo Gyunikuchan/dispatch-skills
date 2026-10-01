@@ -77,7 +77,7 @@ Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, C
 - **Naming**: kebab-case for skill identifiers, filenames, and slugs.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.
-- **Type checking**: Start every `skills/` and `scripts/` `.mjs` file with `// @ts-check`; type exported functions with JSDoc. `npm test` runs `tsc` (`checkJs`, non-strict) first.
+- **Type checking**: Use native `.ts` with erasable syntax and `.ts` relative imports. `npm test` runs strict `tsc --noEmit` first.
 - **Scratch**: Do not commit files under `.scratch/` unless explicitly instructed.
 
 ### Comments
@@ -93,7 +93,7 @@ Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
 - **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
-- **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Shipped skills and development tooling require Node 22+.
+- **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Require Node `^22.18 || >=23.6`. Tests assert observable protocol (frames, events, rendered sections), never internal state or private helpers; one behavior per test, named for it. Git or subprocess tests belong in `tests/e2e/`.
 
 ### Long-running commands and delegates
 

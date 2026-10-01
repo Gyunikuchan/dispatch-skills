@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-09-30
-- **Spec**: `dispatch-state-machine.spec.md` in the brainstorming session folder (`.scratch/dispatch-skills/20260929T1630Z-ab5d2d9be77b-rewrite-dispatch-as/`)
+- **Spec**: `dispatch-state-machine.spec.md` in the brainstorming session folder (`.scratch/dispatch-skills/20260929T1754Z-68393a1a0a77-rewrite-dispatch-as/`)
 
 ## Context
 
@@ -28,7 +28,7 @@ The skill must be:
 | # | Decision | Rationale | Rejected |
 |---|----------|-----------|----------|
 | D1 | All source, tests, and repository tooling are native TypeScript (`.ts`) executed directly by Node type stripping; `tsc` runs with `strict` and extra strictness flags for checking only | Real type syntax for readability; strictness without annotation noise; no build, no output tree | JavaScript with JSDoc types (verbose under strict); compiled `.ts` shipped as generated JavaScript (build step, duplicated tree) |
-| D2 | Node ≥ 22.18 is the only runtime prerequisite; a plain-JavaScript `guard.mjs` imported first reports older Node with an actionable message | Type stripping is on by default from 22.18; the guard turns a syntax error into a clear instruction | Loader hooks or flags for older Node |
+| D2 | Node `^22.18 || >=23.6` is the only runtime prerequisite; `lib/guard.ts` reports unsupported runtimes that can parse the entrypoint | Type stripping is on by default in the supported range; package engines and doctor expose the requirement | Loader hooks or flags for older Node |
 | D3 | Erasable syntax only (`erasableSyntaxOnly`, `verbatimModuleSyntax`); closed sets are union literals and `as const` objects; relative imports carry `.ts` | Required by type stripping; unions also give exhaustive checks | `enum`, `namespace`, parameter properties, decorators |
 | D4 | Zero runtime dependencies; `typescript` and `@types/node` are dev-only | Hosts need nothing beyond Node | Any runtime package |
 
@@ -106,7 +106,7 @@ The skill must be:
 
 ## Consequences
 
-- Hosts need Node ≥ 22.18; Node 22.18–22.x prints one experimental warning on stderr, and stdout
+- Hosts need Node `^22.18 || >=23.6`; Node 22.18–22.x prints one experimental warning on stderr, and stdout
   stays clean.
 - Files under `node_modules` cannot be type-stripped; skills are installed outside it.
 - A lost run folder cannot be reconstructed from deliverables; the run restarts, and code edits and

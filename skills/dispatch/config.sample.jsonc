@@ -1,7 +1,7 @@
 /**
  * Copy to config.jsonc or config.local.jsonc beside this skill. No default is shipped;
  * config.local.jsonc takes priority. Check settings with
- * `node scripts/dispatch.mjs --doctor --level <level>`.
+ * `node scripts/dispatch.ts doctor --level <level>`.
  *
  * Model references:
  * - claude: https://platform.claude.com/docs/en/models/overview
@@ -54,8 +54,8 @@
         },
         // Model arrays try each name in order if the previous one fails.
         {
-          "low": { "model": ["gpt-6.1-sol", "bedrock.gpt-6.1-sol"], "effort": "low" },
-          "max": { "model": ["gpt-6.1-sol", "bedrock.gpt-6.1-sol"], "effort": "medium" },
+          "low": { "model": ["gpt-6-sol", "bedrock.gpt-6-sol"], "effort": "medium" },
+          "max": { "model": ["gpt-6-sol", "bedrock.gpt-6-sol"], "effort": "high" },
         },
       ],
     },
@@ -70,8 +70,8 @@
       "sandbox": true,
       "targets": [
         {
-          "low": { "model": "gpt-6.1-sol", "effort": "low" },
-          "max": { "model": "gpt-6.1-sol", "effort": "medium" },
+          "low": { "model": "gpt-6-sol", "effort": "medium" },
+          "max": { "model": "gpt-6-sol", "effort": "high" },
         },
       ],
     },
@@ -80,7 +80,7 @@
   // Add your host here to use the implement flow.
   "write-subagents": {
     "claude": {
-      "low": { "model": "claude-sonnet-5-5", "effort": "low" },
+      "low": { "model": "claude-sonnet-5", "effort": "medium" },
       "high": { "model": "claude-opus-5-5", "effort": "low" },
       "max": { "model": "claude-opus-5-5", "effort": "medium" },
     },

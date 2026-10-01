@@ -1,5 +1,0 @@
-# dispatch-implement maintainer notes
-
-`dispatch-implement` is a user-invoked compatibility alias. It contains no workflow logic: arguments map to `dispatch ... implement:` and a missing `dispatch` produces a named diagnostic.
-
-Maintain design increments in `references/verbs/design.md`, then implementation behavior in `skills/dispatch/scripts/driver/`, the action schemas, and `skills/dispatch/references/verbs/implement.md`. The single config lives under `skills/dispatch/`.

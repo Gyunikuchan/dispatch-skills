@@ -1,7 +1,7 @@
 # Review delegate prompt (shared frame)
 
-Shared by every review kind; `review/fill-template.mjs --skill <frame> --kind-block <block>` fills each
-`<<slot:NAME>>` from `## NAME` section of `review-prompt-<kind>.md`; `--list` reads both files' variables.
+Shared by every review kind; `domain/prompt.ts` `assembleTemplate(frame, kindBlock)` fills each
+`<<slot:NAME>>` from `## NAME` section of `review-prompt-<kind>.md`, and its variables are both files' declarations.
 
 ## Prompt template
 

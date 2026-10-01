@@ -1,11 +1,11 @@
 ---
 name: dispatch-code-review
-description: Use only when the user explicitly invokes `/dispatch-code-review`.
+description: Compatibility alias for dispatch code review.
 disable-model-invocation: true
 ---
 
-# Code review alias
+# dispatch-code-review
 
-Forward the post-colon text to `/dispatch review code: <argument>`, inserting any level and pins before `review`; place `--fix` after `code` (`/dispatch <prefix> review code --fix: <argument>`) only when it appears in the user's invocation; otherwise the review is report-only.
+Require sibling `dispatch`. If missing, report `Missing dependency: dispatch is required by dispatch-code-review` and stop.
 
-If `dispatch` is unavailable, stop with: `dispatch-code-review requires the dispatch skill; install or enable dispatch, then retry.`
+Read [dispatch](../dispatch), map this invocation to `start review --kind code`, and forward the user's level, pins, model, effort, and argument through its run loop. All host-await judgment and write boundaries belong to that contract.

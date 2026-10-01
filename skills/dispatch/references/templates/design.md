@@ -44,7 +44,6 @@
 *Cross-increment verification.*
 
 ## Execution Status
-<!-- machine-managed; excluded from governed content -->
 | ID | State | Summary | Next Action |
 | --- | --- | --- | --- |
 | I01 | complete | <summary> | - |
@@ -53,11 +52,12 @@
 Next Action: <implement:I<nn> | resume-increment | resolve-reconciliation | resolve-amendment:<id> | resolve-ruling:<key> | final-integration | complete>
 
 ## Review Findings & Resolutions
-<!-- machine-managed review history; excluded from governed content -->
+*No reviews conducted yet.*
 ````
 
 ## Field notes
 
 - Box: exact labels in order; `Increments` equals the graph row count; never live status.
 - Increment Details: one high-level H3 per graph ID.
+- Execution Status and Review Findings & Resolutions: machine-managed; excluded from governed content.
 - Execution Status: every increment's state (completed, active, ready, blocked, invalidated) and one ledger-derived Next Action line.

@@ -1,13 +1,11 @@
 ---
 name: dispatch-design-review
-description: Use only when the user explicitly invokes `/dispatch-design-review`.
+description: Compatibility alias for dispatch design review.
 disable-model-invocation: true
 ---
 
-# Design review alias
+# dispatch-design-review
 
-Forward the post-colon text to `/dispatch review design: <argument>`, inserting any level and pins before `review`; when the user supplied `--fix`, place it after `design` (`/dispatch <prefix> review design --fix: <argument>`).
+Require sibling `dispatch`. If missing, report `Missing dependency: dispatch is required by dispatch-design-review` and stop.
 
-If `dispatch` is unavailable, stop with: `dispatch-design-review requires the dispatch skill; install or enable dispatch, then retry.`
-
-This alias is report-only unless the user explicitly supplied `--fix`.
+Read [dispatch](../dispatch), map this invocation to `start review --kind design`, and forward the user's level, pins, model, effort, and argument through its run loop. All host-await judgment and write boundaries belong to that contract.
