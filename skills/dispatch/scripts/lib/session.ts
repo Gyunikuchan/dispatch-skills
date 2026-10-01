@@ -1,5 +1,5 @@
-// Session paths and lifecycle (ADR 0003, spec §10.1; ports legacy lib/session-paths.mjs, session-lifecycle.mjs,
-// session-temp.mjs). Sessions live under `<repo>/.scratch/dispatch-skills/<folder>/` and hand off to
+// Session paths and lifecycle (ADR 0003, spec §10.1). Sessions live under
+// `<repo>/.scratch/dispatch-skills/<folder>/` and hand off to
 // `<realpath(tmpdir)>/dispatch-skills/<folder>/`. The repo root is found by upward `.git` traversal, never git.
 
 import crypto from 'node:crypto';
@@ -128,8 +128,15 @@ function matching(root: string, sessionId: string, repo: string): string[] {
   try { names = fs.readdirSync(root); } catch { return []; }
   const marker = `-${safePathId(sessionId)}-`;
   return names.filter((name) => name.includes(marker) && FOLDER_NAME.test(name)).map((name) => path.join(root, name)).filter((dir) => {
-    const manifest = readManifest(dir);
-    return manifest.sessionId === sessionId && manifest.repositoryRoot === repo;
+    try {
+      const manifest = readManifest(dir);
+      return manifest.sessionId === sessionId && manifest.repositoryRoot === repo;
+    } catch (error) {
+      let entries: string[] = [];
+      try { entries = fs.readdirSync(dir); } catch { return false; }
+      if (entries.length === 0) return false;
+      throw new Error(`Session folder ${dir} is damaged (unreadable or corrupt manifest): ${error instanceof Error ? error.message : String(error)}`);
+    }
   });
 }
 
@@ -213,7 +220,7 @@ function treeSnapshot(dir: string): string {
       const child = rel ? `${rel}/${entry.name}` : entry.name;
       // The manifest differs by lifecycle state (location, lastUsedAt) between the two copies.
       if (child === MANIFEST) continue;
-      // Legacy parity: a moved symlink can change or break its target, so sessions reject them.
+      // A moved symlink can change or break its target, so sessions reject them.
       if (entry.isSymbolicLink()) throw new Error(`Session contains a symbolic link: ${full}`);
       if (entry.isDirectory()) { rows.push(`d ${child}`); walk(full, child); }
       else rows.push(`f ${child} ${crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex')}`);
@@ -293,7 +300,9 @@ export const isRunId = (id: string): boolean => RUN_ID.test(id);
 export function storeSessionPaths<T>(value: T, root: string): T {
   if (typeof value === 'string') {
     let result: string = value;
-    for (const variant of new Set([root, root.replaceAll('\\', '/'), root.replaceAll('/', '\\')])) result = result.replaceAll(variant, '@session');
+    for (const variant of new Set([root, root.replaceAll('\\', '/'), root.replaceAll('/', '\\')])) {
+      result = result.replace(new RegExp(`${variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[/\\\\]|$)`, 'g'), '@session');
+    }
     return (result.includes('@session') ? result.replaceAll('\\', '/') : result) as T;
   }
   if (Array.isArray(value)) return value.map((item: unknown) => storeSessionPaths(item, root)) as T;

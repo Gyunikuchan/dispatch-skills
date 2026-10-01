@@ -1,4 +1,4 @@
-// Native fallback descriptors and model-mapping verification (spec §6.5; ports legacy native fallback).
+// Native fallback descriptors and model-mapping verification (spec §6.5).
 // A descriptor is what the host needs to launch one native subagent; the wave reconciles its capture by `sourceKey`.
 
 import type { ProviderId } from './types.ts';

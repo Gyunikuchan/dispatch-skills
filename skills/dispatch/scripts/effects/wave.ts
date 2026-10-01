@@ -1,4 +1,4 @@
-// The `wave` effect (spec §6.4–§6.6, ADR 0006; ports legacy driver/wave-process.mjs). The handler arbitrates an
+// The `wave` effect (spec §6.4–§6.6, ADR 0006). The handler arbitrates an
 // attempt through claim files, launches a detached worker, and reconciles its per-slot outcome files into
 // `WAVE_PROGRESS` events and exactly one `WAVE_DONE`. Two-phase path: `startWave` hands native descriptors to the
 // host; `finishWave` reconciles their captures.
@@ -277,7 +277,7 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
   const pool = { current: reservePool([...reserves.keys()]) };
   const finals: SlotFinal[] = [];
   try {
-    // Primary slots run concurrently (legacy batch parity) so one slow delegate cannot starve the rest of the deadline.
+    // Primary slots run concurrently so one slow delegate cannot starve the rest of the deadline.
     const primaries = input.roster.filter((slot) => !slot.reserve && !slot.native);
     finals.push(...await Promise.all(primaries.map(async (slot) => {
       const final = await runSlot(slot, input, deps, deadline, pool, reserves);
@@ -341,7 +341,7 @@ export function waveDone(effect: WaveEffect, finals: readonly SlotFinal[]): Resu
 }
 
 /**
- * Single-shot handler. With `context.nativeHost` (the two-wave machine path, I04), native-needed slots come back
+ * Single-shot handler. With `context.nativeHost` (the two-wave machine path), native-needed slots come back
  * `state: 'native'` with their descriptor for the host; otherwise native rosters are rejected and a runtime native
  * fallback fails by name (no host serves it).
  */

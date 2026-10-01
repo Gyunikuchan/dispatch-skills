@@ -1,10 +1,10 @@
-// Hot-fix judgement (spec §8.6, ADR 0004; ports legacy driver/hotfix-limits.mjs over a pure input). The I04/I06
+// Hot-fix judgement (spec §8.6, ADR 0004). The
 // effects compute `HotfixInput` from git and fs; this module returns violations and never reverts.
 
 export const HOTFIX_MAX_FILES = 10;
 export const HOTFIX_MAX_LINES = 150;
 
-/** Legacy SENSITIVE_FILE_PATTERNS / _BASENAME_ / _DIR_ sources (runners/shared.mjs), matched case-insensitively. */
+/** Sensitive file patterns, matched case-insensitively. */
 export const DEFAULT_SECRET_PATTERNS: SecretPatterns = {
   file: [
     '\\.env($|\\..+)', '\\.(pem|key|pkcs12|pfx|p12|kdbx|keystore|jks)$', '\\.(ovpn)$', 'id_(rsa|dsa|ecdsa|ed25519)($|\\.)',
@@ -51,8 +51,8 @@ export type HotfixJudgement = { violations: readonly string[]; withdrawn: boolea
 const slash = (file: string) => file.replace(/\\/g, '/').replace(/^\.\//, '');
 
 /**
- * `file` patterns test the repo-relative path, `basename` its basename, `dir` the slash-prefixed path (legacy
- * defaults) or any single directory segment (caller-supplied segment patterns such as `^secrets$`).
+ * `file` patterns test the repo-relative path, `basename` its basename, `dir` the slash-prefixed path
+ * or any single directory segment (caller-supplied segment patterns such as `^secrets$`).
  */
 export function isSecretPath(file: string, patterns: SecretPatterns = DEFAULT_SECRET_PATTERNS): boolean {
   const rel = slash(file);

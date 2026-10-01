@@ -21,7 +21,7 @@ test('snapshots stay confined to the review-prompt golden dir', () => {
 });
 
 test('a snapshot outside the golden dir fails with the rule and the fix', () => {
-  const files = ['tests/unit/a.snap', 'tests/unit/b.golden.json', 'tests/fixtures/plan.md', `${GOLDEN_DIR}ok.md`, 'skills/dispatch/SKILL.next.md'];
+  const files = ['tests/unit/a.snap', 'tests/unit/b.golden.json', 'tests/fixtures/plan.md', `${GOLDEN_DIR}ok.md`, 'skills/dispatch/SKILL.md'];
   const errors = checkSnapshots(files.map((path) => ({ path, text: '' })));
   assert.equal(errors.length, 3);
   assert.match(errors[0] ?? '', /^snapshot rule: tests\/unit\/a\.snap .*assert observable fields inline/);

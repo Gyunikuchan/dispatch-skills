@@ -1,7 +1,7 @@
 // `prepare-review`: resolve the review scope and write one prompt per roster slot to `<run>/<effectId>.<slot>.prompt.md`.
 // Code scope comes from `effects/git.ts` (an empty diff → `{ empty: true }`, no prompts); plan/design prompts name
 // the artifact. Carried pending rejections are appended to their affinity slot's prompt (or every prompt when
-// unassigned). `ask` has no template (I02 owns templates), so its bounded prompt is built inline.
+// unassigned). `ask` has no template, so its bounded prompt is built inline.
 
 import path from 'node:path';
 import type { Effect, Handler, ResultEvent } from '../core/types.ts';

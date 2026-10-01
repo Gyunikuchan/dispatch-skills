@@ -149,7 +149,7 @@ Review your working tree or a branch range:
 > [!NOTE]
 > Reviews are report-only. Add `--fix` to let verified findings be applied.
 
-Run the whole loop — plan, review, approval gate, implementation, code review to consensus:
+Run the whole loop — plan, review, approval gate, implementation, code review to settlement:
 
 ```text
 /dispatch implement: Add CSV export

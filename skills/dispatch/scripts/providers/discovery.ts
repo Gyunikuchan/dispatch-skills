@@ -1,4 +1,4 @@
-// Executable discovery (spec §6.3; ports legacy lib/providers.mjs): expand each mode's candidates (`*` segments via
+// Executable discovery (spec §6.3): expand each mode's candidates (`*` segments via
 // the fs table, bare names via PATH/PATHEXT), probe executability, cache provider × mode per invocation.
 
 import type { ModeId, PlatformEnv, ProviderId, ProviderSpec } from './types.ts';

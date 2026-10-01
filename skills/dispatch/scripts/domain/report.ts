@@ -1,5 +1,5 @@
-// The single delegate-report parse path for every source (spec §6.5 step 5; ports legacy review/report.mjs and
-// review/kinds.mjs contracts). Parse failures are named so the wave can fall back; findings dedup with `dupOf`.
+// The single delegate-report parse path for every source (spec §6.5 step 5).
+// Parse failures are named so the wave can fall back; findings dedup with `dupOf`.
 
 import type { FindingId, SlotId } from '../core/types.ts';
 import { sanitizeText } from './sanitize.ts';
@@ -21,7 +21,7 @@ export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
     'invariant', 'migration', 'partial-failure', 'perf', 'race', 'resource-leak', 'reuse', 'root-cause', 'runtime', 'scope-creep',
     'seam', 'security', 'shallow', 'standards', 'test-gap', 'test-leak', 'type', 'ui', 'yagni',
   ]),
-  // NOTE: legacy tags plus those the design prompt block lists (scope, dependency-graph, invariant, testability, standards).
+  // NOTE: Supported review tags plus those the design prompt block lists (scope, dependency-graph, invariant, testability, standards).
   design: new Set([
     'adjacent', 'alternatives', 'architecture', 'boundaries', 'compatibility', 'correctness', 'data-flow', 'dependency-graph',
     'graph-correctness', 'integration', 'intent', 'interfaces', 'invariant', 'migration', 'operations', 'parallel-safety', 'risk',
@@ -43,7 +43,7 @@ const REFUSAL = /\b(?:I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|r
 export function normalizeLocus(kind: ReviewKind, locus: string): string {
   const trimmed = locus.trim();
   if (kind === 'code') {
-    return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]*(?:\/|\.[A-Za-z])[^:#]*):([1-9]\d*)$/, '$1:L$2');
+    return trimmed.replace(/^([^:#]+)#L([1-9]\d*)$/, '$1:L$2').replace(/^([^:#]+):([1-9]\d*)$/, '$1:L$2');
   }
   return trimmed.replace(/^§(?=\S)/, '§ ');
 }

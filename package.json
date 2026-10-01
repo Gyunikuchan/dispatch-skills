@@ -23,7 +23,6 @@
     "code-review",
     "plan-review",
     "multi-agent",
-    "consensus",
     "delegation"
   ],
   "engines": {

@@ -1,5 +1,4 @@
-// Review rounds policy for every review kind (spec §7, ADR 0005; ports legacy review/rounds.mjs and
-// driver/review-policy.mjs without consensus or rebuttal waves).
+// Review rounds policy for every review kind (spec §7, ADR 0005).
 
 import type { FindingId, Level, SlotId } from '../core/types.ts';
 import { matchFinding, type MatchKey } from '../domain/report.ts';

@@ -1,6 +1,5 @@
-// Review roster (spec §6.5 step 1, §14; ports legacy lib/resolve-flow.mjs pins, lib/providers.mjs ordering, and
-// lib/config.mjs level resolution): level → phase policy (`targets`, `only`) → pins → diversity sort with
-// orchestrator demotion → `-m`/`-e` collapse → native marking → reserves. Orchestrator detection is I03's.
+// Review roster (spec §6.5 step 1, §14): level → phase policy (`targets`, `only`) → pins → diversity sort with
+// orchestrator demotion → `-m`/`-e` collapse → native marking → reserves.
 
 import type { Level, SlotId } from '../core/types.ts';
 import type { RosterSlot } from '../domain/types.ts';

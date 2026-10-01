@@ -1,5 +1,5 @@
-// Design parse + lint + governed text (ports legacy design/lint.mjs and design/graph.mjs). Increment selection by
-// graph priority belongs to the design machine (I07), not here.
+// Design parse + lint + governed text. Increment selection by
+// graph priority belongs to the design machine, not here.
 
 import {
   boxValues, documentTitle, findPlaceholders, isFillerNote, lint, lintSummaryBox, RESOLUTION_HEADING, sectionRanges,

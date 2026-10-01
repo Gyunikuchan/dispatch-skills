@@ -1,4 +1,4 @@
-// `createHandlers(deps)` → core `Handlers` for every I04 effect kind plus `wave` (I03 single-shot handler with native
+// `createHandlers(deps)` → core `Handlers` for every effect kind plus `wave` (single-shot handler with native
 // marking, or `wave-native.ts` when every roster entry carries a host capture).
 
 import type { Effect, Handler, Handlers } from '../core/types.ts';

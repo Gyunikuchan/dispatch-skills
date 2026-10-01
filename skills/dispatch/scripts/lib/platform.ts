@@ -1,4 +1,4 @@
-// Platform facts and orchestrator detection (ports legacy lib/platform.mjs and lib/providers.mjs detection).
+// Platform facts and orchestrator detection.
 // Pure over injected getters; `currentPlatform()` binds the real process.
 
 import fs from 'node:fs';
@@ -72,7 +72,7 @@ export const ORCHESTRATOR_MARKERS: Readonly<Record<ProviderKey, { platform: read
   codex: { platform: ['CODEX_THREAD_ID', 'CODEX_CLI', 'CODEX_APP_SERVER'], model: ['CODEX_MODEL'] },
 };
 
-// Detection order matches legacy: agy, claude, copilot, opencode, codex.
+// Detection order: agy, claude, copilot, opencode, codex.
 const DETECTION_ORDER: readonly ProviderKey[] = ['agy', 'claude', 'copilot', 'opencode', 'codex'];
 
 export type Orchestrator = { platform: ProviderKey; model: string | null };

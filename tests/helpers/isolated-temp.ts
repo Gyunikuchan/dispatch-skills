@@ -1,5 +1,5 @@
-// Preloaded by `test:next` (`--import`): one private temp root per run, plus one temp dir per test
-// process inside it, so fixtures never accumulate in the real temp directory. Ported from the legacy helper.
+// Preloaded by tests (`--import`): one private temp root per run, plus one temp dir per test
+// process inside it, so fixtures never accumulate in the real temp directory.
 
 import fs from 'node:fs';
 import os from 'node:os';

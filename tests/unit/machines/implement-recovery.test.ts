@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Event, RecoverySnapshot, RunStartedEvent, TreeFingerprint } from '../../../skills/dispatch/scripts/core/types.ts';
 import { initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import type { VerifyRecord } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
+import { artifactRelative, type VerifyRecord } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
 export const HASH = `sha256:${'a'.repeat(64)}`;
 export const metadata: RecoverySnapshot = { repoRoot: '', contents: { 'src/a.ts': Buffer.from('before').toString('base64') }, entries: { 'src/a.ts': { kind: 'file', mode: 0o644, linkTarget: null } }, taskStartFiles: ['src/a.ts'], callerDirty: [], ignored: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
@@ -127,4 +127,14 @@ test('rewrite SC1 observed RED stays distinct from a manual waived RED requireme
   const result = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I observed the behavior pass', criteria: { SC1: { outcome: 'pass', evidence: 'Behavior passed' } } } });
   assert.equal(result.state.tag, 'complete'); if (result.state.tag !== 'complete') return;
   assert.equal(result.state.c.evidence['SC1']?.['redProvenance'], 'observed'); assert.equal(result.state.c.evidence['SC1']?.['waiver'], undefined);
+});
+
+test('artifactRelative: case folding is pure and derived from repoRoot path format', () => {
+  const winFp = { recovery: { ...metadata, repoRoot: 'C:/Repo' } };
+  assert.equal(artifactRelative(winFp, 'c:/repo/plan.md'), 'plan.md');
+  assert.equal(artifactRelative(winFp, 'C:/Other/file.ts'), 'C:/Other/file.ts');
+
+  const posixFp = { recovery: { ...metadata, repoRoot: '/Repo' } };
+  assert.equal(artifactRelative(posixFp, '/Repo/plan.md'), 'plan.md');
+  assert.equal(artifactRelative(posixFp, '/repo/plan.md'), '/repo/plan.md');
 });

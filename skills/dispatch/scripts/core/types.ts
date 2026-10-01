@@ -15,7 +15,7 @@ export type EffectKind =
   | 'parse-artifact' | 'prepare-review' | 'wave' | 'wave-start' | 'wave-finish' | 'verify' | 'write-brief'
   | 'check-envelope' | 'snapshot' | 'restore' | 'handoff';
 
-// NOTE: effect-handler failure classes; I03/I04 refine when handlers land.
+// Effect-handler failure classes.
 export type EffectFailureClass = 'io' | 'timeout' | 'crash' | 'invalid-output' | 'integrity' | 'config';
 
 /** Provider slot failure classes (spec §6.4). */
@@ -31,34 +31,33 @@ export function assertNever(value: never, what = 'value'): never {
   throw new Error(`unhandled ${what}: ${JSON.stringify(value)}`);
 }
 
-// SECTION: Placeholder payloads
-// NOTE: minimal structural placeholders; the owning increment (named per alias) refines each shape.
+// SECTION: Payload types
 
 type Payload = Readonly<Record<string, unknown>>;
-export type Platform = string; // I02
-export type Pins = Payload; // I02
-export type Overrides = Payload; // I02
-export type ResolvedConfig = Payload; // I02
-export type RepoIdentity = Payload; // I03
-export type NativeSlotResult = Payload; // I03
-export type FindingId = string; // I02
-export type Ruling = Payload; // I04
-export type FixClusterResult = Payload; // I04
-export type WriterFailureKind = string; // I05
-export type CriterionId = string; // I05
-export type CriterionEvidence = Payload; // I05
-export type DecisionAnswer = unknown; // I04–I07
-export type ParsedPlan = Payload; // I02
-export type ParsedDesign = Payload; // I07
-export type LintDefect = Payload; // I02
-export type ReviewScope = Payload; // I04
-export type SlotId = string; // I02
-export type SlotStatus = string; // I03
-export type SlotOutcome = Payload; // I03
-export type Finding = Payload; // I02
-export type VerifyPurpose = string; // I04
-export type CommandResult = Payload; // I04
-export type TreeFingerprint = Payload; // I04
+export type Platform = string;
+export type Pins = Payload;
+export type Overrides = Payload;
+export type ResolvedConfig = Payload;
+export type RepoIdentity = Payload;
+export type NativeSlotResult = Payload;
+export type FindingId = string;
+export type Ruling = Payload;
+export type FixClusterResult = Payload;
+export type WriterFailureKind = string;
+export type CriterionId = string;
+export type CriterionEvidence = Payload;
+export type DecisionAnswer = unknown;
+export type ParsedPlan = Payload;
+export type ParsedDesign = Payload;
+export type LintDefect = Payload;
+export type ReviewScope = Payload;
+export type SlotId = string;
+export type SlotStatus = string;
+export type SlotOutcome = Payload;
+export type Finding = Payload;
+export type VerifyPurpose = string;
+export type CommandResult = Payload;
+export type TreeFingerprint = Payload;
 export type WriteStage = 'tests-only' | 'production' | 'hotfix';
 export type RecoverySnapshot = {
   repoRoot: string;
@@ -75,15 +74,15 @@ export type RecoverySnapshot = {
 };
 export type FileEntry = { kind: 'file' | 'symlink'; mode: number; linkTarget: string | null };
 export type PathInfo = { kind: 'file' | 'symlink' | 'directory'; mode: number; linkTarget: string | null; realPath: string | null };
-export type WriteEnvelope = Payload; // I05
-export type PathDiff = Payload; // I04
-export type ReviewSpec = Payload; // I04
-export type ScopeRequest = Payload; // I04
-export type RosterSlot = Payload; // I02
-export type VerifyCommand = Payload; // I04
-export type BriefInput = Payload; // I05
+export type WriteEnvelope = Payload;
+export type PathDiff = Payload;
+export type ReviewSpec = Payload;
+export type ScopeRequest = Payload;
+export type RosterSlot = Payload;
+export type VerifyCommand = Payload;
+export type BriefInput = Payload;
 export type IntegrationScope = { baseline: string; revision: string; ownership: Readonly<Record<string, readonly string[]>> };
-export type PathSet = readonly string[]; // I05
+export type PathSet = readonly string[];
 
 // SECTION: Events
 
@@ -230,7 +229,7 @@ export interface FsPort {
   remove(file: string): void;
 }
 
-// NOTE: spawn and git shapes are placeholders; I03/I04 refine them with their handlers.
+// Spawn and git port shapes.
 export interface SpawnPort {
   run(argv: readonly string[], options: { cwd: string }): Promise<{ exit: number; stdout: string; stderr: string }>;
 }

@@ -1,5 +1,5 @@
 // `handoff` (ADR 0003): the handler only computes the destination, because `send` still holds the lock and appends
-// and renders under the run dir. `finalizeHandoff` performs the move after `send` unlocks (wired by dispatch.ts, I08).
+// and renders under the run dir. `finalizeHandoff` performs the move after `send` unlocks (wired by dispatch.ts).
 
 import path from 'node:path';
 import type { Effect, Handler } from '../core/types.ts';

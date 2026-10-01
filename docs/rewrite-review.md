@@ -1,5 +1,7 @@
 # v0.7.0 rewrite review against v0.6.1
 
+> Current review: see **Follow-up review at 1e72eec** below. Five material gaps remain after the repair commit; the original 16-finding list describes the older snapshot. This task was report-only.
+
 Completed 2026-10-01. Stable tag: `v0.6.1` (`0efe940cdb0df2b0a18417fccf13d6c364f418a1`). Rewrite: HEAD `443439aac99fbd755a22dc9d87c716301ed0e388`. The checkout remains labeled 0.6.1; v0.7.0 is the intended release.
 
 ## Synthesis
@@ -244,3 +246,77 @@ Suggested report commit message, if the user later chooses to retain it in track
 ## Final checkout drift note
 
 Final verification found HEAD advanced concurrently from reviewed `443439a` to `5341f4e7e12ddca2c1ae3a67634ab042d4eb0aef` (`docs(readme): add branch and tag install example`). `git diff --stat 443439a HEAD` shows only four added README lines. No runtime or agent-contract changes; findings remain tied to the reviewed snapshot and README line numbers refer to that snapshot. The added install example does not resolve the identified stale workflow or safety text. Final git status matches the initial dirty path list; git diff --check passed. No source edits or commit made by this review.
+
+## Follow-up review at 1e72eec
+
+Started 2026-10-01 against stable `v0.6.1` (`0efe940`). Current rewrite snapshot: `1e72eec1f242be696d1dde7b0ecace733c2bb771`; working tree was clean. The earlier report above describes `443439a` and must not be read as a current open-findings list after the intervening repair commit.
+
+Scope: independent all-configured-voice review, host verification of regressions and omitted instructions, and bounded north-star improvement opportunities. Report only; no production fixes. Version metadata still says 0.6.1; v0.7.0 denotes the intended rewrite.
+
+Dispatch selected seven slots: Claude, Antigravity, four OpenCode voices and Codex. Codex native fallback launched while the CLI worker remains active. Coverage and verified synthesis will be updated when captures arrive. Full test run passed; completed synthesis and coverage follow below.
+
+### Current synthesis (completed)
+
+Retain the rewrite: journal authority, pure machines, eight awaits, explicit sandbox opt-outs, claims-based settlement, and separate design approval/delivery are improvements. The repair commit resolves the earlier critical review-settlement defect and most earlier runner/composition findings. Five material gaps remain below: two approval/evidence risks, two observable review/report regressions, and one advertised but unwired reuse path. These priorities reflect verified consequences, not reviewer votes.
+
+Four substantive CLI captures informed this follow-up. Three selected slots failed; native agents supplied no completed capture. A partial native message prompted F01/F02, but the host independently reproduced both. OpenCode voices could inspect files but could not run Git or tests, so their historical comparisons were often secondhand. The host read stable Git blobs and ran verification directly.
+
+### Retained findings at current HEAD
+
+| Priority | ID | Finding | Owning evidence |
+|---|---|---|---|
+| MUST | F01 | Expanded design scope inherits the original user approval | machines/design.ts:180-212; ADR 0006 D32 |
+| MUST | F02 | Global design contract changes preserve completed increments and their evidence | machines/design-revision.ts:8-15; machines/design.ts:198-212 |
+| SHOULD | F03 | Plan/design re-review scope has no changed-section binding | effects/prepare-review.ts:80-129 |
+| SHOULD | F04 | Ask reports complete when every delegate failed | machines/ask.ts:96; stable driver/ask-phase.mjs processCollected |
+| SHOULD | F05 | Public plan-to-implement flow cannot supply the advertised settled-plan reuse | dispatch.ts:162-189; machines/implement.ts:579-582 |
+
+Paths in this table are relative to `skills/dispatch/scripts/`.
+
+**F01 — approval must follow scope growth.** During an implementing design revision, the machine derives a new `by:revision` approval from the old quote for every changed hash, then calls `deliver`; it never tests whether approved paths or commands grew. A reproduction adds `src/new.ts` to I01 and observes `tag:increment`, derived approval, and a snapshot effect without an approval await. The child subsequently derives production approval from this binding. This contradicts ADR 0006 D32's current rule that growth re-requests approval; stable design amendments also required explicit approval. Bounded remedy: compare revised approved scope/commands before deriving approval, pause growth for user approval, and retain inherited approval only for non-growing revisions. Verify expanded and unchanged scope through parent-to-child observable awaits, not only a delta helper.
+
+**F02 — shared contract changes need an evidence invalidation decision.** `designDelta` compares only increment rows and detail objects. Architecture, global requirements and final-integration changes live in governedText and can change its hash without changing either structure. A reproduction changes only a shared architecture contract: `changed`, `invalidated` and `removed` are all empty; the parent retains completed I01 and proceeds to integration under the new hash. This does not prove every prose edit warrants reopening, but an actual shared behavioral change must not silently reuse old acceptance evidence. Stable amendment handling required affected work/dependants to be invalidated. Bounded remedy: include governed shared contracts in the delta and require an explicit affected-increment decision, conservatively reopening affected dependants when equivalence cannot be established. Verify a shared behavioral change and a harmless prose change separately.
+
+**F03 — bounded review applies to artifacts too.** Snapshot/manifest/delta handling is inside the code-kind branch. Plan/design preparation never reads `sinceHash` or produces section changes, and formats an empty path list as `no recorded changes`. Both round-2 delta reproductions emit `Review round 2 (delta): no recorded changes; comparison: example.<kind>.md`, with no manifest. The artifact templates promise changed sections on re-review. Design-revision context may embed before/after text, so the defect is absent binding and misleading scope, not a claim that no revision context ever exists. Bounded remedy: carry an artifact revision/section snapshot into preparation, render kind-specific changed sections and responsible dispute material, and test the generated prompts for ordinary plan/design rounds and revision rounds.
+
+**F04 — terminal failure is not completed advice.** `askData` emits `outcome:complete` for an empty claim list with failed slots, calling transport `partial`. The pure projection reproduction produces exactly `0 claim(s), 1 failed slot(s)` with outcome complete. Stable `processCollected` explicitly used failed when no delegate answered. Retain the useful new `coverage:unknown` distinction; change the all-failed transport/outcome separately. Verify zero, partial and complete transport and preserve source/failure identities. This run itself had four substantive reports and therefore is not an all-failed example.
+
+**F05 — reusable settlement has no production producer.** Implement can skip review only when `run.overrides.settledPlan` supplies matching path/hash/outcome. Searching shipped scripts finds only its parser and consumers in implement; CLI start builds model/effort/kind/timeout overrides and searches same-session journals only for design delivery. There is no settled-plan CLI flag or plan-journal lookup. Thus a plan settled through public `start plan` is reviewed again when passed to public `start implement`, despite `references/verbs/implement.md` saying settled evidence is reused when available. Tests inject the override directly. This is an advertised-composition gap, not a recommendation to trust mutable legacy markers. Bounded remedy: derive a hash-bound same-session completed-plan binding from authoritative journals, or explicitly remove the reuse promise and dead override path. Verify public plan-to-implement composition with matching and stale hashes.
+
+### Earlier finding disposition
+
+- R06 resolved: responsible-source/substitute coverage is required before omission settlement; missing coverage fails by name. Keep that fail-closed behavior.
+- R01 resolved for code; R02's code delta/dispute binding improved. F03 qualifies artifact-kind coverage; do not call all-kind bounded review complete.
+- R03 resolved: this run exposed native/early descriptors while CLI worker outcomes were pending.
+- R04/R05/R10 resolved in production composition: the worker wires OpenCode introspection, verified read-only agent, config selectors and preparation ports. Local GPU/WAN behavior was source/test verified, not live certified on every platform.
+- R07 resolved: governing plan/walkthrough/criteria are supplied to implementation code review.
+- R08 resolved: runner limit flags precede parser success and capped children are terminated.
+- R09/R13 resolved in source/tests: Antigravity profiles and Windows Claude shims are restored. Installed CLI age is a separate environment failure.
+- R11 resolved: frames now emit validator-checked examples. Neutral ruling defaults and typed high-risk payloads remain worthwhile improvements.
+- R12 partially resolved: obsolete section name was removed from the plan template, but its `entry format` pointer still has no target; walkthrough retains `§ Resolution log`. Both should simply disclose driver ownership.
+- R14/R15/R16 resolved: audit import composition, current range/design usage and qualified safety text were repaired.
+
+### Further prose gaps and north-star opportunities
+
+1. **Make discovery support explicit before trimming it.** Stable Codex desktop candidates included versioned OpenAI/Codex/bin folders, Programs/Codex/resources/bin, Programs/Codex/bin, Program Files and Linux bundle paths. Current codex.ts:38 keeps one different Windows path, one macOS path and no Linux desktop candidates. This removal is source-verified; claims that every old path is a standard current installer layout are unverified. Inventory supported installations, retain evidenced current candidates, and add discovery fixtures for those layouts. Do not restore speculative paths merely because legacy listed them.
+2. **Give commands one concise executable convention.** Verb references and run steps use bare `start`/`send` after showing a full Node entrypoint only for initialization. Frames supply the full executable reply, so this is an ambiguity opportunity rather than a demonstrated production failure. Define the command prefix once and use a consistent notation; avoid expanding all five stubs with duplicate instructions.
+3. **Disclose exact upgrade deletions.** Configuration migration says consensus was removed, but does not explicitly tell users to delete old `phases.*.consensus` keys. Keep strict validation; add the deletion instruction. Release labeling remains a release-time task, not a blocker merely because the branch is named v0.7.0.
+4. **Remove stale prose pointers and improve failure wording.** Drop template references to a nonexistent Resolution log/entry format. The standalone plan REVISE rejection says `in plan in standalone review`; name the actual unsupported flow. Keep detailed operating choices in frame data rather than restoring the old procedural prose wholesale.
+5. **Prioritize composition tests.** Add public CLI plan-reuse, design-revision approval/invalidation, generated artifact prompt and zero-transport completion checks. Existing green helper tests did not exercise these consequences. A preserved-behavior source-key inventory is not evidence of delivered behavior.
+6. **Single-source or retire unused twins after a caller inventory.** Report JSON schemas remain shipped while wave requests supply `schemaPath:null`; tests only assert file presence. Use one parser/schema owner or remove unused files. Consolidate repeated session-root derivation through a dependency-safe leaf helper. Remove superseded single-shot wave paths only after caller/test inventory.
+7. **Keep progressive disclosure.** Current ask completion truncates summaries to 512 characters and marks unknown coverage; raw outcome captures still preserve full text. Keep concise summaries plus reachable captures and preserve underlying failure kinds. This run's failed native quota was projected as empty-output after the empty capture; a typed native-failure result would preserve cause without masquerading as a review.
+8. **Reassess debt against concurrent work.** The shared checkout acquired payload typing, comment cleanup, preserved-behavior removal and other edits during this review. Their scope is outside this report-only task. O03/O04/O10 suggestions may already be partly addressed; review those changes separately rather than duplicating or undoing them.
+
+Rejected claims: bulk restoration of provider prose without a missing host decision; automatic restoration of voting consensus, phase jumping, parse-back markers or silent sandbox downgrade; declaring every reduced discovery candidate currently supported; equating a branch name with an authorized release. The new driver owns deterministic discovery/cascade decisions, so removing repeated host procedures is generally useful.
+
+### Coverage, verification and handoff
+
+Seven configured eligible slots were requested once. Substantive captures: Antigravity and OpenCode[0,1,2]. Claude failed cli-outdated; OpenCode[3] timed out after roughly ten minutes; Codex CLI and both native launches hit account usage limits. No completed native report or verified native model mapping is claimed. Partial native observations were checked independently. The driver reached done with four claims and three failed slots; this is partial configured coverage, not a unanimous or complete all-provider review.
+
+Host verification: `npm test` passed type/hash/term/config gates and all **606 tests across 92 files** (32.79 s). The suite completed before later concurrent edits; it does not certify the final dirty checkout. Host transition/projection reproductions demonstrated F01/F02/F04; generated-prompt reproduction demonstrated F03. These scripts/logs are in the handoff folder. F05 is source/caller verified, without a full live public-flow reproduction. `git diff --check -- docs/rewrite-review.md` passed. No live cross-platform sandbox, GPU, authentication or installer-layout certification is claimed.
+
+Review baseline remained HEAD `1e72eec`; the working tree started clean and later acquired many source/test edits from concurrent work. This task intentionally changed only this report and review/session artifacts. Findings reference HEAD source unless stated; the design and ask reproduction owners had no concurrent behavioral diff, and prepare-review's concurrent diff was comment-only. Preserve all unrelated changes.
+
+Authoritative artifacts: `C:/Users/fchei/AppData/Local/Temp/dispatch-skills/20261001T1034Z-fa175f569448-v0-7-0-regression-an/`. Raw slot outcomes and claims live under `.state/runs/001-ask/`; host logs/reproductions are at its root. The session was handed off successfully; there is no live worker left to monitor.
+
+Suggested report commit: `docs(dispatch): refresh rewrite review after contract repairs`. No fixes, staging or commit performed. Review friction: unavailable shell in several delegate harnesses reduced historical comparison coverage; provide small pinned stable-side evidence packets for future comparisons while retaining native read-only controls.

@@ -38,8 +38,8 @@ test('plan: review skipped (rounds 0) → done complete with the skip summary', 
 });
 
 
-test('rewrite SC5 standalone plan revision diagnostic describes actual support', () => {
+test('standalone plan revision diagnostic describes actual support', () => {
   const state = planMachine.step(planMachine.initial(), started()).state;
   const error = planMachine.validate!(state, { type: 'REVISE', artifact: 'plan', reason: 'change', evidence: 'observed' });
-  assert.match(error ?? '', /standalone/); assert.doesNotMatch(error ?? '', /I06/);
+  assert.match(error ?? '', /standalone/);
 });

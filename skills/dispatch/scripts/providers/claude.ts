@@ -1,4 +1,4 @@
-// Claude Code (spec §6.1; ports legacy runners/claude.mjs): plan permission mode, read-tool allowlist, write-tool
+// Claude Code (spec §6.1): plan permission mode, read-tool allowlist, write-tool
 // denylist; sandbox via `--settings`; native Windows reports the sandbox inactive → `sandbox-unsupported`.
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';

@@ -1,4 +1,4 @@
-// Antigravity (spec §6.1; ports legacy runners/agy.mjs): headless plan mode; token, subscription, and execution
+// Antigravity (spec §6.1): headless plan mode; token, subscription, and execution
 // failures cascade to the next mode; a spilled brief is reachable through `--add-dir`; resume `conversation://<id>`.
 
 import { classifyFailure, failOutcome } from './runner.ts';

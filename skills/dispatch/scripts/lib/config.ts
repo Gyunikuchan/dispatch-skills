@@ -1,4 +1,4 @@
-// Dispatch config load and strict validation (ports legacy lib/config.mjs and lib/platform.mjs loading; ADR 0001,
+// Dispatch config load and strict validation (ADR 0001, ADR 0006,
 // spec §14). The first existing candidate loads wholly (no merge); `config.sample.jsonc` is the validation
 // reference only. Every problem names the sample so users can diff against it.
 

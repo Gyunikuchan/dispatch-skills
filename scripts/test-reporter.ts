@@ -1,4 +1,4 @@
-// Quiet reporter for `node --test` (ported from legacy scripts/test-reporter.mjs, not imported).
+// Quiet reporter for `node --test`.
 // Silences passing output, expands the first failure, lists the slowest files, and fails any file
 // outside tests/e2e/ whose top-level tests exceed the per-file budget (spec §15.2).
 

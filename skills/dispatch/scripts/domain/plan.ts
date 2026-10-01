@@ -1,5 +1,4 @@
-// Plan parse + lint + governed text (spec §8.1; ports legacy plan/lint.mjs, plan/structure.mjs,
-// lib/summary-box.mjs, lib/filler.mjs). Shared Markdown helpers are exported for domain/design.ts.
+// Plan parse + lint + governed text (spec §8.1). Shared Markdown helpers are exported for domain/design.ts.
 
 import type {
   ChangeAction, EvidenceClass, LintDefect, LintDefectCode, ParsedPlan, PlanChange, PlanCommand, PlanCriterion,

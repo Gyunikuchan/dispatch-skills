@@ -1,4 +1,4 @@
-// Prompt template extraction, frame assembly, and fill (port of legacy review/fill-template.mjs). Pure: callers
+// Prompt template extraction, frame assembly, and fill. Pure: callers
 // pass Markdown they read. Declared variables are the backtick-quoted `<Name>` bullets between the section
 // heading and its first fence; substitution is single-pass over declared names, so undeclared grammar
 // placeholders (`<file>:L<line>`, `<tag>`) pass through and a value's own text is never re-scanned.

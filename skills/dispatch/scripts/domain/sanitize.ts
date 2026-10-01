@@ -1,5 +1,5 @@
-// Delegate text sanitization before relay or render (port of legacy driver/actions.mjs sanitizeReplyText,
-// plus comment-marker neutralisation so delegate text can never open hidden Markdown/HTML regions).
+// Delegate text sanitization before relay or render,
+// plus comment-marker neutralisation so delegate text can never open hidden Markdown/HTML regions.
 
 const TOOL_CALL_LINE = /^\s*(?:<\/?(?:invoke|parameter|function_calls|tool_use)\b|(?:invoke|parameter|function_calls|tool_use)\s*\(|[A-Z][A-Za-z]*\(.*\)\s*$|\$\s|>\s*\$)/;
 const TOOL_MARKUP = /<\/?(?:invoke|parameter|function_calls|tool_use)\b.*$/;

@@ -84,7 +84,7 @@ Pick `<level>` from the batch: `low` for a single mechanical edit, `medium` by d
 
 The report is state, not a work product: `dispatch ... implement:` fixes the repository and never edits the report — every status change goes through `status.mjs set`. A finding whose fix it refutes during its own plan review goes back to step 2's table as `false-positive`, with the reviewing agent's reason in the note.
 
-**Done when:** `dispatch ... implement:` reports consensus and `npm test` passes (`npm run hashes` first if it reports hash drift).
+**Done when:** `dispatch ... implement:` reports completion and `npm test` passes (`npm run hashes` first if it reports hash drift).
 
 ## 4. Record and loop
 

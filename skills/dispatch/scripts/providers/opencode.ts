@@ -1,4 +1,4 @@
-// OpenCode (spec §6.1; ports legacy runners/opencode.mjs): v2-only argv `run --auto [--agent] [-m model[#effort]]
+// OpenCode (spec §6.1): v2-only argv `run --auto [--agent] [-m model[#effort]]
 // [--format json] -- <prompt>`; `Variant unavailable` asks the runner to rerun once without effort. A loopback
 // endpoint gets a `/models` preflight, the GPU lock, and a WAN proxy trap; a remote endpoint skips all three.
 // Bubblewrap sandbox on Linux only; elsewhere `sandbox: true` is `sandbox-unsupported`.
@@ -26,7 +26,7 @@ export function endpointHost(endpoint: string): string | null {
 export function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[] {
   const home = req.platform.home;
   const xdg = req.platform.xdg ?? {};
-  // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf (legacy resolveOpencodeStateDirs).
+  // OpenCode's writable dirs are XDG data/cache/state, each with an `opencode` leaf.
   const state = [
     join(req.platform, xdg.data ?? join(req.platform, home, '.local', 'share'), 'opencode'),
     join(req.platform, xdg.cache ?? join(req.platform, home, '.cache'), 'opencode'),

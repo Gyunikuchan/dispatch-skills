@@ -47,6 +47,7 @@ test('session-lifecycle: collision-safe creation, manifest, handoff move, reacti
   assert.deepEqual([run.id, isRunId(run.id), createRun(dir, 'implement').id], ['001-plan-review', true, '002-implement']);
   const stored = storeSessionPaths({ log: path.join(dir, '.state', 'x.log') }, dir);
   assert.equal(stored.log, '@session/.state/x.log');
+  assert.equal(storeSessionPaths(`${dir}-sibling/file.txt`, dir), `${dir}-sibling/file.txt`);
   const published = handoffSession(dir, temp);
   assert.equal(fs.existsSync(dir), false);
   assert.equal(readManifest(published).location, 'published');
@@ -55,6 +56,11 @@ test('session-lifecycle: collision-safe creation, manifest, handoff move, reacti
   assert.equal(path.basename(back), path.basename(dir));
   assert.equal(readManifest(back).location, 'workspace');
   assert.throws(() => restoreSessionPaths('@session/../escape', back), /escapes/);
+  // Damaged session directory with existing data refuses initialization rather than abandoning state.
+  const damaged = path.join(path.dirname(dir), '20260929T1754Z-s3-damaged');
+  fs.mkdirSync(damaged);
+  fs.writeFileSync(path.join(damaged, 'corrupt.txt'), 'data');
+  assert.throws(() => initializeSession({ repositoryRoot: root, sessionId: 's3', sessionTitle: 'damaged', now, tempRoot: temp }), /damaged/);
 });
 
 test('session-lifecycle: handoff across filesystems (EXDEV) copies, verifies, and removes the source', () => {

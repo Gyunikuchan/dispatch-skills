@@ -72,7 +72,7 @@ const NON_EMPTY = (value: unknown): value is string => typeof value === 'string'
 
 export function isTestPath(value: string): boolean { return TEST_PATH.test(value); }
 
-/** Boundary guard for the domain parser's payload, which crosses the event journal as an I02 placeholder. */
+/** Boundary guard for the domain parser's payload, which crosses the event journal as a generic payload. */
 export function asParsedPlan(value: unknown): ParsedPlan | null {
   if (!isRecord(value) || !Array.isArray(value['criteria']) || !Array.isArray(value['changes']) || !isRecord(value['verification'])) return null;
   if (!Array.isArray(value['verification']['automated']) || !Array.isArray(value['finalCommands'])) return null;
@@ -185,7 +185,12 @@ export function recoverySnapshot(value: unknown): RecoverySnapshot | null {
 export function artifactRelative(fingerprint: unknown, file: string): string {
   const root = recoverySnapshot(fingerprint)?.repoRoot.replace(/\\/g, '/').replace(/\/$/, '');
   const normalized = file.replace(/\\/g, '/');
-  return root && normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`) ? normalized.slice(root.length + 1) : normalized;
+  if (!root) return normalized;
+  const win = /^[a-zA-Z]:/.test(root);
+  const match = win
+    ? normalized.toLowerCase().startsWith(`${root.toLowerCase()}/`)
+    : normalized.startsWith(`${root}/`);
+  return match ? normalized.slice(root.length + 1) : normalized;
 }
 export function sameFingerprint(left: TreeFingerprint, right: TreeFingerprint): boolean {
   return left['head'] === right['head'] && left['index'] === right['index'] && left['worktree'] === right['worktree'];

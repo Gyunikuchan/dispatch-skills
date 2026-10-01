@@ -14,10 +14,13 @@ const failure = (text: string, truncated = false) => {
 };
 
 test('delegates-one-report-parse: one path parses fenced or bare JSON into draft findings', () => {
-  const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Banner\n\`\`\`json\n${report([finding({ locus: 'src/fetch.ts:12' })])}\n\`\`\`` });
+  const result = parseReport({ kind: 'code', source: 'codex[0]', text: `Banner\n\`\`\`json\n${report([finding({ locus: 'src/fetch.ts:12' }), finding({ locus: 'Dockerfile:12' })])}\n\`\`\`` });
   assert.ok(result.ok);
   assert.equal(result.status, 'FINDINGS');
-  assert.deepEqual(result.findings.map((item) => [item.locus, item.category, item.sources, item.scope]), [['src/fetch.ts:L12', 'correctness', ['codex[0]'], 'in']]);
+  assert.deepEqual(result.findings.map((item) => [item.locus, item.category, item.sources, item.scope]), [
+    ['src/fetch.ts:L12', 'correctness', ['codex[0]'], 'in'],
+    ['Dockerfile:L12', 'correctness', ['codex[0]'], 'in'],
+  ]);
   const clean = parseReport({ kind: 'plan', source: 'agy[0]', text: report([], 'CLEAN') });
   assert.ok(clean.ok && clean.findings.length === 0);
 });

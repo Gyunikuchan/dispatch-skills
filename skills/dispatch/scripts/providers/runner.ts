@@ -1,4 +1,4 @@
-// The one delegate runner (spec §6.2; ports legacy runners/shared.mjs and lib/platform.mjs tree kill):
+// The one delegate runner (spec §6.2):
 // credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
@@ -164,7 +164,7 @@ export const killArgv = (os: OsId, pid: number): readonly string[] =>
 
 // SECTION: Shared classifiers
 
-/** Legacy shared classifier over diagnostics text; null when nothing matches. */
+/** Shared classifier over diagnostics text; null when nothing matches. */
 export function classifyFailure(text: string): FailureClass | null {
   if (!text) return null;
   if (/\b(usage limit|rate limit|rate_limit|quota|credit balance|insufficient[_ ]quota|too many requests|\b429\b)/i.test(text)) return 'quota';
@@ -330,7 +330,7 @@ function escapeCmdArgument(argument: string): string {
 
 /**
  * Batch launchers (.cmd/.bat) cannot run without cmd.exe, and `shell: true` concatenates argv unescaped (injection);
- * route through cmd.exe with every argument escaped and verbatim arguments (port of legacy resolveCliInvocation).
+ * route through cmd.exe with every argument escaped and verbatim arguments.
  */
 export function batchInvocation(binary: string, args: readonly string[], comSpec = 'cmd.exe'): { command: string; args: string[] } {
   if (args.some((arg) => /[\r\n]/.test(arg))) throw new Error('batch launcher argument contains a newline; spill it to a brief file');

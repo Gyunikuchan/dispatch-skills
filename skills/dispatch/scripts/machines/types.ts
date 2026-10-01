@@ -66,7 +66,7 @@ export function asRuling(value: unknown): Ruling | null {
   const severity = value['severity'];
   if (severity === 'MUST' || severity === 'SHOULD' || severity === 'CONSIDER') out.severity = severity;
   if (typeof value['reason'] === 'string') out.reason = value['reason'];
-  // NOTE: the host ruling owns fix scope and verification (reports carry none), mirroring the legacy adjudicate reply.
+  // NOTE: the host ruling owns fix scope and verification (reports carry none).
   const fix = value['fix'];
   if (isRecord(fix)) {
     const list = (key: string) => (Array.isArray(fix[key]) ? (fix[key] as unknown[]).filter((entry): entry is string => typeof entry === 'string') : []);

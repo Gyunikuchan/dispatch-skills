@@ -1,5 +1,5 @@
 // Plan machine: author → AUTHORED → parse-artifact → (defects → author) → review (kind plan, fix mode) → complete.
-// Approval belongs to implement (I05); a disabled plan review (rounds 0) completes with the skip recorded.
+// Approval belongs to implement; a disabled plan review (rounds 0) completes with the skip recorded.
 
 import type { Event, HostEvent, Machine, RunStartedEvent } from '../core/types.ts';
 import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';

@@ -1,4 +1,4 @@
-// All-native wave (two-wave native path, I04): every roster entry carries the host's capture for one native slot.
+// All-native wave (two-wave native path): every roster entry carries the host's capture for one native slot.
 // Each capture goes through the same report parse path as `finishWave` (ask slots yield one sanitized claim), and
 // the handler returns one `WAVE_DONE`. No process is launched.
 

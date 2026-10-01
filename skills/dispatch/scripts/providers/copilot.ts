@@ -1,4 +1,4 @@
-// GitHub Copilot (spec §6.1; ports legacy runners/copilot.mjs): plan mode; sandbox `--experimental --sandbox`;
+// GitHub Copilot (spec §6.1): plan mode; sandbox `--experimental --sandbox`;
 // quota moves to the next mode, auth does not; resume `copilot --resume <id>`.
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';

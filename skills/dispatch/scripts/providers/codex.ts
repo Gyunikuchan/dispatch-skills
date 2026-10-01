@@ -1,4 +1,4 @@
-// Codex (spec §6.1; ports legacy runners/codex.mjs): `exec --json` with approvals disabled and a read-only
+// Codex (spec §6.1): `exec --json` with approvals disabled and a read-only
 // sandbox; sandbox rejection → `sandbox-unsupported`; only `sandbox: false` selects `danger-full-access`.
 
 import { classifyFailure, failOutcome } from './runner.ts';

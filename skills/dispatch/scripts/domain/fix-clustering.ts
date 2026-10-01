@@ -1,4 +1,4 @@
-// Fix clusters with bounded attempts (port of legacy review/fix-clustering.mjs). Accepted fixes group into
+// Fix clusters with bounded attempts. Accepted fixes group into
 // clusters with disjoint paths and no dependency between members; a failed cluster splits into descendants
 // sharing the remaining attempt budget. Cluster ids are a pure FNV-1a digest (no crypto import in domain/).
 

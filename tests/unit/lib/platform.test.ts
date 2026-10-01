@@ -13,7 +13,7 @@ test('platform facts: os, WSL, bubblewrap, argv limit, PATH and PATHEXT', () => 
   assert.equal(platformFacts({ platform: 'darwin', arch: 'arm64', release: '', home: '/h', env: envOf({}), bubblewrap: true }).bubblewrap, false);
 });
 
-test('grammar-orchestrator-demotion: orchestrator detection from env markers, in legacy order, with override', () => {
+test('grammar-orchestrator-demotion: orchestrator detection from env markers, in priority order, with override', () => {
   assert.equal(detectOrchestrator(envOf({})), null);
   assert.deepEqual(detectOrchestrator(envOf({ CLAUDECODE: '1', ANTHROPIC_MODEL: 'opus' })), { platform: 'claude', model: 'opus' });
   assert.deepEqual(detectOrchestrator(envOf({ CLAUDECODE: '1', GEMINI_CLI: '1' })), { platform: 'agy', model: null });
