@@ -22,9 +22,9 @@ Each target is one voice; its model array is a failure cascade for that voice. `
 
 OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obtains merged native config sources and effective agents with bounded introspection. It selects a verified default-deny read-only agent; unavailable permissions fail as `read-only-agent-unavailable`. Unverifiable remote/managed sources fail as `effective-config-unverified`. Inline config is not propagated implicitly. Local selected-model endpoints receive a bounded model preflight, shared GPU lease and proxy trap; remote endpoints skip local preparation. Native Antigravity modes select their authenticated profile through `JETSKI_APP_DATA_DIR`.
 
-## Migration
+## Operational boundaries
 
-Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes. Consensus voting, direct runner entrypoints and phase jumping have been removed; claims are verified by the host, and implementation owns its review sequence. Design approval precedes a separate implement invocation.
+Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes.
 
 Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Handoff moves the entire folder to OS temp and reports its path; reactivate it before later work. Wave journals require protocol revision 2. Historical journals without that revision fail `unsupported-journal-protocol`; preserve their artifacts and start a new run rather than replaying incompatible events.
 
