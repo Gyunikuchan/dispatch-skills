@@ -35,7 +35,15 @@ export const codex: ProviderSpec = {
   id: 'codex',
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'codex.cmd' : 'codex', env.os === 'win32' ? 'codex.exe' : join(env, env.home, '.local', 'bin', 'codex')] },
-    { id: 'desktop', candidates: (env) => env.os === 'darwin' ? ['/Applications/Codex.app/Contents/Resources/codex'] : env.os === 'win32' ? [join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'resources', 'codex.exe')] : [] },
+    { id: 'desktop', candidates: (env) => env.os === 'darwin'
+      ? ['/Applications/Codex.app/Contents/Resources/codex']
+      : env.os === 'win32'
+      ? [
+          join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'resources', 'bin', 'codex.exe'),
+          join(env, env.home, 'AppData', 'Local', 'Programs', 'Codex', 'bin', 'codex.exe'),
+          join(env, 'C:', 'Program Files', 'Codex', 'resources', 'bin', 'codex.exe'),
+        ]
+      : [] },
     { id: 'vscode', candidates: (env) => [join(env, env.home, '.vscode', 'extensions', 'openai.chatgpt-*', 'bin', '*', env.os === 'win32' ? 'codex.exe' : 'codex')] },
   ],
   readOnlyFlags: ['--config', 'approval_policy="never"'],

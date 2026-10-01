@@ -3,13 +3,56 @@
 // the artifact. Carried pending rejections are appended to their affinity slot's prompt (or every prompt when
 // unassigned). `ask` has no template, so its bounded prompt is built inline.
 
+import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, ResultEvent } from '../core/types.ts';
 import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
+import { structuralLines } from '../domain/plan.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import type { IntegrationScope } from '../core/types.ts';
+
+const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
+
+export function parseArtifactSections(source: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  const lines = structuralLines(source);
+  let currentHeading = 'Summary';
+  let currentLines: string[] = [];
+  for (const entry of lines) {
+    const match = !entry.fenced ? /^##\s+(.+)$/.exec(entry.text) : null;
+    if (match) {
+      sections.set(currentHeading, currentLines.join('\n').trim());
+      currentHeading = match[1]!.trim();
+      currentLines = [];
+    } else {
+      currentLines.push(entry.original);
+    }
+  }
+  sections.set(currentHeading, currentLines.join('\n').trim());
+  return sections;
+}
+
+export function artifactSectionDelta(priorText: string, currentText: string): string[] {
+  const prior = parseArtifactSections(priorText);
+  const current = parseArtifactSections(currentText);
+  const changed: string[] = [];
+  const ignored = new Set(['Review Findings & Resolutions', 'Execution Status']);
+  const seen = new Set<string>();
+  for (const [heading, content] of current.entries()) {
+    if (ignored.has(heading)) continue;
+    seen.add(heading);
+    if (!prior.has(heading) || prior.get(heading) !== content) {
+      changed.push(heading);
+    }
+  }
+  for (const [heading] of prior.entries()) {
+    if (ignored.has(heading) || seen.has(heading)) continue;
+    changed.push(heading);
+  }
+  return changed;
+}
 
 type PrepareEffect = Extract<Effect, { kind: 'prepare-review' }>;
 type Row = Readonly<Record<string, unknown>>;
@@ -88,6 +131,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const prompt = askPrompt(text(spec['target']), text(spec['context']));
         body = () => prompt;
       } else {
+        let scopeText: string;
         if (kind === 'code') {
           let integration: unknown = scope['integration'];
           if (integration === undefined && text(spec['context']).startsWith('{')) {
@@ -119,6 +163,41 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...snapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
           }
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
+          scopeText = reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']));
+        } else {
+          const target = text(spec['target']);
+          const targetFile = ports.fs.readText(target) !== null ? target : path.resolve(deps.cwd, target);
+          const currentText = ports.fs.readText(targetFile);
+          if (currentText === null || currentText === undefined) throw new Error(`Artifact target unavailable: ${target}`);
+          if (effect.round > 1 || typeof scope['priorManifest'] === 'string' || typeof scope['priorTarget'] === 'string') {
+            let priorText: string | null = null;
+            if (typeof scope['priorManifest'] === 'string') {
+              const raw = ports.fs.readText(scope['priorManifest']);
+              if (!raw) throw new Error('review-round-binding-unavailable');
+              let prior: { text?: string };
+              try { prior = JSON.parse(raw); } catch { throw new Error('review-round-binding-unavailable'); }
+              if (typeof prior.text !== 'string') throw new Error('review-round-binding-unavailable');
+              priorText = prior.text;
+            } else if (typeof scope['priorTarget'] === 'string') {
+              const pTarget = scope['priorTarget'];
+              priorText = ports.fs.readText(pTarget) ?? ports.fs.readText(path.resolve(deps.cwd, pTarget));
+            }
+            if (priorText !== null) {
+              changed = artifactSectionDelta(priorText, currentText);
+            } else if (scope['fresh'] !== true) {
+              throw new Error('review-round-binding-unavailable');
+            }
+          }
+          manifestPath = path.join(ctx.runDir, `${effect.id}.scope.json`);
+          ports.fs.writeAtomic(manifestPath, JSON.stringify({ kind, target, text: currentText, hash: sha256(currentText) }));
+          const scopeKind = text(scope['scope'], 'full');
+          if (effect.round === 1 && !changed.length) {
+            scopeText = 'Full review';
+          } else if (scopeKind === 'full') {
+            scopeText = `Re-review round ${effect.round} (full artifact) — review the whole artifact; changed sections for context: ${changed.length ? changed.join(', ') : 'none'}`;
+          } else {
+            scopeText = `Re-review round ${effect.round} (delta) — changed sections: ${changed.length ? changed.join(', ') : 'none'}`;
+          }
         }
         const dir = path.join(deps.skillRoot, 'references', 'templates');
         const frame = ports.fs.readText(path.join(dir, 'review-prompt.md'));
@@ -126,7 +205,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
         const template = assembleTemplate(frame, block);
         const values: Record<string, string> = {
           'User Focus Areas': text(spec['context'], 'General review') || 'General review', 'Tool Turn Budget': 'Unspecified',
-          ...kindValues(kind, spec, reviewScopeText(effect.round, text(scope['scope'], 'full'), changed, text(spec['target']))),
+          ...kindValues(kind, spec, scopeText),
         };
         const filled = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
         body = (slot) => `${filled}${isRecord(spec['governing']) ? `\n\n### Governing artifacts and criteria\n${JSON.stringify(spec['governing'])}\n` : ''}${integrationBound ? `\n\n### Integration scope\nReview only the diff from ancestor ${integrationBound.baseline} on these paths: ${changed.join(', ')}.\nGoverned design revision: ${integrationBound.revision}.\nIncrement ownership: ${JSON.stringify(integrationBound.ownership)}.\n` : ''}${carriedSection(carried, slot)}`;

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { designRevision, dispatchMachine, findDesignDelivery, previewReceipt, send, start } from './core/interpreter.ts';
+import { designRevision, dispatchMachine, findDesignDelivery, findSettledPlan, previewReceipt, send, start } from './core/interpreter.ts';
 import { faultFrame } from './core/frame.ts';
 import { readJournal } from './core/journal.ts';
 import { nodePorts } from './core/ports.ts';
@@ -175,6 +175,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           const result = await send({ runDir: existing.runDir, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, dryRun: existing.finished, runRel: path.relative(repo, existing.runDir).replaceAll('\\', '/') });
           if (result.frame) emit(finish(result.frame, existing.runDir)); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
         }
+      }
+      if (command.verb === 'implement' && /\.plan\.md$/i.test(argument) && fs.existsSync(argument)) {
+        const settled = findSettledPlan(ports, path.join(sessionDir, '.state/runs'), dispatchMachine, repo, { path: argument });
+        if (settled) overrides['settledPlan'] = settled;
       }
       const runKind = command.verb === 'review' ? `${textFlag(command, 'kind') ?? (/\.plan\.md$/i.test(argument) ? 'plan' : /\.design\.md$/i.test(argument) ? 'design' : 'code')}-review` as 'code-review' | 'plan-review' | 'design-review' : command.verb!;
       const reserved = createRun(sessionDir, runKind);

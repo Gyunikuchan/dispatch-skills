@@ -1,6 +1,6 @@
 import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
-import { asParsedDesign } from '../domain/design.ts';
+import { asParsedDesign, designScopeGrew } from '../domain/design.ts';
 import { beginApproval, beginBoundImplement, stepImplement, implementAwait, implementData, validateImplement, type ImplementState } from './implement.ts';
 import { incrementPathMatches } from '../domain/plan.ts';
 import { beginReview, stepReview, reviewAwait, reviewData, validateReview, reviewSpecFromRun, type ReviewState } from './review.ts';
@@ -22,12 +22,12 @@ export type DesignState =
   | { tag: 'author'; c: DesignContext; defects: readonly Readonly<Record<string, unknown>>[] }
   | { tag: 'parse'; c: DesignContext; effectId: string; afterReview: boolean }
   | { tag: 'review'; c: DesignContext; review: ReviewState }
-  | { tag: 'approval'; c: DesignContext }
+  | { tag: 'approval'; c: DesignContext; parent?: DesignState | undefined }
   | { tag: 'baseline'; c: DesignContext; effectId: string }
   | { tag: 'increment'; c: DesignContext; increment: string; child: ImplementState }
   | { tag: 'plan-revision'; c: DesignContext; increment: string; child: RevisionState }
   | { tag: 'integration'; c: DesignContext; review: ReviewState; scopeEffectId?: string }
-  | { tag: 'revision'; c: DesignContext; child: DesignRevisionState; parent?: DesignState }
+  | { tag: 'revision'; c: DesignContext; child: DesignRevisionState; parent?: DesignState | undefined }
   | { tag: 'complete'; c: DesignContext; summary: string }
   | { tag: 'failed'; c: DesignContext; summary: string };
 type S = Step<DesignState>;
@@ -61,7 +61,7 @@ function deliver(c: DesignContext): S {
     const run: RunStartedEvent = { ...c.run, verb: 'implement', argument: `${session}/${slugOf(c.path)}-${increment.toLowerCase()}.plan.md`, overrides: { ...c.run.overrides, path: `${session}/${slugOf(c.path)}-${increment.toLowerCase()}.plan.md` } };
     const details = c.design.details[increment] ?? {};
     const contract = Object.fromEntries(Object.entries(details).filter(([key]) => ['outcome', 'affected contracts', 'rollback boundary'].includes(key.toLowerCase())));
-    const result = beginBoundImplement(run, { path: c.path, revision: c.hash, increment, contract, paths: c.design.increments.find((row) => row.id === increment)!.paths, approval: c.approval, repair: c.repairs[increment] ?? [] }, c.counters);
+    const result = beginBoundImplement(run, { path: c.path, revision: c.hash, revisionIndex: c.revisions.length, increment, contract, paths: c.design.increments.find((row) => row.id === increment)!.paths, approval: c.approval, repair: c.repairs[increment] ?? [] }, c.counters);
     return { state: { tag: 'increment', c, increment, child: result.state }, effects: result.effects };
   }
   if (c.completed.length !== c.design.increments.length) return failed(c, 'No ready increment remains; prerequisite graph is blocked.');
@@ -121,6 +121,30 @@ export function stepDesign(state: DesignState, event: Event): S {
       const answer = event.answer as { by: 'user'; quote: string; hash: string };
       const c = { ...state.c, approval: answer };
       if (c.run.verb === 'design') return stay({ tag: 'complete', c, summary: `Design approved at ${c.hash}; authoring complete.` });
+      if (c.baseline) {
+        let parent = state.parent;
+        while (parent?.tag === 'approval') parent = parent.parent;
+        if (parent?.tag === 'increment' && c.design) {
+          const incRow = c.design.increments.find((row) => row.id === parent.increment);
+          const child = parent.child;
+          const binding = 'c' in child && child.c ? child.c.designBinding : undefined;
+          const startIndex = binding
+            ? (binding.revisionIndex ?? (binding.revision ? c.revisions.findLastIndex((rev) => rev.before === binding.revision) : -1))
+            : -1;
+          const revisionsSinceSuspension = startIndex >= 0 ? c.revisions.slice(startIndex) : c.revisions;
+          const isInvalidated = revisionsSinceSuspension.some((rev) => rev.invalidated.includes(parent.increment));
+          const prereqsMet = incRow ? incRow.prerequisites.every((id) => c.completed.includes(id)) : false;
+          if (incRow && !isInvalidated && prereqsMet && 'c' in child && child.c?.designBinding) {
+            const details = c.design.details[parent.increment] ?? {};
+            const contract = Object.fromEntries(Object.entries(details).filter(([key]) => ['outcome', 'affected contracts', 'rollback boundary'].includes(key.toLowerCase())));
+            if (JSON.stringify(child.c.designBinding.paths) === JSON.stringify(incRow.paths) && JSON.stringify(child.c.designBinding.contract) === JSON.stringify(contract)) {
+              const context = { ...child.c, counters: { ...child.c.counters, ...c.counters }, designBinding: { ...child.c.designBinding, path: c.path, revision: c.hash, revisionIndex: c.revisions.length, approval: answer } };
+              return stay({ tag: 'increment', c, increment: parent.increment, child: { ...child, c: context } as ImplementState });
+            }
+          }
+        }
+        return deliver(c);
+      }
       const next = nextId(c.counters, 'design', 'snapshot');
       return { state: { tag: 'baseline', c: { ...c, counters: next.counters }, effectId: next.id }, effects: [{ kind: 'snapshot', id: next.id, since: null }] };
     }
@@ -180,10 +204,11 @@ export function stepDesign(state: DesignState, event: Event): S {
       if (result.state.tag === 'resume') {
         const r = result.state;
         const original = r.c.approval;
-        const approval: DesignApproval | null = original && r.hash !== original.hash ? {
+        const scopeGrew = r.c.design ? designScopeGrew(r.c.design, r.design) : false;
+        const approval: DesignApproval | null = original && r.hash !== original.hash && !scopeGrew ? {
           by: 'revision', quote: original.quote, hash: r.hash, basedOn: original.by === 'user' ? original.hash : original.basedOn,
           revisions: [...original.by === 'revision' ? original.revisions : [], { before: r.c.hash!, after: r.hash }],
-        } : original;
+        } : scopeGrew ? null : original;
         const present = new Set(r.design.increments.map((row) => row.id));
         const ownership: Record<string, string[]> = {};
         const transferred = new Set<string>();
@@ -202,12 +227,24 @@ export function stepDesign(state: DesignState, event: Event): S {
           for (const row of r.design.increments) if (!invalidated.has(row.id) && row.prerequisites.some((id) => invalidated.has(id))) { invalidated.add(row.id); grew = true; }
         }
         const c = { ...r.c, path: r.workingPath, design: r.design, hash: r.hash, approval, completed: r.c.completed.filter((id) => !invalidated.has(id) && present.has(id)), ownership, repairs: Object.fromEntries(Object.entries(r.c.repairs).filter(([id]) => present.has(id) && !invalidated.has(id))), revisions: [...r.c.revisions, { before: r.c.hash!, after: r.hash, reason: r.reason, invalidated: [...invalidated] }] };
-        const parent = state.parent;
-        if (parent?.tag === 'increment' && !invalidated.has(parent.increment) && !r.delta.removed.includes(parent.increment)) {
-          const child = parent.child;
-          if (!('c' in child) || !child.c?.designBinding || !approval) return failed(c, 'Active increment lost its governing design binding.');
-          const context = { ...child.c, counters: { ...child.c.counters, ...c.counters }, designBinding: { ...child.c.designBinding, path: c.path, revision: c.hash, approval } };
-          return stay({ tag: 'increment', c, increment: parent.increment, child: { ...child, c: context } as ImplementState });
+        let effectiveParent = state.parent;
+        while (effectiveParent?.tag === 'approval') effectiveParent = effectiveParent.parent;
+        if (!approval) {
+          return stay({ tag: 'approval', c, parent: effectiveParent });
+        }
+        if (effectiveParent?.tag === 'increment' && !r.delta.removed.includes(effectiveParent.increment)) {
+          const child = effectiveParent.child;
+          const binding = 'c' in child && child.c ? child.c.designBinding : undefined;
+          const startIndex = binding
+            ? (binding.revisionIndex ?? (binding.revision ? c.revisions.findLastIndex((rev) => rev.before === binding.revision) : -1))
+            : -1;
+          const revisionsSinceSuspension = startIndex >= 0 ? c.revisions.slice(startIndex) : c.revisions;
+          const isInvalidated = revisionsSinceSuspension.some((rev) => rev.invalidated.includes(effectiveParent.increment));
+          if (!isInvalidated) {
+            if (!('c' in child) || !child.c?.designBinding) return failed(c, 'Active increment lost its governing design binding.');
+            const context = { ...child.c, counters: { ...child.c.counters, ...c.counters }, designBinding: { ...child.c.designBinding, path: c.path, revision: c.hash, revisionIndex: c.revisions.length, approval } };
+            return stay({ tag: 'increment', c, increment: effectiveParent.increment, child: { ...child, c: context } as ImplementState });
+          }
         }
         return c.run.verb === 'implement' ? deliver(c) : stay({ tag: 'approval', c: { ...c, approval: null } });
       }
@@ -251,7 +288,7 @@ export function validateDesign(state: DesignState, event: HostEvent): string | n
 }
 export const transitions = [
   { from: 'author', on: 'AUTHORED', to: 'parse' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'author' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'review' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'approval' }, { from: 'parse', on: 'EFFECT_FAILED', to: 'failed' },
-  { from: 'approval', on: 'DECISION', to: 'complete' }, { from: 'approval', on: 'DECISION', to: 'baseline' }, { from: 'approval', on: 'DECISION', to: 'failed' }, { from: 'baseline', on: 'SNAPSHOT', to: 'increment' }, { from: 'baseline', on: 'SNAPSHOT', to: 'failed' }, { from: 'baseline', on: 'EFFECT_FAILED', to: 'failed' },
+  { from: 'approval', on: 'DECISION', to: 'complete' }, { from: 'approval', on: 'DECISION', to: 'baseline' }, { from: 'approval', on: 'DECISION', to: 'increment' }, { from: 'approval', on: 'DECISION', to: 'integration' }, { from: 'approval', on: 'DECISION', to: 'failed' }, { from: 'baseline', on: 'SNAPSHOT', to: 'increment' }, { from: 'baseline', on: 'SNAPSHOT', to: 'failed' }, { from: 'baseline', on: 'EFFECT_FAILED', to: 'failed' },
   ...['WAVE_DONE', 'RULINGS', 'ARTIFACT_PARSED', 'DECISION'].map((on) => ({ from: 'review', on, to: 'parse' })),
   ...['REVIEW_PREPARED', 'DECISION', 'EFFECT_FAILED'].map((on) => ({ from: 'review', on, to: 'failed' })),
   { from: 'parse', on: 'ARTIFACT_PARSED', to: 'baseline' },

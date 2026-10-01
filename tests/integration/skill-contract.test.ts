@@ -56,5 +56,7 @@ test('aliases forward explicit fix intent and host contract uses emitted envelop
 test('guidance uses delivered APIs and describes migration boundaries', () => {
   const root = read('README.md'); assert.doesNotMatch(root, /--phases|clean tree falls back/i); assert.match(root, /Ambient credential/); assert.match(root, /invoke `implement:`/);
   const config = read('skills/dispatch/references/readme/configuration.md'); for (const term of ['nativeSubagentsOnly', 'write-subagents', 'unsupported-journal-protocol', 'OPENCODE_CONFIG_DIR', 'sandbox:false']) assert.ok(config.includes(term), term);
-  assert.doesNotMatch(read('skills/dispatch/references/templates/plan.md'), /Resolution log/);
+  assert.doesNotMatch(read('skills/dispatch/references/templates/plan.md'), /Resolution log|entry format/);
+  assert.doesNotMatch(read('skills/dispatch/references/templates/walkthrough.md'), /Resolution log/);
+  assert.doesNotMatch(read('skills/dispatch/scripts/machines/plan.ts'), /is not available in plan/);
 });

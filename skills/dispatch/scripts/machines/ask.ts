@@ -93,7 +93,18 @@ export function askAwait(state: AskState) {
 export function askData(state: AskState): Readonly<Record<string, unknown>> {
   switch (state.tag) {
     case 'native': return { round: 1, slots: state.slots };
-    case 'done': return { outcome: 'complete', summary: `${state.claims.length} claim(s), ${state.failed.length} failed slot(s)`, claims: state.claims.map((claim) => ({ ...claim, text: claim.text.slice(0, 512) })), failed: state.failed, coverage: 'unknown', transport: state.failed.length ? 'partial' : 'success', captures: state.c.rows.flatMap((row) => typeof row['outputPath'] === 'string' ? [row['outputPath']] : []) };
+    case 'done': {
+      const allFailed = state.claims.length === 0 && state.failed.length > 0;
+      return {
+        outcome: allFailed ? 'failed' : 'complete',
+        summary: `${state.claims.length} claim(s), ${state.failed.length} failed slot(s)`,
+        claims: state.claims.map((claim) => ({ ...claim, text: claim.text.slice(0, 512) })),
+        failed: state.failed,
+        coverage: 'unknown',
+        transport: allFailed ? 'failed' : state.failed.length ? 'partial' : 'success',
+        captures: state.c.rows.flatMap((row) => typeof row['outputPath'] === 'string' ? [row['outputPath']] : []),
+      };
+    }
     case 'failed': return { outcome: 'failed', summary: state.detail };
     case 'booting': case 'preparing': case 'wave': return {};
     default: return never(state, 'ask state');

@@ -142,6 +142,36 @@ export function governedDesignText(source: string): string {
   return withoutSections(source, [EXECUTION_STATUS_HEADING, RESOLUTION_HEADING]);
 }
 
+export function sharedDesignSections(source: string): string {
+  const lines = structuralLines(source);
+  const sections = ['## Goals & Requirements', '## Architecture & Boundaries', '## Final Integration'];
+  return sections.map((heading) => {
+    const body = (sectionBody(lines, heading) ?? []).map((l) => l.text.trim()).filter(Boolean).join('\n');
+    return `${heading}\n${body}`;
+  }).join('\n\n');
+}
+
+const detailField = (details: Record<string, string> | undefined, field: string): string =>
+  Object.entries(details ?? {}).find(([k]) => k.toLowerCase() === field.toLowerCase())?.[1] ?? '';
+
+export function designScopeGrew(before: ParsedDesign, after: ParsedDesign): boolean {
+  const beforePaths = new Set(before.increments.flatMap((row) => row.paths));
+  for (const afterRow of after.increments) {
+    for (const p of afterRow.paths) if (!beforePaths.has(p)) return true;
+    const beforeRow = before.increments.find((row) => row.id === afterRow.id);
+    if (!beforeRow) return true;
+    const beforeVal = detailField(before.details[afterRow.id], 'Validation');
+    const afterVal = detailField(after.details[afterRow.id], 'Validation');
+    if (afterVal !== beforeVal) return true;
+  }
+  const beforeLines = structuralLines(before.governedText);
+  const afterLines = structuralLines(after.governedText);
+  const beforeIntegration = (sectionBody(beforeLines, '## Final Integration') ?? []).map((l) => l.text.trim()).filter(Boolean).join('\n');
+  const afterIntegration = (sectionBody(afterLines, '## Final Integration') ?? []).map((l) => l.text.trim()).filter(Boolean).join('\n');
+  if (beforeIntegration !== afterIntegration) return true;
+  return false;
+}
+
 /** Parses and lints a design; any diagnostic fails the parse (design lint has no warnings). */
 export function parseDesign(source: string, options: { placeholders?: PlaceholderVocabulary } = {}): DesignResult {
   const lines = structuralLines(source);

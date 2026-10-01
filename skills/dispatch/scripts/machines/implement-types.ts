@@ -8,7 +8,7 @@ import { isRecord } from './types.ts';
 export type EvidenceClass = 'red' | 'verify' | 'review';
 export type ImplementStage = 'tests-only' | 'production';
 export type DesignBinding = {
-  path: string; revision: string; increment: string; contract: Readonly<Record<string, string>>; paths: readonly string[];
+  path: string; revision: string; revisionIndex?: number; increment: string; contract: Readonly<Record<string, string>>; paths: readonly string[];
   approval: DesignApproval; repair: readonly string[];
 };
 export type ImplementOutcome = 'complete' | 'failed' | 'stopped';

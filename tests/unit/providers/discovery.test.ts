@@ -64,3 +64,12 @@ test('rewrite SC4 Windows cmd-only Claude installation resolves', () => {
   const discovery = createDiscovery(SPECS, windows, { list: () => [], exists: (file) => file.replaceAll('\\', '/') === '/bin/claude.cmd', executable: () => true });
   assert.equal(discovery.resolve('claude', 'cli').status, 'path');
 });
+
+test('resolves codex desktop candidate paths on Windows', () => {
+  const win: PlatformEnv = { ...env, os: 'win32', home: 'C:\\Users\\test' };
+  const candidate = 'C:\\Users\\test\\AppData\\Local\\Programs\\Codex\\resources\\bin\\codex.exe';
+  const fs = table({ [candidate]: 'exec' });
+  const discovery = createDiscovery(SPECS, win, fs);
+  assert.deepEqual(discovery.resolve('codex', 'desktop'), { status: 'path', path: candidate });
+});
+

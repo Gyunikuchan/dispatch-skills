@@ -4,7 +4,7 @@ Kind block for `review-prompt.md`.
 
 - `<Plan Path>` — path to the attached plan.
 - `<Requirement>` — original user ask, verbatim.
-- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is read delegate context.
+- `<Review Scope>` — preparation-supplied scope string: `Full review` on a first review. On a re-review, `Re-review round <n> (full artifact) — review the whole artifact; changed sections for context: <changed sections>`, or `Re-review round <n> (delta) — changed sections: <changed sections>`. An optional `Plan lint warnings:` suffix is read delegate context.
 
 ## opener
 

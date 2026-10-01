@@ -4,6 +4,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { governedDesignText } from '../domain/design.ts';
+import { governedPlanText } from '../domain/plan.ts';
 import { restoreSessionPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
 import { faultFrame, oneLine, projectFrame } from './frame.ts';
@@ -337,6 +338,51 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
   }
   return match;
 }
+
+export type SettledPlanIdentity = { path: string; currentHash?: string };
+
+/** Looks up completed settled plan runs in the session journal. */
+export function findSettledPlan<S>(
+  ports: Ports,
+  runsDir: string,
+  machine: Machine<S>,
+  repoRoot: string,
+  identity: SettledPlanIdentity,
+): { path: string; hash: string; outcome: 'settled' | 'skipped' } | null {
+  const currentHash = identity.currentHash ?? (ports.fs.exists(identity.path)
+    ? `sha256:${crypto.createHash('sha256').update(governedPlanText(ports.fs.readText(identity.path) ?? '')).digest('hex')}`
+    : null);
+  if (!currentHash) return null;
+  if (!ports.fs.exists(runsDir)) return null;
+  for (const file of ports.fs.listFiles(runsDir)) {
+    if (path.basename(file) !== JOURNAL_FILE) continue;
+    const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
+    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
+    const started = lines.find((line) => line.type === 'RUN_STARTED');
+    if (!started || started.data['verb'] !== 'plan') continue;
+    const authoredLine = [...lines].reverse().find((line) => line.type === 'AUTHORED' && typeof line.data['path'] === 'string');
+    const planArg = typeof started.data['argument'] === 'string' ? started.data['argument'] : '';
+    const overrides = started.data['overrides'] as Record<string, unknown> | undefined;
+    const planPath = typeof overrides?.['path'] === 'string'
+      ? overrides['path'] as string
+      : typeof authoredLine?.data['path'] === 'string'
+      ? authoredLine.data['path'] as string
+      : planArg;
+    if (designPathIdentity(path.resolve(repoRoot, planPath)) !== designPathIdentity(path.resolve(repoRoot, identity.path))) continue;
+    const folder = fold(machine, lines);
+    if (machine.awaitOf(folder.state) !== 'done') continue;
+    const projected = machine.project(folder.state).data;
+    if (projected['outcome'] !== 'complete') continue;
+    const parsedLine = [...lines].reverse().find((line) => line.type === 'ARTIFACT_PARSED' && line.data['kind'] === 'plan');
+    const hash = parsedLine?.data['hash'];
+    if (typeof hash !== 'string' || hash !== currentHash) continue;
+    const summary = String(projected['summary'] ?? '');
+    const outcome: 'settled' | 'skipped' = summary.includes('skipped') ? 'skipped' : 'settled';
+    return { path: identity.path, hash, outcome };
+  }
+  return null;
+}
+
 
 /** Creates the run folder exclusively (ADR 0003), appends `RUN_STARTED`, and enters the send loop. */
 export async function start<S>(options: StartOptions<S>): Promise<SendResult> {

@@ -40,6 +40,6 @@ None.
 - Changes Made: every file changed in the session. Note precedence: writer `files[].note`, then the plan's Proposed Changes line, then `+N −M`; review fixes append `fixes <IDs>`.
 - Verification: Evidence is `red→green` plus the command for red criteria, or `<class>; <scenario>; <result>` for verify/review. Plan-less: only the `Final gate:` line, Status `n/a`.
 - Revision Log: `## Revision Log` before Review Findings & Resolutions, only when revisions occurred.
-- Review Findings & Resolutions: driver-rendered; rounds use the entry format in dispatch references/review.md § Resolution log.
+- Review Findings & Resolutions: driver-rendered and machine-managed.
 - Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria.
 - Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box is a one-line summary exactly when a `- Deviation:` bullet exists.

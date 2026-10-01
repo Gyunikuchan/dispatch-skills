@@ -81,6 +81,6 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 
 - Technical-Design Traceability: increment plans only.
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
-- Review Findings & Resolutions: driver-rendered; rounds use the entry format in dispatch references/review.md.
+- Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
 - `[GENERATED]`: the driver reruns Command before completion verification.

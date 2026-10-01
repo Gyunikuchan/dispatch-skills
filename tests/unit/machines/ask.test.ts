@@ -52,3 +52,14 @@ test('rewrite SC3 ask consumes started and finished waves and labels coverage un
   r = askMachine.step(r.state, { type: 'WAVE_DONE', effectId: r.effects[0]!.id, round: 1, slots: [{ slot: 'codex[0]', state: 'success', claim: 'Investigating the issue', outputPath: 'raw.log', records: ['diagnostic'] }], findings: [] });
   const data = askMachine.project(r.state).data; assert.equal(data['coverage'], 'unknown'); assert.equal(data['transport'], 'success'); assert.deepEqual(data['captures'], ['raw.log']);
 });
+
+test('emits failed outcome when all slots fail', () => {
+  const frames = play(askMachine, [
+    started, prepared,
+    { type: 'WAVE_DONE', effectId: 'ask.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'failed', cls: 'quota' }], findings: [] },
+  ]);
+  assert.equal(frames.at(-1)?.at, 'ask › done');
+  assert.equal(frames.at(-1)?.data['outcome'], 'failed');
+  assert.equal(frames.at(-1)?.data['transport'], 'failed');
+  assert.equal(frames.at(-1)?.data['summary'], '0 claim(s), 1 failed slot(s)');
+});

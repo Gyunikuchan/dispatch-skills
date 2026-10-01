@@ -268,6 +268,8 @@ test('every design and design revision transition row has a reducer fixture', ()
     [{ tag: 'prepare', c: rc }, { type: 'EFFECT_FAILED', effectId: 'review-result', cls: 'io', detail: 'Read failed' }],
   ] as readonly [ReviewState, Event][]) extra.push([dReview(child), event]);
   extra.push([{ ...parsing, c: { ...parsing.c, run: { ...parsing.c.run, verb: 'implement' }, approval: { by: 'user', quote: 'Approved', hash: designHash } } }, good]);
+  extra.push([{ tag: 'approval', c: { ...designApproval('implement').c, baseline: 'a'.repeat(40) } }, approve]);
+  extra.push([{ tag: 'approval', c: { ...designApproval('implement').c, baseline: 'a'.repeat(40), completed: ['I01', 'I02'], ownership: { I01: ['src/a.ts'], I02: ['src/b.ts'] } } }, approve]);
 
   const active = started();
   if (active.tag !== 'increment' || !('c' in active.child) || !active.child.c) throw new Error('active increment');
@@ -317,6 +319,8 @@ test('every design and design revision transition row has a reducer fixture', ()
   extra.push([{ tag: 'revision', c: active.c, child: rParsed.state }, { type: 'EFFECT_FAILED', effectId: rParsed.state.effectId, cls: 'io', detail: 'Read failed' }]);
   extra.push([{ tag: 'revision', c: { ...active.c, approval: null }, child: { ...rParsed.state, c: { ...active.c, approval: null }, afterReview: true } }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rParsed.state.effectId, hash: designHash, parsed: design, defects: [] }]);
   extra.push([{ tag: 'revision', c: integrated.c, child: { ...rParsed.state, c: integrated.c, afterReview: true } }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rParsed.state.effectId, hash: designHash, parsed: design, defects: [] }]);
+  const scopeGrownDesign = { ...design, increments: [{ ...design.increments[0]!, paths: ['src/a.ts', 'src/new.ts'] }, design.increments[1]!] };
+  extra.push([{ tag: 'revision', c: active.c, child: { ...rParsed.state, c: active.c, afterReview: true } }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rParsed.state.effectId, hash: designHash, parsed: scopeGrownDesign, defects: [] }]);
   const all = [...observed, ...extra.map(([state, event]) => `${state.tag} --${event.type}--> ${stepDesign(state, event).state.tag}`)];
   assert.deepEqual(new Set(all), new Set(designTransitions.map((row) => `${row.from} --${row.on}--> ${row.to}`)));
 });

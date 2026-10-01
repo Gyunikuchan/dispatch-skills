@@ -97,7 +97,7 @@ export function planData(state: PlanState): Readonly<Record<string, unknown>> {
 }
 
 export function validatePlan(state: PlanState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return 'event.type: REVISE is not available in plan in standalone review; author a new artifact and start a new run';
+  if (event.type === 'REVISE') return 'event.type: REVISE is unavailable in standalone review; author a new artifact and start a new run';
   return state.tag === 'review' ? validateReview(state.review, event) : null;
 }
 

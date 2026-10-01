@@ -71,3 +71,104 @@ test('implementation happy path runs real CLI approval, writer receipt, verifica
     fs.rmSync(published, { recursive: true, force: true });
   } finally { f.cleanup(); }
 });
+
+test('reuses settled plan from session journal and rejects stale or failed candidates', async () => {
+  const f = fixture();
+  try {
+    let session = await f.initialize();
+    const plan = path.join(f.repo, 'reuse.plan.md');
+    fs.writeFileSync(plan, `# Normalize values
+
+> **TL;DR:** Normalize values before use.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — isolated helper
+> **Scope:** src/a.ts
+
+## Key Decisions & Context
+- Preserve case.
+
+## Technical-Design Traceability
+- Approved revision: none
+
+## Success Criteria
+- [SC1] Values are normalized
+  - Changes: src/a.ts
+  - Verify: \`node -e "process.exit(0)"\`
+  - Evidence: verify
+  - Test rationale: Run the isolated verification command.
+
+## Proposed Changes
+### Value helper
+#### [MODIFY] src/a.ts
+- Normalize the value.
+
+## Verification Plan
+### Automated Tests
+- \`node -e "console.log('final gate')"\`
+### Manual Verification
+- Observe normalized output.
+
+## Review Findings & Resolutions
+*No reviews conducted yet.*
+`);
+    f.git('add', 'reuse.plan.md'); f.git('commit', '-qm', 'plan');
+
+    // 1. Unsettled plan in implement runs plan review
+    const unreviewedFrame = await f.begin('implement', session, plan);
+    const unreviewedJournal = fs.readFileSync(path.join(f.absoluteRun(unreviewedFrame.run), 'events.jsonl'), 'utf8');
+    assert.match(unreviewedJournal, /"effectId":"implement\.plan-review/);
+
+    // 2. Run plan to settlement
+    let planFrame = await f.begin('plan', session, plan);
+    const planRun = f.absoluteRun(planFrame.run);
+    assert.equal(planFrame.await, 'author');
+    planFrame = await f.reply(planRun, { type: 'AUTHORED', path: plan });
+    assert.equal(planFrame.await, 'done');
+    assert.equal(planFrame.data['outcome'], 'complete');
+    if (typeof planFrame.data['handoff'] === 'string') session = planFrame.data['handoff'];
+
+    // 3. Reusing settled plan in implement skips review directly to approval decision
+    const reuseFrame = await f.begin('implement', session, plan);
+    const reuseJournal = fs.readFileSync(path.join(f.absoluteRun(reuseFrame.run), 'events.jsonl'), 'utf8');
+    assert.equal(reuseFrame.await, 'decide');
+    assert.equal(reuseFrame.data['kind'], 'approval');
+    assert.doesNotMatch(reuseJournal, /"effectId":"implement\.plan-review/);
+    session = path.resolve(f.absoluteRun(reuseFrame.run), '../../..');
+
+    // 3b. Reusing settled plan with differing drive/path case matches via designPathIdentity
+    const casedPlan = process.platform === 'win32'
+      ? (/^[a-z]:/i.test(plan) ? (plan[0] === plan[0]?.toLowerCase() ? plan[0]!.toUpperCase() : plan[0]!.toLowerCase()) + plan.slice(1) : plan)
+      : plan;
+    const casedReuseFrame = await f.begin('implement', session, casedPlan);
+    const casedReuseJournal = fs.readFileSync(path.join(f.absoluteRun(casedReuseFrame.run), 'events.jsonl'), 'utf8');
+    assert.equal(casedReuseFrame.await, 'decide');
+    assert.equal(casedReuseFrame.data['kind'], 'approval');
+    assert.doesNotMatch(casedReuseJournal, /"effectId":"implement\.plan-review/);
+
+    // 4. Stale hash: modify plan on disk so hash differs from settled run
+    fs.writeFileSync(plan, fs.readFileSync(plan, 'utf8').replace('- Preserve case.', '- Preserve case and format.'));
+    const staleFrame = await f.begin('implement', session, plan);
+    const staleJournal = fs.readFileSync(path.join(f.absoluteRun(staleFrame.run), 'events.jsonl'), 'utf8');
+    assert.match(staleJournal, /"effectId":"implement\.plan-review/);
+
+    // 5. Unfinished plan run in a fresh session is rejected
+    const session2 = await f.initialize();
+    await f.begin('plan', session2, plan);
+    const rejectUnfinished = await f.begin('implement', session2, plan);
+    const rejectJournal = fs.readFileSync(path.join(f.absoluteRun(rejectUnfinished.run), 'events.jsonl'), 'utf8');
+    assert.match(rejectJournal, /"effectId":"implement\.plan-review/);
+
+    // 6. Failed plan run in a fresh session is rejected
+    const session3 = await f.initialize();
+    const failedPlanFrame = await f.begin('plan', session3, plan);
+    const replyFrame = await f.reply(f.absoluteRun(failedPlanFrame.run), { type: 'AUTHORED', path: path.join(f.repo, 'does-not-exist.plan.md') });
+    const session3Active = typeof replyFrame.data?.['handoff'] === 'string' ? replyFrame.data['handoff'] : session3;
+    const rejectFailed = await f.begin('implement', session3Active, plan);
+    const rejectFailedJournal = fs.readFileSync(path.join(f.absoluteRun(rejectFailed.run), 'events.jsonl'), 'utf8');
+    assert.match(rejectFailedJournal, /"effectId":"implement\.plan-review/);
+  } finally {
+    f.cleanup();
+  }
+});
+

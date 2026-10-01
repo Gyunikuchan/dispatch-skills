@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { beginDesign, stepDesign, validateDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
-import { asParsedDesign } from '../../../skills/dispatch/scripts/domain/design.ts';
+import { asParsedDesign, designScopeGrew } from '../../../skills/dispatch/scripts/domain/design.ts';
 
 export const hash = `sha256:${'a'.repeat(64)}`;
 export const design = { title: 'Delivery', box: { 'TL;DR': 'Deliver feature' }, governedText: '# Delivery', executionStatus: null, increments: [{ id: 'I01', priority: 1, summary: 'First', prerequisites: [], paths: ['src/a.ts'] }, { id: 'I02', priority: 2, summary: 'Second', prerequisites: ['I01'], paths: ['src/b.ts'] }], details: { I01: { Outcome: 'First behavior' }, I02: { Outcome: 'Second behavior' } } };
@@ -53,3 +53,383 @@ test('journal design admission rejects malformed objectives and dependency graph
   ];
   for (const payload of invalid) assert.equal(asParsedDesign(payload), null);
 });
+
+test('re-requests approval when increment scope expands', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  assert.equal(s.state.tag, 'baseline');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  assert.equal(s.state.c.baseline, baseline);
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  let rev = stepDesign(s.state, { type: 'REVISE', artifact: 'design', reason: 'scope expansion', evidence: 'test' });
+  assert.equal(rev.state.tag, 'revision');
+
+  const expandedDesign = {
+    ...design,
+    increments: [{ ...design.increments[0]!, paths: ['src/a.ts', 'src/expanded.ts'] }, design.increments[1]!],
+  };
+  const newHash = `sha256:${'c'.repeat(64)}`;
+  rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: expandedDesign,
+    defects: [],
+  });
+  const resumed = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: expandedDesign,
+    defects: [],
+  });
+  assert.equal(resumed.state.tag, 'approval');
+  assert.equal(resumed.state.c.baseline, baseline);
+  assert.equal(resumed.state.c.approval, null);
+
+  const approved = stepDesign(resumed.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Re-approved', hash: newHash } });
+  assert.equal(approved.state.tag, 'increment');
+  assert.equal(approved.state.c.baseline, baseline);
+});
+
+test('invalidates completed increments when shared architecture changes', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  const withCompleted: DesignState = {
+    ...s.state,
+    c: { ...s.state.c, completed: ['I01'], ownership: { I01: ['src/a.ts'] } },
+  };
+
+  let rev = stepDesign(withCompleted, { type: 'REVISE', artifact: 'design', reason: 'architecture update', evidence: 'test' });
+  assert.equal(rev.state.tag, 'revision');
+
+  const alteredDesign = {
+    ...design,
+    governedText: '# Delivery\n\n## Goals & Requirements\nAltered global goals\n\n## Architecture & Boundaries\nAltered boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n',
+  };
+  const newHash = `sha256:${'d'.repeat(64)}`;
+  rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: alteredDesign,
+    defects: [],
+  });
+  const resumed = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: alteredDesign,
+    defects: [],
+  });
+  assert.deepEqual(resumed.state.c.completed, []);
+});
+
+test('preserves completed increments when only increment details or non-contract prose change', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  const baseDesign = {
+    ...design,
+    governedText: '# Delivery\n\n## Context & Intent\nOriginal background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const withCompleted: DesignState = {
+    ...s.state,
+    c: { ...s.state.c, design: baseDesign, completed: ['I01'], ownership: { I01: ['src/a.ts'] } },
+  };
+
+  let rev = stepDesign(withCompleted, { type: 'REVISE', artifact: 'design', reason: 'details update', evidence: 'test' });
+  assert.equal(rev.state.tag, 'revision');
+
+  const detailsOnlyDesign = {
+    ...design,
+    details: {
+      ...design.details,
+      I02: { ...design.details.I02, Scope: 'Modified scope for I02' },
+    },
+    governedText: '# Delivery\n\n## Context & Intent\nUpdated non-contract background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const newHash = `sha256:${'e'.repeat(64)}`;
+  rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: detailsOnlyDesign,
+    defects: [],
+  });
+  const resumed = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: detailsOnlyDesign,
+    defects: [],
+  });
+  assert.deepEqual(resumed.state.c.completed, ['I01']);
+  assert.deepEqual(resumed.state.c.ownership, { I01: ['src/a.ts'] });
+});
+
+test('designScopeGrew compares validation case-insensitively', () => {
+  const before = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', validation: 'npm test -- a' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const sameCased = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- a' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const changedVal = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- a and b' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  assert.equal(designScopeGrew(before, sameCased), false);
+  assert.equal(designScopeGrew(before, changedVal), true);
+});
+
+test('approval of invalidating expansion restarts delivery rather than resuming obsolete child', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  let rev = stepDesign(s.state, { type: 'REVISE', artifact: 'design', reason: 'contract update', evidence: 'test' });
+  const updatedDesign = {
+    ...design,
+    details: {
+      I01: { Outcome: 'Updated outcome for I01', 'Affected contracts': 'New contract' },
+      I02: { Outcome: 'Second behavior' },
+    },
+    increments: [{ ...design.increments[0]!, paths: ['src/a.ts', 'src/new-path.ts'] }, design.increments[1]!],
+  };
+  const newHash = `sha256:${'f'.repeat(64)}`;
+  rev = stepDesign(rev.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: updatedDesign,
+    defects: [],
+  });
+  const resumed = stepDesign(rev.state, {
+    type: 'ARTIFACT_PARSED',
+    kind: 'design',
+    effectId: rev.effects[0]!.id,
+    hash: newHash,
+    parsed: updatedDesign,
+    defects: [],
+  });
+  assert.equal(resumed.state.tag, 'approval');
+
+  const approved = stepDesign(resumed.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Re-approved', hash: newHash } });
+  assert.equal(approved.state.tag, 'increment');
+  const child = approved.state.child;
+  assert.ok('c' in child && child.c?.designBinding);
+  assert.deepEqual(child.c.designBinding.paths, ['src/a.ts', 'src/new-path.ts']);
+  assert.equal(child.c.designBinding.contract['Outcome'], 'Updated outcome for I01');
+  assert.equal(child.c.designBinding.contract['Affected contracts'], 'New contract');
+});
+
+test('expansion followed by non-expanding revision before approval preserves suspended increment and awaits consent', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  // 1. Revision 1 expands scope (adds path)
+  let rev1 = stepDesign(s.state, { type: 'REVISE', artifact: 'design', reason: 'scope expansion', evidence: 'test' });
+  const expandedDesign = {
+    ...design,
+    increments: [{ ...design.increments[0]!, paths: ['src/a.ts', 'src/expanded.ts'] }, design.increments[1]!],
+  };
+  const hash1 = `sha256:${'1'.repeat(64)}`;
+  rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  assert.equal(pending1.state.tag, 'approval');
+  assert.equal(pending1.state.c.approval, null);
+
+  // 2. Revision 2 before user approval: non-expanding edit (e.g. non-contract prose tweak)
+  let rev2 = stepDesign(pending1.state, { type: 'REVISE', artifact: 'design', reason: 'prose tweak', evidence: 'test' });
+  assert.equal(rev2.state.tag, 'revision');
+  const tweakedDesign = {
+    ...expandedDesign,
+    governedText: '# Delivery\n\n## Context & Intent\nTweaked prose\n\n## Goals & Requirements\nSame\n\n## Architecture & Boundaries\nSame\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const hash2 = `sha256:${'2'.repeat(64)}`;
+  rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
+  rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: tweakedDesign, defects: [] });
+  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: tweakedDesign, defects: [] });
+
+  // Must remain in approval state awaiting consent, not crashing via deliver()
+  assert.equal(pending2.state.tag, 'approval');
+  assert.equal(pending2.state.c.approval, null);
+  assert.equal(pending2.state.c.baseline, baseline);
+
+  // 3. User approves revision 2
+  const approved = stepDesign(pending2.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved both', hash: hash2 } });
+  assert.equal(approved.state.tag, 'increment');
+  const child = approved.state.child;
+  assert.ok('c' in child && child.c?.designBinding);
+  assert.deepEqual(child.c.designBinding.paths, ['src/a.ts', 'src/expanded.ts']);
+});
+
+test('intervening invalidating expansion followed by non-contract edit restarts delivery upon approval', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  // 1. Revision 1: Validation expansion invalidates I01 and requires consent
+  let rev1 = stepDesign(s.state, { type: 'REVISE', artifact: 'design', reason: 'validation expansion', evidence: 'test' });
+  const expandedDesign = {
+    ...design,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- a and b' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const hash1 = `sha256:${'3'.repeat(64)}`;
+  rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  assert.equal(pending1.state.tag, 'approval');
+
+  // 2. Revision 2: non-contract background prose edit before approval (no new invalidations in rev 2)
+  let rev2 = stepDesign(pending1.state, { type: 'REVISE', artifact: 'design', reason: 'prose tweak', evidence: 'test' });
+  const proseDesign = {
+    ...expandedDesign,
+    governedText: '# Delivery\n\n## Context & Intent\nNon-contract background prose edit\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const hash2 = `sha256:${'4'.repeat(64)}`;
+  rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
+  rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: proseDesign, defects: [] });
+  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: proseDesign, defects: [] });
+  assert.equal(pending2.state.tag, 'approval');
+
+  // 3. User approves revision 2. Delivery must restart with a fresh child bound to hash2, NOT resume obsolete child
+  const approved = stepDesign(pending2.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved both', hash: hash2 } });
+  assert.equal(approved.state.tag, 'increment');
+  const child = approved.state.child;
+  assert.ok('c' in child && child.c?.designBinding);
+  assert.equal(child.c.designBinding.revision, hash2);
+  // Freshly bound child has clean plan/evidence state
+  assert.equal(child.c.plan, null);
+});
+
+test('revert after invalidating revision resets binding index so later non-invalidating revision preserves fresh child progress', () => {
+  const state = approval('implement');
+  const baseline = '1111111111111111111111111111111111111111';
+  let s = stepDesign(state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved', hash } });
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  assert.equal(s.state.tag, 'increment');
+  s = stepDesign(s.state, { type: 'SNAPSHOT', effectId: s.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+
+  const baseDesign = {
+    ...design,
+    governedText: '# Delivery\n\n## Context & Intent\nOriginal background context\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const hashBase = `sha256:${'a'.repeat(64)}`;
+
+  // 1. Revision 1 (hash -> hashB): invalidating revision (Validation expanded)
+  let rev1 = stepDesign(s.state, { type: 'REVISE', artifact: 'design', reason: 'validation expansion', evidence: 'test' });
+  const designB = {
+    ...baseDesign,
+    details: {
+      I01: { Outcome: 'First behavior', Validation: 'npm test -- expanded' },
+      I02: { Outcome: 'Second behavior' },
+    },
+  };
+  const hashB = `sha256:${'b'.repeat(64)}`;
+  rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
+  rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hashB, parsed: designB, defects: [] });
+  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hashB, parsed: designB, defects: [] });
+  assert.equal(pending1.state.tag, 'approval');
+
+  // 2. Revision 2 (hashB -> hashBase): revert back to original design
+  let rev2 = stepDesign(pending1.state, { type: 'REVISE', artifact: 'design', reason: 'revert', evidence: 'test' });
+  rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
+  rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hashBase, parsed: baseDesign, defects: [] });
+  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hashBase, parsed: baseDesign, defects: [] });
+
+  // 3. User approves reverted design: fresh child is delivered at revision index 2
+  let delivered = stepDesign(pending2.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved revert', hash: hashBase } });
+  assert.equal(delivered.state.tag, 'increment');
+  if (delivered.state.tag !== 'increment') throw new Error('expected increment');
+  delivered = stepDesign(delivered.state, { type: 'SNAPSHOT', effectId: delivered.effects[0]!.id, fingerprint: { head: baseline, index: '0'.repeat(40), worktree: '0'.repeat(40) }, diff: { paths: [] } });
+  if (delivered.state.tag !== 'increment') throw new Error('expected increment');
+  let freshChild = delivered.state.child;
+  assert.ok('c' in freshChild && freshChild.c?.designBinding);
+  assert.equal(freshChild.c.designBinding.revision, hashBase);
+  assert.equal(freshChild.c.designBinding.revisionIndex, 2);
+
+  // 4. Fresh child makes progress (e.g. record some evidence or changed state)
+  const modifiedChild = {
+    ...freshChild,
+    c: {
+      ...freshChild.c,
+      evidence: { C01: { status: 'pass', command: 'npm test', exit: 0 } as any },
+    },
+  };
+  const withProgress: DesignState = {
+    ...delivered.state,
+    child: modifiedChild as any,
+  };
+
+  // 5. Revision 3 (hashBase -> hashC): non-invalidating prose edit
+  const designC = {
+    ...baseDesign,
+    governedText: '# Delivery\n\n## Context & Intent\nMinor background prose update\n\n## Goals & Requirements\nOriginal goals\n\n## Architecture & Boundaries\nOriginal boundary\n\n## Increment Dependency Graph\n\n## Increment Details\n\n## Final Integration\n',
+  };
+  const hashC = `sha256:${'c'.repeat(64)}`;
+  let rev3 = stepDesign(withProgress, { type: 'REVISE', artifact: 'design', reason: 'prose update', evidence: 'test' });
+  rev3 = stepDesign(rev3.state, { type: 'AUTHORED', path: '/session/revision-3.design.md' });
+  rev3 = stepDesign(rev3.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev3.effects[0]!.id, hash: hashC, parsed: designC, defects: [] });
+  const resumed3 = stepDesign(rev3.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev3.effects[0]!.id, hash: hashC, parsed: designC, defects: [] });
+
+  // 6. Non-invalidating revision preserves the fresh child's progress!
+  assert.equal(resumed3.state.tag, 'increment');
+  const resumedChild = resumed3.state.child;
+  assert.ok('c' in resumedChild && resumedChild.c?.designBinding);
+  assert.equal(resumedChild.c.designBinding.revision, hashC);
+  assert.ok('C01' in resumedChild.c.evidence);
+});
+
+
+
+
