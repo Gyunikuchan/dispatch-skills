@@ -120,7 +120,8 @@ function run(argv: readonly string[], cwd: string): Promise<{ exit: number; stdo
   const [command, ...args] = argv;
   if (!command) return Promise.reject(new Error('spawn: empty argv'));
   return new Promise((resolve) => {
-    execFile(command, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
+    const commandShell = process.platform === 'win32' && /(?:^|[/\\])cmd(?:\.exe)?$/i.test(command);
+    execFile(command, args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, windowsHide: true, windowsVerbatimArguments: commandShell }, (error, stdout, stderr) => {
       const code = error && typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : error ? 1 : 0;
       resolve({ exit: code, stdout, stderr });
     });

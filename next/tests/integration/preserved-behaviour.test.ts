@@ -52,10 +52,10 @@ const readOverlay: ReadFile = (file) => {
   try { return fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8'); } catch { return null; }
 };
 
-test('the seeded matrix is well formed and incomplete', () => {
+test('the complete matrix has discriminating keyed evidence for every seeded behavior', () => {
   const matrix = JSON.parse(fs.readFileSync(path.join(OVERLAY_ROOT, MATRIX_FILE), 'utf8')) as { complete: boolean; rows: unknown[] };
   assert.deepEqual(checkMatrix(matrix, readOverlay), []);
-  assert.equal(matrix.complete, false);
+  assert.equal(matrix.complete, true);
   assert.equal(matrix.rows.length, 66);
 });
 

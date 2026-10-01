@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import { isTestSource, scanOverlay, type FileTable } from './scan.ts';
 
 /** Justified exceptions as `<overlay path>: <reason>`; raising it is an explicit, reviewed edit. */
-export const ALLOW_TIMING: readonly string[] = [];
+export const ALLOW_TIMING: readonly string[] = [
+  'tests/helpers/e2e.ts: E2E-only real CLI deadlines and detached-worker polling.',
+  'tests/helpers/stub-provider.ts: E2E-only provider delay keeps a real worker live for sender-kill recovery.',
+];
 
 // NOTE: tokens are assembled so this guard's own source never matches them.
 const TOKENS = ['set' + 'Timeout', 'set' + 'Interval', 'sle' + 'ep(', 'Date' + '.now', 'performance' + '.now'];

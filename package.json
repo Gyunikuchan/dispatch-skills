@@ -39,7 +39,7 @@
     "hashes": "node scripts/generate-hashes.mjs",
     "typecheck": "tsc -p .",
     "test": "npm run typecheck && node scripts/generate-hashes.mjs --check && node scripts/check-terms.mjs && node --test --import=./tests/helpers/isolated-temp.mjs --test-reporter=./scripts/test-reporter.mjs \"tests/{integration,scripts,skills}/**/*.test.mjs\" && npm run test:next",
-    "test:next": "tsc -p next && node --test --import=./next/tests/helpers/isolated-temp.ts --import=./next/tests/helpers/block-spawn.ts --test-reporter=./next/scripts/test-reporter.ts \"next/tests/**/*.test.ts\"",
+    "test:next": "tsc -p next && node next/scripts/generate-hashes.ts --root next --check && node next/scripts/check-terms.ts --root next && node next/scripts/validate-configs.ts --root next && node --test --import=./next/tests/helpers/isolated-temp.ts --import=./next/tests/helpers/block-spawn.ts --test-reporter=./next/scripts/test-reporter.ts \"next/tests/**/*.test.ts\"",
     "validate:configs": "node scripts/validate-configs.mjs"
   },
   "devDependencies": {

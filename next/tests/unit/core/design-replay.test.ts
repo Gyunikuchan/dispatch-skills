@@ -73,7 +73,7 @@ test('real nested two-increment delivery replays author, write and native integr
     assert.equal(writes, increment === 'I01' ? 1 : 2);
     const writeFrame = result.frame;
     result = await send({ ports, machine: rootMachine, handlers, runDir });
-    assert.deepEqual(result.frame?.data, writeFrame?.data);
+    assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
     const writeData = result.frame?.data;
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: writeData?.['envelopePath'] } });

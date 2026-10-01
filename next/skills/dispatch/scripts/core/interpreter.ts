@@ -1,7 +1,11 @@
 // Interpreter: fold the journal through a machine, apply one host event, run pending effects (spec §4.4).
-// Generic over `Machine<S>` and a handler table so the core tier needs no machines/ or effects/ import.
+// Generic journal loop plus the design-designated root-machine wiring choke point.
 
 import path from 'node:path';
+import crypto from 'node:crypto';
+import { governedDesignText } from '../domain/design.ts';
+import { restoreSessionPaths, storeSessionPaths } from '../lib/session.ts';
+import { rootMachine, type RootState } from '../machines/root.ts';
 import { faultFrame, oneLine, projectFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
@@ -11,6 +15,25 @@ import type {
   ResultEventType, RunStartedEvent, TerminalResultMap,
 } from './types.ts';
 import { validateHostEvent } from './validate.ts';
+export { rootMachine as dispatchMachine } from '../machines/root.ts';
+export const designRevision = (source: string): string => `sha256:${crypto.createHash('sha256').update(governedDesignText(source)).digest('hex')}`;
+/** Read-only receipt preview shares the emitted checker and the writer's captured baseline. */
+export async function previewReceipt(state: RootState, event: HostEvent, handlers: Handlers, ports: Ports, runDir: string): Promise<string | null> {
+  if (event.type !== 'WRITE_ENVELOPE' || state.tag !== 'implement') return null;
+  const child = state.child;
+  if (child.tag !== 'write' && child.tag !== 'hotfix-write') return null;
+  const projectedPaths = rootMachine.project(state).data['paths'];
+  const permitted: string[] = Array.isArray(projectedPaths) ? projectedPaths.filter((file): file is string => typeof file === 'string')
+    : [...new Set([...(child.c.plan?.changes.map((change) => change.path) ?? []), ...child.c.adoptedPaths])];
+  const effect: Extract<Effect, { kind: 'check-envelope' }> & { since: Readonly<Record<string, unknown>> } = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted,
+    since: child.tag === 'write' ? child.info.preFingerprint : child.before };
+  const checker = handlers['check-envelope']; if (!checker) return 'Receipt checker is unavailable';
+  const results = await checker(effect, ports, { runDir, attempt: 1 });
+  const result = results[0];
+  if (result?.type === 'EFFECT_FAILED') return result.detail;
+  if (result?.type !== 'ENVELOPE_CHECKED') return 'Receipt checker returned no result';
+  return result.defects.length ? result.defects.map((defect) => typeof defect === 'string' ? defect : JSON.stringify(defect)).join('; ') : null;
+}
 
 /** Guards a reducer bug from looping forever; exceeding it is an engine fault. */
 export const MAX_STEPS = 200;
@@ -81,12 +104,20 @@ export function toEvent(line: JournalLine): Event {
 }
 
 /** Folds journal lines; `inFlight` is the head effect when it started without a terminal result. */
-export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[]): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
+export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sessionRoot?: string): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
   const folder = createFolder(machine);
-  for (const line of lines) folder.apply(toEvent(line));
+  for (const line of lines) folder.apply(toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line));
   const head = folder.queue[0];
   const inFlight = head && folder.open.has(head.id) ? { effect: head, attempt: folder.attempts.get(head.id) ?? 1 } : null;
   return Object.assign(folder, { inFlight });
+}
+
+// Pure machines construct portable paths; live events and restored journals must use that same form.
+function restoreJournalPaths<T>(value: T, root: string): T {
+  if (typeof value === 'string') return (value.includes('@session') ? restoreSessionPaths(value, root).replaceAll('\\', '/') : value) as T;
+  if (Array.isArray(value)) return value.map((item: unknown) => restoreJournalPaths(item, root)) as T;
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, restoreJournalPaths(item, root)])) as T;
+  return value;
 }
 
 // SECTION: Send
@@ -101,6 +132,7 @@ export interface SendOptions<S> {
   dryRun?: boolean;
   /** Run dir relative to the repository root, for the frame. */
   runRel?: string;
+  preview?: (state: S, event: HostEvent) => Promise<string | null>;
 }
 
 export interface SendResult {
@@ -115,14 +147,15 @@ function parseRaw(raw: unknown): { ok: true; value: unknown } | { ok: false; err
   try { return { ok: true, value: JSON.parse(raw) as unknown }; } catch { return { ok: false, error: 'event: expected JSON object, got malformed JSON' }; }
 }
 
-function hostEventError<S>(machine: Machine<S>, folder: Folder<S>, raw: unknown): { event: HostEvent } | { error: string } {
+function hostEventError<S>(machine: Machine<S>, folder: Folder<S>, raw: unknown, sessionRoot?: string): { event: HostEvent } | { error: string } {
   const head = folder.queue[0];
   if (head) return { error: `event: effect ${head.id} is pending; send without --event to resume it` };
   const parsed = parseRaw(raw);
   if (!parsed.ok) return { error: parsed.error };
   const state = folder.state;
   const check = machine.validate ? (event: HostEvent) => machine.validate?.(state, event) ?? null : undefined;
-  const result = validateHostEvent(machine.awaitOf(state) ?? 'done', parsed.value, check);
+  const value = sessionRoot ? restoreJournalPaths(storeSessionPaths(parsed.value, sessionRoot), sessionRoot) : parsed.value;
+  const result = validateHostEvent(machine.awaitOf(state) ?? 'done', value, check);
   return result.ok ? { event: result.value } : { error: oneLine(result.error) };
 }
 
@@ -151,17 +184,20 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     if (read.tornTail) ports.fs.truncate(file, read.goodBytes);
     baseline = { existed: ports.fs.exists(file), bytes: read.goodBytes };
 
-    const folder = fold(machine, read.lines);
+    const sessionRoot = runSession(runDir);
+    const folder = fold(machine, read.lines, sessionRoot);
     let seq = read.lines.length + 1;
     const record = (event: Event): void => {
       const { type, ...data } = event;
-      appendEvent(ports, runDir, type, data, seq++);
-      folder.apply(event);
+      const stored = sessionRoot ? storeSessionPaths(data, sessionRoot) : data;
+      appendEvent(ports, runDir, type, stored, seq++);
+      folder.apply(sessionRoot ? restoreJournalPaths({ ...stored, type } as Event, sessionRoot) : event);
+      machine.render?.(folder.state, ports, runDir);
     };
 
     if (broken !== null) record({ type: 'LOCK_BROKEN', stalePid: broken });
     if (options.rawEvent !== undefined) {
-      const checked = hostEventError(machine, folder, options.rawEvent);
+      const checked = hostEventError(machine, folder, options.rawEvent, sessionRoot);
       if ('error' in checked) return { frame: projectFrame(machine, folder.state, runRel, checked.error), exitCode: 0 };
       record(checked.event);
     }
@@ -217,13 +253,14 @@ async function runEffect(effect: Effect, attempt: number, handlers: Handlers, po
   return results;
 }
 
-function dryRun<S>(options: SendOptions<S>, runRel: string): SendResult {
+async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendResult> {
   const { machine, ports, runDir } = options;
   try {
-    const folder = fold(machine, readJournal(ports, runDir).lines);
+    const folder = fold(machine, readJournal(ports, runDir).lines, runSession(runDir));
     if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel), exitCode: 0 };
-    const checked = hostEventError(machine, folder, options.rawEvent);
-    return { frame: projectFrame(machine, folder.state, runRel, 'error' in checked ? checked.error : undefined), exitCode: 0 };
+    const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
+    const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
+    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined), exitCode: 0 };
   } catch (error) {
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };
   }
@@ -233,17 +270,22 @@ function dryRun<S>(options: SendOptions<S>, runRel: string): SendResult {
 
 export interface StartOptions<S> extends Omit<SendOptions<S>, 'rawEvent' | 'dryRun'> {
   runStarted: RunStartedEvent;
+  reservedRun?: boolean;
 }
 const designPathIdentity = (file: string) => {
   const normalized = path.resolve(file.replace(/\\/g, '/')).replace(/\\/g, '/');
   return path.sep === '\\' ? normalized.toLowerCase() : normalized;
+};
+const runSession = (runDir: string): string | undefined => {
+  const root = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
+  return root === runDir ? undefined : root;
 };
 function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
   if (!ports.fs.exists(runsDir)) return undefined;
   for (const file of ports.fs.listFiles(runsDir)) {
     if (path.basename(file) !== JOURNAL_FILE) continue;
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
-    const lines = readJournal(ports, runDir).lines;
+    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
     const started = lines.find((line) => line.type === 'RUN_STARTED');
     if (!started || started.data['verb'] !== 'design') continue;
     const folder = fold(machine, lines);
@@ -271,7 +313,7 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
   for (const file of ports.fs.listFiles(runsDir)) {
     if (path.basename(file) !== JOURNAL_FILE) continue;
     const runDir = path.dirname(path.isAbsolute(file) ? file : path.join(runsDir, file));
-    const lines = readJournal(ports, runDir).lines;
+    const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
     const started = lines.find((line) => line.type === 'RUN_STARTED');
     if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
     const folder = fold(machine, lines);
@@ -308,10 +350,12 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
     designApproval = journalDesignApproval(ports, path.dirname(runDir), options.machine, identity);
   }
   ports.fs.mkdir(path.dirname(runDir), { recursive: true });
-  ports.fs.mkdir(runDir, { recursive: false });
+  if (options.reservedRun) {
+    if (!ports.fs.exists(runDir) || ports.fs.listFiles(runDir).length) throw new EngineFault('Reserved run must be an empty directory');
+  } else ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
   const { type, ...data } = { ...requested, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
-  appendEvent(ports, runDir, type, data, 1);
+  appendEvent(ports, runDir, type, runSession(runDir) ? storeSessionPaths(data, sessionDir) : data, 1);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;
   return send(sendOptions);

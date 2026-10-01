@@ -2,6 +2,7 @@
 // marking, or `wave-native.ts` when every roster entry carries a host capture).
 
 import type { Effect, Handler, Handlers } from '../core/types.ts';
+import path from 'node:path';
 import type { OsId } from '../lib/platform.ts';
 import type { ProviderId } from '../providers/types.ts';
 import type { Git } from './git.ts';
@@ -29,6 +30,7 @@ export type HandlerDeps = {
   orchestratorPlatform: ProviderId | null;
   /** Worker plumbing for the real wave, or a replacement CLI wave handler (tests). */
   wave: Omit<WaveDeps, 'context'> | Handler<WaveEffect>;
+  selfCheckCommand?: (runDir: string, eventPath: string) => string;
 };
 
 const reviewOf = (roster: readonly Row[]): WaveContext['review'] => {
@@ -58,7 +60,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     wave,
     verify: createVerify(deps),
     'check-envelope': createCheckEnvelope(deps),
-    'write-brief': createWriteBrief(deps),
+    'write-brief': async (effect, ports, ctx) => {
+      if (!deps.selfCheckCommand) return createWriteBrief(deps)(effect, ports, ctx);
+      const eventPath = path.join(ctx.runDir, `${effect.id}.self-check.event.json`);
+      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`) })}\n`);
+      return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
+    },
     snapshot: async (effect, ports, ctx) => {
       const events = await createSnapshot(deps)(effect, ports, ctx);
       for (const event of events) if (event.type === 'SNAPSHOT') {

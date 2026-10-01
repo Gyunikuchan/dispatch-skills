@@ -26,8 +26,9 @@ function collect(skillDir: string, sub: string, pattern: RegExp, into: Record<st
 /** Hashes SKILL.md, scripts (.mjs/.ts), and references (.md/.json), sorted by path. */
 export function generateSkillHashes(skillDir: string): Record<string, string> {
   const entries: Record<string, string> = {};
-  const skillMd = path.join(skillDir, 'SKILL.md');
-  if (fs.existsSync(skillMd)) entries['SKILL.md'] = hashFile(skillMd);
+  const contract = fs.existsSync(path.join(skillDir, 'SKILL.next.md')) ? 'SKILL.next.md' : 'SKILL.md';
+  const skillMd = path.join(skillDir, contract);
+  if (fs.existsSync(skillMd)) entries[contract] = hashFile(skillMd);
   collect(skillDir, 'scripts', SCRIPT_EXTENSION, entries);
   collect(skillDir, 'references', REFERENCE_EXTENSION, entries);
   return Object.fromEntries(Object.keys(entries).sort().map((key) => [key, entries[key] ?? '']));

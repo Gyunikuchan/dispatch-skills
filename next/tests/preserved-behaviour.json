@@ -1,18 +1,18 @@
 {
-  "complete": false,
+  "complete": true,
   "rows": [
     {
       "key": "grammar-default-ask",
       "clause": "verb grammar and default `ask`",
       "increment": "I08",
-      "tests": [],
+      "tests": ["tests/unit/lib/cli.test.ts"],
       "checks": []
     },
     {
       "key": "grammar-argument-required",
       "clause": "prefix-only `design`/`plan`/`implement` require an argument",
       "increment": "I08",
-      "tests": [],
+      "tests": ["tests/unit/lib/cli.test.ts"],
       "checks": []
     },
     {
@@ -33,7 +33,7 @@
       "key": "grammar-level-classification",
       "clause": "level classification rules",
       "increment": "I08",
-      "tests": [],
+      "tests": ["tests/unit/lib/cli.test.ts"],
       "checks": []
     },
     {
