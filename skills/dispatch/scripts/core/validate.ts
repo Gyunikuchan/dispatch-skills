@@ -1,6 +1,27 @@
 // Host-event validation: shape guards plus await acceptance (spec §4.5, §5.2). Dependency-free.
 
-import type { Await, HostEvent, HostEventType } from './types.ts';
+import type { Await, HostEvent, HostEventType, ExecutionConfigUpdated } from './types.ts';
+import { validateConfig } from '../lib/config.ts';
+
+export function validateExecutionUpdate(value: unknown): string | null {
+  if (!isRecord(value) || value['type'] !== 'EXECUTION_CONFIG_UPDATED' || Object.keys(value).some((key) => !['type', 'revision', 'boundarySeq', 'delta'].includes(key))) return 'execution-config-invalid: expected update event';
+  if (![value['revision'], value['boundarySeq']].every((v) => Number.isSafeInteger(v) && Number(v) > 0)) return 'execution-config-invalid: positive revision and boundarySeq required';
+  const delta = value['delta'];
+  if (!isRecord(delta) || Object.keys(delta).some((key) => !['read', 'write'].includes(key)) || !Array.isArray(delta['read']) || !Array.isArray(delta['write'])) return 'execution-config-invalid: expected read/write delta';
+  const seen = new Set<string>();
+  for (const kind of ['read', 'write'] as const) {
+    for (const item of delta[kind] as unknown[]) {
+      if (!isRecord(item) || Object.keys(item).some((key) => !(kind === 'read' ? ['slot', 'provider', 'levels'] : ['provider', 'levels']).includes(key)) || typeof item['provider'] !== 'string') return 'execution-config-invalid: invalid provider entry';
+      if (kind === 'read' && (typeof item['slot'] !== 'string' || item['slot'] !== `${item['provider']}[${/\[(\d+)\]$/.exec(String(item['slot']))?.[1] ?? 'invalid'}]`)) return 'execution-config-invalid: invalid slot identity';
+      const key = `${kind}:${String(item['slot'] ?? item['provider'])}`;
+      if (seen.has(key)) return 'execution-config-invalid: duplicate identity';
+      seen.add(key);
+      const config = kind === 'read' ? { 'read-delegates': { [item['provider']]: { targets: [item['levels']] } } } : { 'read-delegates': { codex: { targets: [{ low: { model: 'validation' } }] } }, 'write-subagents': { [item['provider']]: item['levels'] } };
+      if (validateConfig(config).length) return 'execution-config-invalid: invalid model/effort levels';
+    }
+  }
+  return null;
+}
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export type Validator<T> = (value: unknown, at: string) => Result<T>;

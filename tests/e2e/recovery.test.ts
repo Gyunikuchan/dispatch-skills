@@ -7,6 +7,69 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { fixture, until } from '../helpers/e2e.ts';
 import { recordedLaunches } from '../helpers/stub-provider.ts';
+
+test('SC6: enabled concurrent runs preserve both histories and current session report links', async () => {
+  const f = fixture({ responses: ['dispatch evidence'] });
+  try {
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
+    const session = await f.initialize();
+    const frames = await Promise.all([f.begin('ask', session, 'first'), f.begin('ask', session, 'second')]);
+    const report = path.join(session, 'diagnostics.md');
+    // A contended render retries only at the next normal send boundary.
+    const resumed = await f.cli(['send', '--run', frames[0]!.run]);
+    const text = fs.readFileSync(report, 'utf8');
+    assert.match(text, /Run 001/); assert.match(text, /Run 002/);
+    assert.equal(f.launches().length, 2);
+    assert.equal((resumed.data['diagnostics'] as { path: string }).path, report.replaceAll('\\', '/'));
+    for (const frame of frames) {
+      const link = frame.data['diagnostics'] as { path?: string; unavailable?: boolean };
+      assert.ok(link.unavailable || link.path === report.replaceAll('\\', '/'));
+    }
+    await f.cli(['session', 'reactivate', '--session-dir', session]);
+    assert.equal(fs.existsSync(report), true);
+  } finally { f.cleanup(); }
+});
+
+test('SC6: status and dry-run preserve report bytes and resumed invocation totals', async () => {
+  const f = fixture({ responses: ['dispatch evidence'] });
+  try {
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
+    const session = await f.initialize(), frame = await f.begin('ask', session, 'fixture');
+    const report = path.join(session, 'diagnostics.md'), before = fs.readFileSync(report);
+    await f.cli(['status', '--run', frame.run]);
+    await f.cli(['send', '--run', frame.run, '--dry-run']);
+    assert.deepEqual(fs.readFileSync(report), before);
+    await f.cli(['send', '--run', frame.run]);
+    assert.match(fs.readFileSync(report, 'utf8'), /0\/1 CLI invocations covered/);
+    assert.equal(f.launches().length, 1);
+  } finally { f.cleanup(); }
+});
+
+test('SC5: CLI refresh preserves filtered delegates while enforcing original topology', async () => {
+  const f = fixture();
+  try {
+    const config = { ...f.config, 'read-delegates': { ...f.config['read-delegates'], claude: { nativeSubagentsOnly: true, targets: [{ low: { model: 'unused', effort: 'medium' } }] } } };
+    const file = path.join(f.skill, 'config.local.jsonc');
+    fs.writeFileSync(file, JSON.stringify(config));
+    const session = await f.initialize(), frame = await f.begin('plan', session, 'Fixture'), run = f.absoluteRun(frame.run);
+    const before = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    assert.doesNotMatch(before, /nativeSubagentsOnly/);
+    const next = { ...config, 'read-delegates': { ...config['read-delegates'], opencode: { ...config['read-delegates'].opencode, targets: [{ low: { model: 'second' } }] } } };
+    fs.writeFileSync(file, JSON.stringify(next));
+    const dry = await f.cli(['send', '--run', run, '--refresh-config', '--dry-run']);
+    assert.equal(dry.error, undefined, JSON.stringify(dry));
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), before);
+    const refreshed = await f.cli(['send', '--run', run, '--refresh-config']);
+    assert.equal(refreshed.error, undefined, JSON.stringify(refreshed));
+    const journal = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    assert.match(journal, /EXECUTION_CONFIG_UPDATED.*second/);
+    assert.doesNotMatch(journal, /nativeSubagentsOnly/);
+    fs.writeFileSync(file, JSON.stringify({ ...next, 'read-delegates': { ...next['read-delegates'], claude: { ...next['read-delegates'].claude, nativeSubagentsOnly: false } } }));
+    const rejected = await f.cli(['send', '--run', run, '--refresh-config']);
+    assert.match(rejected.error ?? '', /execution-config-topology/);
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), journal);
+  } finally { f.cleanup(); }
+});
 test('concurrent provider stubs preserve every launch and allocate distinct response indexes', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-stub-concurrency-'));
   const file = path.join(dir, 'scenario.json'), count = 12;

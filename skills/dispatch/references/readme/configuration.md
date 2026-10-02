@@ -26,6 +26,13 @@ OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obt
 
 Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes.
 
-Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Sessions remain in the workspace under `.scratch/dispatch-skills/` for the user to clean up. Wave journals require protocol revision 2. Historical journals without that revision fail `unsupported-journal-protocol`; preserve their artifacts and start a new run rather than replaying incompatible events.
+Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Sessions remain in the workspace under `.scratch/dispatch-skills/` for the user to clean up. Journals require protocol revision 3. Other revisions fail `unsupported-journal-protocol`; preserve their artifacts and start a new run.
 
 Sandbox failure is strict. An explicit `sandbox:false` opts out of OS isolation while native read-only tool controls remain. Ambient credential stripping and sensitive attachment checks do not isolate native authenticated profiles or enforce file-read permissions by themselves.
+# Optional diagnostics and live model refresh
+
+Set `"diagnostics": true` in the effective config to collect bounded session diagnostics. Omitted/false is disabled. The first existing config file wins as a whole; local files are never merged with the sample. Changes take effect at the next mutating `send`; existing workers retain their launch setting. Turning diagnostics off preserves collected records and the report, removes future diagnostic instructions, and suppresses the handoff link. Re-enabling records the intervening gap.
+
+Model/effort edits require `send --run <dir> --refresh-config`. This records future defaults independently of diagnostics; already-issued waves and native/writer descriptors retain their bindings. Explicit start model/effort overrides still win. Provider topology, level keys, phase policies and sandbox changes require a new run.
+
+Use `--refresh-config --dry-run` for read-only validation. Combining refresh with `--event` is rejected, including with `--dry-run`. No-op refresh records no update; terminal runs reject refresh. `status` and dry-run never refresh diagnostic reports.

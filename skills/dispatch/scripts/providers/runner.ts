@@ -2,7 +2,7 @@
 // credential stripping, sensitive-file guardrail, attachments, argv spill, timeout with tree kill, output cap,
 // then `spec.parse`. Shared classifiers live here too so provider specs stay declarative.
 
-import type { FailureClass } from '../core/types.ts';
+import type { FailureClass, DiagnosticUsage } from '../core/types.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
@@ -212,6 +212,7 @@ export const tail = (text: string, max = 2000): string => (text.length > max ? t
 export type RunnerClock = { now(): number; every(ms: number, fn: () => void): () => void };
 
 export type RunnerPorts = {
+  observe?: (event: { attempt: number; start: number; durationMs: number | null; launched: boolean; outcome: string; usage?: DiagnosticUsage }) => void;
   process: ProcessPort;
   clock: RunnerClock;
   fs: RunnerFs;
@@ -261,6 +262,14 @@ async function launchOnce(launch: Launch, req: DelegateRequest, ports: RunnerPor
  * signature, yields `sandbox-unsupported` (never a downgrade). `retryWithoutEffort` reruns once without effort.
  */
 export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts): Promise<DelegateRun> {
+  const started = ports.clock.now();
+  const run = await runDelegateBody(spec, req, mode, ports);
+  if (ports.observe && run.attempts === 0) {
+    try { ports.observe({ attempt: 1, start: started, durationMs: null, launched: false, outcome: run.outcome.status === 'ok' ? 'ok' : run.outcome.cls }); } catch { /* Observational failure cannot change provider results. */ }
+  }
+  return run;
+}
+async function runDelegateBody(spec: ProviderSpec, req: DelegateRequest, mode: ModeId, ports: RunnerPorts): Promise<DelegateRun> {
   const deadline = ports.clock.now() + req.timeoutMs;
   const sandbox = req.sandbox && spec.sandbox !== undefined;
   if (req.sandbox && spec.sandbox && !spec.sandbox.supported(ports.platform)) {
@@ -291,15 +300,25 @@ export async function runDelegate(spec: ProviderSpec, req: DelegateRequest, mode
     if (remaining <= 0) { if (pre?.kind === 'launch') await pre.release(); return { outcome: failOutcome('timeout', 'preparation exhausted delegate deadline'), result: null, attempts, briefFile }; }
     current = { ...current, timeoutMs: remaining };
     let result: ProcessResult;
+    const attemptStarted = ports.clock.now();
     try {
       const launch = spec.argv(current, mode);
       const env = { ...sanitizeEnv({ ...ports.env, ...req.configSelectors }), ...launch.env, ...(pre?.kind === 'launch' ? pre.env : {}) };
       attempts++;
       result = await launchOnce({ ...launch, env }, current, ports);
+    } catch (error) {
+      try { ports.observe?.({ attempt: Math.max(1, attempts), start: attemptStarted, durationMs: null, launched: false, outcome: 'launch-failed' }); } catch { /* Preserve the operational launch error. */ }
+      throw error;
     } finally {
       if (pre?.kind === 'launch') await pre.release();
     }
     const outcome = settle(spec, current, result);
+    if (ports.observe) {
+      try {
+        const usage = !result.truncated && !current.resume ? spec.usage?.(result.stdout) : undefined;
+        ports.observe({ attempt: attempts, start: attemptStarted, durationMs: result.durationMs, launched: true, outcome: outcome.status === 'ok' ? 'ok' : outcome.cls, ...(usage ? { usage } : {}) });
+      } catch { /* Observational failure cannot change provider results. */ }
+    }
     if (outcome.status === 'fail' && outcome.retryWithoutEffort && current.effort && attempts === 1) {
       current = { ...current, effort: null };
       continue;

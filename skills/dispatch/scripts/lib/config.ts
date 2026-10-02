@@ -10,7 +10,7 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'phases'];
+const TABLES = ['read-delegates', 'write-subagents', 'phases', 'diagnostics'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -91,6 +91,12 @@ export function loadConfig(skillRoot: string, read: ReadFile = readReal): { conf
     return { config, path: file };
   }
   throw new Error(`Config file not found: tried ${candidates.join(', ')}. Copy ${SAMPLE_NAME} to config.local.jsonc or config.jsonc.`);
+}
+
+export function loadDiagnosticToggle(skillRoot: string): boolean {
+  const value = loadConfig(skillRoot).config['diagnostics'];
+  if (value !== undefined && typeof value !== 'boolean') throw new Error('diagnostics must be a boolean');
+  return value === true;
 }
 
 // SECTION: Validation
@@ -215,6 +221,7 @@ function checkPhases(value: unknown, readKeys: readonly string[], problems: stri
 export function validateConfig(config: unknown): string[] {
   if (!isRecord(config)) return [`Config must be a JSON object with tables: ${TABLES.join(', ')} (${HINT}).`];
   const problems: string[] = [];
+  if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean') problems.push(`diagnostics must be a boolean (${HINT}).`);
   for (const key of Object.keys(config)) {
     if (!TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
   }

@@ -57,7 +57,7 @@ test('rewrite SC3 production wave journals preparation and completion once', asy
     const frame = await f.begin('review', session, '', ['--kind', 'code']);
     assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
     const journal = fs.readFileSync(path.join(frame.run, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { type: string; data: Record<string, unknown> });
-    assert.equal(journal[0]?.data['protocolRevision'], 2);
+    assert.equal(journal[0]?.data['protocolRevision'], 3);
     assert.equal(journal.filter((row) => row.type === 'WAVE_STARTED').length, 1); assert.equal(journal.filter((row) => row.type === 'WAVE_DONE').length, 1); assert.equal(f.launches().length, 1);
   } finally { f.cleanup(); }
 });
@@ -158,4 +158,3 @@ test('review code with --context passes semantic intent through CLI to reviewer 
     assert.match(f.launches()[0]!.prompt, /- Task: CLI semantic intent/);
   } finally { f.cleanup(); }
 });
-

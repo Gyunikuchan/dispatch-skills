@@ -12,6 +12,8 @@
  * - codex: https://developers.openai.com/codex/models
  */
 {
+  // Optional session diagnostics; changes take effect at the next mutating send.
+  "diagnostics": false,
   // Required for asks and reviews. Keep only providers you use.
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {

@@ -106,6 +106,15 @@ export const nodeFs: FsPort = {
     const fd = fs.openSync(file, 'wx');
     try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   },
+  publishExclusive(file, text) {
+    const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+    try {
+      const fd = fs.openSync(temp, 'wx');
+      try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      try { fs.linkSync(temp, file); return true; }
+      catch (error) { if ((error as { code?: string }).code === 'EEXIST') return false; throw error; }
+    } finally { try { fs.unlinkSync(temp); } catch (error) { if ((error as { code?: string }).code !== 'ENOENT') throw error; } }
+  },
   writeAtomic(file, text) {
     publishAtomic(file, text);
   },

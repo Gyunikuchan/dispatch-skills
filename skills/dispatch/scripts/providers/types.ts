@@ -3,6 +3,7 @@
 
 import type { FailureClass } from '../core/types.ts';
 import type { PlatformEnv, ProviderKey } from '../lib/platform.ts';
+import type { DiagnosticBinding, DiagnosticUsage } from '../core/types.ts';
 
 export type { PlatformEnv } from '../lib/platform.ts';
 
@@ -13,6 +14,7 @@ export const MODE_IDS: readonly ModeId[] = ['cli', 'desktop', 'vscode'];
 export type ModeSpec = { id: ModeId; candidates: (env: PlatformEnv) => readonly string[] };
 
 export type DelegateRequest = {
+  diagnostics?: DiagnosticBinding;
   promptPath: string;
   model: string | null;
   effort: string | null;
@@ -88,6 +90,7 @@ export type ProviderSpec = {
   readOnlyFlags: readonly string[];
   argv(req: LaunchRequest, mode: ModeId): Launch;
   parse(out: ProcessResult, req: LaunchRequest): RunOutcome;
+  usage?(raw: string): DiagnosticUsage | undefined;
   sandbox?: SandboxSpec;
   schema?: true;
   /** Host platform whose native subagents can serve this provider's targets. */

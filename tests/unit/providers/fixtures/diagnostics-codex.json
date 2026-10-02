@@ -1,0 +1,6 @@
+{
+  "cliVersion": "0.156.1",
+  "sourceSha256": "6eaea32ace36f20b30620da3ab7d713bd842c0fc30e6a6fcdba3b8294f73319e",
+  "recordedAt": "2026-10-01",
+  "stdout": "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":275615,\"cached_input_tokens\":221056,\"cache_write_input_tokens\":0,\"output_tokens\":1468,\"reasoning_output_tokens\":70}}"
+}

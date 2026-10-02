@@ -1,0 +1,6 @@
+{
+  "cliVersion": "2.1.268",
+  "sourceSha256": "851860d345a48e52aa8883360969692790e08299a1dc83439ed3a623c4e13395",
+  "recordedAt": "2026-10-01",
+  "stdout": "{\"type\":\"result\",\"is_error\":true,\"usage\":{\"output_tokens_details\":{\"thinking_tokens\":0},\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":2759,\"outputTokens\":16,\"cacheReadInputTokens\":0,\"cacheCreationInputTokens\":0,\"thinkingTokens\":0}}}"
+}

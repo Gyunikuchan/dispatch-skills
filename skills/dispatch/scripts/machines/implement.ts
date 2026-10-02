@@ -18,6 +18,7 @@ export const MAX_WRITE_ATTEMPTS = 3;
 
 type PlanReviewResult = 'initial' | 'rebind';
 export type Context = {
+  pendingWriter?: WriterConfig;
   designBinding?: DesignBinding;
   machinePath?: string;
   run: RunStartedEvent;
@@ -301,6 +302,10 @@ function briefInput(c: Context, stage: ImplementStage, repair: boolean, admissio
 }
 
 function startWriter(c0: Context, stage: ImplementStage, repair: boolean, modelLimit: readonly string[] | null, admissionDefects: readonly string[]): S {
+  if (c0.pendingWriter) {
+    const { pendingWriter, ...bound } = c0;
+    c0 = { ...bound, writer: pendingWriter };
+  }
   if (!c0.plan || !c0.planHash) return beginFailure(c0, 'Cannot start a write stage before the governed plan is bound.');
   if (!c0.writer) return beginFailure(c0, c0.writerError ?? 'Implementation writer model is not configured.');
   const attempt = c0.attempts[stage] + 1;
@@ -867,7 +872,8 @@ function applyParked(parent: ImplementState, c: Context, parked: HostEvent): S {
 }
 
 function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { action: 'hotfix' }>): S {
-  const c0 = origin.c;
+  const { pendingWriter, ...bound } = origin.c;
+  const c0: Context = pendingWriter ? { ...bound, writer: pendingWriter } : origin.c;
   const stage = origin.tag === 'baseline-decision' ? 'baseline' : c0.currentStage;
   if (c0.withdrawnHotfix.includes(stage)) return stay(origin);
   if (!c0.lastFingerprint || !recoverySnapshot(c0.lastFingerprint)) return beginFailure(c0, 'Hotfix requires concrete snapshot metadata.');
@@ -1156,5 +1162,3 @@ export const implementMachine: Machine<ImplementState> = {
   transitions: implementTransitions,
   validate: validateImplement,
 };
-
-

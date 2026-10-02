@@ -10,7 +10,7 @@
 //   <id>.a<n>.<slot>.outcome.json   one SlotFinal per roster slot
 //   <id>.a<n>.done.json             written last
 
-import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect } from '../core/types.ts';
+import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, DiagnosticBinding } from '../core/types.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
 import { collectFindings, parseReport, type ReportFailureKind } from '../domain/report.ts';
 import { sanitizeText } from '../domain/sanitize.ts';
@@ -47,6 +47,7 @@ const readJson = <T>(fs: LinkFs, file: string): T | null => {
 export type SlotPaths = { promptPath: string; logPath: string; attachments: readonly string[] };
 
 export type WaveInput = {
+  diagnostics?: DiagnosticBinding;
   effectId: string;
   round: number;
   timeoutMs: number;
@@ -196,6 +197,7 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     const mode = modes[position.mode] ?? 'cli';
     const model = voice.models[position.model] ?? null;
     const req: DelegateRequest = {
+      ...(input.diagnostics ? { diagnostics: { ...input.diagnostics, producer: `${input.effectId}:${input.diagnostics.producer}:${slot.slot}:${position.model}:${position.mode}` } } : {}),
       promptPath: paths.promptPath, model, effort: slot.effort ?? null, sandbox: slot.sandbox ?? true, schemaPath: null, resume: null,
       cwd: input.cwd, timeoutMs: Math.min(input.timeoutMs, remaining), outputCapBytes: deps.outputCapBytes ?? 10 * 1024 * 1024,
       configSelectors: deps.configSelectors ?? {},
@@ -266,6 +268,7 @@ export type WorkerResult = { launched: false } | { launched: true; finals: SlotF
 export async function runWaveWorker(runDir: string, id: string, n: number, deps: WorkerDeps): Promise<WorkerResult> {
   const input = readJson<WaveInput>(deps.fs, inputPath(runDir, id));
   if (!input) throw new Error(`wave worker: missing input ${inputPath(runDir, id)}`);
+  if (input.diagnostics) input.diagnostics = { ...input.diagnostics, producer: `worker-${n}` };
   const startedAt = deps.clock.now();
   const claim: ClaimFile = { pid: deps.proc.pid, host: deps.proc.host, startedAt };
   if (!publishExclusive(deps.fs, claimPath(runDir, id, n), JSON.stringify(claim))) return { launched: false };
@@ -306,7 +309,7 @@ const failed = (effectId: string, cls: EffectFailureClass, detail: string): Resu
 function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): number {
   const file = inputPath(ctx.runDir, effect.id);
   if (deps.fs.readText(file) === null) {
-    const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster };
+    const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster, ...(ctx.diagnostics ? { diagnostics: ctx.diagnostics } : {}) };
     deps.fs.writeAtomic(file, JSON.stringify(input));
   }
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);

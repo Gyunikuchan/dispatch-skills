@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { designRevision, dispatchMachine, findDesignDelivery, findSettledPlan, previewReceipt, send, start } from './core/interpreter.ts';
+import { designRevision, dispatchMachine, executionTopology, findDesignDelivery, findSettledPlan, previewReceipt, send, start } from './core/interpreter.ts';
 import { faultFrame } from './core/frame.ts';
 import { readJournal } from './core/journal.ts';
+import { diagnosticWarning, invocationObserver } from './core/diagnostics.ts';
 import { nodePorts } from './core/ports.ts';
 import { STALL_HINT_MS } from './core/progress.ts';
 import type { Frame, Level, RunStartedEvent } from './core/types.ts';
@@ -16,8 +17,8 @@ import { sessionDirOf } from './effects/handoff.ts';
 import { claimPath, donePath, heartbeatPath, inputPath, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
-import { loadConfig, validateConfig } from './lib/config.ts';
-import { checkIntegrity, integrityDiagnostic } from './lib/integrity.ts';
+import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.ts';
+import { checkIntegrity, hashFile, integrityDiagnostic } from './lib/integrity.ts';
 import { nodeLinkFs } from './lib/node-fs-ext.ts';
 import { currentPlatform, detectOrchestrator } from './lib/platform.ts';
 import { canonicalRepositoryRoot, createRun, findRepoRoot, handoffSession, initializeSession, platformSessionId, reactivateSession, readManifest, restoreSessionPaths, storeSessionPaths } from './lib/session.ts';
@@ -31,6 +32,12 @@ import type { ProviderId } from './providers/types.ts';
 
 const ENTRY = fileURLToPath(import.meta.url);
 const SKILL_ROOT = path.resolve(path.dirname(ENTRY), '..');
+const diagnosticOptions = {
+  configSource: () => loadConfig(SKILL_ROOT).config,
+  diagnosticToggle: () => loadDiagnosticToggle(SKILL_ROOT),
+  diagnosticInstruction: () => fs.readFileSync(path.join(SKILL_ROOT, 'references/diagnostics.md'), 'utf8'),
+  diagnosticIdentity: () => ({ integrity: hashFile(path.join(SKILL_ROOT, 'skill-hashes.json')), osFamily: process.platform, host: detectOrchestrator((name) => process.env[name])?.platform ?? 'codex' }),
+};
 const policy = { levels: LEVELS, pins: (text: string) => {
   const pins = parsePins(text);
   if (pins.kind === 'providers' && pins.keys.some((key) => !isProviderId(key))) throw new UsageError('Pins name an unknown provider');
@@ -54,21 +61,28 @@ function runtime() {
 }
 function workerDeps(): WorkerDeps {
   const { ports, platform, discovery } = runtime();
+  const warn = diagnosticWarning(ports);
   return {
     fs: nodeLinkFs, proc: ports.proc, clock: ports.clock, specs: SPECS,
     configSelectors: Object.fromEntries(['OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'].flatMap((key) => { const value = ports.env.get(key); return typeof value === 'string' ? [[key, value]] : []; })),
     modes: (provider) => SPECS[provider].modes.filter((mode) => discovery.resolve(provider, mode.id).status === 'path').map((mode) => mode.id),
     async run(provider, request, mode) {
+      const binding = request.diagnostics;
+      const observe = binding ? invocationObserver(ports, binding, provider, request.model, mode, warn) : undefined;
+      const failedLaunch = (cls: 'not-found' | 'config', detail: string) => {
+        observe?.({ attempt: 1, start: ports.clock.now(), durationMs: null, launched: false, outcome: cls });
+        return { status: 'fail' as const, cls, detail };
+      };
       const binary = discovery.resolve(provider, mode).path;
-      if (!binary) return { status: 'fail', cls: 'not-found', detail: `${provider}: missing ${mode}` };
+      if (!binary) return failedLaunch('not-found', `${provider}: missing ${mode}`);
       const deadline = Date.now() + request.timeoutMs;
       let resolved = request;
       if (provider === 'opencode') {
         try { resolved = await resolveEffectiveOpencodeLaunch(request, nativeOpencodeIntrospection(binary, request, process.env, request.timeoutMs)); }
-        catch (error) { return { status: 'fail', cls: 'config', detail: String(error) }; }
+        catch (error) { return failedLaunch('config', String(error)); }
       }
       resolved = { ...resolved, timeoutMs: Math.max(1, deadline - Date.now()) };
-      return (await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) })).outcome;
+      return (await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(observe ? { observe } : {}), ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) })).outcome;
     },
   };
 }
@@ -157,6 +171,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       const provider = textFlag(command, 'provider'), pins = textFlag(command, 'pins');
       if (provider && pins) throw new UsageError('Use --provider or --pins, not both');
       const overrides: Record<string, unknown> = {};
+      overrides['executionTopology'] = crypto.createHash('sha256').update(executionTopology(loaded.config)).digest('hex');
       overrides['sessionDir'] = sessionDir;
       for (const key of ['model', 'effort', 'kind', 'context']) if (textFlag(command, key)) overrides[key] = textFlag(command, key);
       if (textFlag(command, 'timeout')) overrides['timeout'] = Number(command.flags['timeout']);
@@ -187,7 +202,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         }));
       }
       const runStarted: RunStartedEvent = { type: 'RUN_STARTED', verb: command.verb!, argument, level, levelSource: command.flags['level-source'] as 'explicit' | 'classified', pins: pins ? policy.pins(pins) : provider ? policy.pins(`(${provider})`) : null, fix: command.flags['fix'] === true, orchestrator, orchestratorModel, overrides, config, repo: { root: repo } };
-      const result = await start({ runDir: reserved.dir, reservedRun: true, runStarted, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, runRel: path.relative(repo, reserved.dir).replaceAll('\\', '/') });
+      const result = await start({ runDir: reserved.dir, reservedRun: true, runStarted, machine: dispatchMachine, handlers: handlers(repo, orchestrator), ports, runRel: path.relative(repo, reserved.dir).replaceAll('\\', '/'), ...diagnosticOptions });
       if (result.frame) emit(finish(result.frame, reserved.dir)); if (result.message) process.stderr.write(`${result.message}\n`); return result.exitCode;
     }
     const journal = readJournal(ports, runDir), started = journal.lines.find((line) => line.type === 'RUN_STARTED');
@@ -198,7 +213,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     let rawEvent: string | undefined = textFlag(command, 'event');
     if (rawEvent?.startsWith('@')) rawEvent = fs.readFileSync(path.resolve(rawEvent.slice(1)), 'utf8');
     const effectHandlers = handlers(repo, orchestrator);
-    const result = await send({ runDir, machine: dispatchMachine, handlers: effectHandlers, ports, runRel: path.relative(repo, runDir).replaceAll('\\', '/'), ...(rawEvent !== undefined ? { rawEvent } : {}), dryRun: command.command === 'status' || command.flags['dry-run'] === true,
+    const result = await send({ runDir, machine: dispatchMachine, handlers: effectHandlers, ports, runRel: path.relative(repo, runDir).replaceAll('\\', '/'), ...(rawEvent !== undefined ? { rawEvent } : {}), dryRun: command.command === 'status' || command.flags['dry-run'] === true, refreshConfig: command.flags['refresh-config'] === true, ...diagnosticOptions,
+      configSource: () => {
+        const next = loadConfig(SKILL_ROOT).config, problems = validateConfig(next);
+        if (problems.length) throw new UsageError(problems.join('\n'));
+        const overrides = started.data['overrides'] as Record<string, unknown>;
+        if (overrides['executionTopology'] !== crypto.createHash('sha256').update(executionTopology(next)).digest('hex')) throw new UsageError('execution-config-topology: routing changes require a new run');
+        const selected = (started.data['config'] as Record<string, unknown>)['read-delegates'] as Record<string, unknown>;
+        // The launch roster stays bound even if a missing binary appears between sends.
+        return { ...next, 'read-delegates': Object.fromEntries(Object.entries(next['read-delegates'] as Record<string, unknown>).filter(([provider]) => Object.hasOwn(selected, provider))) };
+      },
       preview: (state, event) => previewReceipt(state, event, effectHandlers, ports, runDir) });
     if (command.command === 'status' && result.frame) {
       let progress: unknown = null;

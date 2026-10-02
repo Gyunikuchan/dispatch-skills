@@ -12,9 +12,11 @@ import {
 import { implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
 import { beginRevision, stepRevision, reboundRevision, revisionAwait, revisionData, validateRevision, type RevisionState } from './revision.ts';
+import { executionBindingDeferred, reconfigureRoot } from './execution-config.ts';
+import { refreshedRun } from '../domain/execution-config.ts';
 import { beginDesign, stepDesign, designAwait, designData, validateDesign, type DesignState } from './design.ts';
 
-export type RunInfo = { verb: Verb; argument: string; slug: string };
+export type RunInfo = { verb: Verb; argument: string; slug: string; defaults?: RunStartedEvent };
 
 export type RootState =
   | { tag: 'design'; run: RunInfo; child: DesignState }
@@ -121,7 +123,7 @@ function wrap(run: RunInfo, child: Child, effects: Step<unknown>['effects']): S 
 const failed = (run: RunInfo, summary: string): S => toHandoff(run, null, {}, { outcome: 'failed', summary });
 
 function boot(event: RunStartedEvent): S {
-  const run: RunInfo = { verb: event.verb, argument: event.argument, slug: slugOf(event.argument, event.verb) };
+  const run: RunInfo = { verb: event.verb, argument: event.argument, slug: slugOf(event.argument, event.verb), defaults: event };
   event = { ...event, overrides: { ...event.overrides, artifactSlug: run.slug } };
   switch (event.verb) {
     case 'ask': {
@@ -360,4 +362,11 @@ export const rootMachine: Machine<RootState> = {
   transitions: rootTransitions,
   validate,
   render,
+  executionDeferred: executionBindingDeferred,
+  reconfigure(state, event) {
+    if (!('run' in state) || !state.run.defaults) throw new Error('execution-config-unavailable: run defaults are unavailable');
+    const run = refreshedRun(state.run.defaults, event);
+    const next = reconfigureRoot(state, event, run);
+    return 'run' in next ? { ...next, run: { ...next.run, defaults: run } } : next;
+  },
 };

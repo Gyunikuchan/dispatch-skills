@@ -92,13 +92,23 @@ export type DesignApproval =
 
 export type RunStartedEvent = {
   designApproval?: DesignApproval;
-  protocolRevision?: 2;
+  protocolRevision?: 3;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
   pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
   overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;
 };
 
+export type ModelLevels = Record<string, { model: string | string[]; effort?: string }>;
+export type ExecutionConfigUpdated = {
+  type: 'EXECUTION_CONFIG_UPDATED'; revision: number; boundarySeq: number;
+  delta: {
+    read: Array<{ slot: string; provider: string; levels: ModelLevels }>;
+    write: Array<{ provider: string; levels: ModelLevels }>;
+  };
+};
+
 export type LifecycleEvent =
+  | ExecutionConfigUpdated
   | RunStartedEvent
   | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
   | { type: 'LOCK_BROKEN'; stalePid: number };
@@ -192,9 +202,13 @@ export interface Machine<S> {
   validate?(state: S, event: HostEvent): string | null;
   /** Idempotent rendering of driver-owned Markdown after each send (not an effect). */
   render?(state: S, ports: Ports, runDir: string): void;
+  reconfigure?(state: S, event: ExecutionConfigUpdated): S;
+  executionDeferred?(state: S): boolean;
 }
 
-export interface HandlerContext { runDir: string; attempt: number }
+export type DiagnosticBinding = { runDir: string; phase: string; boundary: number; producer?: string };
+export type DiagnosticUsage = { input: number; output: number; cacheRead?: number; cacheWrite?: number; reasoning?: number; scope: 'invocation' | 'turn-delta' | 'session-cumulative'; provenance: string; inputSemantics: 'includes-cache' | 'uncached'; actualModels?: string[] };
+export interface HandlerContext { runDir: string; attempt: number; diagnostics?: DiagnosticBinding }
 
 /** Returns zero or more non-terminal results followed by exactly one terminal result. */
 export type Handler<E extends Effect = Effect> = (effect: E, ports: Ports, ctx: HandlerContext) => Promise<readonly ResultEvent[]>;
@@ -222,6 +236,8 @@ export interface FsPort {
   appendDurable(file: string, text: string): void;
   /** Exclusive create (`wx`); throws with code EEXIST when present. */
   writeExclusive(file: string, text: string): void;
+  /** Atomic exclusive publication; false means the completed target already exists. */
+  publishExclusive(file: string, text: string): boolean;
   /** Temp file + fsync + rename. */
   writeAtomic(file: string, text: string): void;
   /** Truncate to length and fsync. */

@@ -3,6 +3,7 @@
 
 import { classifyFailure, failOutcome } from './runner.ts';
 import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import { codexUsage } from '../lib/diagnostic-usage.ts';
 
 const REJECTED = [
   /(?:unrecognized|unknown|unexpected|invalid) (?:option|argument|value)[^\n]*--sandbox/i,
@@ -32,6 +33,7 @@ export function parseCodexEvents(raw: string): { answer: string; threadId: strin
 }
 
 export const codex: ProviderSpec = {
+  usage: codexUsage,
   id: 'codex',
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'codex.cmd' : 'codex', env.os === 'win32' ? 'codex.exe' : join(env, env.home, '.local', 'bin', 'codex')] },

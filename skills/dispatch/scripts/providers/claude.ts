@@ -3,6 +3,7 @@
 
 import { classifyFailure, extractCleanResponse, extractSessionId, failOutcome, isSandboxUnsupported } from './runner.ts';
 import type { PlatformEnv, ProviderSpec, RunOutcome } from './types.ts';
+import { claudeUsage } from '../lib/diagnostic-usage.ts';
 
 /** Read-only tools; commands that write through their own arguments and web tools are excluded. */
 export const READ_ONLY_ALLOWED_TOOLS = [
@@ -44,6 +45,7 @@ function parseEnvelope(stdout: string): Envelope | null {
 }
 
 export const claude: ProviderSpec = {
+  usage: claudeUsage,
   id: 'claude',
   modes: [
     { id: 'cli', candidates: (env) => [env.os === 'win32' ? 'claude.exe' : 'claude', ...(env.os === 'win32' ? ['claude.cmd'] : []), join(env, env.home, '.local', 'bin', `claude${exe(env)}`), join(env, env.home, '.claude', 'local', `claude${exe(env)}`)] },

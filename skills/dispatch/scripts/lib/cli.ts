@@ -10,10 +10,10 @@ export const ALIASES: Readonly<Record<string, string>> = {
 const VERBS: readonly Verb[] = ['ask', 'design', 'plan', 'review', 'implement'];
 const FLAGS: Readonly<Record<string, readonly string[]>> = {
   start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'fix', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'context'],
-  send: ['run', 'event', 'dry-run'], status: ['run'], doctor: ['level', 'json'],
+  send: ['run', 'event', 'dry-run', 'refresh-config'], status: ['run'], doctor: ['level', 'json'],
   session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
 };
-const BOOLEANS = new Set(['fix', 'verbose', 'dry-run', 'json']);
+const BOOLEANS = new Set(['fix', 'verbose', 'dry-run', 'json', 'refresh-config']);
 
 export function parseCommand(argv: readonly string[], policy: CliPolicy): Command {
   const args = [...argv], command = args.shift();
@@ -42,6 +42,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
     }
   }
   const need = (name: string) => { if (typeof out.flags[name] !== 'string') throw new UsageError(`--${name} is required`); };
+  if (out.flags['refresh-config'] && out.flags['event'] !== undefined) throw new UsageError('--refresh-config cannot be combined with --event');
   if (command === 'start') {
     need('session-dir'); need('orchestrator');
     if (!out.argument && out.verb !== 'review') throw new UsageError(`${out.verb} requires an argument`);

@@ -105,6 +105,7 @@ export function validateNativeResults(slots: readonly unknown[]): string | null 
 export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly (string | ReviewerView)[]; failed: readonly { slot: string; reason: string }[] };
 
 export type ReviewCtx = {
+  pendingSpec?: ReviewSpec;
   spec: ReviewSpec;
   path: string;
   counters: Counters;
@@ -169,7 +170,8 @@ export function beginReview(spec: ReviewSpec, path: string, counters: Counters):
 }
 
 function prepare(c0: ReviewCtx, round: number, scope: RoundScope, carried: readonly CarriedRejection[]): S {
-  const base = { ...c0, round, scope, carried, rows: [], drafts: [], promptPaths: {} };
+  const { pendingSpec, ...bound } = c0;
+  const base = { ...bound, spec: pendingSpec ?? c0.spec, round, scope, carried, rows: [], drafts: [], promptPaths: {} };
   const { c, effect } = withEffect(base, 'prepare-review', (id) => ({ kind: 'prepare-review', id, review: base.spec, round, scope: { scope, carried, affectedPaths: [...new Set(base.findings.flatMap((finding) => finding.fix?.paths ?? []))], ...(base.priorManifest ? { priorManifest: base.priorManifest } : {}) } }));
   return { state: { tag: 'prepare', c }, effects: [effect] };
 }
