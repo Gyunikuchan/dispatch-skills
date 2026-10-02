@@ -2,7 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-10-02
-- **Spec**: `skills/dispatch/references/review.md`, `skills/dispatch/references/verbs/review.md`, `skills/dispatch-code-review/SKILL.md`
+- **Spec**: `skills/dispatch/references/review-rules.md`, `skills/dispatch/references/verbs/review.md`, `skills/dispatch-code-review/SKILL.md`
 
 ## Context
 

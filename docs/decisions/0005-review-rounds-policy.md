@@ -2,7 +2,7 @@
 
 - **Status**: Accepted; extended to every review kind by [ADR 0006](0006-dispatch-state-machine.md)
 - **Date**: 2026-09-29
-- **Spec**: the review-rounds section of `skills/dispatch/references/review.md`
+- **Spec**: the review-rounds section of `skills/dispatch/references/review-rules.md`
 
 ## Context
 
@@ -23,7 +23,7 @@ four needs:
 
 | # | Decision | Rationale | Rejected |
 |---|----------|-----------|----------|
-| D1 | One review-rounds policy for every review kind (plan, design, code) and mode (fix or report-only), defined once in `references/review.md` and enforced by `policy/rounds.ts` (ADR 0006) | Divergent policies handle the same finding differently by entry point, and separate descriptions produced contract gaps | Per-verb or per-kind policies; a separate rebuttal-wave protocol for plan, design, or report-only reviews |
+| D1 | One review-rounds policy for every review kind (plan, design, code) and mode (fix or report-only), defined once in `references/review-rules.md` and enforced by `policy/rounds.ts` (ADR 0006) | Divergent policies handle the same finding differently by entry point, and separate descriptions produced contract gaps | Per-verb or per-kind policies; a separate rebuttal-wave protocol for plan, design, or report-only reviews |
 | D2 | Resolve every finding (fixed or `pending-rejection`) before deciding on another round | Defects are cheapest to handle while context is fresh; the round decision rests on outcomes, not raw findings | Deferring resolution to the end of the loop |
 | D3 | Another round runs when a finding at or above the threshold was fixed or is pending rejection; threshold is `SHOULD` before the cap and `MUST` at or after it, evaluated after each round | Quality fixes are worth verifying before the cap; afterwards only blocking defects justify rounds; outcome-keyed triggers give every round something concrete to verify | Finding-keyed triggers |
 | D4 | No round cap for `MUST` | A blocking defect is never acceptable to ship; the cap bounds spending on quality, not correctness | User extend/stop gate at the cap |

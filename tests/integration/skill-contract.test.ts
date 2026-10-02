@@ -80,7 +80,7 @@ test('review-context-contract: documents --context and alias forwarder parity', 
   assert.match(verbRef, /\[--context <text>\]/);
   assert.match(verbRef, /Pass `--context` to supply semantic intent/);
 
-  const reviewRef = read('skills/dispatch/references/review.md');
+  const reviewRef = read('skills/dispatch/references/review-rules.md');
   assert.match(reviewRef, /Review prompt context composes two channels/);
   assert.match(reviewRef, /git log --format="%s%n%b" <range>/);
   assert.match(reviewRef, /sessionDir/);

@@ -13,7 +13,7 @@ Deliver high-confidence collaborative development workflows across native agent 
 - **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; Runner harnesses sanitize outputs.
 - **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to the session scratch directory. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
 - **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
-- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
+- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review-rules.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
 
 ## Communication
 
@@ -55,7 +55,7 @@ tests/                    mirrors source plus cross-skill integration guards
 - Reference skills by name or sibling-relative `<skills-dir>` paths, never a host-specific installation path.
 - Aliases require `dispatch`, map arguments to one verb, and provide a named missing-dependency diagnostic.
 - `dispatch` names no alias.
-- Shared review behavior lives in `skills/dispatch/references/review.md`.
+- Shared review behavior lives in `skills/dispatch/references/review-rules.md`.
 
 ## Documentation Standards
 
@@ -73,7 +73,7 @@ Format skills as Markdown with YAML frontmatter (`name`, `description`). When to
 
 Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
 
-- **Cross-Skill Alignment**: Single-source multi-skill conventions and shared schemas in `skills/dispatch/references/review.md`.
+- **Cross-Skill Alignment**: Single-source multi-skill conventions and shared schemas in `skills/dispatch/references/review-rules.md`.
 - **Naming**: kebab-case for skill identifiers, filenames, and slugs.
 - **Paths**: Forward-slash relative paths instead of `file://` URIs or absolute paths; use Node `path` utilities in scripts.
 - **Shell portability**: Universal shell syntax or Node scripts; fork steps explicitly where environments diverge.

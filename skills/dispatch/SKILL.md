@@ -16,7 +16,7 @@ Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit one JSON frame; doctor emits a table or `--json` diagnostics.
 3. Run `send --run <dir> [--event @<event-file>]` in the background, retain its handle, and wait for completion or a blocker. Fill current `events` with observed evidence and user quotes; reply once per `await` until `done`. Eventless send resumes automatic work.
 
-Before the selected branch, read [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [review](references/verbs/review.md), or [implement](references/verbs/implement.md). For adjudication and disputes read [review rules](references/review.md); for provider availability, native mapping, or sandbox failures read [providers](references/providers.md). Terms live in [glossary](references/glossary.md).
+Before the selected branch, read [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [review](references/verbs/review.md), or [implement](references/verbs/implement.md). For adjudication and disputes read [review rules](references/review-rules.md); for provider availability, native mapping, or sandbox failures read [providers](references/providers.md). Terms live in [glossary](references/glossary.md).
 
 ## Await author
 

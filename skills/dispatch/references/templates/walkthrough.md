@@ -1,6 +1,6 @@
 # Walkthrough template
 
-Strict rendering of the [minimum walkthrough contract](../review.md#minimum-walkthrough-contract).
+Strict rendering of the [minimum walkthrough contract](../review-rules.md#minimum-walkthrough-contract).
 
 ````markdown
 # <task title>
