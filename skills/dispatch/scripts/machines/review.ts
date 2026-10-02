@@ -4,7 +4,7 @@
 import type { Effect, Event, FindingId, HostEvent, Level, Machine, RunStartedEvent } from '../core/types.ts';
 import { clusterFixes, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
-import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, RosterSlot } from '../domain/types.ts';
+import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, ReviewerView, RosterSlot } from '../domain/types.ts';
 import { resolveRoster, type PhasePolicy, type Pins, type ReadDelegate } from '../policy/roster.ts';
 import {
   acceptByOmission, assignAffinity, convergence, exitSummary, nextRound, orchestratorClosures, roundsPolicy, threshold,
@@ -102,7 +102,7 @@ export function validateNativeResults(slots: readonly unknown[]): string | null 
 
 // SECTION: State
 
-export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly string[]; failed: readonly { slot: string; reason: string }[] };
+export type RoundRecord = { round: number; scope: RoundScope; reviewers: readonly (string | ReviewerView)[]; failed: readonly { slot: string; reason: string }[] };
 
 export type ReviewCtx = {
   spec: ReviewSpec;
@@ -211,14 +211,44 @@ function onWaveDone(state: Extract<ReviewState, { tag: 'wave' }>, event: Extract
   return afterWave(c);
 }
 
+function failureReasonOf(row: Row): string {
+  if (typeof row['reason'] === 'string' && row['reason']) return row['reason'];
+  if (typeof row['record'] === 'string' && row['record']) return row['record'].replace(/^.*?→.*?:\s*/, '');
+  if (typeof row['cls'] === 'string' && row['cls']) return row['cls'];
+  return 'failed';
+}
+
+function reviewerViewOf(row: Row, roster: readonly RosterSlot[]): ReviewerView {
+  const slot = String(row['by'] ?? row['slot']);
+  const rosterSlot = roster.find((s) => s.slot === slot);
+  const model = typeof row['model'] === 'string' && row['model']
+    ? row['model']
+    : typeof rosterSlot?.model === 'string'
+      ? rosterSlot.model
+      : undefined;
+  const effort = typeof row['effort'] === 'string' && row['effort']
+    ? row['effort']
+    : typeof rosterSlot?.effort === 'string'
+      ? rosterSlot.effort
+      : undefined;
+  return {
+    slot,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  };
+}
+
 function afterWave(c0: ReviewCtx): S {
   const round = c0.round;
   const usable = c0.rows.filter((row) => ['success', 'reserve', 'native'].includes(String(row['state'])) && row['descriptor'] === undefined);
-  const reviewers = usable.map((row) => String(row['slot']));
-  const failed = c0.rows.filter((row) => row['state'] === 'failed').map((row) => ({ slot: String(row['slot']), reason: String(row['reason'] ?? row['cls'] ?? 'failed') }));
+  const reviewers = usable.map((row) => reviewerViewOf(row, c0.spec.roster));
+  const failed = [
+    ...c0.rows.filter((row) => row['state'] === 'failed').map((row) => ({ slot: String(row['slot']), reason: failureReasonOf(row) })),
+    ...c0.rows.filter((row) => row['state'] === 'reserve').map((row) => ({ slot: String(row['slot']), reason: failureReasonOf(row) })),
+  ];
   const fresh: ReviewFinding[] = c0.drafts.map((finding) => ({ ...finding, round, status: finding.dupOf === undefined ? 'open' : 'duplicate' }));
   const c1: ReviewCtx = { ...c0, rounds: [...c0.rounds, { round, scope: c0.scope, reviewers, failed }] };
-  const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot));
+  const uncovered = c0.carried.filter((entry) => entry.slot === null || !usable.some((row) => row['slot'] === entry.slot || row['substitutesFor'] === entry.slot || row['by'] === entry.slot));
   if (!reviewers.length || uncovered.length) return stay({ tag: 'failed', c: c1, detail: `reviewer-coverage: ${uncovered.length ? `responsible reviewer unavailable for ${uncovered.map((entry) => entry.id).join(', ')}` : 'no usable reviewer capture'}` });
   const verdict = convergence(fresh.filter((finding) => finding.status === 'open').map(matchKey), c0.history);
   if (verdict.halt) return stay({ tag: 'decide-escalation', c: { ...c1, findings: [...c1.findings, ...fresh] }, escalation: verdict.escalation });
@@ -577,7 +607,7 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
   return c.rounds.map((record) => ({
     round: record.round,
     heading: record.scope,
-    reviewers: record.reviewers.map((slot) => ({ slot })),
+    reviewers: record.reviewers.map((reviewer) => (typeof reviewer === 'string' ? { slot: reviewer } : reviewer)),
     failed: record.failed,
     entries: c.findings.filter((finding) => finding.round === record.round).map((finding) => ({
       id: finding.id, severity: finding.severity, status: statusOf(finding), sources: finding.sources, locus: finding.locus,

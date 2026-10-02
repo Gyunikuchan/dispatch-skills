@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { reviewMachine, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { reviewMachine, resolutionRounds, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';
+import { renderResolutionSection } from '../../../skills/dispatch/scripts/domain/render.ts';
 import { play } from '../../helpers/play.ts';
 
 const CONFIG = {
@@ -95,4 +96,41 @@ test('rewrite SC1 all-failed review reports coverage failure', () => {
   const { state } = drive([started(), prepared(1), { ...waveDone(1, []), slots: rows.map((row) => ({ ...row, state: 'failed' })) } as Event]);
   assert.equal(state.tag, 'failed');
   assert.match(state.tag === 'failed' ? state.detail : '', /reviewer-coverage/);
+});
+
+test('reserve-substitution: reviewers list reflects reserve delegate and failed reflects primary failure', () => {
+  const reserveRows = [
+    { slot: 'claude[0]', state: 'reserve', by: 'codex[0]', model: 'gpt-5', record: 'claude[0] → codex[0]: api-error: 400', reason: 'api-error: 400' },
+  ];
+  const { state } = drive([
+    started(),
+    prepared(1),
+    { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: reserveRows, findings: [finding('R1-F001', { sources: ['codex[0]'] })] } as Event,
+  ]);
+  assert.equal(state.tag, 'rule');
+  if (!('c' in state)) throw new Error('review context missing');
+  const rounds = resolutionRounds(state.c);
+  assert.equal(rounds.length, 1);
+  assert.deepEqual(rounds[0]?.reviewers, [{ slot: 'codex[0]', model: 'gpt-5' }]);
+  assert.deepEqual(rounds[0]?.failed, [{ slot: 'claude[0]', reason: 'api-error: 400' }]);
+  const rendered = renderResolutionSection(rounds);
+  assert.match(rendered, /- Reviewers: codex\[0\] gpt-5/);
+  assert.match(rendered, /- Failed: claude\[0\] \(api-error: 400\)/);
+});
+
+test('reviewer-metadata-preservation: model and effort are preserved from wave and roster', () => {
+  const metaRows = [
+    { slot: 'codex[0]', state: 'success', model: 'gpt-5', effort: 'high' },
+  ];
+  const { state } = drive([
+    started(),
+    prepared(1),
+    { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: metaRows, findings: [] } as Event,
+  ]);
+  assert.equal(state.tag, 'settled');
+  if (!('c' in state)) throw new Error('review context missing');
+  const rounds = resolutionRounds(state.c);
+  assert.deepEqual(rounds[0]?.reviewers, [{ slot: 'codex[0]', model: 'gpt-5', effort: 'high' }]);
+  const rendered = renderResolutionSection(rounds);
+  assert.match(rendered, /- Reviewers: codex\[0\] gpt-5 \(high\)/);
 });

@@ -78,11 +78,11 @@ const modelsOf = (slot: RosterSlot): string[] => (slot.model === undefined ? [] 
 
 // SECTION: Slot finals (closed union)
 
-type Success = { outputPath?: string; provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string };
+type Success = { outputPath?: string; provider: string; model: string | null; mode: ModeId | null; resume: string | null; drafts: DraftFinding[]; records: string[]; claim?: string; effort?: string | null };
 
 export type SlotFinal =
   | ({ state: 'success'; slot: string } & Success)
-  | ({ state: 'reserve'; slot: string; by: string; record: string } & Success)
+  | ({ state: 'reserve'; slot: string; by: string; record: string; reason?: string } & Success)
   | { state: 'native'; slot: string; sourceKey: string; reason: string; records: string[]; outputPath?: string; drafts?: DraftFinding[]; descriptor?: NativeDescriptor; claim?: string }
   | { state: 'failed'; slot: string; cls: FailureClass | 'worker'; reason: string; records: string[] };
 
@@ -206,12 +206,12 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
     let reason: string;
     if (outcome.status === 'ok' && input.review === 'ask') {
       const claim = sanitizeText(outcome.text);
-      if (claim) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim }, position };
+      if (claim) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: [], records, claim, effort: slot.effort ?? null }, position };
       cls = 'empty-output';
       reason = 'empty-output: the delegate returned no text';
     } else if (outcome.status === 'ok') {
       const report = parseReport({ kind: input.review === 'ask' ? 'code' : input.review, source: slot.slot, text: outcome.text });
-      if (report.ok) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records }, position };
+      if (report.ok) return { ok: true, value: { outputPath: paths.logPath, provider: slot.provider, model, mode, resume: outcome.resume, drafts: report.findings, records, effort: slot.effort ?? null }, position };
       cls = REPORT_CLASS[report.failure.kind];
       reason = `${report.failure.kind}: ${report.failure.detail}`;
     } else {
@@ -246,7 +246,7 @@ async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, dea
       const own_ = input.paths[slot.slot];
       const paths = own_ ? { ...input.paths, [reserve.slot]: { ...own_, logPath: `${own_.logPath}.${safeSlot(reserve.slot)}` } } : input.paths;
       const substitute = await runVoice(reserve, { ...input, paths }, deps, deadline);
-      if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, ...substitute.value, records: [...own.records, ...substitute.value.records] };
+      if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, reason: own.reason, ...substitute.value, records: [...own.records, ...substitute.value.records] };
       return { state: 'failed', slot: slot.slot, cls: substitute.cls, reason: `${own.reason}; reserve ${reserve.slot}: ${substitute.reason}`, records: [...own.records, record, ...substitute.records] };
     }
     case 'native-fallback':
