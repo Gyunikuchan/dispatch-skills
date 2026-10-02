@@ -15,6 +15,9 @@ executing the plan as written delivers the requirement.
 - The requirement: every part traced to a proposed change, and nothing added beyond it.
 - The plan's summary box and detailed `## Success Criteria` entries: each criterion observable and paired with a named test or exact
   verification step whose command runs only that criterion's tests and matches existing test names.
+- The task graph: each prerequisite, ownership boundary, and claimed independence checked against
+  producer/consumer interfaces; a task that consumes another's output without depending on it, or
+  contends for a shared file, port, cache, or output, is a defect.
 - An attached "Approved technical-design context" section: the increment's inherited contract and
   acceptance criteria. Treat the governed design as settled; raise a design-changing proposal as an
   out-of-scope remark for the orchestrator's amendment path.
@@ -33,6 +36,7 @@ findings only there; `adjacent` findings may cite any locus. Stop at that blast 
 ### Tags
 - intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating
 - domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states
+- decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; overlapping ownership or shared resources; fragmented or oversized tasks
 - architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs
 - trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal
 - compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback

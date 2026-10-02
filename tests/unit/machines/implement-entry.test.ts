@@ -10,7 +10,7 @@ const PLAN = {
   title: 'Implement example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
   criteria: [{ id: 'SC1', title: 'Example works', line: 1, changes: ['src/example.ts'], verify: [{ command: 'node --test tests/example.test.ts', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }],
   changes: [{ action: 'MODIFY', path: 'src/example.ts', note: 'Add behavior', command: null, line: 1 }],
-  verification: { automated: ['node --test tests/example.test.ts'], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# plan',
+  verification: { automated: ['node --test tests/example.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# plan',
 };
 const run = (overrides: Record<string, unknown> = {}): RunStartedEvent => ({
   type: 'RUN_STARTED', verb: 'implement', argument: 'Implement example', level: 'low', levelSource: 'explicit', pins: null, fix: false,

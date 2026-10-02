@@ -10,7 +10,7 @@ const PLAN = {
   title: 'Example', box: { 'TL;DR': 'Implement it' }, keyDecisions: [],
   criteria: [{ id: 'SC1', title: 'It works', line: 1, changes: ['src/example.ts'], verify: [{ command: 'node --test tests/example.test.ts', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }],
   changes: [{ action: 'MODIFY', path: 'src/example.ts', note: 'Implement behavior', command: null, line: 1 }],
-  verification: { automated: ['node --test tests/example.test.ts'], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
+  verification: { automated: ['node --test tests/example.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Example',
 };
 const started = (): RunStartedEvent => ({ type: 'RUN_STARTED', verb: 'implement', argument: PATH, level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null,
   overrides: { settledPlan: { path: PATH, hash: HASH, outcome: 'settled' } }, repo: {}, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } });

@@ -41,11 +41,14 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
   - Test rationale: <why the retained RED is discriminating, stable, and behavioral, or why a new test is low-signal>
   - Review: <artifact: path; scenario: bounded inspection; pass: observable condition>
   - Enforcement infeasibility: <why deterministic enforcement is infeasible>
+  - Integration: <why this criterion spans tasks>
 
 ## Proposed Changes
 
-### <Component Name>
-*Summary, then one H4 per file (relative forward-slash paths).*
+### T<n> — <Task outcome>
+<Plain-language outcome and rationale; why each non-obvious prerequisite is needed.>
+- Prerequisites: <none | T<n>[, T<n>...]>
+- Criteria: <SC#[, SC#...]>
 
 #### [NEW] <relative-path>
 - Purpose, public interface, and rationale.
@@ -59,6 +62,7 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 
 #### [GENERATED] <relative-path>
 - Command: `<generator command>`
+- Inputs: <relative-path>[, <relative-path>...]
 
 ## Rollback & Blast Radius
 *Caller impacts, migrations, and rollback paths (or "None").*
@@ -83,4 +87,6 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Optional: Pre-existing `yes` admits a baseline red failure; RED exception (red only) permits a no-failing-state ruling; Review is required for review, Enforcement infeasibility for critical review.
-- `[GENERATED]`: the driver reruns Command before completion verification.
+- Tasks: every H4 belongs to one task; a task is a meaningful outcome with disjoint writable paths and independently checkable criteria. Combine same-file or tightly coupled changes; serialize shared-resource use (ports, caches, outputs) with a prerequisite and rationale.
+- Criteria mapping: each criterion is listed by exactly one task, whose paths cover its Changes, or carries Integration (with Verify) when it spans tasks.
+- `[GENERATED]`: the driver reruns Command before completion verification; a task producing an Input must be a (transitive) prerequisite.

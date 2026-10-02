@@ -48,7 +48,7 @@ test('real nested two-increment delivery replays author, write and native integr
     'parse-artifact': async (effect) => {
       const increment = effect.path.includes('i02') ? 'I02' : 'I01';
       const file = increment === 'I01' ? 'src/a.ts' : 'src/b.ts';
-      const plan = { title: increment, box: { 'TL;DR': design.details[increment as 'I01' | 'I02'].Outcome }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: file, note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment as 'I01' | 'I02'].Outcome }, governedText: '# Plan' };
+      const plan = { title: increment, box: { 'TL;DR': design.details[increment as 'I01' | 'I02'].Outcome }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: file, note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment as 'I01' | 'I02'].Outcome }, governedText: '# Plan' };
       return [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: effect.artifact, hash, parsed: effect.artifact === 'design' ? design : plan, defects: [] }];
     },
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint, diff: { paths: [] } }],

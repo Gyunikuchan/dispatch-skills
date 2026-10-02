@@ -33,7 +33,11 @@ const PLAN = `# Add retry budget
   - Test rationale: aggregate regression gate over every package.
 
 ## Proposed Changes
-### Fetch
+### T1 — Cap fetch retries
+Fetch stops retrying after three attempts so callers fail fast.
+- Prerequisites: none
+- Criteria: SC1
+
 #### [MODIFY] src/fetch.ts
 - Changes: add a retry counter to fetchWithRetry.
 

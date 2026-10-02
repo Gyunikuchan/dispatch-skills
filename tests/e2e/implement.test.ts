@@ -31,7 +31,11 @@ test('implementation happy path runs real CLI approval, writer receipt, verifica
   - Test rationale: Run the isolated verification command to establish the scoped gate behavior.
 
 ## Proposed Changes
-### Value helper
+### T1 — Normalize values
+Values are normalized before use so downstream comparisons agree.
+- Prerequisites: none
+- Criteria: SC1
+
 #### [MODIFY] src/a.ts
 - Normalize the value.
 
@@ -99,7 +103,11 @@ test('reuses settled plan from session journal and rejects stale or failed candi
   - Test rationale: Run the isolated verification command.
 
 ## Proposed Changes
-### Value helper
+### T1 — Normalize values
+Values are normalized before use so downstream comparisons agree.
+- Prerequisites: none
+- Criteria: SC1
+
 #### [MODIFY] src/a.ts
 - Normalize the value.
 

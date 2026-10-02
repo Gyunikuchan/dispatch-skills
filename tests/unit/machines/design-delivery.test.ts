@@ -68,7 +68,7 @@ test('bound child baseline derives approval without an approval await', () => {
   let state = started();
   if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c) throw new Error('child');
   const c = state.child.c;
-  const plan = { title: 'First', box: { 'TL;DR': 'First behavior' }, keyDecisions: [], criteria: [], changes: [], verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: 'I01', Outcome: 'First behavior' }, governedText: '# First' };
+  const plan = { title: 'First', box: { 'TL;DR': 'First behavior' }, keyDecisions: [], criteria: [], changes: [], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: 'I01', Outcome: 'First behavior' }, governedText: '# First' };
   state = { ...state, child: { tag: 'baseline-snapshot', c: { ...c, plan, planHash: hash, startFingerprint: { head: 'h', index: 'i', worktree: 'w' } }, effectId: 'baseline', results: [] } };
   const result = stepDesign(state, { type: 'SNAPSHOT', effectId: 'baseline', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });
   assert.equal(result.state.tag, 'increment');

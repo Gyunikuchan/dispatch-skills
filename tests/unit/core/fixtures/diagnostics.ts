@@ -6,7 +6,7 @@ import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
 import { RUN_STARTED } from './machines.ts';
 export const hash = `sha256:${'a'.repeat(64)}`;
 const fingerprint = { head: 'a'.repeat(40), index: 'index', worktree: 'tree' };
-export const parsedPlan = { title: 'Fixture', box: { 'TL;DR': 'Fixture behavior' }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Fixture' };
+export const parsedPlan = { title: 'Fixture', box: { 'TL;DR': 'Fixture behavior' }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Fixture' };
 export function phaseFixture(verb: 'implement' | 'plan' | 'review', rounds = 1, empty = false) {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state/runs/001-flow');
   // Durability is exercised by E2E; phase transcripts need only exclusive claims.

@@ -29,7 +29,7 @@ const PLAN: ParsedPlan = {
     { action: 'MODIFY', path: 'src/b.ts', note: 'Final-only source', command: null, line: 2 },
     { action: 'GENERATED', path: 'src/generated.ts', note: 'Generated output', command: 'node scripts/gen.mjs', line: 3 },
   ],
-  verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] }, finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
+  verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
 };
 const PATH = 'plans/generated.plan.md';
 const run = (): RunStartedEvent => ({

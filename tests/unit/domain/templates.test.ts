@@ -26,3 +26,17 @@ test('templates: plan.md shows [FINAL] after the Verify code span', () => {
   assert.ok(plan.includes('- Verify: `<command>` [FINAL]'));
   assert.ok(!/Verify: `[^`\n]*\[FINAL\]`/.test(plan));
 });
+
+test('templates: plan.md groups changes under tasks with prerequisites, criteria, and generated inputs', () => {
+  const plan = readFileSync(new URL('plan.md', root), 'utf8');
+  for (const line of ['### T<n> — <Task outcome>', '- Prerequisites: <none | T<n>[, T<n>...]>', '- Criteria: <SC#[, SC#...]>', '- Inputs: <relative-path>[, <relative-path>...]', '  - Integration: <why this criterion spans tasks>']) {
+    assert.ok(plan.includes(line), line);
+  }
+  assert.ok(!plan.includes('<Component Name>'));
+});
+
+test('templates: plan review prompt requires inspecting task dependencies, ownership, and independence', () => {
+  const prompt = readFileSync(new URL('review-prompt-plan.md', root), 'utf8');
+  assert.match(prompt, /claimed independence checked against\s+producer\/consumer interfaces/);
+  assert.match(prompt, /`dependency-graph`, `parallel-safety`/);
+});

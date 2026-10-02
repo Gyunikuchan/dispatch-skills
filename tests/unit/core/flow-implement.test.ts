@@ -39,7 +39,11 @@ const PLAN = `# Normalize values
   - Test rationale: The focused regression names the whitespace behavior that the existing suite misses.
 
 ## Proposed Changes
-### Value helper
+### T1 — Normalize values
+Values are normalized before use so downstream comparisons agree.
+- Prerequisites: none
+- Criteria: SC1
+
 #### [MODIFY] src/value.ts
 - Changes: normalize the input before processing.
 

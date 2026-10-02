@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { governedPlanText, normalizePlanPath, parsePlan, structuralLines, placeholderVocabulary } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { governedPlanText, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
 
 const PLAN = `# Add retry budget
 
@@ -29,13 +29,18 @@ const PLAN = `# Add retry budget
   - Test rationale: aggregate regression gate over every package.
 
 ## Proposed Changes
-### Fetch
+### T1 — Cap fetch retries
+Fetch stops retrying after three attempts so callers fail fast.
+- Prerequisites: none
+- Criteria: SC1, SC2
+
 #### [MODIFY] src/fetch.ts
 - Changes: add a retry counter to fetchWithRetry.
 #### [NEW] tests/fetch.test.ts
 - Purpose: pins the retry cap.
 #### [GENERATED] docs/api.md
 - Command: \`npm run docs\`
+- Inputs: src/fetch.ts
 
 ## Verification Plan
 ### Automated Tests
@@ -122,4 +127,141 @@ test('implement-plan-lint: a fence inside an HTML comment does not swallow later
   const lines = structuralLines(['<!--', '```', '-->', '## Real'].join('\n'));
   assert.equal(lines[3]?.fenced, false);
   assert.equal(lines[3]?.text, '## Real');
+});
+
+const TASKS = `# Shared contract with consumers
+
+> **TL;DR:** consumers need one shared contract.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — isolated modules
+> **Scope:** src/
+
+## Success Criteria
+- [SC1] Contract exports the shape
+  - Changes: src/contract.ts
+  - Verify: \`node --test tests/contract.test.ts\`
+  - Evidence: verify
+  - Test rationale: pins the exported shape consumers rely on.
+- [SC2] Reader consumes the contract
+  - Changes: src/reader.ts
+  - Verify: \`node --test tests/reader.test.ts\`
+  - Evidence: verify
+  - Test rationale: covers the reader path through the contract.
+- [SC3] Writer consumes the contract
+  - Changes: src/writer.ts
+  - Verify: \`node --test tests/writer.test.ts\`
+  - Evidence: verify
+  - Test rationale: covers the writer path through the contract.
+- [SC4] Reader and writer round-trip
+  - Verify: \`node --test tests/roundtrip.test.ts\` [FINAL]
+  - Evidence: verify
+  - Integration: spans reader and writer tasks.
+  - Test rationale: proves both consumers agree on the encoding.
+
+## Proposed Changes
+
+### T1 — Define the shared contract
+Consumers share one exported shape so they cannot drift.
+- Prerequisites: none
+- Criteria: SC1
+
+#### [NEW] src/contract.ts
+- Purpose: exports the shared shape.
+
+### T2 — Read through the contract
+The reader decodes records with the shared shape.
+- Prerequisites: T1
+- Criteria: SC2
+
+#### [MODIFY] src/reader.ts
+- Changes: decode with the contract.
+
+### T3 — Write through the contract
+The writer encodes records with the shared shape and regenerates the docs.
+- Prerequisites: T1
+- Criteria: SC3
+
+#### [MODIFY] src/writer.ts
+- Changes: encode with the contract.
+#### [GENERATED] docs/contract.md
+- Command: \`npm run docs\`
+- Inputs: src/contract.ts, src/writer.ts, README.md
+
+## Verification Plan
+### Automated Tests
+- \`npm run lint\`
+`;
+
+test('task-plan: parses tasks with summary, prerequisites, criteria, owned paths, and generated inputs', () => {
+  const result = parsePlan(TASKS);
+  assert.ok(result.ok, JSON.stringify(result));
+  const { tasks } = result.plan;
+  assert.deepEqual(tasks.map((task) => [task.id, task.title, task.prerequisites, task.criteria, task.paths]), [
+    ['T1', 'Define the shared contract', [], ['SC1'], ['src/contract.ts']],
+    ['T2', 'Read through the contract', ['T1'], ['SC2'], ['src/reader.ts']],
+    ['T3', 'Write through the contract', ['T1'], ['SC3'], ['src/writer.ts', 'docs/contract.md']],
+  ]);
+  assert.equal(tasks[0]?.summary, 'Consumers share one exported shape so they cannot drift.');
+  assert.deepEqual(tasks[2]?.generated, [{ path: 'docs/contract.md', inputs: ['src/contract.ts', 'src/writer.ts', 'README.md'] }]);
+  assert.deepEqual(result.plan.changes.map((change) => change.path), ['src/contract.ts', 'src/reader.ts', 'src/writer.ts', 'docs/contract.md']);
+});
+
+test('task-plan: rejects graph defects', () => {
+  const cases: [string, string, string][] = [
+    ['untasked entry', '### T1 — Define the shared contract\nConsumers share one exported shape so they cannot drift.\n- Prerequisites: none\n- Criteria: SC1\n', 'task-ownership'],
+    ['malformed heading', '### T2 — Read', 'task-heading'],
+    ['empty summary', 'The reader decodes records with the shared shape.\n', 'task-summary'],
+    ['duplicate id', '### T3 — Write', 'duplicate-id'],
+    ['unknown prerequisite', '- Prerequisites: T1\n- Criteria: SC2', 'missing-prerequisite'],
+    ['missing prerequisites bullet', '- Prerequisites: T1\n- Criteria: SC3', 'missing-prerequisite'],
+    ['cycle', '- Prerequisites: none\n- Criteria: SC1', 'cycle'],
+  ];
+  const replacements: Record<string, string> = {
+    'untasked entry': '', 'malformed heading': '### Reader — Read', 'empty summary': '', 'duplicate id': '### T2 — Write',
+    'unknown prerequisite': '- Prerequisites: T9\n- Criteria: SC2', 'missing prerequisites bullet': '- Criteria: SC3',
+    cycle: '- Prerequisites: T2\n- Criteria: SC1',
+  };
+  for (const [name, from, code] of cases) assert.ok(defects(TASKS.replace(from, replacements[name] ?? '')).some((item) => item === code), name);
+  for (const summary of ['TBD', 'Same.']) assert.ok(defects(TASKS.replace('The reader decodes records with the shared shape.', summary)).includes('task-summary'), summary);
+});
+
+test('task-plan: rejects mapping defects', () => {
+  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: SC1')).includes('task-criteria'), 'double-mapped');
+  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: SC2, SC9')).includes('task-criteria'), 'unknown criterion');
+  assert.ok(defects(TASKS.replace('  - Integration: spans reader and writer tasks.\n', '')).includes('task-criteria'), 'unmapped criterion');
+  assert.ok(defects(TASKS.replace('- Criteria: SC2', '- Criteria: none')).includes('task-criteria'), 'task without criteria');
+  assert.ok(defects(TASKS.replace('  - Changes: src/reader.ts\n', '  - Changes: src/reader.ts, src/writer.ts\n')).includes('task-criteria'), 'foreign path');
+  assert.ok(defects(TASKS.replace('- Criteria: SC3', '- Criteria: SC3, SC4')).includes('task-criteria'), 'task-mapped integration criterion');
+  assert.ok(defects(TASKS.replace('#### [MODIFY] src/writer.ts', '#### [MODIFY] src/Reader.ts')).includes('duplicate-change-path'), 'case alias');
+});
+
+test('task-plan: generated inputs require Inputs and cover producers through prerequisites', () => {
+  assert.ok(defects(TASKS.replace('- Inputs: src/contract.ts, src/writer.ts, README.md\n', '')).includes('generated-inputs'), 'missing inputs');
+  assert.ok(defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, ../outside.md')).includes('generated-inputs'), 'invalid input');
+  assert.ok(defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts')).includes('generated-inputs'), 'producer not a prerequisite');
+});
+
+test('task-plan: derives summary and brief from the graph', () => {
+  const result = parsePlan(TASKS);
+  assert.ok(result.ok);
+  assert.deepEqual(taskExecutionSummary(result.plan.tasks), [
+    'T1 — Define the shared contract (start)',
+    'T2 — Read through the contract (after T1)',
+    'T3 — Write through the contract (after T1)',
+  ]);
+  const brief = selectTaskBrief(result.plan, 'T1');
+  assert.ok(brief);
+  assert.deepEqual(brief.changes.map((change) => change.path), ['src/contract.ts']);
+  assert.deepEqual(brief.criteria.map((criterion) => criterion.id), ['SC1']);
+  assert.deepEqual(brief.dependents.map((task) => task.id), ['T2', 'T3']);
+  assert.deepEqual(selectTaskBrief(result.plan, 'T3')?.prerequisites.map((task) => task.id), ['T1']);
+  assert.equal(selectTaskBrief(result.plan, 'T9'), null);
+});
+
+test('task-plan: case-variant generated inputs and repeated task criteria normalize', () => {
+  assert.ok(defects(TASKS.replace('src/writer.ts, README.md', 'src/writer.ts, src/Reader.ts')).includes('generated-inputs'), 'case-variant producer');
+  const result = parsePlan(TASKS.replace('- Criteria: SC2', '- criteria: sc2, `SC2`'));
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.deepEqual(result.plan.tasks[1]?.criteria, ['SC2']);
 });

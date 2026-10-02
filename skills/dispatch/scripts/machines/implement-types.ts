@@ -1,7 +1,7 @@
 // @ts-check
 
 import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
-import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand } from '../domain/types.ts';
+import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord } from './types.ts';
 
@@ -101,11 +101,30 @@ export function asParsedPlan(value: unknown): ParsedPlan | null {
     changes.push({ action: item['action'] as PlanChange['action'], path: item['path'], note: typeof item['note'] === 'string' ? item['note'] : '', command: typeof item['command'] === 'string' ? item['command'] : null, line: typeof item['line'] === 'number' ? item['line'] : index + 1 });
   }
   if (!value['verification']['automated'].every(NON_EMPTY) || !value['finalCommands'].every(NON_EMPTY)) return null;
+  // NOTE: pre-task journals lack `tasks`; rejecting them forces an explicit restart instead of a silent migration.
+  if (!Array.isArray(value['tasks'])) return null;
+  const strings = (raw: unknown): string[] | null => Array.isArray(raw) && raw.every(NON_EMPTY) ? raw : null;
+  const tasks: PlanTask[] = [];
+  for (const item of value['tasks']) {
+    if (!isRecord(item) || !NON_EMPTY(item['id']) || !Array.isArray(item['generated'])) return null;
+    const prerequisites = strings(item['prerequisites']), taskCriteria = strings(item['criteria']), paths = strings(item['paths']);
+    if (!prerequisites || !taskCriteria || !paths) return null;
+    const generated: { path: string; inputs: string[] }[] = [];
+    for (const entry of item['generated']) {
+      const inputs = isRecord(entry) ? strings(entry['inputs']) : null;
+      if (!isRecord(entry) || !NON_EMPTY(entry['path']) || !inputs) return null;
+      generated.push({ path: entry['path'], inputs });
+    }
+    tasks.push({
+      id: item['id'], title: typeof item['title'] === 'string' ? item['title'] : item['id'], summary: typeof item['summary'] === 'string' ? item['summary'] : '',
+      line: typeof item['line'] === 'number' ? item['line'] : tasks.length + 1, prerequisites, criteria: taskCriteria, paths, generated,
+    });
+  }
   return {
     title: typeof value['title'] === 'string' ? value['title'] : null,
     box: isRecord(value['box']) ? Object.fromEntries(Object.entries(value['box']).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {},
     keyDecisions: Array.isArray(value['keyDecisions']) ? value['keyDecisions'].filter((item): item is string => typeof item === 'string') : [],
-    criteria, changes,
+    criteria, tasks, changes,
     verification: {
       automated: value['verification']['automated'] as string[],
       none: typeof value['verification']['none'] === 'string' ? value['verification']['none'] : null,

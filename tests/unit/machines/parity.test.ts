@@ -54,7 +54,7 @@ const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
   criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
   changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
-  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
+  verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Example',
 });
 const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
   argument: 'x.plan.md', overrides: { path: 'x.plan.md', sessionDir: '/session', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },

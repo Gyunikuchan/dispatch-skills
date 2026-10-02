@@ -41,6 +41,8 @@ export type LintDefectCode =
   | 'missing-success-criteria' | 'success-criteria' | 'criterion-format' | 'criterion-id' | 'criterion-mapping'
   | 'criterion-change-path' | 'criterion-verify' | 'final-in-code-span' | 'criterion-evidence' | 'criterion-test-rationale'
   | 'criterion-red-exception' | 'criterion-red-test-path' | 'criterion-review' | 'criterion-critical-review'
+  // Plan tasks
+  | 'task-heading' | 'task-summary' | 'task-ownership' | 'task-criteria' | 'generated-inputs'
   // Design
   | 'missing-section' | 'missing-increment-details' | 'missing-increment-field' | 'invalid-priority' | 'duplicate-id'
   | 'missing-increments' | 'invalid-id-sequence' | 'invalid-priority-order' | 'missing-prerequisite' | 'cycle'
@@ -71,11 +73,25 @@ export type PlanCriterion = {
 
 export type PlanChange = { action: ChangeAction; path: string; note: string; command: string | null; line: number };
 
+/** One H3 task; `paths` are its owned change paths and `generated` its `[GENERATED]` inputs. */
+export type PlanTask = {
+  id: string;
+  title: string;
+  summary: string;
+  line: number;
+  prerequisites: readonly string[];
+  criteria: readonly string[];
+  paths: readonly string[];
+  generated: readonly { path: string; inputs: readonly string[] }[];
+};
+
 export type ParsedPlan = {
   title: string | null;
   box: Readonly<Record<string, string>>;
   keyDecisions: readonly string[];
   criteria: readonly PlanCriterion[];
+  /** Plan-ordered task graph; `changes` is its flattened aggregate. */
+  tasks: readonly PlanTask[];
   changes: readonly PlanChange[];
   verification: { automated: readonly string[]; none: string | null; manual: readonly string[] };
   finalCommands: readonly string[];

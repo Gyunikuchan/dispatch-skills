@@ -11,7 +11,7 @@ const RED: PlanCriterion = { id: 'SC1', title: 'Behavior works', line: 1, change
 const PLAN = {
   title: 'Feature', box: { 'TL;DR': 'Add feature' }, keyDecisions: [], criteria: [RED],
   changes: [{ action: 'MODIFY', path: 'src/feature.ts', note: 'Feature implementation', command: null, line: 1 }, { action: 'NEW', path: 'tests/feature.test.ts', note: 'Behavior tests', command: null, line: 2 }],
-  verification: { automated: ['node --test tests/all.test.ts'], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Feature',
+  verification: { automated: ['node --test tests/all.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Feature',
 };
 const run = (preExisting = false): RunStartedEvent => ({
   type: 'RUN_STARTED', verb: 'implement', argument: 'plans/feature.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false,
