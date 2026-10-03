@@ -33,6 +33,10 @@ test('root-aware strict config fixture validates sample without reading ignored 
 });
 test('machine diagrams are deterministic declared transitions written under the supplied root', () => {
   const root = tempDir(), rendered = diagram(); writeDiagram(root);
-  assert.equal(fs.readFileSync(path.join(root, 'docs/dispatch-notes.md'), 'utf8'), rendered);
-  assert.equal(diagram(), rendered); assert.match(rendered, /booting --> ask: RUN_STARTED/); assert.match(rendered, /## implement/);
+  assert.equal(fs.readFileSync(path.join(root, 'docs/state-diagrams.md'), 'utf8'), rendered);
+  assert.equal(diagram(), rendered); assert.match(rendered, /state "booting" as S\d+/); assert.match(rendered, /S\d+ --> S\d+: RUN_STARTED/); assert.match(rendered, /## implement/);
+  assert.match(rendered, /state "plan-revision" as S\d+/);
+  assert.match(rendered, /state "checking-host-event" as S\d+/);
+  const edges = rendered.split(/\r?\n/).filter((line) => line.includes('-->'));
+  assert.ok(edges.length > 0 && edges.every((line) => /^\s+S\d+ --> S\d+: [A-Z_]+$/.test(line)));
 });

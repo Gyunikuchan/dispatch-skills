@@ -61,17 +61,15 @@ tests/e2e/                 Git/subprocess flows
 
 ## Documentation Standards
 
-Classify each document by audience; keep each fact in one class:
+Classify each document or piece of prose by its primary audience and task. Keep each rule in one canonical home; other documents may explain its audience-specific effect and link to that home.
 
-- **Human documentation**: Help users understand and operate the skills.
-  - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
-  - **Dispatch documentation (`skills/dispatch/README.md` and disclosed references)**: Purpose, concepts, prerequisites, invocations, configuration, troubleshooting; cover referenced paths with path-convention guards.
-- **Agent contracts** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep contracts focused and single-source instructions. Allow added detail when it materially improves correct execution; justify increases by naming the behavior, decision, or failure mode the text addresses.
-- **Maintainer notes** (`docs/<skill>-notes.md`): Record implementation context that users and executing agents do not need; these files are not shipped.
+- **Human documentation**: Help users decide whether and how to use the skills. Include a detail when users need it to choose a skill, set it up, use it correctly, understand its results or limits, or recover from a problem. Explain purpose and concepts plainly, organize around user tasks, and use realistic examples with relevant outcomes and constraints. Treat the root and dispatch READMEs as examples of this style, not required outlines.
+- **Agent-facing prose**: Apply these rules to any prose intended for an agent, wherever it appears: contracts, prompts, templates, instructions embedded in scripts, and operational references. Direct agent decisions and actions with explicit triggers, order, boundaries, and checkable completion criteria. Include operational context or rationale when it changes execution. Keep instructions focused and single-sourced; disclose branch-specific detail. Add detail when it materially improves correct execution, naming the behavior, decision, or failure mode it addresses.
+- **Maintainer knowledge base** (`docs/`): Preserve long-term context for human and agent maintainers. These records are not operationally required; put operational requirements in `skills/dispatch/references/`.
 
 ## Authoring & Cross-Platform Standards
 
-Format skills as Markdown with YAML frontmatter (`name`, `description`). When touching agent-read prose (agent contracts or prompt/instruction strings in code), always apply `writing-for-agents` and single-source each instruction: reference, or restructure the flow around, its existing home instead of restating it.
+Format skills as Markdown with YAML frontmatter (`name`, `description`). When editing agent-facing prose, wherever it appears, apply `writing-for-agents` and single-source each instruction: reference, or restructure the flow around, its existing home instead of restating it.
 
 Portable across macOS, Windows, and Linux (zsh, bash, PowerShell), with native guidance for Antigravity, Claude Code, GitHub Copilot, OpenCode, and Codex:
 
