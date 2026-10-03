@@ -1,19 +1,143 @@
 # Dispatch
 
-Independent model perspectives with one recorded workflow: ask, design, plan, review, and implement. The host verifies findings and controls native writes while provider delegates remain read-only.
+Use Dispatch to bring independent agent perspectives into repository work without leaving your current agent environment. Your host agent checks delegates' evidence and makes the decisions; read delegates do not make production changes.
 
-Plans present meaningful task summaries followed by file changes and prerequisites. Implementation schedules ready tasks within `write-concurrency`, gives each writer an isolated worktree and focused brief, and independently checks results before accepting them. See [task execution](references/readme/concepts.md) and [implementation](references/verbs/implement.md) for evidence, recovery, and delivery boundaries.
+Dispatch can answer a focused question, help shape a design or plan, review existing work, or carry an approved change through implementation and verification.
 
-Requires Git and Node `^22.18 || >=23.6` with native TypeScript stripping. Install and authenticate the configured provider CLIs. Copy `config.sample.jsonc` to `config.local.jsonc`, select installed providers, and use `doctor` to inspect config, integrity, effective targets, sandbox support, and Node version.
+## Contents
 
-Commands below run from the repository root.
+- [How Dispatch works](#how-dispatch-works)
+- [Before you start](#before-you-start)
+- [Choose a verb](#choose-a-verb)
+- [Command pattern](#command-pattern)
+- [Common workflows](#common-workflows)
+- [Configure routing](#configure-routing)
+- [Safety and session files](#safety-and-session-files)
+- [Troubleshooting](#troubleshooting)
 
-```text
-node skills/dispatch/scripts/dispatch.ts doctor
-node skills/dispatch/scripts/dispatch.ts session init --objective "Normalize inputs"
-node skills/dispatch/scripts/dispatch.ts start plan --session-dir <returned-dir> --orchestrator codex --level low --level-source explicit -- Normalize inputs
-node skills/dispatch/scripts/dispatch.ts send --run <returned-run> --event @reply.json
-node skills/dispatch/scripts/dispatch.ts status --run <returned-run>
+## How Dispatch works
+
+Your current agent is the **host**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
+
+For implementation, Dispatch prepares a plan and applies the configured review policy before asking you to approve it. After approval, a writer native to your host platform makes changes. The host checks the results and reports the handoff.
+
+The diagram below shows the implementation path; questions and standalone reviews can finish without an approval gate.
+
+```mermaid
+flowchart LR
+    You([You]) --> Host[Your current agent]
+    Host --> Delegates[Read-only delegates]
+    Delegates --> Evidence[Findings with evidence]
+    Evidence --> Host
+    Host --> Gate{Approve the plan?}
+    Gate -->|Yes| Writer[Host-native writer]
+    Writer --> Checks[Verification and review]
+    Checks --> You
 ```
 
-Read [concepts](references/readme/concepts.md), [configuration](references/readme/configuration.md), [verbs](references/readme/verbs.md), and [troubleshooting](references/readme/troubleshooting.md). The executing host follows the [contract](.).
+## Before you start
+
+You need Node.js `^22.18 || >=23.6`, at least one supported provider CLI installed and authenticated (Claude Code, Antigravity, GitHub Copilot, OpenCode, or Codex), and an active configuration with a read delegate.
+
+For installation instructions, see the [repository README](../../README.md). Copy `config.sample.jsonc` beside the Dispatch skill as `config.local.jsonc` or `config.jsonc`, then replace example model names with ones available to you. The sample is not loaded automatically. If both files exist, `config.local.jsonc` takes precedence as a complete configuration; the files are not merged.
+
+From the repository root, check your setup with:
+
+```bash
+node skills/dispatch/scripts/dispatch.ts doctor --level high
+```
+
+Questions and reviews use `read-delegates`. Implementation also needs a `write-subagents` entry for the platform running your host agent. See [Configure Dispatch](references/readme/configuration.md).
+
+## Choose a verb
+
+| Verb | Use it when… | Result |
+|---|---|---|
+| `ask` | You have a focused repository question | Independent analysis for your host to verify |
+| `design` | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
+| `plan` | The change is one coherent unit | A plan and any reviews enabled for that level |
+| `review` | A design, plan, or code change already exists | Evidence-backed findings; fixes only when requested |
+| `implement` | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
+
+See [Choose a verb](references/readme/verbs.md) for examples and help deciding where to start.
+
+## Command pattern
+
+```text
+/dispatch [level] [(pins)] [verb:] <question, requirement, artifact, or range>
+```
+
+- **Level**: `low`, `medium`, or `high` can be selected automatically. Choose `xhigh` or `max` explicitly.
+- **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
+- **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, and `implement`.
+- **Argument**: a question, requirement, artifact path, or Git range.
+
+## Common workflows
+
+Ask a focused question:
+
+```text
+/dispatch high (all): Could concurrent refreshes issue two valid tokens?
+```
+
+Plan and deliver one change:
+
+```text
+/dispatch plan: Add idempotency keys to webhook delivery
+/dispatch review plan: <plan path returned by Dispatch>
+/dispatch implement: <approved plan path>
+```
+
+Plans present task summaries before file ownership and prerequisites. Plan review breadth depends on your configuration. Read the plan and approve its verification commands before production changes begin; request a separate review if you want another pass.
+
+Design work that needs multiple increments:
+
+```text
+/dispatch design: Migrate billing from mutable balances to a ledger
+/dispatch implement: <approved design path>
+```
+
+Review current or committed work:
+
+```text
+/dispatch review code
+/dispatch review code --fix
+/dispatch review code: main..HEAD
+```
+
+Without a range, code review covers uncommitted changes. Reviews report findings by default; `--fix` requests accepted, safe fixes followed by verification and review.
+
+## Configure routing
+
+| Setting | Controls |
+|---|---|
+| `read-delegates` | Models used for questions and reviews |
+| `write-subagents` | Native writer used by your host during implementation |
+| `phases` | Optional review breadth and round limits |
+| `write-concurrency` | Maximum number of implementation task writers running at once |
+| `diagnostics` | Optional session timing and supported usage summaries |
+
+The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.
+
+## Safety and session files
+
+- Read delegates use provider-specific read-only controls and credential stripping. Sandbox support depends on the provider; see the [provider reference](references/providers.md).
+- Production changes require your approval and use a writer configured for the host platform.
+- Dispatch runs the verification commands approved in the plan. Review fixes are checked and reviewed again.
+- Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
+- Dispatch does not commit, push, or open a pull request.
+
+See [Workspaces and results](references/readme/concepts.md) for session files and verification.
+
+## Troubleshooting
+
+| Problem | What to check |
+|---|---|
+| No delegates are available | Run `doctor`; check `read-delegates`, provider authentication, and the requested level |
+| The selected model or review breadth is unexpected | Check the active config, level, and pins |
+| Implementation cannot start | Configure `write-subagents` for the host platform and complete the plan prerequisites |
+| Code review finds no changes | Without a range, it reviews uncommitted changes; provide a Git range for committed work |
+| Verification fails | Read the reported log and follow the decision Dispatch presents |
+| A provider or sandbox fails | Follow the diagnostic and see the [provider reference](references/providers.md) |
+
+For step-by-step help, see [Troubleshooting](references/readme/troubleshooting.md).

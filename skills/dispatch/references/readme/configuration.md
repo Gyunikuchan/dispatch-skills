@@ -1,42 +1,96 @@
-# Configuration
+# Configure Dispatch
 
-Copy `config.sample.jsonc` at the skill root to `config.local.jsonc` or `config.jsonc`. The first existing candidate loads wholly, without merging; sample config is a validation reference. `read-delegates` defines provider target level maps, `write-subagents` defines native writers, and `phases` defines target breadth and round caps.
+Dispatch reads its configuration from the folder containing the skill. The sample explains the available settings but is not a default configuration.
 
-Sparse levels use the nearest defined lower level, then the lowest higher level. Pins override breadth; model/effort overrides collapse each provider to its first target. Use `doctor --json` to inspect effective membership, order, resolution, writers, config errors, and predicted sandbox support. See [providers](../providers.md) for explicit sandbox opt-outs and native mapping.
+## Set up a configuration
 
+Copy `config.sample.jsonc` to `config.local.jsonc` or `config.jsonc`, then remove providers you do not use and replace the example model names with identifiers accepted by their CLIs.
 
-## Current controls
+If both files exist, `config.local.jsonc` is used on its own; settings are not merged. Keep machine-specific settings in the local file.
+
+| Setting | Needed for | What it controls |
+|---|---|---|
+| `read-delegates` | Questions and reviews | Provider targets and their model choices |
+| `write-subagents` | Implementation | Native writer models available to each host platform |
+| `phases` | Optional | Review target counts, rounds, consensus, and provider filters |
+| `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
+| `diagnostics` | Optional | Session timing and supported provider-usage summaries |
+
+The `write-concurrency` value must be a positive safe integer; omission defaults to one.
+
+For example, a Codex host can use one configured read target and a native writer:
 
 ```jsonc
 {
   "read-delegates": {
-    "claude": { "sandbox": false, "targets": [{ "low": { "model": "sonnet" }, "high": { "model": ["opus", "sonnet"] } }] },
-    "codex": { "nativeSubagentsOnly": true, "targets": [{ "low": { "model": "configured-native-model" } }] }
+    "codex": {
+      "targets": [
+        { "low": { "model": "your-read-model" } }
+      ]
+    }
   },
-  "write-subagents": { "claude": { "low": { "model": "sonnet" } } },
-  "phases": { "plan-review": { "rounds": { "low": 1 }, "targets": { "low": 1 } }, "code-review": { "rounds": { "low": 2 }, "targets": { "low": 1 } } }
+  "write-subagents": {
+    "codex": {
+      "low": { "model": "your-writer-model" }
+    }
+  }
 }
 ```
 
-Each target is one voice; its model array is a failure cascade for that voice. `nativeSubagentsOnly` requires a matching orchestrator platform. Writers resolve from the orchestrator's `write-subagents` level map. A configured phase with zero rounds or targets is disabled; missing phase policy defaults to one reviewer and one round. Pins override breadth, and model/effort overrides select the first target per provider. Doctor reports configured, filtered and resolved membership without launching delegates.
+Replace the provider and model names with choices available in your environment. You can configure several providers or targets, but start small and add more when you need additional perspectives.
 
-`"write-concurrency": 2` sets the maximum active task writers. It must be a positive safe integer; omission defaults to one. Configure it within the host's actual native capacity: the cap is an admission ceiling, not a capacity probe. Every task uses the same isolated execution and acceptance path at one or higher values. See [task execution](concepts.md); writer selection remains the orchestrator's `write-subagents` mapping.
+## Understand levels and pins
 
-OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obtains merged native config sources and effective agents with bounded introspection. It selects a verified default-deny read-only agent; unavailable permissions fail as `read-only-agent-unavailable`. Unverifiable remote/managed sources fail as `effective-config-unverified`. Inline config is not propagated implicitly. Local selected-model endpoints receive a bounded model preflight, shared GPU lease and proxy trap; remote endpoints skip local preparation. Native Antigravity modes select their authenticated profile through `JETSKI_APP_DATA_DIR`.
+Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The level determines which configured model choices and review policy apply. If a target has no exact match, Dispatch uses its nearest configured lower level; when none exists, it uses the lowest configured higher level. Missing fields are not copied between level entries.
 
-## Operational boundaries
+Pins affect one invocation:
 
-Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes.
+| Pin | Effect |
+|---|---|
+| `(claude,agy)` | Use eligible targets from those providers |
+| `(3)` | Select three eligible targets |
+| `(all)` | Select every eligible configured target |
 
-Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Sessions remain in the workspace under `.scratch/dispatch-skills/` for the user to clean up. Journals require protocol revision 3. Other revisions fail `unsupported-journal-protocol`; preserve their artifacts and start a new run.
+Each entry in a provider's `targets` list is a separate voice. A model array inside one target is a fallback list for that voice, not extra reviewers.
 
-Older implementation journals without task records and plans without task ownership require explicit reauthor/restart; they are not silently migrated. Preserve their artifacts before restarting.
+## Set review breadth
 
-Sandbox failure is strict. An explicit `sandbox:false` opts out of OS isolation while native read-only tool controls remain. Ambient credential stripping and sensitive attachment checks do not isolate native authenticated profiles or enforce file-read permissions by themselves.
-# Optional diagnostics and live model refresh
+The optional `phases` setting controls how many independent targets review a change and how many review rounds they can take. The `plan-review` policy is used for both design and plan reviews; `code-review` controls code reviews. Without a policy, standalone reviews use one target and one round.
 
-Set `"diagnostics": true` in the effective config to collect bounded session diagnostics. Omitted/false is disabled. The first existing config file wins as a whole; local files are never merged with the sample. Changes take effect at the next mutating `send`; existing workers retain their launch setting. Turning diagnostics off preserves collected records and the report, removes future diagnostic instructions, and suppresses the handoff link. Re-enabling records the intervening gap.
+Start with the sample's defaults. Increase breadth or rounds when the work needs more scrutiny, and keep review settings proportional to the change.
 
-Model/effort edits require `send --run <dir> --refresh-config`. This records future defaults independently of diagnostics; already-issued waves and native/writer descriptors retain their bindings. Explicit start model/effort overrides still win. Provider topology, level keys, phase policies and sandbox changes require a new run.
+## Check your setup
 
-Use `--refresh-config --dry-run` for read-only validation. Combining refresh with `--event` is rejected, including with `--dry-run`. No-op refresh records no update; terminal runs reject refresh. `status` and dry-run never refresh diagnostic reports.
+From the Dispatch skill folder, run:
+
+```bash
+node scripts/dispatch.ts doctor --level high
+```
+
+Use `--json` for structured output. Doctor reports configuration problems, resolved targets and order, writer availability, and predicted sandbox support without launching delegates.
+
+If an implementation cannot start, check that `write-subagents` includes the host platform. A read delegate is not a substitute for a native writer.
+
+## Sandboxing and provider details
+
+Dispatch requests OS sandboxing by default for providers that support it. Sandbox behavior varies by platform. If Doctor or a run reports an unsupported sandbox, follow the provider-specific diagnostic before changing the setting. The explicit opt-out is `sandbox:false`; other read-only controls may still apply, but do not provide the same boundary.
+
+For provider-specific sandbox behavior and host mappings, see the [provider reference](../providers.md). For installation requirements and supported providers, see the [repository README](../../../../README.md).
+
+## Optional settings
+
+- Set `"write-concurrency"` above `1` only when your host can support that many native writers. It is an admission limit, not a capacity check.
+- Set `"diagnostics": true` to create a shareable `diagnostics.md` with timing and supported usage summaries. It is not uploaded automatically; review it before sharing. Coverage is partial when a provider or execution surface does not report usage.
+
+## Older sessions and provider-specific settings
+
+Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. If an older run reports `unsupported-journal-protocol`, preserve its folder and start a new run. Older implementation journals without task records and plans without task ownership require explicit reauthor/restart; automatic migration is not available.
+
+<details>
+<summary>Advanced provider settings</summary>
+
+- `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when the host matches. On other hosts, those targets are skipped.
+- OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
+- For provider-specific sandbox behavior and host mappings, see the [provider reference](../providers.md).
+
+</details>

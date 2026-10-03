@@ -1,26 +1,44 @@
-# Concepts
+# Workspaces and results
 
-The journal records host replies and automatic effect results. Replaying it reconstructs the same machine state; `status` shows progress and worker claims without mutating it. Eight awaits identify the judgment the host must provide. Bulk prompts and artifacts live in files, so frames stay compact.
+Dispatch keeps independent review and implementation inside your current agent workflow. Your host agent remains responsible for checking evidence, making rulings, and reporting the result.
 
-One artifact folder belongs to one chat. First initialization fixes its title; terminal handoff retains the folder in the workspace. Reactivation reuses that same identity for later work. See [usage](../../README.md).
+## Who does what
 
-## Task execution
+- **Read delegates** inspect the repository and return analysis or review findings. They use provider-specific read-only controls.
+- **Your host agent** compares those claims with the code, repository instructions, and your goal. It accepts, rejects, or narrows findings with reasons.
+- **A native writer** makes production changes only after you approve the plan. The writer is configured for the platform running your host.
 
-A plan groups file changes under task outcomes, with stable IDs, prerequisites, and criterion mappings. File entries define ownership; shared-file edits belong to one task. Shared interfaces become prerequisite tasks. Generated outputs belong to a task whose prerequisites cover their input producers; cross-task criteria use the template's Integration mapping. The graph yields a compact execution summary rather than fixed waves.
+This keeps independent review useful while leaving decisions and production changes under your control.
 
-Tasks are pending, running, submitted, accepted, or failed. Readiness requires accepted prerequisites. Plan order breaks admission ties and `write-concurrency` caps active writers; cap one uses the same isolated path. Candidates are checked serially while unrelated writers retain their handles. The host must respect available native capacity and preserve the frame's task/handle identities.
+## What happens during implementation
 
-Private execution inputs reproduce tracked dirt, required untracked files, ignored configuration, and dependency availability without committing to the caller branch. Each ready task starts from an integrated revision containing accepted prerequisites. A focused brief carries task ownership, overall graph, prerequisite revisions, criteria, approval, receipt schema/path, and the full governed plan path/hash.
+1. The plan lists the outcomes, files, prerequisites, and verification steps for the change.
+2. After approval, Dispatch works through tasks whose prerequisites are ready. Independent tasks can run at the same time when `write-concurrency` is configured above one.
+3. The host checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
+4. Dispatch reports the outcome and links the artifacts and logs you may need for follow-up.
 
-For unwaived RED criteria, the writer's continuous development loop records tests before production; acceptance independently replays its RED checkpoint at the input revision, rejects setup-only failures, and checks immutable submitted tests. Every task receives scope and GREEN checks, integration of its owned delta, and affected contract checks. An independent candidate from an older baseline can be integrated without replacing the whole tree. Evidence binds the revision it checked; later mutations require final verification.
+The default concurrency is one. Increasing it lets independent tasks overlap, but should match the capacity of your host platform.
 
-A failed task blocks descendants while independent branches continue. Recovery through `status` and `send` replays retained handles, candidate revisions, and integration records; the host reconnects to its native writers instead of launching duplicates. Quiesce live writers before revising governing inputs. Failed worktrees and receipts remain available for the emitted retry/revise/stop decision.
+When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host decide what can proceed independently.
 
-Caller drift on transferred paths blocks delivery. Interrupted transfer recognizes already-delivered contents and transfers the remaining delta while preserving unrelated dirt. The current delivery, cleanup, final review, regeneration, and gate order—and its limits—are specified in [implementation](../verbs/implement.md).
-# Session diagnostics
+After a task finishes, the host checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
 
-Enabled diagnostics produces one shareable `diagnostics.md` in the owning session folder, with preserved per-run histories and major-phase summaries. The final frame links to the report when it exists. Share the file by copying or attaching it; no upload is performed.
+## Session folder
 
-Elapsed time includes unclassified gaps; invocation work sums measured durations and can exceed elapsed time when delegates overlap. Parent phases show inclusive and exclusive time. Token figures are provider-scoped covered subtotals; unsupported, truncated, resumed and native surfaces remain unavailable. Codex input includes cached input, while Claude main-loop input and cache counters are disjoint. Failed calls can consume tokens. Actual reported models remain separate from configured aliases.
+Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. It holds that chat's plans, designs, handoff notes, and supporting run files. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
 
-Host observations are optional metadata on existing replies. Proposed improvements are unverified suggestions and never change workflow decisions, findings, approvals or gates. Unknown free text is withheld unless it matches dispatch-owned instruction excerpts.
+Keep the folder while work is active or may resume. The handoff provides its path so you can inspect the saved artifacts.
+
+## What Dispatch verifies
+
+Verification follows the plan you approved. Dispatch records evidence for the plan's criteria, checks submitted changes, and runs a final review before reporting completed delivery. If a required check fails or a decision is still open, the handoff names that state rather than presenting the work as complete.
+
+Dispatch does not commit, push, or open a pull request. You decide when and how to publish the resulting changes.
+
+## Optional session diagnostics
+
+When enabled in configuration, Dispatch writes a `diagnostics.md` report in the session folder. It summarizes measured time and usage counters reported by supported provider CLIs. Some providers, native-agent surfaces, and resumed work do not expose usage, so totals may be partial; unavailable values are not counted as zero.
+
+Diagnostics stay in the session folder and are not uploaded automatically. Review the report before sharing it.
+
+See [Troubleshooting](troubleshooting.md) for interrupted runs, failed checks, and incomplete diagnostics.

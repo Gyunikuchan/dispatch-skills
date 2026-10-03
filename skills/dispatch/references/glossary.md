@@ -8,6 +8,6 @@
 | await | Closed host judgment boundary emitted in a frame | |
 | criterion | Checkable governing outcome | |
 | journal | Append-only authority for replay | |
-| handoff | Whole chat artifact folder published to OS temp | |
+| handoff | Final result and the chat's session-folder path under workspace `.scratch/dispatch-skills/` | |
 
 Operational meanings follow [the contract](..).

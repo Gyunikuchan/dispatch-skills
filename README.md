@@ -97,9 +97,9 @@ node skills/dispatch/scripts/dispatch.ts doctor --level high
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
-> OS sandboxing fails closed when unavailable. `doctor` reports unsupported sandboxes; set `sandbox: false` in the local config only for providers you intend to run without isolation. Read-only controls remain in place. Use WSL2 for Claude's sandbox on Windows. Antigravity uses plan mode as its write boundary.
+> Dispatch requests OS sandboxing by default where a provider supports it. A provider that cannot honor the request reports `sandbox-unsupported`; use `doctor` and the [provider reference](skills/dispatch/references/providers.md) to investigate. Setting `sandbox: false` is an explicit opt-out from OS isolation for that provider. Read-only controls vary by provider. Antigravity uses plan mode as its write boundary.
 
-See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the config tables, levels, sandboxing, and CLI flags.
+See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch user guide, workflow choices, configuration, and troubleshooting.
 
 ## Skills
 
