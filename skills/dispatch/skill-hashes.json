@@ -1,5 +1,5 @@
 {
-  "SKILL.md": "e6d1dec6e72d39cb937e9acf5fdc26ba47dfd66109f5c668f357559c6f38f56a",
+  "SKILL.md": "cc4d836bc6a2255dcaa828a47425a6a5b1279b78b9e10c00a72f784b3aa2f42a",
   "references/diagnostics.md": "700877b6f8ff1ba0b0561832ec75d7a59cdd02ce0543ddb8ccf858647afa5bd4",
   "references/glossary.md": "157e1842cb3f6b848e6507c5e11af03e9289d262d5085cfab5b4566b40d3a3d5",
   "references/native-model-mappings.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
@@ -20,7 +20,7 @@
   "references/templates/schemas/report-plan.json": "905f9591ed764866bff83bb923dd8453c14c1181ffa26b160d4a18f2c46dda1b",
   "references/templates/walkthrough.md": "d05288b7e4f70ed800f1086190e95cacbcdd2a1ffd55aa2ab942539c5f0cc211",
   "references/templates/write-brief-hotfix.md": "b6bfb82aa8d1a968ac38fc13f66e93c53eb220da593326be6edd1b707a82beba",
-  "references/templates/write-brief-task.md": "a64f500e2dd00c40d94848a159cce2515559627b43f93c36da02b0ceffba8e24",
+  "references/templates/write-brief-task.md": "cf1319ee518e01221d302057acbe71fcc8f2d3535bc85ea1c397aef6faaa3ed9",
   "references/templates/write-brief.md": "c137f229eec93be99b7f4e06b7aec81b16989333726960ed142c0ca01569d765",
   "references/verbs/ask.md": "1594fe56bd99bc75a46ba9454c34811d9d829a7233ff4de3a9b7b5b78444d611",
   "references/verbs/design.md": "c124145a123ba67d9faa8a393c252ef7a6c755fca9252c387ed31fffa64dba41",

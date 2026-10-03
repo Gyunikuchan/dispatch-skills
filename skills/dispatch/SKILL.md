@@ -44,7 +44,7 @@ Inspect the driver's command summary and logs; do not rerun already emitted gate
 
 ## Await decide
 
-Answer the named `data.kind` using a listed option and its branch context. Production approval requires the user's actual quote, `{by:"user",quote:"..."}`. Escalate unresolved intent, concerns, drift, and failures to the user when required; recorded decisions cannot be invented. Reply `DECISION` with `kind` and `answer`.
+Answer `data.kind` with a listed option and its branch context. Production approval and manual completion require the user's quote, `{by:"user",quote:"..."}`. Rule code- and plan-verified concerns and RED exceptions as `by:"orchestrator"` with evidence; escalate the rest, intent changes, drift, and failures to the user. Never invent recorded decisions. Reply `DECISION` with `kind` and `answer`.
 
 ## Await done
 
@@ -54,4 +54,4 @@ Report outcome, behavior, verification, concerns, and frame-provided artifact li
 
 The driver owns journals, prompts, briefs, reports, and resolution sections. Host author/fix writes and native writers follow the frame's permission. Provider CLIs remain read-only. Preserve unrelated dirty and ignored files.
 
-The journal is authoritative. After interruption run `status --run <dir>` to inspect progress and live worker claims, then `send --run <dir>` to replay and reattach. `send --dry-run` validates the proposed host event without locks, journal writes, rendering, or effects. Invalid host events reprint a frame with `error`; correct that event. Exit 1 is usage, 2 is an engine fault, 3 names the lock holder. A live lock requires waiting; recovery breaks only stale dead-process locks.
+The journal is authoritative. After interruption run `status --run <dir>` to inspect progress and live worker claims, then `send --run <dir>` to replay and reattach. `send --dry-run` validates a host event without side effects. Invalid host events reprint a frame with `error`; correct that event. Exit 1 is usage, 2 is an engine fault, 3 names the lock holder. Wait on live locks; recovery breaks only dead-process locks.
