@@ -4,16 +4,15 @@ Agent skills for cross-agent CLI delegation and review. Single source of truth f
 
 ## Product North Star & Core Pillars
 
-Deliver high-confidence collaborative development workflows across native agent harnesses, catching flawed assumptions before they become code — with minimal token overhead and zero human babysitting.
+The `dispatch` skill should facilitate high-confidence development across native agent harnesses, catching flawed assumptions early and reducing the total cost and time of verified delivery with minimal routine human coordination. These pillars guide development of `dispatch` and its companion aliases.
 
-- **Trade-offs (Correctness > Token Efficiency > Speed)**: Prioritize correctness over token efficiency over execution speed. Verify claims instead of guessing; optimize context hygiene and token density before speed.
-- **Native Harness Collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs between them.
-- **Low steady-state load:** Keep always-loaded contracts lean: prefer deterministic scripts and disclosed references over recurring prose; emit mode- or state-specific instructions at branch points rather than documenting every branch up front; add behavioral rules when evidence shows they change outcomes.
-- **Claims, Not Verdicts**: Delegates report raw claims; orchestrators verify claims against actual code. Evidence over votes: accept verified findings regardless of delegate count; reject unverified findings even if unanimous.
-- **Structural Least Privilege**: Delegate invocations are structurally read-only (read-only flags and tools; see `skills/dispatch/references/providers.md`). Reserve file writes and destructive actions for orchestrators or native subagents; Runner harnesses sanitize outputs.
-- **Context Hygiene & Token Density**: Stream execution traces and logs out-of-context to the session scratch directory. Pass concise syntheses, banners, and log paths to orchestrators; record findings into artifacts. Progressive disclosure protects context.
-- **Autonomous One-Shot Reliability**: Checkable completion bounds, deterministic review loops, and structured adjudication converge on clean consensus without human intervention.
-- **Host Neutrality & Composability**: Make zero assumptions about the host repository. Delegates read workspace rules, falling back to industry best practices. Skills maintain strict downward independence and work standalone or composed. Shared conventions (`skills/dispatch/references/review-rules.md`) govern only review flows; host conventions always win, and skills never write conventions into host repos.
+- **Proportional assurance:** Balance correctness, token efficiency, and speed against task risk and required confidence. Preserve acceptance and safety boundaries; choose the simplest, least costly workflow that satisfies them.
+- **Native collaboration:** Preserve each platform's native reasoning loop and permitted tools; standardize routing, evidence, and handoffs.
+- **Evidence and intent:** Treat delegate findings as claims. Verify them against governing intent, repository rules, and actual artifacts; use evidence to resolve findings rather than vote counts.
+- **Lean context:** Keep always-loaded contracts and initial briefs focused. Disclose detail when needed; retain logs and evidence in artifacts reached by pointer. Prefer deterministic enforcement over recurring prose.
+- **Structural least privilege:** Keep provider delegates read-only and native writes explicitly scoped; see `skills/dispatch/references/providers.md`. Independently check submitted changes before acceptance.
+- **Recoverable autonomy:** Automate routine progress within approved scope. Preserve work and durable evidence; recover without duplicate effects and escalate unresolved blockers or intent decisions.
+- **Simple, portable composition:** Respect host conventions and maintain clear ownership and downward independence. Prefer one coherent execution path over additional coordination machinery. Shared review conventions live in `skills/dispatch/references/review-rules.md`; skills remain standalone or composable without writing conventions into host repositories.
 
 ## Communication
 
