@@ -43,7 +43,7 @@
   "scripts/domain/diagnostics.ts": "a5303e5aeb65aa98695e79baf1d39fa9b3ff6dfc15849c04fc627807527ecf00",
   "scripts/domain/execution-config.ts": "67be3452d87b1eea98f04784db507d27c08634ca8db6c362201f7cbf4d869173",
   "scripts/domain/fix-clustering.ts": "338f008fac801c0985406aca183354a7ad4cd37c4d93ef80206064a011934a3d",
-  "scripts/domain/plan.ts": "ab849bf6c0dc50c3f04ebe5c9c7ae082bab4cd412487f6b52e63332c20d0e6e4",
+  "scripts/domain/plan.ts": "d2b5503f45285dc59169f9f46d7d70f08f60d7c3ad03225c8a41dc88e1120577",
   "scripts/domain/prompt.ts": "981e0e2ac936a7fa33ef4178fa69253269a6c34a1c94ef3c823213f2f83eb5a9",
   "scripts/domain/render.ts": "f584b075e4b2a7f88efe8147f461955f94f62c85b019e9de037837a75f01cf4b",
   "scripts/domain/report.ts": "b9c14db374666003419add46dd0d7f76c1d902a2c9503d51ce9b0de7d61f1936",

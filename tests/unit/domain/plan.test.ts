@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { governedPlanText, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
 const PLAN = `# Add retry budget
 
@@ -264,4 +265,19 @@ test('task-plan: case-variant generated inputs and repeated task criteria normal
   const result = parsePlan(TASKS.replace('- Criteria: SC2', '- criteria: sc2, `SC2`'));
   assert.ok(result.ok, JSON.stringify(result));
   assert.deepEqual(result.plan.tasks[1]?.criteria, ['SC2']);
+});
+
+test('task-plan: empty prerequisite values and deleted generated inputs are rejected', () => {
+  for (const value of ['', ', ,']) assert.ok(defects(TASKS.replace('- Prerequisites: T1\n- Criteria: SC2', `- Prerequisites: ${value}\n- Criteria: SC2`)).includes('missing-prerequisite'), JSON.stringify(value));
+  const deleted = TASKS.replace('#### [MODIFY] src/reader.ts', '#### [DELETE] src/reader.ts').replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts').replace('- Prerequisites: T1\n- Criteria: SC3', '- Prerequisites: T1, T2\n- Criteria: SC3');
+  assert.ok(defects(deleted).includes('generated-inputs'));
+});
+
+test('task-plan: the journal boundary preserves the task graph and rejects pre-task payloads', () => {
+  const result = parsePlan(TASKS);
+  assert.ok(result.ok);
+  const payload = JSON.parse(JSON.stringify(result.plan)) as Record<string, unknown>;
+  assert.deepEqual(asParsedPlan(payload)?.tasks, result.plan.tasks);
+  const { tasks: _tasks, ...legacy } = payload;
+  assert.equal(asParsedPlan(legacy), null);
 });

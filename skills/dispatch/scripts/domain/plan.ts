@@ -295,7 +295,7 @@ export function parsePlan(source: string, options: PlanOptions = {}): PlanResult
   const { changes, tasks } = parseChanges(lines, out);
   const verification = parseVerification(lines, out);
   const criteria = parseCriteria(lines, changes, out);
-  lintTasks(tasks, criteria, out);
+  lintTasks(tasks, changes, criteria, out);
   lintAutomatedDuplicates(verification.automated, criteria, lines, out);
   lintNotes(lines, out);
   for (const entry of lines) {
@@ -424,6 +424,7 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, summary: string[
     const ids = /^none$/i.test(field[2] ?? '') ? [] : [...new Set((field[2] ?? '').split(',').map((item) => item.replace(/`/g, '').trim().toUpperCase()).filter(Boolean))];
     if (field[1].toLowerCase() === 'prerequisites') {
       if (task.prerequisitesLine !== null) out.push(lint('missing-prerequisite', entry.line, `Task ${task.id} requires exactly one Prerequisites bullet.`));
+      if (!ids.length && !/^none$/i.test(field[2] ?? '')) out.push(lint('missing-prerequisite', entry.line, `Task ${task.id} Prerequisites must be none or task IDs.`));
       task.prerequisites = ids; task.prerequisitesLine = entry.line;
     } else {
       if (task.criteriaLine !== null) out.push(lint('task-criteria', entry.line, `Task ${task.id} requires exactly one Criteria bullet.`));
@@ -610,7 +611,7 @@ function finishCriterion(current: Criterion, out: LintDefect[]): void {
 
 // SECTION: Task graph
 
-function lintTasks(tasks: readonly DraftTask[], criteria: readonly Criterion[], out: LintDefect[]): void {
+function lintTasks(tasks: readonly DraftTask[], changes: readonly PlanChange[], criteria: readonly Criterion[], out: LintDefect[]): void {
   const byId = new Map<string, DraftTask>();
   for (const task of tasks) {
     if (byId.has(task.id)) out.push(lint('duplicate-id', task.line, `Duplicate task ${task.id}.`));
@@ -630,6 +631,10 @@ function lintTasks(tasks: readonly DraftTask[], criteria: readonly Criterion[], 
   for (const task of tasks) {
     for (const { path, inputs } of task.generated) {
       for (const input of inputs) {
+        if (changes.some((change) => change.action === 'DELETE' && change.path.toLowerCase() === input.toLowerCase())) {
+          out.push(lint('generated-inputs', task.line, `Task ${task.id} generates ${path} from ${input}, which the plan deletes.`));
+          continue;
+        }
         // An input no task owns is a pre-existing file; a self-owned input needs no ordering.
         const producer = tasks.find((other) => other.paths.some((owned) => owned.toLowerCase() === input.toLowerCase()));
         if (producer && producer.id !== task.id && !ancestors.get(task.id)?.has(producer.id)) {
