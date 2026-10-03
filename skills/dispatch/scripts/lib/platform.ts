@@ -6,7 +6,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 export type ProviderKey = 'claude' | 'agy' | 'copilot' | 'opencode' | 'codex';
-export const PROVIDER_KEYS: readonly ProviderKey[] = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
 
 export type OsId = 'win32' | 'darwin' | 'linux';
 

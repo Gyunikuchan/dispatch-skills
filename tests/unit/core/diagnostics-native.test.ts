@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
+import { phaseFixture } from './fixtures/diagnostics.ts';
 test('SC2: repeated native review rounds count distinct captures without replay recounting', async () => {
   const f = phaseFixture('review', 2);
   const options = { ...f.options, handlers: { ...f.options.handlers,

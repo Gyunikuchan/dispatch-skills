@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import type { Effect, ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { createWriteBrief } from '../../../skills/dispatch/scripts/effects/write-brief.ts';
 import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';

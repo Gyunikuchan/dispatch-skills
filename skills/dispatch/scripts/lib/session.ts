@@ -3,7 +3,6 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 export const MANIFEST = 'manifest.json';
@@ -100,7 +99,6 @@ function ensureDir(dir: string): string {
 }
 
 export const workspaceSessionRoot = (repositoryRoot: string): string => ensureDir(path.join(fs.realpathSync(repositoryRoot), '.scratch', 'dispatch-skills'));
-export const publishedSessionRoot = (tempRoot: string = os.tmpdir()): string => path.join(fs.realpathSync(tempRoot), 'dispatch-skills');
 
 export function readManifest(dir: string): Manifest {
   const file = path.join(dir, MANIFEST);
@@ -200,65 +198,6 @@ function waitForClaim(root: string, sessionId: string, repo: string, claim: stri
     if (Date.now() >= deadline) throw new Error(`Session initialization is still claimed at ${claim}; inspect the path and retry.`);
     Atomics.wait(pause, 0, 0, 10);
   }
-}
-
-/** Relative path, type, size, and content hash of every entry, sorted; equal snapshots mean a verified copy. */
-function treeSnapshot(dir: string): string {
-  const rows: string[] = [];
-  const walk = (current: string, rel: string): void => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const full = path.join(current, entry.name);
-      const child = rel ? `${rel}/${entry.name}` : entry.name;
-      // The manifest differs by lifecycle state (location, lastUsedAt) between the two copies.
-      if (child === MANIFEST) continue;
-      // A moved symlink can change or break its target, so sessions reject them.
-      if (entry.isSymbolicLink()) throw new Error(`Session contains a symbolic link: ${full}`);
-      if (entry.isDirectory()) { rows.push(`d ${child}`); walk(full, child); }
-      else rows.push(`f ${child} ${crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex')}`);
-    }
-  };
-  walk(dir, '');
-  return rows.join('\n');
-}
-
-// NOTE: workspace and temp roots may sit on different filesystems (tmpfs, other drive), where rename throws EXDEV.
-const FALLBACK_MOVE_CODES = new Set(['EXDEV']);
-
-export type Rename = (from: string, to: string) => void;
-
-function move(source: string, destinationRoot: string, location: 'workspace' | 'published', rename: Rename = fs.renameSync): string {
-  const manifest = readManifest(source);
-  const destination = path.join(ensureDir(destinationRoot), path.basename(source));
-  if (fs.existsSync(destination)) {
-    // An interrupted cross-device move committed the destination but left the source: finish it when identical.
-    if (treeSnapshot(source) !== treeSnapshot(destination)) throw new Error(`Session move collision has conflicting contents: ${source} and ${destination}`);
-    fs.rmSync(source, { recursive: true, force: true });
-    writeManifest(destination, { ...manifest, location });
-    return fs.realpathSync(destination);
-  }
-  writeManifest(source, { ...manifest, location: `moving-to-${location}` });
-  try {
-    rename(source, destination);
-  } catch (error) {
-    if (!FALLBACK_MOVE_CODES.has(String((error as { code?: unknown }).code))) throw error;
-    const stage = path.join(path.dirname(destination), `.${path.basename(destination)}.stage-${crypto.randomUUID()}`);
-    try {
-      fs.cpSync(source, stage, { recursive: true, errorOnExist: true, force: false });
-      if (treeSnapshot(source) !== treeSnapshot(stage)) throw new Error(`Session copy verification failed: ${stage}`);
-      fs.renameSync(stage, destination);
-    } catch (copyError) {
-      fs.rmSync(stage, { recursive: true, force: true });
-      throw copyError;
-    }
-    fs.rmSync(source, { recursive: true, force: true });
-  }
-  writeManifest(destination, { ...manifest, location });
-  return fs.realpathSync(destination);
-}
-
-/** Retains a workspace session in place; no OS temp migration is performed. */
-export function handoffSession(sessionDir: string): string {
-  return fs.realpathSync(sessionDir);
 }
 
 /** Validates that a session belongs to the repository workspace root and sits under `.scratch/dispatch-skills`. */

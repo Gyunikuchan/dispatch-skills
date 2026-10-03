@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { deliverTasks, phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
+import { deliverTasks, phaseFixture } from './fixtures/diagnostics.ts';
 let completedTranscript: Promise<ReturnType<typeof phaseFixture>> | undefined;
 function implementationTranscript() {
   return completedTranscript ??= (async () => {

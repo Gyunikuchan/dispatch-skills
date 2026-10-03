@@ -7,7 +7,6 @@ import type { OsId } from '../lib/platform.ts';
 import type { DelegateRequest, Launch, LaunchRequest, ModeId, PlatformEnv, PreparePorts, ProcessPort, ProcessResult, ProviderSpec, RunOutcome } from './types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 1800 * 1000;
-export const DEFAULT_OUTPUT_CAP_BYTES = 10 * 1024 * 1024;
 export const MAX_ATTACHMENT_BYTES_PER_FILE = 512 * 1024;
 export const MAX_ATTACHMENT_BYTES_TOTAL = 2 * 1024 * 1024;
 export const KILL_ESCALATION_MS = 1000;

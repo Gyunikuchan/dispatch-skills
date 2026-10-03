@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import { stepDesign, selectReady, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { validateDesignTraceability } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { approval, hash, design } from './design.test.ts';

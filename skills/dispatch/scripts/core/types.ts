@@ -1,4 +1,4 @@
-// Run types shared by every layer. Value-free except `assertNever`; imports nothing (dependency guard).
+// Run types shared by every layer. Value-free; imports nothing (dependency guard).
 
 // SECTION: Closed unions
 
@@ -26,10 +26,6 @@ export type FailureClass =
 
 export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type Level = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
-export function assertNever(value: never, what = 'value'): never {
-  throw new Error(`unhandled ${what}: ${JSON.stringify(value)}`);
-}
 
 // SECTION: Payload types
 

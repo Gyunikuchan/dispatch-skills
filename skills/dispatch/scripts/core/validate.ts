@@ -1,6 +1,6 @@
 // Host-event validation: shape guards plus await acceptance (spec §4.5, §5.2). Dependency-free.
 
-import type { Await, HostEvent, HostEventType, ExecutionConfigUpdated } from './types.ts';
+import type { Await, HostEvent, HostEventType } from './types.ts';
 import { validateConfig } from '../lib/config.ts';
 
 export function validateExecutionUpdate(value: unknown): string | null {
@@ -46,7 +46,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export const str: Validator<string> = (value, at) => typeof value === 'string' && value.length > 0 ? ok(value) : fail(at, 'non-empty string', value);
 export const num: Validator<number> = (value, at) => typeof value === 'number' && Number.isFinite(value) ? ok(value) : fail(at, 'number', value);
-export const bool: Validator<boolean> = (value, at) => typeof value === 'boolean' ? ok(value) : fail(at, 'boolean', value);
 export const any: Validator<unknown> = (value) => ok(value);
 
 export function lit<const T extends string | number | boolean>(...values: readonly T[]): Validator<T> {

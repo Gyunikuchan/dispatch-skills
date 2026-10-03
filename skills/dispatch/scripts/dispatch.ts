@@ -22,7 +22,7 @@ import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.t
 import { checkIntegrity, hashFile, integrityDiagnostic } from './lib/integrity.ts';
 import { nodeLinkFs } from './lib/node-fs-ext.ts';
 import { currentPlatform, detectOrchestrator } from './lib/platform.ts';
-import { canonicalRepositoryRoot, createRun, findRepoRoot, handoffSession, initializeSession, platformSessionId, reactivateSession, readManifest, restoreSessionPaths, storeSessionPaths } from './lib/session.ts';
+import { createRun, findRepoRoot, initializeSession, platformSessionId, reactivateSession, readManifest } from './lib/session.ts';
 import { LEVELS, normalizeProvider, parsePins, resolveLevel, resolveRoster, selectLevel, type LevelMap, type ReadDelegate } from './policy/roster.ts';
 import { createDiscovery } from './providers/discovery.ts';
 import { SPECS, isProviderId } from './providers/index.ts';

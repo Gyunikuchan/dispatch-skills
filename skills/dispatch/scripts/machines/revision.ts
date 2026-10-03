@@ -1,4 +1,4 @@
-import type { Await, Event, HostEvent, Machine, TreeFingerprint } from '../core/types.ts';
+import type { Await, Event, HostEvent, TreeFingerprint } from '../core/types.ts';
 import type { ParsedPlan, PlanCriterion } from '../domain/types.ts';
 import type { Context, ImplementState } from './implement.ts';
 import { invalidatesIntegration, reconcileTasks } from './implement-tasks.ts';
@@ -36,7 +36,6 @@ export function beginRevision(parent: ImplementState, event: Extract<HostEvent, 
   const workingPath = `${session.replace(/[\\/]+$/, '')}/revision-${c.revisions.length + 1}.plan.md`;
   return stay({ tag: 'author', error: null, r: { parent, c, original: c.plan!, originalHash: c.planHash!, workingPath, reason: event.reason, evidence: event.evidence, plan: null, hash: null, changed: [], removed: [], grew: false } });
 }
-export function initialRevision(parent: ImplementState, event: Extract<HostEvent, { type: 'REVISE' }>): RevisionState { return beginRevision(parent, event).state; }
 
 function parse(r: RevisionContext, afterReview: boolean): S {
   const next = nextId(r.c.counters, 'implement.revision', 'parse-artifact');
@@ -124,12 +123,3 @@ export function validateRevision(state: RevisionState, event: HostEvent): string
   if (state.tag === 'author' && (event.type !== 'AUTHORED' || event.path !== state.r.workingPath)) return 'event.path: expected the session revision working copy.';
   return state.tag === 'review' ? validateReview(state.review, event) : null;
 }
-export const revisionTransitions = [
-  ...['author', 'review'].flatMap((from) => ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'DECISION'].map((on) => ({ from, on, to: 'checking-host-event' }))),
-  ...['parse', 'review', 'drift'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
-  { from: 'checking-host-event', on: 'EFFECT_FAILED', to: 'refused' },
-  ...['parse', 'review', 'refused'].map((to) => ({ from: 'drift', on: 'DECISION', to })),
-  { from: 'author', on: 'AUTHORED', to: 'parse' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'review' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'resume' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'refused' }, { from: 'parse', on: 'ARTIFACT_PARSED', to: 'author' }, { from: 'parse', on: 'EFFECT_FAILED', to: 'author' },
-  ...['REVIEW_PREPARED', 'WAVE_DONE', 'RULINGS', 'FIXES_APPLIED', 'VERIFY_DONE', 'DECISION', 'EFFECT_FAILED'].flatMap((on) => [{ from: 'review', on, to: 'parse' }, { from: 'review', on, to: 'refused' }]),
-];
-export const revisionMachine: Machine<RevisionState> = { initial: () => { throw new Error('Use beginRevision with the saved governed parent.'); }, step: stepRevision, awaitOf: revisionAwait, project: (state) => ({ at: `revision › ${state.tag}`, data: revisionData(state) }), validate: validateRevision, transitions: revisionTransitions };

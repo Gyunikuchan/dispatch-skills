@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Effect, Event } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { initialImplement, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
@@ -14,7 +14,6 @@ for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(
   assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence');
 });
 
-const HASH = `sha256:${'a'.repeat(64)}`;
 type Fingerprint = { head: string; index: string; worktree: string };
 type Point = { state: ReturnType<typeof initialImplement>; effect: Effect; fingerprint: Fingerprint };
 type ReviewPoint = Point & { effects: readonly Effect[] };

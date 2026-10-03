@@ -220,18 +220,6 @@ export function approvalAnswer(value: DecisionAnswer): { by: string; quote: stri
   return { by: value['by'].trim(), quote: value['quote'].trim() };
 }
 
-export function acceptedKnownRed(value: DecisionAnswer, available: readonly string[]): string[] | null {
-  if (!isRecord(value) || value['action'] !== 'accept-known-red' || !Array.isArray(value['ids']) || !value['ids'].length) return null;
-  if (!value['ids'].every((item) => typeof item === 'string' && available.includes(item)) || new Set(value['ids']).size !== value['ids'].length) return null;
-  return [...value['ids']] as string[];
-}
-
-export function decisionAction(value: DecisionAnswer): 'accept' | 'stop' | null {
-  if (value === 'accept' || value === 'stop') return value;
-  if (isRecord(value) && (value['decision'] === 'accept' || value['decision'] === 'stop')) return value['decision'];
-  return null;
-}
-
 export function isWriterEnvelope(value: unknown): value is WriterEnvelope {
   return isRecord(value) && value['schemaVersion'] === 1
     && ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'].includes(String(value['status']))

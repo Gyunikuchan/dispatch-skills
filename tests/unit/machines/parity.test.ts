@@ -57,7 +57,7 @@ const implementPlan = (withEvidence = false) => ({
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
   tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [] }] : [],
 });
-const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
+const implementRun = (): RunStartedEvent => run('implement', {
   argument: 'x.plan.md', overrides: { path: 'x.plan.md', sessionDir: '/session', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
   config: { 'write-subagents': { claude: { low: { model: 'writer' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } },
 });
@@ -77,10 +77,9 @@ const implementChecked: Step = (effect) => ({ type: 'ENVELOPE_CHECKED', effectId
 const implementApprovalStop: Step = { type: 'DECISION', kind: 'approval', answer: 'stop' };
 const implementApproval: Step = { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } };
 const implementEvidence: Step = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'reviewed behavior' } } };
-const implementHandoff: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id(effect), destination: '/t', warning: null });
 
 function implementsToTerminal(withEvidence: boolean): Step[] {
-  return [implementRun(withEvidence), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementApproval,
+  return [implementRun(), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementApproval,
     implementCheckout, ...(withEvidence ? [implementCheckout, implementBrief, implementLaunched, implementEnvelope, implementChecked, implementCheckout, implementCheckout] : []),
     implementCheckout, implementCheckout, implementSnapshot, implementSnapshot, implementVerified, ...(withEvidence ? [implementEvidence] : [])];
 }

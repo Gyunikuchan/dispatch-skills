@@ -3,8 +3,8 @@
 import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand } from '../core/types.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
-import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, redactOneLine, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
-import { beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
+import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
+import { beginReview, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
 import { answers, isRecord, never, nextId, stay, type Counters, type Step } from './types.ts';
 import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
 import { classifyDrift } from '../policy/drift.ts';
@@ -688,7 +688,7 @@ function completeVerification(c0: Context, results: readonly VerifyRecord[]): S 
   return askEvidence(c0, results);
 }
 
-function needsUserRuling(c: Context, ids: readonly string[], answer: unknown): { decision: 'accept' | 'stop'; by: string; quote: string } | null {
+function needsUserRuling(ids: readonly string[], answer: unknown): { decision: 'accept' | 'stop'; by: string; quote: string } | null {
   if (!isRecord(answer) || !['accept', 'stop'].includes(String(answer['decision'])) || !nonEmpty(answer['by']) || !nonEmpty(answer['quote'])) return null;
   if (!ids.length) return null;
   return { decision: answer['decision'] as 'accept' | 'stop', by: answer['by'].trim(), quote: answer['quote'].trim() };
@@ -788,7 +788,7 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'needs-user': {
       if (event.type !== 'DECISION' || event.kind !== 'needs-user') return stay(state);
-      const ruling = needsUserRuling(state.c, state.ids, event.answer);
+      const ruling = needsUserRuling(state.ids, event.answer);
       if (!ruling) return stay(state);
       if (ruling.decision === 'stop') return stop(state.c, `User stopped at RED exception ruling for ${state.ids.join(', ')}.`);
       const redExceptionRulings = { ...state.c.redExceptionRulings, ...Object.fromEntries(state.ids.map((id) => [id, { decision: 'accept' as const, by: ruling.by, quote: ruling.quote }])) };
@@ -805,7 +805,7 @@ function applyImplement(state: ImplementState, event: Event): S {
     }
     case 'concerns': {
       if (event.type !== 'DECISION' || event.kind !== 'concerns') return stay(state);
-      const ruling = needsUserRuling(state.c, state.items, event.answer);
+      const ruling = needsUserRuling(state.items, event.answer);
       if (!ruling) return stay(state);
       if (ruling.decision === 'stop') return stop(state.c, `User stopped with unresolved implementation concerns: ${state.items.join('; ')}`);
       const concernRulings = { ...state.c.concernRulings, ...Object.fromEntries(state.items.map((item) => [item, { decision: 'accept' as const, by: ruling.by, quote: ruling.quote }])) };
@@ -1104,8 +1104,8 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     const available = failingBaselineIds(state.items);
     if (!isRecord(event.answer) || event.answer['action'] !== 'accept-known-red' || ids.length !== available.length || new Set(ids).size !== ids.length || available.some((id) => !ids.includes(id))) return 'event.answer: accept-known-red must name every distinct baseline failure identity.';
   }
-  if (state.tag === 'needs-user' && event.type === 'DECISION' && event.kind === 'needs-user' && !needsUserRuling(state.c, state.ids, event.answer)) return 'event.answer: RED exception ruling requires accept or stop, by, and quote.';
-  if (state.tag === 'concerns' && event.type === 'DECISION' && event.kind === 'concerns' && !needsUserRuling(state.c, state.items, event.answer)) return 'event.answer: concerns ruling requires accept or stop, by, and quote.';
+  if (state.tag === 'needs-user' && event.type === 'DECISION' && event.kind === 'needs-user' && !needsUserRuling(state.ids, event.answer)) return 'event.answer: RED exception ruling requires accept or stop, by, and quote.';
+  if (state.tag === 'concerns' && event.type === 'DECISION' && event.kind === 'concerns' && !needsUserRuling(state.items, event.answer)) return 'event.answer: concerns ruling requires accept or stop, by, and quote.';
   if (state.tag === 'failure' && event.type === 'DECISION' && event.kind === 'failure') {
     const answer = failureAnswer(event.answer);
     if (!answer) return 'event.answer: failure requires hotfix/retry with rootCause, user manual completion with quote and criteria, or stop.';

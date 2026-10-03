@@ -2,21 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fold, MAX_STEPS, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
 import { appendEvent, journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
-import { LOCK_FILE } from '../../../skills/dispatch/scripts/core/lock.ts';
-import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
-import { awaitingMachine, fakeHandlers, neverAwaitingMachine, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
+import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
 
 async function startAwaiting(ports: FakePorts) {
   const runDir = path.join(tempDir(), 'runs', '001-ask');
   const result = await start({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, runStarted: RUN_STARTED });
   return { runDir, result };
 }
-
-const bytes = (runDir: string) => fs.readFileSync(journalPath(runDir));
-const types = (ports: FakePorts, runDir: string) => readJournal(ports, runDir).lines.map((line) => line.type);
 
 // Split from interpreter.test.ts to stay under the 1 s per-file budget: replay, recovery, and engine faults.
 
