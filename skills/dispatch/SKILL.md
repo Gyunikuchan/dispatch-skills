@@ -48,7 +48,7 @@ Answer `data.kind` with a listed option and its branch context. Production appro
 
 ## Await done
 
-Report outcome, behavior, verification, concerns, and frame-provided artifact links. Completion requires every criterion. Preserve the handoff folder for later work.
+Report outcome, behavior, verification, concerns, each decision you ruled on the user's behalf with its reason, and frame-provided artifact links. Completion requires every criterion. Preserve the handoff folder for later work.
 
 ## Write boundaries and recovery
 
