@@ -20,6 +20,7 @@ Paths are relative to the repo root. Findings are cited by ID (`A-7`), never by 
 | Claude Code | `.claude/skills/audit-dispatch-skills-fix` |
 | Copilot | `.github/skills/audit-dispatch-skills-fix` |
 | OpenCode | `.opencode/skill/audit-dispatch-skills-fix` |
+| Codex | `.agents/skills/audit-dispatch-skills-fix` |
 
 If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives.
 

@@ -36,7 +36,7 @@ Report adjacent findings in output; keep execution strictly bounded to requested
 ```text
 dispatch-design-review ─┐
 dispatch-plan-review ───┼─> dispatch ─> nothing
-dispatch-implement ────┤
+dispatch-implement ─────┤
 dispatch-code-review ───┘
 ```
 
@@ -48,7 +48,10 @@ skills/*-review/          small user-invoked aliases and human manuals
 skills/dispatch-implement/ compatibility alias and human manual
 .agents/skills/           repository-development and vendored skills; none shipped
 scripts/                  repository tooling
-tests/                    mirrors source plus cross-skill integration guards
+tests/unit/{core,policy,domain,providers,lib,machines}/ runtime-layer unit tests
+tests/integration/        layout, dependency, runtime, and skill contracts
+tests/tooling/             repository tool tests
+tests/e2e/                 Git/subprocess flows
 ```
 
 - Reference skills by name or sibling-relative `<skills-dir>` paths, never a host-specific installation path.
@@ -70,7 +73,7 @@ Classify each document by audience; keep each fact in one class:
 
 Format skills as Markdown with YAML frontmatter (`name`, `description`). When touching agent-read prose (agent contracts or prompt/instruction strings in code), always apply `writing-for-agents` and single-source each instruction: reference, or restructure the flow around, its existing home instead of restating it.
 
-Portable across macOS, Windows, Linux (zsh, bash, PowerShell) and Antigravity, Claude Code, Copilot, OpenCode:
+Portable across macOS, Windows, and Linux (zsh, bash, PowerShell), with native guidance for Antigravity, Claude Code, GitHub Copilot, OpenCode, and Codex:
 
 - **Cross-Skill Alignment**: Single-source multi-skill conventions and shared schemas in `skills/dispatch/references/review-rules.md`.
 - **Naming**: kebab-case for skill identifiers, filenames, and slugs.
@@ -92,7 +95,8 @@ Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
 
 - **Discover**: Check relevant `SKILL.md` or scripts before editing.
 - **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
-- **Verify**: Run tests, including plan Verify commands, as `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts [--test-name-pattern="…"] <file>`; filtered commands with multiple files require a match in every file. Run `npm test` before completing any edit task; when it reports hash drift, run `npm run hashes`. Require Node `^22.18 || >=23.6`. Tests assert observable protocol (frames, events, rendered sections), never internal state or private helpers; one behavior per test, named for it. Git or subprocess tests belong in `tests/e2e/`.
+- **Verify**: Run plan Verify commands and `npm test` before completing an edit task. For focused Node tests, use `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts [--test-name-pattern="…"] <file>`; with multiple files, require a name-pattern match in each. Inspect hash drift; run `npm run hashes` only when intended edits changed hashed skill files, then rerun `npm test`. Require Node `^22.18 || >=23.6`.
+- **Test behavior at each layer**: Test through each unit's public entrypoint: protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Keep one behavior per test and name it for that behavior. Put real Git/subprocess flows in `tests/e2e/`.
 
 ### Long-running commands and delegates
 
@@ -104,5 +108,4 @@ End completed tasks with:
 
 1. **Delivered behaviour** — structural, logic, or documentation change, concisely.
 2. **Verification status** — commands executed and test results.
-3. **Skill Retrospective / Friction** — actionable friction, ambiguous instructions, workflow inefficiencies, or token hotspots / refactoring opportunities with proposed solutions (omit section if clean). Apply high-confidence improvements directly to the owning doc or skill.
-4. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.
+3. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.

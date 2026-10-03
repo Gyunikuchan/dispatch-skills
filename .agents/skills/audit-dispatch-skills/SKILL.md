@@ -18,6 +18,7 @@ Paths are relative to the repo root. `<run>` is the current local time as `yyyy-
 | Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool, one call per scope |
 | Copilot | `.github/skills/audit-dispatch-skills` | run the command with `&` | run scopes sequentially; Copilot has no subagent fan-out |
 | OpenCode | `.opencode/skill/audit-dispatch-skills` | run the command with `&` | `task` tool, one call per scope |
+| Codex | `.agents/skills/audit-dispatch-skills` | start once and retain the command session handle | native subagents, one per scope |
 
 If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives. Where a host offers no parallel fan-out, run the scopes one after another — the report is identical, only slower.
 
