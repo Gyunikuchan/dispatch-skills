@@ -66,7 +66,7 @@ Classify each document by audience; keep each fact in one class:
 - **Human documentation**: Help users understand and operate the skills.
   - **Root `README.md`**: Core value proposition (2–3 sentences), install command (`npx skills add ...`), catalog table, quick-start prompts, architecture overview.
   - **Dispatch documentation (`skills/dispatch/README.md` and disclosed references)**: Purpose, concepts, prerequisites, invocations, configuration, troubleshooting; cover referenced paths with path-convention guards.
-- **Agent contracts** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep word count net-neutral or lower; expand only after exhausting rewording, leading words, and disclosure.
+- **Agent contracts** (`skills/*/SKILL.md`, `AGENTS.md`, `CLAUDE.md`, operational `references/*.md` outside `references/readme/`): Include only operational context, decision paths, and checkable completion bounds. Keep contracts focused and single-source instructions. Allow added detail when it materially improves correct execution; justify increases by naming the behavior, decision, or failure mode the text addresses.
 - **Maintainer notes** (`docs/<skill>-notes.md`): Record implementation context that users and executing agents do not need; these files are not shipped.
 
 ## Authoring & Cross-Platform Standards
@@ -91,21 +91,24 @@ Explain non-obvious rationale ("why", CLI/subprocess quirks, cross-platform nuan
 
 ## Execution & Handoff Contract
 
-Follow **Goal-Driven Execution** (**Discover → Edit → Verify**):
+Follow **Goal-Driven Execution** (**Discover → Bound → Execute → Verify → Handoff**):
 
-- **Discover**: Check relevant `SKILL.md` or scripts before editing.
-- **Edit**: Apply minimal, focused edits preserving existing comments and invariants.
-- **Verify**: Run plan Verify commands and `npm test` before completing an edit task. For focused Node tests, use `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts [--test-name-pattern="…"] <file>`; with multiple files, require a name-pattern match in each. Inspect hash drift; run `npm run hashes` only when intended edits changed hashed skill files, then rerun `npm test`. Require Node `^22.18 || >=23.6`.
-- **Test behavior at each layer**: Test through each unit's public entrypoint: protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Keep one behavior per test and name it for that behavior. Put real Git/subprocess flows in `tests/e2e/`.
+- **Discover**: Read relevant `SKILL.md` files or scripts and inspect the current state before editing.
+- **Bound**: Set the intended outcome, in-scope paths, and checkable completion criteria from the request or approved plan. Keep planning and review proportional to task risk.
+- **Execute**: Apply minimal, focused edits within the agreed scope, preserving existing comments and invariants.
+- **Verify**: Run plan Verify commands and `npm test` before completing an edit task. Record evidence for each criterion after the last change; failed or unrun required checks remain open. For focused Node tests, use `node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts [--test-name-pattern="…"] <file>`; with multiple files, require a name-pattern match in each. Inspect hash drift; run `npm run hashes` only when intended edits changed hashed skill files, then rerun `npm test`. Require Node `^22.18 || >=23.6`.
+  - Test behavior at each layer through its public entrypoint: protocol tests cover frames, events, and rendered sections; pure machine tests cover state and effect transitions. Keep one behavior per test and name it for that behavior. Put real Git/subprocess flows in `tests/e2e/`.
+- **Handoff**: Use the format below.
 
 ### Long-running commands and delegates
 
-Start each command or delegate once and retain its handle. Use an event-driven wait with a 30-minute fallback timeout, waking for completion, blockers, or user input. Ask delegates to report only completion or material blockers; continue waiting through routine progress without status requests or narration. When an API caps waits, use its longest event-capable wait and reuse the handle.
+Start each command or delegate once and retain its handle. Wait event-driven for completion, material blockers, or user input, with a 30-minute fallback. Ask delegates to report only completion or material blockers; continue through routine progress without status requests or narration. When an API caps waits, use its longest event-capable wait and reuse the handle.
 
 ### Handoff Format
 
 End completed tasks with:
 
 1. **Delivered behaviour** — structural, logic, or documentation change, concisely.
-2. **Verification status** — commands executed and test results.
-3. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.
+2. **Verification status** — commands executed and test results; include evidence for each completion criterion and identify failed or unrun required checks.
+3. **Remaining concerns and artifacts** — unresolved decisions or blockers, with paths/links to useful artifacts.
+4. **Suggested commit message** — concise Conventional Commits style summary (`type(scope): summary`), optionally with bulleted body for non-trivial changes.
