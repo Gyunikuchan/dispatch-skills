@@ -11,10 +11,8 @@ import { createHandlers } from '../../../skills/dispatch/scripts/effects/index.t
 import { governedPlanText } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
-import { appendEvent, journalPath } from '../../../skills/dispatch/scripts/core/journal.ts';
-import { implementMachine, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { createRestore } from '../../../skills/dispatch/scripts/effects/restore.ts';
-import { approvalState, FP, HASH, RUN } from '../machines/implement-recovery.test.ts';
+import { stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { approvalState, FP, HASH } from '../machines/implement-recovery.test.ts';
 
 const SKILL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 const PLAN = `# Normalize values
@@ -94,7 +92,10 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
     slots: effect.roster.map((slot) => ({ slot: String(slot['slot']), state: 'success', claim: 'Reviewed changed paths; no findings.' })), findings: [],
   }]; };
   const baseHandlers = createHandlers({ skillRoot: SKILL_ROOT, cwd, os: 'linux', git, tempRoot: path.join(cwd, 'tmp'), workspaceRoot: cwd, orchestratorPlatform: 'claude', wave });
-  const handlers = { ...baseHandlers, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
+  // NOTE: fake Git cannot host worktrees, so every checkout op resolves to the caller tree and delivery transfers the changed paths.
+  const checkout = async (effect: Extract<Effect, { kind: 'checkout' }>) => [{ type: 'CHECKOUT_DONE' as const, effectId: effect.id, op: effect.op,
+    result: { path: cwd, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [...changedPaths], conflict: false, conflicts: [], transferred: [...changedPaths], already: [], defects: [] } }];
+  const handlers = { ...baseHandlers, checkout, handoff: async (effect: Extract<Effect, { kind: 'handoff' }>) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: sessionRoot, warning: null }] };
   const ports = fakePorts();
   ports.git = { run: async (argv) => argv.slice(2).map((file) => crypto.createHash('sha1').update(fs.readFileSync(path.join(cwd, file))).digest('hex')).join('\n') };
   const commands: string[] = [];
@@ -104,8 +105,12 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
   const approval = await start({ ...options, runStarted });
   assert.deepEqual([approval.frame?.await, approval.frame?.at], ['decide', 'implement › approval'], JSON.stringify(approval.frame));
   const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } } });
-  assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › write']);
-  const envelopePath = String(write.frame?.data['envelopePath']);
+  assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › tasks']);
+  const [slot] = write.frame?.data['tasks'] as { task: string; action: string; envelopePath: string }[];
+  assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
+  const envelopePath = String(slot?.envelopePath);
+  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: 'agent-1' }] } });
+  assert.equal((launched.frame?.data['tasks'] as { action: string }[])[0]?.action, 'running');
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');
   changedPaths = ['src/value.ts'];
@@ -115,59 +120,22 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
     evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],
   }));
-  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath } });
+  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', envelopePath } });
   assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence']);
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
   assert.equal(done.frame?.await, 'done');
   assert.equal(done.frame?.data['outcome'], 'complete', JSON.stringify(done.frame));
-  assert.equal(commands.filter((command) => command === 'node --test tests/value.test.ts').length, 2, 'baseline and scoped runs execute; the final gate reuses the fresh pass');
+  assert.equal(commands.filter((command) => command === 'node --test tests/value.test.ts').length, 4, 'baseline, task, integration, and caller-checkout final runs execute');
   const walkthroughs = fs.readdirSync(sessionRoot).filter((name) => name.endsWith('.walkthrough.md'));
   assert.equal(walkthroughs.length, 1); assert.equal(reviewed.path?.replaceAll('\\', '/'), path.join(sessionRoot, walkthroughs[0]!).replaceAll('\\', '/'));
   assert.match(fs.readFileSync(path.join(sessionRoot, walkthroughs[0] as string), 'utf8'), /## Verification/);
   assert.deepEqual((await send({ ...options, dryRun: true })).frame, done.frame);
 });
 
-test('implementation parked host replay and in-flight restore replay reuse durable binary patch', async () => {
-  const cwd = tempDir(), runDir = tempDir(), ports = fakePorts();
-  fs.mkdirSync(path.join(cwd, 'src')); fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), Buffer.from('before'));
-  const before = { ...FP, recovery: { ...(FP['recovery'] as import('../../../skills/dispatch/scripts/core/types.ts').RecoverySnapshot), entries: { 'src/a.ts': { kind: 'file' as const, mode: fs.statSync(path.join(cwd, 'src', 'a.ts')).mode & 0o7777, linkTarget: null } } } };
-  const c = { ...approvalState().c, lastFingerprint: before, startFingerprint: before };
-  const writer = { tag: 'write' as const, c, info: { stage: 'production' as const, attempt: 1, models: ['writer-a', 'writer-b'], modelIndex: 0, briefPath: 'brief', briefSha256: HASH, envelopePath: 'outcome', preFingerprint: before, repair: false } };
-  const machine = { ...implementMachine, initial: () => writer };
-  let seq = 1;
-  const record = (event: import('../../../skills/dispatch/scripts/core/types.ts').Event) => { const { type, ...data } = event; appendEvent(ports, runDir, type, data, seq++); };
-  record(RUN);
-  const failed = { type: 'WRITE_FAILED' as const, model: 'writer-a', kind: 'quota', reason: 'partial write' };
-  record(failed);
-  const parked = machine.step(writer, failed);
-  assert.equal(parked.state.tag, 'checking-host-event');
-  const handlers = {
-    snapshot: async (effect: Extract<Effect, { kind: 'snapshot' }>) => [{ type: 'SNAPSHOT' as const, effectId: effect.id, fingerprint: { ...before, worktree: 'changed' }, diff: { paths: ['src/a.ts'] } }],
-    restore: createRestore({ cwd }),
-  };
-  fs.writeFileSync(path.join(cwd, 'src', 'a.ts'), Buffer.from([255, 0, 254]));
-  const result = await send({ runDir, machine, handlers, ports });
-  assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame)); assert.equal(result.frame?.data['model'], 'writer-b');
-  assert.equal(fs.readFileSync(path.join(cwd, 'src', 'a.ts'), 'utf8'), 'before');
-  const patch = fs.readdirSync(runDir).find((file) => file.endsWith('.restore.json'))!;
-  const published = fs.readFileSync(path.join(runDir, patch), 'utf8');
-  assert.ok(published.includes(Buffer.from([255, 0, 254]).toString('base64')));
-  // Simulate a process dying after durable EFFECT_STARTED by removing just the terminal restore journal line.
-  const journal = journalPath(runDir);
-  const lines = fs.readFileSync(journal, 'utf8').trimEnd().split('\n');
-  assert.ok(lines.at(-1)?.includes('RESTORED'));
-  fs.writeFileSync(journal, `${lines.slice(0, -1).join('\n')}\n`);
-  const replayed = await send({ runDir, machine, handlers, ports });
-  assert.equal(replayed.frame?.data['model'], 'writer-b');
-  assert.equal(fs.readFileSync(path.join(runDir, patch), 'utf8'), published);
-  assert.equal((await send({ runDir, machine, handlers, ports, dryRun: true })).frame?.data['model'], 'writer-b');
-});
-
-
 test('rewrite SC2 implementation review carries governing artifacts and criteria', async () => {
   const state = approvalState();
   const c = { ...state.c, planPath: 'feature.plan.md', run: { ...state.c.run, config: { ...state.c.run.config, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } } };
-  const result = stepImplement({ tag: 'evidence', c, purpose: 'scoped', ids: ['SC1'], verify: [] }, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'checked' } } });
+  const result = stepImplement({ tag: 'delivered-snapshot', c: { ...c, phase: 'delivered' }, effectId: 'delivered' }, { type: 'SNAPSHOT', effectId: 'delivered', fingerprint: FP, diff: { paths: [] } });
   const checked = result.state.tag === 'checking-host-event' ? stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: FP, diff: { paths: [] } }) : result;
   assert.equal(checked.state.tag, 'code-review');
   const effect = checked.effects.find((e) => e.kind === 'prepare-review');
@@ -189,7 +157,7 @@ test('review fix design walkthrough uses the originating slug once for each incr
   const state = approvalState();
   const run = { ...state.c.run, argument: 'chat/renamed-i01.plan.md', overrides: { ...state.c.run.overrides, sessionDir: 'chat', artifactSlug: 'original-objective' }, config: { ...state.c.run.config, phases: { 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } } };
   const c = { ...state.c, run, designBinding: { path: 'renamed.design.md', revision: HASH, increment: 'I01', contract: {}, paths: ['src/a.ts'], approval: { by: 'user' as const, quote: 'Approved', hash: HASH }, repair: [] } };
-  let result = stepImplement({ tag: 'evidence', c, purpose: 'scoped', ids: ['SC1'], verify: [] }, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'checked' } } });
+  let result = stepImplement({ tag: 'delivered-snapshot', c: { ...c, phase: 'delivered' }, effectId: 'delivered' }, { type: 'SNAPSHOT', effectId: 'delivered', fingerprint: FP, diff: { paths: [] } });
   if (result.state.tag === 'checking-host-event') result = stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: FP, diff: { paths: [] } });
   const effect = result.effects.find((row) => row.kind === 'prepare-review'); assert.equal(effect?.kind, 'prepare-review');
   if (effect?.kind === 'prepare-review') assert.equal((effect.review['governing'] as Record<string,unknown>)['walkthroughPath'], 'chat/original-objective-i01.walkthrough.md');

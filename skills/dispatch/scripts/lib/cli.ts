@@ -1,7 +1,7 @@
 // Leaf command grammar; callers inject policy validation.
 export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type CliPolicy = { levels: readonly string[]; pins(text: string): unknown; provider(text: string): string | null };
-export type Command = { command: 'start' | 'send' | 'status' | 'doctor' | 'session' | 'wave-worker'; verb?: Verb; action?: string; argument: string; flags: Record<string, string | boolean> };
+export type Command = { command: 'start' | 'send' | 'status' | 'doctor' | 'session' | 'wave-worker' | 'checkpoint'; verb?: Verb; action?: string; argument: string; paths?: string[]; flags: Record<string, string | boolean> };
 export class UsageError extends Error {}
 export const ALIASES: Readonly<Record<string, string>> = {
   'dispatch-code-review': 'start review --kind code', 'dispatch-design-review': 'start review --kind design',
@@ -12,12 +12,13 @@ const FLAGS: Readonly<Record<string, readonly string[]>> = {
   start: ['session-dir', 'orchestrator', 'level', 'level-source', 'pins', 'fix', 'kind', 'provider', 'model', 'effort', 'timeout', 'orchestrator-model', 'verbose', 'context'],
   send: ['run', 'event', 'dry-run', 'refresh-config'], status: ['run'], doctor: ['level', 'json'],
   session: ['objective', 'session-dir', 'session-id'], 'wave-worker': ['run', 'effect', 'attempt'],
+  checkpoint: ['root', 'out'],
 };
 const BOOLEANS = new Set(['fix', 'verbose', 'dry-run', 'json', 'refresh-config']);
 
 export function parseCommand(argv: readonly string[], policy: CliPolicy): Command {
   const args = [...argv], command = args.shift();
-  if (!command || !Object.hasOwn(FLAGS, command)) throw new UsageError('Expected start, send, status, doctor, session, or internal wave-worker');
+  if (!command || !Object.hasOwn(FLAGS, command)) throw new UsageError('Expected start, send, status, doctor, session, checkpoint, or internal wave-worker');
   const out: Command = { command: command as Command['command'], argument: '', flags: {} };
   if (command === 'start') {
     const verb = args.shift();
@@ -30,7 +31,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
   }
   while (args.length) {
     const token = args.shift()!;
-    if (token === '--') { out.argument = args.join(' ').trim(); break; }
+    if (token === '--') { out.argument = args.join(' ').trim(); out.paths = [...args]; break; }
     if (!token.startsWith('--')) throw new UsageError(`Unexpected argument ${token}; use -- before the objective`);
     const name = token.slice(2);
     if (!FLAGS[command]?.includes(name) || Object.hasOwn(out.flags, name)) throw new UsageError(`Invalid or repeated flag ${token} for ${command}`);
@@ -63,6 +64,7 @@ export function parseCommand(argv: readonly string[], policy: CliPolicy): Comman
   if (command === 'doctor' && out.flags['level'] && !policy.levels.includes(String(out.flags['level']))) throw new UsageError('Invalid level');
   if (command === 'send' || command === 'status' || command === 'wave-worker') need('run');
   if (command === 'wave-worker') { need('effect'); need('attempt'); if (!Number.isSafeInteger(Number(out.flags['attempt'])) || Number(out.flags['attempt']) < 1) throw new UsageError('Invalid worker attempt'); }
+  if (command === 'checkpoint') { need('root'); need('out'); if (!out.paths?.length) throw new UsageError('checkpoint requires repository paths after --'); }
   if (command === 'session') { if (out.action === 'init') need('objective'); else need('session-dir'); }
   return out;
 }

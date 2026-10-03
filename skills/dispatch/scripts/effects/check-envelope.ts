@@ -182,8 +182,9 @@ function cleanRepoPath(value: string): string | null {
   return normalized || null;
 }
 
-export function createCheckEnvelope(deps: CheckEnvelopeDeps): Handler<CheckEffect> {
+export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffect> {
   return async (effect, ports) => {
+    const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
     const defects: string[] = [];
     let envelope: ParsedEnvelope | null = null;
     let testsOnly = false;

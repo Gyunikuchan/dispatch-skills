@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 import { loadConfig, parseJsonc, stripJsonc, validateConfig } from '../../../skills/dispatch/scripts/lib/config.ts';
+import { writeConcurrency } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../skills/dispatch');
 
@@ -33,4 +34,16 @@ test('strict validation rejects unknown keys naming config.sample.jsonc; the shi
   assert.ok(problems.some((problem) => /Unrecognized top-level key "bogus".*config\.sample\.jsonc/.test(problem)));
   assert.ok(validateConfig({}).some((problem) => /Missing required table "read-delegates"/.test(problem)));
   assert.deepEqual(validateConfig(parseJsonc(fs.readFileSync(path.join(SKILL, 'config.sample.jsonc'), 'utf8'))), []);
+});
+
+const minimal = { 'read-delegates': { codex: { targets: [{ low: { model: 'm' } }] } } };
+
+test('write-concurrency accepts positive integers', () => {
+  assert.deepEqual(validateConfig({ ...minimal, 'write-concurrency': 3 }), []);
+  assert.equal(writeConcurrency({ 'write-concurrency': 3 }), 3);
+});
+
+test('write-concurrency rejects invalid values and defaults to 1', () => {
+  for (const value of [0, -1, 1.5, '2', true]) assert.match(validateConfig({ ...minimal, 'write-concurrency': value }).join(' '), /write-concurrency must be a positive integer/);
+  assert.equal(writeConcurrency({}), 1);
 });

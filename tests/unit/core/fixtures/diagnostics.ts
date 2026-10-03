@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { dispatchMachine } from '../../../../skills/dispatch/scripts/core/interpreter.ts';
+import { dispatchMachine, send } from '../../../../skills/dispatch/scripts/core/interpreter.ts';
 import type { Handlers, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 import { fakePorts, tempDir } from '../../../helpers/fake-ports.ts';
 import { RUN_STARTED } from './machines.ts';
 export const hash = `sha256:${'a'.repeat(64)}`;
 const fingerprint = { head: 'a'.repeat(40), index: 'index', worktree: 'tree' };
-export const parsedPlan = { title: 'Fixture', box: { 'TL;DR': 'Fixture behavior' }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Fixture' };
+export const parsedPlan = { title: 'Fixture', box: { 'TL;DR': 'Fixture behavior' }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [{ id: 'T1', title: 'Deliver', summary: 'Deliver fixture', line: 1, prerequisites: [], criteria: [], paths: ['src/a.ts'], generated: [] }], finalCommands: [], traceability: null, governedText: '# Fixture' };
 export function phaseFixture(verb: 'implement' | 'plan' | 'review', rounds = 1, empty = false) {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state/runs/001-flow');
   // Durability is exercised by E2E; phase transcripts need only exclusive claims.
@@ -27,8 +27,22 @@ export function phaseFixture(verb: 'implement' | 'plan' | 'review', rounds = 1, 
     'wave-start': async (effect) => [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt: 1, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: 'input' }],
     'wave-finish': async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     handoff: async (effect) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: session, warning: null }],
+    // NOTE: fake ports host no worktrees; every checkout op resolves to the session and delivers nothing new.
+    checkout: async (effect) => [{ type: 'CHECKOUT_DONE', effectId: effect.id, op: effect.op, result: { path: session, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [], conflict: false, conflicts: [], transferred: [], already: [], defects: [] } }],
   };
   const options = { ports, runDir, machine: dispatchMachine, handlers, diagnosticToggle: () => true };
   const capture = () => JSON.parse(fs.readFileSync(path.join(runDir, 'diagnostics/capture.json'), 'utf8')) as { phases: Array<{ id: string; name: string; outcome: string; start: number; end: number }> };
   return { options, runStarted, capture, session };
+}
+
+type Frame = Awaited<ReturnType<typeof send>>;
+/** Launches every `launch` slot in a write frame, then submits each slot's envelope until the frame leaves `write`. */
+export async function deliverTasks(options: Parameters<typeof send>[0], result: Frame): Promise<Frame> {
+  while (result.frame?.await === 'write') {
+    const slots = result.frame.data['tasks'] as { task: string; action: string; envelopePath: string }[];
+    const launch = slots.filter((slot) => slot.action === 'launch');
+    if (launch.length) result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: launch.map((slot) => ({ task: slot.task, handle: `agent-${slot.task}` })) } });
+    else result = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: slots[0]!.task, envelopePath: slots[0]!.envelopePath } });
+  }
+  return result;
 }

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 const root = new URL('../../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
   'review-prompt.md', 'review-prompt-code.md', 'review-prompt-design.md', 'review-prompt-plan.md', 'plan.md', 'design.md', 'walkthrough.md',
-  'write-brief.md', 'write-brief-tests-only.md', 'write-brief-production.md', 'write-brief-hotfix.md',
+  'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md',
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
 
@@ -19,6 +19,13 @@ test('templates: no kept template contains <!--, rebuttal, or consensus', () => 
     const text = readFileSync(new URL(name, root), 'utf8');
     for (const token of [/<!--/, /rebuttal/i, /consensus/i]) assert.ok(!token.test(text), `${name} contains ${String(token)}`);
   }
+});
+
+test('templates: task brief requires an isolated worktree and a pre-production RED checkpoint', () => {
+  const brief = readFileSync(new URL('write-brief-task.md', root), 'utf8');
+  for (const text of ['## purpose', '## kind-rules', '<Checkpoint Command>', 'admissionDefects']) assert.ok(brief.includes(text), text);
+  assert.match(brief, /only inside the worktree/);
+  assert.match(brief, /before any production edit/);
 });
 
 test('templates: plan.md shows [FINAL] after the Verify code span', () => {

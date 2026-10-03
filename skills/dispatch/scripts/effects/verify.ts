@@ -108,8 +108,9 @@ async function inputFingerprint(command: string, raw: unknown, ports: Parameters
   return crypto.createHash('sha256').update(canonical({ command, environment, planHash: fields['planHash'] ?? null, files })).digest('hex');
 }
 
-export function createVerify(deps: VerifyDeps): Handler<VerifyEffect> {
+export function createVerify(base: VerifyDeps): Handler<VerifyEffect> {
   return async (effect, ports, ctx) => {
+    const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
     const results: CommandResult[] = [];
     for (const [index, raw] of effect.commands.entries()) {
       const command = commandOf(raw);

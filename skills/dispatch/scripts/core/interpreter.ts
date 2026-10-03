@@ -28,12 +28,15 @@ export const designRevision = (source: string): string => `sha256:${crypto.creat
 export async function previewReceipt(state: RootState, event: HostEvent, handlers: Handlers, ports: Ports, runDir: string): Promise<string | null> {
   if (event.type !== 'WRITE_ENVELOPE' || state.tag !== 'implement') return null;
   const child = state.child;
-  if (child.tag !== 'write' && child.tag !== 'hotfix-write') return null;
-  const projectedPaths = rootMachine.project(state).data['paths'];
-  const permitted: string[] = Array.isArray(projectedPaths) ? projectedPaths.filter((file): file is string => typeof file === 'string')
-    : [...new Set([...(child.c.plan?.changes.map((change) => change.path) ?? []), ...child.c.adoptedPaths])];
-  const effect: Extract<Effect, { kind: 'check-envelope' }> & { since: Readonly<Record<string, unknown>> } = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted,
-    since: child.tag === 'write' ? child.info.preFingerprint : child.before };
+  let effect: Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
+  if (child.tag === 'tasks') {
+    const record = event.task ? child.c.tasks[event.task] : undefined;
+    const task = child.c.plan?.tasks.find((item) => item.id === event.task);
+    if (!record?.worktree || !task) return 'Receipt names no running task';
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], cwd: record.worktree };
+  } else if (child.tag === 'hotfix-write') {
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...(child.c.plan?.changes.map((change) => change.path) ?? []), ...child.c.adoptedPaths])], since: child.before };
+  } else return null;
   const checker = handlers['check-envelope']; if (!checker) return 'Receipt checker is unavailable';
   const results = await checker(effect, ports, { runDir, attempt: 1 });
   const result = results[0];
@@ -57,6 +60,7 @@ export const TERMINAL_RESULT: TerminalResultMap = {
   snapshot: 'SNAPSHOT',
   restore: 'RESTORED',
   handoff: 'HANDOFF_DONE',
+  checkout: 'CHECKOUT_DONE',
 };
 
 const RESULT_TYPES: ReadonlySet<string> = new Set<ResultEventType>([...Object.values(TERMINAL_RESULT), 'WAVE_PROGRESS', 'EFFECT_FAILED']);

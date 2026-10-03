@@ -104,7 +104,8 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const listed = async (args: string[]) => (await port.run(args, root)).split('\0').filter(Boolean);
       return {
         files: [...new Set([...await listed(['ls-files', '-z']), ...await listed(['ls-files', '--others', '--exclude-standard', '-z'])])].sort(),
-        dirty: await git.diffNames(root, ''), ignored: await listed(['ls-files', '--others', '--ignored', '--exclude-standard', '-z']),
+        // NOTE: nested run worktrees list as directory entries (`path/`); they are not caller files.
+        dirty: await git.diffNames(root, ''), ignored: (await listed(['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])).filter((file) => !file.endsWith('/')),
         stash: await port.run(['rev-parse', '--verify', 'refs/stash'], root).then((s) => s.trim()).catch(() => ''),
         gitDir: (await port.run(['rev-parse', '--absolute-git-dir'], root)).trim(),
       };

@@ -36,7 +36,7 @@ Apply accepted clusters only within each `affectedPaths`, run their bounded veri
 
 ## Await write
 
-Launch the configured native writer using the complete `briefPath` matching `briefSha256`. Give it the expected `envelopePath` and scoped paths; preserve caller changes. Reply `WRITE_ENVELOPE` with `envelopePath` after its envelope arrives, or `WRITE_FAILED` with model, kind, and reason on a failed launch.
+Background native writers for each `launch` slot in `tasks` (or hotfix frame) with `model`, `briefPath` matching `briefSha256`, `envelopePath`, `worktree`; reply `WRITE_LAUNCHED` `{task, handle}` rows. Per stop, reply `WRITE_ENVELOPE` or `WRITE_FAILED` (model, kind, reason) naming `task`; hold others for the next frame.
 
 ## Await evidence
 

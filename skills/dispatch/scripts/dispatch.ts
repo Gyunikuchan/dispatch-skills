@@ -12,6 +12,7 @@ import { nodePorts } from './core/ports.ts';
 import { STALL_HINT_MS } from './core/progress.ts';
 import type { Frame, Level, RunStartedEvent } from './core/types.ts';
 import { createHandlers } from './effects/index.ts';
+import { writeCheckpoint } from './effects/checkout.ts';
 import { createGit } from './effects/git.ts';
 import { sessionDirOf } from './effects/handoff.ts';
 import { claimPath, donePath, heartbeatPath, inputPath, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
@@ -109,7 +110,8 @@ function waveRuntime(): Omit<WaveDeps, 'context'> {
 function handlers(repo: string, orchestrator: ProviderId) {
   const { ports, platform } = runtime();
   return createHandlers({ cwd: repo, skillRoot: SKILL_ROOT, os: platform.os, git: createGit(ports.git), tempRoot: os.tmpdir(), workspaceRoot: path.join(repo, '.scratch/dispatch-skills'), orchestratorPlatform: orchestrator, wave: waveRuntime(),
-    selfCheckCommand: (runDir, eventPath) => `node "${ENTRY}" send --run "${runDir}" --event "@${eventPath}" --dry-run` });
+    selfCheckCommand: (runDir, eventPath) => `node "${ENTRY}" send --run "${runDir}" --event "@${eventPath}" --dry-run`,
+    checkpointCommand: (root, out, paths) => `node "${ENTRY}" checkpoint --root "${root}" --out "${out}" -- ${paths.map((file) => `"${file}"`).join(' ')}` });
 }
 function emit(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
 function activate(dir: string, repo: string): string {
@@ -134,6 +136,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const runDir = path.resolve(textFlag(command, 'run') ?? '.');
   try {
     if (command.command === 'wave-worker') { await runWaveWorker(runDir, textFlag(command, 'effect')!, Number(command.flags['attempt']), workerDeps()); return 0; }
+    if (command.command === 'checkpoint') {
+      const root = path.resolve(textFlag(command, 'root')!);
+      emit({ v: 1, out: path.resolve(textFlag(command, 'out')!), ...writeCheckpoint(runtime().ports, root, path.resolve(textFlag(command, 'out')!), command.paths!) }); return 0;
+    }
     if (command.command === 'doctor') {
       const { discovery, platform } = runtime();
       let config: Record<string, unknown> = {}, configPath: string | null = null, problems: string[] = [];

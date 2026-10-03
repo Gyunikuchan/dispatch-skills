@@ -119,8 +119,10 @@ function asFingerprint(value: unknown): TreeFingerprint | null {
   return { head, index, worktree };
 }
 
-export function createSnapshot(deps: SnapshotDeps): Handler<SnapshotEffect> {
+export function createSnapshot(base: SnapshotDeps): Handler<SnapshotEffect> {
   return async (effect, ports, ctx) => {
+    // A task worktree effect names its checkout; the default remains the caller checkout.
+    const deps = effect.cwd ? { ...base, cwd: effect.cwd } : base;
     try {
       const fingerprint = await deps.git.fingerprint(deps.cwd);
       const since = asFingerprint(effect.since);

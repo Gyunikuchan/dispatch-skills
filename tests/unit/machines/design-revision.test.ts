@@ -83,7 +83,7 @@ test('an unaffected active increment retains its evidence await and progress acr
   const initial = started();
   if (initial.tag !== 'increment' || !('c' in initial.child) || !initial.child.c) throw new Error('child');
   const evidence = { SC1: { result: 'verified before revision' } } as never;
-  const parent = { ...initial, child: { tag: 'evidence' as const, c: { ...initial.child.c, evidence }, purpose: 'scoped' as const, ids: ['SC1'], verify: [] } };
+  const parent = { ...initial, child: { tag: 'evidence' as const, c: { ...initial.child.c, evidence }, purpose: 'final' as const, ids: ['SC1'], verify: [] } };
   const authored = stepDesign(parent, { type: 'REVISE', artifact: 'design', reason: 'Change only second increment', evidence: 'Unstarted contract changed' });
   if (authored.state.tag !== 'revision') throw new Error('revision');
   const parsed = stepDesign(authored.state, { type: 'AUTHORED', path: authored.state.child.workingPath });

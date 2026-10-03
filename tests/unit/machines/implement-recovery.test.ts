@@ -7,7 +7,7 @@ import { artifactRelative, type VerifyRecord } from '../../../skills/dispatch/sc
 export const HASH = `sha256:${'a'.repeat(64)}`;
 export const metadata: RecoverySnapshot = { repoRoot: '', contents: { 'src/a.ts': Buffer.from('before').toString('base64') }, entries: { 'src/a.ts': { kind: 'file', mode: 0o644, linkTarget: null } }, taskStartFiles: ['src/a.ts'], callerDirty: [], ignored: [], git: { head: 'h', index: 'i', stash: '', gitDir: 'g' }, changed: [], verifiedManifestDirs: [], hashManifestDirs: [] };
 export const FP: TreeFingerprint = { head: 'h', index: 'i', worktree: 'w', recovery: metadata };
-export const PLAN = { title: 'Feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], criteria: [{ id: 'SC1', title: 'works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'check', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'feature', command: null, line: 1 }], verification: { automated: ['check'], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: 'original governed text' };
+export const PLAN = { title: 'Feature', box: { 'TL;DR': 'Deliver feature' }, keyDecisions: [], criteria: [{ id: 'SC1', title: 'works', line: 1, changes: ['src/a.ts'], verify: [{ command: 'check', final: false }], evidence: 'verify', preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }], changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'feature', command: null, line: 1 }], verification: { automated: ['check'], none: null, manual: [] }, tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1'], paths: ['src/a.ts'], generated: [] }], finalCommands: [], traceability: null, governedText: 'original governed text' };
 export const RUN: RunStartedEvent = { type: 'RUN_STARTED', protocolRevision: 3, verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {}, overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } }, config: { 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } };
 export const failedRow: VerifyRecord = { command: 'check', exit: 1, logPath: 'failure.log', failureId: 'same-failure', failedTests: ['test:behavior'], diagnostic: 'failed', loadError: false, inputFingerprint: 'input', mutationEpoch: 0, status: 'regression' };
 export function approvalState(): Extract<ImplementState, { tag: 'approval' }> {
@@ -25,21 +25,18 @@ export function host(state: ImplementState, event: Event, fingerprint = FP, path
   assert.equal(r.effects[0]?.kind, 'snapshot');
   return stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.state.effectId, fingerprint, diff: { paths } });
 }
-function failure(): Extract<ImplementState, { tag: 'failure' }> { const c = approvalState().c; return { tag: 'failure', c: { ...c, approval: { by: 'user', quote: 'Proceed' }, stalled: { purpose: 'scoped', rows: [failedRow] } }, reason: 'blocked-by-plan: check failed', changedPaths: [] }; }
-function writer(): Extract<ImplementState, { tag: 'write' }> {
-  let r = host(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  r = stepImplement(r.state, { type: 'BRIEF_READY', effectId: r.effects[0]!.id, stage: 'production', path: 'brief', sha256: HASH, envelopePath: 'outcome' });
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
-  assert.equal(r.state.tag, 'write'); return r.state as Extract<ImplementState, { tag: 'write' }>;
-}
-test('implement-failure-disposition: failure retry bound and root-cause brief', () => {
+function failure(): Extract<ImplementState, { tag: 'failure' }> { const c = approvalState().c; return { tag: 'failure', c: { ...c, phase: 'delivered', approval: { by: 'user', quote: 'Proceed' }, stalled: { purpose: 'final', rows: [failedRow] } }, reason: 'blocked-by-plan: check failed', changedPaths: [] }; }
+function taskFailure(attempt: number): Extract<ImplementState, { tag: 'failure' }> {
   const f = failure();
-  const retry = host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'wrong mapping' } });
-  assert.equal(retry.state.tag, 'writing-brief');
-  assert.equal(retry.effects[0]?.kind === 'write-brief' && retry.effects[0].input['retryContext'] !== null, true);
-  assert.equal('c' in retry.state && retry.state.c?.attempts.production, 1);
-  const cap = host({ ...f, c: { ...f.c, attempts: { ...f.c.attempts, production: 3 } } }, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'same' } });
-  assert.equal(cap.state.tag, 'failure-snapshot');
+  return { ...f, c: { ...f.c, phase: 'tasks', stalled: null, tasks: { T1: { id: 'T1', status: 'failed', attempt, signature: '', input: null, worktree: null, handle: null, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: 'check failed' } } } };
+}
+test('implement-failure-disposition: task retry re-pends failed tasks within the attempt bound', () => {
+  const retry = host(taskFailure(1), { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'wrong mapping' } });
+  assert.equal(retry.state.tag, 'task-checkout');
+  assert.equal(retry.effects[0]?.kind === 'checkout' && retry.effects[0].op, 'init');
+  assert.equal('c' in retry.state && retry.state.c?.tasks['T1']?.status, 'pending');
+  assert.match(validateImplement(taskFailure(3), { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'same' } }) ?? '', /attempt limit/);
+  assert.match(validateImplement(taskFailure(1), { type: 'DECISION', kind: 'failure', answer: { action: 'hotfix', rootCause: 'same' } }) ?? '', /retry or stop/);
 });
 test('user-only manual completion requires explicit quote and per-criterion evidence', () => {
   const f = failure(), criteria = { SC1: { outcome: 'pass', evidence: 'user observed behavior' } };
@@ -88,8 +85,8 @@ test('failure inline hotfix nested spec answer preserves pre-await delta and che
   assert.equal(r.state.tag, 'failure'); assert.deepEqual(r.effects, []);
   assert.equal(host(f, { type: 'DECISION', kind: 'failure', answer: { action: 'manual-complete', by: 'user', quote: 'I verified', criteria: { SC1: { outcome: 'pass', evidence: 'checked' } } } }).state.tag, 'complete');
 });
-for (const violation of ['budget', 'hard-limit', 'pre-RED'] as const) test(`hotfix ${violation} violation re-asks without stalled check`, () => {
-  const c0 = approvalState().c, c = violation === 'pre-RED' ? { ...c0, currentStage: 'tests-only' as const } : c0;
+for (const violation of ['budget', 'hard-limit'] as const) test(`hotfix ${violation} violation re-asks without stalled check`, () => {
+  const c = approvalState().c;
   let r = host({ tag: 'baseline-decision', c, items: [failedRow] }, { type: 'DECISION', kind: 'baseline', answer: { action: 'hotfix', rootCause: 'fix' } });
   const changed = { ...FP, recovery: { ...metadata, changed: [{ path: 'src/a.ts', added: violation === 'budget' ? 151 : 1, removed: 0, deleted: violation === 'hard-limit', outsideRepo: false }] } };
   r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } });
@@ -103,24 +100,6 @@ test('unchanged failure withdraws hotfix for stage', () => {
   assert.ok('c' in r.state && r.state.c?.withdrawnHotfix.includes('baseline'));
   assert.equal(host(r.state, { type: 'DECISION', kind: 'baseline', answer: { action: 'hotfix', rootCause: 'again' } }).state.tag, 'baseline-decision');
 });
-test('failed cascade emits restore and RESTORED launches next model', () => {
-  let r = host(writer(), { type: 'WRITE_FAILED', model: 'writer-a', kind: 'quota', reason: 'partial write' });
-  r = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: { ...FP, worktree: 'changed' }, diff: { paths: ['src/a.ts'] } });
-  assert.equal(r.state.tag, 'restoring'); assert.equal(r.effects[0]?.kind, 'restore');
-  const restoring = r.state;
-  r = stepImplement(r.state, { type: 'RESTORED', effectId: r.effects[0]!.id, paths: ['src/a.ts'], patchPath: 'patch' });
-  assert.equal(r.state.tag, 'write'); if (r.state.tag === 'write') assert.equal(r.state.info.modelIndex, 1);
-  assert.deepEqual(stepImplement(restoring, { type: 'RESTORED', effectId: restoring.tag === 'restoring' ? restoring.effectId : '', paths: ['src/a.ts'], patchPath: 'patch' }).state, r.state);
-});
-test('failed-writer Git mutation stops before restore and next launch', () => {
-  const r = host(writer(), { type: 'WRITE_FAILED', model: 'writer-a', kind: 'quota', reason: 'partial write' });
-  for (const key of ['head', 'index', 'stash', 'gitDir'] as const) {
-    const changed = { ...FP, ...(key === 'head' || key === 'index' ? { [key]: 'changed' } : {}), recovery: { ...metadata, git: { ...metadata.git, [key]: 'changed' } } };
-    const stopped = stepImplement(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: changed, diff: { paths: ['src/a.ts'] } });
-    assert.equal(stopped.state.tag, 'failure-snapshot'); assert.equal(stopped.effects.some((effect) => effect.kind === 'restore'), false);
-  }
-});
-
 test('rewrite SC1 observed RED stays distinct from a manual waived RED requirement', () => {
   const base = failure(); const plan = { ...base.c.plan!, criteria: base.c.plan!.criteria.map((criterion) => ({ ...criterion, evidence: 'red' as const })) };
   const f = { ...base, c: { ...base.c, plan, redMatrix: [{ id: 'SC1', path: 'tests/a.test.ts', leaf: 'check', exit: 1, tests: ['expected failure'] }] } };

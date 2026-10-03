@@ -9,16 +9,14 @@ test('implement-out-of-scope: park snapshot settle apply exactly once', () => {
   const initial = approvalState();
   const parked = stepImplement(initial, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
   assert.equal(parked.state.tag, 'checking-host-event');
-  assert.equal('c' in parked.state && parked.state.c?.attempts.production, 0);
   const event = { type: 'SNAPSHOT' as const, effectId: parked.effects[0]!.id, fingerprint: FP, diff: { paths: ['external.ts'] } };
   const drift = stepImplement(parked.state, event); assert.equal(drift.state.tag, 'drift');
-  assert.equal('c' in drift.state && drift.state.c?.attempts.production, 0);
+  assert.equal('c' in drift.state && drift.state.c?.phase, 'setup');
   const adopted = stepImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { 'external.ts': 'adopt' } });
-  assert.equal(adopted.state.tag, 'writing-brief');
+  assert.equal(adopted.state.tag, 'task-checkout');
   assert.ok('c' in adopted.state && adopted.state.c?.finalFocus.includes('external.ts'));
-  assert.equal('c' in adopted.state && adopted.state.c?.attempts.production, 1);
+  assert.deepEqual('c' in adopted.state && Object.values(adopted.state.c?.tasks ?? {}).map((task) => task.attempt), [0]);
   assert.deepEqual(stepImplement(adopted.state, event).state, adopted.state);
-  if (adopted.effects[0]?.kind === 'write-brief') assert.ok(JSON.stringify(adopted.effects[0].input['settledScope']).includes('external.ts'));
 });
 test('permitted author/write/fix paths and caller-dirty exemption', () => {
   const ctx = { stagePaths: ['src/a.ts'], testPaths: ['tests/a.test.ts'], testsOnly: false, artifactPath: 'x.plan.md' };
@@ -28,7 +26,7 @@ test('permitted author/write/fix paths and caller-dirty exemption', () => {
   const initial = approvalState();
   const c = { ...initial.c, startFingerprint: { ...FP, recovery: { ...metadata, callerDirty: ['caller.txt'] } } };
   const result = host({ ...initial, c }, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, FP, ['caller.txt']);
-  assert.equal(result.state.tag, 'writing-brief');
+  assert.equal(result.state.tag, 'task-checkout');
 });
 test('per-path adopt and stop require exhaustive ruling and stop preserves context', () => {
   const parked = stepImplement(approvalState(), { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });

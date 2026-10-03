@@ -103,7 +103,7 @@ test('implement-approval-by-quote: blocks writing until a user-attributed by and
   const denied = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user' } });
   assert.equal(denied.state.tag, 'approval');
   const allowed = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  assert.equal(allowed.state.tag, 'writing-brief');
+  assert.equal(allowed.state.tag, 'task-checkout');
 });
 
 test('writer configuration resolves sparse levels and rejects malformed cascades', () => {

@@ -54,7 +54,8 @@ const implementPlan = (withEvidence = false) => ({
   title: 'Example', box: { 'TL;DR': 'Deliver example' }, keyDecisions: [],
   criteria: withEvidence ? [{ id: 'SC1', title: 'Works', line: 1, changes: ['src/a.ts'], verify: [], evidence: 'review' as const, preExisting: false, redException: null, testRationale: null, review: null, enforcementInfeasibility: null }] : [],
   changes: withEvidence ? [{ action: 'MODIFY' as const, path: 'src/a.ts', note: 'Add behavior', command: null, line: 1 }] : [],
-  verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: null, governedText: '# Example',
+  verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Example',
+  tasks: withEvidence ? [{ id: 'T1', title: 'Deliver', line: 1, summary: 'Deliver behavior', paths: ['src/a.ts'], criteria: ['SC1'], prerequisites: [], generated: [] }] : [],
 });
 const implementRun = (withEvidence = false): RunStartedEvent => run('implement', {
   argument: 'x.plan.md', overrides: { path: 'x.plan.md', sessionDir: '/session', settledPlan: { path: 'x.plan.md', hash: IMPLEMENT_HASH, outcome: 'settled' } },
@@ -64,9 +65,15 @@ const implementSnapshot: Step = (effect) => ({ type: 'SNAPSHOT', effectId: id(ef
 const implementParsed = (withEvidence = false): Step => (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: IMPLEMENT_HASH, parsed: implementPlan(withEvidence), defects: [] });
 const implementBadParsed: Step = (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: IMPLEMENT_HASH, parsed: {}, defects: [] });
 const implementVerified: Step = (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: effect?.kind === 'verify' ? effect.purpose : 'baseline', results: [], fingerprint: { head: 'h', index: 'i', worktree: 'w' } });
-const implementBrief: Step = (effect) => ({ type: 'BRIEF_READY', effectId: id(effect), stage: 'production', path: 'run/brief.md', sha256: IMPLEMENT_HASH, envelopePath: 'run/outcome.json' });
-const implementEnvelope: Step = { type: 'WRITE_ENVELOPE', envelopePath: 'run/outcome.json' };
-const implementChecked = (withEvidence = false): Step => (effect) => ({ type: 'ENVELOPE_CHECKED', effectId: id(effect), envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented', evidence: withEvidence ? ['CRITERION SC1 | src/a.ts | delivered behavior'] : [] }, defects: [], diff: { paths: [] } });
+const checkoutResults: Record<string, Record<string, unknown>> = {
+  init: { path: 'wt/integration', base: 'b0', manifest: { linked: [] } }, task: { path: 'wt/task-t1', revision: 'b0' }, commit: { revision: 'c1', paths: ['src/a.ts'] },
+  integrate: { revision: 'i1', conflict: false, paths: [] }, deliver: { conflicts: [], transferred: ['src/a.ts'], already: [] }, cleanup: {},
+};
+const implementCheckout: Step = (effect) => ({ type: 'CHECKOUT_DONE', effectId: id(effect), op: effect?.kind === 'checkout' ? effect.op : 'init', result: checkoutResults[effect?.kind === 'checkout' ? effect.op : 'init'] ?? {} });
+const implementBrief: Step = (effect) => ({ type: 'BRIEF_READY', effectId: id(effect), stage: 'task', path: 'run/brief.md', sha256: IMPLEMENT_HASH, envelopePath: 'run/outcome.json' });
+const implementLaunched: Step = { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: 'agent-1' }] };
+const implementEnvelope: Step = { type: 'WRITE_ENVELOPE', envelopePath: 'run/outcome.json', task: 'T1' };
+const implementChecked: Step = (effect) => ({ type: 'ENVELOPE_CHECKED', effectId: id(effect), envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Implemented', evidence: ['CRITERION SC1 | src/a.ts | delivered behavior'] }, defects: [], diff: { paths: ['src/a.ts'] } });
 const implementApprovalStop: Step = { type: 'DECISION', kind: 'approval', answer: 'stop' };
 const implementApproval: Step = { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } };
 const implementEvidence: Step = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'reviewed behavior' } } };
@@ -74,8 +81,8 @@ const implementHandoff: Step = (effect) => ({ type: 'HANDOFF_DONE', effectId: id
 
 function implementsToTerminal(withEvidence: boolean): Step[] {
   return [implementRun(withEvidence), implementSnapshot, implementParsed(withEvidence), implementSnapshot, implementVerified, implementSnapshot, implementApproval,
-    implementBrief, implementSnapshot, implementEnvelope, implementChecked(withEvidence), implementSnapshot, implementSnapshot,
-    implementVerified, ...(withEvidence ? [implementEvidence] : [])];
+    implementCheckout, ...(withEvidence ? [implementCheckout, implementBrief, implementLaunched, implementEnvelope, implementChecked, implementCheckout, implementCheckout] : []),
+    implementCheckout, implementCheckout, implementSnapshot, implementSnapshot, implementVerified, ...(withEvidence ? [implementEvidence] : [])];
 }
 
 // SECTION: Replay
@@ -199,8 +206,8 @@ test('implementation transition declarations include every observed reducer boun
   assert.ok(declared.has('parsing --ARTIFACT_PARSED--> baseline-preflight'));
   assert.ok(declared.has('approval --DECISION--> stopped'));
   assert.ok(declared.has('approval --DECISION--> checking-host-event'));
-  assert.ok(declared.has('cascade-snapshot --SNAPSHOT--> restoring'));
-  assert.ok(declared.has('restoring --RESTORED--> write'));
+  assert.ok(declared.has('task-checkout --CHECKOUT_DONE--> task-brief'));
+  assert.ok(declared.has('tasks --WRITE_ENVELOPE--> task-envelope'));
 });
 
 test('effect ids match EFFECT_ID_PATTERN and are unique across a journal with a second review round', () => {

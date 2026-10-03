@@ -83,7 +83,7 @@ export function reconfigureRoot(state: RootState, event: ExecutionConfigUpdated,
 export function executionBindingDeferred(state: RootState): boolean {
   const reviewing = (value: ReviewState) => value.tag === 'native' && value.c.pendingSpec !== undefined;
   const implementing = (value: ImplementState): boolean => {
-    if (value.tag === 'write' || value.tag === 'hotfix-write') return value.c.pendingWriter !== undefined;
+    if (value.tag === 'tasks' || value.tag === 'hotfix-write') return value.c.pendingWriter !== undefined;
     if (value.tag === 'plan-review' || value.tag === 'code-review') return reviewing(value.review);
     return false;
   };

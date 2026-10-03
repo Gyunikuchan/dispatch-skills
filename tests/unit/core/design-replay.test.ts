@@ -43,12 +43,13 @@ test('finished matching design delivery exposes terminal state', async () => {
 test('real nested two-increment delivery replays author, write and native integration awaits without duplicate writes', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
   const fingerprint = { head: 'a'.repeat(40), index: 'i', worktree: 'w' };
-  let writes = 0;
+  let writes = 0, delivering = '';
   const handlers: Handlers = {
     'parse-artifact': async (effect) => {
       const increment = effect.path.includes('i02') ? 'I02' : 'I01';
       const file = increment === 'I01' ? 'src/a.ts' : 'src/b.ts';
-      const plan = { title: increment, box: { 'TL;DR': design.details[increment as 'I01' | 'I02'].Outcome }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: file, note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment as 'I01' | 'I02'].Outcome }, governedText: '# Plan' };
+      if (effect.artifact === 'plan') delivering = file;
+      const plan = { title: increment, box: { 'TL;DR': design.details[increment as 'I01' | 'I02'].Outcome }, keyDecisions: [], criteria: [], changes: [{ action: 'MODIFY', path: file, note: 'Deliver', command: null, line: 1 }], verification: { automated: [], none: null, manual: [] }, tasks: [{ id: 'T1', title: increment, summary: 'Deliver', line: 1, prerequisites: [], criteria: [], paths: [file], generated: [] }], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment as 'I01' | 'I02'].Outcome }, governedText: '# Plan' };
       return [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: effect.artifact, hash, parsed: effect.artifact === 'design' ? design : plan, defects: [] }];
     },
     snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint, diff: { paths: [] } }],
@@ -60,6 +61,7 @@ test('real nested two-increment delivery replays author, write and native integr
     'wave-finish': async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     wave: async (effect) => [{ type: 'WAVE_DONE', effectId: effect.id, round: effect.round, findings: [], slots: effect.id === 'design.integration.wave.1' ? [{ slot: 'codex[0]', state: 'native', descriptor: { sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'output' } }] : [{ slot: 'codex[0]', state: 'success', claim: 'Clean' }] }],
     handoff: async (effect) => [{ type: 'HANDOFF_DONE', effectId: effect.id, destination: '/handoff', warning: null }],
+    checkout: async (effect) => [{ type: 'CHECKOUT_DONE', effectId: effect.id, op: effect.op, result: { path: session, base: 'base', revision: effect.op === 'task' ? 'base' : `rev-${effect.op}`, manifest: { linked: [] }, paths: [], conflict: false, conflicts: [], transferred: [delivering], already: [] } }],
   };
   const requested = run('implement');
   requested.config = { ...requested.config, phases: { 'design-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } };
@@ -77,8 +79,9 @@ test('real nested two-increment delivery replays author, write and native integr
     result = await send({ ports, machine: rootMachine, handlers, runDir });
     assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
-    const writeData = result.frame?.data;
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: writeData?.['envelopePath'] } });
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: `agent-${increment}` }] } });
+    const [slot] = result.frame?.data['tasks'] as { envelopePath: string }[];
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', envelopePath: slot?.envelopePath } });
   }
   assert.equal(result.frame?.await, 'native', JSON.stringify(result.frame));
   const nativeFrame = result.frame;

@@ -12,11 +12,6 @@ test('five contracts carry exact alias mappings and named dependency guards', ()
   const contract = read(`skills/dispatch/${contractName}`);
   for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
   assert.ok(contract.trim().split(/\s+/).length < WORD_BUDGET);
-  for (const [awaitKind, accepts] of Object.entries(AWAIT_ACCEPTS)) {
-    const section = contract.split(`## Await ${awaitKind}\n`)[1]?.split('\n## ')[0] ?? '';
-    for (const event of accepts.filter((event) => event !== 'REVISE')) assert.ok(section.includes(`\`${event}\``), `${awaitKind} must document ${event}`);
-    for (const event of section.matchAll(/`([A-Z_]+)`/g)) assert.ok(accepts.includes(event[1] as typeof accepts[number]), `${awaitKind} documents unaccepted ${event[1]}`);
-  }
   assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /Preserve unrelated dirty and ignored files/);
   for (const [name, mapping] of Object.entries(ALIASES)) {
     const text = read(`skills/${name}/${contractName}`); assert.match(text, /disable-model-invocation: true/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));
@@ -24,6 +19,15 @@ test('five contracts carry exact alias mappings and named dependency guards', ()
   }
   assert.ok(!Object.keys(ALIASES).some((name) => contract.includes(name)));
 });
+test('await documents exactly its accepted events', () => {
+  const contract = read(`skills/dispatch/${contractName}`);
+  for (const [awaitKind, accepts] of Object.entries(AWAIT_ACCEPTS)) {
+    const section = contract.split(`## Await ${awaitKind}\n`)[1]?.split('\n## ')[0] ?? '';
+    for (const event of accepts.filter((event) => event !== 'REVISE')) assert.ok(section.includes(`\`${event}\``), `${awaitKind} must document ${event}`);
+    for (const event of section.matchAll(/`([A-Z_]+)`/g)) assert.ok(accepts.includes(event[1] as typeof accepts[number]), `${awaitKind} documents unaccepted ${event[1]}`);
+  }
+});
+
 test('branch references and manuals resolve every local link and use portable relative paths', () => {
   const files = scanOverlay().filter((file) => file.path.startsWith('skills/') && file.path.endsWith('.md'));
   const errors: string[] = [];

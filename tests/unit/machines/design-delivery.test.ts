@@ -19,15 +19,15 @@ test('expanded bound plan revision derives approval and retains write effects wi
   const binding = state.child.c.designBinding!;
   const original: ParsedPlan = { ...PLAN, changes: PLAN.changes.map((row) => ({ ...row, action: 'MODIFY' })), criteria: PLAN.criteria.map((row) => ({ ...row, evidence: 'verify' })), box: { 'TL;DR': 'First behavior' }, traceability: { Design: binding.path, Revision: hash, Increment: 'I01', ...binding.contract } };
   const c = { ...state.child.c, plan: original, planHash: hash, startFingerprint: FP, lastFingerprint: FP };
-  const parent = { tag: 'evidence' as const, c, purpose: 'scoped' as const, ids: ['SC1'], verify: [] };
+  const parent = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
   const revision = beginRevision(parent, { type: 'REVISE', artifact: 'plan', reason: 'Add verification', evidence: 'Missing check' }).state;
   const event = { type: 'ARTIFACT_PARSED' as const, kind: 'plan' as const, effectId: 'reparse', hash: `sha256:${'b'.repeat(64)}`, defects: [], parsed: { ...original, criteria: original.criteria.map((row) => ({ ...row, verify: [...row.verify, { command: 'extra-check', final: false }] })) } };
   const result = stepDesign({ tag: 'plan-revision', c: state.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'reparse', afterReview: true } }, event);
   assert.equal(result.state.tag, 'increment');
   if (result.state.tag !== 'increment' || !('c' in result.state.child)) throw new Error('child');
-  assert.equal(result.state.child.tag, 'writing-brief');
+  assert.equal(result.state.child.tag, 'task-checkout');
   assert.equal(result.state.child.c?.approval?.by, 'design');
-  assert.ok(result.effects.some((effect) => effect.kind === 'write-brief'));
+  assert.ok(result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
   const denied = stepDesign({ tag: 'plan-revision', c: state.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'reparse', afterReview: true } }, { ...event, parsed: { ...event.parsed, changes: [{ ...original.changes[0]!, path: 'src/outside.ts' }] } });
   assert.equal(denied.state.tag, 'plan-revision');
   assert.deepEqual(denied.effects, []);
@@ -73,9 +73,9 @@ test('bound child baseline derives approval without an approval await', () => {
   const result = stepDesign(state, { type: 'SNAPSHOT', effectId: 'baseline', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });
   assert.equal(result.state.tag, 'increment');
   if (result.state.tag !== 'increment' || !('c' in result.state.child) || !result.state.child.c) throw new Error('child');
-  assert.equal(result.state.child.tag, 'writing-brief');
+  assert.equal(result.state.child.tag, 'task-checkout');
   assert.equal(result.state.child.c.approval?.by, 'design');
-  assert.ok(result.effects.some((effect) => effect.kind === 'write-brief' && effect.input['designBinding']));
+  assert.ok(result.state.child.c.designBinding && result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
 });
 
 test('traceability scope admits directory and glob forms while rejecting escapes and sibling prefixes', () => {

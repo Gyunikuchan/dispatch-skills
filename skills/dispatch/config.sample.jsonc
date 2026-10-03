@@ -14,6 +14,8 @@
 {
   // Optional session diagnostics; changes take effect at the next mutating send.
   "diagnostics": false,
+  // Optional; maximum concurrent implementation task writers (default 1).
+  "write-concurrency": 2,
   // Required for asks and reviews. Keep only providers you use.
   // Each target is a separate review voice (provider[index]).
   "read-delegates": {

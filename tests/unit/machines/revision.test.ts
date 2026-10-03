@@ -20,7 +20,7 @@ test('REVISE allowed at governed approval/evidence/failure/review awaits; outsta
     assert.equal(validateImplement(parent, revision), null);
     assert.equal(host(parent, revision).state.tag, 'revision-request');
   }
-  const pending = { tag: 'write', c, info: {} } as ImplementState;
+  const pending: ImplementState = { tag: 'tasks', c: { ...c, phase: 'tasks' } };
   assert.match(validateImplement(pending, revision) ?? '', /outstanding write/);
 });
 test('delta review includes governed changes even when criterion IDs and mappings are unchanged', () => {

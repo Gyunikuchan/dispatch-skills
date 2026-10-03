@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
+import { deliverTasks, phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
 let completedTranscript: Promise<ReturnType<typeof phaseFixture>> | undefined;
 function implementationTranscript() {
   return completedTranscript ??= (async () => {
@@ -21,7 +21,7 @@ function implementationTranscript() {
   }
   result = await send({ ...f.options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } } });
   assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame));
-  result = await send({ ...f.options, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: result.frame?.data['envelopePath'] } });
+  result = await deliverTasks(f.options, result);
   assert.equal(result.frame?.await, 'done', JSON.stringify(result.frame));
   return f;
   })();

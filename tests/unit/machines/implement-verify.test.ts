@@ -5,6 +5,7 @@ import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.t
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { initialImplement, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { approvalState, host } from './implement-recovery.test.ts';
+import { launch, start, submit } from './implement-tasks.test.ts';
 
 for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(`rewrite SC1 ordinary evidence ${outcome || 'empty'} cannot falsely complete`, () => {
   const c = approvalState().c;
@@ -29,79 +30,27 @@ const PLAN: ParsedPlan = {
     { action: 'MODIFY', path: 'src/b.ts', note: 'Final-only source', command: null, line: 2 },
     { action: 'GENERATED', path: 'src/generated.ts', note: 'Generated output', command: 'node scripts/gen.mjs', line: 3 },
   ],
-  verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] }, tasks: [], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
+  verification: { automated: ['node --test tests/a.test.ts', 'node --test tests/b.test.ts'], none: null, manual: [] },
+  tasks: [{ id: 'T1', title: 'Feature', summary: 'Deliver feature', line: 1, prerequisites: [], criteria: ['SC1', 'SC2'], paths: ['src/a.ts', 'src/b.ts'], generated: [] }], finalCommands: ['node --test tests/b.test.ts'], traceability: null, governedText: '# Generated feature',
 };
-const PATH = 'plans/generated.plan.md';
-const run = (): RunStartedEvent => ({
-  type: 'RUN_STARTED', verb: 'implement', argument: PATH, level: 'low', levelSource: 'explicit', pins: null, fix: false,
-  orchestrator: 'claude', orchestratorModel: null, overrides: { settledPlan: { path: PATH, hash: HASH, outcome: 'settled' } }, repo: {},
-  config: { 'write-subagents': { claude: { low: { model: 'writer-a' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } },
-});
-const step = (state: ReturnType<typeof initialImplement>, event: Event) => {
-  const result = stepImplement(state, event);
-  if (result.state.tag !== 'checking-host-event') return result;
-  assert.equal(result.effects[0]?.kind, 'snapshot');
-  return stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: result.state.c.lastFingerprint ?? FP, diff: { paths: [] } });
-};
+/** Delivers the single task and stops at the code-review prepare effect. */
+function afterDelivery(): Point {
+  const sim = { plan: PLAN, reviewRounds: 1 };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(result.state.tag, 'code-review');
+  return { state: result.state, effect: getEffect(result.effects, 'prepare-review'), fingerprint: { head: 'h', index: 'i', worktree: 'w' } };
+}
 function getEffect(effects: readonly Effect[], kind: Effect['kind']): Effect {
   const found = effects.find((item) => item.kind === kind);
   assert.ok(found, `expected ${kind}`);
   return found;
 }
-
-function atScopedVerify(): Point {
-  let result = step(initialImplement(), run());
-  let snapshot = getEffect(result.effects, 'snapshot');
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
-  const parse = getEffect(result.effects, 'parse-artifact');
-  result = step(result.state, { type: 'ARTIFACT_PARSED', effectId: parse.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
-  snapshot = getEffect(result.effects, 'snapshot');
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
-  const baseline = getEffect(result.effects, 'verify');
-  result = step(result.state, { type: 'VERIFY_DONE', effectId: baseline.id, purpose: 'baseline', results: [
-    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'ba.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'ba' },
-    { command: 'node --test tests/b.test.ts', exit: 0, logPath: 'bb.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'bb' },
-  ], fingerprint: FP });
-  snapshot = getEffect(result.effects, 'snapshot');
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
-  result = step(result.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  const brief = getEffect(result.effects, 'write-brief');
-  result = step(result.state, { type: 'BRIEF_READY', effectId: brief.id, stage: 'production', path: 'run/prod.md', sha256: HASH, envelopePath: 'run/prod-outcome.json' });
-  snapshot = getEffect(result.effects, 'snapshot');
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
-  let write = result.state;
-  assert.equal(write.tag, 'write');
-  if (write.tag !== 'write') throw new Error('expected writer state');
-  result = step(write, { type: 'WRITE_ENVELOPE', envelopePath: write.info.envelopePath });
-  const check = getEffect(result.effects, 'check-envelope');
-  result = step(result.state, { type: 'ENVELOPE_CHECKED', effectId: check.id, envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'done', evidence: [
-    'CRITERION SC1 | src/a.ts | handles input', 'CRITERION SC2 | src/b.ts | consumes generated output',
-  ] }, defects: [], diff: { paths: ['src/a.ts', 'src/b.ts'] } });
-  snapshot = getEffect(result.effects, 'snapshot');
-  const postWriteFp = { ...FP, worktree: 'post-write' };
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: postWriteFp, diff: { paths: ['src/a.ts', 'src/b.ts'] } });
-  snapshot = getEffect(result.effects, 'snapshot');
-  result = step(result.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: postWriteFp, diff: { paths: [] } });
-  const verify = getEffect(result.effects, 'verify');
-  return { state: result.state, effect: verify, fingerprint: postWriteFp };
-}
-
-function afterScopedEvidence(input: Point = atScopedVerify()): Point {
-  const { state, effect, fingerprint } = input;
-  assert.equal(state.tag, 'scoped-verify');
-  assert.equal(effect.kind, 'verify');
-  if (state.tag !== 'scoped-verify' || effect.kind !== 'verify') throw new Error('expected scoped verification state');
-  assert.deepEqual(effect.commands.map((item) => item['command']), ['node --test tests/a.test.ts']);
-  let result = step(state, { type: 'VERIFY_DONE', effectId: effect.id, purpose: 'scoped', results: [
-    { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'scope-a.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'input-a' },
-  ], fingerprint });
-  assert.equal(result.state.tag, 'evidence');
-  if (result.state.tag !== 'evidence') throw new Error('expected scoped evidence await');
-  result = step(result.state, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'test passed' } } });
-  assert.equal(result.state.tag, 'code-review');
-  const reviewEffect = getEffect(result.effects, 'prepare-review');
-  return { state: result.state, effect: reviewEffect, fingerprint };
-}
+const step = (state: ReturnType<typeof initialImplement>, event: Event) => {
+  const result = stepImplement(state, event);
+  if (result.state.tag !== 'checking-host-event') return result;
+  return stepImplement(result.state, { type: 'SNAPSHOT', effectId: result.state.effectId, fingerprint: result.state.c.lastFingerprint ?? FP, diff: { paths: [] } });
+};
 
 function throughReview(input: Point, mutate = false): ReviewPoint {
   let state = input.state;
@@ -116,10 +65,10 @@ function throughReview(input: Point, mutate = false): ReviewPoint {
   return { state: result.state, effect: result.effects[0] as Effect, effects: result.effects, fingerprint: postReviewFp };
 }
 
-test('implement-final-deferral, implement-final-gate-coverage, implement-completion-rules and implement-within-run-reuse', () => {
+test('implement-final-deferral, implement-final-gate-coverage, implement-completion-rules and caller-checkout reruns after delivery', () => {
   assert.deepEqual(commandMappings(PLAN).map((row) => [row.command, row.final]), [['node --test tests/a.test.ts', false], ['node --test tests/b.test.ts', true]]);
   assert.deepEqual(generatedCommands(PLAN), [{ command: 'node scripts/gen.mjs', path: 'src/generated.ts' }]);
-  const scoped = afterScopedEvidence();
+  const scoped = afterDelivery();
   let postReview = throughReview(scoped);
   assert.equal(postReview.state.tag, 'generated-verify');
   if (postReview.state.tag !== 'generated-verify') return;
@@ -137,7 +86,7 @@ test('implement-final-deferral, implement-final-gate-coverage, implement-complet
   assert.equal(final.kind, 'verify');
   if (final.kind !== 'verify') return;
   assert.deepEqual(final.commands.map((item) => [item['command'], item['reuse'] !== undefined]), [
-    ['node --test tests/a.test.ts', true], ['node --test tests/b.test.ts', false],
+    ['node --test tests/a.test.ts', false], ['node --test tests/b.test.ts', false],
   ]);
   result = step(result.state, { type: 'VERIFY_DONE', effectId: final.id, purpose: 'final', results: [
     { command: 'node --test tests/a.test.ts', exit: 0, logPath: 'scope-a.log', failedTests: [], failureId: null, diagnostic: '', loadError: false, inputFingerprint: 'input-a' },
@@ -145,13 +94,13 @@ test('implement-final-deferral, implement-final-gate-coverage, implement-complet
   ], fingerprint: postReview.fingerprint });
   assert.equal(result.state.tag, 'evidence');
   if (result.state.tag !== 'evidence') return;
-  assert.deepEqual(result.state.ids, ['SC2']);
-  result = step(result.state, { type: 'EVIDENCE', criteria: { SC2: { outcome: 'pass', evidence: 'final command passed' } } });
+  assert.deepEqual(result.state.ids, ['SC1', 'SC2']);
+  result = step(result.state, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'final command passed' }, SC2: { outcome: 'pass', evidence: 'final command passed' } } });
   assert.equal(result.state.tag, 'complete');
 });
 
 test('implement-evidence-postdates and implement-generated-rerun: mutations stale evidence and generation runs first', () => {
-  const scoped = afterScopedEvidence();
+  const scoped = afterDelivery();
   let postReview = throughReview(scoped, true);
   if (postReview.state.tag !== 'generated-verify') return assert.fail('generated verify should follow review snapshot');
   const generated = getEffect(postReview.effects, 'verify');

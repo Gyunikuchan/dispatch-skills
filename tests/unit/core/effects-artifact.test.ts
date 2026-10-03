@@ -66,11 +66,11 @@ test('prepare-review: ask builds a bounded inline prompt', async () => {
 
 test('write-brief: brief written with its sha256 and the envelope path', async () => {
   const runDir = tempDir();
-  const result = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.1', stage: 'production', input: {} }, fakePorts(), { runDir, attempt: 1 }));
+  const result = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.1', stage: 'task', input: {} }, fakePorts(), { runDir, attempt: 1 }));
   assert.ok(result.type === 'BRIEF_READY');
   const text = fs.readFileSync(result.path, 'utf8');
   assert.equal(result.sha256, `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`);
-  assert.equal(result.stage, 'production');
+  assert.equal(result.stage, 'task');
   assert.ok(text.includes(result.envelopePath));
   assert.equal(fs.existsSync(result.envelopePath), false);
 });
@@ -91,6 +91,6 @@ test('prepare-review and write-brief: a write failure is one EFFECT_FAILED io', 
   const review = { kind: 'ask', target: 'q', breadth: 1, context: '', roster: [{ slot: 'codex[0]' }], timeoutMs: 1 };
   const prep = only(await createPrepareReview({ skillRoot: SKILL_ROOT, cwd: '/repo', git: gitWith('') })(
     { kind: 'prepare-review', id: 'ask.prepare-review.1', review, round: 1, scope: { scope: 'full', carried: [] } }, ports, ctx));
-  const brief = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.1', stage: 'production', input: {} }, ports, ctx));
+  const brief = only(await createWriteBrief({ skillRoot: SKILL_ROOT })({ kind: 'write-brief', id: 'implement.write-brief.1', stage: 'task', input: {} }, ports, ctx));
   for (const result of [prep, brief]) assert.ok(result.type === 'EFFECT_FAILED' && result.cls === 'io' && /disk full/.test(result.detail));
 });

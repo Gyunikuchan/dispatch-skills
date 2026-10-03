@@ -13,7 +13,7 @@ export type ExitCode = 0 | 1 | 2 | 3;
 
 export type EffectKind =
   | 'parse-artifact' | 'prepare-review' | 'wave' | 'wave-start' | 'wave-finish' | 'verify' | 'write-brief'
-  | 'check-envelope' | 'snapshot' | 'restore' | 'handoff';
+  | 'check-envelope' | 'snapshot' | 'restore' | 'handoff' | 'checkout';
 
 // Effect-handler failure classes.
 export type EffectFailureClass = 'io' | 'timeout' | 'crash' | 'invalid-output' | 'integrity' | 'config';
@@ -58,7 +58,9 @@ export type Finding = Payload;
 export type VerifyPurpose = string;
 export type CommandResult = Payload;
 export type TreeFingerprint = Payload;
-export type WriteStage = 'tests-only' | 'production' | 'hotfix';
+export type WriteStage = 'task' | 'hotfix';
+/** Driver-owned private Git operations; only `deliver` writes the caller checkout. */
+export type CheckoutOp = 'init' | 'task' | 'commit' | 'red' | 'integrate' | 'reset' | 'deliver' | 'cleanup';
 export type RecoverySnapshot = {
   repoRoot: string;
   contents: Readonly<Record<string, string | null>>;
@@ -118,8 +120,9 @@ export type HostEvent =
   | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
   | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
   | { type: 'FIXES_APPLIED'; clusters: FixClusterResult[] }
-  | { type: 'WRITE_ENVELOPE'; envelopePath: string }
-  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string }
+  | { type: 'WRITE_LAUNCHED'; tasks: { task: string; handle: string }[] }
+  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task?: string }
+  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: string }
   | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence> }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
@@ -136,6 +139,7 @@ export type ResultEvent =
   | { type: 'SNAPSHOT'; effectId: string; fingerprint: TreeFingerprint; diff: PathDiff }
   | { type: 'RESTORED'; effectId: string; paths: string[]; patchPath: string }
   | { type: 'HANDOFF_DONE'; effectId: string; destination: string; warning: string | null }
+  | { type: 'CHECKOUT_DONE'; effectId: string; op: CheckoutOp; result: Payload }
   | { type: 'EFFECT_FAILED'; effectId: string; cls: EffectFailureClass; detail: string };
 
 export type Event = HostEvent | ResultEvent | LifecycleEvent;
@@ -151,12 +155,13 @@ export type Effect =
   | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'wave-finish'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number; waveKey: string; attempt: number; captures: NativeSlotResult[] }
   | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
-  | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[] }
+  | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[]; cwd?: string }
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
-  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet }
-  | { kind: 'snapshot'; id: string; since: TreeFingerprint | null }
+  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; cwd?: string }
+  | { kind: 'snapshot'; id: string; since: TreeFingerprint | null; cwd?: string }
   | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }
-  | { kind: 'handoff'; id: string; terminal: boolean };
+  | { kind: 'handoff'; id: string; terminal: boolean }
+  | { kind: 'checkout'; id: string; op: CheckoutOp; input: Payload };
 
 /** Exactly one terminal result type per effect kind; `EFFECT_FAILED` is terminal for all. */
 export type TerminalResultMap = { readonly [K in EffectKind]: ResultEventType };

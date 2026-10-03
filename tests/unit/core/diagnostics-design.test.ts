@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
+import { deliverTasks, phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
 test('SC2: design increments retain their parent and separately identify embedded skipped reviews', async () => {
   const f = phaseFixture('implement', 0);
   const design = { title: 'Delivery', box: { 'TL;DR': 'Fixture behavior' }, governedText: '# Delivery', executionStatus: null, increments: [{ id: 'I01', priority: 1, summary: 'First', prerequisites: [], paths: ['src/a.ts'] }, { id: 'I02', priority: 2, summary: 'Second', prerequisites: ['I01'], paths: ['src/b.ts'] }], details: { I01: { Outcome: 'First behavior' }, I02: { Outcome: 'Second behavior' } } };
@@ -12,7 +12,7 @@ test('SC2: design increments retain their parent and separately identify embedde
     'parse-artifact': async (effect: Extract<import('../../../skills/dispatch/scripts/core/types.ts').Effect, { kind: 'parse-artifact' }>) => {
       const increment = effect.path.includes('i02') ? 'I02' : 'I01';
       const file = increment === 'I01' ? 'src/a.ts' : 'src/b.ts';
-      const plan = { ...parsedPlan, title: increment, box: { 'TL;DR': design.details[increment].Outcome }, changes: [{ ...parsedPlan.changes[0]!, path: file }], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment].Outcome } };
+      const plan = { ...parsedPlan, title: increment, box: { 'TL;DR': design.details[increment].Outcome }, changes: [{ ...parsedPlan.changes[0]!, path: file }], tasks: [{ ...parsedPlan.tasks[0]!, paths: [file] }], traceability: { Design: 'x.design.md', Revision: hash, Increment: increment, Outcome: design.details[increment].Outcome } };
       return [{ type: 'ARTIFACT_PARSED' as const, effectId: effect.id, kind: effect.artifact, hash, parsed: effect.artifact === 'design' ? design : plan, defects: [] }];
     },
     'check-envelope': async (effect: Extract<import('../../../skills/dispatch/scripts/core/types.ts').Effect, { kind: 'check-envelope' }>) => [{ type: 'ENVELOPE_CHECKED' as const, effectId: effect.id, envelope: { schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered', evidence: [] }, defects: [], diff: { paths: [effect.id.includes('i02') ? 'src/b.ts' : 'src/a.ts'] } }],
@@ -24,7 +24,7 @@ test('SC2: design increments retain their parent and separately identify embedde
     assert.equal(result.frame?.await, 'author', JSON.stringify(result.frame));
     result = await send({ ...options, rawEvent: { type: 'AUTHORED', path: result.frame?.data['path'] } });
     assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame));
-    result = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', envelopePath: result.frame?.data['envelopePath'] } });
+    result = await deliverTasks(options, result);
   }
   assert.equal(result.frame?.await, 'done', JSON.stringify(result.frame));
   const phases = f.capture().phases, outer = phases.find((p) => p.name === 'design')!;

@@ -9,7 +9,10 @@ import { writeRendered } from './artifacts.ts';
 
 type BriefEffect = Extract<Effect, { kind: 'write-brief' }>;
 
-export type BriefDeps = { skillRoot: string };
+export type BriefDeps = { skillRoot: string; checkpointCommand?: (root: string, out: string, paths: readonly string[]) => string };
+
+const quote = (value: string): string => `"${value}"`;
+const defaultCheckpoint = (root: string, out: string, paths: readonly string[]): string => `dispatch checkpoint --root ${quote(root)} --out ${quote(out)} -- ${paths.map(quote).join(' ')}`;
 
 function structuredContext(input: Readonly<Record<string, unknown>>): string {
   const rows: [string, string][] = [];
@@ -23,6 +26,7 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
     rows.push(['Governing plan', `Path: ${String(input['planPath'] ?? '(unknown)')}\nHash: ${String(input['planHash'] ?? '(unknown)')}`]);
   }
   rows.push(['Governing outcome', render(input['governingOutcome'])]);
+  if (input['task']) rows.push(['Task, graph, and worktree', render(input['task'])]);
   rows.push(['Settled scope', render(input['settledScope'])]);
   rows.push(['Criteria', render(input['criteria'])]);
   if (input['designBinding']) rows.push(['Governing design and inherited contract', render(input['designBinding'])]);
@@ -50,7 +54,12 @@ export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
       const template = assembleTemplate(ports.fs.readText(path.join(dir, 'write-brief.md')), ports.fs.readText(path.join(dir, `write-brief-${effect.stage}.md`)));
       const rawSelfCheck = typeof effect.input['selfCheck'] === 'string' ? effect.input['selfCheck'] : 'dispatch --check-envelope <Expected Envelope Path>';
       const selfCheck = rawSelfCheck.split('<Expected Envelope Path>').join(envelopePath);
-      const values: Record<string, string> = { 'Expected Envelope Path': envelopePath, 'Self Check Command': selfCheck };
+      const task = typeof effect.input['task'] === 'object' && effect.input['task'] !== null ? effect.input['task'] as Readonly<Record<string, unknown>> : null;
+      const checkpoint = task && typeof task['checkpoint'] === 'object' && task['checkpoint'] !== null ? task['checkpoint'] as { root?: unknown; paths?: unknown } : null;
+      const checkpointCommand = checkpoint && typeof checkpoint.root === 'string' && Array.isArray(checkpoint.paths)
+        ? (deps.checkpointCommand ?? defaultCheckpoint)(checkpoint.root, envelopePath.replace(/\.outcome\.json$/, '') + '.red.json', checkpoint.paths.filter((item): item is string => typeof item === 'string'))
+        : 'No RED checkpoint: this task has no RED criteria.';
+      const values: Record<string, string> = { 'Expected Envelope Path': envelopePath, 'Self Check Command': selfCheck, 'Checkpoint Command': checkpointCommand };
       const rendered = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));
       text = `${rendered}${structuredContext(effect.input)}`;
     } catch (error) {

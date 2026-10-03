@@ -1,6 +1,7 @@
 import type { Await, Event, HostEvent, Machine, TreeFingerprint } from '../core/types.ts';
 import type { ParsedPlan, PlanCriterion } from '../domain/types.ts';
 import type { Context, ImplementState } from './implement.ts';
+import { reconcileTasks } from './implement-tasks.ts';
 import { asParsedPlan, approvedPaths, commandMappings, recoverySnapshot, driftAnswer, isFingerprint, artifactRelative } from './implement-types.ts';
 import { classifyDrift } from '../policy/drift.ts';
 import { beginReview, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
@@ -110,7 +111,7 @@ export function reboundRevision(state: Extract<RevisionState, { tag: 'resume' }>
     const next = commandMappings(plan).find((row) => row.command === command), old = commandMappings(r.original).find((row) => row.command === command);
     return next && old && JSON.stringify(next) === JSON.stringify(old) && !next.criteria.some((id) => r.changed.includes(id));
   }));
-  return { ...r.c, plan, planHash: hash, planPath: r.workingPath, evidence, records, criterionMutation: Object.fromEntries(plan.criteria.map((row) => [row.id, r.changed.includes(row.id) ? r.c.mutationEpoch : r.c.criterionMutation[row.id] ?? 0])),
+  return { ...r.c, plan, planHash: hash, planPath: r.workingPath, evidence, records, tasks: Object.keys(r.c.tasks).length ? reconcileTasks(r.c.tasks, plan) : r.c.tasks, criterionMutation: Object.fromEntries(plan.criteria.map((row) => [row.id, r.changed.includes(row.id) ? r.c.mutationEpoch : r.c.criterionMutation[row.id] ?? 0])),
     concerns: [...r.c.concerns, ...r.removed.map((id) => `Revision removed criterion ${id}.`)], revisions: [...r.c.revisions, { artifact: 'plan', reason: r.reason, beforeHash: r.originalHash, afterHash: hash, rebind: { retained: Object.keys(evidence), pending: r.changed, removed: r.removed } }] };
 }
 export function revisionAwait(state: RevisionState): Await | null { return state.tag === 'author' ? 'author' : state.tag === 'review' ? reviewAwait(state.review) : state.tag === 'drift' ? 'decide' : state.tag === 'resume' || state.tag === 'refused' ? 'done' : null; }

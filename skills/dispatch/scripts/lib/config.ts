@@ -10,7 +10,7 @@ export const CONFIG_CANDIDATES = ['config.local.jsonc', 'config.jsonc'] as const
 const HINT = `diff against ${SAMPLE_NAME}`;
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const TABLES = ['read-delegates', 'write-subagents', 'phases', 'diagnostics'];
+const TABLES = ['read-delegates', 'write-subagents', 'phases', 'diagnostics', 'write-concurrency'];
 const PHASES = ['plan-review', 'code-review'];
 const KNOBS = ['targets', 'rounds'];
 const KNOWN = ['claude', 'agy', 'copilot', 'opencode', 'codex'];
@@ -107,6 +107,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const canonical = (key: string): string => ALIASES[key.toLowerCase()] ?? key.toLowerCase();
 const nonNegativeInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+const positiveInt = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) > 0;
+
+/** Active task-writer cap; absent means serial execution through the same scheduler. */
 const goodName = (value: unknown): boolean => typeof value === 'string' && value.trim() !== '' && !value.trim().endsWith(':');
 
 function sortedJson(value: unknown): string {
@@ -222,6 +225,7 @@ export function validateConfig(config: unknown): string[] {
   if (!isRecord(config)) return [`Config must be a JSON object with tables: ${TABLES.join(', ')} (${HINT}).`];
   const problems: string[] = [];
   if (config['diagnostics'] !== undefined && typeof config['diagnostics'] !== 'boolean') problems.push(`diagnostics must be a boolean (${HINT}).`);
+  if (config['write-concurrency'] !== undefined && !positiveInt(config['write-concurrency'])) problems.push(`write-concurrency must be a positive integer (${HINT}).`);
   for (const key of Object.keys(config)) {
     if (!TABLES.includes(key)) problems.push(`Unrecognized top-level key "${key}". Valid tables: ${TABLES.join(', ')} (${HINT}).`);
   }

@@ -6,6 +6,7 @@ import type { ResultEvent } from '../../../skills/dispatch/scripts/core/types.ts
 import type { Git } from '../../../skills/dispatch/scripts/effects/git.ts';
 import { createSnapshot } from '../../../skills/dispatch/scripts/effects/snapshot.ts';
 import { createVerify, shellArgv } from '../../../skills/dispatch/scripts/effects/verify.ts';
+import { writeCheckpoint } from '../../../skills/dispatch/scripts/effects/checkout.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
 const FP = { head: 'abc', index: 'i', worktree: 'w' };
@@ -119,4 +120,24 @@ test('reused result reports unknown counts instead of fabricated zero counts', a
   const result = only(await handler({ kind: 'verify', id: 'verify.2', purpose: 'final', commands: [{ command: 'check', reuse: first.results[0] }] }, ports, { runDir: tempDir(), attempt: 1 }));
   assert.ok(result.type === 'VERIFY_DONE');
   if (result.type === 'VERIFY_DONE') { assert.equal(result.results[0]?.['reused'], true); assert.equal(result.results[0]?.['testCounts'], null); }
+});
+
+test('verify and snapshot run in the effect cwd when one is given', async () => {
+  const seen: string[] = [];
+  const probe: Git = { ...git, fingerprint: async (cwd) => { seen.push(cwd); return FP; } };
+  const ports = fakePorts();
+  ports.spawn = { run: async (_argv, options) => { seen.push(options.cwd); return { exit: 0, stdout: '', stderr: '' }; } };
+  await createSnapshot({ cwd: '/repo', git: probe })({ kind: 'snapshot', id: 's.1', since: null, cwd: '/wt/t1' }, fakePorts(), { runDir: tempDir(), attempt: 1 });
+  await createVerify({ os: 'linux', cwd: '/repo', git: probe })({ kind: 'verify', id: 'v.1', purpose: 'fix-verify', commands: [{ command: 'good' }], cwd: '/wt/t1' }, ports, { runDir: tempDir(), attempt: 1 });
+  assert.ok(seen.length >= 2 && seen.every((cwd) => cwd === '/wt/t1'), JSON.stringify(seen));
+});
+
+test('checkpoint captures only listed files and records absent files as deletions', () => {
+  const root = tempDir(), out = path.join(tempDir(), 'red.json');
+  fs.mkdirSync(path.join(root, 'tests'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'tests/a.test.ts'), 'red');
+  fs.writeFileSync(path.join(root, 'tests/other.test.ts'), 'unlisted');
+  assert.deepEqual(writeCheckpoint(fakePorts(), root, out, ['tests/a.test.ts', 'tests/gone.test.ts']).files, ['tests/a.test.ts', 'tests/gone.test.ts']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(out, 'utf8')), { schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'tests/gone.test.ts': null } });
+  assert.throws(() => writeCheckpoint(fakePorts(), root, out, ['../escape.ts']), /repository-relative/);
 });

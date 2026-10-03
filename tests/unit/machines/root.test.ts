@@ -33,7 +33,7 @@ test('root nested revision routes after parked snapshot and resumes original Con
   r = rootMachine.step(r.state, { type: 'SNAPSHOT', effectId: r.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
   r = rootMachine.step(r.state, { type: 'ARTIFACT_PARSED', effectId: r.effects[0]!.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
   assert.equal(r.state.tag, 'implement'); if (r.state.tag !== 'implement' || !('c' in r.state.child) || !r.state.child.c) return;
-  assert.equal(r.state.child.tag, 'approval'); assert.equal(r.state.child.c.attempts.production, parent.c.attempts.production);
+  assert.equal(r.state.child.tag, 'approval'); assert.deepEqual(r.state.child.c.tasks, parent.c.tasks);
   assert.equal(r.state.child.c.revisions[0]?.reason, 'blocked-by-plan');
   assert.deepEqual(r.state.child.c.startFingerprint, parent.c.startFingerprint);
 });

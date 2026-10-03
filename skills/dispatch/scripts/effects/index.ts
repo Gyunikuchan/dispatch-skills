@@ -6,6 +6,8 @@ import path from 'node:path';
 import type { OsId } from '../lib/platform.ts';
 import type { ProviderId } from '../providers/types.ts';
 import type { Git } from './git.ts';
+import fs from 'node:fs';
+import { createCheckout, type CheckoutDeps } from './checkout.ts';
 import { createCheckEnvelope, changedPaths, pathHashes } from './check-envelope.ts';
 import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
@@ -31,7 +33,13 @@ export type HandlerDeps = {
   /** Worker plumbing for the real wave, or a replacement CLI wave handler (tests). */
   wave: Omit<WaveDeps, 'context'> | Handler<WaveEffect>;
   selfCheckCommand?: (runDir: string, eventPath: string) => string;
+  checkpointCommand?: (root: string, out: string, paths: readonly string[]) => string;
+  /** Directory-link plumbing for private worktrees; defaults to Node junction/symlink calls. */
+  links?: CheckoutDeps['links'];
 };
+
+// NOTE: 'junction' needs no elevation on Windows and is ignored elsewhere; unlink removes only the link.
+const nodeLinks: CheckoutDeps['links'] = { create: (target, link) => fs.symlinkSync(target, link, 'junction'), remove: (link) => fs.unlinkSync(link) };
 
 const reviewOf = (roster: readonly Row[]): WaveContext['review'] => {
   const value = roster[0]?.['review'];
@@ -69,14 +77,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'write-brief': async (effect, ports, ctx) => {
       if (!deps.selfCheckCommand) return createWriteBrief(deps)(effect, ports, ctx);
       const eventPath = path.join(ctx.runDir, `${effect.id}.self-check.event.json`);
-      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`) })}\n`);
+      const task = (effect.input['task'] as { id?: unknown } | undefined)?.id;
+      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`), ...(typeof task === 'string' ? { task } : {}) })}\n`);
       return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
     },
     snapshot: async (effect, ports, ctx) => {
       const events = await createSnapshot(deps)(effect, ports, ctx);
       for (const event of events) if (event.type === 'SNAPSHOT') {
         try {
-          const hashes = await pathHashes(deps, ports);
+          const hashes = await pathHashes(effect.cwd ? { ...deps, cwd: effect.cwd } : deps, ports);
           const recovery = event.fingerprint['recovery'] as { changed?: { path: string }[] } | undefined;
           return [{ ...event, fingerprint: { ...event.fingerprint, pathHashes: hashes }, diff: { paths: [...new Set([...changedPaths(effect.since, hashes), ...(recovery?.changed?.map((row) => row.path) ?? [])])].sort() } }];
         } catch (error) {
@@ -87,5 +96,6 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     restore: createRestore(deps),
     handoff: createHandoff(deps),
+    checkout: createCheckout({ cwd: deps.cwd, links: deps.links ?? nodeLinks }),
   };
 }
