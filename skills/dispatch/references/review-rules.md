@@ -1,6 +1,6 @@
 # Review rules
 
-[Dispatch](..) owns `start review`, `send`, and eight awaits. Code, plan, and design reviews are report-only unless `--fix` is requested.
+[Dispatch](..) owns `start review`, `send`, and eight awaits. Reviews apply fixes only with `--fix`. The driver records findings in the owning design, plan, or walkthrough's `## Review Findings & Resolutions`, preserving prior runs; reviews without an owning document use a standalone report.
 
 Review prompt context composes two channels: semantic intent prioritizes explicit `--context` (or distilled chat intent/deviations), falling back to Git commit log (`git log --format="%s%n%b" <range>`) for commit ranges and defaulting to `Review the selected changes.`; structural baseline prioritizes explicit governing paths, discovering unique `<slug>.plan.md` and `<slug>.walkthrough.md` in active `sessionDir` and leaving ambiguous or absent deliverables as `None`.
 

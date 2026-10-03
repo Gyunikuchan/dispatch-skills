@@ -56,8 +56,7 @@ export function renderResolutionSection(rounds: readonly ResolutionRound[]): str
   return out.join('\n');
 }
 
-/** Replaces the exact resolution heading's section wholesale (appending when absent); later sections survive. */
-export function replaceResolutionSection(doc: string, rendered: string): string {
+function resolutionSectionRange(doc: string): { lines: string[]; start: number; end: number } {
   const lines = doc.replace(/\r\n/g, '\n').split('\n');
   let fence: string | null = null;
   let start = -1;
@@ -74,7 +73,29 @@ export function replaceResolutionSection(doc: string, rendered: string): string 
     if (start === -1 && text.trimEnd() === RESOLUTION_HEADING) start = index;
     else if (start !== -1 && /^##\s/.test(text)) { end = index; break; }
   }
-  const body = rendered.replace(/\s+$/, '');
+  return { lines, start, end };
+}
+
+export function resolutionSectionOf(doc: string): string | null {
+  const { lines, start, end } = resolutionSectionRange(doc);
+  return start === -1 ? null : lines.slice(start, end).join('\n');
+}
+
+/** A review key updates only that run's block; otherwise replaces the section. Later sections survive. */
+export function replaceResolutionSection(doc: string, rendered: string, reviewKey?: string): string {
+  const { lines, start, end } = resolutionSectionRange(doc);
+  let body = rendered.replace(/\s+$/, '');
+  if (reviewKey !== undefined) {
+    const heading = `### Review ${line(reviewKey)}`;
+    const current = lines.slice(start + 1, end).join('\n').trim();
+    const history = start === -1 || /^\*?No reviews conducted yet\.\*?$/.test(current) ? '' : current;
+    const block = `${heading}\n\n${body.replace(/^## Review Findings & Resolutions\s*\n/, '').replace(/^### Round /gm, '#### Round ')}`;
+    const blocks = history.split(/(?=^### Review )/m);
+    const index = blocks.findIndex((entry) => entry.split('\n')[0] === heading);
+    if (index === -1) blocks.push(block);
+    else blocks[index] = block;
+    body = `${RESOLUTION_HEADING}\n\n${blocks.map((entry) => entry.trim()).filter(Boolean).join('\n\n')}`;
+  }
   if (start === -1) return `${doc.replace(/\s+$/, '')}\n\n${body}\n`;
   const before = lines.slice(0, start).join('\n').replace(/\s+$/, '');
   const after = lines.slice(end).join('\n').replace(/\s+$/, '');

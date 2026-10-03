@@ -74,3 +74,22 @@ test('walkthrough-minimum-contract: an info-string fence line does not close an 
   const out = replaceResolutionSection(doc, '## Review Findings & Resolutions\nnew');
   assert.ok(out.includes('example') && out.includes('new') && !out.includes('old'));
 });
+
+
+test('review history preserves prior runs and updates the current run without duplicates', () => {
+  const original = '# Plan\n\n## Review Findings & Resolutions\nNo reviews conducted yet.\n\n## Out of Scope\nkeep\n';
+  const first = replaceResolutionSection(original, renderResolutionSection(rounds), 'run-1');
+  const second = replaceResolutionSection(first, renderResolutionSection([]), 'run-2');
+  const updated = replaceResolutionSection(second, renderResolutionSection([{ ...rounds[0]!, entries: [] }]), 'run-1');
+  assert.equal((updated.match(/### Review run-1/g) ?? []).length, 1);
+  assert.match(updated, /### Review run-2/);
+  assert.ok(!updated.includes('R1-F001'));
+  assert.match(updated, /## Out of Scope\nkeep/);
+  assert.equal(replaceResolutionSection(updated, renderResolutionSection([{ ...rounds[0]!, entries: [] }]), 'run-1'), updated);
+});
+
+test('review history retains existing ungrouped rounds', () => {
+  const original = replaceResolutionSection('# Plan\n', renderResolutionSection(rounds));
+  const updated = replaceResolutionSection(original, renderResolutionSection([]), 'new-run');
+  assert.match(updated, /### Round 1[\s\S]*R1-F001[\s\S]*### Review new-run/);
+});

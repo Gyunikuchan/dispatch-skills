@@ -2,7 +2,7 @@
 // validation, and driver-owned Markdown rendering (resolution sections and the standalone report; not an effect).
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
-import { renderReport, renderResolutionSection, replaceResolutionSection, walkthroughPathOf } from '../domain/render.ts';
+import { renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, walkthroughPathOf } from '../domain/render.ts';
 import type { ReviewKind } from '../domain/types.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
@@ -256,57 +256,71 @@ function writeIfChanged(ports: Ports, file: string, text: string): void {
   ports.fs.writeAtomic(file, text);
 }
 
-function writeSection(ports: Ports, file: string, review: ReviewState): void {
-  if (!('c' in review) || !review.c.rounds.length || !ports.fs.exists(file)) return;
-  writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(resolutionRounds(review.c))));
+function reviewKeyOf(runDir: string, machinePath: string): string {
+  const session = sessionDirOf(runDir).replace(/\\/g, '/').split('/').at(-1);
+  const run = runDir.replace(/\\/g, '/').split('/').at(-1);
+  return `${session}/${run}/${machinePath}`;
 }
 
-function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string): void {
-  if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview);
+function writeSection(ports: Ports, file: string, review: ReviewState, runDir: string): void {
+  if (!('c' in review) || !review.c.rounds.length || !ports.fs.exists(file)) return;
+  writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(resolutionRounds(review.c)), reviewKeyOf(runDir, review.c.path)));
+}
+
+function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string, runDir: string): void {
+  if ('c' in implementation && implementation.c?.planReview) writeSection(ports, implementation.c.planPath, implementation.c.planReview, runDir);
   const walkthrough = renderImplementWalkthrough(implementation);
-  if (walkthrough) writeIfChanged(ports, walkthroughPath, walkthrough);
+  if (walkthrough) {
+    const section = resolutionSectionOf(walkthrough)!;
+    const history = ports.fs.exists(walkthroughPath) ? resolutionSectionOf(ports.fs.readText(walkthroughPath)) : null;
+    const base = replaceResolutionSection(walkthrough, history ?? renderResolutionSection([]));
+    writeIfChanged(ports, walkthroughPath, replaceResolutionSection(base, section, reviewKeyOf(runDir, 'implementation')));
+  }
 }
 
 function render(state: RootState, ports: Ports, runDir: string): void {
   if (state.tag === 'revision') {
     const r = state.child.r;
     if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.planPath));
-    if (state.child.tag === 'review') writeSection(ports, r.workingPath, state.child.review);
+    if (state.child.tag === 'review') writeSection(ports, r.workingPath, state.child.review, runDir);
     return;
   }
   const child = childOf(state);
   if (!child || state.tag === 'booting') return;
   if (child.verb === 'design') {
     const design = child.state;
-    if (design.c.designReview && 'c' in design.c.designReview) writeSection(ports, design.c.designReview.c.spec.target, design.c.designReview);
+    if (design.c.designReview && 'c' in design.c.designReview) writeSection(ports, design.c.designReview.c.spec.target, design.c.designReview, runDir);
     const integration = design.c.integrationReview;
-    if (integration && 'c' in integration) writeIfChanged(ports, reportPathOf(runDir, `${state.run.slug}-integration`), renderReport({ title: 'Design integration', kind: 'code', target: design.c.path, summary: `Integration of ${design.c.hash}`, rounds: resolutionRounds(integration.c) }));
+    if (integration && 'c' in integration) {
+      if (ports.fs.exists(design.c.path)) writeSection(ports, design.c.path, integration, runDir);
+      else writeIfChanged(ports, reportPathOf(runDir, `${state.run.slug}-integration`), renderReport({ title: 'Design integration', kind: 'code', target: design.c.path, summary: `Integration of ${design.c.hash}`, rounds: resolutionRounds(integration.c) }));
+    }
     if (design.tag === 'revision') {
       const r = design.child;
       if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.path));
-      if (r.tag === 'review') writeSection(ports, r.workingPath, r.review);
+      if (r.tag === 'review') writeSection(ports, r.workingPath, r.review, runDir);
     }
     if (design.tag === 'plan-revision') {
       const r = design.child.r;
       if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.planPath));
-      if (design.child.tag === 'review') writeSection(ports, r.workingPath, design.child.review);
+      if (design.child.tag === 'review') writeSection(ports, r.workingPath, design.child.review, runDir);
     }
-    if (design.tag === 'review') writeSection(ports, design.c.path, design.review);
+    if (design.tag === 'review') writeSection(ports, design.c.path, design.review, runDir);
     for (const [id, history] of Object.entries(design.c.histories)) {
-      renderImplementation(ports, history.at(-1)!, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, id));
+      renderImplementation(ports, history.at(-1)!, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, id), runDir);
     }
     if (design.tag === 'increment') {
-      renderImplementation(ports, design.child, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, design.increment));
+      renderImplementation(ports, design.child, walkthroughPathOf(sessionDirOf(runDir), state.run.slug, design.increment), runDir);
     }
     return;
   }
   if (child.verb === 'plan') {
     const plan = child.state;
-    if ('review' in plan && plan.review !== null && 'c' in plan.review) writeSection(ports, plan.review.c.spec.target, plan.review);
+    if ('review' in plan && plan.review !== null && 'c' in plan.review) writeSection(ports, plan.review.c.spec.target, plan.review, runDir);
     return;
   }
   if (child.verb === 'implement') {
-    renderImplementation(ports, child.state, walkthroughPathOf(sessionDirOf(runDir), state.run.slug));
+    renderImplementation(ports, child.state, walkthroughPathOf(sessionDirOf(runDir), state.run.slug), runDir);
     return;
   }
   if (child.verb !== 'review') return;
@@ -314,10 +328,11 @@ function render(state: RootState, ports: Ports, runDir: string): void {
   if (!('c' in review) || !review.c.rounds.length) return;
   const { spec } = review.c;
   const summary = isReviewTerminal(review) ? String(reviewData(review)['summary']) : `round ${review.c.round} in progress (${review.tag})`;
-  writeIfChanged(ports, reportPathOf(runDir, state.run.slug), renderReport({
+  const owner = spec.kind === 'code' ? spec.governing?.walkthroughPath : spec.target;
+  if (owner && ports.fs.exists(owner)) writeSection(ports, owner, review, runDir);
+  else writeIfChanged(ports, reportPathOf(runDir, state.run.slug), renderReport({
     title: `Review: ${spec.target || 'working tree'}`, kind: spec.kind, target: spec.target || 'working tree', summary, rounds: resolutionRounds(review.c),
   }));
-  if (spec.kind !== 'code' && spec.mode === 'fix') writeSection(ports, spec.target, review);
 }
 
 // SECTION: Machine
