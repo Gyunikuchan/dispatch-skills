@@ -320,3 +320,226 @@ test('checkout: baseline and delivery preserve executable modes', { skip: proces
   assert.deepEqual((await c.op('deliver', { base, revision }))['transferred'], ['src/a.ts']);
   assert.equal(fs.statSync(path.join(c.repo, 'src/a.ts')).mode & 0o111, 0o111);
 });
+
+// SECTION: Task graph through the public CLI
+
+type TaskSlot = { task: string; action: string; handle: string | null; worktree: string; envelopePath: string; checkpointPath: string };
+type CliFrame = Awaited<ReturnType<ReturnType<typeof fixture>['cli']>>;
+const taskSlots = (frame: CliFrame) => (frame.data['tasks'] ?? []) as TaskSlot[];
+
+async function taskGraph(cap: number, independent = false) {
+  const f = fixture();
+  try {
+    // NOTE: an empty NODE_TEST_CONTEXT still suppresses nested node:test; clear it before Node starts.
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    fs.writeFileSync(path.join(f.dir, 'bin', process.platform === 'win32' ? 'node.cmd' : 'node'),
+      process.platform === 'win32'
+        ? `@echo off\r\nset NODE_TEST_CONTEXT=\r\n"${process.execPath}" %*\r\n`
+        : `#!/bin/sh\nunset NODE_TEST_CONTEXT\nexec ${quote(process.execPath)} "$@"\n`,
+      { mode: 0o700 });
+    f.git('config', 'core.autocrlf', 'false');
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({
+      ...f.config, 'write-concurrency': cap,
+      phases: { 'plan-review': { rounds: { low: 0 }, targets: { low: 0 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } },
+    }));
+    fs.writeFileSync(path.join(f.repo, 'src/b.ts'), 'export const value = 1;\n');
+    fs.writeFileSync(path.join(f.repo, 'src/c.ts'), 'export const value = 1;\n');
+    f.git('add', 'src'); f.git('commit', '-qm', 'consumer inputs');
+    const names = ['normalizes shared value', 'consumer b observes contract', 'consumer c observes contract'];
+    const files = ['a', 'b', 'c'];
+    const nodeTest = 'node --test --test-reporter=tap';
+    const criteria = files.map((file, index) => `- [SC${index + 1}] ${names[index]}
+  - Changes: src/${file}.ts, tests/${file}.test.js
+  - Verify: \`${nodeTest} tests/${file}.test.js\`
+  - Evidence: ${index === 0 ? 'red' : 'verify'}
+  - Pre-existing: no
+  - Test rationale: Assert the exported value and prerequisite interface with executable Node tests.`).join('\n');
+    const tasks = files.map((file, index) => `### T${index + 1} — ${names[index]}
+Deliver the ${file} interface and check its result${index && !(independent && index === 1) ? '; the shared contract must be accepted first' : ''}.
+- Prerequisites: ${index && !(independent && index === 1) ? 'T1' : 'none'}
+- Criteria: SC${index + 1}
+#### [MODIFY] src/${file}.ts
+- Export value two.
+#### [NEW] tests/${file}.test.js
+- Check the exported value${index && !(independent && index === 1) ? ' and the shared contract' : ''}.`).join('\n');
+    const plan = path.join(f.repo, 'graph.plan.md');
+    fs.writeFileSync(plan, `# Deliver task graph
+
+> **TL;DR:** Deliver a checked contract and independent consumers.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — isolated fixture interfaces
+> **Scope:** src and tests
+## Key Decisions & Context
+- Consumers use the accepted contract; each task owns separate source and test files.
+## Success Criteria
+${criteria}
+- [SC4] Accumulated interfaces agree
+  - Changes: src/a.ts, src/b.ts, src/c.ts
+  - Verify: \`${nodeTest} tests/*.test.js\` [FINAL]
+  - Evidence: verify
+  - Integration: The final command checks every accumulated interface.
+  - Test rationale: Executable assertions establish behavior in the delivered tree.
+## Proposed Changes
+${tasks}
+## Verification Plan
+### Automated Tests
+- None: Criterion commands cover the executable fixture interfaces.
+### Manual Verification
+- Observe isolated task frames and final evidence.
+## Review Findings & Resolutions
+No reviews conducted yet.
+`);
+    f.git('add', 'graph.plan.md'); f.git('commit', '-qm', 'governed graph');
+    // Caller inputs include staged, unstaged, untracked, and ignored contents.
+    fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'export const value = 1; // caller input\n');
+    fs.writeFileSync(path.join(f.repo, 'notes.txt'), 'staged caller note\n'); f.git('add', 'notes.txt');
+    fs.writeFileSync(path.join(f.repo, 'local.txt'), 'untracked caller input\n');
+    fs.writeFileSync(path.join(f.repo, '.gitignore'), '.scratch/\nlocal.config\n');
+    fs.writeFileSync(path.join(f.repo, 'local.config'), 'local setting\n');
+    const session = await f.initialize();
+    let frame = await f.begin('implement', session, plan), run = f.absoluteRun(frame.run);
+    if (frame.await === 'decide' && frame.data['kind'] === 'baseline') {
+      const ids = [...new Set((frame.data['items'] as { failureId: string }[]).map((row) => row.failureId))];
+      frame = await f.reply(run, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } });
+    }
+    assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with fixture graph' } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    return { f, session, run, frame, independent };
+  } catch (error) { f.cleanup(); throw error; }
+}
+
+type TaskGraph = Awaited<ReturnType<typeof taskGraph>>;
+async function launchTasks(g: TaskGraph, frame: CliFrame) {
+  return g.f.reply(g.run, { type: 'WRITE_LAUNCHED', tasks: taskSlots(frame).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, handle: `writer-${slot.task}` })) });
+}
+async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' = 'valid') {
+  const slot = taskSlots(frame).find((item) => item.task === id)!;
+  assert.ok(slot, JSON.stringify(frame));
+  const file = { T1: 'a', T2: 'b', T3: 'c' }[id]!;
+  const name = { T1: 'normalizes shared value', T2: 'consumer b observes contract', T3: 'consumer c observes contract' }[id]!;
+  const dependent = id !== 'T1' && !(g.independent && id === 'T2');
+  fs.mkdirSync(path.join(slot.worktree, 'tests'), { recursive: true });
+  const testSource = `import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { value } from '../src/${file}.ts';
+${dependent ? "import { value as shared } from '../src/a.ts';" : ''}
+test('${name}', () => { assert.equal(value, 2);${dependent ? ' assert.equal(shared, 2);' : ''} });
+`;
+  fs.writeFileSync(path.join(slot.worktree, `tests/${file}.test.js`), red === 'setup' && id === 'T1' ? `import '../missing.ts';\n${testSource}` : testSource);
+  if (id === 'T1' && red !== 'missing') await g.f.cli(['checkpoint', '--root', slot.worktree, '--out', slot.checkpointPath, '--', 'tests/a.test.js']);
+  fs.writeFileSync(path.join(slot.worktree, `src/${file}.ts`), 'export const value = 2;\n');
+  fs.writeFileSync(slot.envelopePath, JSON.stringify({
+    schemaVersion: 1, stage: 'COMPLETE', status: 'DONE', summary: `Delivered ${id}`,
+    evidence: [`CRITERION SC${file.charCodeAt(0) - 96} | src/${file}.ts | exports the checked value`,
+      ...(id === 'T1' ? [`RED-MATRIX SC1 | tests/a.test.js:${name} | exit 1 test:${name}`] : [])],
+    files: [{ path: `src/${file}.ts`, note: 'Exports value two.' }, { path: `tests/${file}.test.js`, note: 'Checks the interface.' }],
+  }));
+  return g.f.reply(g.run, { type: 'WRITE_ENVELOPE', task: id, envelopePath: slot.envelopePath });
+}
+
+test('task graph: cap two releases consumers after accepted prerequisite and resumes retained handles', async () => {
+  const g = await taskGraph(2), f = g.f;
+  try {
+    assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1']);
+    const first = taskSlots(g.frame)[0]!;
+    assert.match(fs.readFileSync(path.join(first.worktree, 'src/a.ts'), 'utf8'), /caller input/);
+    assert.equal(fs.readFileSync(path.join(first.worktree, 'local.config'), 'utf8'), 'local setting\n');
+    let frame = await finishTask(g, await launchTasks(g, g.frame), 'T1');
+    assert.deepEqual(taskSlots(frame).map((slot) => slot.task), ['T2', 'T3'], JSON.stringify(frame));
+    for (const slot of taskSlots(frame)) assert.equal(fs.readFileSync(path.join(slot.worktree, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
+    assert.notEqual(taskSlots(frame)[0]!.worktree, taskSlots(frame)[1]!.worktree);
+    assert.match(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), /caller input/);
+    frame = await launchTasks(g, frame);
+    const journal = path.join(g.run, 'events.jsonl'), before = fs.readFileSync(journal, 'utf8');
+    await f.cli(['status', '--run', g.run]);
+    const dry = await f.cli(['send', '--run', g.run, '--dry-run']);
+    assert.deepEqual(taskSlots(dry).map((slot) => slot.handle), ['writer-T2', 'writer-T3']);
+    assert.equal(fs.readFileSync(journal, 'utf8'), before);
+    frame = await f.cli(['send', '--run', g.run]);
+    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.action, slot.handle]), [['T2', 'running', 'writer-T2'], ['T3', 'running', 'writer-T3']]);
+    frame = await finishTask(g, frame, 'T3');
+    assert.deepEqual(taskSlots(frame).map((slot) => slot.task), ['T2']);
+    frame = await finishTask(g, frame, 'T2');
+    assert.equal(frame.await, 'evidence', JSON.stringify(frame));
+    assert.equal(f.git('diff', '--cached', '--name-only').trim(), 'notes.txt');
+    for (const file of ['a', 'b', 'c']) assert.equal(fs.readFileSync(path.join(f.repo, `src/${file}.ts`), 'utf8'), 'export const value = 2;\n');
+    assert.equal(fs.readFileSync(path.join(f.repo, 'local.txt'), 'utf8'), 'untracked caller input\n');
+    assert.equal(fs.readFileSync(path.join(f.repo, 'local.config'), 'utf8'), 'local setting\n');
+    const events = fs.readFileSync(journal, 'utf8').trim().split('\n').map((line) => JSON.parse(line) as { type: string; data: { op?: string; result?: { revision?: string } } });
+    const integrated = events.filter((event) => event.type === 'CHECKOUT_DONE' && event.data.op === 'integrate');
+    assert.equal(integrated.length, 3); assert.equal(new Set(integrated.map((event) => event.data.result?.revision)).size, 3);
+    frame = await f.reply(g.run, { type: 'EVIDENCE', criteria: Object.fromEntries(['SC1', 'SC2', 'SC3', 'SC4'].map((id) => [id, { outcome: 'pass', evidence: 'Executable interface assertions passed after final delivery.' }])) });
+    assert.equal(frame.data['outcome'], 'complete');
+    assert.ok(f.launches().length > 0, 'final code review used the provider shim');
+  } finally { f.cleanup(); }
+});
+
+test('task graph: cap one uses isolated acceptance for every task', async () => {
+  const g = await taskGraph(1);
+  try {
+    let frame = g.frame;
+    for (const id of ['T1', 'T2', 'T3']) {
+      assert.deepEqual(taskSlots(frame).map((slot) => slot.task), [id], JSON.stringify(frame));
+      assert.notEqual(taskSlots(frame)[0]!.worktree, g.f.repo);
+      frame = await finishTask(g, await launchTasks(g, frame), id);
+    }
+    assert.equal(frame.await, 'evidence', JSON.stringify(frame));
+  } finally { g.f.cleanup(); }
+});
+
+test('task graph: failed branch leaves an independent writer running and blocks descendants', async () => {
+  const g = await taskGraph(2, true);
+  try {
+    assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1', 'T2']);
+    let frame = await launchTasks(g, g.frame);
+    frame = await g.f.reply(g.run, { type: 'WRITE_FAILED', task: 'T1', model: 'native-stub', kind: 'integrity', reason: 'fixture scope violation' });
+    assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.handle]), [['T2', 'writer-T2']]);
+    frame = await finishTask(g, frame, 'T2');
+    assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure');
+    const tasks = (frame.data['items'] as { tasks: { task: string; status: string }[] }[])[0]!.tasks;
+    assert.deepEqual(tasks.map((row) => [row.task, row.status]), [['T1', 'failed'], ['T3', 'blocked']]);
+    assert.equal(fs.readFileSync(path.join(g.f.repo, 'src/b.ts'), 'utf8'), 'export const value = 1;\n');
+  } finally { g.f.cleanup(); }
+});
+
+for (const red of ['missing', 'setup'] as const) {
+  test(`task graph: ${red === 'missing' ? 'missing RED checkpoint' : 'setup-only RED'} prevents acceptance`, async () => {
+    const g = await taskGraph(2);
+    try {
+      const frame = await finishTask(g, await launchTasks(g, g.frame), 'T1', red);
+      assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));
+      assert.match(JSON.stringify(frame.data), red === 'missing' ? /checkpoint|ENOENT/i : /RED replay rejected|load\/setup error/i);
+      assert.equal(fs.readFileSync(path.join(g.f.repo, 'src/b.ts'), 'utf8'), 'export const value = 1;\n');
+      assert.ok(fs.existsSync(taskSlots(g.frame)[0]!.worktree), 'failed artifact remains available');
+    } finally { g.f.cleanup(); }
+  });
+}
+
+test('checkout: older independent baseline integrates only the task delta', async () => {
+  const c = await checkoutRepo(), base = String((await c.op('init'))['base']);
+  const a = String((await c.op('task', { name: 'a', revision: base }))['path']);
+  const b = String((await c.op('task', { name: 'b', revision: base }))['path']);
+  fs.writeFileSync(path.join(a, 'src/a.ts'), 'a2\n'); fs.writeFileSync(path.join(b, 'src/b.ts'), 'b2\n');
+  const one = await c.op('commit', { name: 'a', base }), two = await c.op('commit', { name: 'b', base });
+  const accepted = (await c.op('integrate', { task: 'T1', candidate: one['revision'], expected: base }))['revision'];
+  const merged = await c.op('integrate', { task: 'T2', candidate: two['revision'], expected: accepted });
+  assert.equal(merged['conflict'], false);
+  const integration = path.join(c.runDir, 'wt/integration');
+  assert.equal(c.read(integration, 'src/a.ts'), 'a2\n'); assert.equal(c.read(integration, 'src/b.ts'), 'b2\n');
+  assert.equal(c.read(b, 'src/a.ts'), 'a1\n');
+});
+
+test('checkout: partial delivery replay preserves caller dirt and transfers remaining paths', async () => {
+  const c = await checkoutRepo();
+  c.write('src/b.ts', 'caller dirt\n');
+  const base = String((await c.op('init'))['base']), t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.writeFileSync(path.join(t1, 'src/a.ts'), 'a2\n'); fs.rmSync(path.join(t1, 'src/gone.ts'));
+  const candidate = (await c.op('commit', { name: 't1', base }))['revision'];
+  const revision = (await c.op('integrate', { task: 'T1', candidate, expected: base }))['revision'];
+  c.write('src/a.ts', 'a2\n');
+  assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: [], transferred: ['src/gone.ts'], already: ['src/a.ts'] });
+  assert.equal(c.read(c.repo, 'src/b.ts'), 'caller dirt\n'); assert.equal(fs.existsSync(path.join(c.repo, 'src/gone.ts')), false);
+  assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: [], transferred: [], already: ['src/a.ts', 'src/gone.ts'] });
+});

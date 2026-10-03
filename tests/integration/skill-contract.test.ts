@@ -96,4 +96,20 @@ test('review-context-contract: documents --context and alias forwarder parity', 
   assert.equal(codeReviewSkill, agentCodeReviewSkill);
 });
 
+test('task execution guidance describes graph ownership, continuous writers and recovery boundaries', () => {
+  const plan = read('skills/dispatch/references/verbs/plan.md');
+  assert.match(plan, /task outcomes/); assert.match(plan, /prerequisite graph/); assert.match(plan, /producer\/consumer interfaces/);
+  const implement = read('skills/dispatch/references/verbs/implement.md');
+  assert.match(implement, /one continuous writer invocation/); assert.match(implement, /RED checkpoint before production/);
+  assert.match(implement, /submission alone does not/); assert.match(implement, /Keep running handles and completed receipts/);
+  assert.match(implement, /final code review\/fixes.*caller checkout/s);
+  assert.doesNotMatch(implement, /Tests-only RED evidence precedes production/);
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /write-concurrency/); assert.match(config, /positive safe integer/); assert.match(config, /omission defaults to one/);
+  assert.match(config, /explicit reauthor\/restart/);
+  const concepts = read('skills/dispatch/references/readme/concepts.md');
+  for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'retained handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
+  assert.match(read('skills/dispatch/README.md'), /task summaries/);
+  assert.match(read('skills/dispatch/references/readme/verbs.md'), /Design increments remain sequential/);
+});
 

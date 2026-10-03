@@ -20,6 +20,8 @@ Sparse levels use the nearest defined lower level, then the lowest higher level.
 
 Each target is one voice; its model array is a failure cascade for that voice. `nativeSubagentsOnly` requires a matching orchestrator platform. Writers resolve from the orchestrator's `write-subagents` level map. A configured phase with zero rounds or targets is disabled; missing phase policy defaults to one reviewer and one round. Pins override breadth, and model/effort overrides select the first target per provider. Doctor reports configured, filtered and resolved membership without launching delegates.
 
+`"write-concurrency": 2` sets the maximum active task writers. It must be a positive safe integer; omission defaults to one. Configure it within the host's actual native capacity: the cap is an admission ceiling, not a capacity probe. Every task uses the same isolated execution and acceptance path at one or higher values. See [task execution](concepts.md); writer selection remains the orchestrator's `write-subagents` mapping.
+
 OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obtains merged native config sources and effective agents with bounded introspection. It selects a verified default-deny read-only agent; unavailable permissions fail as `read-only-agent-unavailable`. Unverifiable remote/managed sources fail as `effective-config-unverified`. Inline config is not propagated implicitly. Local selected-model endpoints receive a bounded model preflight, shared GPU lease and proxy trap; remote endpoints skip local preparation. Native Antigravity modes select their authenticated profile through `JETSKI_APP_DATA_DIR`.
 
 ## Operational boundaries
@@ -27,6 +29,8 @@ OpenCode preserves `OPENCODE_CONFIG` and `OPENCODE_CONFIG_DIR` selectors and obt
 Use Node.js `^22.18 || >=23.6` for native TypeScript. Invoke `scripts/dispatch.ts` with a verb and use its current frame envelopes.
 
 Each chat has a session folder under `.scratch/dispatch-skills/`; journals live in `.state/runs/<run>/events.jsonl`. Sessions remain in the workspace under `.scratch/dispatch-skills/` for the user to clean up. Journals require protocol revision 3. Other revisions fail `unsupported-journal-protocol`; preserve their artifacts and start a new run.
+
+Older implementation journals without task records and plans without task ownership require explicit reauthor/restart; they are not silently migrated. Preserve their artifacts before restarting.
 
 Sandbox failure is strict. An explicit `sandbox:false` opts out of OS isolation while native read-only tool controls remain. Ambient credential stripping and sensitive attachment checks do not isolate native authenticated profiles or enforce file-read permissions by themselves.
 # Optional diagnostics and live model refresh

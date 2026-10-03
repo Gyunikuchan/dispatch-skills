@@ -2,6 +2,8 @@
 
 Independent model perspectives with one recorded workflow: ask, design, plan, review, and implement. The host verifies findings and controls native writes while provider delegates remain read-only.
 
+Plans present meaningful task summaries followed by file changes and prerequisites. Implementation schedules ready tasks within `write-concurrency`, gives each writer an isolated worktree and focused brief, and independently checks results before accepting them. See [task execution](references/readme/concepts.md) and [implementation](references/verbs/implement.md) for evidence, recovery, and delivery boundaries.
+
 Requires Git and Node `^22.18 || >=23.6` with native TypeScript stripping. Install and authenticate the configured provider CLIs. Copy `config.sample.jsonc` to `config.local.jsonc`, select installed providers, and use `doctor` to inspect config, integrity, effective targets, sandbox support, and Node version.
 
 Commands below run from the repository root.
