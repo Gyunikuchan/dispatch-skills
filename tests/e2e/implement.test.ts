@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -192,7 +193,7 @@ Values are normalized before use so downstream comparisons agree.
 // SECTION: Private checkout ops
 
 async function checkoutRepo() {
-  const { execFileSync } = await import('node:child_process');
+
   const { nodePorts } = await import('../../skills/dispatch/scripts/core/ports.ts');
   const { createCheckout } = await import('../../skills/dispatch/scripts/effects/checkout.ts');
   const repo = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-checkout-'));
@@ -220,7 +221,9 @@ test('checkout: baseline reproduces caller dirt and links ignored dependencies w
   assert.equal(c.read(root, 'src/a.ts'), 'a-dirty\n'); assert.equal(c.read(root, 'src/new.ts'), 'new\n'); assert.equal(fs.existsSync(path.join(root, 'src/gone.ts')), false);
   assert.equal(c.read(root, 'node_modules/dep/index.js'), 'dep'); assert.equal(c.read(root, '.env'), 'X=1');
   assert.deepEqual((await c.op('init'))['base'], baseline['base']);
-  assert.deepEqual((await c.op('cleanup', { names: ['integration'], links: ['node_modules'] }))['removed'], ['integration']);
+  const task = String((await c.op('task', { name: 't1', revision: baseline['base'], links: ['node_modules'], ignored: ['.env'] }))['path']);
+  assert.equal(c.read(task, '.env'), 'X=1'); assert.equal(c.read(task, 'node_modules/dep/index.js'), 'dep');
+  assert.deepEqual((await c.op('cleanup', { names: ['integration', 't1'], links: ['node_modules'] }))['removed'], ['integration', 't1']);
   assert.equal(c.read(c.repo, 'node_modules/dep/index.js'), 'dep'); assert.equal(c.read(c.repo, 'src/a.ts'), 'a-dirty\n');
 });
 
@@ -243,10 +246,13 @@ test('checkout: task worktrees are isolated and integration is idempotent and re
 test('checkout: RED replay applies approved checkpoint files at the input revision and rejects others', async () => {
   const c = await checkoutRepo();
   const base = String((await c.op('init'))['base']), out = path.join(c.runDir, 'red.json');
+  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.mkdirSync(path.join(t1, 'tests')); fs.writeFileSync(path.join(t1, 'tests/a.test.ts'), 'red'); fs.rmSync(path.join(t1, 'src/b.ts'));
+  const candidate = (await c.op('commit', { name: 't1', base }))['revision'];
   fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('red').toString('base64'), 'src/b.ts': null } }));
-  const rejected = await c.op('red', { name: 't1-red', base, checkpointPath: out, permitted: ['tests/a.test.ts'] });
+  const rejected = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts'] });
   assert.match(String(rejected['defects']), /not an approved task test path: src\/b\.ts/);
-  const replay = await c.op('red', { name: 't1-red', base, checkpointPath: out, permitted: ['tests/a.test.ts', 'src/b.ts'] });
+  const replay = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts', 'src/b.ts'] });
   assert.deepEqual(replay['defects'], []); assert.equal(c.read(String(replay['path']), 'tests/a.test.ts'), 'red'); assert.equal(fs.existsSync(path.join(String(replay['path']), 'src/b.ts')), false);
 });
 
@@ -264,4 +270,53 @@ test('checkout: delivery transfers integrated changes and refuses caller drift w
   assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: [], transferred: ['src/a.ts', 'src/gone.ts'], already: [] });
   assert.equal(c.read(c.repo, 'src/a.ts'), 'a2\n');
   assert.deepEqual(await c.op('deliver', { base, revision }), { conflicts: [], transferred: [], already: ['src/a.ts', 'src/gone.ts'] });
+});
+
+test('checkout: RED replay rejects a submitted test that differs from its checkpoint', async () => {
+  const c = await checkoutRepo();
+  const base = String((await c.op('init'))['base']), out = path.join(c.runDir, 'red.json');
+  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.mkdirSync(path.join(t1, 'tests')); fs.writeFileSync(path.join(t1, 'tests/a.test.ts'), 'passing stub');
+  const candidate = (await c.op('commit', { name: 't1', base }))['revision'];
+  fs.writeFileSync(out, JSON.stringify({ schemaVersion: 1, files: { 'tests/a.test.ts': Buffer.from('failing assertion').toString('base64') } }));
+  const replay = await c.op('red', { name: 't1-red', base, candidate, checkpointPath: out, permitted: ['tests/a.test.ts'] });
+  assert.match(String(replay['defects']), /Submitted test differs from its RED checkpoint: tests\/a\.test\.ts/);
+});
+
+test('checkout: integration discards an interrupted uncommitted cherry-pick before replaying the candidate', async () => {
+  const c = await checkoutRepo();
+  const base = String((await c.op('init'))['base']);
+  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.writeFileSync(path.join(t1, 'src/a.ts'), 't1\n');
+  const candidate = String((await c.op('commit', { name: 't1', base }))['revision']);
+  const integration = path.join(c.runDir, 'wt/integration');
+  execFileSync('git', ['cherry-pick', '--no-commit', candidate], { cwd: integration, windowsHide: true });
+  const merged = await c.op('integrate', { task: 'T1', candidate, expected: base });
+  assert.equal(merged['conflict'], false); assert.equal(c.read(integration, 'src/a.ts'), 't1\n');
+});
+
+test('checkout: delivery refuses a caller ancestor directory replaced by an external link', async () => {
+  const c = await checkoutRepo();
+  const base = String((await c.op('init'))['base']);
+  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.writeFileSync(path.join(t1, 'src/a.ts'), 'a2\n');
+  const candidate = await c.op('commit', { name: 't1', base });
+  const revision = (await c.op('integrate', { task: 'T1', candidate: candidate['revision'], expected: base }))['revision'];
+  const outside = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dispatch-outside-'));
+  fs.cpSync(path.join(c.repo, 'src'), outside, { recursive: true }); fs.rmSync(path.join(c.repo, 'src'), { recursive: true }); fs.symlinkSync(outside, path.join(c.repo, 'src'), 'junction');
+  assert.deepEqual((await c.op('deliver', { base, revision }))['conflicts'], ['src/a.ts']);
+  assert.equal(fs.readFileSync(path.join(outside, 'a.ts'), 'utf8'), 'a1\n');
+});
+
+test('checkout: baseline and delivery preserve executable modes', { skip: process.platform === 'win32' && 'POSIX file modes' }, async () => {
+  const c = await checkoutRepo();
+  c.write('bin/run.sh', 'echo\n'); fs.chmodSync(path.join(c.repo, 'bin/run.sh'), 0o755);
+  const base = String((await c.op('init'))['base']);
+  assert.equal(fs.statSync(path.join(c.runDir, 'wt/integration/bin/run.sh')).mode & 0o111, 0o111);
+  const t1 = String((await c.op('task', { name: 't1', revision: base }))['path']);
+  fs.chmodSync(path.join(t1, 'src/a.ts'), 0o755);
+  const candidate = await c.op('commit', { name: 't1', base });
+  const revision = (await c.op('integrate', { task: 'T1', candidate: candidate['revision'], expected: base }))['revision'];
+  assert.deepEqual((await c.op('deliver', { base, revision }))['transferred'], ['src/a.ts']);
+  assert.equal(fs.statSync(path.join(c.repo, 'src/a.ts')).mode & 0o111, 0o111);
 });

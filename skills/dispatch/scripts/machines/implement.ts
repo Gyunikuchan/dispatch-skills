@@ -47,7 +47,7 @@ export type Context = {
   /** `tasks` from approval until verified delivery; caller checkout effects and drift checks apply outside it. */
   phase: 'setup' | 'tasks' | 'delivered';
   tasks: Tasks;
-  integration: { path: string; base: string; head: string; links: readonly string[] } | null;
+  integration: { path: string; base: string; head: string; links: readonly string[]; ignored: readonly string[]; rewind?: boolean } | null;
   approval: { by: string; quote: string } | null;
   changedPaths: readonly string[];
   finalGate: string;
@@ -61,7 +61,7 @@ export type Context = {
   revisionReviewRound: number;
 };
 
-type CheckoutStep = 'init' | 'task' | 'relaunch' | 'commit' | 'red' | 'integrate' | 'reset' | 'deliver' | 'cleanup';
+type CheckoutStep = 'init' | 'task' | 'relaunch' | 'commit' | 'red' | 'integrate' | 'reset' | 'rewind' | 'deliver' | 'cleanup';
 
 export type ImplementState =
   | { tag: 'revision-request'; c: Context; parent: ImplementState; event: Extract<HostEvent, { type: 'REVISE' }> }
@@ -283,12 +283,17 @@ function schedule(c: Context): S {
     c = { ...bound, writer: pendingWriter };
   }
   const plan = c.plan as ParsedPlan;
+  // NOTE: a revision invalidated accepted work; once writers drain, rebuild integration from the baseline.
+  if (c.integration?.rewind) {
+    if (activeTasks(c.tasks).length) return stay({ tag: 'tasks', c });
+    return checkout({ ...c, tasks: initialTasks(plan) }, 'rewind', 'reset', { name: 'integration', revision: c.integration.base });
+  }
   const next = readyTasks(plan, c.tasks, MAX_WRITE_ATTEMPTS)[0];
   if (next && activeTasks(c.tasks).length < writeConcurrency(c.run.config)) {
     const record = c.tasks[next.id] as TaskRecord;
     const integration = c.integration!;
     return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [] }), 'task', 'task',
-      { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links }, next.id);
+      { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links, ignored: integration.ignored }, next.id);
   }
   if (activeTasks(c.tasks).length) return stay({ tag: 'tasks', c });
   if (plan.tasks.every((task) => c.tasks[task.id]?.status === 'accepted')) {
@@ -389,7 +394,7 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
 function redReplay(c: Context, id: string): S {
   const record = c.tasks[id] as TaskRecord;
   if (!record.redRows.length) return greenVerify(c, id);
-  return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, permitted: taskTestPaths(c.plan as ParsedPlan, planTask(c, id)!), links: c.integration!.links }, id);
+  return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, candidate: record.candidate, permitted: taskTestPaths(c.plan as ParsedPlan, planTask(c, id)!), links: c.integration!.links, ignored: c.integration!.ignored }, id);
 }
 
 function redCommands(c: Context, id: string): { command: string; mapping: CommandMapping | null }[] | string {
@@ -421,9 +426,9 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
   switch (state.step) {
     case 'init': {
       const manifest = isRecord(result['manifest']) ? result['manifest'] : {};
-      const links = Array.isArray(manifest['linked']) ? manifest['linked'].filter((item): item is string => typeof item === 'string') : [];
+      const names = (key: string): string[] => Array.isArray(manifest[key]) ? manifest[key].filter((item): item is string => typeof item === 'string') : [];
       if (!text('base') || !text('path')) return beginFailure(c, 'Baseline checkout returned no revision.');
-      return schedule({ ...c, integration: { path: text('path'), base: text('base'), head: text('base'), links } });
+      return schedule({ ...c, integration: { path: text('path'), base: text('base'), head: text('base'), links: names('linked'), ignored: names('copiedIgnored') } });
     }
     case 'task': {
       const next = withTask(c, id, { worktree: text('path'), input: text('revision') });
@@ -448,6 +453,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       return commands.length ? taskVerify(integrated, id, 'integration', c.integration!.path, commands, c.integration!.head) : accept(integrated, id, text('revision'));
     }
     case 'reset': return taskFailed(c, id, state.reason ?? 'Integration verification failed.');
+    case 'rewind': return schedule({ ...c, integration: { ...c.integration!, head: c.integration!.base, rewind: false } });
     case 'deliver': {
       if (list('conflicts').length) return beginFailure(c, `Delivery refused: caller paths changed since the baseline: ${list('conflicts').join(', ')}. Integrated work is preserved in ${c.integration!.path}.`);
       const delivered = [...list('transferred'), ...list('already')];

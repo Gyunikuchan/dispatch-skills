@@ -23,13 +23,14 @@ export type TaskRecord = {
 };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
-/** Paths, criteria, and prerequisites define a task's work; any change re-pends it and its descendants. */
-export function taskSignature(task: PlanTask): string {
-  return JSON.stringify({ paths: [...task.paths].sort(), criteria: [...task.criteria].sort(), prerequisites: [...task.prerequisites].sort() });
+/** Paths, criterion definitions, and prerequisites define a task's work; any change re-pends it and its descendants. */
+export function taskSignature(plan: ParsedPlan, task: PlanTask): string {
+  const criteria = taskCriteria(plan, task).map(({ line: _line, ...criterion }) => criterion).sort((a, b) => a.id.localeCompare(b.id));
+  return JSON.stringify({ paths: [...task.paths].sort(), criteria, prerequisites: [...task.prerequisites].sort() });
 }
 
-function fresh(task: PlanTask): TaskRecord {
-  return { id: task.id, status: 'pending', attempt: 0, signature: taskSignature(task), input: null, worktree: null, handle: null, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
+function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {
+  return { id: task.id, status: 'pending', attempt: 0, signature: taskSignature(plan, task), input: null, worktree: null, handle: null, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
 }
 
 /** Validated config caps concurrent task writers; an absent or invalid value runs one writer at a time. */
@@ -39,7 +40,7 @@ export function writeConcurrency(config: Readonly<Record<string, unknown>>): num
 }
 
 export function initialTasks(plan: ParsedPlan): Tasks {
-  return Object.fromEntries(plan.tasks.map((task) => [task.id, fresh(task)]));
+  return Object.fromEntries(plan.tasks.map((task) => [task.id, fresh(plan, task)]));
 }
 
 function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
@@ -53,12 +54,17 @@ function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
 
 /** Rebinds records to a revised plan: unchanged tasks keep their records; changed, new, and dependent tasks re-pend. */
 export function reconcileTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
-  const changed = new Set(plan.tasks.filter((task) => tasks[task.id]?.signature !== taskSignature(task)).map((task) => task.id));
+  const changed = new Set(plan.tasks.filter((task) => tasks[task.id]?.signature !== taskSignature(plan, task)).map((task) => task.id));
   const repend = descendants(plan, changed);
   return Object.fromEntries(plan.tasks.map((task) => {
     const old = tasks[task.id];
-    return [task.id, !old || repend.has(task.id) ? { ...fresh(task), attempt: old && old.status !== 'accepted' ? old.attempt : 0 } : old];
+    return [task.id, !old || repend.has(task.id) ? { ...fresh(plan, task), attempt: old && old.status !== 'accepted' ? old.attempt : 0 } : old];
   }));
+}
+
+/** Accepted work is already integrated; losing any accepted record means integration must be rebuilt. */
+export function invalidatesIntegration(before: Tasks, after: Tasks): boolean {
+  return Object.values(before).some((record) => record.status === 'accepted' && after[record.id]?.status !== 'accepted');
 }
 
 export function readyTasks(plan: ParsedPlan, tasks: Tasks, maxAttempts: number): PlanTask[] {

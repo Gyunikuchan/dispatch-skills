@@ -59,9 +59,27 @@ async function worktree(deps: CheckoutDeps, ports: Ports, root: string, revision
   await ports.git.run(['worktree', 'add', '-q', '--detach', root, revision], deps.cwd);
 }
 
+/** Copies content and permission bits so executable files survive baseline capture and delivery. */
 function copy(ports: Ports, from: string, to: string): void {
   ports.fs.mkdir(path.dirname(to), { recursive: true });
   ports.fs.writeBase64Atomic(to, ports.fs.readBase64(from));
+  const mode = ports.fs.inspectPath(from)?.mode;
+  if (mode !== undefined) ports.fs.setMode(to, mode & 0o777);
+}
+
+/** Task and RED trees get the dependency links and the ignored root files (local config) the baseline copied. */
+function prepare(deps: CheckoutDeps, ports: Ports, root: string, input: Row): void {
+  link(deps, ports, root, strings(input['links']));
+  for (const file of strings(input['ignored'])) {
+    if (!safe(file) || file.includes('/')) throw new Error(`Invalid ignored input: ${file}`);
+    if (ports.fs.inspectPath(path.join(deps.cwd, file))?.kind === 'file') copy(ports, path.join(deps.cwd, file), path.join(root, file));
+  }
+}
+
+/** Discards uncommitted leftovers (verification output, an interrupted cherry-pick) at the recorded head. */
+async function discard(ports: Ports, root: string, revision: string): Promise<void> {
+  await ports.git.run(['reset', '-q', '--hard', revision], root);
+  await ports.git.run(['clean', '-q', '-fd'], root);
 }
 
 // SECTION: Ops
@@ -126,13 +144,17 @@ async function red(deps: CheckoutDeps, ports: Ports, root: string, input: Row): 
   }
   if (defects.length) return { path: root, defects };
   await worktree(deps, ports, root, text(input['base']), true);
-  link(deps, ports, root, strings(input['links']));
+  prepare(deps, ports, root, input);
+  const candidate = text(input['candidate']);
   for (const [file, value] of entries) {
     const target = path.join(root, file);
     if (value === null) ports.fs.remove(target);
     else { ports.fs.mkdir(path.dirname(target), { recursive: true }); ports.fs.writeBase64Atomic(target, value as string); }
+    // NOTE: checkpointed tests are immutable; GREEN must run the same tests RED replayed.
+    const replayed = value === null ? null : (await ports.git.run(['hash-object', '--', file], root)).trim();
+    if (replayed !== ((await entry(ports, root, candidate, file))?.blob ?? null)) defects.push(`Submitted test differs from its RED checkpoint: ${file}`);
   }
-  return { path: root, defects: [], files: entries.map(([file]) => file).sort() };
+  return { path: root, defects, files: entries.map(([file]) => file).sort() };
 }
 
 async function integrate(ports: Ports, root: string, input: Row): Promise<Row> {
@@ -143,36 +165,42 @@ async function integrate(ports: Ports, root: string, input: Row): Promise<Row> {
     if (log.includes(`${CANDIDATE_TRAILER} ${candidate}`)) return { revision: current, conflict: false, reused: true };
     throw new Error(`Integration head ${current} moved from the recorded revision ${expected}.`);
   }
+  await discard(ports, root, expected);
   try {
     await ports.git.run([...COMMIT, 'cherry-pick', '--no-commit', candidate], root);
   } catch (error) {
     const conflicts = split(await ports.git.run(['diff', '--name-only', '--diff-filter=U', '-z'], root).catch(() => ''));
-    await ports.git.run(['reset', '-q', '--hard', expected], root);
-    await ports.git.run(['clean', '-q', '-fd'], root);
+    await discard(ports, root, expected);
     return { revision: expected, conflict: true, paths: conflicts, detail: error instanceof Error ? error.message.split('\n')[0] : String(error) };
   }
   const revision = await commit(ports, root, `dispatch integrate ${text(input['task'])}\n\n${CANDIDATE_TRAILER} ${candidate}`);
   return { revision, conflict: false };
 }
 
-async function blob(ports: Ports, cwd: string, revision: string, file: string): Promise<string | null> {
-  const entry = (await ports.git.run(['ls-tree', '-z', revision, '--', file], cwd)).split('\0')[0] ?? '';
-  return /^\d+ blob ([a-f0-9]+)\t/.exec(entry)?.[1] ?? null;
+async function entry(ports: Ports, cwd: string, revision: string, file: string): Promise<{ mode: string; blob: string } | null> {
+  const row = (await ports.git.run(['ls-tree', '-z', revision, '--', file], cwd)).split('\0')[0] ?? '';
+  const match = /^(\d+) blob ([a-f0-9]+)\t/.exec(row);
+  return match ? { mode: match[1]!, blob: match[2]! } : null;
 }
 
 async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Row): Promise<Row> {
   const base = text(input['base']), revision = text(input['revision']);
-  if (await head(ports, root) !== revision || !await clean(ports, root)) throw new Error(`Integration checkout is not clean at ${revision}.`);
+  if (await head(ports, root) !== revision) throw new Error(`Integration checkout is not at ${revision}.`);
+  await discard(ports, root, revision);
   const files = split(await ports.git.run(['diff', '--name-only', '-z', base, revision, '--'], root)).sort();
   const plan: { file: string; action: 'write' | 'delete' | 'already' }[] = [], conflicts: string[] = [];
   for (const file of files) {
     if (!safe(file)) throw new Error(`Unsafe delivery path: ${file}`);
     const absolute = path.join(deps.cwd, file), info = ports.fs.inspectPath(absolute);
-    if (info && info.kind !== 'file') { conflicts.push(file); continue; }
+    // NOTE: a linked or replaced ancestor would redirect the write outside the caller checkout.
+    const parts = file.split('/');
+    const ancestors = parts.slice(0, -1).map((_, index) => ports.fs.inspectPath(path.join(deps.cwd, ...parts.slice(0, index + 1))));
+    if ((info && info.kind !== 'file') || ancestors.some((item) => item && item.kind !== 'directory')) { conflicts.push(file); continue; }
     const caller = info ? (await ports.git.run(['hash-object', '--', file], deps.cwd)).trim() : null;
-    const before = await blob(ports, root, base, file), after = await blob(ports, root, revision, file);
-    if (caller === after) plan.push({ file, action: 'already' });
-    else if (caller === before) plan.push({ file, action: after === null ? 'delete' : 'write' });
+    const before = await entry(ports, root, base, file), after = await entry(ports, root, revision, file);
+    const modeOnly = !!before && !!after && before.blob === after.blob && before.mode !== after.mode;
+    if (caller === (after?.blob ?? null) && !modeOnly) plan.push({ file, action: 'already' });
+    else if (caller === (before?.blob ?? null)) plan.push({ file, action: after === null ? 'delete' : 'write' });
     else conflicts.push(file);
   }
   if (conflicts.length) return { conflicts, transferred: [], already: [] };
@@ -208,7 +236,7 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         case 'task': {
           const root = worktreePath(ctx.runDir, text(input['name']));
           await worktree(deps, ports, root, text(input['revision']), input['reset'] === true);
-          link(deps, ports, root, strings(input['links']));
+          prepare(deps, ports, root, input);
           return done('task', { path: root, revision: await head(ports, root) });
         }
         case 'commit': return done('commit', await submit(ports, worktreePath(ctx.runDir, text(input['name'])), text(input['base']), text(input['message']) || 'dispatch task'));

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
+import { beginRevision, reboundRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 
 // SECTION: Fixture plan — T1 (RED) and T2 are independent; T3 depends on T1.
@@ -333,4 +334,25 @@ test('tasks: admission skips RED replay after an attributed RED exception ruling
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
   assert.equal(record(result, 'T1')?.status, 'accepted');
   assert.deepEqual(redCommand(trace), []);
+});
+
+// SECTION: Revision
+
+test('tasks: revision of an accepted criterion definition rewinds integration and reruns the invalidated tasks', () => {
+  const sim: Sim = { envelope: (id) => id === 'T2' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'cannot proceed', evidence: [], blockers: ['missing API'] } : defaultEnvelope(id) };
+  let { result, trace } = start(2, sim);
+  result = launch(result, sim, trace);
+  result = submit(result, 'T1', sim, trace);
+  result = submit(launch(result, sim, trace), 'T3', sim, trace);
+  result = submit(result, 'T2', sim, trace);
+  assert.equal(result.state.tag, 'failure');
+  assert.deepEqual(['T1', 'T2', 'T3'].map((id) => record(result, id)?.status), ['accepted', 'failed', 'accepted']);
+  const revised: ParsedPlan = { ...PLAN, criteria: PLAN.criteria.map((row) => row.id === 'SC1' ? { ...row, verify: [{ command: 'node --test tests/sc1-strict.test.ts', final: false }] } : row) };
+  const r = beginRevision(result.state as Extract<ImplementState, { tag: 'failure' }>, { type: 'REVISE', artifact: 'plan', reason: 'blocked-by-plan', evidence: 'SC1 too weak' }).state.r;
+  const c = reboundRevision({ tag: 'resume', r: { ...r, plan: revised, hash: `sha256:${'b'.repeat(64)}`, changed: ['SC1'], removed: [], grew: false } });
+  const before = trace.effects.length;
+  result = host({ state: { ...result.state, c } as ImplementState, effects: [] }, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'SC1 revised' } }, { ...sim, plan: revised }, trace);
+  const rewind = trace.effects.slice(before).find((effect) => effect.kind === 'checkout' && effect.op === 'reset');
+  assert.deepEqual(rewind?.kind === 'checkout' && rewind.input, { name: 'integration', revision: 'b0' });
+  assert.deepEqual(['T1', 'T2', 'T3'].map((id) => record(result, id)?.status), ['running', 'running', 'pending']);
 });
