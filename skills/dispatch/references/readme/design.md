@@ -6,6 +6,16 @@ Use `design` when a change crosses components, has migration or rollback concern
 
 Dispatch helps shape a design and delivery outline, with reviews selected by your configuration. You review the resulting design and settle its decisions before asking Dispatch to implement it.
 
+### Flow at a glance
+
+```mermaid
+flowchart TD
+    Goal["Outcome and constraints"] --> Shape["Develop a design and<br/>ordered increments"]
+    Shape --> Review["Configured design review,<br/>when enabled"]
+    Review --> Settle["You review and settle<br/>design decisions"]
+    Settle --> Implement["Run implement with the<br/>approved design path"]
+```
+
 ## How to use it
 
 Describe the outcome and the important constraints. For example:
