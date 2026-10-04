@@ -53,13 +53,13 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 
 | Verb | Use it when… | Result |
 |---|---|---|
-| `ask` | You have a focused repository question | Independent analysis for your host to verify |
-| `design` | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
-| `plan` | The change is one coherent unit | A plan and any reviews enabled for that level |
-| `review` | A design, plan, or code change already exists | Evidence-backed findings; fixes only when requested |
-| `implement` | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
+| [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host to verify |
+| [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
+| [`plan`](references/readme/plan.md) | The change is one coherent unit | A plan and any reviews enabled for that level |
+| [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed findings; fixes only when requested |
+| [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
-See [Choose a verb](references/readme/verbs.md) for examples and help deciding where to start.
+Start with the verb that matches your work; you can skip work you have already completed. Use `plan` for one coherent change and `design` when delivery needs ordered increments.
 
 ## Command pattern
 

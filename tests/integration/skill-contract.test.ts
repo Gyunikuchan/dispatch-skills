@@ -110,6 +110,6 @@ test('task execution guidance describes graph ownership, continuous writers and 
   const concepts = read('skills/dispatch/references/readme/concepts.md');
   for (const term of ['accepted prerequisites', 'Generated outputs', 'older baseline', 'setup-only', 'retained handles', 'already-delivered']) assert.ok(concepts.includes(term), term);
   assert.match(read('skills/dispatch/README.md'), /task summaries/);
-  assert.match(read('skills/dispatch/references/readme/verbs.md'), /Design increments remain sequential/);
+  assert.match(read('skills/dispatch/references/readme/design.md'), /increments in order/);
 });
 
