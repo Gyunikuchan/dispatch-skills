@@ -4,14 +4,14 @@ Use `ask` when you have a focused question about code, behavior, or a decision i
 
 ## What happens
 
-Dispatch gathers independent analysis from configured read delegates. Your host checks their claims against repository evidence and gives you an answer. An ask does not make repository changes.
+Dispatch gathers independent analysis from configured read delegates. Your host agent checks their claims against repository evidence and gives you an answer. An ask does not make repository changes.
 
 ### Flow at a glance
 
 ```mermaid
 flowchart TD
     Question["Your focused question"] --> Delegates["Configured read delegates<br/>analyze independently"]
-    Delegates --> Check["Your host checks claims<br/>against repository evidence"]
+    Delegates --> Check["Your host agent checks claims<br/>against repository evidence"]
     Check --> Answer["Get an evidence-checked answer"]
 ```
 

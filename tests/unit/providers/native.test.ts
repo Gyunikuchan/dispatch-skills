@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { nativeDescriptor, retryPosition, verifyMapping } from '../../../skills/dispatch/scripts/providers/native.ts';
+import { nativeDescriptor, retryPosition } from '../../../skills/dispatch/scripts/providers/native.ts';
 
 test('delegates-native-fallback-descriptors: descriptors carry every closed field', () => {
   const fallback = nativeDescriptor({
@@ -18,14 +18,6 @@ test('delegates-native-fallback-descriptors: descriptors carry every closed fiel
   assert.equal(only.agentType, 'explore');
   assert.equal(only.model, null);
   assert.equal(nativeDescriptor({ ...{ slot: 's', models: ['m'], effort: null, substitutes: true, cascadePosition: 0, promptPath: '', outputPath: '', attachments: [] }, platform: 'codex' }).agentType, 'explore');
-});
-
-test('delegates-native-fallback-descriptors: mapping verification distinguishes match, mismatch, and repeated mismatch', () => {
-  const mappings = [{ configuredModel: 'opus', launcherModel: 'claude-opus-5', provider: 'claude' }];
-  assert.equal(verifyMapping({ configured: 'opus', launched: 'opus', provider: 'claude', mappings: [], priorMismatches: [] }), 'match');
-  assert.equal(verifyMapping({ configured: 'opus', launched: 'claude-opus-5', provider: 'claude', mappings, priorMismatches: [] }), 'match');
-  assert.equal(verifyMapping({ configured: 'opus', launched: 'claude-opus-5', provider: 'agy', mappings, priorMismatches: [] }), 'mismatch');
-  assert.equal(verifyMapping({ configured: 'opus', launched: 'sonnet', provider: 'claude', mappings, priorMismatches: ['opus'] }), 'availability');
 });
 
 test('delegates-early-fallbacks: an empty early capture retries at its position; a confirmed rejection advances', () => {

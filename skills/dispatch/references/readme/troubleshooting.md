@@ -22,7 +22,7 @@ Doctor checks Node, configuration, available executables, resolved targets and w
 | Implementation cannot start | Configure `write-subagents` for the host platform. Check that required design or plan steps are complete and that you have approved the plan. |
 | Code review says there are no changes | Without a range, Dispatch reviews uncommitted changes only. Provide an explicit range such as `main..HEAD` to include committed branch work. |
 | Review findings are reported but no files changed | That is the default. Request `--fix` when you want accepted, safe findings applied, verified, and reviewed again. |
-| A provider reports sandbox problems | Follow the provider diagnostic and consult the [provider reference](../providers.md). Setting `sandbox: false` is an explicit opt-out from OS isolation for that provider. |
+| A provider reports sandbox problems | Follow the diagnostic to identify the provider and execution mode. Setting `sandbox: false` opts that provider out of OS isolation; read-only controls may still apply, but they do not provide the same boundary. |
 | A verification step fails | Open the named log and follow the decision Dispatch presents. Keep the working tree and session folder so the failed check can be repaired or resumed. |
 | A run is interrupted | Continue in the same chat and follow its recovery prompt. Preserve the session folder; it contains the recorded progress and work needed to resume. |
 

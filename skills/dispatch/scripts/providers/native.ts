@@ -1,4 +1,4 @@
-// Native fallback descriptors and model-mapping verification (spec §6.5).
+// Native fallback descriptors and retry positioning.
 // A descriptor is what the host needs to launch one native subagent; the wave reconciles its capture by `sourceKey`.
 
 import type { ProviderId } from './types.ts';
@@ -51,17 +51,3 @@ export function nativeDescriptor(input: DescriptorInput): NativeDescriptor {
 
 /** Retry position: an empty early capture retries the same model; a confirmed rejection moves on. */
 export const retryPosition = (reason: 'empty' | 'rejected', current: number): number => (reason === 'empty' ? current : current + 1);
-
-export type ModelMapping = { configuredModel: string; launcherModel: string; provider: string };
-export type MappingVerdict = 'match' | 'mismatch' | 'availability';
-
-/**
- * Whether the launcher ran the configured model: exact, or a verified mapping entry. A mismatch seen again for the
- * same configured model is an availability failure (the host cannot serve it), not a retryable mismatch.
- */
-export function verifyMapping(input: { configured: string; launched: string; provider: string; mappings: readonly ModelMapping[]; priorMismatches: readonly string[] }): MappingVerdict {
-  if (input.configured === input.launched) return 'match';
-  const mapped = input.mappings.some((entry) => entry.configuredModel === input.configured && entry.launcherModel === input.launched && entry.provider === input.provider);
-  if (mapped) return 'match';
-  return input.priorMismatches.includes(input.configured) ? 'availability' : 'mismatch';
-}

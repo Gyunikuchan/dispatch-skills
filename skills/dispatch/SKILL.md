@@ -8,7 +8,9 @@ disable-model-invocation: true
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, and `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. A user-written level is `explicit`; otherwise classify `low`, `medium`, or `high` and mark `classified`. `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, and `(all)` select providers, count, or all configured targets. `-m` and `-e` map to `--model` and `--effort`. Report-only review is the default; map an explicit request to apply fixes to `--fix`.
+Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, and `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. A supplied level is `explicit`; otherwise classify `low`, `medium`, or `high` by risk and required assurance, and mark `classified`; see [level criteria](references/readme/configuration.md#understand-levels-and-pins). `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, and `(all)` select providers, count, or all configured targets. `-m` and `-e` map to `--model` and `--effort`. Report-only review is the default; map an explicit request to apply fixes to `--fix`.
+
+Use `design` for multiple increments, `plan` for one coherent unit, and `implement` for delivery. If mismatched, recommend a fit and wait for user choice; never switch silently.
 
 ## Run loop
 
@@ -16,7 +18,7 @@ Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit one JSON frame; doctor emits a table or `--json` diagnostics.
 3. Run `send --run <dir> [--event @<event-file>]` in the background; retain its handle until completion or a blocker. Follow frame instructions; fill `events` with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automatic work.
 
-Before the selected branch, read [ask](references/verbs/ask.md), [design](references/verbs/design.md), [plan](references/verbs/plan.md), [review](references/verbs/review.md), or [implement](references/verbs/implement.md). For adjudication and disputes read [review rules](references/review-rules.md); for provider availability, native mapping, or sandbox failures read [providers](references/providers.md). Terms live in [glossary](references/glossary.md).
+Before branching, read the selected guide under `references/verbs/`. For disputes, use [review rules](references/review-rules.md); for provider or sandbox failures, use [providers](references/providers.md). See [glossary](references/glossary.md) for terms.
 
 ## Await author
 
@@ -24,7 +26,7 @@ Author at `data.path` using `data.template`; resolve every defect against the go
 
 ## Await native
 
-Launch every listed `data.slots` native subagent with its descriptor's prompt, model, reasoning effort, and attachments. Capture at each `outputPath`; verify native model mapping per providers. Reply once with `NATIVE_RESULTS` and `slots` containing `slot`, `outputPath`, and `sourceKey` where supplied.
+Launch every listed `data.slots` native subagent with its descriptor's prompt, model, reasoning effort, and attachments. Capture at each `outputPath`. Reply once with `NATIVE_RESULTS` and `slots` containing `slot`, `outputPath`, and `sourceKey` where supplied.
 
 ## Await rule
 
@@ -48,10 +50,10 @@ Answer `data.kind` with a listed option and its branch context. Production appro
 
 ## Await done
 
-Report outcome, behavior, verification, concerns, each decision you ruled on the user's behalf with its reason, and frame-provided artifact links. Completion requires every criterion. Preserve the handoff folder for later work.
+Report outcome, behavior, verification, concerns, reasoned rulings, and artifact links. Complete only when every criterion passes; preserve the handoff folder.
 
 ## Write boundaries and recovery
 
-The driver owns journals, prompts, briefs, reports, and resolution sections. Host author/fix writes and native writers follow the frame's permission. Provider CLIs remain read-only. Preserve unrelated dirty and ignored files.
+The driver owns journals, prompts, briefs, reports, and resolution sections. Author/fix and native writes follow frame permissions. Provider CLIs stay read-only. Preserve unrelated dirty and ignored files.
 
 The journal is authoritative. After interruption run `status --run <dir>` to inspect progress and live worker claims, then `send --run <dir>` to replay and reattach. `send --dry-run` validates a host event without side effects. Invalid host events reprint a frame with `error`; correct that event. Exit 1 is usage, 2 is an engine fault, 3 names the lock holder. Wait on live locks; recovery breaks only dead-process locks.

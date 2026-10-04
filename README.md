@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
 
-Build with more confidence by catching flawed assumptions before they become code. `dispatch-skills` brings independent agents into one development workflow for planning, implementation, and review — without leaving the agent IDE or CLI you prefer. Agents work through their native harnesses, while your host verifies their findings against the real code and carries the work forward.
+Build with more confidence by catching flawed assumptions before they become code. `dispatch-skills` brings independent agents into one development workflow for planning, implementation, and review — without leaving the agent IDE or CLI you prefer. Agents work through their native harnesses, while your host agent verifies their findings against the real code and carries the work forward.
 
 ## Contents
 
@@ -58,13 +58,13 @@ Smaller tasks can start later in the same workflow: `/dispatch implement:` begin
 | What dispatch does | Why it matters |
 |---|---|
 | **💡 Reviews designs and plans before implementation** | Catch a missing migration in the plan instead of after hundreds of lines of code, making implementation more likely to succeed on the first pass. |
-| **⚖️ Verifies evidence instead of counting votes** | Reviewers cite `file:L<line>` or `§ plan section`, and your host checks each finding against the code and repository instructions. Unsupported or contradicted findings are rejected, while one well-supported defect is enough to act on. |
+| **⚖️ Verifies evidence instead of counting votes** | Reviewers cite `file:L<line>` or `§ plan section`, and your host agent checks each finding against the code and repository instructions. Unsupported or contradicted findings are rejected, while one well-supported defect is enough to act on. |
 
 ### Keep operations safe and efficient
 
 | What dispatch does | Why it matters |
 |---|---|
-| **🛡️ Keeps read delegates read-only** | Ambient credential variables are stripped; sensitive attachments are rejected. Native authenticated state remains available, and prompt guardrails guide file reads. Supported platforms add an OS sandbox for another layer of protection. After plan approval, production edits go through the host's native write agent/subagent.
+| **🛡️ Keeps read delegates read-only** | Ambient credential variables are stripped; sensitive attachments are rejected. Native authenticated state remains available, and prompt guardrails guide file reads. Supported platforms add an OS sandbox for another layer of protection. After plan approval, a writer on the host platform makes production changes. |
 | **🧾 Passes focused context between agents** | Scripts handle routing, retries, data formats, artifacts, and logs. Noisy output stays in session files, while structured handoffs preserve cited findings and progress for the next phase. |
 | **⚡ Reviews changes before the PR** | Review uncommitted work directly in your terminal while its context is still fresh. An automated loop can apply verified fixes and run the checks again. |
 | **💰 Spreads work across providers** | Use the CLIs you already pay for, reduce your dependence on any one provider's rate limits, and keep working in your preferred IDE while other models do the reading. |
@@ -97,7 +97,7 @@ node skills/dispatch/scripts/dispatch.ts doctor --level high
 > Install every skill into the same scope — all project-local or all global (`-g`). The aliases resolve `dispatch` as a sibling, so a mixed install breaks them.
 
 > [!NOTE]
-> Dispatch requests OS sandboxing by default where a provider supports it. A provider that cannot honor the request reports `sandbox-unsupported`; use `doctor` and the [provider reference](skills/dispatch/references/providers.md) to investigate. Setting `sandbox: false` is an explicit opt-out from OS isolation for that provider. Read-only controls vary by provider. Antigravity uses plan mode as its write boundary.
+> Dispatch requests OS sandboxing by default where a provider and execution mode support it. Doctor reports when sandboxing is unsupported. Setting `sandbox: false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they are not the same boundary. Antigravity uses plan mode as its write boundary.
 
 See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch user guide, workflow choices, configuration, and troubleshooting.
 
@@ -106,10 +106,10 @@ See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch us
 | Skill | Use it for |
 |---|---|
 | [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. User-invoked. |
-| [`dispatch-plan-review`](skills/dispatch/README.md) | Alias for `/dispatch review plan:` |
-| [`dispatch-design-review`](skills/dispatch/README.md) | Alias for `/dispatch review design:` |
-| [`dispatch-code-review`](skills/dispatch/README.md) | Alias for `/dispatch review code:` |
-| [`dispatch-implement`](skills/dispatch/README.md) | Alias for `/dispatch implement:` |
+| [`dispatch-plan-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review plan:` |
+| [`dispatch-design-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review design:` |
+| [`dispatch-code-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review code:` |
+| [`dispatch-implement`](skills/dispatch/references/readme/implement.md) | Alias for `/dispatch implement:` |
 
 The four aliases exist for familiar slash commands only; `dispatch` alone does the work.
 
@@ -119,7 +119,7 @@ The four aliases exist for familiar slash commands only; `dispatch` alone does t
 /dispatch [level] [(pins)] [ask|design|plan|review|implement]: <argument>
 ```
 
-Levels `low` … `max` use progressively more targets, review rounds, and capable models. Pins such as `(claude,agy)` or `(all)` choose which configured providers answer.
+Levels `low` … `max` select configured model and review-policy presets; the sample configuration increases review breadth at higher levels. Pins such as `(claude,agy)` or `(all)` choose which configured providers answer.
 
 Ask another model a bounded question:
 
@@ -128,12 +128,14 @@ Ask another model a bounded question:
 /dispatch (all): Does the cache invalidation flow have a race?
 ```
 
-Write a plan, then have other models attack it before you spend tokens on code:
+Write a plan, then optionally run an additional review pass:
 
 ```text
 /dispatch high (claude,agy) plan: Add webhook idempotency
-/dispatch review plan: .scratch/dispatch-skills/<folder>/webhooks.plan.md
+/dispatch review: .scratch/dispatch-skills/<folder>/webhooks.plan.md
 ```
+
+The plan runs the review and fix rounds enabled by its level's `plan-review` policy. The second command is another pass; Dispatch infers that a `.plan.md` file is a plan.
 
 Review your working tree or a branch range:
 
@@ -148,6 +150,8 @@ Review your working tree or a branch range:
 
 > [!NOTE]
 > Reviews are report-only. Add `--fix` to let verified findings be applied.
+
+With `--fix`, your host agent rules on findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit. Disputed or intent-dependent findings can still be escalated to you.
 
 Run the whole loop — plan, review, approval gate, implementation, code review to settlement:
 

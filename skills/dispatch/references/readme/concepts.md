@@ -6,7 +6,7 @@ Dispatch keeps independent review and implementation inside your current agent w
 
 - **Read delegates** inspect the repository and return analysis or review findings. They use provider-specific read-only controls.
 - **Your host agent** compares those claims with the code, repository instructions, and your goal. It accepts, rejects, or narrows findings with reasons.
-- **A native writer** makes production changes only after you approve the plan. The writer is configured for the platform running your host.
+- **A native writer** makes production changes only after you approve the plan. The writer is configured for the platform running your host agent.
 
 This keeps independent review useful while leaving decisions and production changes under your control.
 
@@ -14,14 +14,14 @@ This keeps independent review useful while leaving decisions and production chan
 
 1. The plan lists the outcomes, files, prerequisites, and verification steps for the change.
 2. After approval, Dispatch works through tasks whose prerequisites are ready. Independent tasks can run at the same time when `write-concurrency` is configured above one.
-3. The host checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
+3. Your host agent checks the submitted changes, integrates accepted work, and runs the approved verification and review steps.
 4. Dispatch reports the outcome and links the artifacts and logs you may need for follow-up.
 
 The default concurrency is one. Increasing it lets independent tasks overlap, but should match the capacity of your host platform.
 
-When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host decide what can proceed independently.
+When a plan has several tasks, each task owns its file changes and names its prerequisites. A task starts when its accepted prerequisites are ready. Generated outputs should identify the task that creates them and the inputs that task needs. These details help the host agent decide what can proceed independently.
 
-After a task finishes, the host checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
+After a task finishes, the host agent checks its submitted changes before integrating them. It rejects setup-only test failures as proof of a behavior change, and can integrate a checked result from an older baseline while preserving unrelated work. If a run is interrupted, recovery uses retained handles rather than launching duplicate writers. It recognizes already-delivered changes and transfers only what remains.
 
 ## Session folder
 

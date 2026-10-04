@@ -17,20 +17,20 @@ Dispatch can answer a focused question, help shape a design or plan, review exis
 
 ## How Dispatch works
 
-Your current agent is the **host**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
+Your current agent is the **host agent**. It routes work to configured read delegates, checks their evidence against the repository, and decides what to do with their findings.
 
-For implementation, Dispatch prepares a plan and applies the configured review policy before asking you to approve it. After approval, a writer native to your host platform makes changes. The host checks the results and reports the handoff.
+For implementation, Dispatch prepares a plan and applies the review and fix rounds enabled by the selected level's policy before asking you to approve it. After approval, a writer native to your host platform makes changes. Your host agent checks the results and reports the handoff.
 
 The diagram below shows the implementation path; questions and standalone reviews can finish without an approval gate.
 
 ```mermaid
 flowchart LR
-    You([You]) --> Host[Your current agent]
+    You([You]) --> Host[Your current host agent]
     Host --> Delegates[Read-only delegates]
     Delegates --> Evidence[Findings with evidence]
     Evidence --> Host
     Host --> Gate{Approve the plan?}
-    Gate -->|Yes| Writer[Host-native writer]
+    Gate -->|Yes| Writer[Writer for your host platform]
     Writer --> Checks[Verification and review]
     Checks --> You
 ```
@@ -53,13 +53,13 @@ Questions and reviews use `read-delegates`. Implementation also needs a `write-s
 
 | Verb | Use it when… | Result |
 |---|---|---|
-| [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host to verify |
+| [`ask`](references/readme/ask.md) | You have a focused repository question | Independent analysis for your host agent to verify |
 | [`design`](references/readme/design.md) | Work crosses boundaries or needs several increments | A design and delivery outline, with reviews set by configuration |
-| [`plan`](references/readme/plan.md) | The change is one coherent unit | A plan and any reviews enabled for that level |
+| [`plan`](references/readme/plan.md) | The change is one coherent unit | A plan after its configured review and fix rounds |
 | [`review`](references/readme/review.md) | A design, plan, or code change already exists | Evidence-backed findings; fixes only when requested |
 | [`implement`](references/readme/implement.md) | You want a requirement or approved artifact delivered | Approved changes, verification, review, and handoff |
 
-Start with the verb that matches your work; you can skip work you have already completed. Use `plan` for one coherent change and `design` when delivery needs ordered increments.
+Use `design` when delivery needs multiple ordered increments, `plan` for one coherent unit, and `implement` when you want a clear requirement or approved artifact delivered. If the requested verb does not fit the scope or outcome, Dispatch recommends a better fit before starting and waits for your choice; it does not silently switch verbs. You can skip work you have already completed.
 
 ## Command pattern
 
@@ -67,7 +67,7 @@ Start with the verb that matches your work; you can skip work you have already c
 /dispatch [level] [(pins)] [verb:] <question, requirement, artifact, or range>
 ```
 
-- **Level**: `low`, `medium`, or `high` can be selected automatically. Choose `xhigh` or `max` explicitly.
+- **Level**: `low`, `medium`, or `high` can be selected automatically based on failure impact, reversibility, uncertainty, and the assurance needed. Choose `xhigh` or `max` explicitly. See [levels](references/readme/configuration.md#understand-levels-and-pins) for the criteria.
 - **Pins**: provider names such as `(claude,agy)`, a target count such as `(3)`, or `(all)`.
 - **Verb**: `ask` is the default; other choices are `design`, `plan`, `review`, and `implement`.
 - **Argument**: a question, requirement, artifact path, or Git range.
@@ -84,11 +84,11 @@ Plan and deliver one change:
 
 ```text
 /dispatch plan: Add idempotency keys to webhook delivery
-/dispatch review plan: <plan path returned by Dispatch>
+/dispatch review: <path/to/change.plan.md>
 /dispatch implement: <approved plan path>
 ```
 
-Plans present task summaries before file ownership and prerequisites. Plan review breadth depends on your configuration. Read the plan and approve its verification commands before production changes begin; request a separate review if you want another pass.
+Plan review and accepted safe fixes run according to the selected level's `plan-review` policy. The `.plan.md` extension lets `/dispatch review:` infer the target type; that command is an optional additional pass. Plans present task summaries before file ownership and prerequisites. Read the plan and approve its verification commands before production changes begin.
 
 Design work that needs multiple increments:
 
@@ -105,23 +105,23 @@ Review current or committed work:
 /dispatch review code: main..HEAD
 ```
 
-Without a range, code review covers uncommitted changes. Reviews report findings by default; `--fix` requests accepted, safe fixes followed by verification and review.
+Without a range, code review covers uncommitted changes. Reviews report findings by default. With `--fix`, your host agent adjudicates findings, applies accepted safe fixes, and verifies and reviews the changes again within the configured round limit.
 
 ## Configure routing
 
 | Setting | Controls |
 |---|---|
-| `read-delegates` | Models used for questions and reviews |
-| `write-subagents` | Native writer used by your host during implementation |
-| `phases` | Optional review breadth and round limits |
-| `write-concurrency` | Maximum number of implementation task writers running at once |
 | `diagnostics` | Optional session timing and supported usage summaries |
+| `write-concurrency` | Maximum number of implementation task writers running at once |
+| `read-delegates` | Models used for questions and reviews |
+| `write-subagents` | Native writer used by your host agent during implementation |
+| `phases` | Optional review breadth and round limits |
 
 The [configuration guide](references/readme/configuration.md) covers setup, levels, pins, and sandbox settings.
 
 ## Safety and session files
 
-- Read delegates use provider-specific read-only controls and credential stripping. Sandbox support depends on the provider; see the [provider reference](references/providers.md).
+- Read delegates use provider-specific read-only controls and credential stripping. Dispatch requests an OS sandbox where the provider and execution mode support it; Doctor reports unsupported sandboxing. Setting `sandbox: false` opts out of OS isolation, which provider read-only controls do not replace.
 - Production changes require your approval and use a writer configured for the host platform.
 - Dispatch runs the verification commands approved in the plan. Review fixes are checked and reviewed again.
 - Each chat keeps its artifacts under `.scratch/dispatch-skills/` in the workspace. The handoff reports the folder path; the same chat can reuse it if you continue later.
@@ -138,6 +138,6 @@ See [Workspaces and results](references/readme/concepts.md) for session files an
 | Implementation cannot start | Configure `write-subagents` for the host platform and complete the plan prerequisites |
 | Code review finds no changes | Without a range, it reviews uncommitted changes; provide a Git range for committed work |
 | Verification fails | Read the reported log and follow the decision Dispatch presents |
-| A provider or sandbox fails | Follow the diagnostic and see the [provider reference](references/providers.md) |
+| A provider or sandbox fails | Follow the diagnostic, then check the active configuration and provider CLI installation/authentication |
 
 For step-by-step help, see [Troubleshooting](references/readme/troubleshooting.md).

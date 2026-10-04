@@ -10,15 +10,15 @@ If both files exist, `config.local.jsonc` is used on its own; settings are not m
 
 | Setting | Needed for | What it controls |
 |---|---|---|
+| `diagnostics` | Optional | Session timing and supported provider-usage summaries |
+| `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
 | `read-delegates` | Questions and reviews | Provider targets and their model choices |
 | `write-subagents` | Implementation | Native writer models available to each host platform |
 | `phases` | Optional | Review target counts, rounds, consensus, and provider filters |
-| `write-concurrency` | Optional | Maximum number of task writers active at once; defaults to `1` |
-| `diagnostics` | Optional | Session timing and supported provider-usage summaries |
 
 The `write-concurrency` value must be a positive safe integer; omission defaults to one.
 
-For example, a Codex host can use one configured read target and a native writer:
+For example, a host agent running on Codex can use one configured read target and a native writer:
 
 ```jsonc
 {
@@ -42,6 +42,8 @@ Replace the provider and model names with choices available in your environment.
 ## Understand levels and pins
 
 Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The level determines which configured model choices and review policy apply. If a target has no exact match, Dispatch uses its nearest configured lower level; when none exists, it uses the lowest configured higher level. Missing fields are not copied between level entries.
+
+When no level is supplied, the host agent chooses `low`, `medium`, or `high` according to the assurance the change needs. Use `low` for localized, routine, reversible work with low failure cost; `medium` for bounded work with meaningful uncertainty or impact; and `high` for broad, externally visible, security or data-integrity work, hard-to-reverse changes, or other high-cost failures. The choice weighs impact, reversibility, uncertainty, and failure cost rather than task size alone. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
 
 Pins affect one invocation:
 
@@ -73,13 +75,13 @@ If an implementation cannot start, check that `write-subagents` includes the hos
 
 ## Sandboxing and provider details
 
-Dispatch requests OS sandboxing by default for providers that support it. Sandbox behavior varies by platform. If Doctor or a run reports an unsupported sandbox, follow the provider-specific diagnostic before changing the setting. The explicit opt-out is `sandbox:false`; other read-only controls may still apply, but do not provide the same boundary.
+Dispatch requests OS sandboxing by default where a provider and execution mode support it. Sandbox behavior varies by provider. If Doctor or a run reports `sandbox-unsupported`, use the diagnostic to identify the affected provider and mode. Setting `sandbox:false` opts that provider out of OS isolation; provider-specific read-only controls may still apply, but they do not provide the same boundary.
 
-For provider-specific sandbox behavior and host mappings, see the [provider reference](../providers.md). For installation requirements and supported providers, see the [repository README](../../../../README.md).
+For Node.js requirements and supported provider CLIs, see the [repository README](../../../../README.md).
 
 ## Optional settings
 
-- Set `"write-concurrency"` above `1` only when your host can support that many native writers. It is an admission limit, not a capacity check.
+- Set `"write-concurrency"` above `1` only when your host platform can support that many native writers. It is an admission limit, not a capacity check.
 - Set `"diagnostics": true` to create a shareable `diagnostics.md` with timing and supported usage summaries. It is not uploaded automatically; review it before sharing. Coverage is partial when a provider or execution surface does not report usage.
 
 ## Older sessions and provider-specific settings
@@ -89,8 +91,8 @@ Chat artifacts remain in the workspace under `.scratch/dispatch-skills/`. If an 
 <details>
 <summary>Advanced provider settings</summary>
 
-- `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when the host matches. On other hosts, those targets are skipped.
+- `nativeSubagentsOnly: true` skips a provider CLI and uses that platform's native subagents when it matches your host platform. On other platforms, those targets are skipped.
 - OpenCode reads its selected native configuration, including `OPENCODE_CONFIG_DIR`; Dispatch does not copy inline settings into another provider's configuration.
-- For provider-specific sandbox behavior and host mappings, see the [provider reference](../providers.md).
+- Doctor reports resolved provider targets, writer availability, and predicted sandbox support without launching delegates.
 
 </details>
