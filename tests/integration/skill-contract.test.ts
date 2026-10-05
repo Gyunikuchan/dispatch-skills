@@ -172,7 +172,8 @@ test('task execution guidance describes graph ownership, continuous writers and 
   const plan = read('skills/dispatch/references/verbs/plan.md');
   assert.match(plan, /task outcomes/); assert.match(plan, /prerequisite graph/); assert.match(plan, /producer\/consumer interfaces/);
   const implement = read('skills/dispatch/references/verbs/implement.md');
-  assert.match(implement, /one continuous writer invocation/); assert.match(implement, /RED checkpoint before production/);
+  assert.match(implement, /one continuous writer invocation/); assert.match(implement, /\[task brief\]\(\.\.\/templates\/write-brief-task\.md\) owns the development sequence/);
+  assert.match(read('skills/dispatch/references/templates/write-brief-task.md'), /record RED, implement to verified GREEN, inspect for refactoring/);
   assert.match(implement, /submission alone does not/); assert.match(implement, /Keep running handles and completed receipts/);
   assert.match(implement, /final code review\/fixes.*caller checkout/s);
   assert.doesNotMatch(implement, /Tests-only RED evidence precedes production/);
