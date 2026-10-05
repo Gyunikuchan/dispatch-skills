@@ -20,6 +20,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 <<slot:purpose>>
 
 ### Verification and editing
+- Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including nested ones on the paths you edit. Report a conflict between them and this brief under concerns.
 - Verify with your mapped `commands` only; after each change, rerun just the commands it affects. Never run an aggregate suite such as `npm test`: the driver runs every gate after you return.
 - Edit with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.
 
