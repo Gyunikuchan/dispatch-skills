@@ -10,13 +10,20 @@ Dispatch reports findings by default. It does not apply fixes unless you ask for
 
 ```mermaid
 flowchart TD
-    Target["Review a design, plan,<br/>working tree, or Git range"] --> Inspect["Independent reviewers<br/>analyze the target"]
-    Inspect --> Check["Your host agent checks findings<br/>against evidence and intent"]
-    Check --> Fix{"Did you request --fix?"}
-    Fix -->|No| Report["Receive findings and rulings"]
-    Fix -->|Yes| Apply["Apply accepted safe fixes"]
-    Apply --> Verify["Verify and review<br/>the updated changes"]
-    Verify --> Report
+    User(["👤 Design, plan,<br/>working tree, or Git range"]) --> Route["🧭 Infer kind; route reviewers"]
+    Route --> Review["⚡ Independent reviews"]
+    Review --> Rule{"⚖️ Finding backed by<br/>evidence and intent?"}
+    Rule -->|No| Reject["🚫 Rejected"]
+    Rule -->|Yes| Fix{"🔧 --fix?"}
+    Fix -->|No| Report["📋 Findings + rulings"]
+    Reject --> Report
+    Fix -->|Yes| Apply["🔧 Apply safe fixes"]
+    Apply --> Verify["✅ Verify"]
+    Verify --> Settled{"🔄 Settled?"}
+    Settled -->|Findings remain| Review
+    Settled -->|Done or cap reached| Report
+    Settled -->|Disputed or intent call| User
+    Report --> User
 ```
 
 ## How to use it

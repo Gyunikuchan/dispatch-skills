@@ -10,9 +10,14 @@ Dispatch gathers independent analysis from configured read delegates. Your host 
 
 ```mermaid
 flowchart TD
-    Question["Your focused question"] --> Delegates["Configured read delegates<br/>analyze independently"]
-    Delegates --> Check["Your host agent checks claims<br/>against repository evidence"]
-    Check --> Answer["Get an evidence-checked answer"]
+    User(["👤 Focused question"]) --> Route["🧭 Route to read delegates"]
+    Route --> Analyze["⚡ Independent analysis"]
+    Analyze --> Claims["📋 Cited claims"]
+    Claims --> Check{"⚖️ Supported by<br/>repository evidence?"}
+    Check -->|Yes| Answer["💬 Evidence-checked answer"]
+    Check -->|No| Reject["🚫 Claim rejected"]
+    Reject --> Answer
+    Answer --> User
 ```
 
 ## How to use it

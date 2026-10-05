@@ -10,10 +10,16 @@ Dispatch helps identify the outcomes, affected files, prerequisites, and verific
 
 ```mermaid
 flowchart TD
-    Change["One coherent change"] --> Plan["Create a plan with outcomes,<br/>prerequisites, files, and checks"]
-    Plan --> Review["Apply the configured<br/>plan review policy"]
-    Review --> Approval["You inspect and approve<br/>the plan and its checks"]
-    Approval --> Implement["Run implement with the<br/>approved plan path"]
+    User(["👤 One coherent change"]) --> Plan["📝 Plan: tasks, outcomes,<br/>files, criteria, checks"]
+    Plan --> Graph["🧩 Task prerequisite graph"]
+    Graph --> Lint["🔍 Plan lint"]
+    Lint --> Review["⚡ Plan review"]
+    Review --> Fix["🔧 Verified fixes"]
+    Fix --> Settled{"🔄 Settled?"}
+    Settled -->|Findings remain| Review
+    Settled -->|Decision needed| User
+    Settled -->|Yes| Gate{"🛑 You approve plan<br/>+ verify commands"}
+    Gate --> Next["▶️ implement: plan path"]
 ```
 
 ## How to use it

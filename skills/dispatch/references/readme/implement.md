@@ -12,13 +12,25 @@ For each task, the writer inspects the relevant code, adds discriminating tests 
 
 ```mermaid
 flowchart TD
-    Requirement["Plain-language requirement"] --> Plan["Create plan and run configured<br/>review and fix rounds"]
-    Plan --> Approval["You approve the plan"]
-    Artifact["Approved plan or design"] --> Delivery["Deliver tasks or increments"]
-    Approval --> Delivery
-    Delivery --> Writer["Host-platform writers handle<br/>ready tasks"]
-    Writer --> Check["Host agent checks and integrates;<br/>verification and code review run"]
-    Check --> Handoff["Receive the outcome<br/>and artifact links"]
+    User(["👤 Requirement"]) --> Plan["📝 Plan + plan review"]
+    Artifact(["📄 Approved plan or design"]) --> Gate
+    Plan --> Gate{"🛑 One approval gate"}
+    Gate --> Baseline["✅ Baseline tests"]
+    Baseline --> Tasks["🧩 Ready tasks, each<br/>in its own worktree"]
+    Tasks --> Red["🔴 Failing tests first"]
+    Red --> Green["💻 Writer makes them pass"]
+    Green --> Accept{"⚖️ Scope, tests,<br/>and checks hold?"}
+    Accept -->|Needs more scope| Scope["📐 Scope request"]
+    Scope -->|Approved| Green
+    Scope -->|Disputed| User
+    Accept -->|Failed| Recover["🔧 Retry, revise plan,<br/>or stop"]
+    Recover --> Tasks
+    Accept -->|Accepted| Integrate["🔗 Integrate; unblock<br/>dependent tasks"]
+    Integrate -->|Tasks remain| Tasks
+    Integrate -->|All done| CodeReview["⚡ Code review + fixes"]
+    CodeReview --> Final["✅ Final tests, lint, build"]
+    Final --> Handoff["📦 Changes + evidence handoff"]
+    Handoff --> User
 ```
 
 ## How to use it

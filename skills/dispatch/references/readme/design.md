@@ -10,10 +10,16 @@ Dispatch helps shape a design and delivery outline, with reviews selected by you
 
 ```mermaid
 flowchart TD
-    Goal["Outcome and constraints"] --> Shape["Develop a design and<br/>ordered increments"]
-    Shape --> Review["Configured design review,<br/>when enabled"]
-    Review --> Settle["You review and settle<br/>design decisions"]
-    Settle --> Implement["Run implement with the<br/>approved design path"]
+    User(["👤 Outcome + constraints"]) --> Draft["🗺️ Technical design"]
+    Draft --> Increments["🧩 Ordered increment graph"]
+    Increments --> Lint["🔍 Design lint"]
+    Lint --> Review["⚡ Design review"]
+    Review --> Fix["🔧 Verified fixes"]
+    Fix --> Settled{"🔄 Settled?"}
+    Settled -->|Findings remain| Review
+    Settled -->|Decision needed| User
+    Settled -->|Yes| Gate{"🛑 You approve design"}
+    Gate --> Next["▶️ implement: design path"]
 ```
 
 ## How to use it
