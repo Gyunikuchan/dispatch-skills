@@ -1,7 +1,7 @@
 # Complete the development loop and reduce skill overhead
 
 > **TL;DR:** Add scoped post-GREEN refactoring, clarify behavioral slices and verification cadence, compress brainstorming, and document an evidence-based efficiency evaluation.
-> **Parent:** `.scratch/dispatch-skills/20261003T0349Z-add-a-scoped-refactor-check-to-continuou/scoped-refactor.spec.md` · sha256:9a19402012801fda383b09c6cb7647685aeb76a16d20a441bf7722b769f02d27
+> **Parent:** `.scratch/dispatch-skills/20261003T0349Z-add-a-scoped-refactor-check-to-continuou/scoped-refactor.spec.md` · sha256:491fb2b25495b690572a3ea41e446a2c755d14be458bf074c2d583f7d5bfc494
 > **Decide:** none
 > **Risk:** low — instruction-only change with unchanged runtime protocol
 > **Scope:** task writer brief, implement reference, existing contract test, brainstorming contract/reference, maintainer evaluation note, shipped hash manifest
@@ -14,7 +14,7 @@ The task brief currently orders inspect, tests, RED, implementation, verificatio
 
 - (user) Require a local refactor inspection after GREEN; make cleanup conditional and preserve one continuous writer invocation.
 - (user) Single-source development instructions in the task brief. Keep runtime acceptance and checkpoint rules unchanged.
-- Net agent-contract word count across both edited documents must stay neutral or decrease. No mandatory refactor report or new runtime stage is needed.
+- (user) Agent-contract word count may increase when genuinely new content warrants it or after streamlining (de-duplicating, rewording, reordering, referencing) has been considered, per AGENTS.md. No mandatory refactor report or new runtime stage is needed.
 - Existing automated contract checks establish assembly and portability, not actual writer adherence. Bounded scenario review supplies semantic evidence.
 - (user) Include every improvement discussed in the spec and plan. This expands planning scope without requesting implementation now.
 - Behavioral slices follow the existing task-level pre-production RED checkpoint. A single replayed baseline and whole-test-file identity do not independently establish every internal cycle's RED ordering. Preserve current protocol; a per-cycle redesign needs separate architectural work.
@@ -38,11 +38,11 @@ None.
   - Evidence: review
   - Test rationale: Prose-fragment tests cannot establish agent adherence; existing brief assembly coverage and bounded scenario inspection are appropriate.
   - Review: artifact: skills/dispatch/references/templates/write-brief-task.md; scenario: useful cleanup, no useful cleanup, adjacent out-of-scope cleanup, and test changes after RED; pass: inspection is required, edits are conditional and scoped, affected checks follow edits, and existing recheckpoint/justification applies to changed tests. Additional review: artifact: skills/dispatch/references/templates/write-brief-task.md; scenario: production-only cleanup and exhausted useful simplifications; pass: existing checkpoint is retained and inspection ends when no warranted in-scope simplification remains.
-- [SC2] The implement reference points to the task brief instead of repeating development steps, preserves unique operational facts, and combined agent-contract word count does not increase.
+- [SC2] The implement reference points to the task brief instead of repeating development steps, preserves unique operational facts, and any combined word-count increase is justified per AGENTS.md.
   - Changes: skills/dispatch/references/templates/write-brief-task.md, skills/dispatch/references/verbs/implement.md
   - Evidence: review
   - Test rationale: A new retained prose-fragment test is low-signal for instruction ownership; semantic review establishes this criterion, while SC7 owns the existing contract-test update and automated coverage.
-  - Review: artifact: skills/dispatch/references/verbs/implement.md and skills/dispatch/references/templates/write-brief-task.md; scenario: compare before/after sequence ownership, unique operational facts, and whitespace-delimited word counts; pass: development sequence has one owner, continuous invocation and independent admission/integration/dependent release remain explicit, total words are no greater than baseline.
+  - Review: artifact: skills/dispatch/references/verbs/implement.md and skills/dispatch/references/templates/write-brief-task.md; scenario: compare before/after sequence ownership, unique operational facts, and whitespace-delimited word counts; pass: development sequence has one owner, continuous invocation and independent admission/integration/dependent release remain explicit, streamlining was considered and any word increase is justified by new content.
 - [SC3] Generated hashes and repository checks pass for the final instruction revision.
   - Changes: skills/dispatch/skill-hashes.json
   - Verify: `npm test` [FINAL]
@@ -53,11 +53,11 @@ None.
   - Evidence: review
   - Test rationale: Existing assembly and contract tests detect integration breakage; additional string assertions cannot establish tests-first behavior.
   - Review: artifact: skills/dispatch/references/templates/write-brief-task.md; scenario: multi-behavior task, changed checkpoint tests, no-change inspection, and review mutation; pass: instructions require task RED before production, coherent slices use affected checks, test changes retain existing replay/justification, no-change inspection adds no aggregate run, and mutations receive required final evidence. Additional review: artifact: skills/dispatch/references/templates/write-brief-task.md; scenario: later behavioral test after production, changed shared helper with impacted consumers, and uncertain impact; pass: allowed recapture retains baseline replay/concerns without claiming historical or per-slice ordering, local checks include impacted consumers and broaden when uncertain, and all required submission/integration/final commands remain mandatory.
-- [SC5] Brainstorming is shorter and preserves all existing intent, approval, classification, and handoff behavior with explicit disclosure triggers.
+- [SC5] Brainstorming has de-duplicated instructions and preserves all existing intent, approval, classification, and handoff behavior with explicit disclosure triggers.
   - Changes: .agents/skills/brainstorming/SKILL.md, .agents/skills/brainstorming/references/architectural-process.md
   - Evidence: review
   - Test rationale: Scenario review establishes semantic preservation; prose-fragment tests would merely mirror the rewritten instructions.
-  - Review: artifact: .agents/skills/brainstorming/SKILL.md and .agents/skills/brainstorming/references/architectural-process.md; scenario: supplied intent, spike approval, bounded approval, architectural written artifacts, hidden complexity, and optional visual companion; pass: each prerequisite and terminal state survives, architectural reference is reached before its work, visual acceptance remains explicit, main contract shrinks and total operational words do not increase under whitespace-delimited counting. Additional review: artifact: .agents/skills/brainstorming/SKILL.md and .agents/skills/brainstorming/references/architectural-process.md; scenario: retain spike code, new project mistaken for bounded work, large-project decomposition, spec location override/commit, visual question after acceptance, and final reference links; pass: every unique rule has a surviving owner, architectural reading is a prerequisite, spec location/commit and all visual gates survive, and links resolve relative to the owning files without relying on the shipped-only link test.
+  - Review: artifact: .agents/skills/brainstorming/SKILL.md and .agents/skills/brainstorming/references/architectural-process.md; scenario: supplied intent, spike approval, bounded approval, architectural written artifacts, hidden complexity, and optional visual companion; pass: each prerequisite and terminal state survives, architectural reference is reached before its work, visual acceptance remains explicit, main contract shrinks and any total operational word increase under whitespace-delimited counting is justified. Additional review: artifact: .agents/skills/brainstorming/SKILL.md and .agents/skills/brainstorming/references/architectural-process.md; scenario: retain spike code, new project mistaken for bounded work, large-project decomposition, spec location override/commit, visual question after acceptance, and final reference links; pass: every unique rule has a surviving owner, architectural reading is a prerequisite, spec location/commit and all visual gates survive, and links resolve relative to the owning files without relying on the shipped-only link test.
 - [SC6] Maintainer guidance defines reproducible efficiency evaluation using existing optional diagnostics without invented coverage or savings.
   - Changes: docs/dispatch-efficiency-evaluation.md
   - Evidence: review
@@ -83,12 +83,12 @@ Deliver the approved instruction change as one cohesive task using writing-for-a
 - Changes: Extend kind-rules order with verified GREEN, refactor inspection, useful cleanup, and affected verification before outcome. Inspect duplication, naming, unnecessary branches, and task-introduced abstractions. Permit proceeding without edits when no useful cleanup exists. Use existing concerns for adjacent improvements.
 - Changes: Clarify coherent behavioral slices after establishing applicable task RED; use affected checks during iteration and after mutations, preserving existing required completion gates. Avoid claiming per-cycle RED ordering is mechanically verified.
 - Changes: Define local checks from criterion mappings plus impacted consumers, broadening uncertain impact; keep all required submission commands. Retain checkpoint for production-only cleanup; necessary test changes retain recapture/concerns and baseline replay. Stop when no warranted in-scope simplification remains. Historical capture ordering and behavior preservation remain prose obligations rather than guarantees of blob replay.
-- Invariants: Authorized task paths and governing outcome bound every edit; existing RED capture, recheckpoint justification, test selection, and blocker rules remain intact. Reword and prune to offset added instruction words.
+- Invariants: Authorized task paths and governing outcome bound every edit; existing RED capture, recheckpoint justification, test selection, and blocker rules remain intact. Streamline before adding words; justify any net increase.
 - Invariants: Preserve template section/slot protocol markers `## purpose`, `## kind-rules`, `<Checkpoint Command>`, and `admissionDefects`, plus existing isolated-worktree and pre-production wording guarded by tests/unit/domain/templates.test.ts. Retain `only inside the worktree` and `before any production edit` while pruning surrounding prose.
 
 #### [MODIFY] skills/dispatch/references/verbs/implement.md
 - Changes: Replace its repeated writer development sequence with the task-brief pointer. Retain continuous invocation and all unique operational acceptance, integration, dependent release, and recovery facts.
-- Invariants: No protocol, driver behavior, or permission change; combined word count stays net-neutral or lower.
+- Invariants: No protocol, driver behavior, or permission change; any combined word increase is justified per AGENTS.md.
 
 #### [MODIFY] tests/integration/skill-contract.test.ts
 - Changes: In the existing task execution guidance test, move checkpoint-order inspection to the authoritative task brief and check the implement reference's pointer; remove the assertion requiring duplicated checkpoint prose in implement.md.
@@ -102,7 +102,7 @@ Reduce repeated instructions and main-contract load using writing-for-agents whi
 
 #### [MODIFY] .agents/skills/brainstorming/SKILL.md
 - Changes: Make path checklists authoritative. Remove the redundant DOT diagram and repeated red-flag/anti-pattern formulations; retain only unique guardrails. Keep shared-understanding reflection, classification, hard approval boundaries, ratchet behavior, concise questions, and visual offer/acceptance in the main contract. Require reading the architectural reference immediately after selecting that path, before any architecture-specific action including approach exploration.
-- Invariants: Preserve spike/bounded/architectural prerequisites, approval meaning, written-spec review, architectural plan handoff, self-review, decomposition, and scope rules. Main-contract word count decreases; total modified/new operational prose does not increase.
+- Invariants: Preserve spike/bounded/architectural prerequisites, approval meaning, written-spec review, architectural plan handoff, self-review, decomposition, and scope rules. Main-contract load decreases; any total operational word increase is justified per AGENTS.md.
 - Invariants: Relocate unique rules before deleting redundant sections: retained spike code requires a newly classified follow-up, bounded classification requires an existing flow, escalation is one-way, spec location permits user override, spec commit remains required, and the visual offer remains its own message with per-question choices. Architectural-reference reading is an explicit prerequisite. Resolve visual-guide and new reference links relative to their final owners.
 
 #### [NEW] .agents/skills/brainstorming/references/architectural-process.md
@@ -120,7 +120,7 @@ Document how to assess the complete discussion's quality/cost/speed trade-offs u
 - Purpose: Maintainer-only protocol covering instruction word counts, comparable representative tasks/runs, model/effort/provider/concurrency/tooling confounders, phase and verification duration coverage, invocation counts, repair/review/admission outcomes, and provider-scoped token subtotals.
 - Interface: Required observation table, coverage caveats, comparison method, and pass/report rules; measurements unavailable from retained evidence remain unavailable.
 - Interface: Each field records source artifact, instruction revision/hash, collection method and coverage. Use retained verification/admission journals and adjudicated outcomes for metrics absent from diagnostics, or mark unavailable. Separate approval wait from active work and report comparison uncertainty; prose word reduction alone does not establish token savings.
-- Rationale: Evaluate total verified delivery cost rather than counting TDD steps. Reference the original X discussion and distinguish opinion from measurement; claim no speed/token improvement without adequate evidence. Keep opt-in diagnostics default-off and local configs unchanged.
+- Rationale: Evaluate total verified delivery cost rather than counting TDD steps. Distinguish opinion from measurement; claim no speed/token improvement without adequate evidence. Keep opt-in diagnostics default-off and local configs unchanged.
 
 ### T4 — Refresh shipped integrity metadata
 
