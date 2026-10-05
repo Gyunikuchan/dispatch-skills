@@ -83,6 +83,12 @@ export type LevelRecommendationAnswer = { choice: 'adopt' | 'retain'; quote: str
 export type ScopeDeviation =
   | { requestId: string; source: 'task'; task: string; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta }
   | { requestId: string; source: 'hotfix'; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta };
+/** Writer-proposed plan change on BLOCKED/NEEDS_CONTEXT; the orchestrator adjudicates and owns plan edits. */
+export type PlanAmendment = {
+  finding: string;
+  evidence: readonly string[];
+  proposal: readonly { kind: 'modify' | 'remove' | 'add'; target: string; current?: string; proposed?: string; rationale: string }[];
+};
 export type RevisionScopeProposal =
   | { requestId: string; source: 'plan-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedTasks: readonly string[]; rationale: string; delta: ScopeDelta }
   | { requestId: string; source: 'design-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedIncrements: readonly string[]; rationale: string; delta: ScopeDelta };

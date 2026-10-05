@@ -2,7 +2,7 @@
 
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, WriteEnvelope, Ports, ScopeCriterionDefinition, ScopeDeviation } from '../core/types.ts';
+import type { Effect, Handler, WriteEnvelope, PlanAmendment, Ports, ScopeCriterionDefinition, ScopeDeviation } from '../core/types.ts';
 import type { Git } from './git.ts';
 
 type CheckEffect = Extract<Effect, { kind: 'check-envelope' }>;
@@ -63,10 +63,11 @@ type ParsedEnvelope = {
   blockers?: string[];
   files?: { path: string; note: string }[];
   scopeRequest?: ScopeDeviation;
+  amendment?: PlanAmendment;
 };
 
 const STATUSES = ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED', 'SCOPE_REQUEST'] as const;
-const TOP_FIELDS = new Set(['schemaVersion', 'status', 'stage', 'summary', 'evidence', 'concerns', 'missingContext', 'blockers', 'files', 'scopeRequest']);
+const TOP_FIELDS = new Set(['schemaVersion', 'status', 'stage', 'summary', 'evidence', 'concerns', 'missingContext', 'blockers', 'files', 'scopeRequest', 'amendment']);
 const REPO_PATH = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
 const EXCLUDED_SCOPE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
@@ -193,6 +194,24 @@ function parseScopeRequest(value: unknown, defects: string[]): ScopeDeviation | 
     : { requestId: value['requestId'] as string, source: 'hotfix', baseArtifactHash: value['baseArtifactHash'] as string, writerRationale: value['writerRationale'] as string, delta: normalized };
 }
 
+const AMENDMENT_KINDS = ['modify', 'remove', 'add'] as const;
+
+// NOTE: target resolution needs the plan, so the implement machine checks targets; this validates shape only.
+function parseAmendment(value: unknown, defects: string[]): PlanAmendment | undefined {
+  const before = defects.length;
+  if (!isRecord(value) || Object.keys(value).some((key) => !['finding', 'evidence', 'proposal'].includes(key))) { defects.push('amendment must be an object with only finding, evidence and proposal.'); return undefined; }
+  if (!nonEmpty(value['finding'])) defects.push('amendment.finding must be a non-empty string.');
+  if (!Array.isArray(value['evidence']) || !value['evidence'].length || value['evidence'].some((entry) => !nonEmpty(entry))) defects.push('amendment.evidence must be a non-empty array of non-empty strings.');
+  const proposal = value['proposal'];
+  if (!Array.isArray(proposal) || !proposal.length) defects.push('amendment.proposal must be a non-empty array.');
+  else proposal.forEach((item, index) => {
+    if (!isRecord(item) || Object.keys(item).some((key) => !['kind', 'target', 'current', 'proposed', 'rationale'].includes(key))
+      || !AMENDMENT_KINDS.includes(item['kind'] as typeof AMENDMENT_KINDS[number]) || !nonEmpty(item['target']) || !nonEmpty(item['rationale'])
+      || ['current', 'proposed'].some((key) => item[key] !== undefined && !nonEmpty(item[key]))) defects.push(`amendment.proposal[${index}] needs kind modify|remove|add, non-empty target and rationale, and optional non-empty current/proposed.`);
+  });
+  return defects.length === before ? value as PlanAmendment : undefined;
+}
+
 function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defects: string[] } {
   const defects: string[] = [];
   if (!isRecord(value)) return { envelope: null, defects: ['Envelope must be a JSON object.'] };
@@ -217,6 +236,11 @@ function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defec
     if (value['stage'] !== 'RED_READY' && value['stage'] !== 'COMPLETE') defects.push('SCOPE_REQUEST is valid only at RED_READY or COMPLETE.');
     scopeRequest = parseScopeRequest(value['scopeRequest'], defects);
   } else if (value['scopeRequest'] !== undefined) defects.push('scopeRequest is valid only for SCOPE_REQUEST status.');
+  let amendment: PlanAmendment | undefined;
+  if (value['amendment'] !== undefined) {
+    if (value['status'] === 'BLOCKED' || value['status'] === 'NEEDS_CONTEXT') amendment = parseAmendment(value['amendment'], defects);
+    else defects.push('amendment is valid only for BLOCKED or NEEDS_CONTEXT status.');
+  }
   let files: ParsedEnvelope['files'];
   if (value['files'] !== undefined) {
     if (!Array.isArray(value['files'])) defects.push('files must be an array.');
@@ -236,7 +260,7 @@ function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defec
   const envelope: ParsedEnvelope = {
     schemaVersion: 1, status: value['status'] as ParsedEnvelope['status'], stage: value['stage'] as ParsedEnvelope['stage'],
     summary: value['summary'] as string, evidence,
-    ...(concerns ? { concerns } : {}), ...(missingContext ? { missingContext } : {}), ...(blockers ? { blockers } : {}), ...(files ? { files } : {}), ...(scopeRequest ? { scopeRequest } : {}),
+    ...(concerns ? { concerns } : {}), ...(missingContext ? { missingContext } : {}), ...(blockers ? { blockers } : {}), ...(files ? { files } : {}), ...(scopeRequest ? { scopeRequest } : {}), ...(amendment ? { amendment } : {}),
   };
   return { envelope, defects };
 }

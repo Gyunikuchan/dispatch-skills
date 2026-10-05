@@ -224,3 +224,41 @@ test('leaf symlinks cannot bypass ancestor containment in path fingerprints', as
   await assert.rejects(pathHashes({ cwd, git }, ports), /ancestor escape/);
   assert.equal(leafInspected, false);
 });
+
+const amendment = { finding: 'SC2 Verify selects no tests.', evidence: ['npm test -- --test-name-pattern=x selected 0 tests'], proposal: [{ kind: 'modify', target: 'SC2', current: 'pattern x', proposed: 'pattern y', rationale: 'Only y names the behavior.' }] };
+
+test('amendment is accepted on BLOCKED and NEEDS_CONTEXT envelopes', async () => {
+  for (const extra of [{ status: 'BLOCKED', blockers: ['SC2 cannot be verified.'] }, { status: 'NEEDS_CONTEXT', missingContext: ['Which pattern names SC2?'] }]) {
+    const { runDir, handler, ports } = setup([]);
+    const file = path.join(runDir, 'outcome.json');
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, stage: 'COMPLETE', summary: 'Plan conflict.', evidence: [], ...extra, amendment }));
+    const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+    assert.ok(result.type === 'ENVELOPE_CHECKED');
+    if (result.type === 'ENVELOPE_CHECKED') { assert.deepEqual(result.defects, []); assert.deepEqual((result.envelope as Record<string, unknown>)['amendment'], amendment); }
+  }
+});
+
+test('amendment is rejected on statuses other than BLOCKED or NEEDS_CONTEXT', async () => {
+  const { runDir, handler, ports } = setup(['src/a.ts']);
+  const file = path.join(runDir, 'outcome.json');
+  fs.writeFileSync(file, JSON.stringify({ ...complete, amendment }));
+  const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+  assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /amendment is valid only for BLOCKED or NEEDS_CONTEXT/.test(defect)));
+});
+
+test('amendment with missing or invalid fields is rejected', async () => {
+  const bad = [
+    { ...amendment, finding: '' }, { ...amendment, evidence: [] }, { ...amendment, proposal: [] },
+    { ...amendment, proposal: [{ ...amendment.proposal[0], kind: 'rewrite' }] },
+    { ...amendment, proposal: [{ ...amendment.proposal[0], target: '' }] },
+    { ...amendment, proposal: [{ ...amendment.proposal[0], rationale: ' ' }] },
+    { ...amendment, extra: true },
+  ];
+  for (const value of bad) {
+    const { runDir, handler, ports } = setup([]);
+    const file = path.join(runDir, 'outcome.json');
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'Plan conflict.', evidence: [], blockers: ['x'], amendment: value }));
+    const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+    assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /^amendment/.test(defect)), JSON.stringify(value));
+  }
+});

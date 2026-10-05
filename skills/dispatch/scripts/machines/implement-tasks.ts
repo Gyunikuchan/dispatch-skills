@@ -2,7 +2,7 @@
 // what the journal cannot recompute (attempts, worktree, launch handle, brief paths, candidate and integrated revisions).
 
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../domain/types.ts';
-import type { TreeFingerprint } from '../core/types.ts';
+import type { PlanAmendment, TreeFingerprint } from '../core/types.ts';
 import { isTestPath, type RedMatrixRow } from './implement-types.ts';
 
 export type TaskStatus = 'pending' | 'running' | 'submitted' | 'accepted' | 'failed';
@@ -26,6 +26,8 @@ export type TaskRecord = {
   integrated: string | null;
   redRows: readonly RedMatrixRow[];
   reason: string | null;
+  /** Latest writer amendment for this failure; null clears a prior attempt's proposal. */
+  amendment?: TaskAmendment | null;
 };
 export type Tasks = Readonly<Record<string, TaskRecord>>;
 
@@ -95,14 +97,15 @@ export function activeTasks(tasks: Tasks): TaskRecord[] {
 }
 
 /** Failed tasks plus every pending task that can no longer run because an ancestor failed. */
-export type FailureItem = { task: string; status: 'failed' | 'blocked'; reason: string; attempt: number };
+export type TaskAmendment = PlanAmendment & { unresolvedTargets: readonly string[] };
+export type FailureItem = { task: string; status: 'failed' | 'blocked'; reason: string; attempt: number; amendment?: TaskAmendment };
 export function failureItems(plan: ParsedPlan, tasks: Tasks): FailureItem[] {
   const failed = new Set(plan.tasks.filter((task) => tasks[task.id]?.status === 'failed').map((task) => task.id));
   const blocked = descendants(plan, failed);
   return plan.tasks.flatMap((task): FailureItem[] => {
     const record = tasks[task.id];
     if (!record) return [];
-    if (record.status === 'failed') return [{ task: task.id, status: 'failed', reason: record.reason ?? 'failed', attempt: record.attempt }];
+    if (record.status === 'failed') return [{ task: task.id, status: 'failed', reason: record.reason ?? 'failed', attempt: record.attempt, ...(record.amendment ? { amendment: record.amendment } : {}) }];
     if (blocked.has(task.id) && record.status === 'pending') return [{ task: task.id, status: 'blocked', reason: `waits on ${task.prerequisites.filter((id) => blocked.has(id)).join(', ')}`, attempt: record.attempt }];
     return [];
   });

@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, ScopeDeviation, ScopeProposal } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, ScopeDeviation, ScopeProposal, PlanAmendment } from '../core/types.ts';
 import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
@@ -11,7 +11,7 @@ import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type Fa
 import { classifyDrift } from '../policy/drift.ts';
 import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, checkpointPathOf, failureItems, initialTasks, invalidatesIntegration, rependTasks, readyTasks, reconcileTasks, taskCriteria, taskRedCriteria, taskTestPaths, worktreeName, writeConcurrency, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { activeTasks, checkpointPathOf, failureItems, initialTasks, invalidatesIntegration, rependTasks, readyTasks, reconcileTasks, taskCriteria, taskRedCriteria, taskTestPaths, worktreeName, writeConcurrency, type TaskAmendment, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { slugOf } from './plan.ts';
 import type { DesignBinding } from './implement-types.ts';
 
@@ -476,9 +476,16 @@ function schedule(c: Context): S {
   return beginFailure(c, `Task writers stopped: ${items.map((item) => `${item.task} ${item.status} (${item.reason})`).join('; ') || 'no runnable task'}.`);
 }
 
-function taskFailed(c: Context, id: string, reason: string): S {
+/** Flags modify/remove targets absent from the plan so the orchestrator sees them before adjudicating. */
+function resolveAmendment(plan: ParsedPlan, amendment: PlanAmendment): TaskAmendment {
+  const known = new Set([...plan.tasks.map((task) => task.id), ...plan.criteria.flatMap((row) => [row.id, ...row.verify.map((verify) => verify.command)]), ...plan.verification.automated, ...plan.finalCommands, ...plan.changes.map((change) => change.path)]);
+  const unresolvedTargets = [...new Set(amendment.proposal.filter((row) => row.kind !== 'add' && !known.has(row.target)).map((row) => row.target))];
+  return { ...amendment, unresolvedTargets };
+}
+
+function taskFailed(c: Context, id: string, reason: string, amendment: TaskAmendment | null = null): S {
   const record = c.tasks[id] as TaskRecord;
-  return schedule(withTask(c, id, { status: 'failed', failures: record.failures + 1, handle: null, reason }));
+  return schedule(withTask(c, id, { status: 'failed', failures: record.failures + 1, handle: null, reason, amendment }));
 }
 
 function briefDesignBinding(c: Context): Readonly<Record<string, unknown>> | null {
@@ -525,6 +532,7 @@ function taskBriefInput(c: Context, record: TaskRecord): Readonly<Record<string,
       concerns: 'required non-empty string array only for DONE_WITH_CONCERNS',
       missingContext: 'required non-empty string array only for NEEDS_CONTEXT', blockers: 'required non-empty string array only for BLOCKED',
       files: 'optional array of { path, note }; each path must be approved and each note a short clause',
+      amendment: 'optional only for BLOCKED or NEEDS_CONTEXT: { finding, evidence: string[], proposal: { kind: modify|remove|add, target: <task id | criterion id | Verify command | change path | new item>, current?, proposed?, rationale }[] }',
     },
     rules: { keyDecisions: plan.keyDecisions, repository: c.run.repo, approval: c.approval, writerStage: 'task' },
     priorFindings: c.planReview && 'c' in c.planReview ? resolutionRounds(c.planReview.c) : [],
@@ -569,7 +577,7 @@ function accept(c0: Context, id: string, revision: string): S {
   const record = c0.tasks[id] as TaskRecord;
   const paths = planTask(c0, id)?.paths ?? [];
   const redMatrix = [...c0.redMatrix.filter((row) => !record.redRows.some((next) => next.id === row.id)), ...record.redRows];
-  const c = withTask({ ...c0, integration: { ...c0.integration!, head: revision }, redMatrix }, id, { status: 'accepted', handle: null, integrated: revision, reason: null });
+  const c = withTask({ ...c0, integration: { ...c0.integration!, head: revision }, redMatrix }, id, { status: 'accepted', handle: null, integrated: revision, reason: null, amendment: null });
   return schedule(markMutation(c, paths));
 }
 
@@ -591,7 +599,7 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   const outside = diffPaths(event).filter((file) => !task.paths.includes(file));
   if (outside.length) return taskFailed(c, id, `Writer changed paths outside the task scope: ${outside.join(', ')}.`);
   if (envelope.stage !== 'COMPLETE') return taskFailed(c, id, `Envelope stage must be COMPLETE; got ${envelope.stage}.`);
-  if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return taskFailed(c, id, `Writer returned ${envelope.status}: ${envelope.summary}`);
+  if (envelope.status === 'NEEDS_CONTEXT' || envelope.status === 'BLOCKED') return taskFailed(c, id, `Writer returned ${envelope.status}: ${envelope.summary}`, envelope.amendment ? resolveAmendment(plan, envelope.amendment) : null);
   const missing = criterionEvidenceRows(envelope.evidence, taskCriteria(plan, task));
   if (missing.length) return taskFailed(c, id, `Evidence is missing criterion rows for ${missing.join(', ')}.`);
   const redCriteriaOfTask = taskRedCriteria(plan, task);
@@ -848,7 +856,7 @@ function failVerify(state: Extract<ImplementState, { tag: 'task-verify' }>, reas
 function retryAfterFailure(c: Context): S {
   if (c.phase === 'delivered') return startGeneratedOrFinal(c);
   if (c.phase === 'setup') return !c.plan ? parsePlan(c, 'initial') : c.approval ? beginPostApproval(c) : beginBaseline(c);
-  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const } : record]));
+  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const, amendment: null } : record]));
   return beginTasks({ ...c, tasks });
 }
 

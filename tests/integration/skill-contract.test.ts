@@ -186,3 +186,12 @@ test('task execution guidance describes graph ownership, continuous writers and 
   assert.match(read('skills/dispatch/references/readme/design.md'), /increments in order/);
 });
 
+
+test('amendment: writers propose plan changes on BLOCKED and the orchestrator adjudicates them', () => {
+  const brief = read('skills/dispatch/references/templates/write-brief-task.md');
+  assert.match(brief, /is wrong or infeasible, stop and return `BLOCKED` with an `amendment`/);
+  assert.doesNotMatch(read('skills/dispatch/references/templates/write-brief.md') + read('skills/dispatch/references/templates/write-brief-hotfix.md'), /amendment/);
+  assert.match(brief, /Never edit the plan or work around it/);
+  const implement = read('skills/dispatch/references/verbs/implement.md');
+  assert.match(implement, /verify each failed task's `amendment` against plan intent, invariants, and code/);
+});

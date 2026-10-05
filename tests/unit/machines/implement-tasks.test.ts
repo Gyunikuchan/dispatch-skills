@@ -246,6 +246,27 @@ test('tasks: failure of one task blocks only its descendants and asks once', () 
   assert.deepEqual(implementData(result.state)['options'], ['retry', 'revise', 'stop']);
 });
 
+test('amendment from a BLOCKED writer reaches the failure decision with unresolved targets flagged', () => {
+  const amendment = { finding: 'SC1 Verify cannot select the RED test.', evidence: ['pattern selects 0 tests'], proposal: [
+    { kind: 'modify', target: 'SC1', proposed: 'select rejects bad input', rationale: 'Matches the leaf test.' },
+    { kind: 'remove', target: 'SC9', rationale: 'Duplicate criterion.' },
+    { kind: 'modify', target: 'T3', rationale: 'Task depends on the changed SC1.' },
+    { kind: 'remove', target: 'npm run lint', rationale: 'Lint is covered by the final gate.' },
+    { kind: 'add', target: 'new edge case', rationale: 'Uncovered input.' },
+  ] };
+  const sim: Sim = { envelope: (id) => id === 'T1' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'plan conflict', evidence: [], blockers: ['SC1 unverifiable'], amendment } : defaultEnvelope(id) };
+  sim.plan = { ...PLAN, verification: { ...PLAN.verification, automated: ['npm run lint'] } };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.equal(result.state.tag, 'failure');
+  const items = (implementData(result.state)['items'] as { tasks: { task: string; amendment?: unknown }[] }[])[0]!.tasks;
+  assert.deepEqual(items.find((item) => item.task === 'T1')?.amendment, { ...amendment, unresolvedTargets: ['SC9'] });
+  assert.equal(items.find((item) => item.task === 'T3')?.amendment, undefined);
+  result = host(result, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'pattern clarified' } }, sim, trace);
+  assert.equal(record(result, 'T1')?.amendment, null);
+});
+
 test('tasks: failure retry re-pends the failed task with its admission defect and stays bounded', () => {
   const sim: Sim = { envelope: (id) => id === 'T1' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'cannot proceed', evidence: [], blockers: ['missing API'] } : defaultEnvelope(id) };
   let { result, trace } = start(1, sim);

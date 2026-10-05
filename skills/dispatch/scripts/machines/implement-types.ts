@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
+import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, PlanAmendment, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord } from './types.ts';
@@ -46,6 +46,7 @@ export type WriterEnvelope = WriteEnvelope & {
   missingContext?: readonly string[];
   blockers?: readonly string[];
   files?: readonly { path: string; note: string }[];
+  amendment?: PlanAmendment;
 };
 export type SettledPlanInput = { path: string; hash: string; outcome: 'settled' | 'skipped' };
 export type FailureAnswer = { action: 'stop' } | { action: 'retry'; rootCause: string } | { action: 'hotfix'; mode: 'inline' | 'writer'; rootCause: string; external: readonly { path: string; reason: string }[] }
