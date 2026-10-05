@@ -69,6 +69,8 @@ tests/e2e/                 Git/subprocess flows
 - Aliases require `dispatch`, map arguments to one verb, and provide a named missing-dependency diagnostic.
 - `dispatch` names no alias.
 - Shared cross-skill review conventions live in `skills/dispatch/references/review-rules.md`.
+- Never edit skills managed by `npx skills` (listed in `skills-lock.json`); updates overwrite local edits. When one needs different behavior here, adapt it through files this repository owns, such as this guide or a local skill that invokes it.
+- Never edit skills managed by `npx skills` (listed in `skills-lock.json`); local edits are overwritten on update. Change them upstream or report the needed change instead.
 
 ## Documentation Standards
 
