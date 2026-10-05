@@ -7,10 +7,12 @@ import { governedDesignText } from '../domain/design.ts';
 import { governedPlanText } from '../domain/plan.ts';
 import { restoreSessionPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
+import { effectivePlan } from '../machines/implement.ts';
 import { faultFrame, oneLine, projectFrame } from './frame.ts';
 import { appendEvent, EngineFault, JOURNAL_FILE, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
 import { HEARTBEAT_MS, milestone, writeProgress } from './progress.ts';
+import { JOURNAL_PROTOCOL_REVISION } from './types.ts';
 import type {
   Effect, Event, ExitCode, Frame, Handler, Handlers, HostEvent, JournalLine, Machine, Ports, ResultEvent,
   ResultEventType, RunStartedEvent, TerminalResultMap, ExecutionConfigUpdated,
@@ -31,11 +33,20 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
   let effect: Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
   if (child.tag === 'tasks') {
     const record = event.task ? child.c.tasks[event.task] : undefined;
-    const task = child.c.plan?.tasks.find((item) => item.id === event.task);
-    if (!record?.worktree || !task) return 'Receipt names no running task';
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], cwd: record.worktree };
+    const task = effectivePlan(child.c).tasks.find((item) => item.id === event.task);
+    if (!record?.worktree || !task || !record.baseline || !('attempt' in event) || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle) return 'Receipt names no active task attempt';
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
+  } else if (child.tag === 'scope-draining') {
+    const record = event.task ? child.c.tasks[event.task] : undefined;
+    const adjustmentId = child.adjustment?.proposal.requestId;
+    const priorScope = adjustmentId
+      ? { ...child.c, scopeAdjustments: child.c.scopeAdjustments.filter((item) => item.proposal.requestId !== adjustmentId) }
+      : child.c;
+    const task = event.task ? effectivePlan(priorScope).tasks.find((item) => item.id === event.task) : undefined;
+    if (!event.task || !('attempt' in event) || !child.active.includes(event.task) || !record?.worktree || !task || !record.baseline || event.attempt !== record.attempt || event.signature !== record.signature || event.handle !== record.handle || record.brief?.envelopePath !== event.envelopePath) return 'Receipt names no original active task attempt';
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...task.paths], since: record.baseline, cwd: record.worktree };
   } else if (child.tag === 'hotfix-write') {
-    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...(child.c.plan?.changes.map((change) => change.path) ?? []), ...child.c.adoptedPaths])], since: child.before };
+    effect = { kind: 'check-envelope', id: 'preview.check-envelope.1', envelopePath: event.envelopePath, permitted: [...new Set([...effectivePlan(child.c).changes.map((change) => change.path), ...child.c.adoptedPaths])], since: child.before };
   } else return null;
   const checker = handlers['check-envelope']; if (!checker) return 'Receipt checker is unavailable';
   const results = await checker(effect, ports, { runDir, attempt: 1 });
@@ -117,8 +128,8 @@ export function createFolder<S>(machine: Machine<S>): Folder<S> {
   return folder;
 }
 
-export function toEvent(line: JournalLine, protocolRevision = 3): Event {
-  if (protocolRevision !== 3) throw new EngineFault('unsupported-journal-protocol: expected revision 3; start a new run');
+export function toEvent(line: JournalLine, protocolRevision: number = JOURNAL_PROTOCOL_REVISION): Event {
+  if (protocolRevision !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
   const event = { ...line.data, type: line.type } as Event;
   if (event.type === 'EXECUTION_CONFIG_UPDATED') {
     const error = validateExecutionUpdate(event);
@@ -130,8 +141,8 @@ export function toEvent(line: JournalLine, protocolRevision = 3): Event {
 /** Folds journal lines; `inFlight` is the head effect when it started without a terminal result. */
 export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sessionRoot?: string): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
   const run = lines.find((line) => line.type === 'RUN_STARTED');
-  const protocolRevision = 3;
-  if (run && run.data['protocolRevision'] !== 3) throw new EngineFault('unsupported-journal-protocol: expected revision 3; start a new run');
+  const protocolRevision = JOURNAL_PROTOCOL_REVISION;
+  if (run && run.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
   const folder = createFolder(machine);
   let revision = 0;
   let config = run?.data['config'] as Record<string, unknown> | undefined;
@@ -264,7 +275,7 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
         if (identity) identity = { ...identity, host: String(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['orchestrator'] ?? 'unavailable') };
       } catch { warn(); }
       try {
-        const replay = createFolder(machine), revision = Number(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['protocolRevision'] ?? 3);
+        const replay = createFolder(machine), revision = Number(read.lines.find((line) => line.type === 'RUN_STARTED')?.data['protocolRevision'] ?? JOURNAL_PROTOCOL_REVISION);
         for (const line of read.lines) { replay.apply(toEvent(sessionRoot ? restoreJournalPaths(line, sessionRoot) : line, revision)); collectState(replay.state, line); }
       } catch { warn(); }
     }
@@ -509,7 +520,7 @@ export async function start<S>(options: StartOptions<S>): Promise<SendResult> {
     if (!ports.fs.exists(runDir) || ports.fs.listFiles(runDir).length) throw new EngineFault('Reserved run must be an empty directory');
   } else ports.fs.mkdir(runDir, { recursive: false });
   const sessionDir = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
-  const { type, ...data } = { ...requested, protocolRevision: 3, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
+  const { type, ...data } = { ...requested, protocolRevision: JOURNAL_PROTOCOL_REVISION, ...(designApproval ? { designApproval } : {}), overrides: { ...requested.overrides, sessionDir } };
   appendEvent(ports, runDir, type, runSession(runDir) ? storeSessionPaths(data, sessionDir) : data, 1);
   const sendOptions: SendOptions<S> = { runDir, machine: options.machine, handlers: options.handlers, ports };
   if (options.runRel !== undefined) sendOptions.runRel = options.runRel;
@@ -536,7 +547,7 @@ function prepareRefresh<S>(options: SendOptions<S>, folder: Folder<S>, lines: re
     let config = started.data['config'] as Record<string, unknown>;
     let revision = 0;
     for (const line of lines) if (line.type === 'EXECUTION_CONFIG_UPDATED') {
-      const event = toEvent(line, 3) as ExecutionConfigUpdated;
+      const event = toEvent(line, JOURNAL_PROTOCOL_REVISION) as ExecutionConfigUpdated;
       config = applyExecutionConfig(config, event.delta);
       revision = event.revision;
     }

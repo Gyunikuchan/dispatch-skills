@@ -1,17 +1,32 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { LevelGateScope, RunStartedEvent, ScopeProposal } from '../../../skills/dispatch/scripts/core/types.ts';
 import { beginDesign, stepDesign, validateDesign, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
+import type { ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { asParsedDesign, designScopeGrew } from '../../../skills/dispatch/scripts/domain/design.ts';
+import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import { approvalState, FP } from './implement-recovery.test.ts';
 
 export const hash = `sha256:${'a'.repeat(64)}`;
 export const design = { title: 'Delivery', box: { 'TL;DR': 'Deliver feature' }, governedText: '# Delivery', executionStatus: null, increments: [{ id: 'I01', priority: 1, summary: 'First', prerequisites: [], paths: ['src/a.ts'] }, { id: 'I02', priority: 2, summary: 'Second', prerequisites: ['I01'], paths: ['src/b.ts'] }], details: { I01: { Outcome: 'First behavior' }, I02: { Outcome: 'Second behavior' } } };
-export const run = (verb: 'design' | 'implement' = 'design'): RunStartedEvent => ({ type: 'RUN_STARTED', protocolRevision: 3, verb, argument: 'x.design.md', level: 'low', levelSource: 'explicit', pins: null, fix: true, orchestrator: 'claude', orchestratorModel: null, overrides: { sessionDir: '/session' }, repo: {}, config: { 'write-subagents': { claude: { low: { model: 'writer' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'design-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } });
+export const run = (verb: 'design' | 'implement' = 'design'): RunStartedEvent => ({ type: 'RUN_STARTED', protocolRevision: 4, verb, argument: 'x.design.md', level: 'low', levelSource: 'explicit', pins: null, fix: true, orchestrator: 'claude', orchestratorModel: null, overrides: { sessionDir: '/session' }, repo: {}, config: { 'write-subagents': { claude: { low: { model: 'writer' } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'design-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 0 }, targets: { low: 1 } } } } });
 export function approval(verb: 'design' | 'implement' = 'design'): DesignState {
   let result = beginDesign(run(verb));
   if (result.state.tag === 'author') result = stepDesign(result.state, { type: 'AUTHORED', path: 'x.design.md' });
   result = stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [] });
   return stepDesign(result.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: result.effects[0]!.id, hash, parsed: design, defects: [] }).state;
+}
+export function approveDesignScope(result: ReturnType<typeof stepDesign>): ReturnType<typeof stepDesign> {
+  const state = result.state;
+  if (state.tag !== 'revision') return result;
+  let child = state.child;
+  if (child.tag === 'scope-adjudication') {
+    child = stepDesignRevision(child, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: child.request, ruling: 'approve', rationale: 'The revised acceptance expands governed work.' } }).state;
+  }
+  if (child.tag !== 'resume') return result;
+  const resumed = stepDesign({ ...state, child }, { type: 'LOCK_BROKEN', stalePid: 1 });
+  return { ...result, state: resumed.state, effects: [...result.effects, ...resumed.effects] };
 }
 test('design-stops-at-approval: hash-bound authoring completes without production effects', () => {
   const state = approval();
@@ -29,6 +44,70 @@ test('design-governed-hash: stale or unattributed approval and lint failure cann
   }
   const parsing = stepDesign(beginDesign(run()).state, { type: 'AUTHORED', path: 'x.design.md' });
   assert.equal(stepDesign(parsing.state, { type: 'ARTIFACT_PARSED', effectId: parsing.effects[0]!.id, kind: 'design', hash, parsed: design, defects: [{ message: 'lint' }] }).state.tag, 'author');
+});
+test('prewrite-level: author-only runs stop after invocation classification', () => {
+  const state = approval('design');
+  assert.equal(state.tag, 'approval');
+  assert.equal(state.c.levelGatePassed, false);
+  assert.equal(state.c.levelAssessment, null);
+  assert.equal(state.c.scopeAdjustments.length, 0);
+});
+test('level-journal: design parent delegates nested implementation event validation', () => {
+  const nested = {
+    tag: 'tasks',
+    c: {
+      phase: 'tasks',
+      tasks: { T1: { status: 'running', handle: null, attempt: 2, signature: 'current-signature', brief: { envelopePath: 'current.out' } } },
+      writer: { models: ['writer'] },
+    },
+  } as unknown as ImplementState;
+  const state: DesignState = { tag: 'increment', c: approval('implement').c, increment: 'I01', child: nested };
+  const stale = { type: 'WRITE_LAUNCHED' as const, tasks: [{ task: 'T1', attempt: 1, signature: 'old-signature', handle: 'old-handle' }] };
+  assert.match(validateDesign(state, stale) ?? '', /projected attempt and signature/);
+});
+test('REVISE design waits for nested gates and drains writers before a stop', () => {
+  const parent = approval('implement');
+  if (parent.tag !== 'approval') throw new Error('design approval');
+  const c = approvalState().c;
+  const runInfo = { verb: 'design' as const, argument: 'x.design.md', slug: 'x' };
+  const rootFor = (child: ImplementState): RootState => ({
+    tag: 'design', run: runInfo, child: { tag: 'increment', c: parent.c, increment: 'I01', child },
+  });
+  const request: ScopeProposal = {
+    requestId: 'design-scope', source: 'task', task: 'T1', baseArtifactHash: hash,
+    writerRationale: 'The required behavior needs a companion module.',
+    delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] },
+  };
+  const adjudication: ImplementState = { tag: 'scope-adjudication', c, request, task: 'T1', active: ['T2'], hotfixResume: null };
+  const userDecision: ImplementState = { tag: 'scope-user-decision', c, request, task: 'T1', active: ['T2'], orchestratorRationale: 'I disagree with the expansion.', hotfixResume: null };
+  const scopeRevisions = [adjudication, userDecision];
+  const designRevision = { type: 'REVISE' as const, artifact: 'design' as const, reason: 'design-invalidates-increment', evidence: 'The accepted design scope must be reconsidered.' };
+  for (const child of scopeRevisions) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /Drain every active writer/);
+  assert.equal(rootMachine.validate!(rootFor({ ...adjudication, active: [] }), designRevision), null);
+
+  const gateScope: LevelGateScope = {
+    planHash: hash, objective: 'Deliver feature', invariants: [], criteria: [], approvedPaths: [],
+    commandMappings: [], baselineEvidence: [], phaseObligations: { writer: [], review: [] }, remainingIncrements: [], design: null,
+  };
+  const classification: ImplementState = { tag: 'level-classification', c, gateScope, resume: { kind: 'tasks' } };
+  const recommendation: ImplementState = {
+    tag: 'level-recommendation', c, assessment: { evaluatedLevel: 'high', rationale: 'Cross-cutting scope.', gateScope }, resume: { kind: 'tasks' },
+  };
+  for (const child of [classification, recommendation]) assert.match(rootMachine.validate!(rootFor(child), designRevision) ?? '', /pending level gate/);
+
+  const runStop = { type: 'DECISION' as const, kind: 'run-stop' as const, answer: { by: 'user' as const, quote: 'Stop this run.' } };
+  const scopedRoot = rootFor(adjudication);
+  assert.equal(rootMachine.validate!(scopedRoot, runStop), null);
+  const parked = stepRoot(scopedRoot, runStop);
+  assert.equal(parked.state.tag, 'design');
+  if (parked.state.tag !== 'design' || parked.state.child.tag !== 'increment' || parked.state.child.child.tag !== 'checking-host-event') throw new Error('expected the stop to be journaled before draining');
+  const snapshot = parked.effects[0];
+  assert.ok(snapshot?.kind === 'snapshot');
+  if (snapshot?.kind !== 'snapshot') return;
+  const drained = stepRoot(parked.state, { type: 'SNAPSHOT', effectId: snapshot.id, fingerprint: FP, diff: { paths: [] } });
+  assert.equal(drained.state.tag, 'design');
+  if (drained.state.tag !== 'design' || drained.state.child.tag !== 'increment') throw new Error('expected the design increment to remain active while writers drain');
+  assert.equal(drained.state.child.child.tag, 'scope-draining');
 });
 test('post-review hash changes require approval of the reparsed hash', () => {
   const parsing = stepDesign(beginDesign(run()).state, { type: 'AUTHORED', path: 'x.design.md' });
@@ -81,7 +160,7 @@ test('re-requests approval when increment scope expands', () => {
     parsed: expandedDesign,
     defects: [],
   });
-  const resumed = stepDesign(rev.state, {
+  const pending = stepDesign(rev.state, {
     type: 'ARTIFACT_PARSED',
     kind: 'design',
     effectId: rev.effects[0]!.id,
@@ -89,7 +168,9 @@ test('re-requests approval when increment scope expands', () => {
     parsed: expandedDesign,
     defects: [],
   });
+  const resumed = approveDesignScope(pending);
   assert.equal(resumed.state.tag, 'approval');
+  if (resumed.state.tag !== 'approval') throw new Error('approval');
   assert.equal(resumed.state.c.baseline, baseline);
   assert.equal(resumed.state.c.approval, null);
 
@@ -128,14 +209,14 @@ test('invalidates completed increments when shared architecture changes', () => 
     parsed: alteredDesign,
     defects: [],
   });
-  const resumed = stepDesign(rev.state, {
+  const resumed = approveDesignScope(stepDesign(rev.state, {
     type: 'ARTIFACT_PARSED',
     kind: 'design',
     effectId: rev.effects[0]!.id,
     hash: newHash,
     parsed: alteredDesign,
     defects: [],
-  });
+  }));
   assert.deepEqual(resumed.state.c.completed, []);
 });
 
@@ -177,14 +258,14 @@ test('preserves completed increments when only increment details or non-contract
     parsed: detailsOnlyDesign,
     defects: [],
   });
-  const resumed = stepDesign(rev.state, {
+  const resumed = approveDesignScope(stepDesign(rev.state, {
     type: 'ARTIFACT_PARSED',
     kind: 'design',
     effectId: rev.effects[0]!.id,
     hash: newHash,
     parsed: detailsOnlyDesign,
     defects: [],
-  });
+  }));
   assert.deepEqual(resumed.state.c.completed, ['I01']);
   assert.deepEqual(resumed.state.c.ownership, { I01: ['src/a.ts'] });
 });
@@ -242,14 +323,14 @@ test('approval of invalidating expansion restarts delivery rather than resuming 
     parsed: updatedDesign,
     defects: [],
   });
-  const resumed = stepDesign(rev.state, {
+  const resumed = approveDesignScope(stepDesign(rev.state, {
     type: 'ARTIFACT_PARSED',
     kind: 'design',
     effectId: rev.effects[0]!.id,
     hash: newHash,
     parsed: updatedDesign,
     defects: [],
-  });
+  }));
   assert.equal(resumed.state.tag, 'approval');
 
   const approved = stepDesign(resumed.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Re-approved', hash: newHash } });
@@ -278,7 +359,7 @@ test('expansion followed by non-expanding revision before approval preserves sus
   const hash1 = `sha256:${'1'.repeat(64)}`;
   rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
   rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
-  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  const pending1 = approveDesignScope(stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] }));
   assert.equal(pending1.state.tag, 'approval');
   assert.equal(pending1.state.c.approval, null);
 
@@ -292,7 +373,7 @@ test('expansion followed by non-expanding revision before approval preserves sus
   const hash2 = `sha256:${'2'.repeat(64)}`;
   rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
   rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: tweakedDesign, defects: [] });
-  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: tweakedDesign, defects: [] });
+  const pending2 = approveDesignScope(stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: tweakedDesign, defects: [] }));
 
   // Must remain in approval state awaiting consent, not crashing via deliver()
   assert.equal(pending2.state.tag, 'approval');
@@ -327,7 +408,7 @@ test('intervening invalidating expansion followed by non-contract edit restarts 
   const hash1 = `sha256:${'3'.repeat(64)}`;
   rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
   rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
-  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] });
+  const pending1 = approveDesignScope(stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hash1, parsed: expandedDesign, defects: [] }));
   assert.equal(pending1.state.tag, 'approval');
 
   // 2. Revision 2: non-contract background prose edit before approval (no new invalidations in rev 2)
@@ -339,7 +420,7 @@ test('intervening invalidating expansion followed by non-contract edit restarts 
   const hash2 = `sha256:${'4'.repeat(64)}`;
   rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
   rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: proseDesign, defects: [] });
-  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: proseDesign, defects: [] });
+  const pending2 = approveDesignScope(stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hash2, parsed: proseDesign, defects: [] }));
   assert.equal(pending2.state.tag, 'approval');
 
   // 3. User approves revision 2. Delivery must restart with a fresh child bound to hash2, NOT resume obsolete child
@@ -378,14 +459,14 @@ test('revert after invalidating revision resets binding index so later non-inval
   const hashB = `sha256:${'b'.repeat(64)}`;
   rev1 = stepDesign(rev1.state, { type: 'AUTHORED', path: '/session/revision-1.design.md' });
   rev1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hashB, parsed: designB, defects: [] });
-  const pending1 = stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hashB, parsed: designB, defects: [] });
+  const pending1 = approveDesignScope(stepDesign(rev1.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev1.effects[0]!.id, hash: hashB, parsed: designB, defects: [] }));
   assert.equal(pending1.state.tag, 'approval');
 
   // 2. Revision 2 (hashB -> hashBase): revert back to original design
   let rev2 = stepDesign(pending1.state, { type: 'REVISE', artifact: 'design', reason: 'revert', evidence: 'test' });
   rev2 = stepDesign(rev2.state, { type: 'AUTHORED', path: '/session/revision-2.design.md' });
   rev2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hashBase, parsed: baseDesign, defects: [] });
-  const pending2 = stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hashBase, parsed: baseDesign, defects: [] });
+  const pending2 = approveDesignScope(stepDesign(rev2.state, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: rev2.effects[0]!.id, hash: hashBase, parsed: baseDesign, defects: [] }));
 
   // 3. User approves reverted design: fresh child is delivered at revision index 2
   let delivered = stepDesign(pending2.state, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approved revert', hash: hashBase } });

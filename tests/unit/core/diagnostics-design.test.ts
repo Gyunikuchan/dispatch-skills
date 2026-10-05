@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
-import { deliverTasks, phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
+import { assessImplementation, deliverTasks, phaseFixture, hash, parsedPlan } from './fixtures/diagnostics.ts';
 test('SC2: design increments retain their parent and separately identify embedded skipped reviews', async () => {
   const f = phaseFixture('implement', 0);
   const design = { title: 'Delivery', box: { 'TL;DR': 'Fixture behavior' }, governedText: '# Delivery', executionStatus: null, increments: [{ id: 'I01', priority: 1, summary: 'First', prerequisites: [], paths: ['src/a.ts'] }, { id: 'I02', priority: 2, summary: 'Second', prerequisites: ['I01'], paths: ['src/b.ts'] }], details: { I01: { Outcome: 'First behavior' }, I02: { Outcome: 'Second behavior' } } };
@@ -21,6 +21,7 @@ test('SC2: design increments retain their parent and separately identify embedde
   for (let n = 0; n < 2; n++) {
     assert.equal(result.frame?.await, 'author', JSON.stringify(result.frame));
     result = await send({ ...options, rawEvent: { type: 'AUTHORED', path: result.frame?.data['path'] } });
+    result = await assessImplementation(options, result);
     assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame));
     result = await deliverTasks(options, result);
   }

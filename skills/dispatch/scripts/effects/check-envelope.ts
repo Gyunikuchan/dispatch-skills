@@ -2,10 +2,10 @@
 
 import crypto from 'node:crypto';
 import path from 'node:path';
-import type { Effect, Handler, WriteEnvelope, Ports } from '../core/types.ts';
+import type { Effect, Handler, WriteEnvelope, Ports, ScopeCriterionDefinition, ScopeDeviation } from '../core/types.ts';
 import type { Git } from './git.ts';
 
-type CheckEffect = Extract<Effect, { kind: 'check-envelope' }> & { since?: Readonly<Record<string, unknown>> };
+type CheckEffect = Extract<Effect, { kind: 'check-envelope' }>;
 export type CheckEnvelopeDeps = { cwd: string; git: Git };
 
 /** Dirty-path contents and index entries distinguish caller dirt from subsequent writer edits. */
@@ -54,7 +54,7 @@ export function changedPaths(since: unknown, current: Record<string, string>): s
 
 type ParsedEnvelope = {
   schemaVersion: 1;
-  status: 'DONE' | 'DONE_WITH_CONCERNS' | 'NEEDS_CONTEXT' | 'BLOCKED';
+  status: 'DONE' | 'DONE_WITH_CONCERNS' | 'NEEDS_CONTEXT' | 'BLOCKED' | 'SCOPE_REQUEST';
   stage: 'RED_READY' | 'COMPLETE';
   summary: string;
   evidence: string[];
@@ -62,14 +62,17 @@ type ParsedEnvelope = {
   missingContext?: string[];
   blockers?: string[];
   files?: { path: string; note: string }[];
+  scopeRequest?: ScopeDeviation;
 };
 
-const STATUSES = ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'] as const;
-const TOP_FIELDS = new Set(['schemaVersion', 'status', 'stage', 'summary', 'evidence', 'concerns', 'missingContext', 'blockers', 'files']);
+const STATUSES = ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED', 'SCOPE_REQUEST'] as const;
+const TOP_FIELDS = new Set(['schemaVersion', 'status', 'stage', 'summary', 'evidence', 'concerns', 'missingContext', 'blockers', 'files', 'scopeRequest']);
 const REPO_PATH = /^(?!\/)(?![A-Za-z]:)(?!\.\/)(?!.*\/\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*[\x00-\x1f\x7f\\]).+$/;
+const EXCLUDED_SCOPE_PATH = /^(?:\.git|\.scratch)(?:\/|$)/;
 const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?)\/|[._-](?:test|spec)s?\.[^/]+$/i;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
+const validScopePath = (value: unknown): value is string => nonEmpty(value) && REPO_PATH.test(value) && !EXCLUDED_SCOPE_PATH.test(value);
 const QUOTE = String.fromCharCode(34);
 
 /** Called only after JSON.parse succeeds; detects duplicate decoded keys before schema validation. */
@@ -133,6 +136,63 @@ function stringArray(value: unknown, field: string, required: boolean, defects: 
   return value as string[];
 }
 
+function parseScopeRequest(value: unknown, defects: string[]): ScopeDeviation | undefined {
+  if (!isRecord(value)) { defects.push('scopeRequest must be an object.'); return undefined; }
+  const source = value['source'];
+  const expected = source === 'task' ? ['requestId', 'source', 'task', 'baseArtifactHash', 'writerRationale', 'delta'] : source === 'hotfix' ? ['requestId', 'source', 'baseArtifactHash', 'writerRationale', 'delta'] : [];
+  const extra = Object.keys(value).find((key) => !expected.includes(key));
+  const missing = expected.find((key) => !(key in value));
+  if (!expected.length || extra || missing) { defects.push(`scopeRequest has an unknown source or invalid fields${extra ? ` (${extra})` : ''}${missing ? ` (missing ${missing})` : ''}.`); return undefined; }
+  if (!nonEmpty(value['requestId']) || !/^[A-Za-z0-9._-]+$/.test(String(value['requestId']))) defects.push('scopeRequest.requestId must be a non-empty stable identifier.');
+  if (source === 'task' && !nonEmpty(value['task'])) defects.push('scopeRequest.task must be non-empty for task requests.');
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(value['baseArtifactHash'])) || !nonEmpty(value['writerRationale'])) defects.push('scopeRequest requires a governed base hash and writer rationale.');
+  const delta = value['delta'];
+  const fields = ['paths', 'criteria', 'obligations', 'commands', 'phaseDuties'];
+  if (!isRecord(delta) || Object.keys(delta).some((key) => ![...fields, 'increments', 'criterionDefinitions', 'finalCommands'].includes(key)) || fields.some((key) => !Array.isArray(delta[key]) || (delta[key] as unknown[]).some((item) => !nonEmpty(item))) || delta['finalCommands'] !== undefined && (!Array.isArray(delta['finalCommands']) || (delta['finalCommands'] as unknown[]).some((item) => !nonEmpty(item))) || !Array.isArray(delta['increments'])) {
+    defects.push('scopeRequest.delta must contain string arrays for paths, criteria, obligations, commands and phaseDuties, plus increments and optional finalCommands/criterionDefinitions.'); return undefined;
+  }
+  const pathValues = [...delta['paths'] as unknown[], ...(delta['criterionDefinitions'] === undefined ? [] : Array.isArray(delta['criterionDefinitions']) ? (delta['criterionDefinitions'] as unknown[]).flatMap((item) => isRecord(item) && Array.isArray(item['changes']) ? item['changes'] : []) : [])];
+  if (pathValues.some((item) => !validScopePath(item))) defects.push('scopeRequest paths and criterion changes must be repository-relative paths without traversal or excluded .git/.scratch paths.');
+  const criterionDefinitions: ScopeCriterionDefinition[] = [];
+  if (delta['criterionDefinitions'] !== undefined && !Array.isArray(delta['criterionDefinitions'])) defects.push('scopeRequest.delta.criterionDefinitions must be an array.');
+  if (Array.isArray(delta['criterionDefinitions'])) for (const [index, item] of delta['criterionDefinitions'].entries()) {
+    const keys = ['id', 'title', 'changes', 'verify', 'evidence', 'preExisting', 'redException', 'testRationale', 'review', 'enforcementInfeasibility'];
+    if (!isRecord(item) || Object.keys(item).some((key) => !keys.includes(key)) || keys.some((key) => !(key in item))
+      || !nonEmpty(item['id']) || !nonEmpty(item['title']) || !Array.isArray(item['changes']) || (item['changes'] as unknown[]).some((entry) => !validScopePath(entry))
+      || !Array.isArray(item['verify']) || (item['verify'] as unknown[]).some((entry) => !isRecord(entry) || Object.keys(entry).some((key) => !['command', 'final'].includes(key)) || !nonEmpty(entry['command']) || typeof entry['final'] !== 'boolean')
+      || !(item['evidence'] === null || ['red', 'verify', 'review'].includes(String(item['evidence']))) || !(item['preExisting'] === null || typeof item['preExisting'] === 'boolean')
+      || ['redException', 'testRationale', 'review', 'enforcementInfeasibility'].some((key) => item[key] !== null && !nonEmpty(item[key]))) {
+      defects.push(`scopeRequest.delta.criterionDefinitions[${index}] has invalid or incomplete fields.`); continue;
+    }
+    criterionDefinitions.push({
+      id: item['id'] as string, title: item['title'] as string, changes: item['changes'] as string[],
+      verify: (item['verify'] as { command: string; final: boolean }[]).map((entry) => ({ command: entry.command, final: entry.final })),
+      evidence: item['evidence'] as ScopeCriterionDefinition['evidence'], preExisting: item['preExisting'] as boolean | null,
+      redException: item['redException'] as string | null, testRationale: item['testRationale'] as string | null,
+      review: item['review'] as string | null, enforcementInfeasibility: item['enforcementInfeasibility'] as string | null,
+    });
+  }
+  if (new Set(criterionDefinitions.map((row) => row.id)).size !== criterionDefinitions.length) defects.push('scopeRequest.delta.criterionDefinitions must have unique criterion ids.');
+  if (criterionDefinitions.some((row) => !(delta['criteria'] as unknown[]).includes(row.id))) defects.push('scopeRequest.delta.criteria must include every criterion definition id.');
+  const increments: { id: string; prerequisites: string[]; paths: string[]; acceptance: string[] }[] = [];
+  for (const [index, item] of (delta['increments'] as unknown[]).entries()) {
+    if (!isRecord(item) || Object.keys(item).some((key) => !['id', 'prerequisites', 'paths', 'acceptance'].includes(key)) || !nonEmpty(item['id']) || ['prerequisites', 'paths', 'acceptance'].some((key) => !Array.isArray(item[key]) || (item[key] as unknown[]).some((entry) => !nonEmpty(entry)))) {
+      defects.push(`scopeRequest.delta.increments[${index}] has invalid fields.`); continue;
+    }
+    if ((item['paths'] as unknown[]).some((entry) => !validScopePath(entry))) {
+      defects.push(`scopeRequest.delta.increments[${index}].paths must be repository-relative paths without traversal or excluded .git/.scratch paths.`); continue;
+    }
+    increments.push({ id: item['id'], prerequisites: item['prerequisites'] as string[], paths: item['paths'] as string[], acceptance: item['acceptance'] as string[] });
+  }
+  const added = fields.some((key) => (delta[key] as unknown[]).length) || (delta['finalCommands'] as unknown[] | undefined)?.length || criterionDefinitions.length || increments.length;
+  if (!added) defects.push('scopeRequest.delta must propose at least one concrete addition.');
+  if (defects.length) return undefined;
+  const normalized = { paths: delta['paths'] as string[], criteria: delta['criteria'] as string[], ...(criterionDefinitions.length ? { criterionDefinitions } : {}), obligations: delta['obligations'] as string[], commands: delta['commands'] as string[], ...(Array.isArray(delta['finalCommands']) ? { finalCommands: delta['finalCommands'] as string[] } : {}), phaseDuties: delta['phaseDuties'] as string[], increments };
+  return source === 'task'
+    ? { requestId: value['requestId'] as string, source: 'task', task: value['task'] as string, baseArtifactHash: value['baseArtifactHash'] as string, writerRationale: value['writerRationale'] as string, delta: normalized }
+    : { requestId: value['requestId'] as string, source: 'hotfix', baseArtifactHash: value['baseArtifactHash'] as string, writerRationale: value['writerRationale'] as string, delta: normalized };
+}
+
 function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defects: string[] } {
   const defects: string[] = [];
   if (!isRecord(value)) return { envelope: null, defects: ['Envelope must be a JSON object.'] };
@@ -141,7 +201,7 @@ function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defec
   if (value['schemaVersion'] !== 1) defects.push('schemaVersion must be 1.');
   if (!STATUSES.includes(value['status'] as typeof STATUSES[number])) defects.push(`Unknown status ${String(value['status'])}.`);
   if (value['stage'] !== 'RED_READY' && value['stage'] !== 'COMPLETE') defects.push(`Unknown stage ${String(value['stage'])}.`);
-  if (value['stage'] === 'RED_READY' && value['status'] !== 'DONE' && value['status'] !== 'DONE_WITH_CONCERNS') defects.push(`RED_READY is not valid with status ${String(value['status'])}.`);
+  if (value['stage'] === 'RED_READY' && value['status'] !== 'DONE' && value['status'] !== 'DONE_WITH_CONCERNS' && value['status'] !== 'SCOPE_REQUEST') defects.push(`RED_READY is not valid with status ${String(value['status'])}.`);
   if (!nonEmpty(value['summary'])) defects.push('summary must be a non-empty string.');
   const terminal = value['status'] === 'DONE' || value['status'] === 'DONE_WITH_CONCERNS';
   const evidence = stringArray(value['evidence'], 'evidence', terminal, defects) ?? [];
@@ -152,6 +212,11 @@ function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defec
     const applicable = (value['status'] === 'DONE_WITH_CONCERNS' && field === 'concerns') || (value['status'] === 'NEEDS_CONTEXT' && field === 'missingContext') || (value['status'] === 'BLOCKED' && field === 'blockers');
     if (!applicable && fieldValue?.length) defects.push(`${field} must be omitted or empty for status ${String(value['status'])}.`);
   }
+  let scopeRequest: ScopeDeviation | undefined;
+  if (value['status'] === 'SCOPE_REQUEST') {
+    if (value['stage'] !== 'RED_READY' && value['stage'] !== 'COMPLETE') defects.push('SCOPE_REQUEST is valid only at RED_READY or COMPLETE.');
+    scopeRequest = parseScopeRequest(value['scopeRequest'], defects);
+  } else if (value['scopeRequest'] !== undefined) defects.push('scopeRequest is valid only for SCOPE_REQUEST status.');
   let files: ParsedEnvelope['files'];
   if (value['files'] !== undefined) {
     if (!Array.isArray(value['files'])) defects.push('files must be an array.');
@@ -171,7 +236,7 @@ function parseEnvelope(value: unknown): { envelope: ParsedEnvelope | null; defec
   const envelope: ParsedEnvelope = {
     schemaVersion: 1, status: value['status'] as ParsedEnvelope['status'], stage: value['stage'] as ParsedEnvelope['stage'],
     summary: value['summary'] as string, evidence,
-    ...(concerns ? { concerns } : {}), ...(missingContext ? { missingContext } : {}), ...(blockers ? { blockers } : {}), ...(files ? { files } : {}),
+    ...(concerns ? { concerns } : {}), ...(missingContext ? { missingContext } : {}), ...(blockers ? { blockers } : {}), ...(files ? { files } : {}), ...(scopeRequest ? { scopeRequest } : {}),
   };
   return { envelope, defects };
 }
@@ -211,11 +276,14 @@ export function createCheckEnvelope(base: CheckEnvelopeDeps): Handler<CheckEffec
     if (allowed.size !== effect.permitted.length) defects.push('Permitted paths must be unique repository-relative slash paths.');
     const changed = [...new Set(paths.map((file) => cleanRepoPath(file) ?? file))].sort();
     const outside = changed.filter((file) => !allowed.has(file));
+    if (outside.length && envelope?.stage === 'COMPLETE' && envelope.status !== 'SCOPE_REQUEST') defects.push('Writer changed paths outside the approved scope: ' + outside.join(', ') + '.');
     if (outside.length && testsOnly) defects.push(`Tests-only writer changed paths outside the approved scope: ${outside.join(', ')}.`);
-    if (testsOnly && effect.permitted.some((file) => !TEST_PATH.test(file))) defects.push('RED_READY envelopes require a tests-only permitted path set.');
+    if (outside.length && envelope?.status === 'SCOPE_REQUEST') defects.push(`SCOPE_REQUEST must be submitted before out-of-envelope edits; changed paths: ${outside.join(', ')}.`);
+    if (testsOnly && changed.some((file) => !TEST_PATH.test(file))) defects.push(`RED_READY envelopes may change tests only: ${changed.filter((file) => !TEST_PATH.test(file)).join(', ')}.`);
     if (envelope?.files) for (const file of envelope.files) {
       const normalized = cleanRepoPath(file.path);
       if (normalized === null || envelope.stage === 'RED_READY' && !allowed.has(normalized)) defects.push(`Envelope files path is outside the approved scope: ${file.path}.`);
+      if (normalized !== null && envelope.stage === 'RED_READY' && !TEST_PATH.test(normalized)) defects.push(`RED_READY envelopes may name tests only: ${file.path}.`);
     }
     return [{ type: 'ENVELOPE_CHECKED', effectId: effect.id, envelope: envelope as WriteEnvelope | null, defects: [...new Set(defects)], diff: { paths: changed, ...(outside.length ? { outside } : {}) } }];
   };

@@ -58,7 +58,7 @@ test('SC5: no-op refresh records no update', async () => {
 test('SC5: no-op refresh resumes queued work and records a broken stale lock', async () => {
   const ports = fakePorts(), runDir = path.join(tempDir(), '.state/runs/001-review');
   ports.fs.mkdir(runDir, { recursive: true });
-  const { type, ...data } = { ...RUN_STARTED, verb: 'review', config: config(), protocolRevision: 3 };
+  const { type, ...data } = { ...RUN_STARTED, verb: 'review', config: config(), protocolRevision: 4 };
   appendEvent(ports, runDir, type, data, 1);
   ports.fs.writeAtomic(path.join(runDir, 'lock'), JSON.stringify({ pid: 999999, host: ports.proc.host, startedAt: new Date().toISOString() }));
   const handlers = { 'prepare-review': async (effect: { id: string }) => [{ type: 'REVIEW_PREPARED' as const, effectId: effect.id, scope: { empty: true }, promptPaths: {} }], handoff: async (effect: { id: string }) => [{ type: 'HANDOFF_DONE' as const, effectId: effect.id, destination: 'session', warning: null }] };
@@ -78,7 +78,7 @@ test('SC5: policy refresh rejection preserves journal', async () => {
 
 test('SC5: refresh preserves materialized queue and its wave model', () => {
   const folder = createFolder(dispatchMachine);
-  folder.apply({ ...RUN_STARTED, verb: 'review', protocolRevision: 3, config: config(), orchestrator: 'codex' });
+  folder.apply({ ...RUN_STARTED, verb: 'review', protocolRevision: 4, config: config(), orchestrator: 'codex' });
   const queued = JSON.stringify(folder.queue), effect = folder.queue[0]!;
   folder.apply({ type: 'EXECUTION_CONFIG_UPDATED', revision: 1, boundarySeq: 2, delta: { read: [{ slot: 'codex[0]', provider: 'codex', levels: { low: { model: 'second' } } }], write: [] } });
   assert.equal(JSON.stringify(folder.queue), queued);
@@ -99,9 +99,9 @@ test('SC5: toggle intervals persist gaps and omit future instructions when disab
   assert.deepEqual(record.intervals.map((v: { enabled: boolean }) => v.enabled), [true, false, true]);
   assert.match(fs.readFileSync(path.join(session, 'diagnostics.md'), 'utf8'), /on.*off.*on/);
 });
-test('SC5: revision-2 refresh is rejected without changing history', async () => {
+test('SC5: revision-3 refresh is rejected without changing history', async () => {
   const f = await fixture(), journal = path.join(f.runDir, 'events.jsonl');
-  fs.writeFileSync(journal, fs.readFileSync(journal, 'utf8').replace('"protocolRevision":3', '"protocolRevision":2'));
+  fs.writeFileSync(journal, fs.readFileSync(journal, 'utf8').replace('"protocolRevision":4', '"protocolRevision":3'));
   const before = fs.readFileSync(journal);
   const result = await send({ ...f, refreshConfig: true, configSource: () => config('second') });
   assert.match(result.frame?.error ?? '', /unsupported-journal-protocol/);

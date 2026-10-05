@@ -29,6 +29,124 @@ test('implement-envelope-self-check parses a strict receipt and accepts only app
   if (result.type === 'ENVELOPE_CHECKED') assert.deepEqual([result.defects, result.diff], [[], { paths: ['src/a.ts'] }]);
 });
 
+test('implement-envelope-self-check rejects out-of-scope COMPLETE changes during preview', async () => {
+  const { runDir, handler, ports } = setup(['src/a.ts', 'src/outside.ts']);
+  const file = path.join(runDir, 'outcome.json');
+  fs.writeFileSync(file, JSON.stringify(complete));
+  const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+  assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /outside the approved scope/.test(defect)));
+});
+
+test('level-journal: scope request parsing preserves complete criteria and final commands', async () => {
+  const { runDir, handler, ports } = setup([]);
+  const file = path.join(runDir, 'scope-request.json');
+  const criterion = {
+    id: 'SC2', title: 'Companion behavior works', changes: ['src/extra.ts'],
+    verify: [{ command: 'check-companion', final: true }], evidence: 'verify', preExisting: false,
+    redException: null, testRationale: null, review: null, enforcementInfeasibility: null,
+  };
+  const envelope = {
+    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'A required companion module is outside this task.', evidence: [],
+    scopeRequest: {
+      requestId: 'request-companion', source: 'task', task: 'T1', baseArtifactHash: `sha256:${'a'.repeat(64)}`,
+      writerRationale: 'The accepted behavior requires this module.',
+      delta: { paths: ['src/extra.ts'], criteria: ['SC2'], criterionDefinitions: [criterion], obligations: ['Preserve companion behavior'], commands: ['check-scope'], finalCommands: ['check-release'], phaseDuties: ['Inspect the integration manually'], increments: [] },
+    },
+  };
+  fs.writeFileSync(file, JSON.stringify(envelope));
+  const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+  assert.equal(result.type, 'ENVELOPE_CHECKED');
+  if (result.type === 'ENVELOPE_CHECKED' && result.envelope) {
+    assert.deepEqual(result.defects, []);
+    const request = result.envelope['scopeRequest'] as { delta: { criterionDefinitions: unknown[]; finalCommands: string[] } };
+    assert.deepEqual(request.delta.criterionDefinitions, [criterion]);
+    assert.deepEqual(request.delta.finalCommands, ['check-release']);
+  }
+});
+
+test('level-journal: RED_READY accepts a scope request before any expanded path is changed', async () => {
+  const { runDir, handler, ports } = setup([]);
+  const file = path.join(runDir, 'red-scope-request.json');
+  fs.writeFileSync(file, JSON.stringify({
+    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'RED_READY', summary: 'The required test needs a companion fixture.', evidence: [],
+    scopeRequest: {
+      requestId: 'red-scope-request', source: 'task', task: 'T1', baseArtifactHash: `sha256:${'a'.repeat(64)}`,
+      writerRationale: 'The required regression test needs a fixture outside this task.',
+      delta: { paths: ['tests/extra.fixture.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] },
+    },
+  }));
+  const result = resultOf(await handler(check(file, ['tests/sc1.test.ts']), ports, { runDir, attempt: 1 }));
+  assert.equal(result.type, 'ENVELOPE_CHECKED');
+  if (result.type === 'ENVELOPE_CHECKED') {
+    assert.deepEqual(result.defects, []);
+    assert.equal((result.envelope?.['scopeRequest'] as { requestId: string }).requestId, 'red-scope-request');
+  }
+});
+
+test('level-journal: RED_READY scope requests accept the mixed task envelope when only tests are in scope', async () => {
+  const { runDir, handler, ports } = setup([]);
+  const file = path.join(runDir, 'red-mixed-scope-request.json');
+  fs.writeFileSync(file, JSON.stringify({
+    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'RED_READY', summary: 'The required test needs a fixture.', evidence: [],
+    scopeRequest: { requestId: 'red-mixed-scope', source: 'task', task: 'T1', baseArtifactHash: `sha256:${'a'.repeat(64)}`, writerRationale: 'The required regression test needs an extra fixture.', delta: { paths: ['tests/extra.fixture.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
+  }));
+  const result = resultOf(await handler(check(file, ['src/a.ts', 'tests/sc1.test.ts']), ports, { runDir, attempt: 1 }));
+  assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.length === 0);
+});
+
+test('level-journal: scope request parsing rejects incomplete criterion definitions and traversal paths', async () => {
+  const { runDir, handler, ports } = setup([]);
+  const file = path.join(runDir, 'invalid-scope-request.json');
+  const envelope = {
+    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Require an ungoverned criterion.', evidence: [],
+    scopeRequest: {
+      requestId: 'request-invalid', source: 'task', task: 'T1', baseArtifactHash: `sha256:${'a'.repeat(64)}`, writerRationale: 'Required.',
+      delta: { paths: ['../outside.ts'], criteria: ['SC2'], criterionDefinitions: [{ id: 'SC2', title: 'Missing the complete definition.' }], obligations: [], commands: [], phaseDuties: [], increments: [] },
+    },
+  };
+  fs.writeFileSync(file, JSON.stringify(envelope));
+  const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+  assert.equal(result.type, 'ENVELOPE_CHECKED');
+  if (result.type === 'ENVELOPE_CHECKED') {
+    assert.ok(result.defects.some((defect) => /repository-relative paths/.test(defect)));
+    assert.ok(result.defects.some((defect) => /incomplete fields/.test(defect)));
+  }
+});
+
+test('level-journal: scope requests reject plan-excluded .git and .scratch paths', async () => {
+  for (const forbidden of ['.git/config', '.scratch/review.out']) {
+    const { runDir, handler, ports } = setup([]);
+    const file = path.join(runDir, 'excluded-scope-request.json');
+    fs.writeFileSync(file, JSON.stringify({
+      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'The request includes an excluded path.', evidence: [],
+      scopeRequest: {
+        requestId: 'excluded-path', source: 'task', task: 'T1', baseArtifactHash: 'sha256:' + 'a'.repeat(64),
+        writerRationale: 'This path must not enter governed scope.',
+        delta: { paths: [forbidden], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] },
+      },
+    }));
+    const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+    assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => defect.includes('excluded .git/.scratch paths')), forbidden);
+  }
+});
+
+test('level-journal: scope requests reject unsafe paths inside increment definitions', async () => {
+  for (const forbidden of ['../outside.ts', '.git/config', '.scratch/review.out', 'C:/outside.ts', 'src\\outside.ts']) {
+    const { runDir, handler, ports } = setup([]);
+    const file = path.join(runDir, 'invalid-increment-scope-request.json');
+    fs.writeFileSync(file, JSON.stringify({
+      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'An increment adds a companion path.', evidence: [],
+      scopeRequest: {
+        requestId: 'increment-path', source: 'task', task: 'T1', baseArtifactHash: 'sha256:' + 'a'.repeat(64),
+        writerRationale: 'The added increment requires a repository path.',
+        delta: { paths: [], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [{ id: 'I1', prerequisites: [], paths: [forbidden], acceptance: ['The increment is complete.'] }] },
+      },
+    }));
+    const result = resultOf(await handler(check(file, ['src/a.ts']), ports, { runDir, attempt: 1 }));
+    assert.ok(result.type === 'ENVELOPE_CHECKED' && result.defects.some((defect) => /increments\[0\]\.paths must be repository-relative/.test(defect)), forbidden);
+  }
+});
+
 test('check-envelope rejects duplicate/unknown fields and out-of-scope or production paths in RED_READY', async () => {
   const { runDir, handler, ports } = setup(['tests/new.test.ts', 'src/production.ts']);
   const file = path.join(runDir, 'outcome.json');
@@ -42,7 +160,7 @@ test('check-envelope rejects duplicate/unknown fields and out-of-scope or produc
   }
   fs.writeFileSync(file, JSON.stringify({ ...complete, stage: 'RED_READY', status: 'DONE' }));
   const nonTest = resultOf(await handler(check(file, ['src/production.ts']), ports, { runDir, attempt: 1 }));
-  assert.ok(nonTest.type === 'ENVELOPE_CHECKED' && nonTest.defects.some((defect) => /tests-only permitted path set/.test(defect)));
+  assert.ok(nonTest.type === 'ENVELOPE_CHECKED' && nonTest.defects.some((defect) => /RED_READY envelopes may change tests only/.test(defect)));
 });
 
 test('writer scope ignores caller dirt and still detects changes to that same dirty file', async () => {
@@ -64,7 +182,10 @@ test('writer scope ignores caller dirt and still detects changes to that same di
   fs.writeFileSync(path.join(cwd, 'caller.txt'), 'writer touched caller edit');
   const bad = resultOf(await handler(effect, ports, { runDir, attempt: 1 }));
   assert.ok(bad.type === 'ENVELOPE_CHECKED');
-  if (bad.type === 'ENVELOPE_CHECKED') { assert.deepEqual(bad.defects, []); assert.deepEqual(bad.diff['outside'], ['caller.txt']); }
+  if (bad.type === 'ENVELOPE_CHECKED') {
+    assert.ok(bad.defects.some((defect) => /outside the approved scope/.test(defect)));
+    assert.deepEqual(bad.diff['outside'], ['caller.txt']);
+  }
 });
 
 

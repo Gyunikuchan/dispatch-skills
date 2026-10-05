@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { classifyDrift, permittedPaths } from '../../../skills/dispatch/scripts/policy/drift.ts';
 import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
 import { approvalState, FP, metadata, host } from './implement-recovery.test.ts';
+
+function classify(result: ReturnType<typeof stepImplement>) {
+  if (result.state.tag !== 'level-classification') return result;
+  return host(result.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded local implementation.', gateScope: implementData(result.state)['gateScope'] } });
+}
 
 test('implement-out-of-scope: park snapshot settle apply exactly once', () => {
   const initial = approvalState();
@@ -12,7 +17,7 @@ test('implement-out-of-scope: park snapshot settle apply exactly once', () => {
   const event = { type: 'SNAPSHOT' as const, effectId: parked.effects[0]!.id, fingerprint: FP, diff: { paths: ['external.ts'] } };
   const drift = stepImplement(parked.state, event); assert.equal(drift.state.tag, 'drift');
   assert.equal('c' in drift.state && drift.state.c?.phase, 'setup');
-  const adopted = stepImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { 'external.ts': 'adopt' } });
+  const adopted = classify(stepImplement(drift.state, { type: 'DECISION', kind: 'drift', answer: { 'external.ts': 'adopt' } }));
   assert.equal(adopted.state.tag, 'task-checkout');
   assert.ok('c' in adopted.state && adopted.state.c?.finalFocus.includes('external.ts'));
   assert.deepEqual('c' in adopted.state && Object.values(adopted.state.c?.tasks ?? {}).map((task) => task.attempt), [0]);
@@ -25,7 +30,7 @@ test('permitted author/write/fix paths and caller-dirty exemption', () => {
   assert.deepEqual(permittedPaths('fix', ctx), ['src/a.ts']);
   const initial = approvalState();
   const c = { ...initial.c, startFingerprint: { ...FP, recovery: { ...metadata, callerDirty: ['caller.txt'] } } };
-  const result = host({ ...initial, c }, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, FP, ['caller.txt']);
+  const result = classify(host({ ...initial, c }, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, FP, ['caller.txt']));
   assert.equal(result.state.tag, 'task-checkout');
 });
 test('per-path adopt and stop require exhaustive ruling and stop preserves context', () => {

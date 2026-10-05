@@ -37,6 +37,7 @@ function context(c: Context, event: ExecutionConfigUpdated): Context {
 function implement(state: ImplementState, event: ExecutionConfigUpdated): ImplementState {
   if (!('c' in state) || state.c === null || ['complete', 'stopped', 'failed'].includes(state.tag)) return state;
   const c = context(state.c, event);
+  if (state.tag === 'scope-drain-envelope') return { ...state, c, parent: { ...state.parent, c: context(state.parent.c, event) } };
   if ('parent' in state) return { ...state, c, parent: implement(state.parent, event) };
   if (state.tag === 'plan-review' || state.tag === 'code-review') return { ...state, c, review: review(state.review, c.run, event) };
   return { ...state, c };
@@ -57,7 +58,7 @@ function designRevision(state: DesignRevisionState, event: ExecutionConfigUpdate
   return state.tag === 'review' ? { ...state, c, review: review(state.review, c.run, event) } : { ...state, c };
 }
 function design(state: DesignState, event: ExecutionConfigUpdated): DesignState {
-  if (state.tag === 'complete' || state.tag === 'failed') return state;
+  if (state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed') return state;
   const c = designContext(state.c, event);
   if (state.tag === 'increment') return { ...state, c, child: implement(state.child, event) };
   if (state.tag === 'plan-revision') return { ...state, c, child: revision(state.child, event) };

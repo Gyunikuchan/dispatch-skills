@@ -11,15 +11,87 @@ const WORD_BUDGET = 657;
 test('five contracts carry exact alias mappings and named dependency guards', () => {
   const contract = read(`skills/dispatch/${contractName}`);
   for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
-  assert.ok(contract.trim().split(/\s+/).length < WORD_BUDGET);
-  assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /Preserve unrelated dirty and ignored files/);
+  assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /unrelated dirty or ignored files stay intact/i);
   for (const [name, mapping] of Object.entries(ALIASES)) {
     const text = read(`skills/${name}/${contractName}`); assert.match(text, /disable-model-invocation: true/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));
     assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, `skills/${name}/README.md`)));
   }
   assert.ok(!Object.keys(ALIASES).some((name) => contract.includes(name)));
 });
-test('await documents exactly its accepted events', () => {
+
+test('level-rubric: SKILL.md remains below its unchanged 657-word budget', () => {
+  const contract = read(`skills/dispatch/${contractName}`);
+  assert.equal(WORD_BUDGET, 657);
+  assert.ok(contract.trim().split(/\s+/).length < WORD_BUDGET);
+});
+
+test('level-rubric: documents invocation and pre-write assessment timing', () => {
+  const contract = read(`skills/dispatch/${contractName}`);
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  const implement = read('skills/dispatch/references/verbs/implement.md');
+  assert.match(contract, /Classify omitted levels at invocation; implementation receives one more assessment before its first write/);
+  assert.match(config, /after its plan, baseline, and applicable write authorization are concrete, immediately before the first production write/);
+  assert.match(implement, /ordinary tasks, inline baseline hotfixes, and the first child of a design/);
+});
+
+test('level-rubric: preserves explicit levels and asks before adopting a higher assessment', () => {
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /An explicit level stays in force unless the assessment recommends a higher level; Dispatch then asks whether to adopt or retain it/);
+  assert.match(config, /`xhigh` and `max` remain user-selected/);
+});
+
+test('level-rubric: medium remains the default for bounded recoverable work', () => {
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /`medium` is the normal level for bounded behavior/);
+  assert.match(config, /failures remain observable and recoverable/);
+});
+
+test('level-rubric: high requires concrete consequential risk', () => {
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /`high` requires a credible consequential risk/);
+  assert.match(config, /financial or data-integrity errors/);
+  assert.match(config, /a small rate-precision change can/);
+});
+
+test('level-rubric: file count and finance-domain labels alone do not force high', () => {
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /A large diff, changed external contract, finance repository, or state-machine file alone does not require high/);
+  assert.match(config, /a broad reversible accessibility change may not/);
+});
+
+test('level-rubric: carries phase skips and post-gate scope decisions forward', () => {
+  const config = read('skills/dispatch/references/readme/configuration.md');
+  assert.match(config, /Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment/);
+  assert.match(config, /Retries, later phases, accepted scope changes, and later design increments keep the settled level/);
+});
+
+test('level-rubric: tells writers to request orchestrator adjudication before deviating', () => {
+  const implement = read('skills/dispatch/references/verbs/implement.md');
+  assert.match(implement, /pauses before editing outside it and submits the typed `SCOPE_REQUEST`/);
+  assert.match(implement, /If it agrees, Dispatch records the approved delta, informs the user before writer resumption/);
+  assert.match(implement, /only a disagreement requires user adjudication/);
+});
+
+test('level-rubric: documents scope requests outside Await write and task receipt identity', () => {
+  const contract = read(`skills/dispatch/${contractName}`);
+  const awaitWrite = contract.split('## Await write\n')[1]?.split('\n## ')[0] ?? '';
+  assert.match(contract, /Before out-of-brief edits, writers request orchestrator adjudication/);
+  assert.doesNotMatch(awaitWrite, /SCOPE_REQUEST/);
+  assert.match(contract, /task-scoped slots.*task-scoped terminal receipts echo all three/);
+  assert.match(contract, /Taskless hotfix receipts omit these identity fields/);
+});
+test('level-rubric: implement guide documents decision payloads, scope receipt placement, and writer draining', () => {
+  const guide = read('skills/dispatch/references/verbs/implement.md');
+  for (const kind of ['run-stop', 'level-classification', 'level-recommendation', 'scope-deviation', 'scope-deviation-user']) {
+    assert.ok(guide.includes('DECISION kind=' + kind));
+  }
+  assert.match(guide, /submits `SCOPE_REQUEST` as the `status` in its `WRITE_ENVELOPE`/);
+  assert.match(guide, /Taskless hotfix `WRITE_ENVELOPE` and `WRITE_FAILED` receipts omit those four fields/);
+  assert.match(guide, /sibling `SCOPE_REQUEST` during this drain is nonterminal: keep that attempt active/);
+  assert.match(guide, /Do not charge its retry budget or launch replacements while any live sibling remains/);
+  assert.match(guide, /Show the writer's rationale and the orchestrator's rationale to the user only when they disagree/);
+});
+test('level-rubric: Await sections contain only their configured accepted events', () => {
   const contract = read(`skills/dispatch/${contractName}`);
   for (const [awaitKind, accepts] of Object.entries(AWAIT_ACCEPTS)) {
     const section = contract.split(`## Await ${awaitKind}\n`)[1]?.split('\n## ')[0] ?? '';

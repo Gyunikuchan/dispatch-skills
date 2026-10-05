@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
-import { initialImplement, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { implementData, initialImplement, stepImplement, validateImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { settledPlanInput, writerConfig } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
+import { reviewSpecFromRun } from '../../../skills/dispatch/scripts/machines/review.ts';
 
 const HASH = `sha256:${'a'.repeat(64)}`;
 const FP = { head: 'head', index: 'index', worktree: 'tree' };
@@ -29,21 +30,31 @@ const effectOf = (effects: readonly Effect[], kind: Effect['kind']): Effect => {
   return effect;
 };
 
-function atBaseline(overrides: Record<string, unknown> = {}) {
+function atBaseline(overrides: Record<string, unknown> = {}, parsedPlan = PLAN, invocation = run(overrides)) {
   let state = initialImplement();
-  let result = step(state, run({ path: 'plans/example.plan.md', settledPlan: { path: 'plans/example.plan.md', hash: HASH, outcome: 'settled' }, ...overrides }));
+  let result = step(state, { ...invocation, overrides: { path: 'plans/example.plan.md', settledPlan: { path: 'plans/example.plan.md', hash: HASH, outcome: 'settled' }, ...overrides } });
   state = result.state;
   let effect = effectOf(result.effects, 'snapshot');
   result = step(state, { type: 'SNAPSHOT', effectId: effect.id, fingerprint: FP, diff: { paths: [] } });
   state = result.state;
   effect = effectOf(result.effects, 'parse-artifact');
-  result = step(state, { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
+  result = step(state, { type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'plan', hash: HASH, parsed: parsedPlan, defects: [] });
   state = result.state;
   assert.equal(state.tag, 'baseline-preflight');
   effect = effectOf(result.effects, 'snapshot');
   result = step(state, { type: 'SNAPSHOT', effectId: effect.id, fingerprint: FP, diff: { paths: [] } });
   state = result.state;
   return { state, effect: effectOf(result.effects, 'verify') };
+}
+
+function classificationGate(parsedPlan = PLAN, invocation = run()) {
+  const { state, effect } = atBaseline({}, parsedPlan, invocation);
+  const approval = toDecision(state, effect.id);
+  assert.equal(approval.tag, 'approval');
+  const result = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
+  assert.equal(result.state.tag, 'level-classification');
+  if (result.state.tag !== 'level-classification') throw new Error('level-classification');
+  return result.state;
 }
 
 function toDecision(state: ReturnType<typeof initialImplement>, effectId: string, exit = 0, failureId: string | null = null, after = FP) {
@@ -95,7 +106,7 @@ test('implement-baseline-known-red: records failure identities, requires the ful
   assert.equal(sideEffect.tag, 'failure-snapshot');
 });
 
-test('implement-approval-by-quote: blocks writing until a user-attributed by and quote are supplied', () => {
+test('prewrite-level: approval-by-quote resolves classification before checkout', () => {
   const { state, effect } = atBaseline();
   const approval = toDecision(state, effect.id);
   assert.equal(approval.tag, 'approval');
@@ -103,7 +114,124 @@ test('implement-approval-by-quote: blocks writing until a user-attributed by and
   const denied = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user' } });
   assert.equal(denied.state.tag, 'approval');
   const allowed = step(approval, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } });
-  assert.equal(allowed.state.tag, 'task-checkout');
+  assert.equal(allowed.state.tag, 'level-classification');
+  if (allowed.state.tag !== 'level-classification') return;
+  const classified = step(allowed.state, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local behavior change.', gateScope: implementData(allowed.state)['gateScope'] } });
+  assert.equal(classified.state.tag, 'task-checkout');
+});
+
+function classifyExplicitRun(choice: 'adopt' | 'retain') {
+  const { state, effect } = atBaseline();
+  let result = toDecision(state, effect.id);
+  assert.equal(result.tag, 'approval');
+  result = step(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }).state;
+  assert.equal(result.tag, 'level-classification');
+  if (result.tag !== 'level-classification') throw new Error('level-classification');
+  const gateScope = implementData(result)['gateScope'];
+  result = step(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded integration has meaningful uncertainty, but failures remain observable and recoverable.', gateScope } }).state;
+  assert.equal(result.tag, 'level-recommendation');
+  if (result.tag !== 'level-recommendation') throw new Error('level-recommendation');
+  const recommendation = implementData(result);
+  assert.equal(recommendation['explicitLevel'], 'low');
+  assert.equal(recommendation['assessedLevel'], 'medium');
+  result = step(result, { type: 'DECISION', kind: 'level-recommendation', answer: { choice, quote: `I choose to ${choice} the recommended level.` } }).state;
+  return result;
+}
+
+test('prewrite-level: a higher assessment pauses an explicit level until the user retains it', () => {
+  const result = classifyExplicitRun('retain');
+  assert.equal(result.tag, 'task-checkout');
+  if (result.tag === 'task-checkout') {
+    assert.equal(result.c.run.level, 'low');
+    assert.equal(result.c.levelAssessment?.evaluatedLevel, 'medium');
+    assert.equal(result.c.levelChoice?.choice, 'retain');
+  }
+});
+
+test('prewrite-level: adopting a higher assessment settles the run at that level', () => {
+  const result = classifyExplicitRun('adopt');
+  assert.equal(result.tag, 'task-checkout');
+  if (result.tag === 'task-checkout') {
+    assert.equal(result.c.run.level, 'medium');
+    assert.equal(result.c.levelAssessment?.evaluatedLevel, 'medium');
+    assert.equal(result.c.levelChoice?.choice, 'adopt');
+  }
+});
+
+test('prewrite-level: classified task assessment controls writer and review routing', () => {
+  const config = {
+    'write-subagents': { claude: { low: { model: 'writer-low' }, medium: { model: 'writer-medium' } } },
+    'read-delegates': { codex: { targets: [{ low: { model: 'reader-low' }, medium: { model: 'reader-medium' } }] } },
+    phases: { 'plan-review': { rounds: { low: 1, medium: 1 }, targets: { low: 1, medium: 1 } }, 'code-review': { rounds: { low: 0, medium: 1 }, targets: { low: 1, medium: 1 } } },
+  } as unknown as RunStartedEvent['config'];
+  const gate = classificationGate(PLAN, { ...run(), config });
+  let result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The change crosses task boundaries but remains observable and recoverable.', gateScope: implementData(gate)['gateScope'] } });
+  assert.equal(result.state.tag, 'level-recommendation');
+  if (result.state.tag !== 'level-recommendation') return;
+  result = step(result.state, { type: 'DECISION', kind: 'level-recommendation', answer: { choice: 'adopt', quote: 'Adopt medium.' } });
+  assert.equal(result.state.tag, 'task-checkout');
+  if (result.state.tag !== 'task-checkout') return;
+  assert.equal(result.state.c.run.level, 'medium');
+  assert.deepEqual(result.state.c.writer?.models, ['writer-medium']);
+  const review = reviewSpecFromRun(result.state.c.run, 'code', 'fix', 'plans/example.plan.md');
+  assert.equal(review.ok && review.spec.cap, 1);
+});
+
+test('prewrite-level: user stop at classification gate ends before first writer', () => {
+  const gate = classificationGate();
+  const result = step(gate, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop before writing.' } });
+  assert.equal(result.state.tag, 'stopped');
+  assert.equal(result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'task'), false);
+  assert.equal(result.effects.some((effect) => effect.kind === 'write-brief'), false);
+});
+
+test('prewrite-level: explicit equal-or-lower assessment continues without prompting', () => {
+  for (const evaluatedLevel of ['low', 'medium'] as const) {
+    const level: RunStartedEvent['level'] = evaluatedLevel === 'low' ? 'low' : 'high';
+    const invocation = { ...run(), level };
+    const gate = classificationGate(PLAN, invocation);
+    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel, rationale: 'The evidence fits within the explicit ceiling.', gateScope: implementData(gate)['gateScope'] } });
+    assert.equal(result.state.tag, 'task-checkout');
+    if (result.state.tag === 'task-checkout') {
+      assert.equal(result.state.c.run.level, level);
+      assert.equal(result.state.c.levelChoice, null);
+    }
+  }
+});
+
+test('prewrite-level: xhigh and max stay explicit', () => {
+  for (const level of ['xhigh', 'max'] as const) {
+    const config = { ...run().config, 'write-subagents': { claude: { [level]: { model: `writer-${level}` } } } } as RunStartedEvent['config'];
+    const gate = classificationGate(PLAN, { ...run(), level, config });
+    const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'high', rationale: 'The classification is below the explicit advanced level.', gateScope: implementData(gate)['gateScope'] } });
+    assert.equal(result.state.tag, 'task-checkout');
+    if (result.state.tag === 'task-checkout') {
+      assert.equal(result.state.c.run.level, level);
+      assert.deepEqual(result.state.c.writer?.models, [`writer-${level}`]);
+    }
+  }
+});
+
+test('prewrite-level: lower retained level preserves configured phase skips', () => {
+  const config = { ...run().config, 'write-subagents': { claude: { high: { model: 'writer-high' } } }, phases: { 'plan-review': { rounds: { high: 0 }, targets: { high: 1 } }, 'code-review': { rounds: { high: 0 }, targets: { high: 1 } } } } as RunStartedEvent['config'];
+  const gate = classificationGate(PLAN, { ...run(), level: 'high', config });
+  const result = step(gate, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'The bounded work does not require the requested ceiling.', gateScope: implementData(gate)['gateScope'] } });
+  assert.equal(result.state.tag, 'task-checkout');
+  if (result.state.tag === 'task-checkout') {
+    assert.equal(result.state.c.run.level, 'high');
+    assert.equal(result.state.c.writer?.models[0], 'writer-high');
+    const review = reviewSpecFromRun(result.state.c.run, 'code', 'fix', 'plans/example.plan.md');
+    assert.equal(review.ok && review.spec.cap, 0);
+  }
+});
+
+test('level-journal: assessment scope distinguishes acceptance obligations with different criterion titles', () => {
+  const alternative: typeof PLAN = { ...PLAN, criteria: PLAN.criteria.map((criterion) => ({ ...criterion, title: 'A behaviorally different required outcome' })) };
+  const originalScope = implementData(classificationGate())['gateScope'] as Record<string, unknown>;
+  const alternativeScope = implementData(classificationGate(alternative))['gateScope'] as Record<string, unknown>;
+  assert.notDeepEqual(originalScope, alternativeScope);
+  assert.equal((originalScope['criteria'] as { title: string }[])[0]?.title, 'Example works');
+  assert.equal((alternativeScope['criteria'] as { title: string }[])[0]?.title, 'A behaviorally different required outcome');
 });
 
 test('writer configuration resolves sparse levels and rejects malformed cascades', () => {

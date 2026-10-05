@@ -104,12 +104,14 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
 
   const approval = await start({ ...options, runStarted });
   assert.deepEqual([approval.frame?.await, approval.frame?.at], ['decide', 'implement › approval'], JSON.stringify(approval.frame));
-  const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } } });
+  const classification = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } } });
+  assert.deepEqual([classification.frame?.await, classification.frame?.data['kind']], ['decide', 'level-classification']);
+  const write = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded and recoverable behavior change.', gateScope: classification.frame?.data['gateScope'] } } });
   assert.deepEqual([write.frame?.await, write.frame?.at], ['write', 'implement › tasks']);
-  const [slot] = write.frame?.data['tasks'] as { task: string; action: string; envelopePath: string }[];
+  const [slot] = write.frame?.data['tasks'] as { task: string; action: string; attempt: number; signature: string; envelopePath: string }[];
   assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
   const envelopePath = String(slot?.envelopePath);
-  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: 'agent-1' }] } });
+  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1' }] } });
   assert.equal((launched.frame?.data['tasks'] as { action: string }[])[0]?.action, 'running');
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');
@@ -120,7 +122,7 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
     evidence: ['CRITERION SC1 | src/value.ts | trims values before processing'],
     files: [{ path: 'src/value.ts', note: 'Normalizes the input value.' }],
   }));
-  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', envelopePath } });
+  const evidence = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath } });
   assert.deepEqual([evidence.frame?.await, evidence.frame?.at], ['evidence', 'implement › evidence']);
   const done = await send({ ...options, rawEvent: { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'node test passed after the source edit' } } } });
   assert.equal(done.frame?.await, 'done');

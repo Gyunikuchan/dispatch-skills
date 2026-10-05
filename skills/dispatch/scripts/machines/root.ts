@@ -3,13 +3,14 @@
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
 import { renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, walkthroughPathOf } from '../domain/render.ts';
+import { materializePlanRevisionSeed } from '../domain/plan.ts';
 import type { ReviewKind } from '../domain/types.ts';
 import { askAwait, askData, askSpecFromRun, beginAsk, stepAsk, validateAsk, type AskState } from './ask.ts';
 import { beginPlan, planAwait, planData, planInputFromRun, slugOf, stepPlan, validatePlan, type PlanState } from './plan.ts';
 import {
   beginReview, isReviewTerminal, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState,
 } from './review.ts';
-import { implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
+import { effectivePlan, implementAwait, implementData, implementMachine, renderImplementWalkthrough, stepImplement, validateImplement, type ImplementState } from './implement.ts';
 import { answers, isRecord, never, nextId, stay, type Claim, type Counters, type DoneData, type Step } from './types.ts';
 import { beginRevision, stepRevision, reboundRevision, revisionAwait, revisionData, validateRevision, type RevisionState } from './revision.ts';
 import { executionBindingDeferred, reconfigureRoot } from './execution-config.ts';
@@ -69,7 +70,7 @@ function countersOf(child: Child): Counters {
 
 function terminal(child: Child): boolean {
   switch (child.verb) {
-    case 'design': return child.state.tag === 'complete' || child.state.tag === 'failed';
+    case 'design': return child.state.tag === 'complete' || child.state.tag === 'stopped' || child.state.tag === 'failed';
     case 'ask': return child.state.tag === 'done' || child.state.tag === 'failed';
     case 'plan': return child.state.tag === 'complete' || child.state.tag === 'escalated' || child.state.tag === 'failed';
     case 'review': return isReviewTerminal(child.state);
@@ -173,6 +174,10 @@ export function stepRoot(state: RootState, event: Event): S {
     case 'implement': { const result = stepImplement(state.child, event); return wrap(state.run, { verb: 'implement', state: result.state }, result.effects); }
     case 'revision': {
       const result = stepRevision(state.child, event);
+      if (result.state.tag === 'stopped') {
+        const context = result.state.r.c;
+        return wrap(state.run, { verb: 'implement', state: { tag: 'stopped', c: context, summary: result.state.summary } }, []);
+      }
       if (result.state.tag === 'refused') {
         const r = result.state.r;
         const parent = 'c' in r.parent ? { ...r.parent, c: { ...r.c, concerns: [...r.c.concerns, result.state.error] } } as ImplementState : r.parent;
@@ -180,7 +185,7 @@ export function stepRoot(state: RootState, event: Event): S {
       }
       if (result.state.tag === 'resume') {
         const c = reboundRevision(result.state);
-        const parent: ImplementState = result.state.r.grew ? { tag: 'approval', c } : result.state.r.parent.tag === 'evidence' ? { ...result.state.r.parent, c, ids: c.plan!.criteria.filter((row) => !c.evidence[row.id]).map((row) => row.id) } : { ...result.state.r.parent, c } as ImplementState;
+        const parent: ImplementState = result.state.r.grew && !result.state.r.scopeAdjudicated ? { tag: 'approval', c } : result.state.r.parent.tag === 'evidence' ? { ...result.state.r.parent, c, ids: c.plan!.criteria.filter((row) => !c.evidence[row.id]).map((row) => row.id) } : { ...result.state.r.parent, c } as ImplementState;
         return wrap(state.run, { verb: 'implement', state: parent }, []);
       }
       return { state: { tag: 'revision', run: state.run, child: result.state }, effects: result.effects };
@@ -281,7 +286,7 @@ function renderImplementation(ports: Ports, implementation: ImplementState, walk
 function render(state: RootState, ports: Ports, runDir: string): void {
   if (state.tag === 'revision') {
     const r = state.child.r;
-    if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.planPath));
+    if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, materializePlanRevisionSeed(ports.fs.readText(r.c.planPath), r.c.plan!, effectivePlan(r.c)));
     if (state.child.tag === 'review') writeSection(ports, r.workingPath, state.child.review, runDir);
     return;
   }
@@ -302,7 +307,7 @@ function render(state: RootState, ports: Ports, runDir: string): void {
     }
     if (design.tag === 'plan-revision') {
       const r = design.child.r;
-      if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, ports.fs.readText(r.c.planPath));
+      if (!ports.fs.exists(r.workingPath)) ports.fs.writeAtomic(r.workingPath, materializePlanRevisionSeed(ports.fs.readText(r.c.planPath), r.c.plan!, effectivePlan(r.c)));
       if (design.child.tag === 'review') writeSection(ports, r.workingPath, design.child.review, runDir);
     }
     if (design.tag === 'review') writeSection(ports, design.c.path, design.review, runDir);
@@ -343,6 +348,9 @@ export const rootTransitions = [
   { from: 'design', on: 'EFFECT_FAILED', to: 'handoff' },
   { from: 'implement', on: 'SNAPSHOT', to: 'revision' },
   { from: 'revision', on: 'ARTIFACT_PARSED', to: 'implement' },
+  { from: 'revision', on: 'SNAPSHOT', to: 'implement' },
+  { from: 'revision', on: 'SNAPSHOT', to: 'handoff' },
+  { from: 'revision', on: 'DECISION', to: 'implement' },
   { from: 'booting', on: 'RUN_STARTED', to: 'ask' },
   { from: 'booting', on: 'RUN_STARTED', to: 'plan' },
   { from: 'booting', on: 'RUN_STARTED', to: 'review' },

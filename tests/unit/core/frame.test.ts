@@ -55,3 +55,30 @@ test('review fix terminal summary truncation preserves complete UTF-8 characters
     assert.deepEqual(frame.data['captures'], ['raw.log']);
   }
 });
+
+test('level-journal: write frames bind failure models and suppress launches while draining', () => {
+  const task = { task: 'T1', attempt: 2, signature: 'sig', handle: 'writer', model: 'model-task', envelopePath: 't1.json' };
+  const ordinary = awaitEnvelopes('write', { tasks: [task], model: 'model-run' });
+  assert.ok(ordinary.some((event) => event.type === 'WRITE_FAILED' && event.model === 'model-task'));
+  const draining = awaitEnvelopes('write', { stage: 'scope-draining', tasks: [task], model: 'model-run' });
+  assert.ok(!draining.some((event) => event.type === 'WRITE_LAUNCHED'));
+  assert.ok(draining.some((event) => event.type === 'WRITE_FAILED' && event.model === 'model-task'));
+});
+
+test('level-journal: projectFrame launches only unlaunched task slots when writers overlap', () => {
+  const tasks = [
+    { task: 'T1', action: 'running', attempt: 1, signature: 'sig-running', handle: 'writer-T1', model: 'model', envelopePath: 't1.json' },
+    { task: 'T2', action: 'launch', attempt: 2, signature: 'sig-launch', handle: '', model: 'model', envelopePath: 't2.json' },
+  ];
+  const machine = {
+    ...awaitingMachine,
+    awaitOf: () => 'write' as const,
+    project: () => ({ at: 'implement › tasks', data: { tasks } }),
+    validate: (_state: unknown, event: import('../../../skills/dispatch/scripts/core/types.ts').HostEvent) =>
+      event.type === 'WRITE_LAUNCHED' && event.tasks.some((task) => task.task === 'T1') ? 'T1 already has a writer handle' : null,
+  };
+  const frame = projectFrame(machine, awaitingMachine.initial(), 'run');
+  const launches = frame.events?.find((event) => event.type === 'WRITE_LAUNCHED');
+  assert.ok(launches?.type === 'WRITE_LAUNCHED');
+  assert.deepEqual(launches.tasks.map((task) => task.task), ['T2']);
+});

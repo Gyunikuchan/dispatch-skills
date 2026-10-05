@@ -77,8 +77,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'write-brief': async (effect, ports, ctx) => {
       if (!deps.selfCheckCommand) return createWriteBrief(deps)(effect, ports, ctx);
       const eventPath = path.join(ctx.runDir, `${effect.id}.self-check.event.json`);
-      const task = (effect.input['task'] as { id?: unknown } | undefined)?.id;
-      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`), ...(typeof task === 'string' ? { task } : {}) })}\n`);
+      const task = effect.input['task'] as { id?: unknown; attempt?: unknown; signature?: unknown } | undefined;
+      const identity = typeof task?.id === 'string' && Number.isSafeInteger(task.attempt) && Number(task.attempt) > 0 && typeof task.signature === 'string'
+        ? { task: task.id, attempt: Number(task.attempt), signature: task.signature, handle: '<host-assigned handle>' }
+        : typeof task?.id === 'string' ? { task: task.id } : {};
+      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`), ...identity })}\n`);
       return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
     },
     snapshot: async (effect, ports, ctx) => {

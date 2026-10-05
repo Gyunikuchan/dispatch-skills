@@ -1,4 +1,4 @@
-import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent } from '../core/types.ts';
+import type { Await, DesignApproval, Event, HostEvent, RunStartedEvent, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment } from '../core/types.ts';
 import type { ParsedDesign } from '../domain/types.ts';
 import { asParsedDesign, designScopeGrew } from '../domain/design.ts';
 import { beginApproval, beginBoundImplement, stepImplement, implementAwait, implementData, validateImplement, type ImplementState } from './implement.ts';
@@ -15,6 +15,9 @@ export type DesignContext = {
   completed: readonly string[]; ownership: Readonly<Record<string, readonly string[]>>;
   histories: Readonly<Record<string, readonly ImplementState[]>>; revisions: readonly { before: string; after: string; reason: string; invalidated: readonly string[] }[];
   repairs: Readonly<Record<string, readonly string[]>>;
+  levelGatePassed: boolean; gateScope: LevelGateScope | null; levelAssessment: LevelClassificationAnswer | null;
+  levelChoice: LevelRecommendationAnswer | null; scopeAdjustments: readonly ScopeAdjustment[];
+  scopeNotice: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
   revisionReviewRound: number; integrationRound: number;
   designReview: ReviewState | null; integrationReview: ReviewState | null;
 };
@@ -29,6 +32,7 @@ export type DesignState =
   | { tag: 'integration'; c: DesignContext; review: ReviewState; scopeEffectId?: string }
   | { tag: 'revision'; c: DesignContext; child: DesignRevisionState; parent?: DesignState | undefined }
   | { tag: 'complete'; c: DesignContext; summary: string }
+  | { tag: 'stopped'; c: DesignContext; summary: string }
   | { tag: 'failed'; c: DesignContext; summary: string };
 type S = Step<DesignState>;
 const sharedContractMarker = '[shared-contract]';
@@ -42,7 +46,7 @@ export function beginDesign(run: RunStartedEvent, counters: Counters = {}): S {
       : sessionDir
         ? `${sessionDir}/${slugOf(run.argument)}.design.md`
         : `${slugOf(run.argument)}.design.md`;
-  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null };
+  const c: DesignContext = { run, path, counters, design: null, hash: null, approval: run.designApproval ?? null, baseline: null, completed: [], ownership: {}, histories: {}, revisions: [], repairs: {}, levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, revisionReviewRound: 0, integrationRound: 0, designReview: null, integrationReview: null };
   return run.verb === 'implement' ? parse(c, false) : stay({ tag: 'author', c, defects: [] });
 }
 function parse(c: DesignContext, afterReview: boolean): S {
@@ -68,7 +72,30 @@ function deliver(c: DesignContext): S {
     const run: RunStartedEvent = { ...c.run, verb: 'implement', argument: `${session}/${slugOf(c.path)}-${increment.toLowerCase()}.plan.md`, overrides: { ...c.run.overrides, path: `${session}/${slugOf(c.path)}-${increment.toLowerCase()}.plan.md` } };
     const details = c.design.details[increment] ?? {};
     const contract = Object.fromEntries(Object.entries(details).filter(([key]) => ['outcome', 'affected contracts', 'rollback boundary'].includes(key.toLowerCase())));
-    const result = beginBoundImplement(run, { path: c.path, revision: c.hash, revisionIndex: c.revisions.length, increment, contract, paths: c.design.increments.find((row) => row.id === increment)!.paths, approval: c.approval, repair: c.repairs[increment] ?? [] }, c.counters);
+    const remainingIncrements = c.design.increments.filter((row) => !c.completed.includes(row.id)).map((row) => {
+      const fields = c.design!.details[row.id] ?? {};
+      return {
+        id: row.id, priority: row.priority, outcome: fields['Outcome'] ?? row.summary,
+        dependencies: [...row.prerequisites], paths: [...row.paths],
+        acceptance: Object.entries(fields).map(([key, value]) => `${key}: ${value}`),
+      };
+    });
+    const invariants = [
+      ...Object.entries(c.design.box).filter(([key]) => /invariant|constraint/i.test(key)).map(([key, value]) => `${key}: ${value}`),
+      ...[...c.design.governedText.matchAll(/^\s*(?:[-*]\s*)?(?:Invariant|Constraint)\s*:\s*(.+)$/gim)].map((match) => match[1]!.trim()),
+    ];
+    const governingDesign: LevelDesignScope = {
+      path: c.path, hash: c.hash, title: c.design.title,
+      objective: c.design.box['TL;DR'] ?? c.design.title ?? c.path,
+      invariants: [...new Set(invariants)], fields: { ...c.design.box }, remainingIncrements,
+    };
+    const result = beginBoundImplement(run, {
+      path: c.path, revision: c.hash, revisionIndex: c.revisions.length, increment, contract,
+      paths: c.design.increments.find((row) => row.id === increment)!.paths, approval: c.approval,
+      repair: c.repairs[increment] ?? [], remainingIncrements, governingDesign, levelGatePassed: c.levelGatePassed,
+      gateScope: c.gateScope, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice,
+      scopeAdjustments: c.scopeAdjustments, scopeNotice: c.scopeNotice,
+    }, c.counters);
     return { state: { tag: 'increment', c, increment, child: result.state }, effects: result.effects };
   }
   if (c.completed.length !== c.design.increments.length) return failed(c, 'No ready increment remains; prerequisite graph is blocked.');
@@ -88,7 +115,18 @@ function deliver(c: DesignContext): S {
 }
 function incrementResult(c0: DesignContext, increment: string, result: Step<ImplementState>): S {
   const child = result.state;
-  const c = { ...c0, counters: 'c' in child && child.c ? { ...c0.counters, ...child.c.counters } : c0.counters };
+  const childContext = 'c' in child && child.c ? child.c : null;
+  const seen = new Set(c0.scopeAdjustments.map((row) => row.proposal.requestId));
+  const scopeAdjustments = [...c0.scopeAdjustments, ...(childContext?.scopeAdjustments ?? []).filter((row) => !seen.has(row.proposal.requestId)).map((row) => ({ ...row, ownerIncrement: row.ownerIncrement ?? increment }))];
+  const c = {
+    ...c0,
+    counters: childContext ? { ...c0.counters, ...childContext.counters } : c0.counters,
+    ...(childContext ? {
+      run: { ...c0.run, level: childContext.run.level }, levelGatePassed: childContext.levelGatePassed,
+      gateScope: c0.gateScope ?? childContext.gateScope, levelAssessment: c0.levelAssessment ?? childContext.levelAssessment,
+      levelChoice: c0.levelChoice ?? childContext.levelChoice, scopeAdjustments, scopeNotice: childContext.scopeNotice ?? c0.scopeNotice,
+    } : {}),
+  };
   if (child.tag === 'complete') {
     return deliver({ ...c, completed: [...new Set([...c.completed, increment])], ownership: { ...c.ownership, [increment]: [...new Set([...c.ownership[increment] ?? [], ...child.c.changedPaths])] }, histories: { ...c.histories, [increment]: [...c.histories[increment] ?? [], child] } });
   }
@@ -96,7 +134,8 @@ function incrementResult(c0: DesignContext, increment: string, result: Step<Impl
     const revision = beginRevision(child.parent, child.event);
     return { state: { tag: 'plan-revision', c, increment, child: revision.state }, effects: revision.effects };
   }
-  if (child.tag === 'failed' || child.tag === 'stopped') return failed(c, `Increment ${increment}: ${implementData(child)['summary'] ?? child.tag}`);
+  if (child.tag === 'stopped') return stay({ tag: 'stopped', c, summary: `Increment ${increment}: ${implementData(child)['summary'] ?? child.tag}` });
+  if (child.tag === 'failed') return failed(c, `Increment ${increment}: ${implementData(child)['summary'] ?? child.tag}`);
   return { state: { tag: 'increment', c, increment, child }, effects: result.effects };
 }
 export function stepDesign(state: DesignState, event: Event): S {
@@ -133,7 +172,7 @@ export function stepDesign(state: DesignState, event: Event): S {
         while (parent?.tag === 'approval') parent = parent.parent;
         if (parent?.tag === 'increment' && c.design) {
           const incRow = c.design.increments.find((row) => row.id === parent.increment);
-          const child = parent.child;
+            const child = parent.child;
           const binding = 'c' in child && child.c ? child.c.designBinding : undefined;
           const startIndex = binding
             ? (binding.revisionIndex ?? (binding.revision ? c.revisions.findLastIndex((rev) => rev.before === binding.revision) : -1))
@@ -163,11 +202,12 @@ export function stepDesign(state: DesignState, event: Event): S {
     case 'plan-revision': {
       const result = stepRevision(state.child, event);
       const c = { ...state.c, counters: result.state.r.c.counters };
+      if (result.state.tag === 'stopped') return stay({ tag: 'stopped', c, summary: result.state.summary });
       if (result.state.tag === 'refused') return incrementResult(c, state.increment, stay(result.state.r.parent));
       if (result.state.tag === 'resume') {
         const rebound = reboundRevision(result.state);
         const parent = result.state.r.parent;
-        if (result.state.r.grew) return incrementResult(c, state.increment, beginApproval(rebound));
+        if (result.state.r.grew && !result.state.r.scopeAdjudicated) return incrementResult(c, state.increment, beginApproval(rebound));
         const child: ImplementState = parent.tag === 'evidence' ? { ...parent, c: rebound, ids: rebound.plan!.criteria.filter((row) => !rebound.evidence[row.id]).map((row) => row.id) } : { ...parent, c: rebound } as ImplementState;
         return incrementResult(c, state.increment, stay(child));
       }
@@ -207,11 +247,12 @@ export function stepDesign(state: DesignState, event: Event): S {
     }
     case 'revision': {
       const result = stepDesignRevision(state.child, event);
+      if (result.state.tag === 'stopped') return stay({ tag: 'stopped', c: result.state.c, summary: result.state.summary });
       if (result.state.tag === 'refused') return state.parent && state.parent.tag !== 'integration' && /objective cannot change/.test(result.state.error) ? stay({ ...state.parent, c: { ...state.parent.c, counters: result.state.c.counters, revisionReviewRound: result.state.c.revisionReviewRound } }) : failed(result.state.c, result.state.error);
       if (result.state.tag === 'resume') {
         const r = result.state;
         const original = r.c.approval;
-        const scopeGrew = r.c.design ? designScopeGrew(r.c.design, r.design) : false;
+        const scopeGrew = !r.scopeAdjudicated && r.c.design ? designScopeGrew(r.c.design, r.design) : false;
         const approval: DesignApproval | null = original && r.hash !== original.hash && !scopeGrew ? {
           by: 'revision', quote: original.quote, hash: r.hash, basedOn: original.by === 'user' ? original.hash : original.basedOn,
           revisions: [...original.by === 'revision' ? original.revisions : [], { before: r.c.hash!, after: r.hash }],
@@ -257,7 +298,7 @@ export function stepDesign(state: DesignState, event: Event): S {
       }
       return { state: { tag: 'revision', c: result.state.c, child: result.state, ...(state.parent ? { parent: state.parent } : {}) }, effects: result.effects };
     }
-    case 'complete': case 'failed': return stay(state);
+    case 'complete': case 'stopped': case 'failed': return stay(state);
     default: return never(state, 'design state');
   }
 }
@@ -268,7 +309,7 @@ export function designAwait(state: DesignState): Await | null {
     case 'integration': return state.scopeEffectId ? null : reviewAwait(state.review);
     case 'plan-revision': return revisionAwait(state.child);
     case 'increment': return implementAwait(state.child); case 'revision': return designRevisionAwait(state.child);
-    case 'complete': case 'failed': return 'done'; case 'parse': case 'baseline': return null;
+    case 'complete': case 'stopped': case 'failed': return 'done'; case 'parse': case 'baseline': return null;
     default: return never(state, 'design state');
   }
 }
@@ -279,12 +320,20 @@ function projectDesignData(state: DesignState): Readonly<Record<string, unknown>
   if (state.tag === 'revision') return designRevisionData(state.child);
   if (state.tag === 'plan-revision') return revisionData(state.child);
   if (state.tag === 'review' || state.tag === 'integration') return { ...reviewData(state.review), baseline: state.c.baseline, ownership: state.c.ownership, ...(state.tag === 'integration' && reviewAwait(state.review) === 'rule' ? { sharedContract: { rulingField: 'rulings[id].reason', marker: sharedContractMarker, instruction: 'Include the marker for a shared contract defect confined to one owner; acceptance requests design revision.' } } : {}) };
-  if (state.tag === 'complete' || state.tag === 'failed') return { outcome: state.tag, summary: state.summary, completion: { governedDesign: { path: state.c.path, revision: state.c.hash }, hash: state.c.hash, approval: state.c.approval, completed: state.c.completed, ownership: state.c.ownership } };
+  if (state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed') return { outcome: state.tag, summary: state.summary, completion: { governedDesign: { path: state.c.path, revision: state.c.hash }, hash: state.c.hash, approval: state.c.approval, completed: state.c.completed, ownership: state.c.ownership, level: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments } };
   return {};
 }
-export function designData(state: DesignState): Readonly<Record<string, unknown>> { return { ...projectDesignData(state), governedDesign: { path: state.c.path, revision: state.c.hash } }; }
+export function designData(state: DesignState): Readonly<Record<string, unknown>> { return { ...projectDesignData(state), governedDesign: { path: state.c.path, revision: state.c.hash }, settledLevel: state.c.run.level, levelAssessment: state.c.levelAssessment, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice }; }
 export function validateDesign(state: DesignState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return state.tag === 'increment' && event.artifact === 'plan' ? validateImplement(state.child, event) : event.artifact !== 'design' ? 'Only design revision is available on the design parent.' : !state.c.design || !state.c.hash || designAwait(state) === null || state.tag === 'complete' || state.tag === 'failed' || state.tag === 'revision' || state.tag === 'plan-revision' || state.tag === 'increment' && implementAwait(state.child) === 'write' ? 'Finish the outstanding effect or writer before design revision.' : null;
+  if (event.type === 'REVISE') {
+    if (state.tag === 'increment' && event.artifact === 'plan') return validateImplement(state.child, event);
+    if (event.artifact !== 'design') return 'Only design revision is available on the design parent.';
+    if (state.tag === 'increment') {
+      if (state.child.tag === 'level-classification' || state.child.tag === 'level-recommendation') return 'Finish the pending level gate before design revision so a revised design cannot reuse stale classification.';
+      if ((state.child.tag === 'scope-adjudication' || state.child.tag === 'scope-user-decision') && state.child.active.length) return 'Drain every active writer before design revision so original attempt identities remain available.';
+    }
+    return !state.c.design || !state.c.hash || designAwait(state) === null || state.tag === 'complete' || state.tag === 'stopped' || state.tag === 'failed' || state.tag === 'revision' || state.tag === 'plan-revision' || state.tag === 'increment' && implementAwait(state.child) === 'write' ? 'Finish the outstanding effect or writer before design revision.' : null;
+  }
   if (state.tag === 'approval' && event.type === 'DECISION') return event.kind !== 'approval' || event.answer !== 'stop' && (!isRecord(event.answer) || event.answer['by'] !== 'user' || typeof event.answer['quote'] !== 'string' || !event.answer['quote'].trim() || event.answer['hash'] !== state.c.hash) ? 'Approval requires user attribution, quote, and the current governed hash.' : null;
   if (state.tag === 'author' && event.type === 'AUTHORED' && event.path !== state.c.path) return 'event.path: expected governed design path.';
   if (state.tag === 'review' || state.tag === 'integration') return validateReview(state.review, event);
@@ -301,9 +350,12 @@ export const transitions = [
   { from: 'parse', on: 'ARTIFACT_PARSED', to: 'baseline' },
   { from: 'increment', on: 'SNAPSHOT', to: 'plan-revision' },
   { from: 'increment', on: 'VERIFY_DONE', to: 'integration' },
-  { from: 'increment', on: 'SNAPSHOT', to: 'failed' },
+  { from: 'increment', on: 'SNAPSHOT', to: 'stopped' },
   { from: 'plan-revision', on: 'ARTIFACT_PARSED', to: 'increment' },
+  { from: 'plan-revision', on: 'ARTIFACT_PARSED', to: 'plan-revision' },
   { from: 'plan-revision', on: 'DECISION', to: 'increment' },
+  { from: 'plan-revision', on: 'DECISION', to: 'plan-revision' },
+  { from: 'plan-revision', on: 'SNAPSHOT', to: 'stopped' },
   ...['author', 'review', 'approval', 'increment', 'integration'].map((from) => ({ from, on: 'REVISE', to: 'revision' })),
   ...['increment', 'revision', 'complete', 'failed'].map((to) => ({ from: 'integration', on: 'RULINGS', to })),
   { from: 'integration', on: 'WAVE_DONE', to: 'complete' },
@@ -313,5 +365,10 @@ export const transitions = [
   { from: 'integration', on: 'DECISION', to: 'complete' },
   { from: 'integration', on: 'DECISION', to: 'failed' },
   ...['author', 'review', 'approval', 'increment', 'integration', 'failed'].map((to) => ({ from: 'revision', on: 'ARTIFACT_PARSED', to })),
+  { from: 'revision', on: 'ARTIFACT_PARSED', to: 'revision' },
   { from: 'revision', on: 'EFFECT_FAILED', to: 'failed' },
+  { from: 'revision', on: 'DECISION', to: 'revision' },
+  { from: 'revision', on: 'DECISION', to: 'increment' },
+  { from: 'revision', on: 'DECISION', to: 'failed' },
+  { from: 'revision', on: 'DECISION', to: 'stopped' },
 ];

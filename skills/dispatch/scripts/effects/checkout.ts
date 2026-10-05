@@ -2,6 +2,7 @@
 // `deliver` writes the caller checkout, and it refuses paths the caller changed since the captured baseline.
 
 import path from 'node:path';
+import crypto from 'node:crypto';
 import type { CheckoutOp, Effect, Handler, Ports } from '../core/types.ts';
 
 type CheckoutEffect = Extract<Effect, { kind: 'checkout' }>;
@@ -212,6 +213,73 @@ async function deliver(deps: CheckoutDeps, ports: Ports, root: string, input: Ro
   return { conflicts: [], transferred: plan.filter((item) => item.action !== 'already').map((item) => item.file), already: plan.filter((item) => item.action === 'already').map((item) => item.file) };
 }
 
+/** Replays a parked in-scope draft onto a new prerequisite base without modifying its original worktree. */
+async function scopeRebase(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row): Promise<Row> {
+  const name = text(input['name']), originalName = text(input['originalName']), revision = text(input['revision']);
+  const permitted = strings(input['permitted']), key = text(input['transferKey']);
+  if (!key || !permitted.length || permitted.some((file) => !safe(file)) || new Set(permitted).size !== permitted.length) throw new Error('scope rebase requires a transfer key and unique repository-relative permitted paths');
+  const marker = path.join(runDir, 'scope-transfers', `${crypto.createHash('sha256').update(key).digest('hex')}.json`);
+  if (ports.fs.exists(marker)) {
+    const prior = JSON.parse(ports.fs.readText(marker)) as Row;
+    if (prior['revision'] !== revision || prior['path'] !== worktreePath(runDir, name)) throw new Error('scope transfer key was reused for a different destination or base');
+    return prior;
+  }
+  const original = worktreePath(runDir, originalName), target = worktreePath(runDir, name);
+  if (ports.fs.inspectPath(original)?.kind !== 'directory') throw new Error('scope rebase source worktree is missing');
+  const targetInfo = ports.fs.inspectPath(target);
+  if (targetInfo && targetInfo.kind !== 'directory') return { path: target, revision, conflict: true, conflicts: permitted, detail: 'scope rebase destination is not a worktree directory' };
+  await worktree(deps, ports, target, revision, !!targetInfo);
+  prepare(deps, ports, target, input);
+  const quoted = ['--', ...permitted];
+  const tracked = (await ports.git.run(['diff', '--name-only', '-z', 'HEAD', ...quoted], original)).split('\0').filter((file) => file && permitted.includes(file));
+  const untracked = (await ports.git.run(['ls-files', '--others', '--exclude-standard', '-z'], original)).split('\0').filter((file) => file && permitted.includes(file));
+  const changed = [...new Set([...tracked, ...untracked])].sort();
+  const redirected = changed.filter((file) => {
+    let ancestor = target;
+    for (const part of file.split('/').slice(0, -1)) {
+      ancestor = path.join(ancestor, part);
+      if (ports.fs.inspectPath(ancestor)?.kind === 'symlink') return true;
+    }
+    return false;
+  });
+  if (redirected.length) return { path: target, revision, conflict: true, conflicts: redirected, detail: 'destination has a symlink ancestor for a permitted draft path' };
+  const collisions = untracked.filter((file) => !!ports.fs.inspectPath(path.resolve(target, file)));
+  if (collisions.length) return { path: target, revision, conflict: true, conflicts: collisions, detail: 'a new prerequisite already owns an untracked draft path' };
+
+  const patch = await ports.git.run(['diff', '--binary', 'HEAD', ...quoted], original);
+  const patchPath = path.join(runDir, `scope-${crypto.createHash('sha256').update(key).digest('hex')}.patch`);
+  try {
+    if (patch) {
+      ports.fs.writeBase64Atomic(patchPath, Buffer.from(patch).toString('base64'));
+      try { await ports.git.run(['apply', '--3way', '--whitespace=nowarn', patchPath], target); }
+      catch (error) { return { path: target, revision, conflict: true, conflicts: tracked, detail: error instanceof Error ? error.message : String(error) }; }
+    }
+    for (const file of untracked) {
+      const from = path.resolve(original, file), to = path.resolve(target, file);
+      let ancestor = original;
+      for (const part of file.split('/').slice(0, -1)) { ancestor = path.join(ancestor, part); if (ports.fs.inspectPath(ancestor)?.kind === 'symlink') throw new Error(`scope draft ancestor is a symlink: ${file}`); }
+      const info = ports.fs.inspectPath(from);
+      if (info?.kind === 'file') copy(ports, from, to);
+      else if (info?.kind === 'symlink') { ports.fs.mkdir(path.dirname(to), { recursive: true }); ports.fs.writeLinkAtomic(to, info.linkTarget ?? ''); }
+      else throw new Error(`unsupported untracked scope draft: ${file}`);
+    }
+    const stagedPaths = (await ports.git.run(['diff', '--name-only', '-z', revision, '--'], target)).split('\0').filter(Boolean);
+    const transferredUntracked = (await ports.git.run(['ls-files', '--others', '--exclude-standard', '-z'], target)).split('\0').filter(Boolean);
+    const outside = [...new Set([...stagedPaths, ...transferredUntracked])].filter((file) => !permitted.includes(file));
+    if (outside.length) return { path: target, revision, conflict: true, conflicts: outside, detail: 'scope transfer produced paths outside its permitted set' };
+    for (const file of untracked) {
+      const from = ports.fs.inspectPath(path.resolve(original, file)), to = ports.fs.inspectPath(path.resolve(target, file));
+      if (!from || !to || from.kind !== to.kind || from.kind === 'file' && ports.fs.readBase64(path.resolve(original, file)) !== ports.fs.readBase64(path.resolve(target, file)) || from.kind === 'symlink' && from.linkTarget !== to.linkTarget) return { path: target, revision, conflict: true, conflicts: [file], detail: 'untracked draft transfer verification failed' };
+    }
+    const result = { path: target, revision, conflict: false, transferred: changed, transferKey: key };
+    ports.fs.mkdir(path.dirname(marker), { recursive: true });
+    ports.fs.writeBase64Atomic(marker, Buffer.from(JSON.stringify(result)).toString('base64'));
+    return result;
+  } finally {
+    if (ports.fs.exists(patchPath)) ports.fs.remove(patchPath);
+  }
+}
+
 async function cleanup(deps: CheckoutDeps, ports: Ports, runDir: string, input: Row): Promise<Row> {
   const removed: string[] = [];
   for (const name of strings(input['names'])) {
@@ -228,7 +296,7 @@ async function cleanup(deps: CheckoutDeps, ports: Ports, runDir: string, input: 
 
 export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
   return async (effect, ports, ctx) => {
-    const input = effect.input;
+    const input = effect.input as Readonly<Record<string, unknown>>;
     const done = (op: CheckoutOp, result: Row) => [{ type: 'CHECKOUT_DONE' as const, effectId: effect.id, op, result }];
     try {
       switch (effect.op) {
@@ -239,6 +307,7 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
           prepare(deps, ports, root, input);
           return done('task', { path: root, revision: await head(ports, root) });
         }
+        case 'scope-rebase': return done('scope-rebase', await scopeRebase(deps, ports, ctx.runDir, effect.input));
         case 'commit': return done('commit', await submit(ports, worktreePath(ctx.runDir, text(input['name'])), text(input['base']), text(input['message']) || 'dispatch task'));
         case 'red': return done('red', await red(deps, ports, worktreePath(ctx.runDir, text(input['name'])), input));
         case 'integrate': return done('integrate', await integrate(ports, worktreePath(ctx.runDir, 'integration'), input));
@@ -249,7 +318,6 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         }
         case 'deliver': return done('deliver', await deliver(deps, ports, worktreePath(ctx.runDir, 'integration'), input));
         case 'cleanup': return done('cleanup', await cleanup(deps, ports, ctx.runDir, input));
-        default: return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'config', detail: `unknown checkout op ${String(effect.op)}` }];
       }
     } catch (error) {
       return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: error instanceof Error ? error.message : String(error) }];

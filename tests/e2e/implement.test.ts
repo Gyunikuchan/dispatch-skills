@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fixture } from '../helpers/e2e.ts';
-test('implementation happy path runs real CLI approval, writer receipt, verification, review and terminal handoff', async () => {
+import { governedPlanText } from '../../skills/dispatch/scripts/domain/plan.ts';
+test('prewrite-level: CLI approval reaches classification before writer receipt, verification and handoff', async () => {
   const f = fixture();
   try {
     const session = await f.initialize();
@@ -54,11 +55,13 @@ Values are normalized before use so downstream comparisons agree.
     let frame = await f.begin('implement', session, plan); const run = f.absoluteRun(frame.run);
     assert.equal(frame.await, 'decide', JSON.stringify(frame)); assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with implementation' } });
+    assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'This is one bounded, reversible helper change.', gateScope: frame.data['gateScope'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
-    const [slot] = frame.data['tasks'] as { task: string; action: string; briefPath: string; briefSha256: string; envelopePath: string; worktree: string }[];
+    const [slot] = frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; briefPath: string; briefSha256: string; envelopePath: string; worktree: string }[];
     assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
     const brief = fs.readFileSync(slot!.briefPath); assert.equal(`sha256:${crypto.createHash('sha256').update(brief).digest('hex')}`, slot!.briefSha256);
-    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: 'agent-1' }] });
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1' }] });
     assert.equal((frame.data['tasks'] as { action: string }[])[0]?.action, 'running', JSON.stringify(frame));
     fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
     assert.notEqual(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
@@ -66,12 +69,16 @@ Values are normalized before use so downstream comparisons agree.
     const previewEvent = fs.readdirSync(run).find((file) => file.endsWith('.self-check.event.json'))!;
     assert.match(brief.toString('utf8'), /send --run .*--event .*self-check.event.json.*--dry-run/);
     const beforePreview = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    const previewPath = path.join(run, previewEvent);
+    const preview = JSON.parse(fs.readFileSync(previewPath, 'utf8')) as Record<string, unknown>;
+    assert.deepEqual([preview['task'], preview['attempt'], preview['signature']], ['T1', slot!.attempt, slot!.signature]);
+    fs.writeFileSync(previewPath, JSON.stringify({ ...preview, handle: 'agent-1' }));
     fs.writeFileSync(envelopePath, '{"schemaVersion":1,"status":"DONE","stage":"COMPLETE","summary":""}');
     const invalidReceipt = await f.cli(['send', '--run', run, '--event', `@${path.join(run, previewEvent)}`, '--dry-run']);
     assert.match(invalidReceipt.error ?? '', /summary|evidence/i); assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), beforePreview);
     fs.writeFileSync(envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Values normalized', evidence: ['CRITERION SC1 | src/a.ts | normalizes value before use'], files: [{ path: 'src/a.ts', note: 'Normalizes values.' }] }));
     const validReceipt = await f.cli(['send', '--run', run, '--event', `@${path.join(run, previewEvent)}`, '--dry-run']); assert.equal(validReceipt.error, undefined);
-    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', task: 'T1', envelopePath }); assert.equal(frame.await, 'evidence', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', envelopePath }); assert.equal(frame.await, 'evidence', JSON.stringify(frame));
     assert.equal(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8').replace(/\r\n/g, '\n'), 'export const value = 2;\n');
     assert.equal(fs.existsSync(slot!.worktree), false);
     frame = await f.reply(run, { type: 'EVIDENCE', criteria: { SC1: { outcome: 'pass', evidence: 'The scoped verification passed after mutation.' } } });
@@ -82,6 +89,207 @@ Values are normalized before use so downstream comparisons agree.
     const replay = await f.cli(['send', '--run', frame.run, '--dry-run']); assert.equal(replay.data['outcome'], 'complete');
     assert.equal(fs.readFileSync(path.join(frame.run, 'events.jsonl'), 'utf8'), journal); assert.equal(f.launches().length, launches);
     fs.rmSync(published, { recursive: true, force: true });
+  } finally { f.cleanup(); }
+});
+
+test('level-journal: hotfix scope request has public dry-run and send parity for an approved path', async () => {
+  const f = fixture();
+  try {
+    const session = await f.initialize();
+    const plan = path.join(f.repo, 'hotfix.plan.md');
+    const source = `# Repair a value
+
+> **TL;DR:** Preserve the accepted value contract.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — one local value
+> **Scope:** src/a.ts
+
+## Key Decisions & Context
+- Keep the value contract stable.
+
+## Technical-Design Traceability
+- Approved revision: none
+
+## Success Criteria
+- [SC1] The value contract remains stable
+  - Changes: src/a.ts
+  - Verify: \`node -e "const fs=require('node:fs');process.exit(fs.readFileSync('src/a.ts','utf8').includes('value = 2') ? 1 : 0)"\` [FINAL]
+  - Evidence: verify
+  - Pre-existing: no
+  - Test rationale: Check that implementation preserves the accepted value contract.
+
+## Proposed Changes
+### T1 — Preserve the value contract
+Keep the public value contract intact.
+- Prerequisites: none
+- Criteria: SC1
+
+#### [MODIFY] src/a.ts
+- Preserve the accepted value.
+
+## Verification Plan
+### Automated Tests
+- \`node -e "process.exit(0)"\`
+### Manual Verification
+- Inspect the public value.
+
+## Review Findings & Resolutions
+*No reviews conducted yet.*
+`;
+    fs.writeFileSync(plan, source);
+    f.git('add', 'hotfix.plan.md'); f.git('commit', '-qm', 'hotfix plan');
+    let frame = await f.begin('implement', session, plan);
+    const run = f.absoluteRun(frame.run);
+    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Approve this scope.' } });
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScope: frame.data['gateScope'] } });
+    const [slot] = frame.data['tasks'] as { task: string; attempt: number; signature: string; handle: string | null; envelopePath: string; worktree: string }[];
+    assert.equal(slot?.task, 'T1', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'writer-1' }] });
+    fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
+    fs.writeFileSync(slot!.envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'The scoped change is delivered.', evidence: ['CRITERION SC1 | src/a.ts | Preserved the value contract.'], files: [{ path: 'src/a.ts', note: 'Updated the value implementation.' }] }));
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'writer-1', envelopePath: slot!.envelopePath });
+    assert.equal(frame.await, 'decide', JSON.stringify(frame));
+    assert.equal(frame.data['kind'], 'failure', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'DECISION', kind: 'failure', answer: { action: 'hotfix', rootCause: 'The final value contract check exposed the change.' } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    const envelopePath = String(frame.data['envelopePath']);
+    assert.ok(envelopePath);
+    const baseArtifactHash = `sha256:${crypto.createHash('sha256').update(governedPlanText(source)).digest('hex')}`;
+    const requestEnvelope = {
+      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'The repair needs a companion path.', evidence: [],
+      scopeRequest: {
+        requestId: 'hotfix-companion', source: 'hotfix', baseArtifactHash,
+        writerRationale: 'The repair requires a companion module.',
+        delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] },
+      },
+    };
+    fs.writeFileSync(envelopePath, JSON.stringify(requestEnvelope));
+    const beforeRequest = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', envelopePath }, true);
+    assert.equal(frame.error, undefined, JSON.stringify(frame));
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), beforeRequest);
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', envelopePath });
+    assert.equal(frame.data['kind'], 'scope-deviation', JSON.stringify(frame));
+    const request = frame.data['pendingProposal'];
+    frame = await f.reply(run, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request, ruling: 'approve', rationale: 'The companion path is necessary for the accepted repair.' } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    const expandedEnvelopePath = String(frame.data['envelopePath']);
+    fs.writeFileSync(path.join(f.repo, 'src/extra.ts'), 'export const companion = true;\n');
+    fs.writeFileSync(expandedEnvelopePath, JSON.stringify({
+      schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'The approved repair is delivered.',
+      evidence: ['HOTFIX src/extra.ts | Added the required companion module.'],
+      files: [{ path: 'src/extra.ts', note: 'Added the approved companion module.' }],
+    }));
+    const beforeExpanded = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', envelopePath: expandedEnvelopePath }, true);
+    assert.equal(frame.error, undefined, JSON.stringify(frame));
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), beforeExpanded);
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', envelopePath: expandedEnvelopePath });
+    assert.equal(frame.error, undefined, JSON.stringify(frame));
+    assert.notEqual(frame.data['kind'], 'scope-deviation');
+  } finally { f.cleanup(); }
+});
+
+test('level-journal: scope-draining preview enforces the original writer envelope', async () => {
+  const f = fixture();
+  try {
+    const session = await f.initialize();
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({
+      ...f.config, 'write-concurrency': 2,
+      'write-subagents': { codex: { low: { model: ['native-stub-a', 'native-stub-b'], effort: 'low' } } },
+    }));
+    const source = `# Deliver two independent values
+
+> **TL;DR:** Preserve both value contracts.
+> **Parent:** user request
+> **Decide:** none
+> **Risk:** low — two isolated files
+> **Scope:** src/a.ts, src/b.ts
+
+## Key Decisions & Context
+- Keep each value stable.
+
+## Success Criteria
+- [SC1] Value A is preserved
+  - Changes: src/a.ts
+  - Verify: \`node -e "process.exit(0)"\`
+  - Evidence: verify
+  - Test rationale: This small retained assertion checks that the established value contract still holds.
+- [SC2] Value B is preserved
+  - Changes: src/b.ts
+  - Verify: \`node -e "process.exit(0)"\`
+  - Evidence: verify
+  - Test rationale: This small retained assertion checks that the independent value contract still holds.
+
+## Proposed Changes
+### T1 — Preserve value A
+Keep the first value stable.
+- Prerequisites: none
+- Criteria: SC1
+
+#### [MODIFY] src/a.ts
+- Preserve value A.
+
+### T2 — Preserve value B
+Keep the second value stable.
+- Prerequisites: none
+- Criteria: SC2
+
+#### [MODIFY] src/b.ts
+- Preserve value B.
+
+## Verification Plan
+### Automated Tests
+- None: Criterion commands cover both changes.
+### Manual Verification
+- Confirm each value remains stable.
+
+## Review Findings & Resolutions
+*No reviews conducted yet.*
+`;
+    const plan = path.join(f.repo, 'scope-drain.plan.md');
+    fs.writeFileSync(plan, source);
+    fs.writeFileSync(path.join(f.repo, 'src/b.ts'), 'export const other = 1;\n');
+    f.git('add', 'src', 'scope-drain.plan.md'); f.git('commit', '-qm', 'scope drain plan');
+    let frame = await f.begin('implement', session, plan);
+    const run = f.absoluteRun(frame.run);
+    frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with both values.' } });
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Two isolated, reversible value changes.', gateScope: frame.data['gateScope'] } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    assert.ok(Array.isArray(frame.data['tasks']), JSON.stringify(frame));
+    const initial = frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; envelopePath: string; worktree: string }[];
+    assert.deepEqual(initial.map(({ task, action }) => [task, action]), [['T1', 'launch'], ['T2', 'launch']]);
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: initial.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}` })) });
+    const t1 = initial.find((slot) => slot.task === 'T1')!;
+    const t2 = initial.find((slot) => slot.task === 'T2')!;
+    const baseArtifactHash = `sha256:${crypto.createHash('sha256').update(governedPlanText(source)).digest('hex')}`;
+    fs.writeFileSync(t1.envelopePath, JSON.stringify({
+      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Request a companion path before editing it.', evidence: [],
+      scopeRequest: { requestId: 't1-extra-path', source: 'task', task: 'T1', baseArtifactHash, writerRationale: 'The accepted behavior requires one companion file.', delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
+    }));
+    frame = await f.reply(run, { type: 'WRITE_ENVELOPE', task: t1.task, attempt: t1.attempt, signature: t1.signature, handle: 'writer-T1', envelopePath: t1.envelopePath });
+    assert.equal(frame.data['kind'], 'scope-deviation', JSON.stringify(frame));
+    const request = frame.data['pendingProposal'];
+    frame = await f.reply(run, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request, ruling: 'approve', rationale: 'The requested path is required by T1.' } });
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+
+    fs.writeFileSync(path.join(t2.worktree, 'src/extra.ts'), 'export const unauthorized = true;\n');
+    fs.writeFileSync(t2.envelopePath, JSON.stringify({
+      schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'Delivered value B.',
+      evidence: ['CRITERION SC2 | src/b.ts | Preserved value B.'], files: [{ path: 'src/extra.ts', note: 'Added an unapproved file for T2.' }],
+    }));
+    const receipt = { type: 'WRITE_ENVELOPE', task: 'T2', attempt: t2.attempt, signature: t2.signature, handle: 'writer-T2', envelopePath: t2.envelopePath };
+    const beforePreview = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
+    const preview = await f.reply(run, receipt, true);
+    assert.ok(preview.events?.some((event) => event.type === 'WRITE_FAILED'), JSON.stringify(preview));
+    assert.deepEqual(((preview.data['tasks'] as { task: string; paths: string[] }[]).find((slot) => slot.task === 'T2'))?.paths, ['src/b.ts']);
+    assert.equal(fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8'), beforePreview);
+    frame = await f.reply(run, receipt);
+    assert.equal(frame.await, 'write', JSON.stringify(frame));
+    assert.deepEqual(((frame.data['tasks'] as { task: string; attempt: number; paths: string[] }[]).find((slot) => slot.task === 'T2'))?.paths, ['src/b.ts']);
+    assert.equal(((frame.data['tasks'] as { task: string; attempt: number }[]).find((slot) => slot.task === 'T2'))?.attempt, t2.attempt + 1);
+    assert.equal(fs.existsSync(path.join(f.repo, 'src/extra.ts')), false);
   } finally { f.cleanup(); }
 });
 
@@ -206,12 +414,17 @@ async function checkoutRepo() {
   const ports = nodePorts();
   const handler = createCheckout({ cwd: repo, links: { create: (target, link) => fs.symlinkSync(target, link, 'junction'), remove: (link) => fs.unlinkSync(link) } });
   let id = 0;
-  const op = async (name: string, input: Record<string, unknown> = {}) => {
+  const invoke = async (name: string, input: Record<string, unknown> = {}) => {
     const [event] = await handler({ kind: 'checkout', id: `c.${++id}`, op: name as never, input }, ports, { runDir, attempt: 1 });
-    assert.ok(event?.type === 'CHECKOUT_DONE', JSON.stringify(event));
+    assert.ok(event, 'checkout handler returned an event');
+    return event;
+  };
+  const op = async (name: string, input: Record<string, unknown> = {}) => {
+    const event = await invoke(name, input);
+    assert.ok(event.type === 'CHECKOUT_DONE', JSON.stringify(event));
     return event.result as Record<string, unknown>;
   };
-  return { repo, git, write, runDir, op, read: (root: string, file: string) => fs.readFileSync(path.join(root, file), 'utf8') };
+  return { repo, git, write, runDir, ports, invoke, op, read: (root: string, file: string) => fs.readFileSync(path.join(root, file), 'utf8') };
 }
 
 test('checkout: baseline reproduces caller dirt and links ignored dependencies without deleting them on cleanup', async () => {
@@ -321,9 +534,61 @@ test('checkout: baseline and delivery preserve executable modes', { skip: proces
   assert.equal(fs.statSync(path.join(c.repo, 'src/a.ts')).mode & 0o111, 0o111);
 });
 
+test('prewrite-level: accepted deviation reapplies parked in-scope draft to changed prerequisite base', async () => {
+  const c = await checkoutRepo();
+    c.write('.env', 'local=1\n');
+    c.write('node_modules/dep/index.js', 'dependency');
+    const base = String((await c.op('init'))['base']);
+    const original = String((await c.op('task', { name: 'task-t1', revision: base, links: ['node_modules'], ignored: ['.env'] }))['path']);
+    fs.writeFileSync(path.join(original, 'src/a.ts'), 'writer draft\n');
+    fs.writeFileSync(path.join(original, 'src/new.ts'), 'untracked writer draft\n');
+
+    const prerequisite = String((await c.op('task', { name: 'task-t2', revision: base }))['path']);
+    fs.writeFileSync(path.join(prerequisite, 'src/b.ts'), 'accepted prerequisite\n');
+    const prerequisiteCandidate = await c.op('commit', { name: 'task-t2', base });
+    const integration = await c.op('integrate', { task: 'T2', candidate: prerequisiteCandidate['revision'], expected: base });
+    const revision = String(integration['revision']);
+    const name = 'task-t1-scope-2';
+    const target = path.join(c.runDir, 'wt', name);
+    const input = {
+      name, originalName: 'task-t1', revision, permitted: ['src/a.ts', 'src/new.ts'],
+      transferKey: 'scope-rebase:T1:accepted-prerequisite:signature', links: ['node_modules'], ignored: ['.env'],
+    };
+    const writeAtomic = c.ports.fs.writeBase64Atomic;
+    let interrupted = false;
+    c.ports.fs.writeBase64Atomic = (file, contents) => {
+      if (!interrupted && path.resolve(file) === path.resolve(target, 'src/new.ts')) {
+        interrupted = true;
+        throw new Error('simulated process interruption during untracked draft transfer');
+      }
+      writeAtomic(file, contents);
+    };
+    const first = await c.invoke('scope-rebase', input);
+    assert.equal(first.type, 'EFFECT_FAILED', JSON.stringify(first));
+    assert.equal(c.read(target, 'src/a.ts'), 'writer draft\n');
+    assert.equal(fs.existsSync(path.join(target, 'src/new.ts')), false);
+
+    c.ports.fs.writeBase64Atomic = writeAtomic;
+    const replay = await c.invoke('scope-rebase', input);
+    assert.equal(replay.type, 'CHECKOUT_DONE', JSON.stringify(replay));
+    if (replay.type !== 'CHECKOUT_DONE') return;
+    assert.equal(replay.result['conflict'], false);
+    assert.deepEqual(replay.result['transferred'], ['src/a.ts', 'src/new.ts']);
+    assert.equal(c.read(original, 'src/a.ts'), 'writer draft\n');
+    assert.equal(c.read(original, 'src/b.ts'), 'b1\n');
+    assert.equal(c.read(target, 'src/a.ts'), 'writer draft\n');
+    assert.equal(c.read(target, 'src/b.ts'), 'accepted prerequisite\n');
+    assert.equal(c.read(target, 'src/new.ts'), 'untracked writer draft\n');
+    assert.equal(c.read(target, '.env'), 'local=1\n');
+    assert.equal(c.read(target, 'node_modules/dep/index.js'), 'dependency');
+
+    const admitted = await c.op('commit', { name, base: revision, message: 'scope replacement' });
+    assert.deepEqual(admitted['paths'], ['src/a.ts', 'src/new.ts']);
+});
+
 // SECTION: Task graph through the public CLI
 
-type TaskSlot = { task: string; action: string; handle: string | null; worktree: string; envelopePath: string; checkpointPath: string };
+type TaskSlot = { task: string; action: string; attempt: number; signature: string; handle: string | null; worktree: string; envelopePath: string; checkpointPath: string };
 type CliFrame = Awaited<ReturnType<ReturnType<typeof fixture>['cli']>>;
 const taskSlots = (frame: CliFrame) => (frame.data['tasks'] ?? []) as TaskSlot[];
 
@@ -405,6 +670,8 @@ No reviews conducted yet.
     }
     assert.equal(frame.data['kind'], 'approval', JSON.stringify(frame));
     frame = await f.reply(run, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed with fixture graph' } });
+    assert.equal(frame.data['kind'], 'level-classification', JSON.stringify(frame));
+    frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'The fixture tasks are bounded and recoverable.', gateScope: frame.data['gateScope'] } });
     assert.equal(frame.await, 'write', JSON.stringify(frame));
     return { f, session, run, frame, independent };
   } catch (error) { f.cleanup(); throw error; }
@@ -412,7 +679,7 @@ No reviews conducted yet.
 
 type TaskGraph = Awaited<ReturnType<typeof taskGraph>>;
 async function launchTasks(g: TaskGraph, frame: CliFrame) {
-  return g.f.reply(g.run, { type: 'WRITE_LAUNCHED', tasks: taskSlots(frame).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, handle: `writer-${slot.task}` })) });
+  return g.f.reply(g.run, { type: 'WRITE_LAUNCHED', tasks: taskSlots(frame).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}` })) });
 }
 async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' = 'valid') {
   const slot = taskSlots(frame).find((item) => item.task === id)!;
@@ -436,10 +703,10 @@ test('${name}', () => { assert.equal(value, 2);${dependent ? ' assert.equal(shar
       ...(id === 'T1' ? [`RED-MATRIX SC1 | tests/a.test.js:${name} | exit 1 test:${name}`] : [])],
     files: [{ path: `src/${file}.ts`, note: 'Exports value two.' }, { path: `tests/${file}.test.js`, note: 'Checks the interface.' }],
   }));
-  return g.f.reply(g.run, { type: 'WRITE_ENVELOPE', task: id, envelopePath: slot.envelopePath });
+  return g.f.reply(g.run, { type: 'WRITE_ENVELOPE', task: id, attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, envelopePath: slot.envelopePath });
 }
 
-test('task graph: cap two releases consumers after accepted prerequisite and resumes retained handles', async () => {
+test('prewrite-level: live CLI taskGraph resolves classification before writer launch', async () => {
   const g = await taskGraph(2), f = g.f;
   try {
     assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1']);
@@ -494,7 +761,8 @@ test('task graph: failed branch leaves an independent writer running and blocks 
   try {
     assert.deepEqual(taskSlots(g.frame).map((slot) => slot.task), ['T1', 'T2']);
     let frame = await launchTasks(g, g.frame);
-    frame = await g.f.reply(g.run, { type: 'WRITE_FAILED', task: 'T1', model: 'native-stub', kind: 'integrity', reason: 'fixture scope violation' });
+    const failedSlot = taskSlots(frame).find((slot) => slot.task === 'T1')!;
+    frame = await g.f.reply(g.run, { type: 'WRITE_FAILED', task: 'T1', attempt: failedSlot.attempt, signature: failedSlot.signature, handle: failedSlot.handle!, model: 'native-stub', kind: 'integrity', reason: 'fixture scope violation' });
     assert.deepEqual(taskSlots(frame).map((slot) => [slot.task, slot.handle]), [['T2', 'writer-T2']]);
     frame = await finishTask(g, frame, 'T2');
     assert.equal(frame.await, 'decide'); assert.equal(frame.data['kind'], 'failure');

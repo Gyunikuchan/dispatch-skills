@@ -1,6 +1,7 @@
 // @ts-check
 
-import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand } from '../core/types.ts';
+import type { Await, CheckoutOp, Effect, Event, HostEvent, Machine, RunStartedEvent, TreeFingerprint, VerifyCommand, LevelGateScope, LevelClassificationAnswer, LevelRecommendationAnswer, ScopeAdjustment, ScopeCriterionDefinition, ScopeDeviation, ScopeProposal } from '../core/types.ts';
+import { stableValue } from '../domain/stable-value.ts';
 import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
@@ -10,7 +11,7 @@ import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type Fa
 import { classifyDrift } from '../policy/drift.ts';
 import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
 import { selectTaskBrief, validateDesignTraceability } from '../domain/plan.ts';
-import { activeTasks, checkpointPathOf, failureItems, initialTasks, readyTasks, taskCriteria, taskRedCriteria, taskTestPaths, worktreeName, writeConcurrency, type TaskRecord, type Tasks } from './implement-tasks.ts';
+import { activeTasks, checkpointPathOf, failureItems, initialTasks, invalidatesIntegration, rependTasks, readyTasks, reconcileTasks, taskCriteria, taskRedCriteria, taskTestPaths, worktreeName, writeConcurrency, type TaskRecord, type Tasks } from './implement-tasks.ts';
 import { slugOf } from './plan.ts';
 import type { DesignBinding } from './implement-types.ts';
 
@@ -59,9 +60,16 @@ export type Context = {
   stalled: { purpose: 'baseline' | 'final'; rows: readonly VerifyRecord[] } | null;
   revisions: readonly { artifact: 'plan'; reason: string; beforeHash: string; afterHash: string; rebind: { retained: readonly string[]; pending: readonly string[]; removed: readonly string[] } }[];
   revisionReviewRound: number;
+  levelGatePassed: boolean;
+  gateScope: LevelGateScope | null;
+  levelAssessment: LevelClassificationAnswer | null;
+  levelChoice: LevelRecommendationAnswer | null;
+  scopeAdjustments: readonly ScopeAdjustment[];
+  scopeNotice: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
+  scopeRebaseQueue: readonly string[];
 };
 
-type CheckoutStep = 'init' | 'task' | 'relaunch' | 'commit' | 'red' | 'integrate' | 'reset' | 'rewind' | 'deliver' | 'cleanup';
+type CheckoutStep = 'init' | 'task' | 'relaunch' | 'scope-rebase' | 'commit' | 'red' | 'integrate' | 'reset' | 'rewind' | 'deliver' | 'cleanup';
 
 export type ImplementState =
   | { tag: 'revision-request'; c: Context; parent: ImplementState; event: Extract<HostEvent, { type: 'REVISE' }> }
@@ -81,10 +89,17 @@ export type ImplementState =
   | { tag: 'baseline'; c: Context; effectId: string }
   | { tag: 'baseline-snapshot'; c: Context; effectId: string; results: readonly VerifyRecord[] }
   | { tag: 'baseline-decision'; c: Context; items: readonly VerifyRecord[] }
+  | { tag: 'level-classification'; c: Context; gateScope: LevelGateScope; resume: LevelGateResume }
+  | { tag: 'level-recommendation'; c: Context; assessment: LevelClassificationAnswer; resume: LevelGateResume }
+  | { tag: 'scope-adjudication'; c: Context; request: ScopeProposal; task: string | null; active: readonly string[]; hotfixResume: HotfixResume | null }
+  | { tag: 'scope-user-decision'; c: Context; request: ScopeProposal; task: string | null; active: readonly string[]; orchestratorRationale: string; hotfixResume: HotfixResume | null }
+  | { tag: 'scope-draining'; c: Context; request: ScopeProposal | null; adjustment: ScopeAdjustment | null; requester: string | null; active: readonly string[]; drained: readonly string[]; stopAfterDrain: boolean; hotfixResume: HotfixResume | null; rejectedScopeRequests?: readonly { task: string; requestId: string | null; summary: string }[] }
+  | { tag: 'scope-drain-envelope'; c: Context; parent: Extract<ImplementState, { tag: 'scope-draining' }>; effectId: string; task: string }
   | { tag: 'approval'; c: Context }
   | { tag: 'needs-user'; c: Context; ids: readonly string[] }
   | { tag: 'task-checkout'; c: Context; effectId: string; step: CheckoutStep; task: string | null; reason: string | null }
   | { tag: 'task-brief'; c: Context; effectId: string; task: string }
+  | { tag: 'task-prewrite-snapshot'; c: Context; effectId: string; task: string }
   | { tag: 'tasks'; c: Context }
   | { tag: 'task-envelope'; c: Context; effectId: string; task: string }
   | { tag: 'task-verify'; c: Context; effectId: string; task: string; purpose: 'red' | 'green' | 'integration'; previous: string | null }
@@ -104,6 +119,8 @@ export type ImplementState =
 
 type S = Step<ImplementState>;
 type RecoveryOrigin = Extract<ImplementState, { tag: 'failure' | 'baseline-decision' }>;
+type LevelGateResume = { kind: 'tasks' } | { kind: 'baseline-hotfix'; origin: Extract<ImplementState, { tag: 'baseline-decision' }>; answer: Extract<FailureAnswer, { action: 'hotfix' }> };
+type HotfixResume = { origin: RecoveryOrigin; answer: Extract<FailureAnswer, { action: 'hotfix' }> };
 const emptyCounters: Counters = {};
 const nonEmpty = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
@@ -135,6 +152,7 @@ function baseContext(run: RunStartedEvent): Context {
     approvedRedExceptions: [], redExceptionRulings: {}, concernRulings: {}, phase: 'setup', tasks: {}, integration: null,
     approval: null, changedPaths: [], finalGate: 'pending', failureReason: null,
     adoptedPaths: [], finalFocus: [], withdrawnHotfix: [], retryContext: null, stalled: null, revisions: [], revisionReviewRound: 0,
+    levelGatePassed: false, gateScope: null, levelAssessment: null, levelChoice: null, scopeAdjustments: [], scopeNotice: null, scopeRebaseQueue: [],
   };
 }
 
@@ -169,10 +187,15 @@ function reviewCtxCounters(review: ReviewState, fallback: Counters): Counters {
   return 'c' in review ? review.c.counters : fallback;
 }
 
+export function planReviewContext(c: Context, invocationContext: string | null | undefined): string | null {
+	const context = invocationContext ?? null;
+	return c.designBinding ? JSON.stringify({ invocationContext: context, invocationLevel: c.run.level, invocationLevelSource: c.run.levelSource }) : context;
+}
+
 function startReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'plan', 'fix', c0.planPath);
   if (!built.ok) return beginFailure(c0, built.error);
-  const spec = c0.designBinding ? { ...built.spec, context: `${built.spec.context}\nGoverning design binding: ${JSON.stringify(c0.designBinding)}` } : built.spec;
+  const spec = { ...built.spec, context: planReviewContext(c0, built.spec.context) };
   const result = beginReview(spec, `${c0.machinePath ?? 'implement'}.plan-review`, c0.counters);
   return fromPlanReview(c0, result);
 }
@@ -240,8 +263,53 @@ export function beginApproval(c: Context): S {
   return c.designBinding ? beginPostApproval({ ...c, approval: { by: 'design', quote: `${c.designBinding.approval.quote} (${c.designBinding.revision}, ${c.designBinding.increment})` } }) : stay({ tag: 'approval', c });
 }
 
+function gateScope(c: Context): LevelGateScope {
+  const plan = c.plan as ParsedPlan;
+  return {
+    planHash: c.planHash as string,
+    objective: plan.box['TL;DR'] ?? plan.title ?? c.planPath,
+    invariants: [...plan.keyDecisions],
+    criteria: plan.criteria.map((row) => ({ id: row.id, title: row.title, changes: [...row.changes], verify: row.verify.map((item) => item.command), review: row.review ?? null, evidence: row.evidence ?? 'verify' })),
+    approvedPaths: approvedPaths(plan),
+    commandMappings: commandMappings(plan).map((row) => ({ command: row.command, criteria: [...row.criteria], paths: [...row.paths], final: row.final })),
+    baselineEvidence: c.baseline.map((row) => ({ command: row.command, status: row.status, exit: row.exit, inputFingerprint: row.inputFingerprint })),
+    phaseObligations: { writer: c.writer ? [...c.writer.models, ...(c.writer.effort ? [`effort:${c.writer.effort}`] : [])] : [], review: ['code review under the settled level and configured skip policy'] },
+    remainingIncrements: [...(c.designBinding?.governingDesign?.remainingIncrements ?? c.designBinding?.remainingIncrements ?? [])],
+    design: c.designBinding?.governingDesign ?? null,
+  };
+}
+
+function beginLevelGate(c: Context, resume: LevelGateResume): S {
+  if (c.levelGatePassed) return resumeLevelGate(c, resume);
+  if (!c.plan || !c.planHash) return beginFailure(c, 'Cannot classify implementation level before the governing plan is bound.');
+  const scope = gateScope(c);
+  return stay({ tag: 'level-classification', c: { ...c, gateScope: scope }, gateScope: scope, resume });
+}
+
+function resumeLevelGate(c: Context, resume: LevelGateResume): S {
+  if (resume.kind === 'tasks') return beginTasks(c);
+  return beginHotfix({ ...resume.origin, c }, resume.answer);
+}
+
+function finishLevelGate(c0: Context, assessment: LevelClassificationAnswer, choice: LevelRecommendationAnswer | null, resume: LevelGateResume): S {
+  const explicit = c0.run.levelSource === 'explicit';
+  const selected = explicit ? choice?.choice === 'adopt' ? assessment.evaluatedLevel : c0.run.level : assessment.evaluatedLevel;
+  const writer = writerConfig(c0.run.config, c0.run.orchestrator, selected);
+  if (!writer.ok) return beginFailure(c0, writer.error);
+  const levelChoice = choice;
+  const settled = { ...c0 };
+  delete settled.pendingWriter;
+  const c: Context = {
+    ...settled, run: { ...c0.run, level: selected }, writer: writer.value, writerError: null,
+    levelGatePassed: true, gateScope: assessment.gateScope, levelAssessment: assessment, levelChoice,
+  };
+  return resumeLevelGate(c, resume);
+}
+
+function levelOf(value: string): number { return value === 'low' ? 0 : value === 'medium' ? 1 : value === 'high' ? 2 : 3; }
+
 function redCriteria(c: Context): PlanCriterion[] {
-  return (c.plan?.criteria ?? []).filter((criterion) => criterion.evidence === 'red');
+  return effectivePlan(c).criteria.filter((criterion) => criterion.evidence === 'red');
 }
 
 function activeRedCriteria(c: Context): PlanCriterion[] { return redCriteria(c).filter((criterion) => !criterion.redException); }
@@ -249,14 +317,47 @@ function activeRedCriteria(c: Context): PlanCriterion[] { return redCriteria(c).
 function beginPostApproval(c: Context): S {
   const exceptionIds = redCriteria(c).filter((criterion) => criterion.redException).map((criterion) => criterion.id);
   if (exceptionIds.some((id) => !c.approvedRedExceptions.includes(id))) return stay({ tag: 'needs-user', c, ids: exceptionIds.filter((id) => !c.approvedRedExceptions.includes(id)) });
-  return beginTasks(c);
+  return beginLevelGate(c, { kind: 'tasks' });
 }
 
 // SECTION: Task scheduler
 
-function checkout(c0: Context, step: CheckoutStep, op: CheckoutOp, input: Readonly<Record<string, unknown>>, task: string | null = null, reason: string | null = null): S {
+function checkout(c0: Context, step: CheckoutStep, op: Exclude<CheckoutOp, 'scope-rebase'>, input: Readonly<Record<string, unknown>>, task: string | null = null, reason: string | null = null): S {
   const { c, id } = effectId(c0, 'checkout');
   return { state: { tag: 'task-checkout', c, effectId: id, step, task, reason }, effects: [{ kind: 'checkout', id, op, input }] };
+}
+
+function captureTaskBaseline(c0: Context, id: string, incrementAttempt: boolean): S {
+  const record = c0.tasks[id] as TaskRecord;
+  if (!record.worktree) return checkout(withTask(c0, id, { worktreeNames: [...new Set([...(record.worktreeNames ?? []), worktreeName('task', id)])] }), 'task', 'task', { name: worktreeName('task', id), revision: c0.integration?.head, reset: true, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] }, id);
+  const prepared = withTask(c0, id, {
+    ...(incrementAttempt ? { attempt: record.attempt + 1 } : {}), status: 'pending', modelIndex: 0, handle: null,
+    baseline: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false,
+  });
+  const { c, id: snapshotId } = effectId(prepared, 'snapshot');
+  return { state: { tag: 'task-prewrite-snapshot', c, effectId: snapshotId, task: id }, effects: [{ kind: 'snapshot', id: snapshotId, since: null, cwd: record.worktree }] };
+}
+
+function rebaseTaskDraft(c0: Context, id: string): S {
+  const record = c0.tasks[id] as TaskRecord;
+  const revision = c0.integration?.head;
+  if (!record.worktree || !revision) return schedule(withTask(c0, id, { preserveDraft: false }));
+  if (record.input === revision) return captureTaskBaseline(withTask(c0, id, { preserveDraft: true }), id, true);
+  const originalName = record.worktree.split(/[\\/]/).at(-1) as string;
+  const name = worktreeName('task', `${id}-scope-${record.attempt + 1}`);
+  const tracked = withTask(c0, id, { worktreeNames: [...new Set([...(record.worktreeNames ?? []), originalName, name])] });
+  const { c, id: effectIdValue } = effectId(tracked, 'checkout');
+  const transferKey = `${c0.scopeNotice?.requestId ?? 'scope'}:${id}:${revision}:${record.signature}`;
+  return {
+    state: { tag: 'task-checkout', c, effectId: effectIdValue, step: 'scope-rebase', task: id, reason: null },
+    effects: [{ kind: 'checkout', id: effectIdValue, op: 'scope-rebase', input: { name, originalName, revision, permitted: planTask(c0, id)?.paths ?? [], transferKey, links: c0.integration?.links ?? [], ignored: c0.integration?.ignored ?? [] } }],
+  };
+}
+
+function nextScopeRebase(c: Context): S {
+  const [id, ...rest] = c.scopeRebaseQueue;
+  if (!id) return schedule({ ...c, scopeRebaseQueue: [] });
+  return rebaseTaskDraft({ ...c, scopeRebaseQueue: rest }, id);
 }
 
 function beginTasks(c0: Context): S {
@@ -274,7 +375,76 @@ function withTask(c: Context, id: string, patch: Partial<TaskRecord>): Context {
   return { ...c, tasks: { ...c.tasks, [id]: { ...c.tasks[id] as TaskRecord, ...patch } } };
 }
 
-function planTask(c: Context, id: string): PlanTask | undefined { return (c.plan as ParsedPlan).tasks.find((task) => task.id === id); }
+function applicableScopeAdjustments(c: Context): ScopeAdjustment[] {
+  return c.scopeAdjustments.filter((adjustment) => {
+    const { proposal } = adjustment;
+    if (c.designBinding) {
+      if (proposal.source === 'design-revision') {
+        if (!proposal.affectedIncrements.includes(c.designBinding.increment)) return false;
+      } else if (adjustment.ownerIncrement !== c.designBinding.increment) return false;
+    } else if (adjustment.ownerIncrement !== undefined) return false;
+    return proposal.source === 'design-revision'
+      ? c.designBinding?.revision === proposal.proposedArtifactHash
+      : proposal.baseArtifactHash === c.planHash;
+  });
+}
+
+function planCriterion(definition: ScopeCriterionDefinition): PlanCriterion {
+  return {
+    ...definition, line: 0, verify: definition.verify.map((command) => ({ ...command })),
+  };
+}
+
+export function effectivePlan(c: Context): ParsedPlan {
+  const base = c.plan as ParsedPlan;
+  // NOTE: Revisions fold earlier overlays into their artifact; retain only overlays based on the current artifact.
+  const applicable = applicableScopeAdjustments(c);
+  const implementationAdjustments = applicable.filter(({ proposal }) => proposal.source !== 'design-revision');
+  const taskAdjustments = (id: string) => implementationAdjustments.filter(({ proposal }) =>
+    proposal.source === 'task' && proposal.task === id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(id));
+  const tasks = base.tasks.map((task) => {
+    const adjustments = taskAdjustments(task.id);
+    const paths = [...new Set([...task.paths, ...adjustments.flatMap(({ proposal }) => [
+      ...proposal.delta.paths,
+      ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.changes),
+    ])])].sort();
+    const criteria = [...new Set([...task.criteria, ...adjustments.flatMap(({ proposal }) => proposal.delta.criteria)])].sort();
+    const obligations = adjustments.flatMap(({ proposal }) => proposal.delta.obligations);
+    const summary = obligations.length ? `${task.summary}\nApproved obligations: ${obligations.join('; ')}` : task.summary;
+    return { ...task, paths, criteria, summary };
+  });
+  const definitions = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.criterionDefinitions ?? []);
+  const criteria = [...base.criteria];
+  for (const definition of definitions) {
+    const replacement = planCriterion(definition);
+    const index = criteria.findIndex((row) => row.id === replacement.id);
+    if (index < 0) criteria.push(replacement); else criteria[index] = replacement;
+  }
+  const extraPaths = [...new Set(applicable.flatMap(({ proposal }) => [
+    ...proposal.delta.paths,
+    ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.changes),
+  ]))];
+  const changes = [...base.changes, ...extraPaths.filter((file) => !base.changes.some((row) => row.path === file)).map((file) => ({ action: 'MODIFY' as const, path: file, note: 'Accepted implementation scope adjustment', command: null, line: 0 }))];
+  const commands = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.commands);
+  const finalCommands = implementationAdjustments.flatMap(({ proposal }) => [
+    ...(proposal.delta.finalCommands ?? []),
+    ...(proposal.delta.criterionDefinitions ?? []).flatMap((definition) => definition.verify.filter((item) => item.final).map((item) => item.command)),
+  ]);
+  const criterionCommands = definitions.flatMap((definition) => definition.verify.filter((item) => !item.final).map((item) => item.command));
+  const phaseDuties = implementationAdjustments.flatMap(({ proposal }) => proposal.delta.phaseDuties);
+  const keyDecisions = [...base.keyDecisions, ...applicable.flatMap(({ proposal }) => proposal.delta.obligations)];
+  return {
+    ...base, tasks, criteria, changes, keyDecisions,
+    verification: { ...base.verification, automated: [...new Set([...base.verification.automated, ...commands, ...criterionCommands])], manual: [...new Set([...base.verification.manual, ...phaseDuties])] },
+    finalCommands: [...new Set([...base.finalCommands, ...finalCommands])],
+  };
+}
+
+function planTask(c: Context, id: string): PlanTask | undefined { return effectivePlan(c).tasks.find((task) => task.id === id); }
+
+function taskWorktreeName(record: TaskRecord): string {
+  return record.worktree?.split(/[\\/]/).at(-1) || worktreeName('task', record.id);
+}
 
 /** Prepares the first ready task while a slot is free; otherwise waits on running writers, delivers, or asks once. */
 function schedule(c: Context): S {
@@ -282,17 +452,19 @@ function schedule(c: Context): S {
     const { pendingWriter, ...bound } = c;
     c = { ...bound, writer: pendingWriter };
   }
-  const plan = c.plan as ParsedPlan;
+  const plan = effectivePlan(c);
   // NOTE: a revision invalidated accepted work; once writers drain, rebuild integration from the baseline.
   if (c.integration?.rewind) {
     if (activeTasks(c.tasks).length) return stay({ tag: 'tasks', c });
-    return checkout({ ...c, tasks: initialTasks(plan) }, 'rewind', 'reset', { name: 'integration', revision: c.integration.base });
+    return checkout({ ...c, tasks: rependTasks(c.tasks, plan) }, 'rewind', 'reset', { name: 'integration', revision: c.integration.base });
   }
+  if (c.scopeRebaseQueue.length) return nextScopeRebase(c);
   const next = readyTasks(plan, c.tasks, MAX_WRITE_ATTEMPTS)[0];
   if (next && activeTasks(c.tasks).length < writeConcurrency(c.run.config)) {
     const record = c.tasks[next.id] as TaskRecord;
     const integration = c.integration!;
-    return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [] }), 'task', 'task',
+    if (record.preserveDraft && record.worktree) return record.input === integration.head ? captureTaskBaseline(c, next.id, true) : rebaseTaskDraft(c, next.id);
+    return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false }), 'task', 'task',
       { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links, ignored: integration.ignored }, next.id);
   }
   if (activeTasks(c.tasks).length) return stay({ tag: 'tasks', c });
@@ -305,28 +477,47 @@ function schedule(c: Context): S {
 }
 
 function taskFailed(c: Context, id: string, reason: string): S {
-  return schedule(withTask(c, id, { status: 'failed', handle: null, reason }));
+  const record = c.tasks[id] as TaskRecord;
+  return schedule(withTask(c, id, { status: 'failed', failures: record.failures + 1, handle: null, reason }));
+}
+
+function briefDesignBinding(c: Context): Readonly<Record<string, unknown>> | null {
+  const binding = c.designBinding;
+  if (!binding) return null;
+  return {
+    revision: binding.revision, increment: binding.increment,
+    settledLevel: c.run.level, levelSource: c.run.levelSource,
+    objective: binding.governingDesign?.objective ?? null,
+    invariants: binding.governingDesign?.invariants ?? [],
+    fields: binding.governingDesign?.fields ?? {},
+    contract: binding.contract, paths: binding.paths,
+    remainingIncrements: binding.governingDesign?.remainingIncrements ?? binding.remainingIncrements ?? [],
+  };
 }
 
 function taskBriefInput(c: Context, record: TaskRecord): Readonly<Record<string, unknown>> {
-  const plan = c.plan as ParsedPlan;
+  const plan = effectivePlan(c);
   const brief = selectTaskBrief(plan, record.id)!;
   const testPaths = taskTestPaths(plan, brief.task);
   return {
     planPath: c.planPath, planHash: c.planHash,
-    designBinding: c.designBinding, reopenedDefects: c.designBinding?.repair,
+    designBinding: briefDesignBinding(c), reopenedDefects: c.designBinding?.repair,
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c.planPath },
     task: {
-      id: brief.task.id, title: brief.task.title, summary: brief.task.summary, graph: brief.summary, attempt: record.attempt,
+      id: brief.task.id, title: brief.task.title, summary: brief.task.summary, graph: brief.summary, attempt: record.attempt, signature: record.signature,
       prerequisites: brief.prerequisites.map((task) => ({ id: task.id, integrated: c.tasks[task.id]?.integrated ?? null })),
       dependents: brief.dependents.map((task) => task.id), worktree: record.worktree, inputRevision: record.input,
       checkpoint: testPaths.length ? { root: record.worktree, paths: testPaths } : null,
     },
-    settledScope: { paths: brief.task.paths, approvedPaths: brief.task.paths, changes: brief.changes },
+    settledScope: { paths: brief.task.paths, approvedPaths: brief.task.paths, changes: brief.changes, acceptedAdjustments: applicableScopeAdjustments(c).filter(({ proposal }) => proposal.source === 'task' && proposal.task === record.id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(record.id)).map(({ proposal, approvedBy }) => ({
+      requestId: proposal.requestId, source: proposal.source, ...(proposal.source === 'task' ? { task: proposal.task } : proposal.source === 'plan-revision' ? { affectedTasks: proposal.affectedTasks } : {}),
+      approvedBy, delta: proposal.delta,
+    })) },
     criteria: brief.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence, preExisting: criterion.preExisting, redException: criterion.redException, testRationale: criterion.testRationale })),
     envelopeSchema: {
       schemaVersion: 1, stage: 'COMPLETE',
-      status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string',
+      status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED', 'SCOPE_REQUEST'], summary: 'non-empty string',
+      scopeRequest: { requestId: '<stable id>', source: 'task', task: record.id, baseArtifactHash: c.planHash, writerRationale: '<why expansion is required>', delta: { paths: [], criteria: [], criterionDefinitions: [], obligations: [], commands: [], finalCommands: [], phaseDuties: [], increments: [] } },
       evidence: [
         'CRITERION <SC#> | <one path from that criterion Changes list> | <delivered behavior>',
         ...(testPaths.length ? ['RED-MATRIX <SC#> | <approved-test-path>:<leaf test> | exit <nonzero> test:<observed failure identifier>'] : []),
@@ -345,7 +536,17 @@ function taskBriefInput(c: Context, record: TaskRecord): Readonly<Record<string,
 
 function taskVerifyCommands(c: Context, id: string): { command: string; mapping: CommandMapping }[] {
   const task = planTask(c, id);
-  return task ? commandMappings(c.plan as ParsedPlan).filter((mapping) => !mapping.final && mapping.criteria.some((criterion) => task.criteria.includes(criterion))).map((mapping) => ({ command: mapping.command, mapping })) : [];
+  if (!task) return [];
+  const mappings = new Map(commandMappings(effectivePlan(c)).map((mapping) => [mapping.command, mapping]));
+  for (const adjustment of applicableScopeAdjustments(c)) {
+    const proposal = adjustment.proposal;
+    if (!(proposal.source === 'task' && proposal.task === id || proposal.source === 'plan-revision' && proposal.affectedTasks.includes(id))) continue;
+    for (const command of proposal.delta.commands) {
+      const old = mappings.get(command);
+      mappings.set(command, { command, criteria: [...new Set([...(old?.criteria ?? []), ...proposal.delta.criteria])], paths: [...new Set([...(old?.paths ?? []), ...proposal.delta.paths])], final: false });
+    }
+  }
+  return [...mappings.values()].filter((mapping) => !mapping.final && (!mapping.criteria.length || mapping.criteria.some((criterion) => task.criteria.includes(criterion)))).map((mapping) => ({ command: mapping.command, mapping }));
 }
 
 function taskVerify(c0: Context, id: string, purpose: 'red' | 'green' | 'integration', cwd: string, commands: readonly { command: string; mapping: CommandMapping | null }[], previous: string | null = null): S {
@@ -373,9 +574,19 @@ function accept(c0: Context, id: string, revision: string): S {
 }
 
 function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'ENVELOPE_CHECKED' }>): S {
-  const plan = c.plan as ParsedPlan, task = planTask(c, id), record = c.tasks[id] as TaskRecord;
+  const plan = effectivePlan(c), task = planTask(c, id), record = c.tasks[id] as TaskRecord;
   if (!task) return taskFailed(c, id, 'Task is no longer in the governed plan.');
   const envelope = event.envelope;
+  if (isRecord(envelope) && envelope['status'] === 'SCOPE_REQUEST') {
+    const outside = diffPaths(event).filter((file) => !task.paths.includes(file));
+    if (outside.length) return taskFailed(c, id, `Scope request rejected after out-of-envelope edits: ${outside.join(', ')}.`);
+    const request = envelope['scopeRequest'] as ScopeDeviation | undefined;
+    if (event.defects.length || !request || request.source !== 'task' || request.task !== id || request.baseArtifactHash !== c.planHash) return taskFailed(c, id, `Scope request rejected: ${event.defects.join('; ') || 'request must bind this task and the active plan hash.'}`);
+    const defect = scopeDeltaDefect(plan, request);
+    if (defect) return taskFailed(c, id, `Scope request rejected: ${defect}`);
+    if (request.delta.paths.every((file) => task.paths.includes(file)) && !request.delta.criteria.length && !request.delta.obligations.length && !request.delta.commands.length && !(request.delta.finalCommands?.length) && !request.delta.phaseDuties.length && !(request.delta.criterionDefinitions?.length) && !request.delta.increments.length) return taskFailed(c, id, 'Scope request does not add any work outside its current brief.');
+    return beginScopeAdjudication(c, request, id, null);
+  }
   if (event.defects.length || !isWriterEnvelope(envelope)) return taskFailed(c, id, `Envelope rejected: ${event.defects.join('; ') || 'malformed envelope.'}`);
   const outside = diffPaths(event).filter((file) => !task.paths.includes(file));
   if (outside.length) return taskFailed(c, id, `Writer changed paths outside the task scope: ${outside.join(', ')}.`);
@@ -388,17 +599,104 @@ function admitEnvelope(c: Context, id: string, event: Extract<Event, { type: 'EN
   if (red.defects.length) return taskFailed(c, id, `RED matrix rejected: ${red.defects.join('; ')}`);
   const concerns = envelope.status === 'DONE_WITH_CONCERNS' ? (envelope.concerns ?? []).map((item) => `${id}: ${item}`) : [];
   const next = withTask({ ...c, concerns: [...new Set([...c.concerns, ...concerns])] }, id, { redRows: red.rows });
-  return checkout(next, 'commit', 'commit', { name: worktreeName('task', id), base: record.input, message: `dispatch task ${id} attempt ${record.attempt}` }, id);
+  return checkout(next, 'commit', 'commit', { name: taskWorktreeName(record), base: record.input, message: `dispatch task ${id} attempt ${record.attempt}` }, id);
+}
+
+function scopeDeltaDefect(plan: ParsedPlan, request: ScopeDeviation): string | null {
+  if (request.delta.increments.length) return 'task and hotfix requests cannot add design increments.';
+  const known = new Set(plan.criteria.map((criterion) => criterion.id));
+  const definitions = request.delta.criterionDefinitions ?? [];
+  const defined = new Set(definitions.map((definition) => definition.id));
+  const missing = request.delta.criteria.filter((id) => !known.has(id) && !defined.has(id));
+  if (missing.length) return `new criteria require full definitions: ${[...new Set(missing)].join(', ')}.`;
+  if (definitions.some((definition) => !request.delta.criteria.includes(definition.id))) return 'every criterion definition must appear in delta.criteria.';
+  const allowed = new Set([...approvedPaths(plan), ...request.delta.paths]);
+  const outside = definitions.flatMap((definition) => definition.changes.filter((file) => !allowed.has(file)));
+  if (outside.length) return `criterion changes must be declared in delta.paths or already approved: ${[...new Set(outside)].join(', ')}.`;
+  return null;
+}
+
+function beginScopeAdjudication(c: Context, request: ScopeProposal, task: string | null, hotfixResume: HotfixResume | null): S {
+  let tasks = c.tasks;
+  for (const record of activeTasks(c.tasks)) {
+    if (record.id === task || record.handle) continue;
+    tasks = { ...tasks, [record.id]: { ...record, status: 'pending', handle: null, baseline: null, preserveDraft: false, brief: null, candidate: null, integrated: null, redRows: [] } };
+  }
+  const settled = tasks === c.tasks ? c : { ...c, tasks };
+  const active = activeTasks(settled.tasks).map((record) => record.id).filter((id) => id !== task);
+  return stay({ tag: 'scope-adjudication', c: settled, request, task, active, hotfixResume });
+}
+
+function scopeDrain(c: Context, request: ScopeProposal | null, adjustment: ScopeAdjustment | null, requester: string | null, active: readonly string[], stopAfterDrain: boolean, hotfixResume: HotfixResume | null): S {
+  if (!active.length) {
+    if (stopAfterDrain) return stop(c, 'User stopped at scope adjudication after all active writer attempts were drained.');
+    return finishScopeDrain(c, request, adjustment, requester, [], hotfixResume);
+  }
+  return stay({ tag: 'scope-draining', c, request, adjustment, requester, active, drained: [], stopAfterDrain, hotfixResume });
+}
+
+function acceptScopeRuling(c: Context, request: ScopeProposal, requester: string | null, active: readonly string[], hotfixResume: HotfixResume | null, adjustment: ScopeAdjustment | null): S {
+  const next = adjustment ? {
+    ...c,
+    scopeAdjustments: [...c.scopeAdjustments, { ...adjustment, ...(c.designBinding ? { ownerIncrement: c.designBinding.increment } : {}) }],
+    scopeNotice: { requestId: request.requestId, approvedBy: adjustment.approvedBy, rationale: adjustment.rationale, ...(adjustment.quote ? { quote: adjustment.quote } : {}) },
+  } : c;
+  return scopeDrain(next, request, adjustment, requester, active, false, hotfixResume);
+}
+
+function finishScopeDrain(c: Context, request: ScopeProposal | null, adjustment: ScopeAdjustment | null, requester: string | null, drained: readonly string[], hotfixResume: HotfixResume | null): S {
+  if (hotfixResume) return beginHotfix({ ...hotfixResume.origin, c }, hotfixResume.answer);
+  const parked = [...new Set([...(requester ? [requester] : []), ...drained])];
+  if (!c.plan || !parked.length) return beginTasks(c);
+  const rebound = reconcileTasks(c.tasks, effectivePlan(c));
+  const tasks = { ...rebound };
+  for (const id of parked) {
+    const before = c.tasks[id], after = tasks[id];
+    if (!before || !after) continue;
+    tasks[id] = {
+      ...after, status: 'pending', attempt: before.attempt,
+      failures: before.signature === after.signature ? before.failures : after.failures,
+      worktree: before.worktree, input: before.input, baseline: null, preserveDraft: !!before.worktree,
+      handle: null, brief: null, candidate: null, integrated: null, redRows: [],
+    };
+  }
+  const integration = c.integration && invalidatesIntegration(c.tasks, tasks) ? { ...c.integration, rewind: true } : c.integration;
+  const next: Context = { ...c, tasks, integration, scopeRebaseQueue: parked.filter((id) => !!tasks[id]?.worktree) };
+  return schedule(next);
+}
+
+function terminalDuringScopeDrain(state: Extract<ImplementState, { tag: 'scope-draining' }>, task: string, failed: boolean): S {
+  const before = state.c.tasks[task];
+  if (!before || !state.active.includes(task)) return stay(state);
+  const after = withTask(state.c, task, {
+    status: 'pending', handle: null, baseline: null, brief: null, candidate: null,
+    preserveDraft: !!before.worktree, ...(failed ? { failures: before.failures + 1 } : {}),
+  });
+  const active = state.active.filter((id) => id !== task), drained = [...state.drained, task];
+  const next = { ...state, c: after, active, drained };
+  if (active.length) return stay(next);
+  if (state.stopAfterDrain) return stop(after, 'User stopped after every original writer attempt produced terminal evidence.');
+  return finishScopeDrain(after, state.request, state.adjustment, state.requester, drained, state.hotfixResume);
+}
+
+function drainEnvelope(state: Extract<ImplementState, { tag: 'scope-draining' }>, event: Extract<HostEvent, { type: 'WRITE_ENVELOPE' }>): S {
+  if (!event.task) return stay(state);
+  const record = state.c.tasks[event.task] as TaskRecord;
+  const { c, id } = effectId(state.c, 'check-envelope');
+  const adjustmentId = state.adjustment?.proposal.requestId;
+  const priorScope = adjustmentId ? { ...c, scopeAdjustments: c.scopeAdjustments.filter((item) => item.proposal.requestId !== adjustmentId) } : c;
+  return { state: { tag: 'scope-drain-envelope', c, parent: state, effectId: id, task: event.task }, effects: [{ kind: 'check-envelope', id, envelopePath: event.envelopePath, permitted: planTask(priorScope, event.task)?.paths ?? [], ...(record.baseline ? { since: record.baseline } : {}), ...(record.worktree ? { cwd: record.worktree } : {}) }] };
 }
 
 function redReplay(c: Context, id: string): S {
   const record = c.tasks[id] as TaskRecord;
   if (!record.redRows.length) return greenVerify(c, id);
-  return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, candidate: record.candidate, permitted: taskTestPaths(c.plan as ParsedPlan, planTask(c, id)!), links: c.integration!.links, ignored: c.integration!.ignored }, id);
+  const plan = effectivePlan(c);
+  return checkout(c, 'red', 'red', { name: worktreeName('red', id), base: record.input, checkpointPath: record.brief?.checkpointPath, candidate: record.candidate, permitted: taskTestPaths(plan, planTask(c, id)!), links: c.integration!.links, ignored: c.integration!.ignored }, id);
 }
 
 function redCommands(c: Context, id: string): { command: string; mapping: CommandMapping | null }[] | string {
-  const plan = c.plan as ParsedPlan, rows = (c.tasks[id] as TaskRecord).redRows;
+  const plan = effectivePlan(c), rows = (c.tasks[id] as TaskRecord).redRows;
   const mappings = commandMappings(plan);
   const commands = new Map<string, { command: string; mapping: CommandMapping | null }>();
   for (const criterion of taskRedCriteria(plan, planTask(c, id)!)) {
@@ -431,11 +729,21 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
       return schedule({ ...c, integration: { path: text('path'), base: text('base'), head: text('base'), links: names('linked'), ignored: names('copiedIgnored') } });
     }
     case 'task': {
-      const next = withTask(c, id, { worktree: text('path'), input: text('revision') });
-      const { c: withId, id: briefId } = effectId(next, 'write-brief');
-      return { state: { tag: 'task-brief', c: withId, effectId: briefId, task: id }, effects: [{ kind: 'write-brief', id: briefId, stage: 'task', input: taskBriefInput(next, next.tasks[id] as TaskRecord) }] };
+      const worktree = text('path');
+      const name = worktree.split(/[\\/]/).at(-1);
+      const record = c.tasks[id] as TaskRecord;
+      const next = withTask(c, id, { worktree, input: text('revision'), worktreeNames: [...new Set([...(record.worktreeNames ?? []), ...(name ? [name] : [])])] });
+      return captureTaskBaseline(next, id, false);
     }
-    case 'relaunch': return stay({ tag: 'tasks', c: withTask(c, id, { status: 'running', handle: null, modelIndex: (c.tasks[id] as TaskRecord).modelIndex + 1 }) });
+    case 'relaunch': {
+      const record = c.tasks[id] as TaskRecord;
+      return stay({ tag: 'tasks', c: withTask(c, id, { status: 'running', attempt: record.attempt + 1, handle: null, modelIndex: record.modelIndex + 1 }) });
+    }
+    case 'scope-rebase': {
+      if (result['conflict'] === true || !text('path') || !text('revision')) return taskFailed(c, id, `Scope rebase preserved the original draft but could not apply it cleanly: ${list('conflicts').join(', ') || text('detail') || 'invalid transfer result'}.`);
+      const next = withTask(c, id, { worktree: text('path'), input: text('revision'), baseline: null, preserveDraft: true, handle: null, brief: null, candidate: null, integrated: null, redRows: [], status: 'pending' });
+      return nextScopeRebase(next);
+    }
     case 'commit': {
       const outside = list('paths').filter((file) => !planTask(c, id)!.paths.includes(file));
       if (outside.length) return taskFailed(c, id, `Candidate changes paths outside the task scope: ${outside.join(', ')}.`);
@@ -457,7 +765,7 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
     case 'deliver': {
       if (list('conflicts').length) return beginFailure(c, `Delivery refused: caller paths changed since the baseline: ${list('conflicts').join(', ')}. Integrated work is preserved in ${c.integration!.path}.`);
       const delivered = [...list('transferred'), ...list('already')];
-      const names = [...Object.keys(c.tasks).flatMap((task) => [worktreeName('task', task), worktreeName('red', task)]), 'integration'];
+      const names = [...new Set([...Object.entries(c.tasks).flatMap(([task, record]) => [worktreeName('task', task), worktreeName('red', task), ...(record.worktreeNames ?? []), ...(record.worktree ? [taskWorktreeName(record)] : [])]), 'integration'])];
       return checkout({ ...markMutation(c, delivered), phase: 'delivered', changedPaths: [...new Set([...c.changedPaths, ...delivered])].sort() }, 'cleanup', 'cleanup', { names, links: c.integration!.links });
     }
     case 'cleanup': {
@@ -468,8 +776,15 @@ function stepCheckout(state: Extract<ImplementState, { tag: 'task-checkout' }>, 
   }
 }
 
-function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' | 'task-envelope' | 'task-verify' | 'delivered-snapshot' }>, event: Event): S {
+function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' | 'task-prewrite-snapshot' | 'task-envelope' | 'task-verify' | 'delivered-snapshot' }>, event: Event): S {
   switch (state.tag) {
+    case 'task-prewrite-snapshot': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return taskFailed(state.c, state.task, `pre-write snapshot failed: ${event.cls}: ${event.detail}`);
+      if (event.type !== 'SNAPSHOT' || !answers(event, state.effectId) || !isFingerprint(event.fingerprint)) return stay(state);
+      const next = withTask(state.c, state.task, { baseline: event.fingerprint });
+      const { c, id } = effectId(next, 'write-brief');
+      return { state: { tag: 'task-brief', c, effectId: id, task: state.task }, effects: [{ kind: 'write-brief', id, stage: 'task', input: taskBriefInput(next, next.tasks[state.task] as TaskRecord) }] };
+    }
     case 'task-brief': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return taskFailed(state.c, state.task, `write-brief failed: ${event.cls}: ${event.detail}`);
       if (event.type !== 'BRIEF_READY' || !answers(event, state.effectId)) return stay(state);
@@ -485,14 +800,14 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' 
       if (event.type === 'WRITE_ENVELOPE' && event.task) {
         const record = state.c.tasks[event.task] as TaskRecord;
         const { c, id } = effectId(withTask(state.c, event.task, { status: 'submitted' }), 'check-envelope');
-        return { state: { tag: 'task-envelope', c, effectId: id, task: event.task }, effects: [{ kind: 'check-envelope', id, envelopePath: event.envelopePath, permitted: [...planTask(c, event.task)?.paths ?? []], cwd: record.worktree as string }] };
+        return { state: { tag: 'task-envelope', c, effectId: id, task: event.task }, effects: [{ kind: 'check-envelope', id, envelopePath: event.envelopePath, permitted: [...planTask(c, event.task)?.paths ?? []], ...(record.baseline ? { since: record.baseline } : {}), cwd: record.worktree as string }] };
       }
       if (event.type === 'WRITE_FAILED' && event.task) {
         const record = state.c.tasks[event.task] as TaskRecord;
         const terminal = event.kind === 'sandbox-unsupported' || event.kind === 'integrity';
         const reason = `${event.model}: ${event.kind}: ${event.reason}`;
         if (terminal || record.modelIndex + 1 >= (state.c.writer?.models.length ?? 0)) return taskFailed(state.c, event.task, `Writer cascade exhausted or reached a terminal failure: ${reason}`);
-        return checkout(withTask(state.c, event.task, { status: 'submitted', handle: null }), 'relaunch', 'reset', { name: worktreeName('task', event.task), revision: record.input }, event.task, reason);
+        return checkout(withTask(state.c, event.task, { status: 'submitted', handle: null }), 'relaunch', 'reset', { name: taskWorktreeName(record), revision: record.input }, event.task, reason);
       }
       return stay(state);
     }
@@ -533,20 +848,20 @@ function failVerify(state: Extract<ImplementState, { tag: 'task-verify' }>, reas
 function retryAfterFailure(c: Context): S {
   if (c.phase === 'delivered') return startGeneratedOrFinal(c);
   if (c.phase === 'setup') return !c.plan ? parsePlan(c, 'initial') : c.approval ? beginPostApproval(c) : beginBaseline(c);
-  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.attempt < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const } : record]));
+  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const } : record]));
   return beginTasks({ ...c, tasks });
 }
 
 function markMutation(c: Context, paths: readonly string[]): Context {
   const epoch = c.mutationEpoch + 1;
-  const criteria = c.plan?.criteria ?? [];
+  const criteria = c.plan ? effectivePlan(c).criteria : [];
   const criterionMutation = { ...c.criterionMutation };
   for (const criterion of criteria) if (!paths.length || criterion.changes.some((file) => paths.includes(file))) criterionMutation[criterion.id] = epoch;
   return { ...c, mutationEpoch: epoch, criterionMutation };
 }
 
 function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generated', commands: readonly { command: string; mapping?: CommandMapping | null; reuse?: VerifyRecord | null }[], cwd?: string): { c: Context; id: string; effect: Effect } {
-  const mappings = commandMappings(c0.plan as ParsedPlan);
+  const mappings = commandMappings(effectivePlan(c0));
   const prepared: VerifyCommand[] = commands.map((item) => {
     const mapping = item.mapping ?? mappings.find((row) => row.command === item.command) ?? null;
     const command = commandEffect(item.command, mapping, scopePaths(c0), environmentKey(c0));
@@ -603,7 +918,7 @@ function actualRedDefects(c: Context, rows: readonly RedMatrixRow[], records: re
 }
 
 function askEvidence(c0: Context, verify: readonly VerifyRecord[]): S {
-  const ids = (c0.plan as ParsedPlan).criteria.filter((criterion) => {
+  const ids = effectivePlan(c0).criteria.filter((criterion) => {
     const evidence = c0.evidence[criterion.id];
     return !evidence || evidence.planHash !== c0.planHash || evidence.mutationEpoch < (c0.criterionMutation[criterion.id] ?? 0);
   }).map((criterion) => criterion.id);
@@ -617,7 +932,8 @@ function continueAfterDelivery(c: Context): S {
 function startCodeReview(c0: Context): S {
   const built = reviewSpecFromRun(c0.run, 'code', 'fix', '');
   if (!built.ok) return beginFailure(c0, built.error);
-  const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: (c0.plan?.criteria ?? []).map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
+  const plan = effectivePlan(c0);
+  const governing = { planPath: c0.planPath, walkthroughPath: walkthroughPathOf(typeof c0.run.overrides['sessionDir'] === 'string' ? c0.run.overrides['sessionDir'] : '.', typeof c0.run.overrides['artifactSlug'] === 'string' ? c0.run.overrides['artifactSlug'] : slugOf(c0.designBinding?.path ?? c0.run.argument, 'implement'), c0.designBinding?.increment), ...(c0.designBinding ? { designPath: c0.designBinding.path } : {}), criteria: plan.criteria.map((row) => ({ id: row.id, changes: row.changes, verify: row.verify.map((v) => v.command) })) };
   const baseContext = built.spec.context ?? c0.run.argument;
   const result = beginReview({ ...built.spec, governing, context: `${baseContext}\nFinal focus paths: ${[...new Set([...c0.changedPaths, ...c0.finalFocus])].join(', ') || 'governed implementation paths'}` }, `${c0.machinePath ?? 'implement'}.code-review`, c0.counters);
   return fromCodeReview(c0, result);
@@ -642,7 +958,7 @@ function startGeneratedOrFinal(c0: Context): S {
 }
 
 function runGeneratedOrFinal(c0: Context): S {
-  const generated = generatedCommands(c0.plan as ParsedPlan);
+  const generated = generatedCommands(effectivePlan(c0));
   if (!generated.length) return startFinalVerify(c0);
   const batch = beginVerify(c0, 'generated', generated.map((item) => ({ command: item.command, mapping: null })));
   const before = c0.lastFingerprint;
@@ -651,7 +967,7 @@ function runGeneratedOrFinal(c0: Context): S {
 }
 
 function startFinalVerify(c0: Context): S {
-  const mappings = commandMappings(c0.plan as ParsedPlan);
+  const mappings = commandMappings(effectivePlan(c0));
   const batch = beginVerify(c0, 'final', mappings.map((mapping) => ({ command: mapping.command, mapping, reuse: c0.records[mapping.command] ?? null })));
   const before = c0.lastFingerprint;
   if (!before) return beginFailure(c0, 'No tree fingerprint is available before final verification.');
@@ -659,7 +975,7 @@ function startFinalVerify(c0: Context): S {
 }
 
 function finishEvidence(c: Context, verify: readonly VerifyRecord[]): S {
-  const plan = c.plan as ParsedPlan;
+  const plan = effectivePlan(c);
   const stale = plan.criteria.filter((criterion) => {
     const item = c.evidence[criterion.id];
     return !item || item['outcome'] !== 'pass' || item.planHash !== c.planHash || item.mutationEpoch < (c.criterionMutation[criterion.id] ?? 0);
@@ -675,7 +991,7 @@ function recordEvidence(c: Context, ids: readonly string[], values: Readonly<Rec
   for (const id of ids) {
     const value = values[id];
     if (!isRecord(value) || !(value['outcome'] === 'pass' || waiver && value['outcome'] === 'waived') || !nonEmpty(value['evidence'])) return null;
-    const criterion = c.plan?.criteria.find((criterion) => criterion.id === id);
+    const criterion = effectivePlan(c).criteria.find((criterion) => criterion.id === id);
     const redProvenance = criterion?.evidence !== 'red' ? 'not-required' : c.redMatrix.some((row) => row.id === id && row.exit !== 0 && row.tests.length > 0) ? 'observed' : 'waived';
     const attribution = waiver ?? c.redExceptionRulings[id];
     if (redProvenance === 'waived' && !attribution) return null;
@@ -700,7 +1016,13 @@ function startFailureFromEffect(c: Context, cls: string, detail: string): S {
 
 export function initialImplement(): ImplementState { return { tag: 'booting', counters: emptyCounters }; }
 export function beginBoundImplement(run: RunStartedEvent, binding: DesignBinding, counters: Counters): S {
-  const c = { ...baseContext(run), counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement` };
+  const c = {
+    ...baseContext(run), counters, designBinding: binding, machinePath: `design.${binding.increment.toLowerCase()}.implement`,
+    levelGatePassed: binding.levelGatePassed ?? false, gateScope: binding.gateScope ?? null,
+    levelAssessment: binding.levelAssessment ?? null, levelChoice: binding.levelChoice ?? null,
+    scopeAdjustments: binding.scopeAdjustments ?? [],
+    scopeNotice: binding.scopeNotice ?? null,
+  };
   return snapshot(c, 'author');
 }
 
@@ -773,7 +1095,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'DECISION' || event.kind !== 'baseline') return stay(state);
       if (event.answer === 'stop') return stop(state.c, 'User stopped after baseline failures; repository work is preserved.');
       const recovery = failureAnswer(event.answer);
-      if (recovery?.action === 'hotfix') return beginHotfix(state, recovery);
+      if (recovery?.action === 'hotfix') return beginLevelGate(state.c, { kind: 'baseline-hotfix', origin: state, answer: recovery });
       const available = failingBaselineIds(state.items);
       if (!isRecord(event.answer) || event.answer['action'] !== 'accept-known-red' || !Array.isArray(event.answer['ids'])) return stay(state);
       const ids = event.answer['ids'];
@@ -786,6 +1108,60 @@ function applyImplement(state: ImplementState, event: Event): S {
       const approval = approvalAnswer(event.answer);
       return approval ? beginPostApproval({ ...state.c, approval }) : stay(state);
     }
+    case 'level-classification': {
+      if (event.type === 'DECISION' && event.kind === 'run-stop') return stop(state.c, 'User stopped before implementation; no production writer was launched.');
+      if (event.type !== 'DECISION' || event.kind !== 'level-classification' || !isRecord(event.answer)) return stay(state);
+      const assessment = event.answer as unknown as LevelClassificationAnswer;
+      if (state.c.run.levelSource === 'explicit' && levelOf(assessment.evaluatedLevel) > levelOf(state.c.run.level)) {
+        return stay({ tag: 'level-recommendation', c: { ...state.c, levelAssessment: assessment }, assessment, resume: state.resume });
+      }
+      return finishLevelGate(state.c, assessment, null, state.resume);
+    }
+    case 'level-recommendation': {
+      if (event.type === 'DECISION' && event.kind === 'run-stop') return stop(state.c, 'User stopped before implementation; no production writer was launched.');
+      if (event.type !== 'DECISION' || event.kind !== 'level-recommendation' || !isRecord(event.answer)) return stay(state);
+      return finishLevelGate(state.c, state.assessment, event.answer as unknown as LevelRecommendationAnswer, state.resume);
+    }
+    case 'scope-adjudication': {
+      if (event.type === 'DECISION' && event.kind === 'run-stop') return scopeDrain(state.c, null, null, null, state.active, true, state.hotfixResume);
+      if (event.type !== 'DECISION' || event.kind !== 'scope-deviation' || !isRecord(event.answer)) return stay(state);
+      const rationale = String(event.answer['rationale']).trim();
+      if (event.answer['ruling'] === 'disagree') return stay({ tag: 'scope-user-decision', c: state.c, request: state.request, task: state.task, active: state.active, orchestratorRationale: rationale, hotfixResume: state.hotfixResume });
+      const adjustment: ScopeAdjustment = { proposal: state.request, approvedBy: 'orchestrator', rationale };
+      return acceptScopeRuling(state.c, state.request, state.task, state.active, state.hotfixResume, adjustment);
+    }
+    case 'scope-user-decision': {
+      if (event.type === 'DECISION' && event.kind === 'run-stop') return scopeDrain(state.c, null, null, null, state.active, true, state.hotfixResume);
+      if (event.type !== 'DECISION' || event.kind !== 'scope-deviation-user' || !isRecord(event.answer)) return stay(state);
+      if (event.answer['choice'] === 'decline') return acceptScopeRuling(state.c, state.request, state.task, state.active, state.hotfixResume, null);
+      const quote = String(event.answer['quote']).trim();
+      const adjustment: ScopeAdjustment = { proposal: state.request, approvedBy: 'user', rationale: `Accepted after orchestrator disagreement: ${state.orchestratorRationale}`, quote };
+      return acceptScopeRuling(state.c, state.request, state.task, state.active, state.hotfixResume, adjustment);
+    }
+    case 'scope-draining': {
+      if (event.type === 'WRITE_CANCELLED') return terminalDuringScopeDrain(state, event.task, false);
+      if (event.type === 'WRITE_FAILED') return event.task ? terminalDuringScopeDrain(state, event.task, true) : stay(state);
+      if (event.type === 'WRITE_ENVELOPE' && event.task) return drainEnvelope(state, event);
+      return stay(state);
+    }
+    case 'scope-drain-envelope': {
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return terminalDuringScopeDrain({ ...state.parent, c: state.c }, state.task, true);
+      if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
+      if (isRecord(event.envelope) && event.envelope['status'] === 'SCOPE_REQUEST') {
+        const request = event.envelope['scopeRequest'];
+        const rejectedScopeRequest = {
+          task: state.task,
+          requestId: isRecord(request) && typeof request['requestId'] === 'string' ? request['requestId'] : null,
+          summary: typeof event.envelope['summary'] === 'string' ? event.envelope['summary'] : 'Writer requested a scope change during an active scope drain.',
+        };
+        return stay({
+          ...state.parent,
+          c: state.c,
+          rejectedScopeRequests: [...(state.parent.rejectedScopeRequests ?? []), rejectedScopeRequest],
+        });
+      }
+      return terminalDuringScopeDrain({ ...state.parent, c: state.c }, state.task, event.defects.length > 0 || !isWriterEnvelope(event.envelope));
+    }
     case 'needs-user': {
       if (event.type !== 'DECISION' || event.kind !== 'needs-user') return stay(state);
       const ruling = needsUserRuling(state.ids, event.answer);
@@ -793,10 +1169,10 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (ruling.decision === 'stop') return stop(state.c, `User stopped at RED exception ruling for ${state.ids.join(', ')}.`);
       const redExceptionRulings = { ...state.c.redExceptionRulings, ...Object.fromEntries(state.ids.map((id) => [id, { decision: 'accept' as const, by: ruling.by, quote: ruling.quote }])) };
       const c = { ...state.c, redExceptionRulings, approvedRedExceptions: [...new Set([...state.c.approvedRedExceptions, ...state.ids])] };
-      return beginTasks(c);
+      return beginLevelGate(c, { kind: 'tasks' });
     }
     case 'task-checkout': return stepCheckout(state, event);
-    case 'tasks': case 'task-brief': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': return stepTasks(state, event);
+    case 'tasks': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': return stepTasks(state, event);
     case 'evidence': {
       if (event.type !== 'EVIDENCE') return stay(state);
       const c = recordEvidence(state.c, state.ids, event.criteria);
@@ -825,7 +1201,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (event.type !== 'VERIFY_DONE' || !answers(event, state.effectId) || event.purpose !== 'generated' || !isFingerprint(event.fingerprint)) return stay(state);
       const rows = recordsFrom(resultEventRows(event), state.c, 'generated');
       if (!rows || rows.some((row) => row.exit !== 0)) return beginFailure(state.c, `Generated command failed: ${rows?.filter((row) => row.exit !== 0).map((row) => `${row.command} (${row.logPath})`).join('; ') ?? 'invalid results'}`);
-      const paths = generatedCommands(state.c.plan as ParsedPlan).map((item) => item.path);
+      const paths = generatedCommands(effectivePlan(state.c)).map((item) => item.path);
       const { c, id } = effectId({ ...state.c, lastFingerprint: event.fingerprint }, 'snapshot');
       return { state: { tag: 'generated-snapshot', c, effectId: id, before: state.before, paths }, effects: [{ kind: 'snapshot', id, since: state.before }] };
     }
@@ -863,7 +1239,7 @@ function applyImplement(state: ImplementState, event: Event): S {
       if (answer.action === 'stop') return stop(state.c, `Stopped after failure: ${state.reason}. Work preserved; changed paths: ${state.changedPaths.join(', ') || 'none reported'}.`);
       if (answer.action === 'retry') return retryAfterFailure({ ...state.c, retryContext: { rootCause: answer.rootCause, failure: state.reason } });
       if (answer.action === 'hotfix') return beginHotfix(state, answer);
-      const c = recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria, { by: 'user', quote: answer.quote });
+      const c = recordEvidence(state.c, effectivePlan(state.c).criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote });
       const waived = c ? Object.values(c.evidence).filter((row) => row['outcome'] === 'waived').length : 0;
       return c ? stay({ tag: 'complete', c: { ...c, finalGate: `Manual completion by user: ${answer.quote}` }, summary: `User manually completed implementation: ${Object.keys(c.evidence).length - waived} passed; ${waived} waived. ${answer.quote}` }) : stay(state);
     }
@@ -873,11 +1249,11 @@ function applyImplement(state: ImplementState, event: Event): S {
   }
 }
 
-function redTestPaths(c: Context): string[] { return [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort(); }
+function redTestPaths(c: Context): string[] { return c.plan ? [...new Set(activeRedCriteria(c).flatMap((criterion) => criterion.changes.filter(isTestPath)))].sort() : []; }
 
-function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(c.plan) : [], ...c.adoptedPaths])].sort(); }
+function scopePaths(c: Context): string[] { return [...new Set([...c.plan ? approvedPaths(effectivePlan(c)) : [], ...c.adoptedPaths])].sort(); }
 function withContext(state: ImplementState, c: Context): ImplementState { return 'c' in state ? { ...state, c } as ImplementState : state; }
-const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'EVIDENCE', 'DECISION', 'REVISE']);
+const hostTypes = new Set(['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED', 'EVIDENCE', 'DECISION', 'REVISE']);
 
 export function stepImplement(state: ImplementState, event: Event): S {
   if (state.tag === 'checking-host-event' || state.tag === 'drift' && event.type !== 'REVISE') return stepRecovery(state, event);
@@ -913,13 +1289,13 @@ function beginHotfix(origin: RecoveryOrigin, answer: Extract<FailureAnswer, { ac
   }
   if (!c0.writer?.models[0] || !c0.stalled) return stay(origin);
   const { c, id } = effectId(c0, 'write-brief');
-  const plan = c0.plan as ParsedPlan;
+  const plan = effectivePlan(c0);
   return { state: { tag: 'hotfix-brief', c, origin, before: c0.lastFingerprint, effectId: id, answer }, effects: [{ kind: 'write-brief', id, stage: 'hotfix', input: {
-    planPath: c0.planPath, planHash: c0.planHash, designBinding: c0.designBinding,
+    planPath: c0.planPath, planHash: c0.planHash, designBinding: briefDesignBinding(c0),
     governingOutcome: { title: plan.title, outcome: plan.box['TL;DR'] ?? plan.title ?? c0.planPath },
-    settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes },
+    settledScope: { paths: scopePaths(c0), approvedPaths: scopePaths(c0), changes: plan.changes, acceptedAdjustments: applicableScopeAdjustments(c0).filter(({ proposal }) => proposal.source === 'hotfix').map(({ proposal, approvedBy }) => ({ requestId: proposal.requestId, source: proposal.source, approvedBy, delta: proposal.delta })) },
     criteria: plan.criteria.map((criterion) => ({ id: criterion.id, title: criterion.title, changes: criterion.changes, verify: criterion.verify, evidence: criterion.evidence })),
-    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED'], summary: 'non-empty string' },
+    envelopeSchema: { schemaVersion: 1, stage: 'COMPLETE', status: ['DONE', 'DONE_WITH_CONCERNS', 'NEEDS_CONTEXT', 'BLOCKED', 'SCOPE_REQUEST'], summary: 'non-empty string' },
     rules: { keyDecisions: plan.keyDecisions, repository: c0.run.repo, approval: c0.approval, writerStage: 'hotfix' },
     priorFindings: [], evidence: [], retryContext: c0.retryContext, rootCause: answer.rootCause, stalledCheck: c0.stalled,
     hotfix: { maxFiles: HOTFIX_MAX_FILES, maxLines: HOTFIX_MAX_LINES, singleShot: true, model: c0.writer.models[0], external: answer.external, preRed: false, paths: scopePaths(c0) },
@@ -967,11 +1343,17 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       if (event.type === 'WRITE_FAILED') return stay(withContext(state.origin, state.c));
       if (event.type !== 'WRITE_ENVELOPE' || event.envelopePath !== state.brief.envelopePath) return stay(state);
       const { c, id } = effectId(state.c, 'check-envelope');
-      return { state: { tag: 'hotfix-envelope', c, origin: state.origin, before: state.before, effectId: id, answer: state.answer }, effects: [{ kind: 'check-envelope', id, envelopePath: state.brief.envelopePath, permitted: scopePaths(c) }] };
+      return { state: { tag: 'hotfix-envelope', c, origin: state.origin, before: state.before, effectId: id, answer: state.answer }, effects: [{ kind: 'check-envelope', id, envelopePath: state.brief.envelopePath, permitted: scopePaths(c), since: state.before }] };
     }
     case 'hotfix-envelope': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
       if (event.type !== 'ENVELOPE_CHECKED' || !answers(event, state.effectId)) return stay(state);
+      if (!event.defects.length && isRecord(event.envelope) && event.envelope['status'] === 'SCOPE_REQUEST') {
+        const request = event.envelope['scopeRequest'] as ScopeDeviation | undefined;
+        const defect = request ? scopeDeltaDefect(effectivePlan(state.c), request) : 'request is missing or malformed.';
+        if (request?.source === 'hotfix' && request.baseArtifactHash === state.c.planHash && !defect) return beginScopeAdjudication(state.c, request, null, { origin: state.origin, answer: state.answer });
+        return stay(withContext(state.origin, { ...state.c, concerns: [...state.c.concerns, `Hotfix scope request rejected: ${defect ?? 'request did not bind to the active plan hash.'}`] }));
+      }
       if (event.defects.length || !isWriterEnvelope(event.envelope) || !['DONE', 'DONE_WITH_CONCERNS'].includes(event.envelope.status)) return stay(withContext(state.origin, state.c));
       return hotfixSnapshot(state);
     }
@@ -988,7 +1370,7 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       const changedPaths = after.changed.map((item) => item.path);
       const c0 = markMutation({ ...state.c, lastFingerprint: event.fingerprint, stalled, adoptedPaths: [...new Set([...state.c.adoptedPaths, ...changedPaths])], finalFocus: [...new Set([...state.c.finalFocus, ...changedPaths])] }, changedPaths);
       const { c, id } = effectId(c0, 'verify');
-      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: event.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(c.plan as ParsedPlan).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
+      return { state: { tag: 'hotfix-verify', c, origin: state.origin, before: event.fingerprint, effectId: id, changedPaths }, effects: [{ kind: 'verify', id, purpose: 'hotfix', commands: stalled.rows.map((row) => commandEffect(row.command, commandMappings(effectivePlan(c)).find((m) => m.command === row.command) ?? null, scopePaths(c), environmentKey(c))) }] };
     }
     case 'hotfix-verify': {
       if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay(withContext(state.origin, state.c));
@@ -1020,11 +1402,12 @@ export function implementAwait(state: ImplementState): Await | null {
     case 'plan-review': case 'code-review': return reviewAwait(state.review);
     case 'tasks': case 'hotfix-write': return 'write';
     case 'baseline-decision': return 'decide';
-    case 'approval': case 'needs-user': case 'concerns': case 'failure': case 'drift': return 'decide';
+    case 'approval': case 'level-classification': case 'level-recommendation': case 'scope-adjudication': case 'scope-user-decision': case 'needs-user': case 'concerns': case 'failure': case 'drift': return 'decide';
+    case 'scope-draining': return 'write';
     case 'evidence': return 'evidence';
     case 'complete': case 'stopped': case 'failed': return 'done';
     case 'booting': case 'starting': case 'parsing': case 'baseline-preflight': case 'baseline': case 'baseline-snapshot':
-    case 'task-checkout': case 'task-brief': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': case 'post-review-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
+    case 'task-checkout': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'scope-drain-envelope': case 'delivered-snapshot': case 'post-review-snapshot': case 'generated-verify': case 'generated-snapshot': case 'final-verify': case 'failure-snapshot':
     case 'checking-host-event': case 'hotfix-brief': case 'hotfix-envelope': case 'hotfix-snapshot': case 'hotfix-verify': case 'revision-request': return null;
     default: return never(state, 'implement state');
   }
@@ -1035,14 +1418,27 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     case 'author': return { artifact: 'plan', path: state.c.planPath, template: IMPLEMENT_TEMPLATE, ...(state.defects.length ? { defects: state.defects } : {}) };
     case 'plan-review': case 'code-review': return reviewData(state.review);
     case 'tasks': return {
-      stage: 'task', effort: state.c.writer?.effort, concurrency: writeConcurrency(state.c.run.config),
+      stage: 'task', effort: state.c.writer?.effort, concurrency: writeConcurrency(state.c.run.config), settledLevel: state.c.run.level,
+      levelAssessment: state.c.levelAssessment, levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
       tasks: activeTasks(state.c.tasks).filter((record) => record.status === 'running').map((record) => ({
-        task: record.id, action: record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt,
+        task: record.id, action: record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt, signature: record.signature,
         model: state.c.writer?.models[record.modelIndex], briefPath: record.brief?.path, briefSha256: record.brief?.sha256,
         envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath, worktree: record.worktree, paths: planTask(state.c, record.id)?.paths ?? [],
       })),
     };
-    case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity as known red or stop.', ['accept-known-red', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
+    case 'baseline-decision': return decideData('baseline', 'The baseline has nonzero results. Accept every listed failure identity, choose an inline hotfix, or stop.', ['accept-known-red', 'inline-hotfix', 'stop'], state.items.map((row) => ({ command: row.command, failureId: row.failureId, diagnostic: row.diagnostic, logPath: row.logPath })));
+    case 'level-classification': return { ...decideData('level-classification', 'Assess the complete settled implementation scope once before the first production write. Return the evaluated level, concise evidence-based rationale and this exact gateScope.', ['low', 'medium', 'high'], [{ level: state.c.run.level, source: state.c.run.levelSource }]), gateScope: state.gateScope, settledLevel: state.c.run.level, stopAllowed: true };
+    case 'level-recommendation': return { ...decideData('level-recommendation', `The implementation assessment is ${state.assessment.evaluatedLevel}: ${state.assessment.rationale}. Choose whether to adopt it or retain the explicit ${state.c.run.level}.`, ['adopt', 'retain']), assessedLevel: state.assessment.evaluatedLevel, rationale: state.assessment.rationale, explicitLevel: state.c.run.level, gateScope: state.assessment.gateScope, stopAllowed: true };
+    case 'scope-adjudication': return { ...decideData('scope-deviation', 'Adjudicate this required scope delta against the task objective and invariants. Approve it to continue under the settled level, or disagree so the user can decide.', ['approve', 'disagree', 'stop']), pendingProposal: state.request, writerRationale: state.request.source === 'task' || state.request.source === 'hotfix' ? state.request.writerRationale : state.request.rationale, activeWriters: state.active, stopAllowed: true, settledLevel: state.c.run.level };
+    case 'scope-user-decision': return { ...decideData('scope-deviation-user', 'The orchestrator disagrees with the proposed delta. Show both rationales and ask the user whether to accept or decline it.', ['accept', 'decline', 'stop']), pendingProposal: state.request, writerRationale: state.request.source === 'task' || state.request.source === 'hotfix' ? state.request.writerRationale : state.request.rationale, orchestratorRationale: state.orchestratorRationale, activeWriters: state.active, stopAllowed: true, settledLevel: state.c.run.level };
+    case 'scope-draining': return {
+      stage: 'scope-draining', stopAfterDrain: state.stopAfterDrain, settledLevel: state.c.run.level, scopeNotice: state.c.scopeNotice,
+      pendingProposal: state.request, tasks: state.active.map((id) => {
+        const record = state.c.tasks[id] as TaskRecord;
+        return { task: id, attempt: record.attempt, signature: record.signature, handle: record.handle, envelopePath: record.brief?.envelopePath, model: state.c.writer?.models[record.modelIndex], paths: planTask(state.c, id)?.paths ?? [] };
+      }),
+      rejectedScopeRequests: state.rejectedScopeRequests ?? [],
+    };
     case 'approval': return decideData('approval', 'Approve these plan paths and verification commands before any writer stage.', ['approve', 'stop'], [{ by: 'required', quote: 'required', paths: state.c.plan ? approvedPaths(state.c.plan) : [], commands: state.c.plan ? commandMappings(state.c.plan).map((row) => row.command) : [] }]);
     case 'needs-user': return decideData('needs-user', `Rule on RED exceptions for ${state.ids.join(', ')} before production work.`, ['accept', 'stop'], state.ids);
     case 'concerns': return decideData('concerns', 'Resolve the writer concerns before code review.', ['accept', 'stop'], state.items);
@@ -1050,12 +1446,25 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
       ? decideData('failure', state.reason, ['retry', 'revise', 'stop'], [{ tasks: state.c.plan ? failureItems(state.c.plan, state.c.tasks) : [], maxAttempts: MAX_WRITE_ATTEMPTS, worktrees: state.c.integration?.path ?? null, workPreserved: true }])
       : decideData('failure', state.reason, ['hotfix', 'retry', 'manual-complete', 'revise', 'stop'], [{ changedPaths: state.changedPaths, workPreserved: true, hotfixWithdrawn: state.c.withdrawnHotfix.includes(state.c.phase === 'delivered' ? 'delivered' : 'baseline') }]);
     case 'drift': return decideData('drift', 'Rule adopt or stop for every changed path before applying the parked event.', ['adopt', 'stop'], state.paths);
-    case 'hotfix-write': return { stage: 'hotfix', singleShot: true, model: state.c.writer?.models[0], models: state.c.writer?.models.slice(0, 1), briefPath: state.brief.path, briefSha256: state.brief.sha256, envelopePath: state.brief.envelopePath, rootCause: state.answer.rootCause, limits: { files: HOTFIX_MAX_FILES, lines: HOTFIX_MAX_LINES } };
+    case 'hotfix-write': {
+      const acceptedHotfixAdjustments = applicableScopeAdjustments(state.c).filter(({ proposal }) => proposal.source === 'hotfix');
+      const scopeNotice = state.c.scopeNotice && acceptedHotfixAdjustments.some(({ proposal }) => proposal.requestId === state.c.scopeNotice?.requestId)
+        ? state.c.scopeNotice : null;
+      return {
+      stage: 'hotfix', singleShot: true, model: state.c.writer?.models[0], models: state.c.writer?.models.slice(0, 1),
+      briefPath: state.brief.path, briefSha256: state.brief.sha256, envelopePath: state.brief.envelopePath, rootCause: state.answer.rootCause,
+      scopeNotice,
+      acceptedAdjustments: acceptedHotfixAdjustments.map(({ proposal, approvedBy, rationale, quote }) => ({
+        requestId: proposal.requestId, approvedBy, rationale, ...(quote ? { quote } : {}), delta: proposal.delta,
+      })),
+      limits: { files: HOTFIX_MAX_FILES, lines: HOTFIX_MAX_LINES },
+      };
+    }
     case 'evidence': return {
       purpose: state.purpose,
       summary: state.verify.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, diagnostic: row.diagnostic, status: row.status, failureId: row.failureId })),
       criteria: state.ids.map((id) => {
-        const criterion = state.c.plan?.criteria.find((entry) => entry.id === id);
+        const criterion = effectivePlan(state.c).criteria.find((entry) => entry.id === id);
         return { id, title: criterion?.title ?? id, evidenceClass: criterion?.evidence, planHash: state.c.planHash, mutationEpoch: state.c.mutationEpoch };
       }),
     };
@@ -1070,9 +1479,10 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
   const review = c.codeReview ? reviewData(c.codeReview) : {};
   return {
     planPath: c.planPath, planHash: c.planHash, mutationEpoch: c.mutationEpoch, acceptedBaseline: c.acceptedBaseline,
+    settledLevel: c.run.level, levelSource: c.run.levelSource, levelAssessment: c.levelAssessment, levelChoice: c.levelChoice, gateScope: c.gateScope, scopeAdjustments: c.scopeAdjustments,
     adoptedPaths: c.adoptedPaths, finalFocus: c.finalFocus, revisions: c.revisions,
     approval: c.approval, redExceptionRulings: c.redExceptionRulings, concernRulings: c.concernRulings,
-    criteria: (c.plan?.criteria ?? []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
+    criteria: (c.plan ? effectivePlan(c).criteria : []).map((criterion) => ({ id: criterion.id, evidence: c.evidence[criterion.id] ?? null, lastMutation: c.criterionMutation[criterion.id] ?? 0 })),
     review: review['completion'] ?? review, limitations: [...c.concerns, ...Object.values(c.evidence).filter((item) => item['outcome'] === 'waived').map((item) => `${item.id}: user-waived criterion; ${item['evidence']}`)], finalGate: c.finalGate,
   };
 }
@@ -1081,20 +1491,68 @@ function validateTaskEvent(c: Context, event: HostEvent): string | null {
   const running = (id: string | undefined) => id ? c.tasks[id]?.status === 'running' ? c.tasks[id] : undefined : undefined;
   if (event.type === 'WRITE_LAUNCHED') {
     const ids = event.tasks.map((row) => row.task);
-    if (!ids.length || new Set(ids).size !== ids.length || event.tasks.some((row) => !running(row.task) || running(row.task)!.handle !== null || !row.handle.trim())) return 'event.tasks: name each launch slot once with a non-empty handle.';
+    if (!ids.length || new Set(ids).size !== ids.length || event.tasks.some((row) => !running(row.task) || running(row.task)!.handle !== null || row.attempt !== running(row.task)!.attempt || row.signature !== running(row.task)!.signature || !row.handle.trim())) return 'event.tasks: name each launch slot once and echo its projected attempt and signature with a non-empty handle.';
   }
-  if (event.type === 'WRITE_ENVELOPE' && running(event.task)?.brief?.envelopePath !== event.envelopePath) return 'event.task: name a running task and its exact envelope path from the write frame.';
-  if (event.type === 'WRITE_FAILED' && (!running(event.task) || event.model !== c.writer?.models[running(event.task)!.modelIndex])) return 'event.task: name a running task and its current model id.';
+  if (event.type === 'WRITE_ENVELOPE') {
+    const record = running(event.task);
+    if (!event.task || !record || record.brief?.envelopePath !== event.envelopePath || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: echo the active task, attempt, signature, handle and exact envelope path from the write frame.';
+  }
+  if (event.type === 'WRITE_FAILED') {
+    const record = running(event.task);
+    if (!event.task || !record || event.model !== c.writer?.models[record.modelIndex] || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: echo the active task, attempt, signature and handle and name its current model id.';
+  }
   return null;
 }
 
 export function validateImplement(state: ImplementState, event: HostEvent): string | null {
-  if (event.type === 'REVISE') return event.artifact !== 'plan' ? 'event.artifact: only plan revision is available.' : implementAwait(state) === 'write' || implementAwait(state) === null ? 'event.type: outstanding write/effect must finish before REVISE.' : !('c' in state) || !state.c?.plan ? 'event.type: a governed plan must be bound before REVISE.' : null;
+  if (event.type === 'WRITE_CANCELLED' && state.tag !== 'scope-draining') return 'event.type: cancellation receipts are accepted only while draining scope changes.';
+  if (event.type === 'REVISE') {
+    if (event.artifact !== 'plan') return 'event.artifact: only plan revision is available.';
+    if (state.tag === 'level-classification' || state.tag === 'level-recommendation') return 'event.type: finish the pending level gate before REVISE so a revised plan cannot reuse stale classification.';
+    if ((state.tag === 'scope-adjudication' || state.tag === 'scope-user-decision') && state.active.length) return 'event.type: drain every active writer before REVISE so original attempt identities remain available.';
+    if (implementAwait(state) === 'write' || implementAwait(state) === null) return 'event.type: outstanding write/effect must finish before REVISE.';
+    if (!('c' in state) || !state.c?.plan) return 'event.type: a governed plan must be bound before REVISE.';
+    return null;
+  }
+  if (event.type === 'DECISION' && event.kind === 'run-stop' && !['level-classification', 'level-recommendation', 'scope-adjudication', 'scope-user-decision'].includes(state.tag)) return 'event.kind: run-stop is valid only at a level or scope decision gate.';
   if (state.tag === 'hotfix-write' && event.type === 'WRITE_ENVELOPE' && event.envelopePath !== state.brief.envelopePath) return 'event.envelopePath: expected the exact hotfix envelope path.';
   if (state.tag === 'hotfix-write' && event.type === 'WRITE_FAILED' && event.model !== state.c.writer?.models[0]) return 'event.model: expected the single-shot configured writer.';
   if (state.tag === 'drift' && (event.type !== 'DECISION' || event.kind !== 'drift' || !driftAnswer(event.answer, state.paths))) return 'event.answer: rule adopt or stop for each drift path.';
   if (state.tag === 'author' && event.type === 'AUTHORED' && event.path !== state.c.planPath) return `event.path: expected ${state.c.planPath}.`;
   if (state.tag === 'tasks') return validateTaskEvent(state.c, event);
+  if (state.tag === 'level-classification') {
+    if (event.type === 'DECISION' && event.kind === 'run-stop') return nonEmpty((event.answer as Record<string, unknown>)['quote']) ? null : 'event.answer.quote: run stop requires the user quote.';
+    if (event.type !== 'DECISION' || event.kind !== 'level-classification' || !isRecord(event.answer)) return 'event.kind: expected level-classification or run-stop at this gate.';
+    const answer = event.answer;
+    if (!['low', 'medium', 'high'].includes(String(answer['evaluatedLevel'])) || !nonEmpty(answer['rationale']) || answer['rationale'].trim().length > 500) return 'event.answer: level assessment requires a low/medium/high level and rationale up to 500 characters.';
+    if (!state.c.gateScope || stableValue(answer['gateScope']) !== stableValue(state.gateScope)) return 'event.answer.gateScope: assessment must include the exact complete scope snapshot shown in the frame.';
+    return null;
+  }
+  if (state.tag === 'level-recommendation') {
+    if (event.type === 'DECISION' && event.kind === 'run-stop') return nonEmpty((event.answer as Record<string, unknown>)['quote']) ? null : 'event.answer.quote: run stop requires the user quote.';
+    if (event.type !== 'DECISION' || event.kind !== 'level-recommendation' || !isRecord(event.answer) || !['adopt', 'retain'].includes(String(event.answer['choice'])) || !nonEmpty(event.answer['quote'])) return 'event.answer: choose adopt or retain with a non-empty user quote.';
+    return null;
+  }
+  if (state.tag === 'scope-adjudication') {
+    if (event.type === 'DECISION' && event.kind === 'run-stop') return nonEmpty((event.answer as Record<string, unknown>)['quote']) ? null : 'event.answer.quote: run stop requires the user quote.';
+    if (event.type !== 'DECISION' || event.kind !== 'scope-deviation' || !isRecord(event.answer) || event.answer['by'] !== 'orchestrator' || stableValue(event.answer['request']) !== stableValue(state.request) || !['approve', 'disagree'].includes(String(event.answer['ruling'])) || !nonEmpty(event.answer['rationale'])) return 'event.answer: orchestrator ruling must bind the pending proposal and include a rationale.';
+    return null;
+  }
+  if (state.tag === 'scope-user-decision') {
+    if (event.type === 'DECISION' && event.kind === 'run-stop') return nonEmpty((event.answer as Record<string, unknown>)['quote']) ? null : 'event.answer.quote: run stop requires the user quote.';
+    if (event.type !== 'DECISION' || event.kind !== 'scope-deviation-user' || !isRecord(event.answer) || event.answer['by'] !== 'user' || event.answer['requestId'] !== state.request.requestId || !['accept', 'decline'].includes(String(event.answer['choice'])) || !nonEmpty(event.answer['quote'])) return 'event.answer: user choice must bind the pending request id and include a quote.';
+    return null;
+  }
+  if (state.tag === 'scope-draining') {
+    if (event.type !== 'WRITE_ENVELOPE' && event.type !== 'WRITE_FAILED' && event.type !== 'WRITE_CANCELLED') return 'event.type: scope draining accepts only terminal receipts for original writer attempts.';
+    if (!('task' in event) || typeof event.task !== 'string') return 'event.task: receipt must name an original active attempt.';
+    if (!state.active.includes(event.task)) return 'event.task: receipt does not name an original active attempt being drained.';
+    const record = state.c.tasks[event.task];
+    if (!record || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: receipt must echo the active task attempt, signature and handle.';
+    if (event.type === 'WRITE_ENVELOPE' && record.brief?.envelopePath !== event.envelopePath) return 'event.envelopePath: expected the exact original brief envelope.';
+    if (event.type === 'WRITE_FAILED' && event.model !== state.c.writer?.models[record.modelIndex]) return 'event.model: expected the active writer model.';
+    return null;
+  }
   if (state.tag === 'plan-review' || state.tag === 'code-review') return validateReview(state.review, event);
   if (state.tag === 'approval' && event.type === 'DECISION' && event.kind === 'approval' && event.answer !== 'stop' && !approvalAnswer(event.answer)) return 'event.answer: approval requires non-empty user-attributed by and quote.';
   if (state.tag === 'baseline-decision' && event.type === 'DECISION' && event.kind === 'baseline' && event.answer !== 'stop') {
@@ -1110,28 +1568,35 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     const answer = failureAnswer(event.answer);
     if (!answer) return 'event.answer: failure requires hotfix/retry with rootCause, user manual completion with quote and criteria, or stop.';
     if (state.c.phase === 'tasks' && (answer.action === 'hotfix' || answer.action === 'manual-complete')) return 'event.answer: task-phase failures accept retry or stop; hotfix and manual completion apply after delivery.';
-    if (state.c.phase === 'tasks' && answer.action === 'retry' && Object.values(state.c.tasks).some((task) => task.status === 'failed') && !Object.values(state.c.tasks).some((task) => task.status === 'failed' && task.attempt < MAX_WRITE_ATTEMPTS)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-attempt limit; revise or stop.`;
-    if (answer.action === 'manual-complete' && !recordEvidence(state.c, state.c.plan?.criteria.map((row) => row.id) ?? [], answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
+    if (state.c.phase === 'tasks' && answer.action === 'retry' && Object.values(state.c.tasks).some((task) => task.status === 'failed') && !Object.values(state.c.tasks).some((task) => task.status === 'failed' && task.failures < MAX_WRITE_ATTEMPTS)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-failure limit; revise or stop.`;
+    if (answer.action === 'manual-complete' && !recordEvidence(state.c, effectivePlan(state.c).criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
   }
   if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}.`;
   return null;
 }
 
 export const implementTransitions = [
-  ...['author', 'plan-review', 'code-review', 'tasks', 'hotfix-write', 'baseline-decision', 'approval', 'needs-user', 'concerns', 'failure', 'evidence'].flatMap((from) => ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'DECISION', 'EVIDENCE', 'REVISE'].map((on) => ({ from, on, to: 'checking-host-event' }))),
-  ...['parsing', 'plan-review', 'code-review', 'task-checkout', 'needs-user', 'approval', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'post-review-snapshot', 'revision-request'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
+  ...['author', 'plan-review', 'code-review', 'tasks', 'hotfix-write', 'baseline-decision', 'approval', 'needs-user', 'concerns', 'failure', 'evidence', 'level-classification', 'level-recommendation'].flatMap((from) => ['AUTHORED', 'NATIVE_RESULTS', 'RULINGS', 'FIXES_APPLIED', 'WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'DECISION', 'EVIDENCE', 'REVISE'].map((on) => ({ from, on, to: 'checking-host-event' }))),
+  ...['scope-adjudication', 'scope-user-decision'].map((from) => ({ from, on: 'DECISION', to: 'checking-host-event' })),
+  ...['parsing', 'plan-review', 'code-review', 'task-checkout', 'tasks', 'needs-user', 'approval', 'baseline-decision', 'level-classification', 'level-recommendation', 'scope-adjudication', 'scope-user-decision', 'scope-draining', 'evidence', 'concerns', 'complete', 'stopped', 'failure', 'failure-snapshot', 'drift', 'hotfix-snapshot', 'hotfix-brief', 'hotfix-envelope', 'post-review-snapshot', 'revision-request'].map((to) => ({ from: 'checking-host-event', on: 'SNAPSHOT', to })),
   { from: 'checking-host-event', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
   ...['task-checkout', 'parsing', 'plan-review', 'code-review', 'evidence', 'concerns', 'approval', 'failure', 'post-review-snapshot', 'revision-request'].map((to) => ({ from: 'drift', on: 'DECISION', to })),
   { from: 'drift', on: 'DECISION', to: 'stopped' },
-  { from: 'baseline-decision', on: 'DECISION', to: 'approval' }, { from: 'baseline-decision', on: 'DECISION', to: 'stopped' }, { from: 'approval', on: 'DECISION', to: 'needs-user' }, { from: 'approval', on: 'DECISION', to: 'stopped' }, { from: 'needs-user', on: 'DECISION', to: 'stopped' },
+  { from: 'baseline-decision', on: 'DECISION', to: 'approval' }, { from: 'baseline-decision', on: 'DECISION', to: 'level-classification' }, { from: 'baseline-decision', on: 'DECISION', to: 'stopped' }, { from: 'approval', on: 'DECISION', to: 'needs-user' }, { from: 'approval', on: 'DECISION', to: 'level-classification' }, { from: 'approval', on: 'DECISION', to: 'stopped' }, { from: 'needs-user', on: 'DECISION', to: 'level-classification' }, { from: 'needs-user', on: 'DECISION', to: 'stopped' },
   { from: 'approval', on: 'DECISION', to: 'task-checkout' }, { from: 'needs-user', on: 'DECISION', to: 'task-checkout' }, { from: 'failure', on: 'DECISION', to: 'task-checkout' },
+  ...['scope-user-decision', 'scope-draining', 'task-checkout', 'tasks', 'hotfix-snapshot', 'hotfix-brief', 'stopped', 'failure'].map((to) => ({ from: 'scope-adjudication', on: 'DECISION', to })),
+  ...['scope-draining', 'task-checkout', 'tasks', 'hotfix-snapshot', 'hotfix-brief', 'stopped', 'failure'].map((to) => ({ from: 'scope-user-decision', on: 'DECISION', to })),
   { from: 'failure', on: 'DECISION', to: 'tasks' }, { from: 'failure', on: 'DECISION', to: 'post-review-snapshot' }, { from: 'failure', on: 'DECISION', to: 'failure-snapshot' },
   ...['task-checkout', 'task-brief', 'tasks', 'task-verify', 'delivered-snapshot', 'failure-snapshot'].map((to) => ({ from: 'task-checkout', on: 'CHECKOUT_DONE', to })),
   ...['task-checkout', 'tasks', 'failure-snapshot'].map((to) => ({ from: 'task-checkout', on: 'EFFECT_FAILED', to })),
   ...['task-checkout', 'tasks', 'failure-snapshot'].flatMap((to) => [{ from: 'task-brief', on: 'BRIEF_READY', to }, { from: 'task-brief', on: 'EFFECT_FAILED', to }]),
   { from: 'tasks', on: 'WRITE_LAUNCHED', to: 'tasks' }, { from: 'tasks', on: 'WRITE_ENVELOPE', to: 'task-envelope' },
   ...['task-checkout', 'tasks', 'failure-snapshot'].map((to) => ({ from: 'tasks', on: 'WRITE_FAILED', to })),
-  ...['task-checkout', 'tasks', 'failure-snapshot'].flatMap((to) => [{ from: 'task-envelope', on: 'ENVELOPE_CHECKED', to }, { from: 'task-envelope', on: 'EFFECT_FAILED', to }]),
+  ...['task-checkout', 'tasks', 'scope-adjudication', 'failure-snapshot'].flatMap((to) => [{ from: 'task-envelope', on: 'ENVELOPE_CHECKED', to }, { from: 'task-envelope', on: 'EFFECT_FAILED', to }]),
+  { from: 'scope-draining', on: 'WRITE_ENVELOPE', to: 'scope-drain-envelope' },
+  ...['scope-draining', 'task-checkout', 'tasks', 'hotfix-snapshot', 'hotfix-brief', 'stopped', 'failure'].flatMap((to) => ['WRITE_FAILED', 'WRITE_CANCELLED'].map((on) => ({ from: 'scope-draining', on, to }))),
+  ...['scope-draining', 'task-checkout', 'tasks', 'hotfix-snapshot', 'hotfix-brief', 'stopped', 'failure'].map((to) => ({ from: 'scope-drain-envelope', on: 'ENVELOPE_CHECKED', to })),
+  ...['scope-draining', 'task-checkout', 'tasks', 'hotfix-snapshot', 'hotfix-brief', 'stopped', 'failure'].map((to) => ({ from: 'scope-drain-envelope', on: 'EFFECT_FAILED', to })),
   ...['task-checkout', 'task-verify', 'tasks', 'failure-snapshot'].flatMap((to) => [{ from: 'task-verify', on: 'VERIFY_DONE', to }, { from: 'task-verify', on: 'EFFECT_FAILED', to }]),
   ...['concerns', 'code-review', 'post-review-snapshot', 'failure-snapshot'].map((to) => ({ from: 'delivered-snapshot', on: 'SNAPSHOT', to })),
   { from: 'delivered-snapshot', on: 'EFFECT_FAILED', to: 'failure-snapshot' },
@@ -1172,7 +1637,7 @@ export function implementWalkthrough(state: ImplementState): WalkthroughView | n
   if (state.tag !== 'complete' && state.tag !== 'stopped' && state.tag !== 'failed' && state.tag !== 'code-review') return null;
   if (!state.c || !state.c.plan) return null;
   const c = state.c;
-  const plan = c.plan;
+  const plan = effectivePlan(c);
   if (!plan) return null;
   const status = state.tag === 'code-review' ? 'review pending' : state.tag;
   const planRounds = c.planReview && 'c' in c.planReview ? resolutionRounds(c.planReview.c) : [];

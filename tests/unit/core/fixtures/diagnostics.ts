@@ -36,13 +36,32 @@ export function phaseFixture(verb: 'implement' | 'plan' | 'review', rounds = 1, 
 }
 
 type Frame = Awaited<ReturnType<typeof send>>;
+/** Settles implementation's one pre-write assessment in automated phase transcripts. */
+export async function assessImplementation(options: Parameters<typeof send>[0], initial: Frame): Promise<Frame> {
+  let result = initial;
+  for (let guard = 0; guard < 3 && result.frame?.await === 'decide'; guard++) {
+    const data = result.frame.data;
+    if (data['kind'] === 'level-classification') {
+      result = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded fixture behavior with local recovery.', gateScope: data['gateScope'] } } });
+      continue;
+    }
+    if (data['kind'] === 'level-recommendation') {
+      result = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'level-recommendation', answer: { choice: 'retain', quote: 'Keep the explicit fixture level.' } } });
+      continue;
+    }
+    break;
+  }
+  return result;
+}
+
 /** Launches every `launch` slot in a write frame, then submits each slot's envelope until the frame leaves `write`. */
 export async function deliverTasks(options: Parameters<typeof send>[0], result: Frame): Promise<Frame> {
+  result = await assessImplementation(options, result);
   while (result.frame?.await === 'write') {
-    const slots = result.frame.data['tasks'] as { task: string; action: string; envelopePath: string }[];
+    const slots = result.frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; envelopePath: string }[];
     const launch = slots.filter((slot) => slot.action === 'launch');
-    if (launch.length) result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: launch.map((slot) => ({ task: slot.task, handle: `agent-${slot.task}` })) } });
-    else result = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: slots[0]!.task, envelopePath: slots[0]!.envelopePath } });
+    if (launch.length) result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: launch.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}` })) } });
+    else result = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: slots[0]!.task, attempt: slots[0]!.attempt, signature: slots[0]!.signature, handle: slots[0]!.handle!, envelopePath: slots[0]!.envelopePath } });
   }
   return result;
 }

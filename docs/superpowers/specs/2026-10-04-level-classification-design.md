@@ -1,6 +1,6 @@
 # Dispatch level classification design
 
-**Status:** Conversational design approved on 2026-10-04; written specification awaits user review. The user asked to compact before implementation, so this document does not authorize implementation.
+**Status:** Approved for implementation on 2026-10-05 under the settled plan. Journal protocol 4 intentionally requires revision-3 runs to restart under a new dispatch invocation.
 
 ## Purpose
 
@@ -47,7 +47,15 @@ For a direct or inline implementation without a separate plan, run the same asse
 
 Freeze the final level for the invocation. Apply it consistently to all implementation increments, retries, and the later code review. Do not reclassify at individual phases.
 
-If new evidence shows that the approved scope expanded or contains a materially different risk, stop before further writes. Surface the evidence and require a newly scoped dispatch invocation; do not silently run a third classification or continue under a stale decision.
+### Writer deviations
+
+When a writer executing an approved brief or envelope finds necessary work beyond it, the writer must stop before doing that work and send the proposed delta and rationale to the orchestrator. The orchestrator adjudicates the request against the user's objective and governing invariants.
+
+When the orchestrator agrees the deviation is needed, that adjudication authorizes the delta for the current run. It records the accepted delta, informs the user before the writer resumes, and lets the writer continue in the same run under the already settled level. The notice does not wait for user confirmation. The accepted delta may extend beyond the scope snapshot or the level that would otherwise have been assessed for it; do not reclassify or require a new dispatch solely for an agreed deviation.
+
+When the orchestrator disagrees with the writer's proposal, show the user both rationales and pause the affected writer for the user's decision. Record the user's actual choice. If the user accepts, continue under the same settled level; if the user declines, keep the original envelope or stop that work if it cannot be completed within it. Never silently expand an envelope.
+
+Apply the same adjudication to plan or design revisions that expand post-gate work before adopting or resuming them. Keep the original `gateScope` as the immutable record used for classification; journal approved deviations as ordered adjustments to the effective scope so replay restores both the classification basis and the work actually authorized by the orchestrator or user.
 
 ## Classification rubric
 
@@ -74,11 +82,13 @@ The pre-implementation assessment must cover the complete remaining implementati
 
 Use this same snapshot to choose the final level and assurance obligations. Persist enough evidence to explain the decision and to detect a change in scope.
 
-When adopting a design or plan revision, compare the revised criteria and obligations as well as paths and commands. If the revision adds work, expands a boundary, or leaves containment uncertain, stop before resuming a writer and require a newly scoped dispatch. A path-only or command-only comparison is insufficient.
+When adopting a design or plan revision, compare the revised criteria and obligations as well as paths and commands. A path-only or command-only comparison is insufficient. Route additions or uncertain containment through the writer-deviation adjudication before adoption or resumption; an accepted change updates effective scope without changing the gate snapshot or settled level.
+
+When an implementation deviation is pending, do not launch new writers. Let already-running writers finish only within their original envelopes and hold their results from integration until the adjudication is recorded. After accepting a delta, reconcile task signatures and dependencies before integration: re-pend any task made stale by the adjustment, preserve the requesting writer's parked worktree for its updated brief, and reject results produced against superseded envelopes. Apply accepted adjustments to later verification and code-review context as well as writer scope.
 
 ## Persistence and compatibility
 
-Journal the invocation level, whether it was explicit or automatic, the pre-implementation assessment, the final level, the scope snapshot or its stable fingerprint, and any user's choice to retain or raise an explicit level. Make gate completion replay-safe so a resumed run neither reclassifies nor asks the same question again.
+Journal the invocation level, whether it was explicit or automatic, the pre-implementation assessment, the final level, the scope snapshot or its stable fingerprint, and any user's choice to retain or raise an explicit level. Journal each writer-deviation proposal, orchestrator adjudication, accepted scope adjustment, and any user choice when the orchestrator disagrees. Make both the level gate and scope adjustments replay-safe so a resumed run neither reclassifies nor repeats a resolved question.
 
 Bump the journal protocol to revision 4 for this decision and scope state. Reject unsupported revisions. Do not migrate revision 3 journals; resume them by starting a new dispatch invocation. Older binaries must fail closed on revision 4.
 
@@ -91,6 +101,9 @@ Bump the journal protocol to revision 4 for this decision and scope state. Rejec
 - The rubric gives medium a clear default and requires concrete consequential-risk evidence for high.
 - The final level governs all remaining increments, retries, and code review without phase-by-phase reclassification.
 - The assessment uses the complete remaining scope and design or plan revisions cannot bypass scope comparison.
+- Writers report necessary deviations before doing out-of-envelope work. Orchestrator agreement records the change, informs the user, and continues under the settled level; only disagreement pauses for user decision.
+- Pending deviations pause new writer launches; accepted adjustments invalidate stale task results and appear in later verification and code review.
+- Accepted scope adjustments and any user choices replay deterministically without changing the original gate snapshot or settled level.
 - Replay preserves the decision and user's choice without repeating classification or prompting.
 - Revision 4 journals are handled according to the fail-closed compatibility policy.
 - Tests cover classification boundaries, both timing points, explicit-level recommendation and choice, complete-scope assessment, revision adoption, replay, and protocol compatibility.

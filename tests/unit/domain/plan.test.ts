@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { governedPlanText, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { governedPlanText, materializePlanRevisionSeed, normalizePlanPath, parsePlan, selectTaskBrief, structuralLines, placeholderVocabulary, taskExecutionSummary } from '../../../skills/dispatch/scripts/domain/plan.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 
 const PLAN = `# Add retry budget
@@ -73,6 +73,54 @@ test('implement-plan-lint: parsePlan extracts box, criteria, changes, verificati
   assert.equal(plan.changes[2]?.command, 'npm run docs');
   assert.deepEqual(plan.verification.automated, ['npm run lint']);
   assert.deepEqual(plan.traceability, { 'Approved revision': 'none' });
+});
+
+test('implement-plan-revision: seed carries accepted scope into the editable plan', () => {
+  const parsed = parsePlan(PLAN);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  const base = parsed.plan;
+  const extra = {
+    id: 'SC3', title: 'Accepted companion behavior', line: 0, changes: ['src/extra.ts'], verify: [{ command: 'npm run check-extra', final: false }],
+    evidence: 'verify' as const, preExisting: false, redException: null, testRationale: 'Checks the accepted companion behavior directly.', review: null, enforcementInfeasibility: null,
+  };
+  const effective = {
+    ...base,
+    keyDecisions: [...base.keyDecisions, 'Preserve the accepted companion behavior.'],
+    criteria: [...base.criteria, extra],
+    tasks: base.tasks.map((task) => task.id === 'T1' ? { ...task, paths: [...task.paths, 'src/extra.ts'], criteria: [...task.criteria, 'SC3'] } : task),
+    changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note: 'Accepted companion scope.', command: null, line: 0 }],
+    verification: { automated: [...base.verification.automated, 'npm run check-extra', 'npm run extra-check'], none: null, manual: [...base.verification.manual, 'Confirm companion behavior in the local service.'] },
+    finalCommands: [...base.finalCommands, 'npm run final-companion-check'],
+  };
+  const seed = materializePlanRevisionSeed(PLAN, base, effective);
+  const revised = parsePlan(seed);
+  assert.ok(revised.ok, JSON.stringify(revised));
+  assert.ok(seed.includes('Fetch stops retrying after three attempts so callers fail fast.'));
+  assert.match(seed, /^> \*\*Scope:\*\*.*src\/extra\.ts/m);
+  assert.deepEqual(revised.plan.tasks.find((task) => task.id === 'T1')?.paths, [...base.tasks[0]!.paths, 'src/extra.ts']);
+  assert.ok(revised.plan.tasks.find((task) => task.id === 'T1')?.criteria.includes('SC3'));
+  assert.deepEqual(revised.plan.criteria.find((criterion) => criterion.id === 'SC3')?.changes, ['src/extra.ts']);
+  assert.ok(revised.plan.verification.automated.includes('npm run extra-check'));
+  assert.ok(revised.plan.criteria.find((criterion) => criterion.id === 'SC3')?.verify.some((item) => item.command === 'npm run final-companion-check' && item.final));
+  assert.ok(revised.plan.keyDecisions.includes('Preserve the accepted companion behavior.'));
+  assert.ok(revised.plan.verification.manual.includes('Confirm companion behavior in the local service.'));
+});
+
+test('implement-plan-revision: seed assigns accepted hotfix paths that have no task owner', () => {
+  const parsed = parsePlan(PLAN);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  const base = parsed.plan;
+  const effective = {
+    ...base,
+    criteria: base.criteria.map((criterion) => criterion.id === 'SC1' ? { ...criterion, changes: [...criterion.changes, 'src/hotfix-helper.ts'] } : criterion),
+    changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/hotfix-helper.ts', note: 'Accepted hotfix scope.', command: null, line: 0 }],
+  };
+  const seed = materializePlanRevisionSeed(PLAN, base, effective);
+  const revised = parsePlan(seed);
+  assert.ok(revised.ok, JSON.stringify(revised));
+  assert.ok(seed.includes('#### [MODIFY] src/hotfix-helper.ts'));
+  assert.ok(revised.plan.tasks.find((task) => task.id === 'T1')?.paths.includes('src/hotfix-helper.ts'));
+  assert.ok(revised.plan.criteria.find((criterion) => criterion.id === 'SC1')?.changes.includes('src/hotfix-helper.ts'));
 });
 
 test('implement-plan-lint: [FINAL] inside the code span is a defect naming the fix', () => {

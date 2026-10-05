@@ -4,7 +4,10 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
 
-export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift';
+export const JOURNAL_PROTOCOL_REVISION = 4 as const;
+
+export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
+  | 'level-classification' | 'level-recommendation' | 'scope-deviation' | 'scope-deviation-user' | 'run-stop';
 
 export type DoneOutcome = 'complete' | 'failed' | 'stopped' | 'fault' | 'no-reviewable-changes' | 'lint-defects' | 'skipped';
 
@@ -26,6 +29,71 @@ export type FailureClass =
 
 export type Verb = 'ask' | 'design' | 'plan' | 'review' | 'implement';
 export type Level = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export type ClassifiedLevel = Extract<Level, 'low' | 'medium' | 'high'>;
+
+export type ScopeCriterionDefinition = {
+  id: string;
+  title: string;
+  changes: readonly string[];
+  verify: readonly { command: string; final: boolean }[];
+  evidence: 'red' | 'verify' | 'review' | null;
+  preExisting: boolean | null;
+  redException: string | null;
+  testRationale: string | null;
+  review: string | null;
+  enforcementInfeasibility: string | null;
+};
+
+export type ScopeDelta = {
+  paths: readonly string[];
+  criteria: readonly string[];
+  criterionDefinitions?: readonly ScopeCriterionDefinition[];
+  obligations: readonly string[];
+  commands: readonly string[];
+  finalCommands?: readonly string[];
+  phaseDuties: readonly string[];
+  increments: readonly { id: string; prerequisites: readonly string[]; paths: readonly string[]; acceptance: readonly string[] }[];
+};
+
+export type LevelDesignScope = {
+  path: string;
+  hash: string;
+  title: string | null;
+  objective: string;
+  invariants: readonly string[];
+  fields: Readonly<Record<string, string>>;
+  remainingIncrements: readonly { id: string; priority: number; outcome: string; dependencies: readonly string[]; paths: readonly string[]; acceptance: readonly string[] }[];
+};
+
+export type LevelGateScope = {
+  planHash: string;
+  objective: string;
+  invariants: readonly string[];
+  criteria: readonly { id: string; title: string; changes: readonly string[]; verify: readonly string[]; review: string | null; evidence: string }[];
+  approvedPaths: readonly string[];
+  commandMappings: readonly { command: string; criteria: readonly string[]; paths: readonly string[]; final: boolean }[];
+  baselineEvidence: readonly { command: string; status: string; exit: number; inputFingerprint: string }[];
+  phaseObligations: { writer: readonly string[]; review: readonly string[] };
+  remainingIncrements: readonly { id: string; priority: number; outcome: string; dependencies: readonly string[]; paths: readonly string[]; acceptance: readonly string[] }[];
+  design: LevelDesignScope | null;
+};
+
+export type LevelClassificationAnswer = { evaluatedLevel: ClassifiedLevel; rationale: string; gateScope: LevelGateScope };
+export type LevelRecommendationAnswer = { choice: 'adopt' | 'retain'; quote: string };
+export type ScopeDeviation =
+  | { requestId: string; source: 'task'; task: string; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta }
+  | { requestId: string; source: 'hotfix'; baseArtifactHash: string; writerRationale: string; delta: ScopeDelta };
+export type RevisionScopeProposal =
+  | { requestId: string; source: 'plan-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedTasks: readonly string[]; rationale: string; delta: ScopeDelta }
+  | { requestId: string; source: 'design-revision'; baseArtifactHash: string; proposedArtifactHash: string; affectedIncrements: readonly string[]; rationale: string; delta: ScopeDelta };
+export type ScopeProposal = ScopeDeviation | RevisionScopeProposal;
+export type ScopeAdjustment = {
+  proposal: ScopeProposal;
+  approvedBy: 'orchestrator' | 'user';
+  rationale: string;
+  quote?: string;
+  ownerIncrement?: string;
+};
 
 // SECTION: Payload types
 
@@ -56,7 +124,11 @@ export type CommandResult = Payload;
 export type TreeFingerprint = Payload;
 export type WriteStage = 'task' | 'hotfix';
 /** Driver-owned private Git operations; only `deliver` writes the caller checkout. */
-export type CheckoutOp = 'init' | 'task' | 'commit' | 'red' | 'integrate' | 'reset' | 'deliver' | 'cleanup';
+export type CheckoutOp = 'init' | 'task' | 'commit' | 'red' | 'integrate' | 'reset' | 'deliver' | 'cleanup' | 'scope-rebase';
+export type ScopeRebaseInput = { name: string; originalName: string; revision: string; permitted: readonly string[]; transferKey: string; links: readonly string[]; ignored: readonly string[] };
+export type CheckoutEffect =
+  | { kind: 'checkout'; id: string; op: 'scope-rebase'; input: ScopeRebaseInput }
+  | { kind: 'checkout'; id: string; op: Exclude<CheckoutOp, 'scope-rebase'>; input: Payload };
 export type RecoverySnapshot = {
   repoRoot: string;
   contents: Readonly<Record<string, string | null>>;
@@ -90,7 +162,7 @@ export type DesignApproval =
 
 export type RunStartedEvent = {
   designApproval?: DesignApproval;
-  protocolRevision?: 3;
+  protocolRevision?: typeof JOURNAL_PROTOCOL_REVISION;
   type: 'RUN_STARTED'; verb: Verb; argument: string; level: Level; levelSource: 'explicit' | 'classified';
   pins: Pins | null; fix: boolean; orchestrator: Platform; orchestratorModel: string | null;
   overrides: Overrides; config: ResolvedConfig; repo: RepoIdentity;
@@ -111,14 +183,24 @@ export type LifecycleEvent =
   | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
   | { type: 'LOCK_BROKEN'; stalePid: number };
 
+export type WriteLaunchedTask = { task: string; attempt: number; signature: string; handle: string };
+export type WriteEnvelopeEvent =
+  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task: string; attempt: number; signature: string; handle: string }
+  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task?: never; attempt?: never; signature?: never; handle?: never };
+export type WriteFailureEvent =
+  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task: string; attempt: number; signature: string; handle: string }
+  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: never; attempt?: never; signature?: never; handle?: never };
+export type WriteCancelledEvent = { type: 'WRITE_CANCELLED'; task: string; attempt: number; signature: string; handle: string; reason: string };
+
 export type HostEvent =
   | { type: 'AUTHORED'; path: string }
   | { type: 'NATIVE_RESULTS'; slots: NativeSlotResult[] }
   | { type: 'RULINGS'; rulings: Record<FindingId, Ruling> }
   | { type: 'FIXES_APPLIED'; clusters: FixClusterResult[] }
-  | { type: 'WRITE_LAUNCHED'; tasks: { task: string; handle: string }[] }
-  | { type: 'WRITE_ENVELOPE'; envelopePath: string; task?: string }
-  | { type: 'WRITE_FAILED'; model: string; kind: WriterFailureKind; reason: string; task?: string }
+  | { type: 'WRITE_LAUNCHED'; tasks: WriteLaunchedTask[] }
+  | WriteEnvelopeEvent
+  | WriteFailureEvent
+  | WriteCancelledEvent
   | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence> }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
@@ -153,11 +235,11 @@ export type Effect =
   | { kind: 'wave'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }
   | { kind: 'verify'; id: string; purpose: VerifyPurpose; commands: VerifyCommand[]; cwd?: string }
   | { kind: 'write-brief'; id: string; stage: WriteStage; input: BriefInput }
-  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; cwd?: string }
+  | { kind: 'check-envelope'; id: string; envelopePath: string; permitted: PathSet; since?: TreeFingerprint; cwd?: string }
   | { kind: 'snapshot'; id: string; since: TreeFingerprint | null; cwd?: string }
   | { kind: 'restore'; id: string; paths: string[]; to: TreeFingerprint }
   | { kind: 'handoff'; id: string; terminal: boolean }
-  | { kind: 'checkout'; id: string; op: CheckoutOp; input: Payload };
+  | CheckoutEffect;
 
 /** Exactly one terminal result type per effect kind; `EFFECT_FAILED` is terminal for all. */
 export type TerminalResultMap = { readonly [K in EffectKind]: ResultEventType };

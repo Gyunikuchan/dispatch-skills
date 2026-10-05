@@ -1,6 +1,6 @@
 // @ts-check
 
-import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
+import type { CriterionEvidence, DecisionAnswer, DesignApproval, Level, LevelClassificationAnswer, LevelRecommendationAnswer, LevelGateScope, LevelDesignScope, ScopeAdjustment, TreeFingerprint, VerifyCommand, WriteEnvelope, RecoverySnapshot } from '../core/types.ts';
 import type { ParsedPlan, PlanChange, PlanCriterion, PlanCommand, PlanTask } from '../domain/types.ts';
 import { selectLevel } from '../policy/roster.ts';
 import { isRecord } from './types.ts';
@@ -10,6 +10,11 @@ export type ImplementStage = 'task';
 export type DesignBinding = {
   path: string; revision: string; revisionIndex?: number; increment: string; contract: Readonly<Record<string, string>>; paths: readonly string[];
   approval: DesignApproval; repair: readonly string[];
+  remainingIncrements?: readonly { id: string; priority: number; outcome: string; dependencies: readonly string[]; paths: readonly string[]; acceptance: readonly string[] }[];
+  governingDesign?: LevelDesignScope;
+  levelGatePassed?: boolean; gateScope?: LevelGateScope | null; levelAssessment?: LevelClassificationAnswer | null;
+  levelChoice?: LevelRecommendationAnswer | null; scopeAdjustments?: readonly ScopeAdjustment[];
+  scopeNotice?: { requestId: string; approvedBy: 'orchestrator' | 'user'; rationale: string; quote?: string } | null;
 };
 export type ImplementOutcome = 'complete' | 'failed' | 'stopped';
 export type VerificationStatus = 'pass' | 'known-red — unchanged' | 'regression' | 'red' | 'quality-error';
@@ -153,6 +158,11 @@ export function commandMappings(plan: ParsedPlan): CommandMapping[] {
       record.criteria.add(criterion.id);
       criterion.changes.forEach((file) => record.paths.add(file));
     }
+    byCommand.set(command, record);
+  }
+  for (const command of plan.finalCommands) {
+    const record = byCommand.get(command) ?? { criteria: new Set<string>(), paths: new Set<string>(), final: true };
+    record.final = true;
     byCommand.set(command, record);
   }
   return [...byCommand].map(([command, record]) => ({ command, criteria: [...record.criteria].sort(), paths: [...record.paths].sort(), final: record.final })).sort((a, b) => a.command.localeCompare(b.command));

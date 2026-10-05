@@ -40,7 +40,7 @@ test('finished matching design delivery exposes terminal state', async () => {
   assert.equal(found?.finished, true);
   assert.equal(found?.state.tag, 'done');
 });
-test('real nested two-increment delivery replays author, write and native integration awaits without duplicate writes', async () => {
+test('level-journal: nested design replay classifies before its first writer and retains full scope across increments', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
   const fingerprint = { head: 'a'.repeat(40), index: 'i', worktree: 'w' };
   let writes = 0, delivering = '';
@@ -67,21 +67,39 @@ test('real nested two-increment delivery replays author, write and native integr
   requested.config = { ...requested.config, phases: { 'design-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'plan-review': { rounds: { low: 0 }, targets: { low: 1 } }, 'code-review': { rounds: { low: 1 }, targets: { low: 1 } } } };
   let result = await start({ ports, machine: rootMachine, handlers, runDir, runStarted: requested });
   result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Deliver', hash } } });
+  let capturedGateScope: unknown = null;
   for (const increment of ['I01', 'I02']) {
     assert.equal(result.frame?.await, 'author', JSON.stringify(result.frame));
     const authorFrame = result.frame;
     result = await send({ ports, machine: rootMachine, handlers, runDir });
     assert.deepEqual(result.frame?.data, authorFrame?.data);
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'AUTHORED', path: result.frame?.data['path'] } });
+    if (result.frame?.data['kind'] === 'level-classification') {
+      const gate = result.frame.data['gateScope'] as { design?: { path: string; hash: string; objective: string; fields: Record<string, string>; remainingIncrements: { id: string; priority: number; outcome: string; dependencies: string[]; paths: string[]; acceptance: string[] }[] } };
+      assert.equal(gate.design?.path, 'x.design.md');
+      assert.equal(gate.design?.hash, hash);
+      assert.equal(gate.design?.objective, design.box['TL;DR']);
+      assert.deepEqual(gate.design?.fields, design.box);
+      assert.deepEqual(gate.design?.remainingIncrements.map((row) => [row.id, row.priority, row.outcome]), [
+        ['I01', 1, design.details.I01.Outcome], ['I02', 2, design.details.I02.Outcome],
+      ]);
+      capturedGateScope = result.frame.data['gateScope'];
+      result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded design increment with observable local checks.', gateScope: result.frame.data['gateScope'] } } });
+    }
     assert.equal(result.frame?.await, 'write', JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
     const writeFrame = result.frame;
     result = await send({ ports, machine: rootMachine, handlers, runDir });
     assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: `agent-${increment}` }] } });
-    const [slot] = result.frame?.data['tasks'] as { envelopePath: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', task: 'T1', envelopePath: slot?.envelopePath } });
+    const [pending] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; envelopePath: string }[];
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}` }] } });
+    const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string }[];
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath } });
+    if (increment === 'I01') {
+      assert.deepEqual((result.frame?.data['levelAssessment'] as { gateScope: unknown } | undefined)?.gateScope, capturedGateScope);
+      assert.equal(result.frame?.data['settledLevel'], 'low');
+    }
   }
   assert.equal(result.frame?.await, 'native', JSON.stringify(result.frame));
   const nativeFrame = result.frame;

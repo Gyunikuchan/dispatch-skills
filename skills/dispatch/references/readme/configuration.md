@@ -43,7 +43,13 @@ Replace the provider and model names with choices available in your environment.
 
 Levels are routing presets: `low`, `medium`, `high`, `xhigh`, and `max`. The level determines which configured model choices and review policy apply. If a target has no exact match, Dispatch uses its nearest configured lower level; when none exists, it uses the lowest configured higher level. Missing fields are not copied between level entries.
 
-When no level is supplied, the host agent chooses `low`, `medium`, or `high` according to the assurance the change needs. Use `low` for localized, routine, reversible work with low failure cost; `medium` for bounded work with meaningful uncertainty or impact; and `high` for broad, externally visible, security or data-integrity work, hard-to-reverse changes, or other high-cost failures. The choice weighs impact, reversibility, uncertainty, and failure cost rather than task size alone. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
+When no level is supplied, the host agent chooses `low`, `medium`, or `high` from the likely impact and recovery cost:
+
+- `low` fits localized, routine, reversible work such as copy, documentation, isolated presentation changes, or pure tests when no runtime or domain invariant changes.
+- `medium` is the normal level for bounded behavior in one feature or subsystem, such as validation, forms, flags, contained refactors, or backward-compatible integration. Use it when uncertainty is meaningful but failures remain observable and recoverable.
+- `high` requires a credible consequential risk: financial or data-integrity errors, persisted-format or journal-replay invariants, security or write authority, an incompatible external contract that could materially harm callers, or cross-boundary failures that are difficult to recover. A large diff, changed external contract, finance repository, or state-machine file alone does not require high; a small rate-precision change can, while a broad reversible accessibility change may not.
+
+Every implementation run receives one more assessment after its plan, baseline, and applicable write authorization are concrete, immediately before the first production write. This also covers inline baseline hotfixes and the first implementation child of a design. A classified run adopts that assessment. An explicit level stays in force unless the assessment recommends a higher level; Dispatch then asks whether to adopt or retain it. Retries, later phases, accepted scope changes, and later design increments keep the settled level. `xhigh` and `max` remain user-selected. Plan-only, ask, review-only, and design-authoring runs receive only the invocation assessment. A level selects your configured routing preset; it does not guarantee a fixed number of models or review rounds.
 
 Pins affect one invocation:
 

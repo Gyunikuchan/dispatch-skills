@@ -41,6 +41,26 @@ test('shape guards cover every accepted host event', () => {
   assert.deepEqual(Object.keys(AWAIT_ACCEPTS).sort(), ['author', 'decide', 'done', 'evidence', 'fix', 'native', 'rule', 'write']);
 });
 
+test('level-journal: strict schemas enforce bounded rationale, attribution, and closed decision shapes', () => {
+  const scope = {
+    planHash: 'sha256:' + 'a'.repeat(64), objective: 'ship', invariants: [], criteria: [], approvedPaths: [],
+    commandMappings: [], baselineEvidence: [], phaseObligations: { writer: [], review: [] }, remainingIncrements: [], design: null,
+  };
+  const valid = { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'medium', rationale: 'bounded risk', gateScope: scope } };
+  assert.equal(validateHostEvent('decide', valid).ok, true);
+  assert.equal(validateHostEvent('decide', { ...valid, answer: { ...valid.answer, rationale: `${'x'.repeat(500)}  \n` } }).ok, true);
+  for (const answer of [null, {}, { ...valid.answer, extra: true }, { ...valid.answer, rationale: 'x'.repeat(501) }, { ...valid.answer, rationale: '   ' }]) {
+    assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'level-classification', answer }).ok, false);
+  }
+  for (const [kind, answer] of [
+    ['level-recommendation', { choice: 'maybe', quote: 'user said so' }],
+    ['scope-deviation', { by: 'user', request: {}, ruling: 'approve', rationale: 'scope' }],
+    ['scope-deviation-user', { by: 'orchestrator', requestId: 'r1', choice: 'accept', quote: 'yes' }],
+    ['run-stop', null],
+  ] as const) assert.equal(validateHostEvent('decide', { type: 'DECISION', kind, answer }).ok, false);
+  assert.equal(validateHostEvent('decide', { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'stop now' } }).ok, true);
+});
+
 test('the machine check hook runs after shape and acceptance', () => {
   assert.deepEqual(validateHostEvent('author', { type: 'AUTHORED', path: 'x' }, () => 'event.path: expected a known path'),
     { ok: false, error: 'event.path: expected a known path' });

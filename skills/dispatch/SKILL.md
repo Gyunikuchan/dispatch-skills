@@ -8,52 +8,52 @@ disable-model-invocation: true
 
 ## Invocation
 
-Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, and `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. A supplied level is `explicit`; otherwise classify `low`, `medium`, or `high` by risk and required assurance, and mark `classified`; see [level criteria](references/readme/configuration.md#understand-levels-and-pins). `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, and `(all)` select providers, count, or all configured targets. `-m` and `-e` map to `--model` and `--effort`. Report-only review is the default; map an explicit request to apply fixes to `--fix`.
+Parse `[level] [(pins)] [verb:] argument`. Default verb: `ask`. `design`, `plan`, and `implement` require an argument. `review` accepts an empty working-tree target; `.plan.md` and `.design.md` infer their review kinds, otherwise code. Classify omitted levels at invocation; implementation receives one more assessment before its first write, with no later reclassification. Retain an explicit level unless that assessment recommends higher; then recommend the change and wait for the user to adopt or retain. See [level criteria](references/readme/configuration.md#understand-levels-and-pins). `xhigh` and `max` require user selection. Pins `(a,b)`, `(3)`, and `(all)` select providers, count, or all configured targets. `-m` and `-e` map to `--model` and `--effort`. Report-only review is default; map an explicit request to apply fixes to `--fix`.
 
 Use `design` for multiple increments, `plan` for one coherent unit, and `implement` for delivery. If mismatched, recommend a fit and wait for user choice; never switch silently.
 
 ## Run loop
 
-1. Initialize this chat with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist returned `sessionDir` and `sessionId`; use `--session-id` for a fallback identity on later initialization. Retain the folder across runs with `session reactivate --session-dir <dir>`.
-2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit one JSON frame; doctor emits a table or `--json` diagnostics.
-3. Run `send --run <dir> [--event @<event-file>]` in the background; retain its handle until completion or a blocker. Follow frame instructions; fill `events` with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automatic work.
+1. Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir` and `sessionId`; use `--session-id` as a fallback identity. Retain the folder with `session reactivate --session-dir <dir>`.
+2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit JSON; doctor emits a table or `--json` diagnostics.
+3. Run `send --run <dir> [--event @<event-file>]` in the background; keep its handle through completion or a blocker. Follow frame instructions; use observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automatic work.
 
-Before branching, read the selected guide under `references/verbs/`. For disputes, use [review rules](references/review-rules.md); for provider or sandbox failures, use [providers](references/providers.md). See [glossary](references/glossary.md) for terms.
+Read the selected [verb guide](references/verbs/). Use [review rules](references/review-rules.md), [providers](references/providers.md), and the [glossary](references/glossary.md) as needed.
 
 ## Await author
 
-Author at `data.path` using `data.template`; resolve every defect against the governing outcome. Reply `AUTHORED` with `path` when complete.
+Author at `data.path` with `data.template`; resolve defects against the governing outcome. Reply `AUTHORED` with `path`.
 
 ## Await native
 
-Launch every listed `data.slots` native subagent with its descriptor's prompt, model, reasoning effort, and attachments. Capture at each `outputPath`. Reply once with `NATIVE_RESULTS` and `slots` containing `slot`, `outputPath`, and `sourceKey` where supplied.
+Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply once with `NATIVE_RESULTS` and the required slot fields.
 
 ## Await rule
 
-Verify each finding against code and the governing outcome. Reply `RULINGS` using `events`: finding-id objects containing `ruling` and scoped `fix`. Include reasons for rejection and downgrade; apply the recorded-decision and dispute rules in the review reference.
+Verify findings against code and outcome. Reply `RULINGS` with finding-id `ruling` and scoped `fix`; explain rejection/downgrade and follow [review rules](references/review-rules.md).
 
 ## Await fix
 
-Apply accepted clusters only within each `affectedPaths`, run their bounded verification, and reply `FIXES_APPLIED` with cluster results. Adjacent changes require the driver's opt-in decision.
+Apply accepted clusters within `affectedPaths`, run bounded verification, and reply `FIXES_APPLIED`. Adjacent changes require opt-in.
 
 ## Await write
 
-Background native writers for each `launch` slot in `tasks` (or hotfix frame) with `model`, `briefPath` matching `briefSha256`, `envelopePath`, `worktree`; reply `WRITE_LAUNCHED` `{task, handle}` rows. Per stop, reply `WRITE_ENVELOPE` or `WRITE_FAILED` (model, kind, reason) naming `task`; hold others for the next frame.
+Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, and host-assigned handle; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal and inform the user before resuming under the settled level; ask the user only when the orchestrator disagrees. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
 
 ## Await evidence
 
-Inspect the driver's command summary and logs; do not rerun already emitted gates. Independently establish every criterion and reply `EVIDENCE` with `criteria` keyed by id, each containing `outcome:"pass"` and concrete `evidence`.
+Inspect command summaries and logs; do not rerun emitted gates. Verify each criterion and reply `EVIDENCE` with id-keyed `outcome:"pass"` results and concrete evidence.
 
 ## Await decide
 
-Answer `data.kind` with a listed option and its branch context. Production approval and manual completion require the user's quote, `{by:"user",quote:"..."}`. Rule code- and plan-verified concerns and RED exceptions as `by:"orchestrator"` with evidence; escalate the rest, intent changes, drift, and failures to the user. Never invent recorded decisions. Reply `DECISION` with `kind` and `answer`.
+Answer `data.kind` with a listed option. Production approval and manual completion require `{by:"user",quote:"..."}`. Assess the exact `gateScope`; for a higher explicit-level recommendation, ask the user to adopt or retain. The orchestrator approves or disagrees with scope proposals; disagreement goes to the user. A `run-stop` choice ends the run. Rule verified concerns and RED exceptions as `by:"orchestrator"` with evidence; escalate intent changes, drift, and failures. Never invent decisions. Reply `DECISION` with `kind` and `answer`.
 
 ## Await done
 
-Report outcome, behavior, verification, concerns, reasoned rulings, and artifact links. Complete only when every criterion passes; preserve the handoff folder.
+Report outcome, behavior, verification, concerns, rulings, and artifact links. Complete only when every criterion passes; preserve the handoff folder.
 
 ## Write boundaries and recovery
 
-The driver owns journals, prompts, briefs, reports, and resolution sections. Author/fix and native writes follow frame permissions. Provider CLIs stay read-only. Preserve unrelated dirty and ignored files.
+The driver owns journals and generated artifacts; writers follow frame permissions, provider CLIs stay read-only, and unrelated dirty or ignored files stay intact.
 
-The journal is authoritative. After interruption run `status --run <dir>` to inspect progress and live worker claims, then `send --run <dir>` to replay and reattach. `send --dry-run` validates a host event without side effects. Invalid host events reprint a frame with `error`; correct that event. Exit 1 is usage, 2 is an engine fault, 3 names the lock holder. Wait on live locks; recovery breaks only dead-process locks.
+The journal is authoritative. After interruption, inspect `status --run <dir>`, then run `send --run <dir>` to replay and reattach. `send --dry-run` validates events; correct rejected events. Exit 1 is usage, 2 an engine fault, 3 a lock holder. Wait on live locks; break only dead-process locks.

@@ -288,6 +288,151 @@ export type PlanResult =
 
 export type PlanOptions = { placeholders?: PlaceholderVocabulary };
 
+/** Carries accepted scope overlays into the editable artifact used for a later plan revision. */
+export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan, effective: ParsedPlan): string {
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  let lines = source.replace(/\r\n/g, '\n').split('\n');
+  const addedPaths = effective.changes.map((change) => change.path).filter((file) => !baseline.changes.some((change) => change.path === file));
+  const seedTasks = effective.tasks.map((task) => ({ ...task, paths: [...task.paths] }));
+  for (const file of new Set(addedPaths)) {
+    if (seedTasks.some((task) => task.paths.includes(file))) continue;
+    const criterion = effective.criteria.find((row) => row.changes.includes(file));
+    const owner = criterion ? seedTasks.findIndex((task) => task.criteria.includes(criterion.id)) : -1;
+    const targetIndex = owner >= 0 ? owner : seedTasks.length ? 0 : -1;
+    const target = seedTasks[targetIndex];
+    if (target) seedTasks[targetIndex] = { ...target, paths: [...target.paths, file] };
+  }
+  if (addedPaths.length) {
+    const index = lines.findIndex((line) => /^>\s+\*\*Scope:\*\*/.test(line));
+    if (index >= 0) {
+      const current = lines[index] ?? '';
+      const suffix = addedPaths.filter((file) => !current.includes(file));
+      if (suffix.length) lines[index] = `${current.replace(/\s*$/, '')}, ${suffix.join(', ')}`;
+    }
+  }
+  const replaceSection = (heading: string, update: (body: string[]) => string[]) => {
+    const start = lines.findIndex((line) => line.trimEnd() === heading);
+    if (start < 0) return false;
+    let end = start + 1;
+    while (end < lines.length && !/^##\s/.test(lines[end] ?? '')) end++;
+    lines = [...lines.slice(0, start + 1), ...update(lines.slice(start + 1, end)), ...lines.slice(end)];
+    return true;
+  };
+
+  replaceSection('## Proposed Changes', (body) => {
+    const result = [...body];
+    const headings = result.flatMap((line, index) => /^###\s+T[1-9]\d*\s+[—–-]\s+/.test(line) ? [index] : []);
+    for (const task of [...seedTasks].reverse()) {
+      const start = headings.find((index) => new RegExp(`^###\\s+${task.id}\\s+[—–-]\\s+`).test(result[index] ?? ''));
+      if (start === undefined) continue;
+      const end = headings.find((index) => index > start) ?? result.length;
+      let action = result.findIndex((line, index) => index > start && index < end && /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+/.test(line));
+      if (action < 0) action = end;
+      const criteriaIndex = result.findIndex((line, index) => index > start && index < action && /^[-*+]\s+Criteria:/i.test(line));
+      const criteriaLine = `- Criteria: ${task.criteria.length ? task.criteria.join(', ') : 'none'}`;
+      let headerAdded = false;
+      if (criteriaIndex >= 0) result[criteriaIndex] = criteriaLine;
+      else { result.splice(action, 0, criteriaLine); action++; headerAdded = true; }
+
+      const taskEnd = (headings.find((index) => index > start) ?? result.length) + (headerAdded ? 1 : 0);
+      const existing = new Set(result.slice(start + 1, taskEnd).flatMap((line) => {
+        const match = /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/.exec(line);
+        return match?.[1] ? [match[1]] : [];
+      }));
+      const additions = task.paths.filter((path) => !existing.has(path)).flatMap((path) => {
+        const note = effective.changes.find((change) => change.path === path)?.note || 'Accepted implementation scope adjustment.';
+        return ['', `#### [MODIFY] ${path}`, `- Changes: ${note}`];
+      });
+      if (additions.length) result.splice(taskEnd, 0, ...additions);
+    }
+    return result;
+  });
+
+  replaceSection('## Success Criteria', (body) => {
+    const first = body.findIndex((line) => /^(?:[-*+] |\d+[.)] )\[SC[1-9]\d*\]\s+/.test(line));
+    if (first < 0) return body;
+    const prefix = body.slice(0, first);
+    const existingGroups = new Map<string, string[]>();
+    let currentId: string | null = null;
+    for (const line of body.slice(first)) {
+      const heading = /^(?:[-*+] |\d+[.)] )\[SC([1-9]\d*)\]\s+/.exec(line);
+      if (heading) { currentId = `SC${heading[1]}`; existingGroups.set(currentId, [line]); }
+      else if (currentId) existingGroups.get(currentId)!.push(line);
+    }
+    const render = (criterion: PlanCriterion): string[] => {
+      const old = existingGroups.get(criterion.id) ?? [];
+      const integration = old.filter((line) => /^ {2,}[-*+] Integration:/i.test(line));
+      return [
+        `- [${criterion.id}] ${criterion.title}`,
+        ...(criterion.changes.length ? [`  - Changes: ${criterion.changes.join(', ')}`] : []),
+        ...criterion.verify.map(({ command, final }) => `  - Verify: \`${command}\`${final ? ' [FINAL]' : ''}`),
+        ...(criterion.evidence ? [`  - Evidence: ${criterion.evidence}`] : []),
+        ...(criterion.preExisting === null ? [] : [`  - Pre-existing: ${criterion.preExisting ? 'yes' : 'no'}`]),
+        ...(criterion.redException ? [`  - RED exception: ${criterion.redException}`] : []),
+        ...(criterion.testRationale ? [`  - Test rationale: ${criterion.testRationale}`] : []),
+        ...(criterion.review ? [`  - Review: ${criterion.review}`] : []),
+        ...(criterion.enforcementInfeasibility ? [`  - Enforcement infeasibility: ${criterion.enforcementInfeasibility}`] : []),
+        ...integration,
+      ];
+    };
+    const mapped = effective.criteria.flatMap((criterion) => {
+      const original = baseline.criteria.find((row) => row.id === criterion.id);
+      const unchanged = original && JSON.stringify({ ...original, line: 0 }) === JSON.stringify({ ...criterion, line: 0 });
+      return unchanged ? existingGroups.get(criterion.id) ?? render(criterion) : render(criterion);
+    });
+    return [...prefix, ...mapped];
+  });
+
+  const decisionsAdded = effective.keyDecisions.filter((item) => !baseline.keyDecisions.includes(item));
+  if (decisionsAdded.length) {
+    const found = replaceSection('## Key Decisions & Context', (body) => [...body, ...decisionsAdded.map((item) => `- ${item}`)]);
+    if (!found) {
+      const at = lines.findIndex((line) => line.trimEnd() === '## Success Criteria');
+      if (at >= 0) lines.splice(at, 0, '## Key Decisions & Context', ...decisionsAdded.map((item) => `- ${item}`), '');
+    }
+  }
+
+  const criterionCommands = new Set(effective.criteria.flatMap((criterion) => criterion.verify.map((item) => item.command)));
+  const commandsAdded = effective.verification.automated.filter((command) => !baseline.verification.automated.includes(command) && !criterionCommands.has(command));
+  if (commandsAdded.length) replaceSection('## Verification Plan', (body) => {
+    const result = [...body];
+    const at = result.findIndex((line) => line.trimEnd() === '### Automated Tests');
+    if (at < 0) return result;
+    let end = at + 1;
+    while (end < result.length && !/^#{2,3}\s/.test(result[end] ?? '')) end++;
+    result.splice(end, 0, ...commandsAdded.map((command) => `- \`${command}\``));
+    return result;
+  });
+
+  const dutiesAdded = effective.verification.manual.filter((item) => !baseline.verification.manual.includes(item));
+  if (dutiesAdded.length) replaceSection('## Verification Plan', (body) => {
+    const result = [...body];
+    let at = result.findIndex((line) => line.trimEnd() === '### Manual Verification');
+    if (at < 0) { result.push('', '### Manual Verification'); at = result.length - 1; }
+    let end = at + 1;
+    while (end < result.length && !/^#{2,3}\s/.test(result[end] ?? '')) end++;
+    result.splice(end, 0, ...dutiesAdded.map((item) => `- ${item}`));
+    return result;
+  });
+
+  const representedFinals = new Set(effective.criteria.flatMap((criterion) => criterion.verify.filter((item) => item.final).map((item) => item.command)));
+  const extraFinals = effective.finalCommands.filter((command) => !baseline.finalCommands.includes(command) && !representedFinals.has(command));
+  if (extraFinals.length && effective.criteria.length) {
+    const expandedPath = effective.criteria.find((criterion) => criterion.changes.some((path) => !baseline.changes.some((change) => change.path === path)));
+    const owner = expandedPath ?? effective.criteria[0]!;
+    replaceSection('## Success Criteria', (body) => {
+      const start = body.findIndex((line) => new RegExp(`^(?:[-*+] |\\d+[.)] )\\[${owner.id}\\]\\s+`).test(line));
+      if (start < 0) return body;
+      let end = start + 1;
+      while (end < body.length && !/^(?:[-*+] |\d+[.)] )\[SC[1-9]\d*\]\s+/.test(body[end] ?? '')) end++;
+      body.splice(end, 0, ...extraFinals.map((command) => `  - Verify: \`${command}\` [FINAL]`));
+      return body;
+    });
+  }
+
+  return lines.join(newline);
+}
+
 /** Parses and lints a plan; any defect-severity diagnostic fails the parse. */
 export function parsePlan(source: string, options: PlanOptions = {}): PlanResult {
   const lines = structuralLines(source);

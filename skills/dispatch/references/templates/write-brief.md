@@ -13,7 +13,7 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 ````markdown
 ### Outcome handoff
 - Write the complete implementation-outcome JSON to `<Expected Envelope Path>`.
-- Run `<Self Check Command>`; correct every listed defect before returning.
+- After launch, copy the task's exact attempt, signature, and assigned handle from the `Await write` frame into its generated self-check event, then run `<Self Check Command>`; correct every listed defect before returning.
 - List each changed file in `files` with one short clause on what changed there.
 - In chat, return only the status, one-line summary, concerns, and envelope path. Keep evidence rows in the JSON file.
 
@@ -24,4 +24,9 @@ Structured `envelope`, `selfCheck`, `packet`, `manifest`, `boundaries`, `criteri
 - Edit with your file edit/write tools, batching related changes; do not chain shell text rewrites (sed, awk, python) over source files.
 
 <<slot:kind-rules>>
+
+### Scope requests
+- If required work exceeds the current brief or envelope, pause before editing outside it and submit the kind-specific `SCOPE_REQUEST` to the orchestrator with the concrete delta and why it is necessary.
+- The orchestrator adjudicates against the task objective and invariants. If it agrees, wait for the approval notice and revised brief before resuming; the accepted work keeps the settled level. If it disagrees, do no out-of-envelope work until the user accepts the delta.
+- Never treat an out-of-envelope edit as a scope request. The driver rejects a request when those edits already exist.
 ````

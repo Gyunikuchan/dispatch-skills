@@ -2,6 +2,7 @@
 // what the journal cannot recompute (attempts, worktree, launch handle, brief paths, candidate and integrated revisions).
 
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../domain/types.ts';
+import type { TreeFingerprint } from '../core/types.ts';
 import { isTestPath, type RedMatrixRow } from './implement-types.ts';
 
 export type TaskStatus = 'pending' | 'running' | 'submitted' | 'accepted' | 'failed';
@@ -10,10 +11,15 @@ export type TaskRecord = {
   id: string;
   status: TaskStatus;
   attempt: number;
+  failures: number;
   signature: string;
   input: string | null;
   worktree: string | null;
+  /** Keeps prior and rebased trees addressable for retries and final cleanup. */
+  worktreeNames?: readonly string[];
   handle: string | null;
+  baseline: TreeFingerprint | null;
+  preserveDraft: boolean;
   modelIndex: number;
   brief: TaskBriefPaths | null;
   candidate: string | null;
@@ -26,11 +32,11 @@ export type Tasks = Readonly<Record<string, TaskRecord>>;
 /** Paths, criterion definitions, and prerequisites define a task's work; any change re-pends it and its descendants. */
 export function taskSignature(plan: ParsedPlan, task: PlanTask): string {
   const criteria = taskCriteria(plan, task).map(({ line: _line, ...criterion }) => criterion).sort((a, b) => a.id.localeCompare(b.id));
-  return JSON.stringify({ paths: [...task.paths].sort(), criteria, prerequisites: [...task.prerequisites].sort() });
+  return JSON.stringify({ paths: [...task.paths].sort(), criteria: [...task.criteria].sort(), definitions: criteria, summary: task.summary, prerequisites: [...task.prerequisites].sort() });
 }
 
 function fresh(plan: ParsedPlan, task: PlanTask): TaskRecord {
-  return { id: task.id, status: 'pending', attempt: 0, signature: taskSignature(plan, task), input: null, worktree: null, handle: null, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
+  return { id: task.id, status: 'pending', attempt: 0, failures: 0, signature: taskSignature(plan, task), input: null, worktree: null, worktreeNames: [], handle: null, baseline: null, preserveDraft: false, modelIndex: 0, brief: null, candidate: null, integrated: null, redRows: [], reason: null };
 }
 
 /** Validated config caps concurrent task writers; an absent or invalid value runs one writer at a time. */
@@ -41,6 +47,18 @@ export function writeConcurrency(config: Readonly<Record<string, unknown>>): num
 
 export function initialTasks(plan: ParsedPlan): Tasks {
   return Object.fromEntries(plan.tasks.map((task) => [task.id, fresh(plan, task)]));
+}
+
+/** Rewinds integrated work without reusing an earlier writer identity or replenishing failure budget. */
+export function rependTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
+  return Object.fromEntries(plan.tasks.map((task) => {
+    const old = tasks[task.id];
+    return [task.id, {
+      ...fresh(plan, task), attempt: old?.attempt ?? 0, failures: old?.failures ?? 0,
+      worktreeNames: old?.worktreeNames ?? [],
+      ...(old?.preserveDraft && old.worktree ? { worktree: old.worktree, input: old.input, preserveDraft: true, reason: old.reason } : {}),
+    }];
+  }));
 }
 
 function descendants(plan: ParsedPlan, ids: ReadonlySet<string>): Set<string> {
@@ -58,7 +76,7 @@ export function reconcileTasks(tasks: Tasks, plan: ParsedPlan): Tasks {
   const repend = descendants(plan, changed);
   return Object.fromEntries(plan.tasks.map((task) => {
     const old = tasks[task.id];
-    return [task.id, !old || repend.has(task.id) ? { ...fresh(plan, task), attempt: old && old.status !== 'accepted' ? old.attempt : 0 } : old];
+    return [task.id, !old ? fresh(plan, task) : repend.has(task.id) ? { ...fresh(plan, task), attempt: old.attempt, failures: old.signature === taskSignature(plan, task) ? old.failures : 0, worktreeNames: old.worktreeNames ?? [] } : old];
   }));
 }
 
@@ -67,8 +85,8 @@ export function invalidatesIntegration(before: Tasks, after: Tasks): boolean {
   return Object.values(before).some((record) => record.status === 'accepted' && after[record.id]?.status !== 'accepted');
 }
 
-export function readyTasks(plan: ParsedPlan, tasks: Tasks, maxAttempts: number): PlanTask[] {
-  return plan.tasks.filter((task) => tasks[task.id]?.status === 'pending' && tasks[task.id]!.attempt < maxAttempts
+export function readyTasks(plan: ParsedPlan, tasks: Tasks, maxFailures: number): PlanTask[] {
+  return plan.tasks.filter((task) => tasks[task.id]?.status === 'pending' && tasks[task.id]!.failures < maxFailures
     && task.prerequisites.every((id) => tasks[id]?.status === 'accepted'));
 }
 

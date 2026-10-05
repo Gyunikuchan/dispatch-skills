@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { stepDesign, selectReady, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { validateDesignTraceability } from '../../../skills/dispatch/scripts/domain/plan.ts';
-import { approval, hash, design } from './design.test.ts';
+import { approval, approveDesignScope, hash, design } from './design.test.ts';
 import { beginRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
+import { beginDesignRevision, stepDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { PLAN, FP } from './implement-recovery.test.ts';
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 
@@ -12,21 +13,72 @@ export function started(): DesignState {
   return stepDesign(approved.state, { type: 'SNAPSHOT', effectId: approved.effects[0]!.id, fingerprint: { head: 'a'.repeat(40), index: 'i', worktree: 'w' }, diff: { paths: [] } }).state;
 }
 
-test('expanded bound plan revision derives approval and retains write effects within design scope', () => {
+test('prewrite-level: gate sees all increments before checkout', () => {
+  const state = started();
+  assert.equal(state.tag, 'increment');
+  if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c) throw new Error('child');
+  assert.deepEqual(state.child.c.designBinding?.governingDesign?.remainingIncrements.map((row) => row.id), ['I01', 'I02']);
+  assert.notEqual(state.child.tag, 'task-checkout');
+});
+
+test('prewrite-level: approved later-increment expansion is adjudicated before delivery checkout', () => {
+  const base = approval('implement').c;
+  const c = {
+    ...base, design, hash, levelGatePassed: true, completed: ['I01'], ownership: { I01: ['src/a.ts'] },
+    approval: { by: 'user' as const, quote: 'Deliver', hash }, baseline: 'a'.repeat(40),
+  };
+  const working = beginDesignRevision(c, { type: 'REVISE', artifact: 'design', reason: 'Expand the later increment', evidence: 'Its acceptance contract requires the helper.' });
+  const authored = stepDesignRevision(working.state, { type: 'AUTHORED', path: working.state.workingPath });
+  if (authored.state.tag !== 'parse') throw new Error('parse');
+  const revised = { ...design, increments: design.increments.map((row) => row.id === 'I02' ? { ...row, paths: [...row.paths, 'src/extra.ts'] } : row) };
+  const proposal = stepDesignRevision({ ...authored.state, afterReview: true }, { type: 'ARTIFACT_PARSED', kind: 'design', effectId: authored.state.effectId, hash: `sha256:${'b'.repeat(64)}`, parsed: revised, defects: [] });
+  assert.equal(proposal.state.tag, 'scope-adjudication');
+  if (proposal.state.tag !== 'scope-adjudication') return;
+  assert.equal(proposal.state.request.source, 'design-revision');
+  if (proposal.state.request.source !== 'design-revision') return;
+  const requestId = proposal.state.request.requestId;
+  assert.deepEqual(proposal.state.request.affectedIncrements, ['I02']);
+  assert.ok(proposal.state.request.delta.paths.includes('src/extra.ts'));
+  assert.deepEqual(proposal.effects, []);
+
+  const pending = { state: { tag: 'revision' as const, c, child: proposal.state }, effects: [] };
+  const resumed = approveDesignScope(pending);
+  assert.ok(resumed.state.tag === 'approval' || resumed.state.tag === 'increment');
+  assert.ok('c' in resumed.state && resumed.state.c?.scopeAdjustments.some((item) => item.proposal.requestId === requestId));
+  assert.equal(resumed.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'task'), false);
+});
+
+function approveRevisionScope(result: ReturnType<typeof stepDesign>): ReturnType<typeof stepDesign> {
+  const state = result.state;
+  if (state.tag !== 'plan-revision' || state.child.tag !== 'scope-adjudication') return result;
+  let next = stepDesign(state, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: state.child.request, ruling: 'approve', rationale: 'The added check is required by the accepted criterion.' } });
+  if (next.state.tag === 'plan-revision' && next.state.child.tag === 'checking-host-event') next = stepDesign(next.state, { type: 'SNAPSHOT', effectId: next.state.child.effectId, fingerprint: FP, diff: { paths: [] } });
+  return { ...next, effects: [...result.effects, ...next.effects] };
+}
+
+test('orchestrator-approved bound plan revision resumes without another user approval', () => {
   const state = started();
   if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c) throw new Error('child');
   const binding = state.child.c.designBinding!;
   const original: ParsedPlan = { ...PLAN, changes: PLAN.changes.map((row) => ({ ...row, action: 'MODIFY' })), criteria: PLAN.criteria.map((row) => ({ ...row, evidence: 'verify' })), box: { 'TL;DR': 'First behavior' }, traceability: { Design: binding.path, Revision: hash, Increment: 'I01', ...binding.contract } };
-  const c = { ...state.child.c, plan: original, planHash: hash, startFingerprint: FP, lastFingerprint: FP };
+  const c = { ...state.child.c, plan: original, planHash: hash, startFingerprint: FP, lastFingerprint: FP, levelGatePassed: true };
   const parent = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
   const revision = beginRevision(parent, { type: 'REVISE', artifact: 'plan', reason: 'Add verification', evidence: 'Missing check' }).state;
   const event = { type: 'ARTIFACT_PARSED' as const, kind: 'plan' as const, effectId: 'reparse', hash: `sha256:${'b'.repeat(64)}`, defects: [], parsed: { ...original, criteria: original.criteria.map((row) => ({ ...row, verify: [...row.verify, { command: 'extra-check', final: false }] })) } };
-  const result = stepDesign({ tag: 'plan-revision', c: state.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'reparse', afterReview: true } }, event);
+  const parsed = stepDesign({ tag: 'plan-revision', c: state.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'reparse', afterReview: true } }, event);
+  assert.equal(parsed.state.tag, 'plan-revision');
+  if (parsed.state.tag !== 'plan-revision' || parsed.state.child.tag !== 'scope-adjudication') throw new Error('revision scope proposal');
+  assert.equal(parsed.state.child.request.source, 'plan-revision');
+  assert.equal(parsed.state.child.request.baseArtifactHash, hash);
+  assert.equal(parsed.state.child.request.proposedArtifactHash, event.hash);
+  const result = approveRevisionScope(parsed);
   assert.equal(result.state.tag, 'increment');
   if (result.state.tag !== 'increment' || !('c' in result.state.child)) throw new Error('child');
-  assert.equal(result.state.child.tag, 'task-checkout');
-  assert.equal(result.state.child.c?.approval?.by, 'design');
-  assert.ok(result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'));
+  assert.equal(result.state.child.tag, 'evidence');
+  assert.equal(result.state.child.c?.designBinding?.revision, hash);
+  assert.equal(result.state.child.c?.scopeNotice?.requestId, parsed.state.tag === 'plan-revision' && parsed.state.child.tag === 'scope-adjudication' ? parsed.state.child.request.requestId : null);
+  assert.equal(result.state.child.c?.run.level, c.run.level);
+  assert.equal(result.effects.some((effect) => effect.kind === 'checkout' && effect.op === 'init'), false);
   const denied = stepDesign({ tag: 'plan-revision', c: state.c, increment: 'I01', child: { tag: 'parse', r: revision.r, effectId: 'reparse', afterReview: true } }, { ...event, parsed: { ...event.parsed, changes: [{ ...original.changes[0]!, path: 'src/outside.ts' }] } });
   assert.equal(denied.state.tag, 'plan-revision');
   assert.deepEqual(denied.effects, []);
@@ -66,7 +118,7 @@ test('design-implement-delivers-all: two child outcomes retain ownership and use
 test('bound child baseline derives approval without an approval await', () => {
   let state = started();
   if (state.tag !== 'increment' || !('c' in state.child) || !state.child.c) throw new Error('child');
-  const c = state.child.c;
+  const c = { ...state.child.c, levelGatePassed: true };
   const plan = { title: 'First', box: { 'TL;DR': 'First behavior' }, keyDecisions: [], criteria: [], changes: [], verification: { automated: [], none: null, manual: [] }, tasks: [], finalCommands: [], traceability: { Design: 'x.design.md', Revision: hash, Increment: 'I01', Outcome: 'First behavior' }, governedText: '# First' };
   state = { ...state, child: { tag: 'baseline-snapshot', c: { ...c, plan, planHash: hash, startFingerprint: { head: 'h', index: 'i', worktree: 'w' } }, effectId: 'baseline', results: [] } };
   const result = stepDesign(state, { type: 'SNAPSHOT', effectId: 'baseline', fingerprint: { head: 'h', index: 'i', worktree: 'w' }, diff: { paths: [] } });

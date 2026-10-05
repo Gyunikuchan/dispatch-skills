@@ -113,18 +113,56 @@ export function oneOf<T>(...options: readonly Validator<T>[]): Validator<T> {
 // SECTION: Host events
 
 const payload = rec(any);
-const DECIDE_KINDS = lit('approval', 'baseline', 'failure', 'concerns', 'escalation', 'needs-user', 'opt-in', 'drift');
+const LEGACY_DECIDE_KINDS = lit('approval', 'baseline', 'failure', 'concerns', 'escalation', 'needs-user', 'opt-in', 'drift');
+const strings = arr(str);
+const nullableString: Validator<string | null> = (value, at) => value === null ? ok(null) : str(value, at);
+const nullableBoolean: Validator<boolean | null> = (value, at) => value === null || typeof value === 'boolean' ? ok(value) : fail(at, 'boolean or null', value);
+const nonBlank: Validator<string> = (value, at) => typeof value === 'string' && value.trim().length > 0 ? ok(value) : fail(at, 'non-empty trimmed string', value);
+const boundedText = (max: number): Validator<string> => (value, at) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= max ? ok(value) : fail(at, `non-empty trimmed string of at most ${max} characters`, value);
+const incrementDelta = obj({ id: str, prerequisites: strings, paths: strings, acceptance: strings });
+const scopeCriterion = obj({ id: str, title: nonBlank, changes: strings, verify: arr(obj({ command: nonBlank, final: lit(true, false) })), evidence: oneOf(lit('red', 'verify', 'review'), (value, at) => value === null ? ok(null) : fail(at, 'evidence class or null', value)), preExisting: nullableBoolean, redException: nullableString, testRationale: nullableString, review: nullableString, enforcementInfeasibility: nullableString });
+const scopeDelta = obj({ paths: strings, criteria: strings, criterionDefinitions: opt(arr(scopeCriterion)), obligations: strings, commands: strings, finalCommands: opt(strings), phaseDuties: strings, increments: arr(incrementDelta) });
+const criterionScope = obj({ id: str, title: nonBlank, changes: strings, verify: strings, review: nullableString, evidence: str });
+const commandScope = obj({ command: str, criteria: strings, paths: strings, final: lit(true, false) });
+const baselineScope = obj({ command: str, status: str, exit: num, inputFingerprint: str });
+const remainingIncrement = obj({ id: str, priority: num, outcome: nonBlank, dependencies: strings, paths: strings, acceptance: strings });
+const designScope = obj({ path: str, hash: str, title: nullableString, objective: nonBlank, invariants: strings, fields: rec(str), remainingIncrements: arr(remainingIncrement) });
+const levelGateScope = obj({
+  planHash: str, objective: str, invariants: strings, criteria: arr(criterionScope), approvedPaths: strings,
+  commandMappings: arr(commandScope), baselineEvidence: arr(baselineScope),
+  phaseObligations: obj({ writer: strings, review: strings }), remainingIncrements: arr(remainingIncrement), design: oneOf(designScope, (value, at) => value === null ? ok(null) : fail(at, 'design object or null', value)),
+});
+const deviationTask = obj({ requestId: str, source: lit('task'), task: str, baseArtifactHash: str, writerRationale: nonBlank, delta: scopeDelta });
+const deviationHotfix = obj({ requestId: str, source: lit('hotfix'), baseArtifactHash: str, writerRationale: nonBlank, delta: scopeDelta });
+const revisionPlan = obj({ requestId: str, source: lit('plan-revision'), baseArtifactHash: str, proposedArtifactHash: str, affectedTasks: strings, rationale: nonBlank, delta: scopeDelta });
+const revisionDesign = obj({ requestId: str, source: lit('design-revision'), baseArtifactHash: str, proposedArtifactHash: str, affectedIncrements: strings, rationale: nonBlank, delta: scopeDelta });
+const scopeProposal = oneOf(deviationTask, deviationHotfix, revisionPlan, revisionDesign);
+const positiveInt: Validator<number> = (value, at) => Number.isSafeInteger(value) && Number(value) > 0 ? ok(Number(value)) : fail(at, 'positive integer', value);
 
 export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Record<string, unknown>> } = {
   AUTHORED: obj({ type: lit('AUTHORED'), path: str }),
   NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(payload) }),
   RULINGS: obj({ type: lit('RULINGS'), rulings: rec(payload) }),
   FIXES_APPLIED: obj({ type: lit('FIXES_APPLIED'), clusters: arr(payload) }),
-  WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, handle: str })) }),
-  WRITE_ENVELOPE: obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: opt(str) }),
-  WRITE_FAILED: obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: opt(str) }),
+  WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, attempt: positiveInt, signature: str, handle: str })) }),
+  WRITE_ENVELOPE: oneOf(
+    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str }),
+    obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: str, attempt: positiveInt, signature: str, handle: str }),
+  ),
+  WRITE_FAILED: oneOf(
+    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str }),
+    obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: str, attempt: positiveInt, signature: str, handle: str }),
+  ),
+  WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str }),
   EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload) }),
-  DECISION: obj({ type: lit('DECISION'), kind: DECIDE_KINDS, answer: any }),
+  DECISION: oneOf(
+    obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
+    obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),
+    obj({ type: lit('DECISION'), kind: lit('scope-deviation'), answer: obj({ by: lit('orchestrator'), request: scopeProposal, ruling: lit('approve', 'disagree'), rationale: nonBlank }) }),
+    obj({ type: lit('DECISION'), kind: lit('scope-deviation-user'), answer: obj({ by: lit('user'), requestId: str, choice: lit('accept', 'decline'), quote: nonBlank }) }),
+    obj({ type: lit('DECISION'), kind: lit('run-stop'), answer: obj({ by: lit('user'), quote: nonBlank }) }),
+    obj({ type: lit('DECISION'), kind: LEGACY_DECIDE_KINDS, answer: any }),
+  ),
   REVISE: obj({ type: lit('REVISE'), artifact: lit('plan', 'design'), reason: str, evidence: str }),
 };
 
@@ -134,7 +172,7 @@ export const AWAIT_ACCEPTS: { readonly [K in Await]: readonly HostEventType[] } 
   native: ['NATIVE_RESULTS', 'REVISE'],
   rule: ['RULINGS', 'REVISE'],
   fix: ['FIXES_APPLIED', 'REVISE'],
-  write: ['WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'REVISE'],
+  write: ['WRITE_LAUNCHED', 'WRITE_ENVELOPE', 'WRITE_FAILED', 'WRITE_CANCELLED', 'REVISE'],
   evidence: ['EVIDENCE', 'REVISE'],
   decide: ['DECISION', 'REVISE'],
   done: [],

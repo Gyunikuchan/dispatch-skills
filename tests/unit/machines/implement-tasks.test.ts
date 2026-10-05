@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { ScopeAdjustment } from '../../../skills/dispatch/scripts/core/types.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { parseRedMatrix } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { beginRevision, reboundRevision } from '../../../skills/dispatch/scripts/machines/revision.ts';
-import { implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { effectivePlan, implementData, initialImplement, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
+import { reconcileTasks, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 
 // SECTION: Fixture plan — T1 (RED) and T2 are independent; T3 depends on T1.
 
@@ -22,7 +24,7 @@ export const PLAN: ParsedPlan = {
   verification: { automated: [], none: null, manual: [] }, finalCommands: [], traceability: null, governedText: '# Tasks',
   tasks: [task('T1', ['src/a.ts', 'tests/sc1.test.ts'], ['SC1']), task('T2', ['src/b.ts'], ['SC2']), task('T3', ['src/c.ts'], ['SC3'], ['T1'])],
 };
-const run = (concurrency: number, reviewRounds = 0): RunStartedEvent => ({
+export const run = (concurrency: number, reviewRounds = 0): RunStartedEvent => ({
   type: 'RUN_STARTED', verb: 'implement', argument: 'x.plan.md', level: 'low', levelSource: 'explicit', pins: null, fix: false, orchestrator: 'claude', orchestratorModel: null, repo: {},
   overrides: { sessionDir: 'session', settledPlan: { path: 'x.plan.md', hash: HASH, outcome: 'settled' } },
   config: { 'write-concurrency': concurrency, 'write-subagents': { claude: { low: { model: ['writer-a', 'writer-b'] } } }, 'read-delegates': { codex: { targets: [{ low: { model: 'reader' } }] } }, phases: { 'plan-review': { rounds: { low: 1 }, targets: { low: 1 } }, 'code-review': { rounds: { low: reviewRounds }, targets: { low: 1 } } } },
@@ -71,6 +73,7 @@ function answer(state: ImplementState, effect: Effect, sim: Sim): Event | null {
         task: { path: `run/wt/${input['name']}`, revision: input['revision'] },
         commit: { revision: `c-${id}`, paths: pathsOf(id ?? 'T1', plan) },
         red: { path: `run/wt/${input['name']}`, defects: sim.redDefects?.includes(id ?? '') ? ['checkpoint names an unapproved path'] : [], files: [] },
+        'scope-rebase': { path: `run/wt/${input['name']}`, revision: input['revision'], conflict: false, conflicts: [] },
         integrate: sim.conflict?.includes(id ?? '') ? { conflict: true, paths: ['src/shared.ts'], detail: 'both modified' } : { revision: `i-${id}`, conflict: false, paths: [] },
         reset: { path: `run/wt/${input['name']}` }, deliver: { conflicts: [], transferred: ['src/a.ts'], already: [] }, cleanup: {},
       };
@@ -100,24 +103,34 @@ export function host(result: Result, event: Event, sim: Sim, trace: Trace): Resu
   return pump(stepImplement(result.state, event), sim, trace);
 }
 
+function classify(result: Result, sim: Sim, trace: Trace): Result {
+  if (result.state.tag !== 'level-classification') return result;
+  const gateScope = implementData(result.state)['gateScope'];
+  return host(result, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'Bounded task with local and recoverable effects.', gateScope } }, sim, trace);
+}
+
 export function start(concurrency: number, sim: Sim = {}): { result: Result; trace: Trace } {
   const trace: Trace = { effects: [], events: [] };
   let result = pump(stepImplement(initialImplement(), run(concurrency, sim.reviewRounds)), sim, trace);
   assert.equal(result.state.tag, 'approval');
   result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
+  result = classify(result, sim, trace);
   return { result, trace };
 }
 
-type Slot = { task: string; action: string; handle: string | null; attempt: number; model: string; envelopePath: string; worktree: string };
+type Slot = { task: string; action: string; handle: string | null; attempt: number; signature: string; model: string; envelopePath: string; worktree: string };
 const slots = (result: Result): Slot[] => result.state.tag === 'tasks' ? (implementData(result.state)['tasks'] as Slot[]) : [];
 const record = (result: Result, id: string) => 'c' in result.state && result.state.c ? result.state.c.tasks[id] : undefined;
-export const launch = (result: Result, sim: Sim, trace: Trace): Result => host(result, { type: 'WRITE_LAUNCHED', tasks: slots(result).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, handle: `agent-${slot.task}-${slot.attempt}` })) }, sim, trace);
-export const submit = (result: Result, id: string, sim: Sim, trace: Trace): Result => host(result, { type: 'WRITE_ENVELOPE', task: id, envelopePath: slots(result).find((slot) => slot.task === id)!.envelopePath }, sim, trace);
+export const launch = (result: Result, sim: Sim, trace: Trace): Result => host(result, { type: 'WRITE_LAUNCHED', tasks: slots(result).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}` })) }, sim, trace);
+export const submit = (result: Result, id: string, sim: Sim, trace: Trace): Result => {
+  const slot = slots(result).find((item) => item.task === id)!;
+  return host(result, { type: 'WRITE_ENVELOPE', task: id, attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, envelopePath: slot.envelopePath }, sim, trace);
+};
 const launchedTasks = (trace: Trace) => trace.effects.flatMap((effect) => effect.kind === 'checkout' && effect.op === 'task' ? [String(effect.input['name'])] : []);
 
 // SECTION: Scheduling
 
-test('tasks: schedule launches ready tasks in plan order up to the cap and dependents after acceptance', () => {
+test('prewrite-level: task slots schedule in plan order only after the shared gate', () => {
   const sim: Sim = {};
   let { result, trace } = start(2, sim);
   assert.deepEqual(slots(result).map((slot) => [slot.task, slot.action, slot.model]), [['T1', 'launch', 'writer-a'], ['T2', 'launch', 'writer-a']]);
@@ -151,6 +164,60 @@ test('tasks: schedule with cap one runs the same pipeline one task at a time', (
   }
   assert.equal(result.state.tag, 'evidence');
   assert.deepEqual(launchedTasks(trace), ['task-t1', 'task-t2', 'task-t3']);
+});
+
+test('level-journal: task admission supplies its mixed production/test paths to a RED_READY scope request', () => {
+  const sim: Sim = {
+    envelope: (id) => id === 'T1' ? {
+      schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'RED_READY', summary: 'The regression needs one additional fixture.', evidence: [],
+      scopeRequest: { requestId: 'red-ready-extra-fixture', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required regression test needs a fixture outside this task.', delta: { paths: ['tests/extra.fixture.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
+    } : defaultEnvelope(id),
+  };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  assert.equal(result.state.tag, 'scope-adjudication');
+  const admission = trace.effects.findLast((effect) => effect.kind === 'check-envelope');
+  assert.ok(admission?.kind === 'check-envelope');
+  if (admission?.kind === 'check-envelope') assert.deepEqual(admission.permitted, ['src/a.ts', 'tests/sc1.test.ts']);
+});
+
+test('level-journal: scope-driven fourth launch stays schedulable while repeated failures hit retry bound', () => {
+  let scopeRequests = 0;
+  const sim: Sim = {
+    plan: { ...PLAN, tasks: [PLAN.tasks[0]!] },
+    envelope: (id) => {
+      if (id !== 'T1') return defaultEnvelope(id);
+      if (scopeRequests < 3) {
+        const request = ++scopeRequests;
+        return {
+          schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: `Add required helper ${request}.`, evidence: [],
+          scopeRequest: { requestId: `scope-${request}`, source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The accepted outcome requires another helper.', delta: { paths: [`src/helper-${request}.ts`], criteria: [], obligations: [`Use helper ${request}`], commands: [], phaseDuties: [], increments: [] } },
+        };
+      }
+      return { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'Writer cannot complete.', evidence: [], blockers: ['upstream API remains unavailable'] };
+    },
+  };
+  let { result, trace } = start(1, sim);
+  for (let scope = 1; scope <= 3; scope++) {
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.equal(result.state.tag, 'scope-adjudication');
+    if (result.state.tag !== 'scope-adjudication') return;
+    result = host(result, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: result.state.request, ruling: 'approve', rationale: 'The requested helper supports the approved outcome.' } }, sim, trace);
+    assert.equal(result.state.tag, 'tasks');
+    const next = slots(result).find((slot) => slot.task === 'T1');
+    assert.equal(next?.action, 'launch');
+    assert.equal(next?.attempt, scope + 1);
+    assert.equal(record(result, 'T1')?.failures, 0);
+  }
+  assert.equal(slots(result).find((slot) => slot.task === 'T1')?.attempt, 4);
+
+  for (let failures = 1; failures <= 3; failures++) {
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.equal(result.state.tag, 'failure');
+    assert.equal(record(result, 'T1')?.failures, failures);
+    if (failures < 3) result = host(result, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'The upstream API is still unavailable.' } }, sim, trace);
+  }
+  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'Try again.' } }) ?? '', /failure limit/);
 });
 
 test('tasks: schedule verifies GREEN in the task worktree and integration in the integration worktree', () => {
@@ -192,20 +259,23 @@ test('tasks: failure retry re-pends the failed task with its admission defect an
     const brief = trace.effects.findLast((effect) => effect.kind === 'write-brief');
     assert.deepEqual(brief?.kind === 'write-brief' && brief.input['admissionDefects'], ['Writer returned BLOCKED: cannot proceed']);
   }
-  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'again' } }) ?? '', /attempt limit/);
+  assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'again' } }) ?? '', /failure limit/);
 });
 
 test('tasks: failure cascade relaunches the next model in a reset worktree without a new attempt', () => {
   const sim: Sim = {};
   let { result, trace } = start(1, sim);
   result = launch(result, sim, trace);
-  assert.match(validateImplement(result.state, { type: 'WRITE_FAILED', task: 'T1', model: 'writer-b', kind: 'quota', reason: 'x' }) ?? '', /current model/);
-  result = host(result, { type: 'WRITE_FAILED', task: 'T1', model: 'writer-a', kind: 'quota', reason: 'no capacity' }, sim, trace);
+  const t1 = slots(result).find((slot) => slot.task === 'T1')!;
+  const receipt = { task: 'T1', attempt: t1.attempt, signature: t1.signature, handle: t1.handle! };
+  assert.match(validateImplement(result.state, { type: 'WRITE_FAILED', ...receipt, model: 'writer-b', kind: 'quota', reason: 'x' }) ?? '', /current model/);
+  result = host(result, { type: 'WRITE_FAILED', ...receipt, model: 'writer-a', kind: 'quota', reason: 'no capacity' }, sim, trace);
   const reset = trace.effects.at(-1);
   assert.deepEqual(reset?.kind === 'checkout' && [reset.op, reset.input['name'], reset.input['revision']], ['reset', 'task-t1', 'b0']);
-  assert.deepEqual(slots(result).map((slot) => [slot.task, slot.action, slot.model, slot.attempt]), [['T1', 'launch', 'writer-b', 1]]);
+  assert.deepEqual(slots(result).map((slot) => [slot.task, slot.action, slot.model, slot.attempt]), [['T1', 'launch', 'writer-b', 2]]);
   result = launch(result, sim, trace);
-  result = host(result, { type: 'WRITE_FAILED', task: 'T1', model: 'writer-b', kind: 'quota', reason: 'no capacity' }, sim, trace);
+  const fallback = slots(result).find((slot) => slot.task === 'T1')!;
+  result = host(result, { type: 'WRITE_FAILED', task: 'T1', attempt: fallback.attempt, signature: fallback.signature, handle: fallback.handle!, model: 'writer-b', kind: 'quota', reason: 'no capacity' }, sim, trace);
   assert.equal(record(result, 'T1')?.status, 'failed');
   assert.deepEqual(slots(result).map((slot) => slot.task), ['T2']);
 });
@@ -214,6 +284,10 @@ test('tasks: failure cascade relaunches the next model in a reset worktree witho
 
 const rejections: [string, Sim, RegExp][] = [
   ['scope violation', { diff: (id) => [...pathsOf(id), 'README.md'] }, /outside the task scope/],
+  ['scope request after an out-of-envelope edit', {
+    envelope: () => ({ schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Need an extra module.', evidence: [], scopeRequest: { requestId: 'scope-1', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The accepted behavior requires this module.', delta: { paths: ['src/new.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } } }),
+    diff: (id) => [...pathsOf(id), 'src/new.ts'],
+  }, /Scope request rejected after out-of-envelope edits/],
   ['missing RED matrix', { envelope: (id) => ({ ...defaultEnvelope(id), evidence: ['CRITERION SC1 | src/a.ts | behavior'] }) }, /RED matrix rejected/],
   ['unapproved checkpoint', { redDefects: ['T1'] }, /RED checkpoint rejected/],
   ['setup-only RED', { verify: (purpose) => purpose === 'red' ? { exit: 1, loadError: true } : { exit: 0 } }, /load, syntax, or missing-file/],
@@ -273,8 +347,47 @@ test('tasks: replay folds the recorded events to identical frames without relaun
   assert.deepEqual(first.state, result.state);
   assert.deepEqual(slots(first).map((slot) => [slot.task, slot.action]), [['T1', 'running']]);
   assert.equal(first.effects.filter((effect) => effect.kind === 'checkout' && effect.op === 'integrate').length, 1);
-  assert.match(validateImplement(first.state, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', handle: 'again' }] }) ?? '', /launch slot/);
-  assert.match(validateImplement(first.state, { type: 'WRITE_ENVELOPE', task: 'T2', envelopePath: 'run/T2.outcome.json' }) ?? '', /running task/);
+  const active = slots(first).find((slot) => slot.task === 'T1')!;
+  assert.match(validateImplement(first.state, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: active.attempt, signature: active.signature, handle: 'again' }] }) ?? '', /launch slot/);
+  assert.match(validateImplement(first.state, { type: 'WRITE_ENVELOPE', task: 'T2', attempt: 1, signature: 'stale', handle: 'stale', envelopePath: 'run/T2.outcome.json' }) ?? '', /active task/);
+});
+
+test('level-journal: task drain retains handle, worktree and signature through replay', () => {
+  const sim: Sim = { envelope: (id) => id === 'T1' ? {
+    schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Request an extra path before editing it.', evidence: [],
+    scopeRequest: { requestId: 'scope-replay', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required behavior uses a companion module.', delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
+  } : defaultEnvelope(id), verify: defaultVerify };
+  let { result, trace } = start(2, sim);
+  result = launch(result, sim, trace);
+  const original = record(result, 'T2');
+  result = submit(result, 'T1', sim, trace);
+  assert.equal(result.state.tag, 'scope-adjudication');
+  if (result.state.tag !== 'scope-adjudication') return;
+  result = host(result, { type: 'DECISION', kind: 'scope-deviation', answer: { by: 'orchestrator', request: result.state.request, ruling: 'approve', rationale: 'The additional path is required by the accepted outcome.' } }, sim, trace);
+  assert.equal(result.state.tag, 'scope-draining');
+  if (result.state.tag !== 'scope-draining' || !('c' in result.state) || !result.state.c) throw new Error('scope drain should retain the implementation context');
+  const drained = result.state.c.tasks['T2'];
+  assert.deepEqual([drained?.handle, drained?.worktree, drained?.signature], [original?.handle, original?.worktree, original?.signature]);
+  let replay = initialImplement();
+  for (const event of [run(2), ...trace.events]) replay = stepImplement(replay, event).state;
+  assert.deepEqual(replay, result.state);
+});
+
+test('level-journal: task reconciliation retains the parked draft under its updated signature', () => {
+  const { result } = start(1);
+  if (result.state.tag !== 'tasks') throw new Error('tasks');
+  const adjustment: ScopeAdjustment = {
+    proposal: { requestId: 'scope-task-signature', source: 'task', task: 'T1', baseArtifactHash: HASH, writerRationale: 'The required behavior uses a companion module.', delta: { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] } },
+    approvedBy: 'orchestrator', rationale: 'The extra path is required.',
+  };
+  const plan = effectivePlan({ ...result.state.c, scopeAdjustments: [adjustment] });
+  const revisedTask = plan.tasks.find((task) => task.id === 'T1')!;
+  const prior = result.state.c.tasks['T1']!;
+  const signature = taskSignature(plan, revisedTask);
+  assert.notEqual(signature, prior.signature);
+  const draft = { ...prior, status: 'pending' as const, signature, attempt: 2, worktree: 'run/wt/task-t1', input: 'integration-head', preserveDraft: true, handle: null, baseline: null };
+  const reconciled = reconcileTasks({ ...result.state.c.tasks, T1: draft }, plan)['T1']!;
+  assert.deepEqual([reconciled.signature, reconciled.worktree, reconciled.input, reconciled.preserveDraft, reconciled.attempt], [signature, draft.worktree, draft.input, true, 2]);
 });
 
 // SECTION: RED evidence
@@ -317,6 +430,7 @@ test('tasks: admission collides RED with a baseline failure unless Pre-existing 
     const ids = (implementData(result.state)['items'] as { failureId: string }[]).map((row) => row.failureId);
     result = host(result, { type: 'DECISION', kind: 'baseline', answer: { action: 'accept-known-red', ids } }, sim, trace);
     result = host(result, { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } }, sim, trace);
+    result = classify(result, sim, trace);
     result = submit(launch(result, sim, trace), 'T1', sim, trace);
     if (preExisting) assert.equal(record(result, 'T1')?.status, 'accepted');
     else assert.match(record(result, 'T1')?.reason ?? '', /collides with a pre-existing baseline failure/);
@@ -331,6 +445,7 @@ test('tasks: admission skips RED replay after an attributed RED exception ruling
   assert.equal(result.state.tag, 'needs-user');
   assert.ok(validateImplement(result.state, { type: 'DECISION', kind: 'needs-user', answer: { decision: 'accept', by: 'user' } }));
   result = host(result, { type: 'DECISION', kind: 'needs-user', answer: { decision: 'accept', by: 'user', quote: 'Accept the invariant' } }, sim, trace);
+  result = classify(result, sim, trace);
   result = submit(launch(result, sim, trace), 'T1', sim, trace);
   assert.equal(record(result, 'T1')?.status, 'accepted');
   assert.deepEqual(redCommand(trace), []);
