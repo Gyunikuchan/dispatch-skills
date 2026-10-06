@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- GitHub Copilot now loads `dispatch` and its aliases: skills no longer set `disable-model-invocation`; their descriptions limit them to explicit invocation.
-- Added the `dispatch-plan` alias for `/dispatch plan`.
-- Removed the `dispatch-plan-review` and `dispatch-design-review` aliases. Use `/dispatch review <file>.plan.md` or `<file>.design.md`; the kind is inferred.
-
 ## [0.7.0] - 2026-10-06
 
 - Rebuilt `dispatch` on a state-machine driver, so runs recover from interruptions more reliably and fix or revise plans without starting over.
@@ -19,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Run level and scope are double-checked during the run, and the orchestrator reports any judgment calls it made when it finishes.
 - Run artifacts stay together in one session folder, and standalone reviews now see the original intent and deliverables.
 - Rewritten user guide with workflow diagrams for each verb, plus opt-in diagnostics and live model list refresh.
+- GitHub Copilot now loads `dispatch` and its aliases: skills no longer set `disable-model-invocation`; their descriptions limit them to explicit invocation.
+- Added the `dispatch-plan` alias for `/dispatch plan`.
+- **Breaking:** removed the `dispatch-plan-review` and `dispatch-design-review` aliases. Use `/dispatch review <file>.plan.md` or `<file>.design.md`; the kind is inferred.
 
 ## [0.6.1] - 2026-09-30
 
