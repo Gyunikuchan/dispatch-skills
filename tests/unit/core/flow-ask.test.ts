@@ -28,7 +28,7 @@ test('ask end to end: start reaches done with claims; the journal replays to the
   assert.equal(result.exitCode, 0);
   assert.equal(result.frame?.at, 'ask › done');
   assert.equal(result.frame?.await, 'done');
-  assert.deepEqual(result.frame?.data['claims'], [{ text: 'claim from codex[0] via ask.prepare-review.1.codex-0.prompt.md', source: 'codex[0]' }]);
+  assert.deepEqual(result.frame?.data['claims'], [{ text: 'claim from codex[0] via codex-0.prompt.md', source: 'codex[0]' }]);
   assert.equal(result.frame?.data['handoff'], runDir);
   const replay = await send({ runDir, machine: rootMachine, handlers, ports, dryRun: true, runRel: 'run' });
   assert.deepEqual(replay.frame, result.frame);

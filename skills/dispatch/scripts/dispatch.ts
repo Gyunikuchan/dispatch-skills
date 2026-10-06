@@ -15,14 +15,14 @@ import { createHandlers } from './effects/index.ts';
 import { writeCheckpoint } from './effects/checkout.ts';
 import { createGit } from './effects/git.ts';
 import { sessionDirOf } from './effects/handoff.ts';
-import { claimPath, donePath, heartbeatPath, inputPath, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
+import { listWorkerClaims, readClaim, runWaveWorker, type WorkerDeps, type WaveDeps } from './effects/wave.ts';
 import { parseCommand, UsageError, type Command } from './lib/cli.ts';
 import { doctorReport, formatDoctor } from './lib/doctor.ts';
 import { loadConfig, loadDiagnosticToggle, validateConfig } from './lib/config.ts';
 import { checkIntegrity, hashFile, integrityDiagnostic } from './lib/integrity.ts';
 import { nodeLinkFs } from './lib/node-fs-ext.ts';
 import { currentPlatform, detectOrchestrator } from './lib/platform.ts';
-import { createRun, findRepoRoot, initializeSession, platformSessionId, reactivateSession, readManifest } from './lib/session.ts';
+import { createRun, findRepoRoot, initializeSession, platformSessionId, reactivateSession, readManifest, runPaths } from './lib/session.ts';
 import { LEVELS, normalizeProvider, parsePins, resolveLevel, resolveRoster, selectLevel, type LevelMap, type ReadDelegate } from './policy/roster.ts';
 import { createDiscovery } from './providers/discovery.ts';
 import { SPECS, isProviderId } from './providers/index.ts';
@@ -96,10 +96,11 @@ function waveRuntime(): Omit<WaveDeps, 'context'> {
       child.on('error', (error) => ports.proc.stderr(`wave worker launch: ${error.message}\n`)); child.unref();
     },
     async awaitWorker(runDir, id, attempt) {
-      const input = JSON.parse(fs.readFileSync(inputPath(runDir, id), 'utf8')) as { timeoutMs: number };
+      const paths = runPaths(runDir);
+      const input = JSON.parse(fs.readFileSync(paths.input(id), 'utf8')) as { timeoutMs: number };
       const deadline = Date.now() + 30_000;
-      while (!fs.existsSync(claimPath(runDir, id, attempt))) { if (Date.now() > deadline) throw new Error('worker did not publish its claim'); await pause(25); }
-      while (!fs.existsSync(donePath(runDir, id, attempt))) {
+      while (!fs.existsSync(paths.claim(id, attempt))) { if (Date.now() > deadline) throw new Error('worker did not publish its claim'); await pause(25); }
+      while (!fs.existsSync(paths.done(id, attempt))) {
         const state = readClaim({ fs: nodeLinkFs, proc: ports.proc, clock: ports.clock }, runDir, id, attempt, input.timeoutMs);
         if (state.kind !== 'live') return;
         await pause(25);
@@ -233,12 +234,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     if (command.command === 'status' && result.frame) {
       let progress: unknown = null;
       try { progress = JSON.parse(fs.readFileSync(path.join(runDir, 'progress.json'), 'utf8')); } catch { /* no effect yet */ }
-      const claims = fs.readdirSync(runDir).flatMap((name) => {
-        const match = /^(.*)\.a(\d+)\.claim\.json$/.exec(name);
-        if (!match) return [];
-        const effect = match[1]!, attempt = Number(match[2]);
-        const input = JSON.parse(nodeLinkFs.readText(inputPath(runDir, effect)) ?? '{"timeoutMs":1800000}') as { timeoutMs: number };
-        return [{ effect, attempt, claim: readClaim({ fs: nodeLinkFs, proc: ports.proc, clock: ports.clock }, runDir, effect, attempt, input.timeoutMs), heartbeat: nodeLinkFs.readText(heartbeatPath(runDir, effect, attempt)) }];
+      const claims = listWorkerClaims(nodeLinkFs, runDir).map(({ effect, attempt }) => {
+        const input = JSON.parse(nodeLinkFs.readText(runPaths(runDir).input(effect)) ?? '{"timeoutMs":1800000}') as { timeoutMs: number };
+        return { effect, attempt, claim: readClaim({ fs: nodeLinkFs, proc: ports.proc, clock: ports.clock }, runDir, effect, attempt, input.timeoutMs), heartbeat: nodeLinkFs.readText(runPaths(runDir).heartbeat(effect, attempt)) };
       });
       const at = typeof progress === 'object' && progress !== null ? (progress as Record<string, unknown>)['at'] : null;
       const stalled = typeof at === 'string' && Date.now() - Date.parse(at) > STALL_HINT_MS;

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import * as prefixed from 'node:child_process';
+import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { nodeFs } from '../../../skills/dispatch/scripts/core/ports.ts';
 import { BLOCKED_LAUNCHERS, SPAWN_RULE } from '../../helpers/block-spawn.ts';
 import { TEMP_ROOT_MARKER } from '../../helpers/isolated-temp.ts';
 import { play, PLAY_RUN } from '../../helpers/play.ts';
@@ -36,4 +38,13 @@ test('play returns the projected frame after each event', () => {
     [PLAY_RUN, 'fixture › snapshotting', 'done'],
     [PLAY_RUN, 'fixture › authoring', 'author'],
   ]);
+});
+
+test('run paths: port atomic, exclusive, and append writes create an absent parent folder', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ports-'));
+  nodeFs.writeAtomic(path.join(root, 'a', 'input.json'), '{}');
+  assert.equal(nodeFs.publishExclusive(path.join(root, 'b', 'launch.json'), '{}'), true);
+  nodeFs.writeExclusive(path.join(root, 'c', 'claim.json'), '{}');
+  nodeFs.appendDurable(path.join(root, 'd', 'events.jsonl'), 'x\n');
+  for (const file of ['a/input.json', 'b/launch.json', 'c/claim.json', 'd/events.jsonl']) assert.ok(fs.existsSync(path.join(root, file)), file);
 });

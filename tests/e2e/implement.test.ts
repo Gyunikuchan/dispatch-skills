@@ -66,7 +66,7 @@ Values are normalized before use so downstream comparisons agree.
     fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
     assert.notEqual(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
     const envelopePath = slot!.envelopePath;
-    const previewEvent = fs.readdirSync(run).find((file) => file.endsWith('.self-check.event.json'))!;
+    const previewEvent = fs.readdirSync(run, { recursive: true, encoding: 'utf8' }).find((file) => file.endsWith('self-check.event.json'))!;
     assert.match(brief.toString('utf8'), /send --run .*--event .*self-check.event.json.*--dry-run/);
     const beforePreview = fs.readFileSync(path.join(run, 'events.jsonl'), 'utf8');
     const previewPath = path.join(run, previewEvent);

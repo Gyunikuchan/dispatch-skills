@@ -28,8 +28,9 @@ export function fakePorts(): FakePorts {
     // durability and atomicity belong to ports.ts (progress.test.ts exercises the real nodeFs).
     fs: {
       ...nodeFs,
-      appendDurable: (file, text) => { fs.appendFileSync(file, text); },
-      writeAtomic: (file, text) => { fs.writeFileSync(file, text); },
+      // Real port writes create their parent folder, so the fakes do too.
+      appendDurable: (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.appendFileSync(file, text); },
+      writeAtomic: (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); },
     },
     spawn: { run: () => { throw new Error('fake ports: spawn is not available in tiers 1-5'); } },
     git: { run: () => { throw new Error('fake ports: git is not available in tiers 1-5'); } },

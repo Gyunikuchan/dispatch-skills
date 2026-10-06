@@ -143,7 +143,7 @@ test('implement-failure-disposition: patch publication and sha256 precede mutati
   assert.equal((await f.invoke())[0]?.type, 'RESTORED');
   assert.deepEqual(order.slice(0, 3), ['.json', '.sha256', 'mutation']);
   f.verify();
-  const patch = JSON.parse(fs.readFileSync(path.join(f.runDir, 'implement_restore_1.restore.json'), 'utf8'));
+  const patch = JSON.parse(fs.readFileSync(path.join(f.runDir, 'implement.restore.1', 'restore.json'), 'utf8'));
   assert.equal(Buffer.from(patch.failed.dirty.content, 'base64').toString(), 'failed attempt');
   assert.equal(Buffer.from(patch.failed.untracked.content, 'base64').toString(), 'binary overwritten');
 });
@@ -160,7 +160,7 @@ for (const failure of ['patch write', 'after patch before sidecar', 'after sidec
   };
   assert.equal((await f.invoke())[0]?.type, 'EFFECT_FAILED');
   if (failure !== 'mid-restore') assert.equal(fs.readFileSync(path.join(f.cwd, 'dirty'), 'utf8'), 'failed attempt');
-  const patchPath = path.join(f.runDir, 'implement_restore_1.restore.json');
+  const patchPath = path.join(f.runDir, 'implement.restore.1', 'restore.json');
   const original = fs.existsSync(patchPath) ? fs.readFileSync(patchPath, 'utf8') : null;
   assert.equal((await f.invoke())[0]?.type, 'RESTORED'); f.verify();
   if (original) assert.equal(fs.readFileSync(patchPath, 'utf8'), original);
@@ -168,7 +168,7 @@ for (const failure of ['patch write', 'after patch before sidecar', 'after sidec
 test('corrupt sidecar and mismatched pre-attempt binding refuse all mutation', async () => {
   const f = fixture(); assert.equal((await f.invoke())[0]?.type, 'RESTORED');
   fs.writeFileSync(path.join(f.cwd, 'dirty'), 'new edit');
-  fs.writeFileSync(path.join(f.runDir, 'implement_restore_1.restore.json.sha256'), 'corrupt');
+  fs.writeFileSync(path.join(f.runDir, 'implement.restore.1', 'restore.json.sha256'), 'corrupt');
   assert.equal((await f.invoke())[0]?.type, 'EFFECT_FAILED');
   assert.equal(fs.readFileSync(path.join(f.cwd, 'dirty'), 'utf8'), 'new edit');
 });

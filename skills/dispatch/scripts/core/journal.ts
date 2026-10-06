@@ -10,6 +10,11 @@ export class EngineFault extends Error {
   override name = 'EngineFault';
 }
 
+/** A run whose RUN_STARTED predates the effect-folder layout; resuming it would split files across layouts. */
+export class LayoutUnsupported extends Error {
+  override name = 'LayoutUnsupported';
+}
+
 export interface JournalRead {
   lines: JournalLine[];
   tornTail: boolean;

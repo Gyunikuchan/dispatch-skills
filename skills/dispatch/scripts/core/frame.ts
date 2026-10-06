@@ -1,16 +1,20 @@
 // Frame projection: one JSON line per invocation on stdout (spec §4.6).
 
+import { runPaths } from '../lib/session.ts';
 import { validateHostEvent } from './validate.ts';
 import type { Await, Frame, HostEvent, Machine } from './types.ts';
 
-export function replyTemplate(runRel: string): string {
+/** With a boundary seq, names `events/<seq>-<await>.json`; a rejected event keeps the seq, so its rewrite reuses the path. */
+export function replyTemplate(runRel: string, boundary?: { seq: number; awaiting: string }): string {
+  const file = boundary ? runPaths(runRel).event(boundary.seq, boundary.awaiting).replace(/\\/g, '/') : '<event-file>';
   // NOTE: `@<file>` sidesteps JSON quoting differences across bash, zsh, and PowerShell.
-  return `node <skills-dir>/dispatch/scripts/dispatch.ts send --run ${runRel} --event @<event-file>`;
+  return `node <skills-dir>/dispatch/scripts/dispatch.ts send --run ${runRel} --event @${file}`;
 }
 
-export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, error?: string): Frame {
+export function projectFrame<S>(machine: Machine<S>, state: S, runRel: string, error?: string, seq?: number): Frame {
   const { at, data } = machine.project(state);
-  const frame: Frame = { v: 1, run: runRel, at, await: machine.awaitOf(state) ?? 'done', data, reply: replyTemplate(runRel) };
+  const awaiting = machine.awaitOf(state) ?? 'done';
+  const frame: Frame = { v: 1, run: runRel, at, await: awaiting, data, reply: replyTemplate(runRel, seq !== undefined && awaiting !== 'done' ? { seq, awaiting } : undefined) };
   const events = awaitEnvelopes(frame.await, data).filter((event) => validateHostEvent(frame.await, event, machine.validate ? (item) => machine.validate!(state, item) : undefined).ok);
   if (events.length) frame.events = events;
   if (frame.await === 'done' && typeof data['summary'] === 'string' && Buffer.byteLength(data['summary']) > 4096) frame.data = { ...data, summary: new TextDecoder('utf-8', { ignoreBOM: true }).decode(Buffer.from(data['summary']).subarray(0, 4000), { stream: true }) + ' [full captures referenced separately]' };

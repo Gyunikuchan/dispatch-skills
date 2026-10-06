@@ -10,6 +10,7 @@ import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
 import { structuralLines } from '../domain/plan.ts';
 import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
+import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
 import type { IntegrationScope } from '../core/types.ts';
 
@@ -204,7 +205,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
           }
           if (scope['scope'] === 'disputes-only') changed = [...new Set(carried.map((row) => row.locus.replace(/:L\d+.*$/, '')))];
           if (deps.git.reviewSnapshot) {
-            manifestPath = path.join(ctx.runDir, `${effect.id}.scope.json`);
+            manifestPath = runPaths(ctx.runDir).scope(effect.id);
             snapshot ??= await deps.git.reviewSnapshot(deps.cwd, text(spec['target']), governedPaths ?? changed);
             ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...snapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
           }
@@ -234,7 +235,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
               throw new Error('review-round-binding-unavailable');
             }
           }
-          manifestPath = path.join(ctx.runDir, `${effect.id}.scope.json`);
+          manifestPath = runPaths(ctx.runDir).scope(effect.id);
           ports.fs.writeAtomic(manifestPath, JSON.stringify({ kind, target, text: currentText, hash: sha256(currentText) }));
           const scopeKind = text(scope['scope'], 'full');
           if (effect.round === 1 && !changed.length) {
@@ -262,7 +263,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     const promptPaths: Record<string, string> = {};
     for (const slot of roster) {
       const name = String(slot['slot']);
-      const file = path.join(ctx.runDir, `${effect.id}.${safeSlot(name)}.prompt.md`);
+      const file = runPaths(ctx.runDir).prompt(effect.id, safeSlot(name));
       try { writeRendered(ports, file, body(name)); } catch (error) {
         return [{ type: 'EFFECT_FAILED', effectId: effect.id, cls: 'io', detail: `prompt: ${error instanceof Error ? error.message : String(error)}` }];
       }

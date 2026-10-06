@@ -11,6 +11,7 @@ import { createCheckout, type CheckoutDeps } from './checkout.ts';
 import { createCheckEnvelope, changedPaths, pathHashes } from './check-envelope.ts';
 import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
+import { runPaths } from '../lib/session.ts';
 import { createPrepareReview } from './prepare-review.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRestore } from './restore.ts';
@@ -76,12 +77,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     'check-envelope': createCheckEnvelope(deps),
     'write-brief': async (effect, ports, ctx) => {
       if (!deps.selfCheckCommand) return createWriteBrief(deps)(effect, ports, ctx);
-      const eventPath = path.join(ctx.runDir, `${effect.id}.self-check.event.json`);
+      const eventPath = runPaths(ctx.runDir).selfCheckEvent(effect.id);
       const task = effect.input['task'] as { id?: unknown; attempt?: unknown; signature?: unknown } | undefined;
       const identity = typeof task?.id === 'string' && Number.isSafeInteger(task.attempt) && Number(task.attempt) > 0 && typeof task.signature === 'string'
         ? { task: task.id, attempt: Number(task.attempt), signature: task.signature, handle: '<host-assigned handle>' }
         : typeof task?.id === 'string' ? { task: task.id } : {};
-      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: path.join(ctx.runDir, `${effect.id}.outcome.json`), ...identity })}\n`);
+      ports.fs.writeAtomic(eventPath, `${JSON.stringify({ type: 'WRITE_ENVELOPE', envelopePath: runPaths(ctx.runDir).envelope(effect.id), ...identity })}\n`);
       return createWriteBrief(deps)({ ...effect, input: { ...effect.input, selfCheck: deps.selfCheckCommand(ctx.runDir, eventPath) } }, ports, ctx);
     },
     snapshot: async (effect, ports, ctx) => {

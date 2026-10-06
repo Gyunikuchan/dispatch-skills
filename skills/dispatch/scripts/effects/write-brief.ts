@@ -1,11 +1,12 @@
-// `write-brief`: fill `write-brief.md` with the stage block, write the brief to `<run>/<effectId>.brief.md`, and name
-// the envelope path the writer must produce (`<run>/<effectId>.outcome.json`, not created here).
+// `write-brief`: fill `write-brief.md` with the stage block, write the brief to `<run>/<effectId>/brief.md`, and name
+// the envelope path the writer must produce (`<run>/<effectId>/outcome.json`, not created here).
 
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler } from '../core/types.ts';
 import { assembleTemplate, fillTemplate } from '../domain/prompt.ts';
 import { writeRendered } from './artifacts.ts';
+import { runPaths } from '../lib/session.ts';
 
 type BriefEffect = Extract<Effect, { kind: 'write-brief' }>;
 
@@ -46,8 +47,8 @@ function structuredContext(input: Readonly<Record<string, unknown>>): string {
 
 export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
   return async (effect, ports, ctx) => {
-    const envelopePath = path.join(ctx.runDir, `${effect.id}.outcome.json`);
-    const briefPath = path.join(ctx.runDir, `${effect.id}.brief.md`);
+    const envelopePath = runPaths(ctx.runDir).envelope(effect.id);
+    const briefPath = runPaths(ctx.runDir).brief(effect.id);
     let text: string;
     try {
       const dir = path.join(deps.skillRoot, 'references', 'templates');
@@ -57,7 +58,7 @@ export function createWriteBrief(deps: BriefDeps): Handler<BriefEffect> {
       const task = typeof effect.input['task'] === 'object' && effect.input['task'] !== null ? effect.input['task'] as Readonly<Record<string, unknown>> : null;
       const checkpoint = task && typeof task['checkpoint'] === 'object' && task['checkpoint'] !== null ? task['checkpoint'] as { root?: unknown; paths?: unknown } : null;
       const checkpointCommand = checkpoint && typeof checkpoint.root === 'string' && Array.isArray(checkpoint.paths)
-        ? (deps.checkpointCommand ?? defaultCheckpoint)(checkpoint.root, envelopePath.replace(/\.outcome\.json$/, '') + '.red.json', checkpoint.paths.filter((item): item is string => typeof item === 'string'))
+        ? (deps.checkpointCommand ?? defaultCheckpoint)(checkpoint.root, envelopePath.replace(/outcome\.json$/, 'red.json'), checkpoint.paths.filter((item): item is string => typeof item === 'string'))
         : 'No RED checkpoint: this task has no RED criteria.';
       const values: Record<string, string> = { 'Expected Envelope Path': envelopePath, 'Self Check Command': selfCheck, 'Checkpoint Command': checkpointCommand };
       const rendered = fillTemplate(template.template, template.variables, Object.fromEntries(template.variables.map((name) => [name, values[name] ?? ''])));

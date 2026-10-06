@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Effect, Handler, RecoverySnapshot, Ports, FileEntry } from '../core/types.ts';
 import { snapshotContent } from './snapshot.ts';
+import { runPaths } from '../lib/session.ts';
 
 type RestoreEffect = Extract<Effect, { kind: 'restore' }>;
 export type RestoreDeps = { cwd: string };
@@ -39,7 +40,7 @@ export function createRestore(deps: RestoreDeps): Handler<RestoreEffect> {
       if (paths.some((file) => !Object.hasOwn(snapshot.contents, file) || !Object.hasOwn(snapshot.entries, file))) throw new Error('Restore target lacks a path binding.');
       for (const file of paths) checkAncestors(deps.cwd, file, ports);
       const binding = digest(JSON.stringify({ paths, to: effect.to }));
-      const patchPath = path.join(ctx.runDir, `${effect.id.replace(/[^A-Za-z0-9_-]/g, '_')}.restore.json`);
+      const patchPath = runPaths(ctx.runDir).restore(effect.id);
       const sidecar = `${patchPath}.sha256`;
       const target = Object.fromEntries(paths.map((file) => [file, { content: snapshotContent(snapshot, file, ports, ctx.runDir), entry: snapshot.entries[file] }]));
       if (!ports.fs.exists(patchPath)) {

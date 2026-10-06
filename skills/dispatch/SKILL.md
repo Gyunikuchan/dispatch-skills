@@ -15,7 +15,7 @@ Use `design` for multiple increments, `plan` for one coherent unit, and `impleme
 
 1. Initialize with `node <skills-dir>/dispatch/scripts/dispatch.ts session init --objective "<objective>"`. Persist `sessionDir` and `sessionId`; use `--session-id` as a fallback identity. Retain the folder with `session reactivate --session-dir <dir>`.
 2. Start with `start <verb> --session-dir <dir> --orchestrator <platform> --level <level> --level-source explicit|classified [--pins "(pins)"] [--fix] -- <argument>`. Keep the returned `run` path. Start/send emit JSON; doctor emits a table or `--json` diagnostics.
-3. Run `send --run <dir> [--event @<event-file>]` in the background; keep its handle through completion or a blocker. Follow frame instructions; use observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automatic work.
+3. Run `send --run <dir> [--event @<reply-path>]` in the background; keep its handle until done or blocked; rewrite rejected payloads in place. Follow frames with observed evidence and user quotes. Reply once per `await` until `done`; eventless send resumes automation.
 
 Read the selected [verb guide](references/verbs/). Use [review rules](references/review-rules.md), [providers](references/providers.md), and the [glossary](references/glossary.md) as needed.
 

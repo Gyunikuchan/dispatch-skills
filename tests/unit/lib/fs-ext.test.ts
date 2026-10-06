@@ -31,3 +31,11 @@ test('real LinkFs: writeAtomic replaces the target and leaves no partial file', 
   assert.equal(nodeLinkFs.readText(path.join(root, 'missing')), null);
   assert.deepEqual(nodeLinkFs.list(path.join(root, 'missing')), []);
 });
+
+test('run paths: real LinkFs atomic and exclusive writes create an absent parent folder', () => {
+  const root = dir();
+  nodeLinkFs.writeAtomic(path.join(root, 'review.wave.1', 'input.json'), '{}');
+  assert.equal(publishExclusive(nodeLinkFs, path.join(root, 'review.wave.2', 'launch.json'), '{}'), true);
+  assert.equal(fs.readFileSync(path.join(root, 'review.wave.1', 'input.json'), 'utf8'), '{}');
+  assert.ok(fs.existsSync(path.join(root, 'review.wave.2', 'launch.json')));
+});

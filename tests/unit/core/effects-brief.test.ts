@@ -15,7 +15,7 @@ const only = (events: readonly ResultEvent[]) => { assert.equal(events.length, 1
 
 test('prewrite-level: task brief renders bound context, worktree, checkpoint, and exact self-check', async () => {
   const runDir = tempDir();
-  const envelopePath = path.join(runDir, 'implement.write-brief.1.outcome.json');
+  const envelopePath = path.join(runDir, 'implement.write-brief.1', 'outcome.json');
   const input = {
     planPath: 'docs/example.plan.md', planHash: `sha256:${'a'.repeat(64)}`, governingOutcome: { title: 'Example', outcome: 'Deliver behavior' },
     settledScope: { paths: ['src/a.ts'], changes: [{ action: 'MODIFY', path: 'src/a.ts' }] }, criteria: [{ id: 'SC1', title: 'works' }],
@@ -34,7 +34,7 @@ test('prewrite-level: task brief renders bound context, worktree, checkpoint, an
   assert.ok(text.includes('Envelope schema'));
   assert.ok(text.includes(`dispatch send --dry-run ${envelopePath}`));
   assert.ok(text.includes('run/wt/task-t1'));
-  assert.ok(text.includes(`dispatch checkpoint --root "run/wt/task-t1" --out "${envelopePath.replace(/\.outcome\.json$/, '.red.json')}" -- "tests/a.test.ts"`));
+  assert.ok(text.includes(`dispatch checkpoint --root "run/wt/task-t1" --out "${path.join(runDir, 'implement.write-brief.1', 'red.json')}" -- "tests/a.test.ts"`));
   assert.equal(result.sha256, `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`);
   assert.equal(result.envelopePath, envelopePath);
   assert.equal(fs.existsSync(envelopePath), false);

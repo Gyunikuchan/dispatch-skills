@@ -34,7 +34,7 @@ test('parse-artifact: hash excludes the resolution section, defects are listed, 
   assert.deepEqual(missing.type === 'EFFECT_FAILED' && missing.cls, 'io');
 });
 
-test('prepare-review: one prompt per slot, carried rejections ride their affinity slot; an empty code diff is an empty scope', async () => {
+test('effect folder: prepare-review writes one prompt per slot, carried rejections ride their affinity slot; an empty code diff is an empty scope', async () => {
   const runDir = tempDir();
   const roster = [{ slot: 'codex[0]', provider: 'codex', index: 0, native: false, reserve: false }, { slot: 'agy[0]', provider: 'agy', index: 0, native: false, reserve: false }];
   const review = { kind: 'code', mode: 'report', target: 'main..HEAD', cap: 2, breadth: 2, context: 'check the lock', roster, timeoutMs: 1000 };
@@ -43,7 +43,9 @@ test('prepare-review: one prompt per slot, carried rejections ride their affinit
   const result = only(await handler({ kind: 'prepare-review', id: 'review.prepare-review.2', review, round: 2, scope: { scope: 'disputes-only', carried } }, fakePorts(), { runDir, attempt: 1 }));
   assert.ok(result.type === 'REVIEW_PREPARED');
   assert.deepEqual(Object.keys(result.promptPaths), ['codex[0]', 'agy[0]']);
-  assert.equal(path.basename(result.promptPaths['agy[0]'] ?? ''), 'review.prepare-review.2.agy-0.prompt.md');
+  assert.equal(path.basename(result.promptPaths['agy[0]'] ?? ''), 'agy-0.prompt.md');
+  // Effect folder: each slot's prompt and the scope manifest sit together under the effect id.
+  for (const file of [...Object.values(result.promptPaths), String(result.scope['manifestPath'])]) assert.equal(path.dirname(file), path.join(runDir, 'review.prepare-review.2'));
   const agy = fs.readFileSync(result.promptPaths['agy[0]'] ?? '', 'utf8');
   const codex = fs.readFileSync(result.promptPaths['codex[0]'] ?? '', 'utf8');
   assert.match(agy, /R1-F001 src\/a\.ts:L3: null deref — orchestrator rejection: guarded upstream/);

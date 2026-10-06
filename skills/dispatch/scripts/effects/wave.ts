@@ -3,12 +3,12 @@
 // `WAVE_PROGRESS` events and exactly one `WAVE_DONE`. Two-phase path: `startWave` hands native descriptors to the
 // host; `finishWave` reconciles their captures.
 //
-// Attempt n files, all under the run dir:
-//   <id>.input.json                 handler-written worker input (roster, round, timeout, per-slot paths)
-//   <id>.a<n>.claim.json            {pid, host, startedAt} published by link, or a tombstone {fenced, by, at}
-//   <id>.a<n>.heartbeat.json        {heartbeatAt}, refreshed every 30 s
-//   <id>.a<n>.<slot>.outcome.json   one SlotFinal per roster slot
-//   <id>.a<n>.done.json             written last
+// Attempt n files, all under the effect folder `<run>/<id>/` (suffix `.a<n>` only for n > 1; see `runPaths`):
+//   input.json                handler-written worker input (roster, round, timeout, per-slot paths)
+//   claim[.a<n>].json         {pid, host, startedAt} published by link, or a tombstone {fenced, by, at}
+//   heartbeat[.a<n>].json     {heartbeatAt}, refreshed every 30 s
+//   <slot>[.a<n>].outcome.json one SlotFinal per roster slot
+//   done[.a<n>].json          written last
 
 import type { EffectFailureClass, FailureClass, Handler, HandlerContext, ResultEvent, SlotOutcome, Effect, DiagnosticBinding } from '../core/types.ts';
 import type { DraftFinding, ReviewKind, RosterSlot } from '../domain/types.ts';
@@ -18,6 +18,7 @@ import { hasReserve, next, reservePool, takeReserve, type Position, type Reserve
 import { nativeDescriptor, type NativeDescriptor } from '../providers/native.ts';
 import type { DelegateRequest, ModeId, ProviderId, ProviderSpec, RunOutcome } from '../providers/types.ts';
 import { publishExclusive, type LinkFs } from '../lib/fs-ext.ts';
+import { attemptOf, runPaths } from '../lib/session.ts';
 
 export const HEARTBEAT_MS = 30_000;
 export const STALE_GRACE_MS = 30_000;
@@ -30,11 +31,6 @@ const unreachable = (value: never, what: string): never => { throw new Error(`un
 
 const join = (dir: string, name: string): string => `${dir.replace(/[/\\]+$/, '')}/${name}`;
 export const safeSlot = (slot: string): string => slot.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'slot';
-export const inputPath = (runDir: string, id: string): string => join(runDir, `${id}.input.json`);
-export const claimPath = (runDir: string, id: string, n: number): string => join(runDir, `${id}.a${n}.claim.json`);
-export const heartbeatPath = (runDir: string, id: string, n: number): string => join(runDir, `${id}.a${n}.heartbeat.json`);
-export const outcomePath = (runDir: string, id: string, n: number, slot: string): string => join(runDir, `${id}.a${n}.${safeSlot(slot)}.outcome.json`);
-export const donePath = (runDir: string, id: string, n: number): string => join(runDir, `${id}.a${n}.done.json`);
 
 const readJson = <T>(fs: LinkFs, file: string): T | null => {
   const text = fs.readText(file);
@@ -123,13 +119,13 @@ export type ClaimRead =
 export type ClaimDeps = { fs: LinkFs; proc: { host: string; isAlive(pid: number): boolean }; clock: { now(): number } };
 
 export function readClaim(deps: ClaimDeps, runDir: string, id: string, n: number, timeoutMs: number): ClaimRead {
-  const claim = readJson<ClaimFile>(deps.fs, claimPath(runDir, id, n));
+  const claim = readJson<ClaimFile>(deps.fs, runPaths(runDir).claim(id, n));
   if (claim === null) return { kind: 'absent' };
   if ('fenced' in claim) return { kind: 'tombstone' };
   if (claim.host !== deps.proc.host) return { kind: 'foreign', host: claim.host };
   if (!deps.proc.isAlive(claim.pid)) return { kind: 'dead' };
   const now = deps.clock.now();
-  const beat = readJson<{ heartbeatAt: number }>(deps.fs, heartbeatPath(runDir, id, n));
+  const beat = readJson<{ heartbeatAt: number }>(deps.fs, runPaths(runDir).heartbeat(id, n));
   const quiet = beat === null || now - beat.heartbeatAt > HEARTBEAT_MS;
   // A live pid past its deadline plus grace with no recent heartbeat is a reused pid or a wedged worker.
   return now > claim.startedAt + timeoutMs + STALE_GRACE_MS && quiet ? { kind: 'stale' } : { kind: 'live' };
@@ -137,8 +133,18 @@ export function readClaim(deps: ClaimDeps, runDir: string, id: string, n: number
 
 /** Highest attempt with a claim file; 0 when none. */
 export function latestAttempt(fs: LinkFs, runDir: string, id: string): number {
-  const pattern = new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.a(\\d+)\\.claim\\.json$`);
-  return fs.list(runDir).reduce((max, name) => Math.max(max, Number(pattern.exec(name)?.[1] ?? 0)), 0);
+  return fs.list(runPaths(runDir).effectDir(id)).reduce((max, name) => Math.max(max, attemptOf('claim', name) ?? 0), 0);
+}
+
+export type WorkerClaim = { effect: string; attempt: number };
+
+/** Every published worker claim in the run, read from effect folders for `status`. */
+export function listWorkerClaims(fs: LinkFs, runDir: string): WorkerClaim[] {
+  return fs.list(runDir).flatMap((effect) => {
+    let attempts: number[];
+    try { runPaths(runDir).effectDir(effect); attempts = fs.list(join(runDir, effect)).flatMap((name) => attemptOf('claim', name) ?? []); } catch { return []; }
+    return attempts.sort((a, b) => a - b).map((attempt) => ({ effect, attempt }));
+  });
 }
 
 export type Arbitration = { action: 'reattach'; attempt: number } | { action: 'launch'; attempt: number };
@@ -149,13 +155,13 @@ export type Arbitration = { action: 'reattach'; attempt: number } | { action: 'l
  */
 export function arbitrate(deps: ClaimDeps, runDir: string, id: string, n: number, timeoutMs: number): Arbitration {
   const tombstone: ClaimFile = { fenced: true, by: 'send', at: deps.clock.now() };
-  if (publishExclusive(deps.fs, claimPath(runDir, id, n), JSON.stringify(tombstone))) return { action: 'launch', attempt: n + 1 };
+  if (publishExclusive(deps.fs, runPaths(runDir).claim(id, n), JSON.stringify(tombstone))) return { action: 'launch', attempt: n + 1 };
   const read = readClaim(deps, runDir, id, n, timeoutMs);
   switch (read.kind) {
     case 'live': return { action: 'reattach', attempt: n };
     case 'absent': // removed between link and read: treat as fenced
     case 'tombstone': case 'dead': case 'stale': return { action: 'launch', attempt: n + 1 };
-    case 'foreign': throw new Error(`wave claim ${claimPath(runDir, id, n)} belongs to host ${read.host}; the run dir is shared across hosts`);
+    case 'foreign': throw new Error(`wave claim ${runPaths(runDir).claim(id, n)} belongs to host ${read.host}; the run dir is shared across hosts`);
     default: return unreachable(read, 'claim read');
   }
 }
@@ -201,7 +207,7 @@ async function runVoice(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, de
       promptPath: paths.promptPath, model, effort: slot.effort ?? null, sandbox: slot.sandbox ?? true, schemaPath: null, resume: null,
       cwd: input.cwd, timeoutMs: Math.min(input.timeoutMs, remaining), outputCapBytes: deps.outputCapBytes ?? 10 * 1024 * 1024,
       configSelectors: deps.configSelectors ?? {},
-      attachments: paths.attachments, logPath: paths.logPath, briefPath: `${paths.logPath}.brief.md`,
+      attachments: paths.attachments, logPath: paths.logPath, briefPath: paths.logPath.replace(/\.log$/, '.spill.md'),
     };
     const outcome = await deps.run(provider, req, mode);
     let cls: FailureClass;
@@ -246,7 +252,7 @@ async function runSlot(slot: RosterSlot, input: WaveInput, deps: WorkerDeps, dea
       if (!reserve) return { state: 'failed', slot: slot.slot, cls: own.cls, reason: own.reason, records: own.records };
       // The reserve answers the failed slot's prompt; its log sits beside the slot's.
       const own_ = input.paths[slot.slot];
-      const paths = own_ ? { ...input.paths, [reserve.slot]: { ...own_, logPath: `${own_.logPath}.${safeSlot(reserve.slot)}` } } : input.paths;
+      const paths = own_ ? { ...input.paths, [reserve.slot]: { ...own_, logPath: own_.logPath.replace(/\.log$/, `.${safeSlot(reserve.slot)}.log`) } } : input.paths;
       const substitute = await runVoice(reserve, { ...input, paths }, deps, deadline);
       if (substitute.ok) return { state: 'reserve', slot: slot.slot, by: reserve.slot, record, reason: own.reason, ...substitute.value, records: [...own.records, ...substitute.value.records] };
       return { state: 'failed', slot: slot.slot, cls: substitute.cls, reason: `${own.reason}; reserve ${reserve.slot}: ${substitute.reason}`, records: [...own.records, record, ...substitute.records] };
@@ -266,13 +272,13 @@ export type WorkerResult = { launched: false } | { launched: true; finals: SlotF
  * launching), heartbeat, run every non-reserve CLI slot under its own deadline, write outcome files, then done.
  */
 export async function runWaveWorker(runDir: string, id: string, n: number, deps: WorkerDeps): Promise<WorkerResult> {
-  const input = readJson<WaveInput>(deps.fs, inputPath(runDir, id));
-  if (!input) throw new Error(`wave worker: missing input ${inputPath(runDir, id)}`);
+  const input = readJson<WaveInput>(deps.fs, runPaths(runDir).input(id));
+  if (!input) throw new Error(`wave worker: missing input ${runPaths(runDir).input(id)}`);
   if (input.diagnostics) input.diagnostics = { ...input.diagnostics, producer: `worker-${n}` };
   const startedAt = deps.clock.now();
   const claim: ClaimFile = { pid: deps.proc.pid, host: deps.proc.host, startedAt };
-  if (!publishExclusive(deps.fs, claimPath(runDir, id, n), JSON.stringify(claim))) return { launched: false };
-  const beat = (): void => deps.fs.writeAtomic(heartbeatPath(runDir, id, n), JSON.stringify({ heartbeatAt: deps.clock.now() }));
+  if (!publishExclusive(deps.fs, runPaths(runDir).claim(id, n), JSON.stringify(claim))) return { launched: false };
+  const beat = (): void => deps.fs.writeAtomic(runPaths(runDir).heartbeat(id, n), JSON.stringify({ heartbeatAt: deps.clock.now() }));
   beat();
   const stopBeat = deps.clock.every(HEARTBEAT_MS, beat);
   const deadline = startedAt + input.timeoutMs;
@@ -284,10 +290,10 @@ export async function runWaveWorker(runDir: string, id: string, n: number, deps:
     const primaries = input.roster.filter((slot) => !slot.reserve && !slot.native);
     finals.push(...await Promise.all(primaries.map(async (slot) => {
       const final = await runSlot(slot, input, deps, deadline, pool, reserves);
-      deps.fs.writeAtomic(outcomePath(runDir, id, n, slot.slot), JSON.stringify(final));
+      deps.fs.writeAtomic(runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n), JSON.stringify(final));
       return final;
     })));
-    deps.fs.writeAtomic(donePath(runDir, id, n), JSON.stringify({ at: deps.clock.now(), slots: finals.length }));
+    deps.fs.writeAtomic(runPaths(runDir).done(id, n), JSON.stringify({ at: deps.clock.now(), slots: finals.length }));
   } finally {
     stopBeat();
   }
@@ -307,14 +313,14 @@ export type WaveDeps = ClaimDeps & {
 const failed = (effectId: string, cls: EffectFailureClass, detail: string): ResultEvent => ({ type: 'EFFECT_FAILED', effectId, cls, detail });
 
 function prepareWorker(effect: WaveEffect, roster: readonly RosterSlot[], deps: WaveDeps, ctx: HandlerContext): number {
-  const file = inputPath(ctx.runDir, effect.id);
+  const file = runPaths(ctx.runDir).input(effect.id);
   if (deps.fs.readText(file) === null) {
     const input: WaveInput = { ...deps.context(effect), effectId: effect.id, round: effect.round, timeoutMs: effect.timeoutMs, roster, ...(ctx.diagnostics ? { diagnostics: ctx.diagnostics } : {}) };
     deps.fs.writeAtomic(file, JSON.stringify(input));
   }
   const latest = latestAttempt(deps.fs, ctx.runDir, effect.id);
-  if (latest > 0 && deps.fs.readText(donePath(ctx.runDir, effect.id, latest)) !== null) return latest;
-  const launchFence = join(ctx.runDir, `${effect.id}.launch.json`);
+  if (latest > 0 && deps.fs.readText(runPaths(ctx.runDir).done(effect.id, latest)) !== null) return latest;
+  const launchFence = runPaths(ctx.runDir).launch(effect.id);
   if (latest === 0 && deps.fs.readText(launchFence) !== null) return 1;
   // A resumed send settles the newest attempt; a first send launches past any leftovers.
   const decision: Arbitration = ctx.attempt > 1 || latest > 0 ? arbitrate(deps, ctx.runDir, effect.id, Math.max(latest, 1), effect.timeoutMs) : { action: 'launch', attempt: 1 };
@@ -333,7 +339,7 @@ async function collectWorker(effect: WaveEffect, roster: readonly RosterSlot[], 
 
 function readFinals(deps: WaveDeps, runDir: string, id: string, n: number, roster: readonly RosterSlot[]): SlotFinal[] {
   return roster.filter((slot) => !slot.reserve && !slot.native).map((slot): SlotFinal =>
-    readJson<SlotFinal>(deps.fs, outcomePath(runDir, id, n, slot.slot))
+    readJson<SlotFinal>(deps.fs, runPaths(runDir).slotOutcome(id, safeSlot(slot.slot), n))
       ?? { state: 'failed', slot: slot.slot, cls: 'worker', reason: `attempt ${n} wrote no outcome for ${slot.slot}`, records: [] });
 }
 
@@ -474,7 +480,7 @@ export function createWaveStartHandler(deps: WaveDeps): Handler<Extract<Effect, 
       const started = startWave(effect, ctx, deps);
       const attempt = await started.attempt;
       return [{ type: 'WAVE_STARTED', effectId: effect.id, waveKey: effect.id, attempt, roster: effect.roster,
-        native: started.native, early: started.early, claimPath: attempt ? claimPath(ctx.runDir, effect.id, attempt) : null, inputPath: inputPath(ctx.runDir, effect.id) }];
+        native: started.native, early: started.early, claimPath: attempt ? runPaths(ctx.runDir).claim(effect.id, attempt) : null, inputPath: runPaths(ctx.runDir).input(effect.id) }];
     } catch (error) { return [failed(effect.id, 'io', `wave start: ${String(error)}`)]; }
   };
 }

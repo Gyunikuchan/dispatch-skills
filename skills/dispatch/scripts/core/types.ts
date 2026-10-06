@@ -4,7 +4,7 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 4 as const;
+export const JOURNAL_PROTOCOL_REVISION = 5 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
   | 'level-classification' | 'level-recommendation' | 'scope-deviation' | 'scope-deviation-user' | 'run-stop';

@@ -4,7 +4,7 @@ import { nextEffectId, type EffectCounters } from '../../../../skills/dispatch/s
 import type { Effect, Event, Handlers, Machine, ResultEvent, RunStartedEvent } from '../../../../skills/dispatch/scripts/core/types.ts';
 
 export const RUN_STARTED: RunStartedEvent = {
-  type: 'RUN_STARTED', protocolRevision: 4, verb: 'ask', argument: 'fixture', level: 'low', levelSource: 'explicit', pins: null, fix: false,
+  type: 'RUN_STARTED', protocolRevision: 5, verb: 'ask', argument: 'fixture', level: 'low', levelSource: 'explicit', pins: null, fix: false,
   orchestrator: 'claude', orchestratorModel: null, overrides: {}, config: {}, repo: {},
 };
 

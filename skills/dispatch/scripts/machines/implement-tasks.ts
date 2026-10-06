@@ -131,5 +131,5 @@ export function taskTestPaths(plan: ParsedPlan, task: PlanTask): string[] {
 }
 
 export function checkpointPathOf(envelopePath: string): string {
-  return envelopePath.replace(/\.outcome\.json$/, '') + '.red.json';
+  return envelopePath.replace(/outcome\.json$/, 'red.json');
 }

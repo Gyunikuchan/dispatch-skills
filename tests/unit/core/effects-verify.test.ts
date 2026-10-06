@@ -37,6 +37,20 @@ test('verify: sequential runs with logs; a red command is VERIFY_DONE with its e
   assert.deepEqual(none.type === 'VERIFY_DONE' && none.results, []);
 });
 
+test('effect folder: two verification effects in one run keep distinct logs without precreated folders', async () => {
+  const runDir = tempDir();
+  const ports = fakePorts();
+  ports.spawn = { run: async (argv) => ({ exit: 0, stdout: `out ${argv.at(-1)}`, stderr: '' }) };
+  const verify = createVerify({ os: 'linux', cwd: '/repo', git });
+  const first = only(await verify({ kind: 'verify', id: 'implement.verify.1', purpose: 'baseline', commands: [{ command: 'one' }] }, ports, { runDir, attempt: 1 }));
+  const second = only(await verify({ kind: 'verify', id: 'implement.verify.2', purpose: 'fix-verify', commands: [{ command: 'two' }] }, ports, { runDir, attempt: 1 }));
+  assert.ok(first.type === 'VERIFY_DONE' && second.type === 'VERIFY_DONE');
+  const logs = [first, second].map((event) => String(event.results[0]?.['logPath']));
+  assert.deepEqual(logs, [path.join(runDir, 'implement.verify.1', '1.log'), path.join(runDir, 'implement.verify.2', '1.log')]);
+  assert.match(fs.readFileSync(logs[0]!, 'utf8'), /out one/);
+  assert.match(fs.readFileSync(logs[1]!, 'utf8'), /out two/);
+});
+
 test('snapshot: fingerprint and changed paths since a prior fingerprint', async () => {
   const handler = createSnapshot({ cwd: '/repo', git });
   const first = only(await handler({ kind: 'snapshot', id: 's.1', since: null }, fakePorts(), { runDir: '/run', attempt: 1 }));

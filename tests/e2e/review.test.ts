@@ -57,11 +57,43 @@ test('rewrite SC3 production wave journals preparation and completion once', asy
     const frame = await f.begin('review', session, '', ['--kind', 'code']);
     assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
     const journal = fs.readFileSync(path.join(frame.run, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { type: string; data: Record<string, unknown> });
-    assert.equal(journal[0]?.data['protocolRevision'], 4);
+    assert.equal(journal[0]?.data['protocolRevision'], 5);
     assert.equal(journal.filter((row) => row.type === 'WAVE_STARTED').length, 1); assert.equal(journal.filter((row) => row.type === 'WAVE_DONE').length, 1); assert.equal(f.launches().length, 1);
   } finally { f.cleanup(); }
 });
 
+
+for (const diagnostics of [false, true]) test(`session layout: a review with diagnostics ${diagnostics ? 'enabled' : 'disabled'} keeps only the manifest and deliverables at the root`, async () => {
+  const finding = { severity: 'MUST', locus: 'src/a.ts:L1', tag: 'correctness', defect: 'Value is incorrect', requiredChange: 'Set value to 3' };
+  const f = fixture({ responses: [{ status: 'FINDINGS', findings: [finding] }, CLEAN, CLEAN] });
+  try {
+    if (diagnostics) fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, diagnostics: true }));
+    const session = await f.initialize(); fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'changed');
+    let frame = await f.begin('review', session, '', ['--kind', 'code']);
+    const run = f.absoluteRun(frame.run);
+    assert.equal(frame.await, 'rule', JSON.stringify(frame));
+    const named = path.resolve(f.repo, /--event @(\S+)$/.exec(frame.reply)![1]!);
+    assert.equal(path.dirname(named), path.join(run, 'events'));
+    // A rejected payload is rewritten at the same frame-named path.
+    const rejected = await f.reply(run, { type: 'RULINGS', rulings: {} });
+    assert.ok(rejected.error, JSON.stringify(rejected)); assert.equal(rejected.reply, frame.reply);
+    frame = await f.reply(run, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'The value is intentional.' } } });
+    for (let round = 0; frame.await === 'rule' && round < 3; round++) frame = await f.reply(run, { type: 'RULINGS', rulings: Object.fromEntries((frame.data['findings'] as { id: string }[]).map((row) => [row.id, { ruling: 'reject', reason: 'The value is intentional.' }])) });
+    assert.equal(frame.await, 'done', JSON.stringify(frame));
+    assert.match(fs.readFileSync(named, 'utf8'), /The value is intentional/);
+    const entries = (dir: string) => fs.readdirSync(dir, { withFileTypes: true });
+    const names = (dir: string, directories: boolean) => entries(dir).filter((entry) => entry.isDirectory() === directories).map((entry) => entry.name).sort();
+    assert.deepEqual(names(session, false), ['manifest.json', 'review.report.md', ...(diagnostics ? ['diagnostics.md'] : [])].sort());
+    assert.deepEqual(names(session, true), ['.state']);
+    assert.deepEqual(names(run, false), ['events.jsonl', 'progress.json']);
+    const folders = names(run, true);
+    assert.deepEqual(folders.filter((name) => !/^[a-z-]+\.[a-z-]+\.\d+$/.test(name)), ['events', ...(diagnostics ? ['diagnostics'] : [])].sort());
+    assert.deepEqual(fs.readdirSync(path.join(run, 'events')), [path.basename(named)]);
+    for (const folder of folders.filter((name) => name !== 'diagnostics' && name !== 'events')) {
+      assert.deepEqual(names(path.join(run, folder), false).filter((name) => /^(claim|heartbeat|done)(\.a\d+)?\.json$|^launch\.json$/.test(name)), [], folder);
+    }
+  } finally { f.cleanup(); }
+});
 
 test('rewrite SC4 GPU lock excludes concurrent leases recovers dead owner and releases', async () => {
   const f = fixture(); const file = path.join(f.dir, 'gpu.lock');

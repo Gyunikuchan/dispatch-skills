@@ -6,6 +6,8 @@ import path from 'node:path';
 import type { LinkFs } from './fs-ext.ts';
 
 function writeSynced(file: string, text: string): void {
+  // Effect folders appear lazily, so the first write into one creates it.
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const fd = fs.openSync(file, 'wx', 0o600);
   try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }

@@ -108,6 +108,23 @@ test('killed send leaves a live detached worker; status, dry-run and resume reat
     fs.rmSync(String(done.data['handoff']), { recursive: true, force: true });
   } finally { f.cleanup(); }
 });
+test('effect folder: the CLI waits for a worker whose claim and heartbeat sit in its effect folder, and status reports it', async () => {
+  const f = fixture({ delayMs: 1800, responses: ['Evidence from src/a.ts:L1: value is defined.'] });
+  try {
+    const session = await f.initialize();
+    const pending = f.launch(['start', 'ask', '--session-dir', session, '--orchestrator', 'codex', '--level', 'low', '--', 'What value is defined?']);
+    await until(() => f.launches().length === 1);
+    const runs = path.join(session, '.state/runs'), run = path.join(runs, fs.readdirSync(runs)[0]!);
+    const effect = fs.readdirSync(run).find((name) => fs.existsSync(path.join(run, name, 'claim.json')))!;
+    assert.ok(effect, 'a wave effect folder holds the first-attempt claim');
+    await until(() => fs.existsSync(path.join(run, effect, 'heartbeat.json')));
+    assert.deepEqual(fs.readdirSync(run).filter((name) => /claim|heartbeat/.test(name)), []);
+    const status = await f.cli(['status', '--run', run]);
+    assert.ok(JSON.stringify(status.progress).includes(effect) && JSON.stringify(status.progress).includes('live'));
+    const done = await pending.done; assert.equal(done.exit, 0);
+    assert.equal(JSON.parse(done.stdout).await, 'done'); assert.equal(f.launches().length, 1);
+  } finally { f.cleanup(); }
+});
 test('doctor reports real discovery through provider shim, injected config, Node version and sandbox support', async () => {
   const f = fixture();
   try {

@@ -6,6 +6,9 @@ import { fold, send, start } from '../../../skills/dispatch/scripts/core/interpr
 import { appendEvent, journalPath, readJournal } from '../../../skills/dispatch/scripts/core/journal.ts';
 import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts';
 import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
+import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
+import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
+import { design, hash, run } from '../machines/design.test.ts';
 
 async function startAwaiting(ports: FakePorts) {
   const runDir = path.join(tempDir(), 'runs', '001-ask');
@@ -53,3 +56,77 @@ test('a torn tail is dropped and its effect re-executed', async () => {
   assert.deepEqual(starts, [1, 1, 2]);
 });
 
+
+// SECTION: Effect-folder layout
+
+const WORKER_FILES = ['claim.json', 'heartbeat.json', 'claim.a2.json', 'done.a2.json', 'launch.json'];
+
+function seedWorkerFiles(runDir: string): string {
+  const effect = path.join(runDir, 'fixture.wave.1');
+  fs.mkdirSync(effect, { recursive: true });
+  for (const name of [...WORKER_FILES, 'input.json', 'codex-0.log']) fs.writeFileSync(path.join(effect, name), '{}');
+  return effect;
+}
+
+test('prune at done: worker claim, heartbeat, done and launch files leave each effect folder', async () => {
+  const ports = fakePorts();
+  const runDir = waveJournal(ports, false);
+  const effect = seedWorkerFiles(runDir);
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  assert.equal(result.frame?.await, 'done');
+  assert.deepEqual(fs.readdirSync(effect).sort(), ['codex-0.log', 'input.json']);
+});
+
+test('prune at done: an unlink failure warns and keeps the done outcome', async () => {
+  const ports = fakePorts();
+  const runDir = waveJournal(ports, false);
+  const effect = seedWorkerFiles(runDir);
+  ports.fs.remove = () => { throw new Error('EBUSY'); };
+  const result = await send({ runDir, machine: waveMachine, handlers: fakeHandlers, ports });
+  assert.deepEqual([result.frame?.await, result.exitCode], ['done', 0]);
+  assert.ok(ports.stderrLines.some((line) => /could not remove fixture\.wave\.1\/claim\.json: .*EBUSY/.test(line)));
+  assert.ok(fs.existsSync(path.join(effect, 'claim.json')));
+});
+
+test('legacy layout: a revision-4 run is refused with exit 1 by send and status', async () => {
+  const ports = fakePorts();
+  const runDir = tempDir();
+  appendEvent(ports, runDir, 'RUN_STARTED', { ...RUN_STARTED, type: undefined, protocolRevision: 4 });
+  const before = fs.readFileSync(journalPath(runDir));
+  for (const dryRun of [false, true]) {
+    const result = await send({ runDir, runRel: 'runs/legacy', machine: waveMachine, handlers: fakeHandlers, ports, dryRun });
+    assert.deepEqual([result.frame, result.exitCode, result.message], [null, 1, 'layout-unsupported: runs/legacy']);
+  }
+  assert.deepEqual(fs.readFileSync(journalPath(runDir)), before);
+});
+
+test('legacy layout: a revision-4 design run in the session does not block starting a design implementation', async () => {
+  const ports = fakePorts(), runs = path.join(tempDir(), '.state', 'runs');
+  appendEvent(ports, path.join(runs, '001-design'), 'RUN_STARTED', { ...run(), type: undefined, protocolRevision: 4 });
+  const handlers: Handlers = {
+    'parse-artifact': async (effect) => [{ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects: [] }],
+    snapshot: async (effect) => [{ type: 'SNAPSHOT', effectId: effect.id, fingerprint: { head: 'a'.repeat(40), index: 'i', worktree: 'w' }, diff: { paths: [] } }],
+  };
+  const result = await start({ ports, machine: rootMachine, handlers, runDir: path.join(runs, '002-implement'), runStarted: { ...run('implement'), argument: './x.design.md', overrides: { designRevision: hash } } });
+  assert.equal(result.exitCode, 0);
+  assert.notEqual(result.frame?.at, 'fault', JSON.stringify(result.frame));
+});
+
+test('event path: a dry-run config refresh still names the boundary event path', async () => {
+  const ports = fakePorts();
+  const { runDir } = await startAwaiting(ports);
+  const result = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, dryRun: true, refreshConfig: true, configSource: () => ({}) });
+  assert.match(result.frame?.reply ?? '', /@runs\/001-ask\/events\/\d+-author\.json$/);
+});
+
+test('event path: a stale-lock break keeps the reply path for rejection and correction', async () => {
+  const ports = fakePorts();
+  const { runDir, result } = await startAwaiting(ports);
+  fs.writeFileSync(path.join(runDir, 'lock'), JSON.stringify({ pid: 2147483647, host: ports.proc.host, startedAt: new Date(0).toISOString() }));
+  const rejected = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED' } });
+  assert.ok(readJournal(ports, runDir).lines.some((line) => line.type === 'LOCK_BROKEN'));
+  assert.ok(rejected.frame?.error);
+  assert.equal(rejected.frame.reply, result.frame?.reply);
+  const again = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED' } });
+  assert.equal(again.frame?.reply, result.frame?.reply);
+});

@@ -5,11 +5,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { governedDesignText } from '../domain/design.ts';
 import { governedPlanText } from '../domain/plan.ts';
-import { restoreSessionPaths, storeSessionPaths } from '../lib/session.ts';
+import { attemptOf, restoreSessionPaths, runPaths, storeSessionPaths } from '../lib/session.ts';
 import { rootMachine, type RootState } from '../machines/root.ts';
 import { effectivePlan } from '../machines/implement.ts';
 import { faultFrame, oneLine, projectFrame } from './frame.ts';
-import { appendEvent, EngineFault, JOURNAL_FILE, journalPath, readJournal, type JournalRead } from './journal.ts';
+import { appendEvent, EngineFault, JOURNAL_FILE, LayoutUnsupported, journalPath, readJournal, type JournalRead } from './journal.ts';
 import { acquireLock, LockHeld, releaseLock } from './lock.ts';
 import { HEARTBEAT_MS, milestone, writeProgress } from './progress.ts';
 import { JOURNAL_PROTOCOL_REVISION } from './types.ts';
@@ -142,6 +142,7 @@ export function toEvent(line: JournalLine, protocolRevision: number = JOURNAL_PR
 export function fold<S>(machine: Machine<S>, lines: readonly JournalLine[], sessionRoot?: string): Folder<S> & { inFlight: { effect: Effect; attempt: number } | null } {
   const run = lines.find((line) => line.type === 'RUN_STARTED');
   const protocolRevision = JOURNAL_PROTOCOL_REVISION;
+  if (run && typeof run.data['protocolRevision'] === 'number' && run.data['protocolRevision'] < JOURNAL_PROTOCOL_REVISION) throw new LayoutUnsupported();
   if (run && run.data['protocolRevision'] !== JOURNAL_PROTOCOL_REVISION) throw new EngineFault(`unsupported-journal-protocol: expected revision ${JOURNAL_PROTOCOL_REVISION}; start a new run`);
   const folder = createFolder(machine);
   let revision = 0;
@@ -293,14 +294,14 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     let refreshStatus: Record<string, unknown> | undefined;
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, read.lines);
-      if ('error' in refresh) return { frame: projectFrame(machine, folder.state, runRel, refresh.error), exitCode: 0 };
+      if ('error' in refresh) return { frame: boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(diagnosticLines))), exitCode: 0 };
       refreshStatus = refresh.status;
       if (refresh.event) record(refresh.event);
     }
     if (broken !== null) record({ type: 'LOCK_BROKEN', stalePid: broken });
     if (options.rawEvent !== undefined) {
       const checked = hostEventError(machine, folder, options.rawEvent, sessionRoot);
-      if ('error' in checked) return { frame: projectFrame(machine, folder.state, runRel, checked.error), exitCode: 0 };
+      if ('error' in checked) return { frame: boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, checked.error, hostBoundary(diagnosticLines))), exitCode: 0 };
       if (diagnosticEnabled) {
         sidecars.push({ seq, phase: activePhaseId().replace(/:\d+$/, ''), ...(checked.sidecar !== undefined ? { value: checked.sidecar } : {}) });
         if (checked.event.type === 'NATIVE_RESULTS') for (const slot of checked.event.slots) {
@@ -323,17 +324,44 @@ export async function send<S>(options: SendOptions<S>): Promise<SendResult> {
     if (machine.awaitOf(folder.state) === null) throw new EngineFault('machine neither awaits nor emits effects');
     machine.render?.(folder.state, ports, runDir);
     publishBoundary(ports, runDir, diagnosticEnabled, diagnosticLines, timeline, sidecars, instruction.split(/\r?\n/).filter(Boolean), warn, identity, machine.awaitOf(folder.state) === 'done' ? 0 : Buffer.byteLength(instruction), diagnosticBinding);
+    if (machine.awaitOf(folder.state) === 'done') pruneWorkerFiles(ports, runDir);
     releaseLock(ports, runDir); locked = false;
     publishReport(ports, runDir, diagnosticEnabled, warn, instruction.split(/\r?\n/).filter(Boolean));
     const status = refreshStatus?.['status'] === 'unchanged' ? refreshStatus : executionStatus(diagnosticLines, machine.awaitOf(folder.state), machine.executionDeferred?.(folder.state));
-    return { frame: diagnosticFrame(executionFrame(projectFrame(machine, folder.state, runRel), status), ports, runDir, diagnosticEnabled, instruction), exitCode: 0 };
+    return { frame: diagnosticFrame(executionFrame(boundaryFrame(ports, runDir, projectFrame(machine, folder.state, runRel, undefined, hostBoundary(diagnosticLines))), status), ports, runDir, diagnosticEnabled, instruction), exitCode: 0 };
   } catch (error) {
+    if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     if (baseline) restoreJournal(ports, file, baseline);
     if (locked) { releaseLock(ports, runDir); locked = false; }
     publishReport(ports, runDir, diagnosticEnabled, warn, instruction.split(/\r?\n/).filter(Boolean));
     return { frame: diagnosticFrame(faultFrame(runRel, message(error)), ports, runDir, diagnosticEnabled, instruction), exitCode: 2 };
   } finally {
     if (locked) releaseLock(ports, runDir);
+  }
+}
+
+/** Event files are named by the last host-visible journal seq; lock recovery lines are skipped, so a stale-lock break keeps the reply path. */
+function hostBoundary(lines: readonly JournalLine[]): number {
+  let end = lines.length;
+  while (end > 0 && lines[end - 1]!.type === 'LOCK_BROKEN') end--;
+  return lines[end - 1]?.seq ?? 0;
+}
+
+/** Creates `events/` before a frame names a path inside it, so hosts write the reply without a mkdir. */
+function boundaryFrame(ports: Ports, runDir: string, frame: Frame): Frame {
+  if (frame.await !== 'done') ports.fs.mkdir(path.join(runDir, 'events'), { recursive: true });
+  return frame;
+}
+
+/** Worker recovery files only serve resume, so a done run drops them; best-effort, as a failed unlink must not change the outcome. */
+function pruneWorkerFiles(ports: Ports, runDir: string): void {
+  let files: string[];
+  try { files = ports.fs.listFiles(runDir); } catch (error) { milestone(ports, `warning: worker files not pruned: ${message(error)}`); return; }
+  for (const file of files) {
+    const [effect, name, ...rest] = file.split('/');
+    if (!effect || !name || rest.length || effect === 'events') continue;
+    if (name !== 'launch.json' && !['claim', 'heartbeat', 'done'].some((stem) => attemptOf(stem, name) !== null)) continue;
+    try { ports.fs.remove(path.join(runPaths(runDir).effectDir(effect), name)); } catch (error) { milestone(ports, `warning: could not remove ${file}: ${message(error)}`); }
   }
 }
 
@@ -376,13 +404,14 @@ async function dryRun<S>(options: SendOptions<S>, runRel: string): Promise<SendR
     const folder = fold(machine, lines, runSession(runDir));
     if (options.refreshConfig) {
       const refresh = prepareRefresh(options, folder, lines);
-      return { frame: 'error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error) : executionFrame(projectFrame(machine, folder.state, runRel), refresh.status), exitCode: 0 };
+      return { frame: 'error' in refresh ? projectFrame(machine, folder.state, runRel, refresh.error, hostBoundary(lines)) : executionFrame(projectFrame(machine, folder.state, runRel, undefined, hostBoundary(lines)), refresh.status), exitCode: 0 };
     }
-    if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel), exitCode: 0 };
+    if (options.rawEvent === undefined) return { frame: projectFrame(machine, folder.state, runRel, undefined, hostBoundary(lines)), exitCode: 0 };
     const checked = hostEventError(machine, folder, options.rawEvent, runSession(runDir));
     const error = 'error' in checked ? checked.error : await options.preview?.(folder.state, checked.event) ?? undefined;
-    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined), exitCode: 0 };
+    return { frame: projectFrame(machine, folder.state, runRel, error ?? undefined, hostBoundary(lines)), exitCode: 0 };
   } catch (error) {
+    if (error instanceof LayoutUnsupported) return { frame: null, exitCode: 1, message: `layout-unsupported: ${runRel}` };
     return { frame: faultFrame(runRel, message(error)), exitCode: 2 };
   }
 }
@@ -401,6 +430,10 @@ const runSession = (runDir: string): string | undefined => {
   const root = runDir.replace(/[\\/]\.state[\\/]runs[\\/][^\\/]+[\\/]?$/, '');
   return root === runDir ? undefined : root;
 };
+/** Historical discovery skips legacy-layout runs, so they cannot block new runs in the same session. */
+function foldCurrent<S>(machine: Machine<S>, lines: readonly JournalLine[]): Folder<S> | null {
+  try { return fold(machine, lines); } catch (error) { if (error instanceof LayoutUnsupported) return null; throw error; }
+}
 function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machine<S>, identity: DesignDeliveryIdentity): RunStartedEvent['designApproval'] {
   if (!ports.fs.exists(runsDir)) return undefined;
   for (const file of ports.fs.listFiles(runsDir)) {
@@ -409,7 +442,8 @@ function journalDesignApproval<S>(ports: Ports, runsDir: string, machine: Machin
     const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
     const started = lines.find((line) => line.type === 'RUN_STARTED');
     if (!started || started.data['verb'] !== 'design') continue;
-    const folder = fold(machine, lines);
+    const folder = foldCurrent(machine, lines);
+    if (!folder) continue;
     const projected = machine.project(folder.state).data;
     if (machine.awaitOf(folder.state) !== 'done' || projected['outcome'] !== 'complete') continue;
     const completion = projected['completion'];
@@ -437,7 +471,8 @@ export function findDesignDelivery<S>(ports: Ports, runsDir: string, machine: Ma
     const lines = restoreJournalPaths(readJournal(ports, runDir).lines, runSession(runDir) ?? runDir);
     const started = lines.find((line) => line.type === 'RUN_STARTED');
     if (!started || started.data['verb'] !== 'implement' || typeof started.data['argument'] !== 'string' || designPathIdentity(started.data['argument']) !== designPathIdentity(identity.path)) continue;
-    const folder = fold(machine, lines);
+    const folder = foldCurrent(machine, lines);
+    if (!folder) continue;
     const finished = machine.awaitOf(folder.state) === 'done';
     const data = machine.project(folder.state).data;
     const completion = data['completion'];
@@ -485,7 +520,8 @@ export function findSettledPlan<S>(
       ? authoredLine.data['path'] as string
       : planArg;
     if (designPathIdentity(path.resolve(repoRoot, planPath)) !== designPathIdentity(path.resolve(repoRoot, identity.path))) continue;
-    const folder = fold(machine, lines);
+    const folder = foldCurrent(machine, lines);
+    if (!folder) continue;
     if (machine.awaitOf(folder.state) !== 'done') continue;
     const projected = machine.project(folder.state).data;
     if (projected['outcome'] !== 'complete') continue;

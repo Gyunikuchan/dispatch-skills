@@ -90,9 +90,9 @@ test('SC7: real wave runner and coordinator publication excludes typed path and 
   for (const d of descriptors) fs.writeFileSync(d.outputPath, JSON.stringify({ status: 'CLEAN', findings: [] }));
   const done = await send({ ...options, rawEvent: { v: 1, event: { type: 'NATIVE_RESULTS', slots: descriptors.map((d) => ({ slot: d.sourceKey.split('#')[0], sourceKey: d.sourceKey, outputPath: d.outputPath, mapping: { launcherModel: d.model, ...(d.reasoningEffort ? { launcherEffort: d.reasoningEffort } : {}) } })) }, diagnostics: { observations: [{ v: 1, id: 'one', component: 'effects/wave.ts', category: 'routing/delegation', trigger: 'objective-canary', evidence: 'session-canary ```', impact: 'source-canary', proposedFix: 'resume-canary', confidence: 'observer-canary' }] } } });
   assert.equal(done.frame?.await, 'done', JSON.stringify(done.frame));
-  assert.ok(requests.some((r) => r.cwd.includes('cwd-canary') && r.briefPath.includes('log-canary.log.brief.md') && r.attachments.some((v) => v.includes('attachment-canary'))));
+  assert.ok(requests.some((r) => r.cwd.includes('cwd-canary') && r.briefPath.includes('log-canary.spill.md') && r.attachments.some((v) => v.includes('attachment-canary'))));
   assert.ok(outcomes.some((o) => o.status === 'ok' && o.sessionId === 'session-canary'));
-  const finals = fs.readdirSync(runDir).filter((f) => /\.outcome\.json$/.test(f)).map((f) => JSON.parse(fs.readFileSync(path.join(runDir, f), 'utf8')) as SlotFinal);
+  const finals = fs.readdirSync(runDir, { recursive: true, encoding: 'utf8' }).filter((f) => /\.outcome\.json$/.test(f)).map((f) => JSON.parse(fs.readFileSync(path.join(runDir, f), 'utf8')) as SlotFinal);
   assert.ok(finals.some((f) => f.state === 'success' && f.resume === 'resume-canary' && f.outputPath?.includes('log-canary')));
   publishReport(ports, runDir, true, () => assert.fail('unexpected diagnostic warning'));
   const files = [path.join(session, 'diagnostics.md'), ...fs.readdirSync(path.join(runDir, 'diagnostics')).map((f) => path.join(runDir, 'diagnostics', f))];

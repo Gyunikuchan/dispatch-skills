@@ -17,6 +17,9 @@ function syncDirectory(dir: string): void {
   }
 }
 
+// Effect folders appear lazily, so every create-style write makes its parent first.
+const ensureParent = (file: string): void => { fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 }); };
+
 function hashFile(file: string): string {
   const digest = crypto.createHash('sha256'), fd = fs.openSync(file, 'r'), chunk = Buffer.allocUnsafe(64 * 1024);
   try { let count: number; while ((count = fs.readSync(fd, chunk)) > 0) digest.update(chunk.subarray(0, count)); }
@@ -37,6 +40,7 @@ function replaceAtomic(temp: string, file: string): void {
 }
 
 function publishAtomic(file: string, content: string | Buffer): void {
+  ensureParent(file);
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
   try {
     const fd = fs.openSync(temp, 'wx');
@@ -99,14 +103,17 @@ export const nodeFs: FsPort = {
   size: (file) => fs.statSync(file).size,
   mkdir: (dir, options) => { fs.mkdirSync(dir, options); },
   appendDurable(file, text) {
+    ensureParent(file);
     const fd = fs.openSync(file, 'a');
     try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   },
   writeExclusive(file, text) {
+    ensureParent(file);
     const fd = fs.openSync(file, 'wx');
     try { fs.writeSync(fd, text); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
   },
   publishExclusive(file, text) {
+    ensureParent(file);
     const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${crypto.randomUUID()}.tmp`);
     try {
       const fd = fs.openSync(temp, 'wx');

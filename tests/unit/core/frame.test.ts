@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { faultFrame, projectFrame, replyTemplate, awaitEnvelopes } from '../../../skills/dispatch/scripts/core/frame.ts';
 import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
-import { awaitingMachine } from './fixtures/machines.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { awaitingMachine, fakeHandlers, RUN_STARTED } from './fixtures/machines.ts';
 
 test('a projected frame carries the envelope fields in order', () => {
   const frame = projectFrame(awaitingMachine, { tag: 'authoring', counters: {} }, 'runs/001');
@@ -23,6 +27,26 @@ test('the reply template sends the event from a file', () => {
   assert.match(replyTemplate('runs/001'), /send --run runs\/001 --event @<event-file>$/);
 });
 
+
+test('event path: a boundary frame names events/<seq>-<await>.json and a done frame keeps the placeholder', () => {
+  assert.match(projectFrame(awaitingMachine, { tag: 'authoring', counters: {} }, 'runs/001', undefined, 3).reply, /--event @runs\/001\/events\/3-author\.json$/);
+  assert.match(faultFrame('runs/001', 'x').reply, /@<event-file>$/);
+});
+
+test('event path: a rejected event keeps its path, and the rewritten file is accepted', async () => {
+  const ports = fakePorts();
+  const root = tempDir(), runDir = path.join(root, 'runs', '001-ask');
+  const started = await start({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, runStarted: RUN_STARTED });
+  const file = path.join(root, /@(\S+)$/.exec(started.frame!.reply)![1]!);
+  assert.equal(fs.existsSync(path.dirname(file)), true, 'events/ exists before the host writes');
+  const rejected = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: { type: 'AUTHORED' } });
+  assert.ok(rejected.frame?.error);
+  assert.equal(rejected.frame.reply, started.frame!.reply);
+  fs.writeFileSync(file, JSON.stringify({ type: 'AUTHORED', path: 'plan.md' }));
+  const accepted = await send({ runDir, runRel: 'runs/001-ask', machine: awaitingMachine, handlers: fakeHandlers, ports, rawEvent: JSON.parse(fs.readFileSync(file, 'utf8')) });
+  assert.equal(accepted.frame?.error, undefined);
+  assert.notEqual(accepted.frame?.reply, started.frame!.reply);
+});
 
 test('rewrite SC5 every live await emits parser-compatible envelopes with scoped ruling and mapping metadata', () => {
   const data = { path: 'plan.md', slots: [{ sourceKey: 'native[0]', outputPath: 'raw.md', model: 'configured' }], findings: [{ id: 'F1', locus: 'src/a.ts:L1' }], clusters: [{ clusterId: 'C1', affectedPaths: ['src/a.ts'] }], envelopePath: 'receipt.json', model: 'writer', criteria: [{ id: 'SC1' }], kind: 'approval', items: [] };

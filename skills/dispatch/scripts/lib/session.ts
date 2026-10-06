@@ -226,6 +226,58 @@ export function createRun(sessionRoot: string, kind: RunKind): { id: string; dir
 
 export const isRunId = (id: string): boolean => RUN_ID.test(id);
 
+// SECTION: Run paths
+
+const RUN_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/** Rejects rather than hashes, so effect folders keep readable dotted IDs such as `review.wave.1`. */
+export function runSegment(value: string): string {
+  if (!RUN_SEGMENT.test(value) || value.split('.').includes('')) throw new Error(`Unsafe run path segment: ${JSON.stringify(value)}`);
+  return value;
+}
+
+const attemptInfix = (attempt: number): string => {
+  if (!Number.isSafeInteger(attempt) || attempt < 1) throw new Error(`Invalid attempt: ${attempt}`);
+  return attempt === 1 ? '' : `.a${attempt}`;
+};
+
+/** Pure builders for files this layout groups by effect; run-root files keep their own owners. */
+export function runPaths(runDir: string) {
+  const effectDir = (id: string): string => path.join(runDir, runSegment(id));
+  const inEffect = (id: string, name: string): string => path.join(effectDir(id), name);
+  return {
+    effectDir,
+    input: (id: string) => inEffect(id, 'input.json'),
+    launch: (id: string) => inEffect(id, 'launch.json'),
+    prompt: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.prompt.md`),
+    slotLog: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.log`),
+    spill: (id: string, slot: string) => inEffect(id, `${runSegment(slot)}.spill.md`),
+    slotOutcome: (id: string, slot: string, attempt: number) => inEffect(id, `${runSegment(slot)}${attemptInfix(attempt)}.outcome.json`),
+    claim: (id: string, attempt: number) => inEffect(id, `claim${attemptInfix(attempt)}.json`),
+    heartbeat: (id: string, attempt: number) => inEffect(id, `heartbeat${attemptInfix(attempt)}.json`),
+    done: (id: string, attempt: number) => inEffect(id, `done${attemptInfix(attempt)}.json`),
+    brief: (id: string) => inEffect(id, 'brief.md'),
+    envelope: (id: string) => inEffect(id, 'outcome.json'),
+    scope: (id: string) => inEffect(id, 'scope.json'),
+    restore: (id: string) => inEffect(id, 'restore.json'),
+    selfCheckEvent: (id: string) => inEffect(id, 'self-check.event.json'),
+    verifyLog: (id: string, n: number) => {
+      if (!Number.isSafeInteger(n) || n < 1) throw new Error(`Invalid command index: ${n}`);
+      return inEffect(id, `${n}.log`);
+    },
+    event: (seq: number, awaiting: string) => {
+      if (!Number.isSafeInteger(seq) || seq < 0) throw new Error(`Invalid event sequence: ${seq}`);
+      return path.join(runDir, 'events', `${seq}-${runSegment(awaiting)}.json`);
+    },
+  };
+}
+
+/** Attempt number encoded in a `<stem>[.a<n>].json` file name, or null when it is another file. */
+export function attemptOf(stem: string, name: string): number | null {
+  const match = new RegExp(`^${stem}(?:\\.a(\\d+))?\\.json$`).exec(name);
+  return match ? Number(match[1] ?? 1) : null;
+}
+
 // SECTION: Relative references
 
 /** Rewrites absolute paths under `root` to `@session/...` so stored state survives the handoff move. */

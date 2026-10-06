@@ -35,6 +35,8 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
   const entry = path.join(skill, 'scripts/dispatch.ts');
   const running = new Set<ReturnType<typeof spawn>>();
   const ownedSessions = new Set<string>();
+  // Hosts write each reply where the frame names it, so replies follow the latest frame per run.
+  const eventFiles = new Map<string, string>();
   function launch(args: readonly string[]) {
     const child = spawn(process.execPath, [entry, ...args], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); running.add(child);
     let stdout = '', stderr = ''; child.stdout?.on('data', (bytes: Buffer) => { stdout += bytes; }); child.stderr?.on('data', (bytes: Buffer) => { stderr += bytes; });
@@ -49,13 +51,15 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     const result = await launch(args).done; assert.equal(result.exit, 0, `${args.join(' ')}\n${result.stderr}\n${result.stdout}`); assert.equal(result.stdout.trim().split('\n').length, 1, 'one stdout frame');
     const frame = JSON.parse(result.stdout) as Frame & { sessionDir: string; sessionId: string };
     if (frame.sessionDir) ownedSessions.add(frame.sessionDir);
+    const named = typeof frame.reply === 'string' ? /--event @(\S+)$/.exec(frame.reply)?.[1] : undefined;
+    if (frame.run && named && named !== '<event-file>') eventFiles.set(path.resolve(repo, frame.run), path.resolve(repo, named));
     if (typeof frame.data?.['handoff'] === 'string') ownedSessions.add(frame.data['handoff']);
     return frame;
   };
   const initialize = async () => (await cli(['session', 'init', '--session-id', crypto.randomUUID(), '--objective', 'E2E fixture'])).sessionDir;
   const begin = async (verb: string, session: string, argument: string, flags: string[] = []) => cli(['start', verb, '--session-dir', session, '--orchestrator', 'codex', '--level', 'low', '--level-source', 'explicit', ...flags, '--', argument]);
   const reply = async (run: string, event: unknown, dryRun = false) => {
-    const eventPath = path.join(dir, 'reply.json'); fs.writeFileSync(eventPath, JSON.stringify(event));
+    const eventPath = eventFiles.get(path.resolve(repo, run)) ?? path.join(dir, 'reply.json'); fs.writeFileSync(eventPath, JSON.stringify(event));
     return cli(['send', '--run', run, '--event', `@${eventPath}`, ...(dryRun ? ['--dry-run'] : [])]);
   };
   const launches = () => recordedLaunches(scenarioPath);
@@ -63,7 +67,7 @@ export function fixture(scenario: Scenario = { responses: [CLEAN] }) {
     for (const child of running) child.kill('SIGKILL');
     const workerPids = new Set<number>();
     for (const session of ownedSessions) if (fs.existsSync(session)) for (const relative of fs.readdirSync(session, { recursive: true })) {
-      if (!String(relative).endsWith('.claim.json')) continue;
+      if (!/(^|[\\/])claim(\.a\d+)?\.json$/.test(String(relative))) continue;
       try { const claim = JSON.parse(fs.readFileSync(path.join(session, String(relative)), 'utf8')) as { pid?: number }; if (claim.pid) workerPids.add(claim.pid); } catch { /* incomplete claim */ }
     }
     for (const pid of workerPids) try { process.kill(pid, 'SIGKILL'); } catch { /* completed */ }

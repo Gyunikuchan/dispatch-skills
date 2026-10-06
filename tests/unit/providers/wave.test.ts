@@ -24,7 +24,8 @@ function memLinkFs(): LinkFs {
     },
     writeAtomic: (file, text) => { files.set(file, text); },
     readText: (file) => files.get(file) ?? null,
-    list: (dir) => [...files.keys()].filter((key) => key.startsWith(`${dir}/`)).map((key) => key.slice(dir.length + 1)).filter((name) => !name.includes('/')),
+    // Like readdir: one separator on every platform, and child folders appear as names.
+    list: (dir) => { const root = `${dir.replace(/\\/g, '/')}/`; return [...files.keys()].map((key) => key.replace(/\\/g, '/')).filter((key) => key.startsWith(root)).map((key) => key.slice(root.length).split('/')[0]!).filter((name, i, all) => all.indexOf(name) === i); },
     remove: (file) => { files.delete(file); },
   };
 }
@@ -34,6 +35,7 @@ type Script = Record<string, RunOutcome[]>; // key `<provider>:<model>:<mode>`
 function setup(script: Script, roster: Record<string, unknown>[], orchestrator: ProviderId | null = null) {
   const fs = memLinkFs();
   const calls: string[] = [];
+  const requests: DelegateRequest[] = [];
   const workers: Promise<unknown>[] = [];
   const worker: WorkerDeps = {
     fs, proc: { pid: 10, host: 'h' }, clock: { now: () => 1000, every: () => () => {} }, specs: SPECS,
@@ -41,6 +43,7 @@ function setup(script: Script, roster: Record<string, unknown>[], orchestrator: 
     run: async (provider: ProviderId, req: DelegateRequest, mode: ModeId) => {
       const key = `${provider}:${req.model ?? '-'}:${mode}`;
       calls.push(key);
+      requests.push(req);
       return script[key]?.shift() ?? fail('not-found');
     },
   };
@@ -54,7 +57,7 @@ function setup(script: Script, roster: Record<string, unknown>[], orchestrator: 
     awaitWorker: async () => { await Promise.all(workers); },
   };
   const effect = { kind: 'wave' as const, id: 'e1', round: 1, roster, timeoutMs: 60000 };
-  return { fs, calls, deps, effect, context };
+  return { fs, calls, requests, deps, effect, context };
 }
 
 const slot = (name: string, provider: string, extra: Record<string, unknown> = {}) => ({ slot: name, provider, index: 0, native: false, reserve: false, ...extra });
@@ -96,6 +99,17 @@ test('delegates-slots-reconciled: a reserve substitutes once per wave with its r
   assert.deepEqual(states(events), [['codex[0]', 'reserve'], ['codex[1]', 'failed']]);
   assert.match(String(done(events).slots[0]?.['record']), /^codex\[0\] → claude\[9\]: quota/);
   assert.deepEqual(w.calls.filter((call) => call.startsWith('claude')), ['claude:opus:cli']);
+});
+
+test('effect folder: a slot spills beside its log and a reserve logs beside the slot it replaces', async () => {
+  const roster = [slot('codex[0]', 'codex'), slot('claude[9]', 'claude', { reserve: true, model: 'opus' })];
+  const w = setup({ 'codex:-:cli': [fail('quota')], 'claude:opus:cli': [ok(CLEAN)] }, roster);
+  Object.assign(w.context.paths, Object.fromEntries(roster.map((row) => [row.slot, { promptPath: `/run/e0/${row.slot}.prompt.md`, logPath: `/run/e0/${row.slot}.log`, attachments: [] }])));
+  await createWaveHandler(w.deps)(w.effect, fakePorts(), { runDir: '/run', attempt: 1 });
+  assert.deepEqual(w.requests.map((req) => [req.logPath, req.briefPath]), [
+    ['/run/e0/codex[0].log', '/run/e0/codex[0].spill.md'],
+    ['/run/e0/codex[0].claude-9.log', '/run/e0/codex[0].claude-9.spill.md'],
+  ]);
 });
 
 test('delegates-fallback-triggers: refusal, truncation, empty, uncovered scope, and loose locus each cascade', async () => {

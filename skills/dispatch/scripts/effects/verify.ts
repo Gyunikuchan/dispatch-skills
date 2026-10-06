@@ -2,6 +2,7 @@
 
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { runPaths } from '../lib/session.ts';
 import type { Effect, Handler } from '../core/types.ts';
 import type { OsId } from '../lib/platform.ts';
 import type { Git } from './git.ts';
@@ -128,7 +129,7 @@ export function createVerify(base: VerifyDeps): Handler<VerifyEffect> {
           continue;
         }
       }
-      const logPath = path.join(ctx.runDir, `${effect.id}.${index + 1}.log`);
+      const logPath = runPaths(ctx.runDir).verifyLog(effect.id, index + 1);
       let exit: number;
       let stdout: string;
       let stderr: string;

@@ -25,7 +25,7 @@ After a task finishes, the host agent checks its submitted changes before integr
 
 ## Session folder
 
-Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. It holds that chat's plans, designs, handoff notes, and supporting run files. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
+Each chat has one session folder under `.scratch/dispatch-skills/<folder>/` in the workspace. Its top level holds only `manifest.json` and the deliverables: plans, designs, walkthroughs, the review report, and `diagnostics.md` when enabled. Run internals such as prompts, logs, and journals live under `.state/`. The folder remains in the workspace after handoff, and continuing in the same chat reuses it.
 
 Keep the folder while work is active or may resume. The handoff provides its path so you can inspect the saved artifacts.
 
