@@ -10,7 +10,7 @@ Dispatch reports findings by default. It does not apply fixes unless you ask for
 
 ```mermaid
 flowchart TD
-    User(["👤 Design, plan,<br/>working tree, or Git range"]) --> Route["🧭 Infer kind; route reviewers"]
+    User(["👤 Tech design, plan,<br/>working tree, or Git range"]) --> Route["🧭 Infer kind; route reviewers"]
     Route --> Review["⚡ Independent reviews"]
     Review --> Rule{"⚖️ Finding backed by<br/>evidence and intent?"}
     Rule -->|No| Reject["🚫 Rejected"]

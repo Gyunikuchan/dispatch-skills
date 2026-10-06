@@ -23,23 +23,16 @@ For a large change, dispatch breaks the design into smaller increments. Each inc
 
 ```mermaid
 flowchart TD
-    User(["👤 Requirement"]) --> Design["🗺️ Technical design"]
-    Design --> DesignReview["⚡ Design review"]
-    DesignReview --> Increments["🧩 Increment graph"]
-    Increments --> Plan["📝 Increment plan"]
-    Plan --> PlanReview["⚡ Plan review"]
-    PlanReview --> Gate{"🛑 One approval gate"}
-    Gate --> Baseline["✅ Baseline tests"]
-    Baseline --> Implement["💻 Write subagent"]
-    Implement --> Verify["✅ Tests, lint, build"]
-    Verify --> CodeReview["⚡ Code review"]
-    CodeReview --> Fix["🔧 Verified fixes"]
-    Fix --> Consensus{"🔄 Settled?"}
-    Consensus -->|Findings remain| CodeReview
-    Consensus -->|Next increment| Plan
-    Consensus -->|Last increment| Integration["📦 Integration + handoff"]
-    Consensus -->|Cap or deadlock| User
-    Integration --> User
+    User(["👤 Requirement"]) --> Design["🗺️ Tech design + review"]
+    Design --> Plan["📝 Increment plan + plan review"]
+    Plan --> Gate{"🛑 One approval gate"}
+    Gate --> Tasks["🧩 Tasks in isolated worktrees"]
+    Tasks --> Red["🔴 Failing tests first"]
+    Red --> Green["💻 Writer makes them pass"]
+    Green --> CodeReview["⚡ Code review + fixes"]
+    CodeReview --> Final["✅ Final tests, lint, build"]
+    Final -.->|Next increment| Plan
+    Final -->|Last increment| Handoff(["📦 Changes + evidence<br/>handed to you"])
 ```
 
 Smaller tasks can start later in the same workflow: `/dispatch implement:` begins with a plan, while a standalone review runs only the review step.

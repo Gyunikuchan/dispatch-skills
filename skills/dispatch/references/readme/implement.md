@@ -14,7 +14,7 @@ For each task, the writer inspects the relevant code, adds discriminating tests 
 flowchart TD
     User(["👤 Requirement"]) --> Plan["📝 Plan + plan review"]
     Plan --> Gate{"🛑 One approval gate"}
-    Artifact(["📄 Approved plan or design"]) --> Gate
+    Artifact(["📄 Approved plan<br/>or tech design"]) --> Gate
     Gate --> Baseline["✅ Baseline tests"]
     Baseline --> Tasks["🧩 Ready tasks, each<br/>in its own worktree"]
     Tasks --> Red["🔴 Failing tests first"]
