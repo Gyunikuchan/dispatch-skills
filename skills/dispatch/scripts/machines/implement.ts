@@ -883,10 +883,11 @@ function beginVerify(c0: Context, purpose: 'red' | 'scoped' | 'final' | 'generat
   return { c, id, effect: { kind: 'verify', id, purpose, commands: prepared, ...(cwd ? { cwd } : {}) } };
 }
 
-function quoteArg(value: string): string { return `"${value.replace(/"/g, '\\"')}"`; }
+// narrowToTests rejects quotes, expansions, and a trailing backslash (escapes the closing quote on Windows), so plain quoting is safe.
+function quoteArg(value: string): string { return `"${value}"`; }
 
 function narrowToTests(command: string, paths: readonly string[]): string | null {
-  if (!paths.length || /[;&|<>`$\r\n]/.test(command) || paths.some((file) => /["`$%\r\n]/.test(file))) return null;
+  if (!paths.length || /[;&|<>`$\r\n]/.test(command) || paths.some((file) => /["`$%\r\n]|\\$/.test(file))) return null;
   const tokenPattern = /--[a-z-]+=(?:"[^"\n]*"|'[^'\n]*')|"[^"\n]*"|'[^'\n]*'|[^\s"']+/g;
   const tokens: string[] = command.match(tokenPattern) ?? [];
   if (command.replace(tokenPattern, '').trim()) return null;

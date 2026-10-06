@@ -26,8 +26,8 @@ export function statusLabel(status: ResolutionStatus): string {
   }
 }
 
-/** Table cells: one line, pipes escaped, comments neutralised. */
-const cell = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').trim());
+/** Table cells: one line, backslashes then pipes escaped, comments neutralised. */
+const cell = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
 const line = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').trim());
 
 // SECTION: Resolution section

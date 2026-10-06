@@ -13,6 +13,7 @@ export const nodeProcess: ProcessPort = {
     const started = process.hrtime.bigint();
     const [command, ...args] = launch.argv;
     if (!command) throw new Error('nodeProcess.start: empty argv');
+    // ComSpec is the host's own cmd.exe location; shell stays off and batchInvocation escapes every argument.
     const batch = process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)
       ? batchInvocation(command, args, process.env['ComSpec'] || 'cmd.exe') : null;
     // Open the log first so a failure cannot orphan a running child.

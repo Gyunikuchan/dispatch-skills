@@ -441,6 +441,25 @@ test('tasks: admission fails a task whose RED command cannot be narrowed', () =>
   assert.match(record(result, 'T1')?.reason ?? '', /cannot be narrowed safely/);
 });
 
+test('tasks: admission refuses to narrow RED to a test path that could break its quoting', () => {
+  for (const unsafe of ['tests/sc1.test.ts\\', 'tests/"sc1".test.ts']) {
+    const swap = (path: string) => path === 'tests/sc1.test.ts' ? unsafe : path;
+    const base = withRed({ verify: [{ command: 'node --test tests/all.test.ts', final: false }] });
+    const plan: ParsedPlan = {
+      ...base,
+      criteria: base.criteria.map((row) => ({ ...row, changes: row.changes.map(swap) })),
+      changes: base.changes.map((row) => ({ ...row, path: swap(row.path) })),
+      tasks: base.tasks.map((row) => ({ ...row, paths: row.paths.map(swap) })),
+    };
+    const envelope = (id: string) => ({ ...defaultEnvelope(id, plan), evidence: defaultEnvelope(id, plan).evidence.map((row) => row.replace('tests/sc1.test.ts', unsafe)) });
+    const sim: Sim = { plan, envelope };
+    let { result, trace } = start(1, sim);
+    result = submit(launch(result, sim, trace), 'T1', sim, trace);
+    assert.deepEqual(redCommand(trace), [], unsafe);
+    assert.match(record(result, 'T1')?.reason ?? '', /cannot be narrowed safely/, unsafe);
+  }
+});
+
 test('tasks: admission collides RED with a baseline failure unless Pre-existing is yes', () => {
   for (const preExisting of [false, true]) {
     const failing = (purpose: string): Outcome => purpose === 'baseline' || purpose === 'red' ? { exit: 1, failedTests: ['test:rejects bad input'] } : { exit: 0 };

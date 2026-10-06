@@ -352,6 +352,8 @@ function escapeCmdArgument(argument: string): string {
  */
 export function batchInvocation(binary: string, args: readonly string[], comSpec = 'cmd.exe'): { command: string; args: string[] } {
   if (args.some((arg) => /[\r\n]/.test(arg))) throw new Error('batch launcher argument contains a newline; spill it to a brief file');
+  // NOTE: cmd.exe expands %VAR% before caret escapes apply, so no escape makes % literal.
+  if (args.some((arg) => arg.includes('%'))) throw new Error('batch launcher argument contains %; spill it to a brief file');
   const line = [binary.replace(CMD_META_CHARS, '^$1'), ...args.map(escapeCmdArgument)].join(' ');
   return { command: comSpec, args: ['/d', '/s', '/c', '"' + line + '"'] };
 }

@@ -29,6 +29,7 @@ test('walkthrough-minimum-contract: sections in order; Context only for a user-r
   let at = -1;
   for (const marker of order) { const next = out.indexOf(marker); assert.ok(next > at, marker); at = next; }
   assert.ok(out.includes('stops \\| at three'));
+  assert.ok(renderWalkthrough({ ...view, verification: [{ sc: 'SC1', outcome: 'a\\|b', evidence: '-' }] }).includes('a\\\\\\|b'));
   assert.ok(out.includes('- Follow-up: tune backoff'));
   assert.ok(!out.includes('## Revision Log'));
   assert.ok(!out.includes('<!--'));

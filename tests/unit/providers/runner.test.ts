@@ -164,6 +164,10 @@ test('batch launchers go through cmd.exe with escaped verbatim args, never a raw
   assert.throws(() => batchInvocation('x.cmd', ['a\nb']), /newline/);
 });
 
+test('batch launchers reject % arguments because cmd.exe expands them despite escapes', () => {
+  assert.throws(() => batchInvocation('x.cmd', ['--model', '%PATH%']), /contains %/);
+});
+
 
 for (const limit of ['timedOut', 'truncated'] as const) test(`rewrite SC4 parsed success retains ${limit} failure`, async () => {
   const h = harness(posix); const pending = runDelegate(claude, req, 'cli', h.ports); await flush(); h.finish(ok({ [limit]: true }));
