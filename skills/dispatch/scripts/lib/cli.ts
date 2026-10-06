@@ -4,8 +4,7 @@ export type CliPolicy = { levels: readonly string[]; pins(text: string): unknown
 export type Command = { command: 'start' | 'send' | 'status' | 'doctor' | 'session' | 'wave-worker' | 'checkpoint'; verb?: Verb; action?: string; argument: string; paths?: string[]; flags: Record<string, string | boolean> };
 export class UsageError extends Error {}
 export const ALIASES: Readonly<Record<string, string>> = {
-  'dispatch-code-review': 'start review --kind code', 'dispatch-design-review': 'start review --kind design',
-  'dispatch-plan-review': 'start review --kind plan', 'dispatch-implement': 'start implement',
+  'dispatch-code-review': 'start review --kind code', 'dispatch-plan': 'start plan', 'dispatch-implement': 'start implement',
 };
 const VERBS: readonly Verb[] = ['ask', 'design', 'plan', 'review', 'implement'];
 const FLAGS: Readonly<Record<string, readonly string[]>> = {

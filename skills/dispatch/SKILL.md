@@ -1,7 +1,6 @@
 ---
 name: dispatch
-description: Coordinate independent reviews and bounded implementation across native agent platforms.
-disable-model-invocation: true
+description: Multi-agent planning, review, and implementation. Use only when explicitly invoked.
 ---
 
 # Dispatch

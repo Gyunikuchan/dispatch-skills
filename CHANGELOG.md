@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- GitHub Copilot now loads `dispatch` and its aliases: skills no longer set `disable-model-invocation`; their descriptions limit them to explicit invocation.
+- Added the `dispatch-plan` alias for `/dispatch plan`.
+- Removed the `dispatch-plan-review` and `dispatch-design-review` aliases. Use `/dispatch review <file>.plan.md` or `<file>.design.md`; the kind is inferred.
+
 ## [0.7.0] - 2026-10-06
 
 - Rebuilt `dispatch` on a state-machine driver, so runs recover from interruptions more reliably and fix or revise plans without starting over.

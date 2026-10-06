@@ -39,12 +39,11 @@ For code and documentation changes, follow **Discover → Bound → Execute → 
 
 ## Product Architecture and Key Areas
 
-`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. The four companion skills are user-invoked compatibility aliases:
+`dispatch` owns every shipped runner, driver, template, schema, config, and operational reference. The three companion skills are compatibility aliases that run only when invoked by name:
 
 ```text
-dispatch-design-review ─┐
-dispatch-plan-review ───┼──> dispatch
-dispatch-implement ─────┤
+dispatch-plan ──────────┐
+dispatch-implement ─────┼──> dispatch
 dispatch-code-review ───┘
 
 dispatch has no dependency on these aliases.
@@ -54,8 +53,7 @@ Key areas:
 
 ```text
 skills/dispatch/          model-visible contract, config, scripts, references
-skills/*-review/          small user-invoked aliases and human manuals
-skills/dispatch-implement/ compatibility alias and human manual
+skills/dispatch-{plan,implement,code-review}/ compatibility aliases and human manuals
 .agents/skills/           local-only and vendored agent skills; none shipped
 docs/                     long-term human and agent maintainer context
 scripts/                  repository tooling

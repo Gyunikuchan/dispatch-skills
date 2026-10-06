@@ -30,7 +30,7 @@ test('leaf CLI enforces flags, duplicate/value guards, providers, pins and comma
   for (const kind of ['code', 'design', 'plan']) assert.equal(parseCommand(['start', 'review', '--session-dir', 'chat', '--orchestrator', 'codex', '--kind', kind], policy).flags['kind'], kind);
 });
 test('compatibility alias parity uses public start mappings', () => {
-  assert.deepEqual(Object.values(ALIASES), ['start review --kind code', 'start review --kind design', 'start review --kind plan', 'start implement']);
+  assert.deepEqual(Object.values(ALIASES), ['start review --kind code', 'start plan', 'start implement']);
   for (const line of Object.values(ALIASES)) assert.equal(parseCommand([...line.split(' '), '--session-dir', 'chat', '--orchestrator', 'codex', '--', 'target'], policy).command, 'start');
 });
 test('cli-start-review-context: start review accepts --context and non-review verbs reject it', () => {

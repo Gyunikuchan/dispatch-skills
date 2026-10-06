@@ -105,13 +105,12 @@ See [`skills/dispatch/README.md`](skills/dispatch/README.md) for the Dispatch us
 
 | Skill | Use it for |
 |---|---|
-| [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. User-invoked. |
-| [`dispatch-plan-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review plan:` |
-| [`dispatch-design-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review design:` |
+| [`dispatch`](skills/dispatch/README.md) | Everything below, plus one-off delegation. Runs only when you invoke it. |
+| [`dispatch-plan`](skills/dispatch/references/readme/plan.md) | Alias for `/dispatch plan:` |
 | [`dispatch-code-review`](skills/dispatch/references/readme/review.md) | Alias for `/dispatch review code:` |
 | [`dispatch-implement`](skills/dispatch/references/readme/implement.md) | Alias for `/dispatch implement:` |
 
-The four aliases exist for familiar slash commands only; `dispatch` alone does the work.
+The three aliases exist for familiar slash commands only; `dispatch` alone does the work.
 
 ## Quick start
 

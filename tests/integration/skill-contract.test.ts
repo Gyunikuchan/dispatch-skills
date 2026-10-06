@@ -8,14 +8,15 @@ import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
 const contractName = 'SKILL.md';
 const WORD_BUDGET = 657;
-test('five contracts carry exact alias mappings and named dependency guards', () => {
+test('four contracts carry exact alias mappings and named dependency guards', () => {
   const contract = read(`skills/dispatch/${contractName}`);
   for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);
   assert.match(contract, /journal is authoritative/i); assert.match(contract, /level-source explicit\|classified/); assert.match(contract, /unrelated dirty or ignored files stay intact/i);
   for (const [name, mapping] of Object.entries(ALIASES)) {
-    const text = read(`skills/${name}/${contractName}`); assert.match(text, /disable-model-invocation: true/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));
+    const text = read(`skills/${name}/${contractName}`); assert.doesNotMatch(text, /disable-model-invocation/); assert.ok(text.includes(mapping)); assert.ok(text.includes(`Missing dependency: dispatch is required by ${name}`));
     assert.ok(fs.existsSync(path.join(OVERLAY_ROOT, `skills/${name}/README.md`)));
   }
+  assert.doesNotMatch(contract, /disable-model-invocation/);
   assert.ok(!Object.keys(ALIASES).some((name) => contract.includes(name)));
 });
 
@@ -124,7 +125,7 @@ test('branch references and manuals resolve every local link and use portable re
 
 
 test('aliases forward explicit fix intent and host contract uses emitted envelopes', () => {
-  for (const name of ['dispatch-code-review', 'dispatch-plan-review', 'dispatch-design-review']) assert.match(read(`skills/${name}/SKILL.md`), /--fix/);
+  for (const name of ['dispatch-code-review']) assert.match(read(`skills/${name}/SKILL.md`), /--fix/);
   assert.match(read('skills/dispatch/SKILL.md'), /`events`/); assert.match(read('skills/dispatch/SKILL.md'), /outcome:"pass"/);
 });
 

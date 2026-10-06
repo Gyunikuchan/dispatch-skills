@@ -1,5 +1,5 @@
 {
-  "SKILL.md": "ea5a6736e6737683cf11cde858114f5db86048c81eebd46c0f843bfe68710057",
+  "SKILL.md": "68a2834de307434ae24ee3894dd67b7e175c326e8d04e6fd3a922d0e4db84571",
   "references/diagnostics.md": "700877b6f8ff1ba0b0561832ec75d7a59cdd02ce0543ddb8ccf858647afa5bd4",
   "references/glossary.md": "e33726f613f0882dbea68aaa767da6612f8b6c3023899f284d4056e902a0ec0a",
   "references/providers.md": "6ecb8cc91faf9dd115f16f566abcdd95105c459f5213d1290374328202acb9ee",
@@ -66,7 +66,7 @@
   "scripts/effects/wave-native.ts": "0895ebd7b151efc311422272e10afa0cf97cd65498c3acd66b9eb98881905ff0",
   "scripts/effects/wave.ts": "6dea3429f92403da3b65e899bdd8f9571c55c036d20055116e7902ad1e3b582a",
   "scripts/effects/write-brief.ts": "6aec52634c11717a6fa9c1b986c0a38cf0b9794a58b3c94f7a1e4b501b26d19b",
-  "scripts/lib/cli.ts": "acce8ac4be27fc5eac7cf44597667560d43231bebe15cb3d956aee86db90db05",
+  "scripts/lib/cli.ts": "e2e335a80106b0df2f7fff9aa3cee8a72b49160da7b720b41b53001a6ddf5bb7",
   "scripts/lib/config.ts": "f54ea9aab09f32c14ff9b476ba0267d158aed7ca7dabdb979f1a126e3f52832a",
   "scripts/lib/diagnostic-usage.ts": "2f0c9cb7824bd172110595d3572cfa6d04fedc252a6f35cdad166194b0cc21d9",
   "scripts/lib/doctor.ts": "b56dc8b89516bf3b78ede7fab85863cda2c285de9f7cf9f6e554124fced08624",
