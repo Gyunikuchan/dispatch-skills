@@ -13,24 +13,23 @@ For each task, the writer inspects the relevant code, adds discriminating tests 
 ```mermaid
 flowchart TD
     User(["👤 Requirement"]) --> Plan["📝 Plan + plan review"]
-    Artifact(["📄 Approved plan or design"]) --> Gate
     Plan --> Gate{"🛑 One approval gate"}
+    Artifact(["📄 Approved plan or design"]) --> Gate
     Gate --> Baseline["✅ Baseline tests"]
     Baseline --> Tasks["🧩 Ready tasks, each<br/>in its own worktree"]
     Tasks --> Red["🔴 Failing tests first"]
     Red --> Green["💻 Writer makes them pass"]
     Green --> Accept{"⚖️ Scope, tests,<br/>and checks hold?"}
-    Accept -->|Needs more scope| Scope["📐 Scope request"]
-    Scope -->|Approved| Green
-    Scope -->|Disputed| User
-    Accept -->|Failed| Recover["🔧 Retry, revise plan,<br/>or stop"]
-    Recover --> Tasks
     Accept -->|Accepted| Integrate["🔗 Integrate; unblock<br/>dependent tasks"]
-    Integrate -->|Tasks remain| Tasks
+    Accept -->|Needs more scope| Scope["📐 Scope request"]
+    Accept -->|Failed| Recover["🔧 Retry, revise plan,<br/>or stop"]
+    Scope -.->|Approved| Green
+    Scope -->|Disputed| Ask(["👤 Your decision"])
+    Recover -.-> Tasks
+    Integrate -.->|Tasks remain| Tasks
     Integrate -->|All done| CodeReview["⚡ Code review + fixes"]
     CodeReview --> Final["✅ Final tests, lint, build"]
-    Final --> Handoff["📦 Changes + evidence handoff"]
-    Handoff --> User
+    Final --> Handoff(["📦 Changes + evidence<br/>handed to you"])
 ```
 
 ## How to use it
