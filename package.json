@@ -1,6 +1,6 @@
 {
   "name": "dispatch-skills",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Collaborative development workflows across native agent platforms, combining independent model perspectives with structured, evidence-based review.",
   "license": "MIT",
   "type": "module",

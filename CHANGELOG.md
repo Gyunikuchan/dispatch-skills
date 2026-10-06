@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-06
+
+- Rebuilt `dispatch` on a state-machine driver, so runs recover from interruptions more reliably and fix or revise plans without starting over.
+- Task-based plans can run independent tasks in parallel, with each writer in its own isolated worktree.
+- Writers follow your repository's rule files, tidy code once tests pass, and can propose plan changes when blocked instead of stopping.
+- Run level and scope are double-checked during the run, and the orchestrator reports any judgment calls it made when it finishes.
+- Run artifacts stay together in one session folder, and standalone reviews now see the original intent and deliverables.
+- Rewritten user guide with workflow diagrams for each verb, plus opt-in diagnostics and live model list refresh.
+
 ## [0.6.1] - 2026-09-30
 
 - Implementation runs can resolve unexpected stalls or localized test failures with fast hot fixes instead of heavy restart loops.

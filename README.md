@@ -1,6 +1,6 @@
 # dispatch-skills
 
-[![Version](https://img.shields.io/badge/version-v0.6.1-blue.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-v0.7.0-blue.svg)](package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%5E22.18%20%7C%7C%20%3E%3D23.6-brightgreen.svg)](package.json)
 
