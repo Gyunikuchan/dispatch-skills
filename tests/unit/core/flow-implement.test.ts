@@ -111,7 +111,7 @@ for (const planMode of ['external', 'session', 'objective'] as const) test(`impl
   const [slot] = write.frame?.data['tasks'] as { task: string; action: string; attempt: number; signature: string; envelopePath: string }[];
   assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
   const envelopePath = String(slot?.envelopePath);
-  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1' }] } });
+  const launched = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: (slot as unknown as { model: string }).model, ...(typeof write.frame!.data['effort'] === 'string' ? { effort: write.frame!.data['effort'] as string } : {}) }] } });
   assert.equal((launched.frame?.data['tasks'] as { action: string }[])[0]?.action, 'running');
   fs.mkdirSync(path.join(cwd, 'src'));
   fs.writeFileSync(path.join(cwd, 'src', 'value.ts'), 'export const normalize = (value: string) => value;\n');

@@ -121,7 +121,7 @@ export function start(concurrency: number, sim: Sim = {}): { result: Result; tra
 type Slot = { task: string; action: string; handle: string | null; attempt: number; signature: string; model: string; envelopePath: string; worktree: string };
 const slots = (result: Result): Slot[] => result.state.tag === 'tasks' ? (implementData(result.state)['tasks'] as Slot[]) : [];
 const record = (result: Result, id: string) => 'c' in result.state && result.state.c ? result.state.c.tasks[id] : undefined;
-export const launch = (result: Result, sim: Sim, trace: Trace): Result => host(result, { type: 'WRITE_LAUNCHED', tasks: slots(result).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}` })) }, sim, trace);
+export const launch = (result: Result, sim: Sim, trace: Trace): Result => host(result, { type: 'WRITE_LAUNCHED', tasks: slots(result).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}`, model: slot.model })) }, sim, trace);
 export const submit = (result: Result, id: string, sim: Sim, trace: Trace): Result => {
   const slot = slots(result).find((item) => item.task === id)!;
   return host(result, { type: 'WRITE_ENVELOPE', task: id, attempt: slot.attempt, signature: slot.signature, handle: slot.handle!, envelopePath: slot.envelopePath }, sim, trace);
@@ -369,7 +369,7 @@ test('tasks: replay folds the recorded events to identical frames without relaun
   assert.deepEqual(slots(first).map((slot) => [slot.task, slot.action]), [['T1', 'running']]);
   assert.equal(first.effects.filter((effect) => effect.kind === 'checkout' && effect.op === 'integrate').length, 1);
   const active = slots(first).find((slot) => slot.task === 'T1')!;
-  assert.match(validateImplement(first.state, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: active.attempt, signature: active.signature, handle: 'again' }] }) ?? '', /launch slot/);
+  assert.match(validateImplement(first.state, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: active.attempt, signature: active.signature, handle: 'again', model: active.model }] }) ?? '', /launch slot/);
   assert.match(validateImplement(first.state, { type: 'WRITE_ENVELOPE', task: 'T2', attempt: 1, signature: 'stale', handle: 'stale', envelopePath: 'run/T2.outcome.json' }) ?? '', /active task/);
 });
 
@@ -491,4 +491,19 @@ test('tasks: revision of an accepted criterion definition rewinds integration an
   const rewind = trace.effects.slice(before).find((effect) => effect.kind === 'checkout' && effect.op === 'reset');
   assert.deepEqual(rewind?.kind === 'checkout' && rewind.input, { name: 'integration', revision: 'b0' });
   assert.deepEqual(['T1', 'T2', 'T3'].map((id) => record(result, id)?.status), ['running', 'running', 'pending']);
+});
+
+test('tasks: launch receipts must echo the configured writer model or disclose a substitution', () => {
+  const sim: Sim = {};
+  let { result, trace } = start(1, sim);
+  const slot = slots(result).find((item) => item.action === 'launch')!;
+  const launched = { task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: 'agent-1' };
+  assert.match(validateImplement(result.state, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: 'host-default' }] }) ?? '', /launched model host-default \(configured writer-a\)/);
+  assert.equal(validateImplement(result.state, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: slot.model }] }), null);
+  result = host(result, { type: 'WRITE_LAUNCHED', tasks: [{ ...launched, model: 'host-default', substitution: 'Task tool exposes no model parameter' }] }, sim, trace);
+  assert.ok(result.state.tag === 'tasks' && result.state.c.concerns.some((item) => item === 'T1: writer substitution, launched model host-default (configured writer-a); Task tool exposes no model parameter'));
+  assert.equal(slots(result).find((item) => item.task === slot.task)?.model, 'host-default');
+  const failure = { type: 'WRITE_FAILED' as const, ...launched, kind: 'timeout', reason: 'stalled' };
+  assert.equal(validateImplement(result.state, { ...failure, model: 'host-default' }), null);
+  assert.match(validateImplement(result.state, { ...failure, model: 'writer-a' }) ?? '', /current model id/);
 });

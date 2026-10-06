@@ -35,7 +35,7 @@ const empty: Step = (effect) => ({ type: 'REVIEW_PREPARED', effectId: id(effect)
 const wave = (findings: unknown[], slots: unknown[] = [{ slot: 'codex[0]', state: 'success', claim: 'c' }]): Step => (effect) =>
   ({ type: 'WAVE_DONE', effectId: id(effect), round: effect?.kind === 'wave' ? effect.round : 1, slots: slots as never, findings: findings as never });
 const nativeWave = wave([], [{ slot: 'codex[0]', state: 'native', descriptor: { sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'o' } }]);
-const natives: Step = { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]#fallback', outputPath: 'o' }] };
+const natives: Step = { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]#fallback', outputPath: 'o', mapping: { launcherModel: 'host-default' } }] };
 const failed: Step = (effect) => ({ type: 'EFFECT_FAILED', effectId: id(effect), cls: 'io', detail: 'x' });
 const rule = (ruling: string, n = 1): Step => ({ type: 'RULINGS', rulings: { [`R${n}-F001`]: { ruling } } });
 const applied: Step = (_effect, state) => {
@@ -81,7 +81,7 @@ const implementLaunched: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };
   const current = raw.tag === 'implement' && raw.child ? raw.child : state as ImplementState;
   const task = (current as Extract<ImplementState, { tag: 'tasks' }>).c.tasks['T1']!;
-  return { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: task.attempt, signature: task.signature, handle: 'agent-1' }] };
+  return { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: task.attempt, signature: task.signature, handle: 'agent-1', model: (current as Extract<ImplementState, { tag: 'tasks' }>).c.writer!.models[task.modelIndex]! }] };
 };
 const implementEnvelope: Step = (_effect, state) => {
   const raw = state as { tag: string; child?: ImplementState };

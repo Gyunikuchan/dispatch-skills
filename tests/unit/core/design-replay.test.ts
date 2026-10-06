@@ -8,6 +8,8 @@ import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 import { run, hash, design } from '../machines/design.test.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
 
+const launched = (slot: Record<string, unknown>) => ({ launcherModel: slot['model'] ?? 'host-default', ...(slot['reasoningEffort'] ? { launcherEffort: slot['reasoningEffort'] } : {}) });
+
 test('same-session unfinished design delivery folds journal and resumes without duplicate effects', async () => {
   const ports = fakePorts(), session = tempDir(), runDir = path.join(session, '.state', 'runs', '001-implement');
   let parses = 0;
@@ -93,7 +95,7 @@ test('level-journal: nested design replay classifies before its first writer and
     assert.deepEqual(result.frame?.data, writeFrame?.data, JSON.stringify(result.frame));
     assert.equal(writes, increment === 'I01' ? 1 : 2);
     const [pending] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; envelopePath: string }[];
-    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}` }] } });
+    result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: pending!.task, attempt: pending!.attempt, signature: pending!.signature, handle: `agent-${increment}`, model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) }] } });
     const [slot] = result.frame?.data['tasks'] as { task: string; attempt: number; signature: string; handle: string; envelopePath: string }[];
     result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'WRITE_ENVELOPE', task: slot!.task, attempt: slot!.attempt, signature: slot!.signature, handle: slot!.handle, envelopePath: slot!.envelopePath } });
     if (increment === 'I01') {
@@ -106,7 +108,7 @@ test('level-journal: nested design replay classifies before its first writer and
   result = await send({ ports, machine: rootMachine, handlers, runDir });
   assert.deepEqual(result.frame?.data, nativeFrame?.data);
   assert.equal(writes, 2);
-  result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]#fallback', outputPath: 'output' }] } });
+  result = await send({ ports, machine: rootMachine, handlers, runDir, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]#fallback', outputPath: 'output', mapping: launched((nativeFrame?.data['slots'] as Record<string, unknown>[])[0]!) }] } });
   assert.equal(result.frame?.await, 'done', JSON.stringify(result.frame));
   assert.equal(result.frame?.data['outcome'], 'complete');
   assert.ok(ports.fs.exists(path.join(session, 'x-i01.walkthrough.md')));

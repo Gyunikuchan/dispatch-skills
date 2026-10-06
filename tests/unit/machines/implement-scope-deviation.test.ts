@@ -14,7 +14,7 @@ const HASH = `sha256:${'a'.repeat(64)}`;
 const delta = { paths: ['src/extra.ts'], criteria: [], obligations: [], commands: [], phaseDuties: [], increments: [] };
 const request = (task = 'T1') => ({ requestId: 'scope-expand-1', source: 'task' as const, task, baseArtifactHash: HASH, writerRationale: 'The required behavior needs a companion module.', delta });
 const scopeEnvelope = (task = 'T1') => ({ schemaVersion: 1, status: 'SCOPE_REQUEST', stage: 'COMPLETE', summary: 'Request the companion module before editing it.', evidence: [], scopeRequest: request(task) });
-const slots = (result: Result) => implementData(result.state)['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; envelopePath: string; paths: string[] }[];
+const slots = (result: Result) => implementData(result.state)['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; model: string; envelopePath: string; paths: string[] }[];
 
 function scopedSimulation(): Sim {
   let requests = 0;
@@ -481,7 +481,7 @@ test('level-journal: stale launch, envelope, and failure receipts cannot bind a 
     c: { ...result.state.c, tasks: { ...result.state.c.tasks, T1: { ...prior, attempt: prior.attempt + 1, signature: 'replacement-signature', handle: null } } },
   };
   const stale = { task: 'T1', attempt: prior.attempt, signature: prior.signature, handle: prior.handle! };
-  assert.match(validateImplement(replacement, { type: 'WRITE_LAUNCHED', tasks: [{ ...stale, handle: 'late-launch' }] }) ?? '', /echo its projected attempt and signature/);
+  assert.match(validateImplement(replacement, { type: 'WRITE_LAUNCHED', tasks: [{ ...stale, handle: 'late-launch', model: result.state.c.writer!.models[prior.modelIndex]! }] }) ?? '', /echo its projected attempt and signature/);
   assert.match(validateImplement(replacement, { type: 'WRITE_ENVELOPE', ...stale, envelopePath: prior.brief!.envelopePath }) ?? '', /active task, attempt, signature, handle/);
   assert.match(validateImplement(replacement, { type: 'WRITE_FAILED', ...stale, model: result.state.c.writer!.models[prior.modelIndex]!, kind: 'integrity', reason: 'stale failure' }) ?? '', /active task, attempt, signature and handle/);
   assert.equal(replacement.c.tasks['T1']?.attempt, prior.attempt + 1);
@@ -500,7 +500,7 @@ test('level-journal: partial launch scope approval requeues unlaunched slots and
   const sim = scopedSimulation();
   let { result, trace } = start(2, sim);
   const first = slots(result).find((slot) => slot.task === 'T1')!;
-  result = host(result, { type: 'WRITE_LAUNCHED', tasks: [{ task: first.task, attempt: first.attempt, signature: first.signature, handle: 'agent-T1' }] }, sim, trace);
+  result = host(result, { type: 'WRITE_LAUNCHED', tasks: [{ task: first.task, attempt: first.attempt, signature: first.signature, handle: 'agent-T1', model: first.model }] }, sim, trace);
   result = submit(result, 'T1', sim, trace);
   assert.equal(result.state.tag, 'scope-adjudication');
   if (result.state.tag !== 'scope-adjudication') throw new Error('scope adjudication');
@@ -512,7 +512,7 @@ test('level-journal: partial launch scope approval requeues unlaunched slots and
   const stopSim = scopedSimulation();
   let stopped = start(2, stopSim);
   const stopSlot = slots(stopped.result).find((slot) => slot.task === 'T1')!;
-  stopped.result = host(stopped.result, { type: 'WRITE_LAUNCHED', tasks: [{ task: stopSlot.task, attempt: stopSlot.attempt, signature: stopSlot.signature, handle: 'agent-T1' }] }, stopSim, stopped.trace);
+  stopped.result = host(stopped.result, { type: 'WRITE_LAUNCHED', tasks: [{ task: stopSlot.task, attempt: stopSlot.attempt, signature: stopSlot.signature, handle: 'agent-T1', model: stopSlot.model }] }, stopSim, stopped.trace);
   stopped.result = submit(stopped.result, 'T1', stopSim, stopped.trace);
   stopped.result = host(stopped.result, { type: 'DECISION', kind: 'run-stop', answer: { by: 'user', quote: 'Stop this run.' } }, stopSim, stopped.trace);
   assert.equal(stopped.result.state.tag, 'stopped');

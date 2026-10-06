@@ -26,7 +26,7 @@ Author at `data.path` with `data.template`; resolve defects against the governin
 
 ## Await native
 
-Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply once with `NATIVE_RESULTS` and the required slot fields.
+Launch each `data.slots` subagent with its prompt, model, effort, and attachments. Capture `outputPath`; reply once with `NATIVE_RESULTS` and attested slot fields ([fields](references/providers.md)).
 
 ## Await rule
 
@@ -38,7 +38,7 @@ Apply accepted clusters within `affectedPaths`, run bounded verification, and re
 
 ## Await write
 
-Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, and host-assigned handle; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal and inform the user before resuming under the settled level; ask the user only when the orchestrator disagrees. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
+Launch native writers for each `launch` slot using its model, verified brief, envelope path, and worktree. In frame `events`, for task-scoped slots reply `WRITE_LAUNCHED` with each task's attempt, signature, host-assigned handle, and attested `model`/`effort`; task-scoped terminal receipts echo all three in `WRITE_ENVELOPE`, `WRITE_FAILED`, or `WRITE_CANCELLED`. Taskless hotfix receipts omit these identity fields. Before out-of-brief edits, writers request orchestrator adjudication. If agreed, journal and inform the user before resuming under the settled level; ask the user only when the orchestrator disagrees. During scope draining, report each original attempt's envelope, failure, or confirmed cancellation; launch no replacement yet.
 
 ## Await evidence
 

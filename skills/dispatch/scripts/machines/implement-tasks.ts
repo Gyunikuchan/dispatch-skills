@@ -21,6 +21,8 @@ export type TaskRecord = {
   baseline: TreeFingerprint | null;
   preserveDraft: boolean;
   modelIndex: number;
+  /** Model the host reported launching for the active handle; differs from the cascade entry only under a disclosed substitution. */
+  launchedModel?: string;
   brief: TaskBriefPaths | null;
   candidate: string | null;
   integrated: string | null;

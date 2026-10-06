@@ -133,7 +133,7 @@ test('SC5: a subsequent native wave uses refreshed defaults and reports applied'
   result = await send({ ...options, refreshConfig: true, configSource: () => settings('second') });
   assert.equal((result.frame!.data['slots'] as Array<{ model: string }>)[0]?.model, 'first');
   assert.equal((result.frame!.progress!['executionConfig'] as { status: string }).status, 'deferred');
-  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output' }] } });
+  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output', mapping: { launcherModel: 'first', launcherEffort: 'low' } }] } });
   result = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Unsupported claim' } } } });
   assert.equal((result.frame!.data['slots'] as Array<{ model: string }>)[0]?.model, 'second');
   assert.equal((result.frame!.progress!['executionConfig'] as { status: string }).status, 'applied');

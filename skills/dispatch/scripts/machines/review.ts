@@ -11,7 +11,7 @@ import {
   type ExitSummary, type HistoryEntry, type RoundFinding, type RoundScope,
 } from '../policy/rounds.ts';
 import {
-  answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, never, nextId, stay,
+  answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, stay,
   type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Step,
 } from './types.ts';
 
@@ -93,11 +93,32 @@ export function nativeRoster(slots: readonly NativeSlot[], results: readonly unk
   });
 }
 
-export function validateNativeResults(slots: readonly unknown[]): string | null {
+/** Stamps each accepted capture with its descriptor's `sourceKey`; wave-finish matches captures only by that key. */
+export function keyedCaptures(slots: readonly unknown[], descriptors: readonly NativeSlot[]): unknown[] {
+  return slots.map((value) => {
+    const capture = asNativeCapture(value);
+    if (!capture || capture.sourceKey !== undefined) return value;
+    const descriptor = descriptors.find((entry) => entry.sourceKey === capture.slot) ?? descriptors.find((entry) => (entry.substitutesFor ?? entry.sourceKey) === capture.slot);
+    return descriptor && isRecord(value) ? { ...value, sourceKey: descriptor.sourceKey } : value;
+  });
+}
+
+export function validateNativeResults(slots: readonly unknown[], descriptors: readonly NativeSlot[] = []): string | null {
+  const matched = new Set<string>();
   for (const [index, value] of slots.entries()) {
-    if (asNativeCapture(value) === null) return `event.slots[${index}]: expected { slot, outputPath, sourceKey? }`;
+    const capture = asNativeCapture(value);
+    if (capture === null) return `event.slots[${index}]: expected { slot, outputPath, sourceKey? }`;
+    if (!descriptors.length) continue;
+    const descriptor = descriptors.find((entry) => entry.sourceKey === (capture.sourceKey ?? capture.slot)) ?? descriptors.find((entry) => capture.sourceKey === undefined && (entry.substitutesFor ?? entry.sourceKey) === capture.slot);
+    if (!descriptor || matched.has(descriptor.sourceKey)) return `event.slots[${index}]: expected one capture per pending native slot; ${descriptor ? 'duplicate' : 'unknown'} ${capture.sourceKey ?? capture.slot}.`;
+    matched.add(descriptor.sourceKey);
+    const mapping = isRecord(capture.mapping) ? capture.mapping : {};
+    const mismatch = launchMismatch({ model: descriptor['model'], effort: descriptor['reasoningEffort'] }, { model: mapping['launcherModel'], effort: mapping['launcherEffort'], substitution: mapping['substitution'] });
+    if (mismatch) return `event.slots[${index}].mapping: ${mismatch}.`;
   }
-  return null;
+  // NOTE: omitted captures would otherwise be synthesized from descriptor output paths with no launch attestation.
+  const missing = descriptors.filter((entry) => !matched.has(entry.sourceKey)).map((entry) => entry.sourceKey);
+  return missing.length ? `event.slots: missing captures for pending native slots ${missing.join(', ')}.` : null;
 }
 
 // SECTION: State
@@ -463,7 +484,7 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
   if (event.type === 'REVISE') return 'event.type: REVISE is unavailable in standalone review; author a new artifact and start a new run';
   switch (state.tag) {
     case 'rule': return event.type === 'RULINGS' ? validateRulings(state.c, event.rulings) : null;
-    case 'native': return event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots) : null;
+    case 'native': return event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots, state.slots) : null;
     case 'fix': return event.type === 'FIXES_APPLIED' ? validateFixes(state.clusters, event.clusters) : null;
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': {
       if (event.type !== 'DECISION') return null;
@@ -512,8 +533,8 @@ export function stepReview(state: ReviewState, event: Event): S {
       }
       return event.type === 'WAVE_DONE' && answers(event, state.c.effectId) ? onWaveDone(state, event) : stay(state);
     case 'native':
-      if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots) !== null) return stay(state);
-      if (state.c.waveBinding) return finishReviewWave(state.c, event.slots);
+      if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots, state.slots) !== null) return stay(state);
+      if (state.c.waveBinding) return finishReviewWave(state.c, keyedCaptures(event.slots, state.slots) as typeof event.slots);
       return launchWave(state.c, nativeRoster(state.slots, event.slots, state.c.spec.kind), 'native');
     case 'rule': return event.type === 'RULINGS' ? onRulings(state.c, event.rulings) : stay(state);
     case 'fix':

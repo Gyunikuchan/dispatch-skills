@@ -6,7 +6,7 @@ import { renderWalkthrough, walkthroughPathOf } from '../domain/render.ts';
 import type { ParsedPlan, PlanCriterion, PlanTask, WalkthroughView } from '../domain/types.ts';
 import { generatedCommands, approvedPaths, approvalAnswer, asParsedPlan, commandEffect, commandMappings, criterionEvidenceRows, isFingerprint, isTestPath, isWriterEnvelope, parseRedMatrix, sameFingerprint, settledPlanInput, writerConfig, type CommandMapping, type EvidenceRecord, type RedMatrixRow, type VerifyRecord, type WriterConfig } from './implement-types.ts';
 import { beginReview, resolutionRounds, reviewAwait, reviewData, reviewSpecFromRun, stepReview, validateReview, type ReviewState } from './review.ts';
-import { answers, isRecord, never, nextId, stay, type Counters, type Step } from './types.ts';
+import { answers, isRecord, launchDrift, launchMismatch, never, nextId, stay, type Counters, type Step } from './types.ts';
 import { recoverySnapshot, failureAnswer, driftAnswer, artifactRelative, type FailureAnswer } from './implement-types.ts';
 import { classifyDrift } from '../policy/drift.ts';
 import { judgeHotfix, HOTFIX_MAX_FILES, HOTFIX_MAX_LINES } from '../policy/hotfix.ts';
@@ -802,8 +802,12 @@ function stepTasks(state: Extract<ImplementState, { tag: 'tasks' | 'task-brief' 
     case 'tasks': {
       if (event.type === 'WRITE_LAUNCHED') {
         let c = state.c;
-        for (const row of event.tasks) c = withTask(c, row.task, { handle: row.handle });
-        return stay({ tag: 'tasks', c });
+        for (const row of event.tasks) c = withTask(c, row.task, { handle: row.handle, launchedModel: row.model });
+        const substitutions = event.tasks.flatMap((row) => {
+          const drift = launchDrift({ model: c.writer?.models[(c.tasks[row.task] as TaskRecord).modelIndex], effort: c.writer?.effort }, row);
+          return drift.length ? [`${row.task}: writer substitution, launched ${drift.join(', ')}; ${row.substitution}`] : [];
+        });
+        return stay({ tag: 'tasks', c: substitutions.length ? { ...c, concerns: [...new Set([...c.concerns, ...substitutions])] } : c });
       }
       if (event.type === 'WRITE_ENVELOPE' && event.task) {
         const record = state.c.tasks[event.task] as TaskRecord;
@@ -1430,7 +1434,7 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
       levelAssessment: state.c.levelAssessment, levelChoice: state.c.levelChoice, scopeAdjustments: state.c.scopeAdjustments, scopeNotice: state.c.scopeNotice,
       tasks: activeTasks(state.c.tasks).filter((record) => record.status === 'running').map((record) => ({
         task: record.id, action: record.handle ? 'running' : 'launch', handle: record.handle, attempt: record.attempt, signature: record.signature,
-        model: state.c.writer?.models[record.modelIndex], briefPath: record.brief?.path, briefSha256: record.brief?.sha256,
+        model: activeModel(state.c, record), briefPath: record.brief?.path, briefSha256: record.brief?.sha256,
         envelopePath: record.brief?.envelopePath, checkpointPath: record.brief?.checkpointPath, worktree: record.worktree, paths: planTask(state.c, record.id)?.paths ?? [],
       })),
     };
@@ -1443,7 +1447,7 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
       stage: 'scope-draining', stopAfterDrain: state.stopAfterDrain, settledLevel: state.c.run.level, scopeNotice: state.c.scopeNotice,
       pendingProposal: state.request, tasks: state.active.map((id) => {
         const record = state.c.tasks[id] as TaskRecord;
-        return { task: id, attempt: record.attempt, signature: record.signature, handle: record.handle, envelopePath: record.brief?.envelopePath, model: state.c.writer?.models[record.modelIndex], paths: planTask(state.c, id)?.paths ?? [] };
+        return { task: id, attempt: record.attempt, signature: record.signature, handle: record.handle, envelopePath: record.brief?.envelopePath, model: activeModel(state.c, record), paths: planTask(state.c, id)?.paths ?? [] };
       }),
       rejectedScopeRequests: state.rejectedScopeRequests ?? [],
     };
@@ -1495,11 +1499,20 @@ function completionData(c: Context): Readonly<Record<string, unknown>> {
   };
 }
 
+/** Model behind a task's live handle: the attested launch, else its cascade entry; launch slots always show the configured model. */
+function activeModel(c: Context, record: TaskRecord): string | undefined {
+  return record.handle && record.launchedModel ? record.launchedModel : c.writer?.models[record.modelIndex];
+}
+
 function validateTaskEvent(c: Context, event: HostEvent): string | null {
   const running = (id: string | undefined) => id ? c.tasks[id]?.status === 'running' ? c.tasks[id] : undefined : undefined;
   if (event.type === 'WRITE_LAUNCHED') {
     const ids = event.tasks.map((row) => row.task);
     if (!ids.length || new Set(ids).size !== ids.length || event.tasks.some((row) => !running(row.task) || running(row.task)!.handle !== null || row.attempt !== running(row.task)!.attempt || row.signature !== running(row.task)!.signature || !row.handle.trim())) return 'event.tasks: name each launch slot once and echo its projected attempt and signature with a non-empty handle.';
+    for (const row of event.tasks) {
+      const mismatch = launchMismatch({ model: c.writer?.models[running(row.task)!.modelIndex], effort: c.writer?.effort }, row);
+      if (mismatch) return `event.tasks[${row.task}]: ${mismatch}.`;
+    }
   }
   if (event.type === 'WRITE_ENVELOPE') {
     const record = running(event.task);
@@ -1507,7 +1520,7 @@ function validateTaskEvent(c: Context, event: HostEvent): string | null {
   }
   if (event.type === 'WRITE_FAILED') {
     const record = running(event.task);
-    if (!event.task || !record || event.model !== c.writer?.models[record.modelIndex] || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: echo the active task, attempt, signature and handle and name its current model id.';
+    if (!event.task || !record || event.model !== activeModel(c, record) || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: echo the active task, attempt, signature and handle and name its current model id.';
   }
   return null;
 }
@@ -1558,7 +1571,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     const record = state.c.tasks[event.task];
     if (!record || event.attempt !== record.attempt || event.signature !== record.signature || !record.handle || event.handle !== record.handle) return 'event.task: receipt must echo the active task attempt, signature and handle.';
     if (event.type === 'WRITE_ENVELOPE' && record.brief?.envelopePath !== event.envelopePath) return 'event.envelopePath: expected the exact original brief envelope.';
-    if (event.type === 'WRITE_FAILED' && event.model !== state.c.writer?.models[record.modelIndex]) return 'event.model: expected the active writer model.';
+    if (event.type === 'WRITE_FAILED' && event.model !== activeModel(state.c, record)) return 'event.model: expected the active writer model.';
     return null;
   }
   if (state.tag === 'plan-review' || state.tag === 'code-review') return validateReview(state.review, event);

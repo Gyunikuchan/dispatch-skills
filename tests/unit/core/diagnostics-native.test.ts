@@ -12,11 +12,11 @@ test('SC2: repeated native review rounds count distinct captures without replay 
   } };
   let result = await start({ ...options, runStarted: f.runStarted });
   assert.equal(result.frame?.await, 'native', JSON.stringify(result.frame));
-  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output' }] } });
+  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output', mapping: { launcherModel: 'host-default' } }] } });
   assert.equal(result.frame?.await, 'rule', JSON.stringify(result.frame));
   result = await send({ ...options, rawEvent: { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'reject', reason: 'Unsupported claim' } } } });
   assert.equal(result.frame?.await, 'native', JSON.stringify(result.frame));
-  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output' }] } });
+  result = await send({ ...options, rawEvent: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output', mapping: { launcherModel: 'host-default' } }] } });
   assert.equal(result.frame?.await, 'done', JSON.stringify(result.frame));
   await send(options);
   assert.match(fs.readFileSync(path.join(f.session, 'diagnostics.md'), 'utf8'), /Native captures observed: 2;/);

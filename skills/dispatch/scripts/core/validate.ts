@@ -144,7 +144,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
   NATIVE_RESULTS: obj({ type: lit('NATIVE_RESULTS'), slots: arr(payload) }),
   RULINGS: obj({ type: lit('RULINGS'), rulings: rec(payload) }),
   FIXES_APPLIED: obj({ type: lit('FIXES_APPLIED'), clusters: arr(payload) }),
-  WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, attempt: positiveInt, signature: str, handle: str })) }),
+  WRITE_LAUNCHED: obj({ type: lit('WRITE_LAUNCHED'), tasks: arr(obj({ task: str, attempt: positiveInt, signature: str, handle: str, model: nonBlank, effort: opt(str), substitution: opt(nonBlank) })) }),
   WRITE_ENVELOPE: oneOf(
     obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str }),
     obj({ type: lit('WRITE_ENVELOPE'), envelopePath: str, task: str, attempt: positiveInt, signature: str, handle: str }),

@@ -18,7 +18,7 @@ const events: Event[] = [
   started,
   { type: 'REVIEW_PREPARED', effectId: 'review.prepare-review.1', scope: {}, promptPaths: { 'codex[0]': 'p0', 'claude[0]': 'p1' } },
   { type: 'WAVE_DONE', effectId: 'review.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'success' }, { slot: 'claude[0]', state: 'native', descriptor }], findings: [finding('R1-F001', 'codex[0]')] },
-  { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', sourceKey: 'claude[0]#fallback', outputPath: 'run/claude.native.md' }] },
+  { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', sourceKey: 'claude[0]#fallback', outputPath: 'run/claude.native.md', mapping: { launcherModel: 'host-default' } }] },
   { type: 'WAVE_DONE', effectId: 'review.wave.2', round: 1, slots: [{ slot: 'claude[0]', state: 'native' }], findings: [finding('R1-F001', 'claude[0]')] },
 ];
 
@@ -38,7 +38,7 @@ test('the native wave roster is exactly the native slots, each carrying its capt
   const wave = effects[0];
   assert.equal(wave?.kind === 'wave' && wave.id, 'review.wave.2');
   assert.deepEqual(wave?.kind === 'wave' && wave.roster.map((row) => [row['slot'], row['native'], row['capture']]),
-    [['claude[0]', true, { slot: 'claude[0]', sourceKey: 'claude[0]#fallback', outputPath: 'run/claude.native.md' }]]);
+    [['claude[0]', true, { slot: 'claude[0]', sourceKey: 'claude[0]#fallback', outputPath: 'run/claude.native.md', mapping: { launcherModel: 'host-default' } }]]);
   const rounds = 'c' in state ? state.c.rounds : [];
   assert.equal(rounds.length, 0);
   assert.match(reviewMachine.validate?.(reviewMachine.step(reviewMachine.initial(), started).state, { type: 'NATIVE_RESULTS', slots: [] }) ?? 'null', /null/);
@@ -48,4 +48,17 @@ test('NATIVE_RESULTS entries must name slot and outputPath', () => {
   let state: ReviewState = reviewMachine.initial();
   for (const event of events.slice(0, 3)) state = reviewMachine.step(state, event).state;
   assert.equal(reviewMachine.validate?.(state, { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]' }] }), 'event.slots[0]: expected { slot, outputPath, sourceKey? }');
+});
+
+test('a bound native wave forwards a capture without sourceKey under its descriptor key', () => {
+  let state: ReviewState = reviewMachine.initial();
+  let effects: readonly Effect[] = [];
+  for (const event of events.slice(0, 2)) ({ state, effects } = reviewMachine.step(state, event));
+  const start = effects[0]!;
+  ({ state, effects } = reviewMachine.step(state, { type: 'WAVE_STARTED', effectId: start.id, waveKey: start.id, attempt: 1, roster: [], native: [descriptor], early: [], claimPath: null, inputPath: 'input' }));
+  const receipt = { type: 'NATIVE_RESULTS' as const, slots: [{ slot: 'claude[0]', outputPath: 'run/claude.native.md', mapping: { launcherModel: 'host-default' } }] };
+  assert.equal(reviewMachine.validate?.(state, receipt), null);
+  ({ effects } = reviewMachine.step(state, receipt));
+  const finish = effects.find((effect) => effect.kind === 'wave-finish');
+  assert.deepEqual(finish?.kind === 'wave-finish' && finish.captures.map((capture) => capture['sourceKey']), ['claude[0]#fallback']);
 });

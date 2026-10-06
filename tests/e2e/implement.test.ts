@@ -61,7 +61,7 @@ Values are normalized before use so downstream comparisons agree.
     const [slot] = frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; briefPath: string; briefSha256: string; envelopePath: string; worktree: string }[];
     assert.deepEqual([slot?.task, slot?.action], ['T1', 'launch']);
     const brief = fs.readFileSync(slot!.briefPath); assert.equal(`sha256:${crypto.createHash('sha256').update(brief).digest('hex')}`, slot!.briefSha256);
-    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1' }] });
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'agent-1', model: (slot as unknown as { model: string }).model, ...(typeof frame.data['effort'] === 'string' ? { effort: frame.data['effort'] as string } : {}) }] });
     assert.equal((frame.data['tasks'] as { action: string }[])[0]?.action, 'running', JSON.stringify(frame));
     fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
     assert.notEqual(fs.readFileSync(path.join(f.repo, 'src/a.ts'), 'utf8'), 'export const value = 2;\n');
@@ -145,7 +145,7 @@ Keep the public value contract intact.
     frame = await f.reply(run, { type: 'DECISION', kind: 'level-classification', answer: { evaluatedLevel: 'low', rationale: 'One bounded local value change.', gateScope: frame.data['gateScope'] } });
     const [slot] = frame.data['tasks'] as { task: string; attempt: number; signature: string; handle: string | null; envelopePath: string; worktree: string }[];
     assert.equal(slot?.task, 'T1', JSON.stringify(frame));
-    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'writer-1' }] });
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'writer-1', model: (slot as unknown as { model: string }).model, ...(typeof frame.data['effort'] === 'string' ? { effort: frame.data['effort'] as string } : {}) }] });
     fs.writeFileSync(path.join(slot!.worktree, 'src/a.ts'), 'export const value = 2;\n');
     fs.writeFileSync(slot!.envelopePath, JSON.stringify({ schemaVersion: 1, status: 'DONE', stage: 'COMPLETE', summary: 'The scoped change is delivered.', evidence: ['CRITERION SC1 | src/a.ts | Preserved the value contract.'], files: [{ path: 'src/a.ts', note: 'Updated the value implementation.' }] }));
     frame = await f.reply(run, { type: 'WRITE_ENVELOPE', task: 'T1', attempt: slot!.attempt, signature: slot!.signature, handle: 'writer-1', envelopePath: slot!.envelopePath });
@@ -260,7 +260,7 @@ Keep the second value stable.
     assert.ok(Array.isArray(frame.data['tasks']), JSON.stringify(frame));
     const initial = frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; envelopePath: string; worktree: string }[];
     assert.deepEqual(initial.map(({ task, action }) => [task, action]), [['T1', 'launch'], ['T2', 'launch']]);
-    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: initial.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}` })) });
+    frame = await f.reply(run, { type: 'WRITE_LAUNCHED', tasks: initial.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}`, model: (slot as unknown as { model: string }).model, ...(typeof frame.data['effort'] === 'string' ? { effort: frame.data['effort'] as string } : {}) })) });
     const t1 = initial.find((slot) => slot.task === 'T1')!;
     const t2 = initial.find((slot) => slot.task === 'T2')!;
     const baseArtifactHash = `sha256:${crypto.createHash('sha256').update(governedPlanText(source)).digest('hex')}`;
@@ -679,7 +679,7 @@ No reviews conducted yet.
 
 type TaskGraph = Awaited<ReturnType<typeof taskGraph>>;
 async function launchTasks(g: TaskGraph, frame: CliFrame) {
-  return g.f.reply(g.run, { type: 'WRITE_LAUNCHED', tasks: taskSlots(frame).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}` })) });
+  return g.f.reply(g.run, { type: 'WRITE_LAUNCHED', tasks: taskSlots(frame).filter((slot) => slot.action === 'launch').map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `writer-${slot.task}`, model: (slot as unknown as { model: string }).model, ...(typeof frame.data['effort'] === 'string' ? { effort: frame.data['effort'] as string } : {}) })) });
 }
 async function finishTask(g: TaskGraph, frame: CliFrame, id: string, red: 'valid' | 'missing' | 'setup' = 'valid') {
   const slot = taskSlots(frame).find((item) => item.task === id)!;

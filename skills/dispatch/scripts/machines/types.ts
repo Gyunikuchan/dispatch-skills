@@ -112,6 +112,29 @@ export function asNativeSlot(value: unknown): NativeSlot | null {
   return { ...value, sourceKey: value['sourceKey'], outputPath: value['outputPath'], substitutesFor: isString(substitutes) ? substitutes : null };
 }
 
+/**
+ * Checks a host's echoed launch against the configured model and effort; host runtimes silently fall back to
+ * their default model when the launch omits it, so any mismatch must be disclosed as a `substitution` reason.
+ */
+export function launchMismatch(expected: { model?: unknown; effort?: unknown }, actual: { model?: unknown; effort?: unknown; substitution?: unknown }): string | null {
+  const missing = [
+    !(isString(actual.model) && actual.model.trim()) ? 'model' : null,
+    isString(expected.effort) && expected.effort && !(isString(actual.effort) && actual.effort.trim()) ? 'effort' : null,
+  ].filter((item): item is string => item !== null);
+  if (missing.length) return `report the actually launched ${missing.join(' and ')}; a substitution reason explains differing values but never replaces them`;
+  const drift = launchDrift(expected, actual);
+  if (!drift.length) return null;
+  return isString(actual.substitution) && actual.substitution.trim() ? null : `launched ${drift.join(', ')}; relaunch with the configured values or state a substitution reason`;
+}
+
+/** Lists each launched value that differs from its configured one, e.g. `model a (configured b)`. */
+export function launchDrift(expected: { model?: unknown; effort?: unknown }, actual: { model?: unknown; effort?: unknown }): string[] {
+  return [
+    isString(expected.model) && expected.model && actual.model !== expected.model ? `model ${String(actual.model ?? 'unreported')} (configured ${expected.model})` : null,
+    isString(expected.effort) && expected.effort && actual.effort !== expected.effort ? `effort ${String(actual.effort ?? 'unreported')} (configured ${expected.effort})` : null,
+  ].filter((item): item is string => item !== null);
+}
+
 /** Host capture for one native slot, matched to its descriptor by `sourceKey ?? slot`. */
 export type NativeCapture = { sourceKey?: string; slot: string; outputPath: string; mapping?: unknown };
 

@@ -23,7 +23,7 @@ test('SC5: writer refresh keeps the issued task binding and applies at the next 
   result = await send({ ...options, rawEvent: { type: 'DECISION', kind: 'approval', answer: { by: 'user', quote: 'Proceed' } } });
   result = await assessImplementation(options, result);
   const pending = slot(result.frame);
-  result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: pending.attempt, signature: pending.signature, handle: 'agent-1' }] } });
+  result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: [{ task: 'T1', attempt: pending.attempt, signature: pending.signature, handle: 'agent-1', model: (pending as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) }] } });
   const binding = slot(result.frame);
   assert.equal(binding.model, 'first');
   result = await send({ ...options, refreshConfig: true, configSource: () => config('second') });

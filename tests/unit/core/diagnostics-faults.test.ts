@@ -62,7 +62,7 @@ test('SC8: engine fault preserves recorded instruction evidence and links the pa
   } };
   await start({ ...options, runStarted: f.runStarted });
   const excerpt = 'Runtime metrics require no reply.';
-  await send({ ...options, rawEvent: { v: 1, event: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output' }] }, diagnostics: { observations: [{ v: 1, id: 'one', component: 'core/interpreter.ts', category: 'driver protocol', trigger: excerpt, evidence: excerpt, impact: excerpt, proposedFix: excerpt, confidence: excerpt }] } } });
+  await send({ ...options, rawEvent: { v: 1, event: { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]', outputPath: 'output', mapping: { launcherModel: 'host-default' } }] }, diagnostics: { observations: [{ v: 1, id: 'one', component: 'core/interpreter.ts', category: 'driver protocol', trigger: excerpt, evidence: excerpt, impact: excerpt, proposedFix: excerpt, confidence: excerpt }] } } });
   const report = path.join(f.session, 'diagnostics.md');
   assert.ok(fs.readFileSync(report, 'utf8').includes(`Evidence: ${excerpt}`));
   options.handlers['prepare-review'] = async () => { throw new Error('injected operational fault'); };

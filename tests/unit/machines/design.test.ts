@@ -62,7 +62,7 @@ test('level-journal: design parent delegates nested implementation event validat
     },
   } as unknown as ImplementState;
   const state: DesignState = { tag: 'increment', c: approval('implement').c, increment: 'I01', child: nested };
-  const stale = { type: 'WRITE_LAUNCHED' as const, tasks: [{ task: 'T1', attempt: 1, signature: 'old-signature', handle: 'old-handle' }] };
+  const stale = { type: 'WRITE_LAUNCHED' as const, tasks: [{ task: 'T1', attempt: 1, signature: 'old-signature', handle: 'old-handle', model: 'writer' }] };
   assert.match(validateDesign(state, stale) ?? '', /projected attempt and signature/);
 });
 test('REVISE design waits for nested gates and drains writers before a stop', () => {

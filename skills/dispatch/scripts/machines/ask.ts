@@ -1,7 +1,7 @@
 // Ask machine (spec §5.4): preparing → wave → [native → wave] → done { claims, failed }. Claims are untrusted.
 
 import type { Event, HostEvent, Machine, RunStartedEvent } from '../core/types.ts';
-import { nativeRoster, pendingNative, resolveSlots, validateNativeResults, waveRoster } from './review.ts';
+import { keyedCaptures, nativeRoster, pendingNative, resolveSlots, validateNativeResults, waveRoster } from './review.ts';
 import { answers, isString, never, nextId, stay, type AskSpec, type Claim, type Counters, type FailedSlot, type NativeSlot, type Step } from './types.ts';
 
 type Row = Readonly<Record<string, unknown>>;
@@ -73,8 +73,8 @@ export function stepAsk(state: AskState, event: Event): S {
       return pending.length ? stay({ tag: 'native', c, slots: pending }) : finish(c);
     }
     case 'native':
-      if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots) !== null) return stay(state);
-      if (state.c.waveBinding) return finishAskWave(state.c, event.slots);
+      if (event.type !== 'NATIVE_RESULTS' || validateNativeResults(event.slots, state.slots) !== null) return stay(state);
+      if (state.c.waveBinding) return finishAskWave(state.c, keyedCaptures(event.slots, state.slots) as typeof event.slots);
       return launch(state.c, nativeRoster(state.slots, event.slots, 'ask'), 'native');
     case 'done': case 'failed': return stay(state);
     default: return never(state, 'ask state');
@@ -113,7 +113,7 @@ export function askData(state: AskState): Readonly<Record<string, unknown>> {
 
 export function validateAsk(state: AskState, event: HostEvent): string | null {
   if (event.type === 'REVISE') return 'event.type: REVISE is not available in ask';
-  return state.tag === 'native' && event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots) : null;
+  return state.tag === 'native' && event.type === 'NATIVE_RESULTS' ? validateNativeResults(event.slots, state.slots) : null;
 }
 
 export const askTransitions = [

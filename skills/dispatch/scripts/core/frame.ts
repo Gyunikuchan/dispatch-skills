@@ -34,7 +34,7 @@ const rows = (value: unknown): Row[] => Array.isArray(value) ? value.filter((ite
 export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
   switch (current) {
     case 'author': return typeof data['path'] === 'string' && data['path'].trim() ? [{ type: 'AUTHORED', path: data['path'] }] : [];
-    case 'native': return [{ type: 'NATIVE_RESULTS', slots: rows(data['slots']).map((slot) => ({ slot: String(slot['substitutesFor'] ?? slot['sourceKey']), sourceKey: slot['sourceKey'], outputPath: slot['outputPath'], mapping: { configuredModel: slot['model'], launcherModel: '<actual launched model>', provider: '<host provider>' } })) }];
+    case 'native': return [{ type: 'NATIVE_RESULTS', slots: rows(data['slots']).map((slot) => ({ slot: String(slot['substitutesFor'] ?? slot['sourceKey']), sourceKey: slot['sourceKey'], outputPath: slot['outputPath'], mapping: { configuredModel: slot['model'], launcherModel: slot['model'] ?? '<actual launched model>', ...(slot['reasoningEffort'] ? { launcherEffort: slot['reasoningEffort'] } : {}), provider: '<host provider>' } })) }];
     case 'rule': return [{ type: 'RULINGS', rulings: Object.fromEntries(rows(data['findings']).map((finding) => [String(finding['id']), { ruling: finding['category'] === 'intent' ? 'needs-user' : 'accept', fix: { affectedPaths: [String(finding['locus']).replace(/:L\d+.*$/, '')], dependsOn: [], verification: [] } }])) }];
     case 'fix': return [{ type: 'FIXES_APPLIED', clusters: rows(data['clusters']).map((cluster) => ({ clusterId: cluster['clusterId'], status: 'applied', affectedPaths: cluster['affectedPaths'] })) }];
     case 'write': {
@@ -50,7 +50,7 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       if (typeof data['envelopePath'] === 'string' && data['envelopePath']) events.push({ type: 'WRITE_ENVELOPE', envelopePath: data['envelopePath'] });
       if (typeof data['model'] === 'string' && data['model']) events.push({ type: 'WRITE_FAILED', model: data['model'], kind: '<observed failure class>', reason: '<observed failure>' });
       const launches = rows(data['tasks']).filter((task) => task['action'] === 'launch' && typeof task['task'] === 'string' && typeof task['signature'] === 'string' && Number.isSafeInteger(task['attempt']) && Number(task['attempt']) > 0);
-      if (launches.length && data['stage'] !== 'scope-draining') events.push({ type: 'WRITE_LAUNCHED', tasks: launches.map((task) => ({ task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>' })) });
+      if (launches.length && data['stage'] !== 'scope-draining') events.push({ type: 'WRITE_LAUNCHED', tasks: launches.map((task) => ({ task: String(task['task']), attempt: Number(task['attempt']), signature: String(task['signature']), handle: typeof task['handle'] === 'string' && task['handle'] ? String(task['handle']) : '<host-assigned handle>', model: String(task['model'] ?? '<actual launched model>'), ...(typeof data['effort'] === 'string' && data['effort'] ? { effort: data['effort'] } : {}) })) });
       return events;
     }
     case 'evidence': return [{ type: 'EVIDENCE', criteria: Object.fromEntries(rows(data['criteria']).map((criterion) => [String(criterion['id']), { outcome: 'pass', evidence: '<observed criterion evidence>' }])) }];

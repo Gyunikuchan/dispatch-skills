@@ -24,7 +24,7 @@ test('ask: native slots go through the native frame and a second wave', () => {
   const frames = play(askMachine, [
     started, prepared,
     { type: 'WAVE_DONE', effectId: 'ask.wave.1', round: 1, slots: [{ slot: 'codex[0]', state: 'failed', cls: 'quota' }, { slot: 'claude[0]', state: 'native', descriptor }], findings: [] },
-    { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', outputPath: 'o.md' }] },
+    { type: 'NATIVE_RESULTS', slots: [{ slot: 'claude[0]', outputPath: 'o.md', mapping: { launcherModel: 'host-default' } }] },
     { type: 'WAVE_DONE', effectId: 'ask.wave.2', round: 1, slots: [{ slot: 'claude[0]', state: 'native', claim: 'answer' }], findings: [] },
   ]);
   assert.deepEqual(frames.map((frame) => [frame.at, frame.await]), [

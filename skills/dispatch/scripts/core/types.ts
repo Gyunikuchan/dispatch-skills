@@ -189,7 +189,7 @@ export type LifecycleEvent =
   | { type: 'EFFECT_STARTED'; effectId: string; kind: EffectKind; attempt: number; pid?: number }
   | { type: 'LOCK_BROKEN'; stalePid: number };
 
-export type WriteLaunchedTask = { task: string; attempt: number; signature: string; handle: string };
+export type WriteLaunchedTask = { task: string; attempt: number; signature: string; handle: string; model: string; effort?: string; substitution?: string };
 export type WriteEnvelopeEvent =
   | { type: 'WRITE_ENVELOPE'; envelopePath: string; task: string; attempt: number; signature: string; handle: string }
   | { type: 'WRITE_ENVELOPE'; envelopePath: string; task?: never; attempt?: never; signature?: never; handle?: never };

@@ -60,7 +60,7 @@ export async function deliverTasks(options: Parameters<typeof send>[0], result: 
   while (result.frame?.await === 'write') {
     const slots = result.frame.data['tasks'] as { task: string; action: string; attempt: number; signature: string; handle: string | null; envelopePath: string }[];
     const launch = slots.filter((slot) => slot.action === 'launch');
-    if (launch.length) result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: launch.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}` })) } });
+    if (launch.length) result = await send({ ...options, rawEvent: { type: 'WRITE_LAUNCHED', tasks: launch.map((slot) => ({ task: slot.task, attempt: slot.attempt, signature: slot.signature, handle: `agent-${slot.task}-${slot.attempt}`, model: (slot as unknown as { model: string }).model, ...(typeof result.frame!.data['effort'] === 'string' ? { effort: result.frame!.data['effort'] as string } : {}) })) } });
     else result = await send({ ...options, rawEvent: { type: 'WRITE_ENVELOPE', task: slots[0]!.task, attempt: slots[0]!.attempt, signature: slots[0]!.signature, handle: slots[0]!.handle!, envelopePath: slots[0]!.envelopePath } });
   }
   return result;
