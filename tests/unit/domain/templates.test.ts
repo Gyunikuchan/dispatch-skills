@@ -47,3 +47,25 @@ test('templates: plan review prompt requires inspecting task dependencies, owner
   assert.match(prompt, /claimed independence checked against\s+producer\/consumer interfaces/);
   assert.match(prompt, /`dependency-graph`, `parallel-safety`/);
 });
+
+test('templates: every tag a review prompt offers is accepted by the validator and its schema', async () => {
+  const { REVIEW_TAGS } = await import('../../../skills/dispatch/scripts/domain/report.ts');
+  const enumOf = (node: unknown): string[] | null => {
+    if (!node || typeof node !== 'object') return null;
+    const record = node as Record<string, unknown>;
+    const tag = record['tag'] as Record<string, unknown> | undefined;
+    if (tag && Array.isArray(tag['enum'])) return tag['enum'] as string[];
+    for (const value of Object.values(record)) { const found = enumOf(value); if (found) return found; }
+    return null;
+  };
+  for (const kind of ['code', 'plan', 'design'] as const) {
+    const block = readFileSync(new URL(`review-prompt-${kind}.md`, root), 'utf8').split(/^## tags$/m)[1]!.split(/^## /m)[0]!;
+    const offered = [...block.matchAll(/^- [^:\n]+: (.*?) —/gm)].flatMap((line) => [...line[1]!.matchAll(/`([^`]+)`/g)].map((tag) => tag[1]!));
+    assert.ok(offered.length, `${kind} prompt lists tags`);
+    const schema = enumOf(JSON.parse(readFileSync(new URL(`schemas/report-${kind}.json`, root), 'utf8')));
+    for (const tag of offered) {
+      assert.ok(REVIEW_TAGS[kind].has(tag), `${kind} validator rejects prompt tag ${tag}`);
+      if (schema) assert.ok(schema.includes(tag), `${kind} schema rejects prompt tag ${tag}`);
+    }
+  }
+});

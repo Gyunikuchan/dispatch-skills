@@ -12,8 +12,8 @@ const CODE_LOCUS = /^(?!\/)(?![A-Za-z]:)(?!.*(?:^|\/)\.\.(?:\/|$))[^:\\\r\n]+:L[
 
 export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {
   plan: new Set([
-    'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'domain-logic',
-    'edge-case', 'intent', 'invariant', 'migration', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
+    'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'dependency-graph',
+    'domain-logic', 'edge-case', 'intent', 'invariant', 'migration', 'parallel-safety', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',
     'simplicity', 'spec-gap', 'standards', 'state-machine', 'testability', 'user-gap', 'validation', 'verification', 'yagni',
   ]),
   code: new Set([
