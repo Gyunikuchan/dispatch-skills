@@ -250,4 +250,5 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     emit(faultFrame(command.command === 'start' ? '' : runDir, error instanceof Error ? error.message : String(error))); return 2;
   }
 }
-if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) process.exitCode = await main();
+// NOTE: Node resolves symlinks for import.meta.url but not argv[1]; compare real paths so symlinked skill installs run.
+if (process.argv[1] && pathToFileURL(fs.realpathSync(path.resolve(process.argv[1]))).href === import.meta.url) process.exitCode = await main();
