@@ -33,6 +33,8 @@ export type DelegateRequest = {
   endpoint?: string | null;
   agent?: string | null;
   readOnlyVerified?: boolean;
+  /** Opencode's built-in explore agent accepted without a verified read-only permission set. */
+  readOnlyBestEffort?: boolean;
   configSelectors?: Readonly<Record<string, string>>;
 };
 

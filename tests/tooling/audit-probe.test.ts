@@ -84,6 +84,13 @@ test('audit probe selection uses low configuration and one reachable mode per pr
   assert.equal(probe.PROBE_LEVEL, 'low');
 });
 
+test('audit probe targets every provider in the shipped registry, including codex', () => {
+  const codexRows = [{ provider: 'codex', mode: 'cli', bin: '/bin/codex', reachable: true, detail: '' }];
+  const codexConfig = { 'read-delegates': { codex: { targets: [{ low: { model: 'codex-model', effort: 'low' } }] } } };
+  const targets = probe.buildTargets(codexRows, { modes: false, config: codexConfig, limits: limits() });
+  assert.deepEqual(targets.map((t: { id: string; skip: string | null }) => [t.id, t.skip]), [['codex', null]]);
+});
+
 test('audit probe --modes widening beyond the launch limit is skipped without launching', () => {
   const targets = probe.buildTargets(rows, { modes: true, config, limits: limits() });
   assert.deepEqual(targets.map((t: { id: string; skip: string | null }) => [t.id, t.skip === null]), [['claude/cli', true], ['claude/desktop', false]]);

@@ -42,7 +42,7 @@ export function bwrapArgv(req: LaunchRequest, inner: readonly string[]): string[
 }
 
 export async function prepareOpencode(req: LaunchRequest, ports: PreparePorts): Promise<Prelaunch> {
-  if (!req.agent || req.readOnlyVerified !== true) return { kind: 'fail', outcome: failOutcome('config', 'read-only-agent-unavailable: verified native agent required') };
+  if (!req.agent || (req.readOnlyVerified !== true && req.readOnlyBestEffort !== true)) return { kind: 'fail', outcome: failOutcome('config', 'read-only-agent-unavailable: verified native agent required') };
   const host = req.endpoint ? endpointHost(req.endpoint) : null;
   if (!req.endpoint || !host || !isLocalHost(host)) return { kind: 'launch', env: {}, release: () => {} };
   const models = await ports.fetchModels(req.endpoint);
@@ -72,7 +72,7 @@ export const opencode: ProviderSpec = {
   modeCascadeOn: [],
   resumeCommand: (id) => id,
   argv(req) {
-    // Headless `--auto` requires the effective deny-by-default read-only agent verified in preparation.
+    // Headless `--auto` requires the read-only agent from preparation: verified deny-by-default, or best-effort explore.
     // `--pure` and `--variant` are v1-only and never emitted.
     const inner = [req.binary, 'run', '--auto'];
     if (req.agent) inner.push('--agent', req.agent);

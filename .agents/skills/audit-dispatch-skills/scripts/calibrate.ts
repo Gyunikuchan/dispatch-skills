@@ -126,13 +126,17 @@ export function prepare(options: PrepareOptions): string[] {
     new: { commit: null, paths: fixture.briefs.new.paths.map((p) => ({ path: p.path, sha256: sha256(readBrief(p.path)) })) },
   };
   const dir = dirOf(workDir);
+  const preparedAt = (options.now ?? (() => new Date()))().toISOString();
+  // Case ids name the kind (defect-*/control-*), so auditors see a per-run opaque id; only the manifest maps it back.
+  const packetIds = Object.fromEntries(fixture.cases.map((c) => [c.id, `case-${sha256(`${preparedAt}\0${c.id}`).slice(7, 15)}`]));
+  if (new Set(Object.values(packetIds)).size !== fixture.cases.length) throw new Error('opaque packet ids collided; prepare again');
   const written: string[] = [];
   for (const arm of ARMS) {
     for (const c of fixture.cases) {
-      const file = path.join(dir, 'packets', arm, `${c.id}.json`);
+      const file = path.join(dir, 'packets', arm, `${packetIds[c.id]}.json`);
       // NOTE: kind, category, severity, answer and the fix commit are withheld; parent-commit excerpts show pre-fix source.
       writeJson(file, {
-        arm, caseId: c.id, scenario: c.scenario, brief: arms[arm],
+        arm, caseId: packetIds[c.id], scenario: c.scenario, brief: arms[arm],
         excerpts: c.excerpts.map(({ path: p, commit, blob, lines, sha256: hash, text }) => ({ path: p, commit, blob, lines, sha256: hash, text: redactRationale(text) })),
         constraints: { scope: 'calibration', probes: false, nestedDispatch: false },
         claimsPath: `calibration/claims/${arm}.json`,
@@ -141,7 +145,7 @@ export function prepare(options: PrepareOptions): string[] {
     }
   }
   writeJson(path.join(dir, 'manifest.json'), {
-    version: 1, preparedAt: (options.now ?? (() => new Date()))().toISOString(), settings, arms,
+    version: 1, preparedAt, settings, arms, packetIds,
     cases: Object.fromEntries(fixture.cases.map((c) => [c.id, c.excerpts.map((e) => e.sha256)])),
     answerKeySha256: sha256(JSON.stringify(fixture.cases.map((c) => [c.id, c.answer]))),
     fixedClaims: {},

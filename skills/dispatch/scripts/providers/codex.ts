@@ -55,7 +55,8 @@ export const codex: ProviderSpec = {
   argv(req) {
     const argv = [req.binary, 'exec'];
     if (req.resume) argv.push('resume', req.resume);
-    argv.push('--json', '--cd', req.cwd, '--config', 'approval_policy="never"');
+    // Codex refuses untrusted non-git folders; dispatch enforces read-only access itself, so skip that check.
+    argv.push('--json', '--skip-git-repo-check', '--cd', req.cwd, '--config', 'approval_policy="never"');
     // NOTE: the unsandboxed path uses config because an older CLI may reject --sandbox itself.
     if (req.sandbox) argv.push('--sandbox', 'read-only');
     else argv.push('--config', 'sandbox_mode="danger-full-access"');

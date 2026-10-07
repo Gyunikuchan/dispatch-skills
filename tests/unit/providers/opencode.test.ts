@@ -82,3 +82,12 @@ test('rewrite SC4 effective config merges selected model endpoint and verifies a
   await assert.rejects(resolveEffectiveOpencodeLaunch(base, async (command) => command === 'config' ? [] : [{ id: 'plan', permissions: [{ action: '*', resource: '*', effect: 'allow' }] }]), /read-only-agent-unavailable/);
   const denied = await prepareOpencode(launchReq({ agent: null }), { fetchModels: async () => [], acquireGpuLock: async () => () => {} }); assert.equal(denied.kind, 'fail');
 });
+
+test('opencode accepts an unverified built-in explore agent as best-effort read-only, never another agent', async () => {
+  const agents = [{ id: 'explore', permissions: [{ action: '*', resource: '*', effect: 'deny' }, { action: 'shell', resource: '*', effect: 'allow' }] }, { id: 'build', permissions: [{ action: '*', resource: '*', effect: 'allow' }] }];
+  const inspect = async (command: 'config' | 'agents') => command === 'config' ? [] : agents;
+  const resolved = await resolveEffectiveOpencodeLaunch({ ...base, agent: null }, inspect);
+  assert.equal(resolved.agent, 'explore'); assert.equal(resolved.readOnlyVerified, false); assert.equal(resolved.readOnlyBestEffort, true);
+  assert.equal((await prepareOpencode(launchReq({ readOnlyVerified: false, readOnlyBestEffort: true }), { fetchModels: async () => [], acquireGpuLock: async () => () => {} })).kind, 'launch');
+  await assert.rejects(resolveEffectiveOpencodeLaunch({ ...base, agent: 'build' }, inspect), /read-only-agent-unavailable/);
+});

@@ -25,7 +25,7 @@ Old-arm adaptation: give the old auditor every path in `briefs.old` from the bas
 
    Writes `calibration/packets/<arm>/<case>.json` and `calibration/manifest.json` under the work directory. Packets withhold kind, category, severity, answer key and fix commit. Use the same host, model and effort for every case in both arms.
 3. **Run each case once per arm** in a fresh native subagent context: give it the arm's brief, the packet path, and the scope overrides. It returns claims, each `{id, verdict: defect|opportunity|none, claim, evidence}`; `evidence` is the static trace (file:line steps) or deterministic check supporting a `defect`. Store raw output under `calibration/raw/<arm>/<case>.md` and record its usage (input/output tokens, tool calls, wall seconds) or `null` when the host does not expose a metric.
-4. **Fix claims before reveal.** Write `calibration/claims/<arm>.json` as `{arm, cases: {<case id>: Claim[]}}` with every case present, then:
+4. **Fix claims before reveal.** Packets carry opaque ids; map each back through `manifest.json` `packetIds`. Write `calibration/claims/<arm>.json` as `{arm, cases: {<case id>: Claim[]}}` with every case present, then:
 
    ```bash
    node <skill>/scripts/calibrate.ts fix --run <run> --arm <old|new>

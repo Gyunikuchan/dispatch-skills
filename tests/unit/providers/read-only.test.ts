@@ -34,6 +34,7 @@ test('delegates-read-only: every provider × mode × sandbox argv carries the re
   }
   assert.ok(SPECS.codex.argv(request(true), 'cli').argv.join(' ').includes('--sandbox read-only'));
   assert.ok(SPECS.codex.argv(request(false), 'cli').argv.includes('sandbox_mode="danger-full-access"'));
+  assert.ok(SPECS.codex.argv(request(true), 'cli').argv.includes('--skip-git-repo-check'), 'codex runs outside a trusted git folder');
   assert.deepEqual(SPECS.opencode.argv(request(true), 'cli').argv.slice(0, 7), ['bwrap', '--unshare-user', '--unshare-ipc', '--unshare-pid', '--unshare-uts', '--ro-bind', '/']);
 });
 

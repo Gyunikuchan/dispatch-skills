@@ -81,6 +81,7 @@ function workerDeps(): WorkerDeps {
       if (provider === 'opencode') {
         try { resolved = await resolveEffectiveOpencodeLaunch(request, nativeOpencodeIntrospection(binary, request, process.env, request.timeoutMs)); }
         catch (error) { return failedLaunch('config', String(error)); }
+        if (resolved.readOnlyBestEffort) ports.proc.stderr('[dispatch] opencode: explore agent is not verified read-only (best effort)\n');
       }
       resolved = { ...resolved, timeoutMs: Math.max(1, deadline - Date.now()) };
       return (await runDelegate(SPECS[provider], resolved, mode, { process: nodeProcess, clock: ports.clock, fs: runnerFs, env: process.env, platform, binary, nonce: crypto.randomUUID, workspaceRoot: request.cwd, ...(observe ? { observe } : {}), ...(provider === 'opencode' ? { prepare: createOpencodePreparePorts(deadline) } : {}) })).outcome;

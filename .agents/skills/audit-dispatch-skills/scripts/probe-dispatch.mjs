@@ -47,7 +47,8 @@ const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(pr
 /** Smoke probes prove connectivity, not capability, so the cheapest configured tier is used. */
 export const PROBE_LEVEL = 'low';
 const TABLE_CELL_CHARACTERS = 160;
-const PROVIDERS = ['claude', 'agy', 'copilot', 'opencode'];
+// Derived from the shipped registry so a new adapter is probed without editing this list.
+const PROVIDERS = Object.keys(SPECS);
 const GENERATION_GAP = 'provider adapter exposes no generation-token limit';
 const DENYLIST_REFUSAL = 'audit probe: denylist validation never launches a provider';
 /** Providers whose adapter refuses to launch until preparation verifies an effective read-only agent. */
@@ -474,7 +475,7 @@ export async function runTarget(target, ctx) {
   Object.assign(record, {
     handle: guard.state.handle, liveness: guard.state.liveness, exitConfirmed: guard.state.exitConfirmed,
     launches: guard.state.launches, attempts: run?.attempts ?? guard.state.launches, usage,
-    gaps: usage ? [] : ['usage unavailable'],
+    gaps: [...(usage ? [] : ['usage unavailable']), ...(prepared.readOnlyBestEffort ? [`${target.provider} read-only agent ${prepared.agent} accepted best effort, not verified`] : [])],
   });
   if (!fs.existsSync(path.join(stageDir, record.capture))) record.capture = null;
   Object.assign(record, classify(run, thrown, guard.state, events, fixture));
@@ -505,7 +506,8 @@ async function prepareRequest(target, req, ports, { deadline, settleBy }, signal
     const resolved = await Promise.race([resolving, aborted, stalled]);
     if (resolved === STALLED) return { timedOut: true };
     if (resolved === null) return { interrupted: true };
-    return { fields: { model: resolved.model, endpoint: resolved.endpoint, agent: resolved.agent, readOnlyVerified: resolved.readOnlyVerified } };
+    const fields = { model: resolved.model, endpoint: resolved.endpoint, agent: resolved.agent, readOnlyVerified: resolved.readOnlyVerified, readOnlyBestEffort: resolved.readOnlyBestEffort };
+    return { fields };
   } catch (error) {
     // Only the classified prefix is kept: a raw parse error could quote credential-bearing native config.
     const reason = PREPARATION_REASON.exec(String(error?.message ?? error))?.[0] ?? 'effective-config-unverified: native introspection failed';

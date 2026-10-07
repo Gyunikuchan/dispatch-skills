@@ -97,11 +97,14 @@ test('audit calibration prepare rejects missing host or model settings', async (
 
 test('audit calibration packets withhold answer keys, labels and fix commits from both arms', async () => {
   const { workDir, f } = await prepared();
+  const { packetIds } = JSON.parse(fs.readFileSync(path.join(workDir, 'calibration', 'manifest.json'), 'utf8'));
   for (const arm of ARMS) {
+    assert.deepEqual(fs.readdirSync(path.join(workDir, 'calibration', 'packets', arm)).filter((name) => /defect|control/i.test(name)), [], `${arm} packet filenames reveal the case kind`);
     for (const c of f['cases']) {
-      const text = fs.readFileSync(path.join(workDir, 'calibration', 'packets', arm, `${c.id}.json`), 'utf8');
+      const text = fs.readFileSync(path.join(workDir, 'calibration', 'packets', arm, `${packetIds[c.id]}.json`), 'utf8');
       const packet = JSON.parse(text);
-      assert.equal(packet.caseId, c.id);
+      assert.equal(packet.caseId, packetIds[c.id]);
+      assert.equal(text.includes(c.id), false, `${arm}/${c.id} leaks the labelled case id`);
       assert.equal(packet.scenario, c.scenario);
       assert.equal(packet.constraints.probes, false);
       for (const key of ['answer', 'kind', 'category', 'severity']) assert.equal(key in packet, false, `${arm}/${c.id} leaks ${key}`);

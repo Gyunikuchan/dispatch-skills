@@ -38,7 +38,11 @@ export async function resolveEffectiveOpencodeLaunch(req: DelegateRequest, inspe
     return lastDeny >= 0 && rules.slice(lastDeny + 1).every((rule: unknown) => record(rule) && (rule['effect'] === 'deny' || readActions.has(String(rule['action']))));
   };
   const candidates = agents.filter(safe);
-  const agent = req.agent ? candidates.find((a) => a['id'] === req.agent) : candidates.find((a) => a['id'] === 'explore') ?? candidates.find((a) => a['id'] === 'plan');
+  const verified = req.agent ? candidates.find((a) => a['id'] === req.agent) : candidates.find((a) => a['id'] === 'explore') ?? candidates.find((a) => a['id'] === 'plan');
+  // NOTE: newer opencode builds grant `shell` to the built-in explore agent; the user accepted it as best-effort read-only.
+  const bestEffort = verified || (req.agent && req.agent !== 'explore') ? undefined
+    : agents.find((a): a is Row => record(a) && a['id'] === 'explore' && a['hidden'] !== true);
+  const agent = verified ?? bestEffort;
   if (!agent) throw new Error('read-only-agent-unavailable: require an effective agent with wildcard deny and only read tool grants');
   const model = req.model ?? (typeof config['model'] === 'string' ? config['model'] : null);
   const providerId = model?.split('/')[0];
@@ -47,7 +51,7 @@ export async function resolveEffectiveOpencodeLaunch(req: DelegateRequest, inspe
   const settings = record(provider['settings']) ? provider['settings'] : record(provider['options']) ? provider['options'] : {};
   const endpoint = typeof settings['baseURL'] === 'string' ? settings['baseURL'] : null;
   if (endpoint) { const url = new URL(endpoint); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('effective-config-unverified: unsupported endpoint'); }
-  return { ...req, model, endpoint, agent: String(agent['id']), readOnlyVerified: true };
+  return { ...req, model, endpoint, agent: String(agent['id']), readOnlyVerified: Boolean(verified), ...(verified ? {} : { readOnlyBestEffort: true }) };
 }
 
 export function nativeOpencodeIntrospection(binary: string, req: DelegateRequest, env: Readonly<Record<string, string | undefined>>, budgetMs: number): Introspect {
