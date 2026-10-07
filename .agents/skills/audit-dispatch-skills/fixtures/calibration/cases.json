@@ -1,0 +1,251 @@
+{
+  "version": 1,
+  "briefs": {
+    "old": {
+      "commit": "933675571c2dffb3911877e0749a53920d0c5ac9",
+      "paths": [
+        {
+          "path": ".agents/skills/audit-dispatch-skills/SKILL.md",
+          "blob": "176e01e92b4dc99219de5f9f4749c58ca014f001"
+        },
+        {
+          "path": ".agents/skills/audit-dispatch-skills/references/deep.md",
+          "blob": "b0849fb6ba0bf3a0745df59b8ec5ad85da524080"
+        },
+        {
+          "path": ".agents/skills/audit-dispatch-skills/references/broad.md",
+          "blob": "f2c7338a670b71010bbb982deaef74c3693df77a"
+        }
+      ]
+    },
+    "new": {
+      "commit": null,
+      "paths": [
+        {
+          "path": ".agents/skills/audit-dispatch-skills/SKILL.md",
+          "blob": null
+        },
+        {
+          "path": ".agents/skills/audit-dispatch-skills/references/walkthrough.md",
+          "blob": null
+        },
+        {
+          "path": ".agents/skills/audit-dispatch-skills/references/shared.md",
+          "blob": null
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "defect-write-reply-shape",
+      "kind": "defect",
+      "category": "ambiguity",
+      "severity": "medium",
+      "source": {
+        "commit": "540e8ee43380537080da191f7e0c561a24ac4ff3",
+        "parent": "759527de9f6187b0351499e5e195fc4eb192b9e2"
+      },
+      "scenario": "implement: the orchestrator launches a native writer from the delegate-write action, then must reply to the driver with the writer result; separately, review adjudication receives a restate entry whose prose report contains no findings.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/scripts/driver/write.mjs",
+          "commit": "759527de9f6187b0351499e5e195fc4eb192b9e2",
+          "blob": "f2ec5d10e6db768239e4e3e3d36bed0d7bd9c501",
+          "lines": "136-150",
+          "sha256": "sha256:834865496c7386cd431f3935de802ecb876a227df1bb17e650715c855e0f00d2",
+          "text": "    ...(testsOnly ? { continuation: data.testsOnlyRepair ? { kind: 'admission-repair', reuseChanges: true, defects: data.testsOnlyRepair.defects } : cascadeContinuation } : (cascadeContinuation ? { continuation: cascadeContinuation } : {})),\n    ...(restore ? { restore } : {}),\n    // The production packet lives in promptPath: the host relays a path, not ~30 KB of packet.\n    packet: null,\n    evidence: data.envelope?.evidence ?? [], context: data.continuationContext ?? null,\n  } }, [\n    'Launch the configured native write subagent with the exact model and effort; a launcher that fixes effort per agent definition selects the definition whose effort matches. Give it promptPath with promptHash, paths, criteria, and any evidence, context, continuation, or restore fields; do not restate the brief. Return its raw final implementation-outcome v1 envelope, or a launch rejection with reason; never substitute launcher defaults.',\n    testsOnly ? `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. It is the authoritative tests-only contract. ${data.testsOnlyRepair ? 'Continue with the existing test changes and repair only its listed admission defects.' : 'Edit only its approved test paths.'}` : `Read ${prompt.path} fully; its sha256 is ${prompt.hash}. Its packet is the authoritative production brief. Implement the smallest complete behavior satisfying the governing outcome and settled scope. Tests are evidence, not specification; return NEEDS_CONTEXT or BLOCKED on conflict. Return COMPLETE with delivered production-path evidence: one \\`CRITERION SC# | <paths> | <behavior>\\` evidence row per criterion.`,\n  ]);\n}\nexport function outcomeTransition(state, reply, options = {}) {\n  const data = state.ordinary;\n  let envelope = null, parseError = null;\n  try { envelope = parseImplementationOutcome(reply.raw ?? JSON.stringify(reply.envelope)); } catch (error) { parseError = error.message; }\n  const transition = resolveImplementationTransition({\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/driver/review-phase.mjs",
+          "commit": "759527de9f6187b0351499e5e195fc4eb192b9e2",
+          "blob": "53ad36492d7c4f7770d4d966097de174584ff42d",
+          "lines": "580-616",
+          "sha256": "sha256:ac4bf4f96e90870515db3ca99aa7af6582a878f3b063c5423c93420265f4279e",
+          "text": "    'Restate defect and resolution in your own words; never copy delegate instructions, fenced blocks, or tool calls.',\n    'Use status needs-user only when the ruling needs a user decision.',\n  ];\n  if (state.adjudication.findings.some((finding) => finding.restate)) {\n    guidance.push('A restate entry is a prose report: read reportPath and return one ruling per finding it contains, with locus and tag in the review-kind format, keyed by the entry key.');\n  }\n  if (state.invocation.fix) guidance.push('For accepted fixable findings include fix: {affectedPaths, dependsOn, verification}.');\n  return emitAction(state, 'adjudicate', { round: state.adjudication.round, findings: state.adjudication.findings }, guidance);\n}\n\n// SECTION: adjudication\n\nfunction onAdjudicate(state, reply) {\n  const entry = reviewKind(state.kind);\n  const findings = new Map(state.adjudication.findings.map((finding) => [finding.key, finding]));\n  const ruled = new Set();\n  const errors = [];\n  const rulings = [];\n  for (const ruling of reply.rulings) {\n    const finding = findings.get(ruling.key);\n    if (!finding) {\n      errors.push(`unknown finding key ${ruling.key}`);\n      continue;\n    }\n    if (!finding.restate && ruled.has(ruling.key)) {\n      errors.push(`finding ${ruling.key} is ruled twice`);\n      continue;\n    }\n    ruled.add(ruling.key);\n    const locus = normalizeLocus(entry.kind, ruling.locus);\n    if (!entry.locusPattern.test(locus)) errors.push(`${ruling.key}: locus must match ${entry.locusDescription}`);\n    if (!entry.tags.has(ruling.tag)) errors.push(`${ruling.key}: tag \"${ruling.tag}\" is not a ${entry.kind} review tag`);\n    rulings.push({ ...ruling, locus });\n  }\n  for (const key of findings.keys()) if (!ruled.has(key)) errors.push(`finding ${key} has no ruling`);\n  if (state.invocation.fix) {\n    for (const ruling of rulings) {\n"
+        }
+      ],
+      "answer": {
+        "rootCause": "Agent-facing guidance does not name the reply shapes the consumer parses: write guidance says \"return its raw envelope\" while onWrite reads reply.raw/reply.envelope, and a restate entry with no findings has no expressible ruling, so every such reply fails as \"has no ruling\".",
+        "fixRationale": "Fix 540e8ee names {raw}/{rejected} in the write guidance and adds {key, empty: true} for finding-free restate entries."
+      }
+    },
+    {
+      "id": "defect-plan-review-tags",
+      "kind": "defect",
+      "category": "handoff",
+      "severity": "high",
+      "source": {
+        "commit": "0c51fe3918a421ec495edfdf2cdcc95ef6500f37",
+        "parent": "e110e3ca348fa6f93beef202ad83f47e79dd9039"
+      },
+      "scenario": "review (plan): a plan reviewer follows the plan review prompt and tags a finding about a false task dependency; the driver validates the returned report.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/references/templates/review-prompt-plan.md",
+          "commit": "e110e3ca348fa6f93beef202ad83f47e79dd9039",
+          "blob": "db755ad11db209194ad47288b017535d3833b887",
+          "lines": "36-46",
+          "sha256": "sha256:79eeb8da320c5c37332aa1448a510bc9f52cf876f1148af3e5e227d270ea7370",
+          "text": "Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.\n\n## tags\n\n- intent: `intent`, `user-gap`, `scope-creep` — requirement traceability; unstated assumptions; flawed premises, XY problems, conflicting constraints, missing prerequisites; gold-plating\n- domain invariants: `correctness`, `domain-logic`, `invariant`, `state-machine` — project and domain rules; sign and unit conventions (debit/credit, monthly/annual); invariants across multi-step mutations; valid transitions and reachable states\n- decomposition: `dependency-graph`, `parallel-safety` — missing semantic prerequisites; false independence; overlapping ownership or shared resources; fragmented or oversized tasks\n- architecture: `architecture`, `coherence`, `approach`, `standards` — producer/consumer contract mismatches; step order; self-contradiction; boundary leaks; host rule files and specs\n- trust boundaries: `security`, `auth`, `validation` — credential exposure, isolation, authorization, input validation, injection, traversal\n- compatibility: `compatibility`, `blast-radius`, `migration`, `rollback` — affected callers; persisted schemas; version skew; graceful degradation; rollback\n- robustness: `edge-case`, `partial-failure`, `race`, `perf` — empty, zero, and boundary inputs; partial failure; races; unbounded designs\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/domain/report.ts",
+          "commit": "e110e3ca348fa6f93beef202ad83f47e79dd9039",
+          "blob": "e315f99dacc8427c308a884c84b2ca057d3c73bb",
+          "lines": "13-22",
+          "sha256": "sha256:da07f0c0990ec63b387456dc45ec06cc23316a815d561e5e714b7b2eddb44574",
+          "text": "export const REVIEW_TAGS: Readonly<Record<ReviewKind, ReadonlySet<string>>> = {\n  plan: new Set([\n    'adjacent', 'approach', 'architecture', 'auth', 'blast-radius', 'coherence', 'compatibility', 'correctness', 'domain-logic',\n    'edge-case', 'intent', 'invariant', 'migration', 'partial-failure', 'perf', 'race', 'rollback', 'scope-creep', 'security',\n    'simplicity', 'spec-gap', 'standards', 'state-machine', 'testability', 'user-gap', 'validation', 'verification', 'yagni',\n  ]),\n  code: new Set([\n    'a11y', 'adjacent', 'auth', 'breaking', 'compatibility', 'correctness', 'coupling', 'domain-logic', 'edge-case', 'intent',\n    'invariant', 'migration', 'partial-failure', 'perf', 'race', 'resource-leak', 'reuse', 'root-cause', 'runtime', 'scope-creep',\n    'seam', 'security', 'shallow', 'standards', 'test-gap', 'test-leak', 'type', 'ui', 'yagni',\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/domain/report.ts",
+          "commit": "e110e3ca348fa6f93beef202ad83f47e79dd9039",
+          "blob": "e315f99dacc8427c308a884c84b2ca057d3c73bb",
+          "lines": "140-150",
+          "sha256": "sha256:02a086dbe2cf4a4c1e40e52e80e93edb65901cb665f264e1bd5b8b722db8d42e",
+          "text": "  const { pattern, description } = LOCUS[kind];\n  for (const [index, item] of items.entries()) {\n    if (typeof item !== 'object' || item === null || Array.isArray(item)) return fail('uncovered-scope', `finding ${index} must be a JSON object`);\n    const finding = item as Record<string, unknown>;\n    if (Object.keys(finding).sort().join('\\0') !== FINDING_FIELDS.join('\\0')) return fail('uncovered-scope', `finding ${index} fields must be exactly: severity, locus, tag, defect, requiredChange`);\n    const { severity, locus, tag, defect, requiredChange } = finding;\n    if (typeof severity !== 'string' || !SEVERITIES.has(severity)) return fail('uncovered-scope', `finding ${index} severity must be MUST, SHOULD, or CONSIDER`);\n    if (!nonEmpty(tag) || !REVIEW_TAGS[kind].has(tag.trim())) return fail('uncovered-scope', `finding ${index} tag is not an allowed ${kind} review tag`);\n    if (!nonEmpty(defect) || !nonEmpty(requiredChange)) return fail('uncovered-scope', `finding ${index} needs a defect and a requiredChange`);\n    if (!nonEmpty(locus) || !pattern.test(normalizeLocus(kind, locus))) return fail('loose-locus', `finding ${index} locus must match ${description}`);\n    // Sanitization can strip a whole value (e.g. a tool-call line), so emptiness is re-checked after it.\n"
+        }
+      ],
+      "answer": {
+        "rootCause": "Producer/consumer mismatch: the plan review prompt offers dependency-graph and parallel-safety tags, but REVIEW_TAGS.plan (and the report schema) omit them, so the validator rejects the whole report as uncovered-scope.",
+        "fixRationale": "Fix 0c51fe3 adds both tags to the validator and schema and tests that every prompt-offered tag is accepted."
+      }
+    },
+    {
+      "id": "defect-repeated-git-root",
+      "kind": "defect",
+      "category": "efficiency",
+      "severity": "medium",
+      "source": {
+        "commit": "6453c26dfe436987fbf9b7478f5518aedb11bbc6",
+        "parent": "fe61fb9af51405a80f5858016ba5bf640d5ffac2"
+      },
+      "scenario": "implement: one driver step resolves the repository root while preparing state, paths and the implement phase in the same process.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/scripts/artifacts/resolve-paths.mjs",
+          "commit": "fe61fb9af51405a80f5858016ba5bf640d5ffac2",
+          "blob": "e0048cd24a4cdc50ab904c3ff71e480ffade9799",
+          "lines": "134-142",
+          "sha256": "sha256:ff5eb769946e45927da03fcbb7e109da2ee68c969c4a7263c08cd0d687dd282c",
+          "text": "  return crypto.createHash('sha256').update(canonicalRepositoryRoot(root, options)).digest('hex').slice(0, 12);\n}\n\nexport function getRepositoryRoot(cwd = PROJECT_ROOT) {\n  const result = spawnCliSync('git', ['rev-parse', '--show-toplevel'], {\n    cwd,\n    encoding: 'utf8',\n    timeout: 5000,\n  });\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/driver/index.mjs",
+          "commit": "fe61fb9af51405a80f5858016ba5bf640d5ffac2",
+          "blob": "8546c4adce5c63c5fe388084b7294f3e493b99b9",
+          "lines": "222-234",
+          "sha256": "sha256:6e82f399a25f279470add658d4343a0585d31b80eba16fc136cfb9e2c777dde0",
+          "text": "      action = await next(parsed);\n    } else {\n      const invocation = normalizeRun(parsed);\n      if (invocation.verb === 'design') {\n        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();\n        const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });\n        writeRunSidecar(state, invocation);\n        action = save(state, startDesign(state));\n      } else if (invocation.verb === 'implement' && invocation.argument?.endsWith('-design.md')) {\n        const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();\n        const state = createRunState({ invocation, repoRoot, resumeCommand: resumeCommand(invocation), dispatchScript: DISPATCH_SCRIPT, ordinary: {}, pending: null });\n        writeRunSidecar(state, invocation);\n        action = save(state, await resumeDesignPath(state));\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/driver/state.mjs",
+          "commit": "fe61fb9af51405a80f5858016ba5bf640d5ffac2",
+          "blob": "290593281244d9c58b87c430ed52314eafa98f19",
+          "lines": "19-26",
+          "sha256": "sha256:ecad36d0f1b7529ad402989ae5d15cafff5044a828f39ec5b81d10bc45331eae",
+          "text": "\n/** Repository root of `cwd`, or `cwd` itself outside a work tree. */\nexport function gitRoot(cwd) {\n  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' });\n  return res.status === 0 && res.stdout.trim() ? path.resolve(res.stdout.trim()) : path.resolve(cwd);\n}\n\n/** Writes a private run-scoped file beside the state file and queues it for cleanup. */\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/driver/implement-phase.mjs",
+          "commit": "fe61fb9af51405a80f5858016ba5bf640d5ffac2",
+          "blob": "e346d8c75a9acaa09941c653824e9f5c6430b40f",
+          "lines": "20-24",
+          "sha256": "sha256:a6c9447c1f8103a2ea019153d19732d9dec9ed157f364a66d54f2ab3936a1422",
+          "text": " */\nexport async function startImplement({ invocation, cwd, resumeCommand, dispatchScript }) {\n  const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd, encoding: 'utf8' }).trim();\n  const state = createRunState({ invocation, repoRoot, resumeCommand, dispatchScript, ordinary: {}, pending: null });\n  writeRunSidecar(state, invocation);\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/lib/platform.mjs",
+          "commit": "fe61fb9af51405a80f5858016ba5bf640d5ffac2",
+          "blob": "3f45e2e5d5e3d59fb521252167cc889fc866a690",
+          "lines": "89-97",
+          "sha256": "sha256:bd973b29802b18a8e19c5b826657640b66b35de11b8b00dc353a8887464375ed",
+          "text": " * as a portable skill and cannot assume a fixed depth beneath the workspace.\n */\nfunction resolveWorkspaceRoot() {\n  const res = spawnSync('git', ['rev-parse', '--show-toplevel'], {\n    cwd: process.cwd(),\n    encoding: 'utf8',\n    timeout: 5000,\n  });\n  if (res.status === 0 && res.stdout.trim()) {\n"
+        }
+      ],
+      "answer": {
+        "rootCause": "Redundant subprocess work: seven independent call sites each spawn `git rev-parse --show-toplevel` for the same unchanged root within one process, with no shared cached resolver.",
+        "fixRationale": "Fix 6453c26 adds a cached lib/git-root.mjs; ADR 0002 measured 2,707 show-toplevel calls across the suite."
+      }
+    },
+    {
+      "id": "defect-output-file-loss",
+      "kind": "defect",
+      "category": "recovery",
+      "severity": "high",
+      "source": {
+        "commit": "3cd221db3411200e4f96ef8e79790e46a482dc97",
+        "parent": "12f73ea54905ac3db7025ab3e71665c8caea41c2"
+      },
+      "scenario": "review: a background provider run completes and dispatch writes the report to --output-file, but the output path is not writable.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/scripts/dispatch.mjs",
+          "commit": "12f73ea54905ac3db7025ab3e71665c8caea41c2",
+          "blob": "525462e4db7270b617397b4671fba52ee7854edf",
+          "lines": "795-812",
+          "sha256": "sha256:815837dc7d612192c5c505e9bb7c7fcb3f3d571bc9aabb1d4287b8c11cbf7489",
+          "text": "    valueFlags: ['--response-schema-file', '--batch-file', '--output-file'],\n    aliases: { '--response-schema-file': 'responseSchemaFile', '--batch-file': 'batchFile', '--output-file': 'outputFile' },\n  });\n  const responseSchemaFile = dispatchValues.responseSchemaFile ?? null;\n  const batchFile = dispatchValues.batchFile ?? null;\n  const outputFile = dispatchValues.outputFile ?? null;\n  // NOTE: --output-file keeps the report off stdout so a background task's output shows only banners.\n  const writeOutput = (text) => {\n    if (!outputFile) {\n      process.stdout.write(text);\n      return;\n    }\n    fs.writeFileSync(outputFile, text, { encoding: 'utf8', mode: 0o600 });\n    process.stderr.write(`[dispatch] Output: ${outputFile}\\n`);\n  };\n\n  if (options.help) {\n    printHelp();\n"
+        },
+        {
+          "path": "skills/dispatch/scripts/dispatch.mjs",
+          "commit": "12f73ea54905ac3db7025ab3e71665c8caea41c2",
+          "blob": "525462e4db7270b617397b4671fba52ee7854edf",
+          "lines": "920-950",
+          "sha256": "sha256:bfcb8a714a6642dad7ddbe9235a8e6a89ff5a82f4224fb375d788b7c5f0be6bb",
+          "text": "          ...options,\n          prompt: finalPrompt,\n          responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,\n          configPath: loaded.path,\n        }, loaded.config);\n      } finally {\n        fs.rmSync(batch.path, { force: true });\n      }\n      writeOutput(`${JSON.stringify(envelope, null, 2)}\\n`);\n      process.exit(envelope.complete ? 0 : 1);\n      return;\n    }\n    result = await dispatchTask({\n      ...options,\n      prompt: finalPrompt,\n      responseSchema: responseSchemaFile ? loadResponseSchema(responseSchemaFile) : null,\n      noConfig,\n      orchestratorModel: options.orchestratorModel ?? undefined,\n    });\n  } catch (err) {\n    appendTelemetry({ error: err, startedAt });\n    console.error(formatCliError(err));\n    const exitCode = safeExitCode(err);\n    process.exit(exitCode);\n    return;\n  }\n\n  if (result.stdout) {\n    writeOutput(result.stdout.endsWith('\\n') ? result.stdout : `${result.stdout}\\n`);\n  }\n\n"
+        }
+      ],
+      "answer": {
+        "rootCause": "Unrecoverable failure path: writeOutput calls writeFileSync without a guard, so a write failure throws after a completed, costly provider run and the report is lost instead of falling back to stdout.",
+        "fixRationale": "Fix 3cd221d adds writeDispatchOutput with a stdout fallback and warning."
+      }
+    },
+    {
+      "id": "control-alias-one-way",
+      "kind": "control",
+      "category": "control",
+      "source": {
+        "commit": "933675571c2dffb3911877e0749a53920d0c5ac9",
+        "parent": null
+      },
+      "scenario": "plan: a user invokes the dispatch-plan alias; the auditor checks routing between the alias and dispatch.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch-plan/SKILL.md",
+          "commit": "933675571c2dffb3911877e0749a53920d0c5ac9",
+          "blob": "81295758da314d24a697893202ae04857173c46e",
+          "lines": "1-10",
+          "sha256": "sha256:91ac3184a49c13c477d8b519102d2b24d05c1d7407fcf21185a58abc04a7eb6b",
+          "text": "---\nname: dispatch-plan\ndescription: Alias for `/dispatch plan`. Use only when the user invokes dispatch-plan by name.\n---\n\n# dispatch-plan\n\nRequire sibling `dispatch`. If missing, report `Missing dependency: dispatch is required by dispatch-plan` and stop.\n\nRead [dispatch](../dispatch), map this invocation to `start plan`, and forward level, pins, model, effort, and argument through its loop. That contract owns host-await judgment and write boundaries.\n"
+        }
+      ],
+      "answer": {
+        "intent": "The alias depends on dispatch and forwards one verb; dispatch intentionally names no alias (repository architecture rule). The one-way dependency and missing-dependency stop are intended, not a routing gap."
+      }
+    },
+    {
+      "id": "control-legacy-journal-rejected",
+      "kind": "control",
+      "category": "control",
+      "source": {
+        "commit": "933675571c2dffb3911877e0749a53920d0c5ac9",
+        "parent": null
+      },
+      "scenario": "implement: a user resumes a run whose journal predates per-task state.",
+      "excerpts": [
+        {
+          "path": "skills/dispatch/scripts/machines/implement-types.ts",
+          "commit": "933675571c2dffb3911877e0749a53920d0c5ac9",
+          "blob": "2666e13036460621dd0c4260983a87866ea35fd4",
+          "lines": "104-116",
+          "sha256": "sha256:859937401531371fa32f9a9282ae20a6834ee9e032cb4c1c43958c0918ccf9ea",
+          "text": "  const changes: PlanChange[] = [];\n  for (const [index, item] of value['changes'].entries()) {\n    if (!isRecord(item) || !['NEW', 'MODIFY', 'DELETE', 'GENERATED'].includes(String(item['action'])) || !NON_EMPTY(item['path'])) return null;\n    changes.push({ action: item['action'] as PlanChange['action'], path: item['path'], note: typeof item['note'] === 'string' ? item['note'] : '', command: typeof item['command'] === 'string' ? item['command'] : null, line: typeof item['line'] === 'number' ? item['line'] : index + 1 });\n  }\n  if (!value['verification']['automated'].every(NON_EMPTY) || !value['finalCommands'].every(NON_EMPTY)) return null;\n  // NOTE: pre-task journals lack `tasks`; rejecting them forces an explicit restart instead of a silent migration.\n  if (!Array.isArray(value['tasks'])) return null;\n  const strings = (raw: unknown): string[] | null => Array.isArray(raw) && raw.every(NON_EMPTY) ? raw : null;\n  const tasks: PlanTask[] = [];\n  for (const item of value['tasks']) {\n    if (!isRecord(item) || !NON_EMPTY(item['id']) || !Array.isArray(item['generated'])) return null;\n    const prerequisites = strings(item['prerequisites']), taskCriteria = strings(item['criteria']), paths = strings(item['paths']);\n"
+        }
+      ],
+      "answer": {
+        "intent": "Rejecting pre-task journals forces an explicit restart instead of a silent migration; the repository drops legacy support by default. Not a recovery defect."
+      }
+    }
+  ]
+}

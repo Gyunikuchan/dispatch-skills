@@ -32,11 +32,13 @@ node <skill>/scripts/status.mjs init
 
 Targets the newest `.scratch/audits/<run>-audit.md` (`--run <yyyy-mm-dd-hhmm>` targets an older one), backfills `- **Status**: open` on any finding written without one, and refreshes the counts blockquote under `## 3. Findings`. Re-running it keeps every status and note already recorded, so use it to refresh after the report is edited by hand.
 
-It reads the findings section in the shape `audit-dispatch-skills` § "5. Write the report" fixes, and errors out rather than writing a status line into a report that has drifted from it. On that error, repair the report's finding headings and meta lines first.
+It reads the findings section in the shape the `audit-dispatch-skills` report format fixes, and errors out rather than writing a status line into a report that has drifted from it. On that error, repair the report's finding headings and meta lines first.
+
+A report whose findings section is the sentinel `No defect findings.` prints `0 findings`: skip to step 5 and hand off with zero counts. `O-<n>` opportunities in the report's opportunities section never enter this run; act on one only when the user selects it, as its own scoped `dispatch` task.
 
 Confirm with the user which run you are working if the printed path is not the one they named.
 
-**Done when:** the printed total matches the report's finding count and the counts line is in the report.
+**Done when:** the printed total matches the report's `A-<n>` finding count (0 for the sentinel) and the counts line is in the report.
 
 ## 2. Triage the next batch
 

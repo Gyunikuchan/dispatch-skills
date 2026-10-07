@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "ask-normal-bounded-question",
+      "scope": "ask",
+      "class": "normal",
+      "trigger": "User invokes dispatch with a bounded repository question and no verb.",
+      "expectedOutcome": "Supported advice that cites evidence, with reviewer disagreement surfaced rather than voted away.",
+      "startingState": "clean checkout, configured providers",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/ask.md", "skills/dispatch/scripts/machines/ask.ts"]
+    },
+    {
+      "id": "ask-decision-missing-context",
+      "scope": "ask",
+      "class": "decision",
+      "trigger": "The question depends on context the delegates lack, or delegates disagree on the answer.",
+      "expectedOutcome": "The orchestrator names the missing context or disagreement and resolves it with evidence or asks the user.",
+      "startingState": "clean checkout, two or more reviewers",
+      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/machines/ask.ts"]
+    },
+    {
+      "id": "ask-recovery-provider-unavailable",
+      "scope": "ask",
+      "class": "recovery",
+      "trigger": "A selected provider is unavailable or returns an incomplete response.",
+      "expectedOutcome": "The run reports the failed slot and answers from remaining evidence or stops with a named blocker.",
+      "startingState": "one provider missing or failing",
+      "entries": ["skills/dispatch/references/verbs/ask.md", "skills/dispatch/references/providers.md", "skills/dispatch/scripts/machines/ask.ts"]
+    },
+    {
+      "id": "design-normal-increments",
+      "scope": "design",
+      "class": "normal",
+      "trigger": "User asks for a design spanning several increments.",
+      "expectedOutcome": "A coherent design with explicit increments, boundaries, and review evidence.",
+      "startingState": "clean checkout, new session",
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/references/templates/design.md", "skills/dispatch/scripts/machines/design.ts"]
+    },
+    {
+      "id": "design-decision-constraint-change",
+      "scope": "design",
+      "class": "decision",
+      "trigger": "User changes an architectural constraint after the first design draft.",
+      "expectedOutcome": "The revision retains decisions and rationale that still hold and re-reviews affected increments.",
+      "startingState": "authored design awaiting revision",
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/machines/design-revision.ts"]
+    },
+    {
+      "id": "design-recovery-interrupted-handoff",
+      "scope": "design",
+      "class": "recovery",
+      "trigger": "The session stops between authoring and review.",
+      "expectedOutcome": "Resume continues from the journal without duplicate authoring or lost review state.",
+      "startingState": "interrupted design run with a journal",
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/scripts/machines/design.ts", "skills/dispatch/scripts/core/journal.ts"]
+    },
+    {
+      "id": "plan-normal-executable-unit",
+      "scope": "plan",
+      "class": "normal",
+      "trigger": "User asks for a plan for one coherent unit of work.",
+      "expectedOutcome": "An executable plan with tasks, criteria, Verify commands, and review rulings.",
+      "startingState": "clean checkout, new session",
+      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/references/templates/plan.md", "skills/dispatch/scripts/machines/plan.ts"]
+    },
+    {
+      "id": "plan-decision-verb-mismatch",
+      "scope": "plan",
+      "class": "decision",
+      "trigger": "The requested scope needs several increments and does not fit plan.",
+      "expectedOutcome": "The orchestrator recommends the fitting verb and waits for the user; it never switches silently.",
+      "startingState": "clean checkout, oversized request",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/domain/plan.ts"]
+    },
+    {
+      "id": "plan-recovery-unmet-prerequisite",
+      "scope": "plan",
+      "class": "recovery",
+      "trigger": "Review or revision reveals a prerequisite the plan does not meet.",
+      "expectedOutcome": "The revision records the prerequisite and either amends the plan or escalates the blocker.",
+      "startingState": "authored plan under review",
+      "entries": ["skills/dispatch/references/verbs/plan.md", "skills/dispatch/scripts/machines/revision.ts"]
+    },
+    {
+      "id": "review-normal-code-target",
+      "scope": "review",
+      "class": "normal",
+      "kind": "code",
+      "trigger": "User asks for a report-only review of the working tree.",
+      "expectedOutcome": "Findings ruled against the exact reviewed target, with rejected claims explained.",
+      "startingState": "dirty working tree",
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-code.md", "skills/dispatch/scripts/machines/review.ts"]
+    },
+    {
+      "id": "review-decision-plan-fix-request",
+      "scope": "review",
+      "class": "decision",
+      "kind": "plan",
+      "trigger": "User reviews a .plan.md and explicitly asks to apply fixes.",
+      "expectedOutcome": "Fixes stay within accepted clusters and affected paths; report-only remains the default otherwise.",
+      "startingState": "authored plan file",
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-plan.md", "skills/dispatch/scripts/domain/fix-clustering.ts"]
+    },
+    {
+      "id": "review-decision-code-report-only",
+      "scope": "review",
+      "class": "decision",
+      "kind": "code",
+      "trigger": "User asks for a code review without requesting fixes.",
+      "expectedOutcome": "The run stays report-only and offers fixes without applying them.",
+      "startingState": "dirty working tree",
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/scripts/machines/review.ts"]
+    },
+    {
+      "id": "review-recovery-design-target-drift",
+      "scope": "review",
+      "class": "recovery",
+      "kind": "design",
+      "trigger": "A .design.md target changes during review, or one reviewer fails.",
+      "expectedOutcome": "The run detects drift or the failed slot and rules only on evidence tied to the reviewed target.",
+      "startingState": "design under review, concurrent edit or failing reviewer",
+      "entries": ["skills/dispatch/references/verbs/review.md", "skills/dispatch/references/templates/review-prompt-design.md", "skills/dispatch/scripts/policy/drift.ts"]
+    },
+    {
+      "id": "implement-normal-approved-change",
+      "scope": "implement",
+      "class": "normal",
+      "trigger": "User asks to implement an approved plan.",
+      "expectedOutcome": "Scoped native writers deliver each task with RED/GREEN and criterion evidence that the driver accepts.",
+      "startingState": "approved plan, clean checkout",
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/write-brief-task.md", "skills/dispatch/scripts/machines/implement.ts"]
+    },
+    {
+      "id": "implement-decision-scope-amendment",
+      "scope": "implement",
+      "class": "decision",
+      "trigger": "A writer needs a path outside its brief, or the pre-write assessment recommends a higher level.",
+      "expectedOutcome": "The writer submits a scope request; the orchestrator adjudicates and the user decides only on disagreement or level change.",
+      "startingState": "running task writer",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/machines/implement-tasks.ts"]
+    },
+    {
+      "id": "implement-recovery-interrupted-writer",
+      "scope": "implement",
+      "class": "recovery",
+      "trigger": "A writer attempt is interrupted, or its verification fails.",
+      "expectedOutcome": "The driver records the attempt, repairs or relaunches once with admission defects, and never accepts unverified work.",
+      "startingState": "task worktree with a failed or missing envelope",
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/effects/check-envelope.ts", "skills/dispatch/scripts/effects/verify.ts"]
+    },
+    {
+      "id": "shared-design-to-plan",
+      "scope": "shared",
+      "class": "design-to-plan",
+      "trigger": "An approved design increment becomes the parent of a plan.",
+      "expectedOutcome": "The plan names its parent design and hash, and carries forward its decisions and boundaries.",
+      "startingState": "approved design",
+      "entries": ["skills/dispatch/references/verbs/design.md", "skills/dispatch/references/verbs/plan.md", "skills/dispatch/references/templates/plan.md"]
+    },
+    {
+      "id": "shared-plan-to-implement",
+      "scope": "shared",
+      "class": "plan-to-implement",
+      "trigger": "An approved plan starts implementation.",
+      "expectedOutcome": "Implementation consumes the approved plan hash, criteria, and approval authority without re-deriving them.",
+      "startingState": "approved plan",
+      "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/references/templates/write-brief.md", "skills/dispatch/scripts/effects/handoff.ts"]
+    },
+    {
+      "id": "shared-review-to-fix",
+      "scope": "shared",
+      "class": "review-to-fix",
+      "trigger": "Accepted review findings move to fixes.",
+      "expectedOutcome": "Fixes act only on ruled findings within affected paths, with bounded verification evidence.",
+      "startingState": "ruled review findings",
+      "entries": ["skills/dispatch/references/review-rules.md", "skills/dispatch/scripts/domain/fix-clustering.ts"]
+    },
+    {
+      "id": "shared-interruption-to-resume",
+      "scope": "shared",
+      "class": "interruption-to-resume",
+      "trigger": "A host session ends mid-run and a new session resumes it.",
+      "expectedOutcome": "Ownership, handles, and journal state transfer without duplicate effects or lost evidence.",
+      "startingState": "interrupted run with a journal and lock",
+      "entries": ["skills/dispatch/SKILL.md", "skills/dispatch/scripts/core/journal.ts", "skills/dispatch/scripts/core/lock.ts", "skills/dispatch/scripts/effects/restore.ts"]
+    }
+  ]
+}

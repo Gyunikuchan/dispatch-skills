@@ -1,6 +1,6 @@
 ---
 name: audit-dispatch-skills
-description: Report-only audit of the dispatch-skills repository across skills, docs, scripts, tests, and live dispatch platforms.
+description: Report-only static audit of Dispatch through scenario walkthroughs of each verb, shared handoff review, and bounded provider probes.
 disable-model-invocation: true
 metadata:
   internal: true
@@ -8,118 +8,108 @@ metadata:
 
 # Audit Dispatch Skills
 
-A **report-only** audit of the `dispatch-skills` repository. The standard is `AGENTS.md`; skills are verified for behavioral flow, correctness, and goal fulfillment; agent-facing docs (`SKILL.md`, references, `AGENTS.md`) are also graded against `writing-for-agents`. Subagents gather raw **claims**; you verify them against the code and own the final report. Fixes happen in a later task the user chooses.
+A **report-only**, static audit of the `dispatch-skills` repository. Six scope auditors trace concrete scenarios (one per verb: `ask`, `design`, `plan`, `review`, `implement`; plus `shared` for cross-verb contracts) and return **claims**. You, the lead, own the baseline, scenario selection, scheduling, probe handles, verification, the report and finalization. Complete Dispatch flows are never executed; production diagnostics supply observed behavior. Fixes happen in a later task the user chooses.
 
-Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start. `<skill>` is this skill's own directory, which differs per host:
+**Objective**: a verified, self-contained report of where Dispatch fails to carry users to their intended outcomes, or does so at avoidable cost, with coverage and its gaps stated honestly.
 
-| Host | `<skill>` | Backgrounding a command | Subagent mechanism |
+Paths are relative to the repo root. `<run>` is the current local time as `yyyy-mm-dd-hhmm`, fixed once at the start. `<skill>` is the directory holding this `SKILL.md`:
+
+| Host | `<skill>` | Backgrounding a command | Scope auditors |
 |---|---|---|---|
-| Antigravity | `.agents/skills/audit-dispatch-skills` | run the command with `&` | spawn parallel subagents |
-| Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool, one call per scope |
-| Copilot | `.github/skills/audit-dispatch-skills` | run the command with `&` | run scopes sequentially; Copilot has no subagent fan-out |
+| Antigravity | `.agents/skills/audit-dispatch-skills` | run the command with `&` | parallel subagents |
+| Claude Code | `.claude/skills/audit-dispatch-skills` | Bash with `run_in_background: true` and `dangerouslyDisableSandbox: true` (Antigravity binds a local TCP socket) | `Agent` tool (`general-purpose`), one call per scope |
+| Copilot | `.github/skills/audit-dispatch-skills` | run the command with `&` | sequential, in your own context |
 | OpenCode | `.opencode/skill/audit-dispatch-skills` | run the command with `&` | `task` tool, one call per scope |
 | Codex | `.agents/skills/audit-dispatch-skills` | start once and retain the command session handle | native subagents, one per scope |
 
-If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives. Where a host offers no parallel fan-out, run the scopes one after another — the report is identical, only slower.
+**Containment**: every working file lives under `.scratch/audits/<run>-work/`; the report is `.scratch/audits/<run>-audit.md`. Step 7 relocates the work directory to OS temp. A run that stops early keeps it in place; resume with `--resume` and reuse every recorded artifact.
 
-**Containment**: every working file (baseline, probe captures, findings) lives under `.scratch/audits/<run>-work/`; the report is `.scratch/audits/<run>-audit.md`. Step 6 relocates the work directory to OS temp, leaving only the report in the repository. A run that stops early keeps it in place for resumption.
+**Budgets**: `<skill>/config.json` holds the defaults; the run manifest (`<run>-work/manifest.json`) holds the effective limits and counters. You spend `leadInvestigationCalls` on verification (waits and report writing excluded) and `focusedReproductions` on single test files. Exhausting a budget makes the run **partial**; it never extends the budget.
 
 ## 1. Baseline
+
+Write the objective and the independent expected outcome of each verb (from `AGENTS.md` and `skills/dispatch/SKILL.md`) into your notes before reading implementation; they are the yardstick for adjudication.
 
 ```bash
 node <skill>/scripts/baseline.mjs --run <run>
 ```
 
-Writes to the work directory: `git-status.txt` (repo snapshot, audit output excluded), `tests.txt` (full suite with coverage, no hash write), and `metrics.md` (doc token footprint, broken links/anchors, script structure, exports no test names, test counts, hash drift). Prints a digest; a failing test is audit evidence, not a stop.
+Reserves the run, then writes the manifest, repo status and content snapshot, one aggregate `npm test` capture (`tests.txt`) and labeled metric leads (`metrics.md`). A failing test is audit evidence, not a stop. On resume pass `--resume`: a completed baseline is reused, never rerun.
 
-Resuming a stopped run into an existing work directory throws rather than overwrite it; add `--force` to reuse the directory deliberately.
+**Done when:** the manifest records a complete baseline and the printed digest is noted for the report summary.
 
-**Done when:** the three files exist and the printed digest is noted for the report summary.
+## 2. Select scenarios
 
-## 2. Launch the dispatch probe
+Gather risk leads as JSON: changes since the last audit revision (or recent relevant commits, recording the range), unresolved defects from the previous report, and diagnostics. Then:
+
+```bash
+node <skill>/scripts/scenarios.ts --run <run> [--risk <leads.json>] [--prior <coverage.json>] [--scopes <ids>] [--scenarios <ids>]
+```
+
+It selects one scenario per mandatory class from [scenarios.json](references/scenarios.json), ranked explicit → risk → least-covered → stable ID, records the selection in the manifest and writes `<run>-work/packets/<scope>.json`. `--scopes`/`--scenarios` are for an explicit user narrowing only; the run is then partial. Every printed `gap:` line goes into the report's coverage section.
+
+**Done when:** packets exist for every selected scope and the manifest records the selection.
+
+## 3. Launch the provider probe
 
 ```bash
 node <skill>/scripts/probe-dispatch.mjs --run <run> > .scratch/audits/<run>-work/probe-stdout.txt 2>&1
 ```
 
-Run it **backgrounded** (live prompts take minutes) — see the per-host table above. The redirection is not optional: it is the only capture of the probe's output, and Step 4 quotes it when the probe dies. Discovery is token-free across every provider mode; each reachable provider then gets a read probe (`-f` file from a temp dir under the home directory, plus an un-attached sibling file the delegate must read itself) and a denylist probe. The temp dir is removed when the probe exits. Add `--modes` when the user asks for per-mode coverage: one live target per distinct binary through the provider runner. `--only claude,agy` narrows the whole re-run: an excluded provider is neither discovered nor probed, so it costs nothing and gets no row. `--discover-only` stops after token-free discovery, skipping every live prompt — the fastest way to refresh the platform matrix. `--timeout <s>` caps each live probe.
+Run it **backgrounded** and keep its handle; the redirection is the only capture of its output. `--only a,b` narrows providers; `--discover-only` skips live prompts. The probe enforces its own launch, deadline and capture limits and records each provider's lifecycle in the manifest. Continue without waiting.
 
-Continue to step 3 without waiting.
+**Done when:** the probe is running and its handle is recorded.
 
-**Done when:** the probe is running in the background.
+## 4. Run scope auditors
 
-## 3. Fan out subagents
-
-Scopes, derived from the tree rather than assumed:
-
-- one **deep** scope per directory in `skills/` and per repo-authored skill in `.agents/skills/` (real directories not listed in `skills-lock.json`), scope id = skill name;
-- one **broad** scope, scope id `broad`.
-
-Spawn every scope in a single message so they run in parallel, as native subagents that can write files (Claude Code: `Agent` with `general-purpose`). Brief each one:
+Launch each scope as a fresh native agent that can write files, using available slots and reserving your own; queue the rest. No auditor launches further agents. Brief each one:
 
 ```
-Audit <scope path> in the dispatch-skills repo. Read <skill>/references/<deep|broad>.md and follow it.
-Work dir: .scratch/audits/<run>-work (baseline evidence: metrics.md, tests.txt).
-Write findings to .scratch/audits/<run>-work/findings/<scope-id>.md; write nothing anywhere else.
-Return only: finding counts by severity and the findings path.
+Audit scope <scope> of the dispatch-skills repo. Read <skill>/<packet.reference> and follow it.
+Packet: .scratch/audits/<run>-work/packets/<scope>.json (scenarios, evidence, findings path).
+Write only <packet.findingsPath>. Return terminal status, counts, gaps and the findings path.
 ```
 
-**Done when:** every scope subagent has completed execution, returned its final response, and its findings file exists; re-spawn any scope whose file is missing or lacks an axis coverage table.
+Pass the packet only; leave your suspected findings and implementation excerpts out so traces stay independent. Record each handle and lifecycle in the manifest. On a host without native agents, run the scopes yourself one at a time and record `reduced independence: sequential lead execution` as a coverage gap.
 
-## 4. Synthesize
+When a scope returns, its file must exist and follow [findings.md](references/findings.md). A missing or malformed file gets **one** repair follow-up naming the defect; the shared scope's follow-up also carries any verb `Handoff` lines for its boundaries. After that, mark the scope `partial` with its gaps and verify late observations yourself rather than relaunching.
 
-Read every findings file and `<run>-work/dispatch/summary.md` (wait for all subagents to finish first). Test the probe's state, since a slow probe and a dead one look alike from the outside:
+**Done when:** every scope has a terminal lifecycle (`complete`, `partial` or `failed`) in the manifest.
 
-| On disk | State | Action |
-|---|---|---|
-| `dispatch/summary.md` exists | finished | read it |
-| `dispatch/failed.txt` exists | crashed during the probe | report `probe crashed: <first line of failed.txt>` in the dispatch-platforms section |
-| `dispatch/started.txt` only | still running | wait, then re-test; once `started.txt` is older than `--timeout` (default 300 s) plus 2 minutes, treat it as crashed and quote `probe-stdout.txt` |
-| none of them | crashed before the live loop | report `probe crashed: <last lines of probe-stdout.txt>` in the dispatch-platforms section |
+## 5. Verify
 
-1. **Dedupe**: merge findings that name the same defect — same location, or one root cause across locations. Keep every source scope and the highest severity the evidence supports.
-2. **Verify** each merged finding by opening its cited locations. Confirmed → `Verified`. Contradicted by the code → refuted, moved to the appendix with the reason. Settled only by a run you cannot do here (another OS, a missing CLI) → `Unverified` plus what would settle it. Evidence decides, not how many scopes raised it.
-3. **Probe failures**: for each `FAIL` target, read its `*.read.stderr.txt` and session log to name the cause (auth, quota, sandbox, runner bug). A runner bug becomes a finding; an environment gap (not logged in, CLI absent) is reported in the platform section only.
+Wait for the probe: its manifest lifecycle is terminal (`complete`, `skipped`, `failed`, `timeout`); quote `probe-stdout.txt` for any `failed`. A failed or skipped provider never blocks static reporting; its cause goes into the platform section, and a reproducible adapter defect becomes a claim.
 
-**Done when:** every finding from every file is `Verified`, `Unverified`, or refuted — none unread.
+For every claim in every findings file:
 
-## 5. Write the report
+1. **Dedupe** by root cause; keep every source scope and the highest severity the evidence supports.
+2. **Verify** against the cited current source, the expected outcome from step 1 and counterevidence. Confirmed → `Verified`; contradicted → refuted with the evidence; settled only by an environment you lack, or by medium/low confidence that is not directly established → `Unverified` plus what would settle it.
+3. Classify each as a **defect** or an **opportunity** per [findings.md](references/findings.md).
 
-`.scratch/audits/<run>-audit.md` is self-contained — it quotes what it needs from the work directory rather than linking there. In this order:
+If `leadInvestigationCalls` runs out, name the remaining claims `Unverified` and the run partial.
 
-1. **Summary**: severity counts, top five fixes by impact, test totals, one-line probe verdict.
-2. **Dispatch platforms**: discovery table, not-found list, live-probe table (copied from `<run>-work/dispatch/summary.md`), cause of each failure.
-3. **Findings** grouped critical → nit under a `### <Severity>` heading per group. IDs renumbered `A-<n>`. `audit-dispatch-skills-fix` parses this section, so each finding takes exactly this shape:
+**Done when:** every claim is `Verified`, `Unverified` or refuted, and every gap from steps 2–5 is listed.
 
-   ```md
-   #### A-<n>: <one-line title>
-   - **<severity>** · <axis> · <Verified|Unverified> · <source scope ids>
-   - **Status**: open
-   - **Location**: `path:line` (comma-separated when several)
-   - **Claim**: …
-   - **Evidence**: …
-   - **Proposal**: …
-   ```
+## 6. Write the report
 
-   Any legend above the findings names the meta line's third field **Verification**, not "Status", which belongs to the fix line alone. Headings stay `####` (severity groups `###`), the meta line stays a single bullet in that order, and the section heading stays `## 3. Findings` followed by a numbered `## 4.` section. `- **Status**: open` is the fix run's state slot — `audit-dispatch-skills-fix` rewrites that one line per finding and keeps a counts blockquote under the section heading; the report stays the only state file.
-4. **Axis coverage**: scope × axis matrix (`✓` checked, `—` n/a with reason, `✗` gap). Any `✗` is named in the summary.
-5. **Proposed axes & metrics**: merged from the subagents plus your own.
-6. **Appendix**: refuted claims with reasons.
+Write `.scratch/audits/<run>-audit.md` exactly as [report.md](references/report.md) defines: section order, the parsed findings grammar, the zero-defect sentinel, opportunities, coverage and budget evidence.
 
-**Done when:** the report is written.
+The run is **complete** only when the baseline and probe have terminal evidence, every scope finished `complete`, every claim is adjudicated, and no coverage gap remains; otherwise the summary says **partial** and names each gap.
 
-## 6. Finalize
+**Done when:** the report satisfies report.md's completion criterion.
+
+## 7. Finalize
 
 ```bash
 node <skill>/scripts/finalize.mjs --run <run>
 ```
 
-Compares the repo against the work directory's `git-status.txt`, moves `.scratch/audits/<run>-work/` to an `audit-dispatch-skills-<run>-*` directory in OS temp, and appends the relocation path and integrity result to the report.
+Run it only after every scope and the probe have stopped. It compares content fingerprints against the baseline, relocates the work directory to OS temp, and appends the authoritative path and integrity result to the report.
 
-**Done when:** the script has printed its integrity result and `.scratch/audits/` holds only `<run>-audit.md` for this run. `unchanged` closes the step. A `CHANGED` result also closes it, but only once every file it names is attributed in the reply (a subagent write or concurrent user edits) — a repo-modifying audit is itself a finding.
+**Done when:** the integrity result is printed. `unchanged` closes the step. A `CHANGED` result closes it once every named file is attributed in the reply (an auditor write or concurrent user edit); an audit-attributable write is itself a finding. A failed relocation leaves the work directory authoritative; report its path.
 
-## 7. Hand off
+## 8. Hand off
 
-Reply with the report path, severity counts, the top five fixes, and the probe table. Offer to act on the findings through `audit-dispatch-skills-fix`.
+Reply with the report path, complete/partial status, defect counts by severity, the top five fixes, opportunity count, and the probe table. Offer to act on findings through `audit-dispatch-skills-fix`; opportunities need the user's explicit selection as a separate task.
 
-**Done when:** the reply is sent with the report path, severity counts, top five fixes, probe table, and offer to act.
+**Done when:** the reply is sent.

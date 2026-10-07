@@ -2,24 +2,27 @@
 
 /**
  * @file baseline.mjs
- * @description Deterministic audit evidence gathered before any subagent runs, written to the run's work dir:
- *   - git-status.txt: repo snapshot (audit output excluded) that finalize.mjs compares against;
- *   - tests.txt:      full test run with line/branch coverage (bypasses `npm test`'s pretest hash write);
- *   - metrics.md:     doc token footprint, broken relative links/anchors, script structure,
- *                     exports no test mentions, per-file test counts, skill hash drift.
+ * @description Deterministic audit evidence gathered once, before any subagent runs, into the run's work dir:
+ *   - manifest.json:          exclusive run reservation, effective settings, budgets and baseline fingerprints;
+ *   - git-status.txt:         repo status snapshot (audit output excluded) that finalize.mjs compares against;
+ *   - content-snapshot.json:  content hashes that expose edits to already-dirty files and protected local configs;
+ *   - tests.txt:              one aggregate `npm test` run;
+ *   - metrics.md:             labeled leads: doc token footprint, broken relative links/anchors, skill hash drift.
  * Prints a short digest; the files carry the detail.
  *
- * Usage: node <skill>/scripts/baseline.mjs --run <yyyy-mm-dd-hhmm>
+ * Usage: node <skill>/scripts/baseline.mjs --run <yyyy-mm-dd-hhmm> [--resume]
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const isMainModule = (url) => !!process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === url;
 const measureText = (text) => ({ characters: text.length, estimate: Math.ceil(text.length / 4) });
-import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
+import { auditGitStatus, contentSnapshot, frontmatterDescription, relTo, resolveRepoRoot, resolveRunDirs } from './shared.mjs';
+import { consumeBudget, loadAuditConfig, readRun, reserveRun, updateRun } from './run-state.ts';
 
 // ============================================================================
 // SECTION: Configuration
@@ -28,12 +31,7 @@ import { auditGitStatus, frontmatterDescription, relTo, resolveRepoRoot, resolve
 const SKIP_DIRS = new Set(['node_modules', '.git', '.scratch', 'worktrees']);
 const TEST_TIMEOUT_MS = 10 * 60 * 1000;
 const TEST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-const TEST_GLOB = 'tests/**/*.test.ts';
-const COVERAGE_INCLUDES = [
-  'skills/**/*.ts',
-  'scripts/**/*.ts',
-  '.agents/skills/audit-dispatch-skills/**/*.mjs',
-];
+const EVIDENCE = ['git-status.txt', 'content-snapshot.json', 'tests.txt', 'metrics.md'];
 
 // ============================================================================
 // SECTION: Main
@@ -42,67 +40,88 @@ const COVERAGE_INCLUDES = [
 export async function main(options = {}) {
   const root = options.root ?? resolveRepoRoot();
   const argv = options.argv ?? process.argv;
-  const { workDir, rel } = resolveRunDirs(root, argv);
+  const { runId, workDir, reportPath, rel } = resolveRunDirs(root, argv);
+  if (argv.includes('--force')) {
+    throw new Error('--force is no longer supported: a baseline is never overwritten. Pass --resume to continue this run, or a new --run id for a fresh run.');
+  }
+  const revision = gitHead(root);
 
-  // Re-running step 1 to resume an audit used to overwrite the baseline it was resuming from,
-  // silently replacing the pre-audit git status and test output the finalize step compares against.
-  const existing = fs.existsSync(path.join(workDir, 'git-status.txt'));
-  if (existing && !argv.includes('--force')) {
-    throw new Error(
-      `A baseline already exists at ${rel(workDir)}.\n` +
-        'Resuming an audit should reuse it — re-running this step would replace the pre-audit ' +
-        'snapshot that finalize compares against.\n' +
-        'Pass --force to overwrite deliberately, or --run <id> to start a separate run.',
-    );
+  // Reservation is exclusive, so a repeated step 1 cannot replace the evidence finalize compares against.
+  const manifest = argv.includes('--resume')
+    ? readRun(workDir, { revision })
+    : reserveRun(workDir, { runId, revision, config: loadAuditConfig() });
+  if (manifest.baseline.status === 'complete') {
+    process.stdout.write(`Baseline already complete at ${rel(workDir)}; reusing it (tests: ${manifest.baseline.tests?.totals ?? 'unknown'}).\n`);
+    return;
   }
 
-  fs.mkdirSync(workDir, { recursive: true });
+  const gaps = [];
+  const file = (name) => path.join(workDir, name);
+  // Resume keeps any capture already written; only missing evidence is produced.
+  if (!fs.existsSync(file('git-status.txt'))) fs.writeFileSync(file('git-status.txt'), auditGitStatus(root) ?? '', 'utf8');
+  if (!fs.existsSync(file('content-snapshot.json'))) {
+    const snapshot = contentSnapshot(root, { exclude: [rel(workDir), rel(reportPath)] });
+    fs.writeFileSync(file('content-snapshot.json'), `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+  }
 
-  fs.writeFileSync(path.join(workDir, 'git-status.txt'), auditGitStatus(root) ?? '', 'utf8');
+  let tests = null;
+  const budget = consumeBudget(workDir, 'lead', 'baselineTestRuns');
+  if (budget.allowed) {
+    const result = (options.runTests ?? runTests)(root);
+    fs.writeFileSync(file('tests.txt'), result.output, 'utf8');
+    tests = { status: result.status ?? null, signal: result.signal ?? null, error: result.error ?? null, totals: result.totals, capture: 'tests.txt' };
+  } else {
+    gaps.push(`baselineTestRuns budget exhausted (${budget.used}/${budget.limit}); ${fs.existsSync(file('tests.txt')) ? 'kept earlier tests.txt' : 'no test capture'}`);
+  }
 
-  const tests = (options.runTests ?? runTests)(root);
-  fs.writeFileSync(path.join(workDir, 'tests.txt'), tests.output, 'utf8');
+  if (!fs.existsSync(file('metrics.md'))) {
+    const metrics = await (options.buildMetrics ?? buildMetrics)(root);
+    fs.writeFileSync(file('metrics.md'), metrics.markdown, 'utf8');
+  }
 
-  const metrics = await (options.buildMetrics ?? buildMetrics)(root);
-  fs.writeFileSync(path.join(workDir, 'metrics.md'), metrics.markdown, 'utf8');
+  const fingerprints = Object.fromEntries(
+    EVIDENCE.filter((n) => fs.existsSync(file(n))).map((n) => [n, `sha256:${createHash('sha256').update(fs.readFileSync(file(n))).digest('hex')}`]),
+  );
+  updateRun(workDir, (m) => { m.baseline = { status: 'complete', fingerprints, tests, gaps }; });
 
   process.stdout.write(
     [
-      `Tests: ${tests.totals} (exit ${tests.status})`,
-      `Broken links: ${metrics.brokenCount}`,
-      ...metrics.hashLines,
-      `Wrote ${rel(workDir)}/{git-status.txt,tests.txt,metrics.md}`,
+      `Tests: ${tests ? `${tests.totals} (exit ${tests.status})` : 'not run'}`,
+      ...gaps.map((g) => `Gap: ${g}`),
+      `Wrote ${rel(workDir)}/{manifest.json,${EVIDENCE.join(',')}}`,
     ].join('\n') + '\n',
   );
 }
 
+function gitHead(root) {
+  const res = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' });
+  if (res.status !== 0) throw new Error('Cannot read the current revision (git rev-parse HEAD failed).');
+  return res.stdout.trim();
+}
+
 // ============================================================================
-// SECTION: Tests & Coverage
+// SECTION: Tests
 // ============================================================================
 
+/**
+ * Runs the repository's current aggregate `npm test` once through an injectable process port.
+ * @param {string} root
+ * @param {(cmd: string, args: readonly string[], opts: object) => {stdout?: string, stderr?: string, status: number|null, signal?: string|null, error?: Error}} [spawn]
+ */
 export function runTests(root, spawn = spawnSync) {
-  // Node < 22 treats the quoted glob as a literal path and runs nothing; report that, not a false 0/0.
-  if (Number(process.versions.node.split('.')[0]) < 22) {
-    return { output: '', status: null, totals: 'skipped: Node <22 cannot expand the test glob' };
-  }
-  // Node expands the quoted glob itself, so the same argv works under bash, zsh, and PowerShell.
-  const res = spawn(
-    process.execPath,
-    [
-      '--test',
-      '--import=./tests/helpers/isolated-temp.ts',
-      '--import=./tests/helpers/block-spawn.ts',
-      '--experimental-test-coverage',
-      // Installed CLIs spawned by tests would otherwise flood the coverage report.
-      ...COVERAGE_INCLUDES.map((pattern) => `--test-coverage-include=${pattern}`),
-      '--test-reporter=spec',
-      TEST_GLOB,
-    ],
-    { cwd: root, encoding: 'utf8', timeout: TEST_TIMEOUT_MS, maxBuffer: TEST_MAX_BUFFER_BYTES },
-  );
+  // NOTE: npm is a .cmd shim on Windows, which spawn can only reach through a shell; argv is fixed.
+  const res = spawn('npm', ['test'], {
+    cwd: root, encoding: 'utf8', timeout: TEST_TIMEOUT_MS, maxBuffer: TEST_MAX_BUFFER_BYTES, shell: process.platform === 'win32', windowsHide: true,
+  });
   const output = `${res.stdout ?? ''}${res.stderr ?? ''}`;
-  const count = (label) => new RegExp(`^ℹ ${label} (\\d+)`, 'm').exec(output)?.[1] ?? '?';
-  return { output, status: res.status, totals: `${count('pass')}/${count('tests')} pass, ${count('fail')} fail` };
+  const summary = output.split(/\r?\n/).filter((l) => /test\(s\)/.test(l)).pop()?.trim();
+  return {
+    output,
+    status: res.status ?? null,
+    signal: res.signal ?? null,
+    error: res.error ? String(res.error.message ?? res.error) : null,
+    totals: summary ?? `exit ${res.status ?? 'none'}`,
+  };
 }
 
 // ============================================================================
@@ -118,7 +137,6 @@ async function buildMetrics(root) {
     ...authoredSkillDirs(root).flatMap(walk),
   ].filter((f) => /\.(?:ts|mjs)$/.test(f));
   const tests = walk(path.join(root, 'tests')).filter((f) => f.endsWith('.test.ts'));
-  const testText = tests.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 
   const out = ['# Audit Metrics', ''];
 
@@ -134,13 +152,10 @@ async function buildMetrics(root) {
   const broken = docs.flatMap((file) => brokenLinks(file).map((b) => `- ${rel(file)}:${b.line} → \`${b.target}\` (${b.reason})`));
   out.push('', '## Broken relative links', '', ...(broken.length ? broken : ['- none']));
 
-  // Name mentions are a lead, not proof: an export exercised only through another export shows up here.
-  out.push('', '## Scripts', '', '| Script | LOC | SECTION dividers | Exports | Exports no test file names |', '|---|---|---|---|---|');
+  out.push('', '## Scripts', '', '| Script | LOC | SECTION dividers |', '|---|---|---|');
   for (const file of scripts) {
     const text = fs.readFileSync(file, 'utf8');
-    const exportsList = [...text.matchAll(/^export (?:async )?(?:function\*?|const|let|class) (\w+)/gm)].map((m) => m[1]);
-    const unnamed = exportsList.filter((name) => !new RegExp(`\\b${name}\\b`).test(testText));
-    out.push(`| ${rel(file)} | ${loc(text)} | ${(text.match(/\/\/ SECTION:/g) ?? []).length} | ${exportsList.length} | ${unnamed.join(', ') || '—'} |`);
+    out.push(`| ${rel(file)} | ${loc(text)} | ${(text.match(/\/\/ SECTION:/g) ?? []).length} |`);
   }
 
   out.push('', '## Tests', '', '| Test file | LOC | Cases |', '|---|---|---|');

@@ -7,6 +7,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 // ============================================================================
@@ -144,4 +146,70 @@ export function diffStatus(before, after) {
   const a = new Set(before.split('\n').filter(Boolean));
   const b = new Set(after.split('\n').filter(Boolean));
   return [...[...b].filter((l) => !a.has(l)).map((l) => `+ ${l}`), ...[...a].filter((l) => !b.has(l)).map((l) => `- ${l}`)];
+}
+
+// ============================================================================
+// SECTION: Content Snapshots
+// ============================================================================
+
+// Ignored local configs can hold user settings an audit must not alter; they are hashed, never copied.
+const PROTECTED_IGNORED = [':(glob)**/config.local.*', ':(glob)**/config.jsonc'];
+
+function gitPaths(root, args) {
+  const res = spawnSync('git', ['ls-files', '-z', ...args], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  if (res.status !== 0) return null;
+  return res.stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Content fingerprints for tracked, nonignored untracked, and protected ignored local-config
+ * files. Status alone misses an edit to an already-dirty file, so each path carries a hash.
+ * Symlinks are fingerprinted by their target string, never followed, so an external target is
+ * neither read nor attributed to the repo. Only this run's own outputs are excluded; contents are
+ * never recorded. A path that exists but cannot be read is `unreadable` and named in `gaps`, since
+ * an equal marker in two snapshots proves nothing about its content.
+ *
+ * @param {string} root
+ * @param {{exclude?: string[], fs?: Pick<typeof fs, 'lstatSync' | 'readlinkSync' | 'readFileSync'>}} [options]
+ *   Repo-relative paths (files or directories) owned by this run; `fs` replaces the filesystem in tests.
+ * @returns {{version: 1, entries: Record<string, string>, exclusions: string[], gaps: string[]}}
+ */
+export function contentSnapshot(root, options = {}) {
+  const io = options.fs ?? fs;
+  const exclusions = (options.exclude ?? []).map(toPosix);
+  const gaps = [];
+  const listed = gitPaths(root, ['--cached', '--others', '--exclude-standard']);
+  const ignored = gitPaths(root, ['--others', '--ignored', '--exclude-standard', '--', ...PROTECTED_IGNORED]);
+  if (listed === null) gaps.push('git ls-files failed; tracked and untracked content not fingerprinted');
+  if (ignored === null) gaps.push('git ls-files failed; ignored local configs not fingerprinted');
+  const excluded = (p) => exclusions.some((e) => p === e || p.startsWith(`${e}/`));
+  const hash = (data) => createHash('sha256').update(data).digest('hex');
+  const entries = {};
+  for (const rel of [...new Set([...(listed ?? []), ...(ignored ?? [])])].sort()) {
+    if (excluded(rel)) continue;
+    const full = path.join(root, rel);
+    try {
+      const stat = io.lstatSync(full);
+      entries[rel] = stat.isSymbolicLink() ? `symlink:${hash(io.readlinkSync(full))}` : `sha256:${hash(io.readFileSync(full))}`;
+    } catch (err) {
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') {
+        entries[rel] = 'missing';
+      } else {
+        entries[rel] = 'unreadable';
+        gaps.push(`${rel} unreadable (${err?.code ?? err?.message ?? String(err)}); its content is not compared`);
+      }
+    }
+  }
+  return { version: 1, entries, exclusions, gaps };
+}
+
+/** `~` changed content, `+` appeared, `-` disappeared, comparing two `contentSnapshot` results. */
+export function diffContent(before, after) {
+  const lines = [];
+  for (const [p, hash] of Object.entries(after.entries)) {
+    if (!(p in before.entries)) lines.push(`+ ${p}`);
+    else if (before.entries[p] !== hash) lines.push(`~ ${p}`);
+  }
+  for (const p of Object.keys(before.entries)) if (!(p in after.entries)) lines.push(`- ${p}`);
+  return lines.sort((a, b) => a.slice(2).localeCompare(b.slice(2)));
 }

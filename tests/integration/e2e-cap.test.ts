@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { scanOverlay, type FileTable } from './scan.ts';
 
-// Audit subprocess fixtures require the fourth planned E2E file.
-export const E2E_CAP = 4;
+// Audit subprocess fixtures need audit-tooling.test.ts and audit-probe.test.ts (probe termination/capture flows).
+export const E2E_CAP = 5;
 
 export function checkE2eCap(files: FileTable, cap = E2E_CAP): string[] {
   const e2e = files.filter((file) => file.path.startsWith('tests/e2e/'));

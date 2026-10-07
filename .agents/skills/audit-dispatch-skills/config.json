@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "limits": {
+    "scopes": 6,
+    "scenariosPerVerb": 3,
+    "sharedBoundaries": 4,
+    "branchExpansionsPerScope": 2,
+    "repairFollowUps": 1,
+    "scopeToolCalls": 40,
+    "scopeMinutes": 20,
+    "leadInvestigationCalls": 60,
+    "baselineTestRuns": 1,
+    "focusedReproductions": 3,
+    "probeLaunchesPerProvider": 1,
+    "probeDeadlineSeconds": 60,
+    "probeTerminationGraceSeconds": 10,
+    "probeCaptureBytes": 16384,
+    "probeFixtureBytes": 2048,
+    "probeGenerationTokens": 128
+  }
+}

@@ -60,6 +60,8 @@ export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--full', '--size
 const REPORT_NAME_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}-audit\.md$/;
 const RUN_ID_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
 const FINDING_HEADING_PATTERN = /^#### (A-\d+):\s*(.+)$/;
+const OPPORTUNITY_HEADING_PATTERN = /^#{3,4} (O-\d+):/;
+export const EMPTY_FINDINGS_SENTINEL = 'No defect findings.';
 
 // SECTION: CLI and report paths
 
@@ -130,9 +132,36 @@ export function loadReport(file) {
  */
 export function parseFindings(report) {
   const headings = [];
+  const opportunities = [];
+  let sentinel = false;
   for (let line = report.start; line < report.end; line += 1) {
-    const match = FINDING_HEADING_PATTERN.exec(report.lines[line]);
+    const text = report.lines[line];
+    const match = FINDING_HEADING_PATTERN.exec(text);
     if (match) headings.push({ id: match[1], title: match[2].trim(), line });
+    const opportunity = OPPORTUNITY_HEADING_PATTERN.exec(text);
+    if (opportunity) opportunities.push(opportunity[1]);
+    if (text.trim() === EMPTY_FINDINGS_SENTINEL) sentinel = true;
+  }
+  if (opportunities.length > 0) {
+    // Opportunities are improvement hypotheses, never remediation targets; inside § 3 they would
+    // be silently folded into the preceding finding's body and dispatched with it.
+    throw new Error(
+      `${report.file} § "3. Findings" contains opportunity headings (${opportunities.join(', ')}). ` +
+        `Move them to the report's opportunities section.`,
+    );
+  }
+  if (sentinel && headings.length > 0) {
+    throw new Error(
+      `${report.file} § "3. Findings" mixes "${EMPTY_FINDINGS_SENTINEL}" with findings ` +
+        `(${headings.map((h) => h.id).join(', ')}). Remove one of them.`,
+    );
+  }
+  if (sentinel) {
+    // Only the sentinel, the machine-owned counts line and blank lines make a canonical empty section.
+    const extra = report.lines
+      .slice(report.start + 1, report.end)
+      .filter((text) => text.trim() !== '' && text.trim() !== EMPTY_FINDINGS_SENTINEL && !text.startsWith(COUNTS_PREFIX));
+    if (extra.length === 0) return [];
   }
 
   const findings = headings.map((heading, index) => {
@@ -176,7 +205,8 @@ export function parseFindings(report) {
   if (findings.length === 0) {
     throw new Error(
       `${report.file} § "3. Findings" yielded no findings — expected \`#### A-<n>: <title>\` headings ` +
-        `followed by a \`- **<severity>** · <axis> · <verification> · <sources>\` line. Fix the report, then re-run init.`,
+        `followed by a \`- **<severity>** · <axis> · <verification> · <sources>\` line, or only ` +
+        `"${EMPTY_FINDINGS_SENTINEL}" when there are none. Fix the report, then re-run init.`,
     );
   }
   const unknown = findings.filter((f) => !STATUSES.includes(f.status));
