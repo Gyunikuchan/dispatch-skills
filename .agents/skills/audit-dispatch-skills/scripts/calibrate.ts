@@ -210,7 +210,9 @@ function scoreArm(fixture: CalibrationFixture, cases: Record<string, Claim[]>, m
     const ruling = matches[c.id];
     if (ruling?.match) {
       const claim = caseClaims.find((x) => x.id === ruling.match);
-      if (!claim || claim.verdict !== 'defect') throw new Error(`${arm}/${c.id}: match ${ruling.match} is not a fixed defect claim of this case`);
+      // The briefs classify static repetition as an opportunity until measured, so an efficiency case accepts one.
+      const accepted = c.category === 'efficiency' ? ['defect', 'opportunity'] : ['defect'];
+      if (!claim || !accepted.includes(claim.verdict)) throw new Error(`${arm}/${c.id}: match ${ruling.match} is not a fixed ${accepted.join(' or ')} claim of this case`);
       if (!nonEmpty(ruling.rationale)) throw new Error(`${arm}/${c.id}: a root-cause match needs a rationale`);
       result.recovered.push(c.id);
     } else result.missed.push(c.id);

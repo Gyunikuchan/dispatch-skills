@@ -20,6 +20,14 @@ export interface FakePorts extends Ports {
 export function fakePorts(): FakePorts {
   const alive = new Set<number>([FAKE_PID]);
   const stderrLines: string[] = [];
+  // NOTE: Windows mkdir calls are slow even for existing folders; MAX_STEPS runs write the same folders hundreds of times.
+  const made = new Set<string>();
+  const ensureDir = (file: string) => {
+    const dir = path.dirname(file);
+    if (made.has(dir) && fs.existsSync(dir)) return;
+    fs.mkdirSync(dir, { recursive: true });
+    made.add(dir);
+  };
   const ports: FakePorts = {
     alive,
     stderrLines,
@@ -29,8 +37,10 @@ export function fakePorts(): FakePorts {
     fs: {
       ...nodeFs,
       // Real port writes create their parent folder, so the fakes do too.
-      appendDurable: (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.appendFileSync(file, text); },
-      writeAtomic: (file, text) => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); },
+      appendDurable: (file, text) => { ensureDir(file); fs.appendFileSync(file, text); },
+      writeAtomic: (file, text) => { ensureDir(file); fs.writeFileSync(file, text); },
+      // Keeps exclusive-create semantics (lock contention) without the fsync.
+      writeExclusive: (file, text) => { ensureDir(file); fs.writeFileSync(file, text, { flag: 'wx' }); },
     },
     spawn: { run: () => { throw new Error('fake ports: spawn is not available in tiers 1-5'); } },
     git: { run: () => { throw new Error('fake ports: git is not available in tiers 1-5'); } },

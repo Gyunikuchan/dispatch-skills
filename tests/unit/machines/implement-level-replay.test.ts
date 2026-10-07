@@ -4,7 +4,7 @@ import type { ScopeAdjustment } from '../../../skills/dispatch/scripts/core/type
 import { planReviewContext, implementData, stepImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { executionDelta } from '../../../skills/dispatch/scripts/domain/execution-config.ts';
 import { initialTasks } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
-import { approvalState, host, RUN } from './implement-recovery.test.ts';
+import { approvalState, host, RUN } from './fixtures/implement-recovery.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 
 const HASH = `sha256:${'a'.repeat(64)}`;

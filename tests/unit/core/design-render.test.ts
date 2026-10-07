@@ -3,8 +3,8 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machines/review.ts';
-import { approvalState } from '../machines/implement-recovery.test.ts';
-import { started } from '../machines/design-delivery.test.ts';
+import { approvalState } from '../machines/fixtures/implement-recovery.ts';
+import { started } from '../machines/fixtures/design-delivery.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
 
 test('standalone, active and completed design children share idempotent plan resolution rendering', () => {

@@ -88,7 +88,8 @@ export const opencode: ProviderSpec = {
       return { status: 'ok', text, sessionId: null, resume: handle };
     }
     const detail = `opencode exit ${String(out.exit)}: ${out.stderrTail.trim().slice(0, 300)}`;
-    if (VARIANT_UNAVAILABLE.test(both) && req.effort) return { status: 'fail', cls: 'model-not-found', detail, retryWithoutEffort: true };
+    // The model exists; only the configured effort variant does not, so this is a config fault, not model-not-found.
+    if (VARIANT_UNAVAILABLE.test(both) && req.effort) return { status: 'fail', cls: 'config', detail: `effort variant "${req.effort}" unavailable for ${req.model ?? 'model'}; ${detail}`, retryWithoutEffort: true };
     return failOutcome(classifyFailure(both) ?? 'empty-output', detail);
   },
   prepare: prepareOpencode,

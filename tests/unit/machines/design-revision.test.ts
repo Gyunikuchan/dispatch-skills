@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { stepDesign } from '../../../skills/dispatch/scripts/machines/design.ts';
-import { approval, approveDesignScope, design, hash } from './design.test.ts';
-import { started } from './design-delivery.test.ts';
+import { approval, approveDesignScope, design, hash } from './fixtures/design.ts';
+import { started } from './fixtures/design-delivery.ts';
 import type { DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 
 test('design-revision: completed changed acceptance and dependent increments invalidate', () => {

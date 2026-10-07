@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { implementData, stepImplement, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { classifyDrift, permittedPaths } from '../../../skills/dispatch/scripts/policy/drift.ts';
 import { validateHostEvent } from '../../../skills/dispatch/scripts/core/validate.ts';
-import { approvalState, FP, metadata, host } from './implement-recovery.test.ts';
+import { approvalState, FP, metadata, host } from './fixtures/implement-recovery.ts';
 
 function classify(result: ReturnType<typeof stepImplement>) {
   if (result.state.tag !== 'level-classification') return result;

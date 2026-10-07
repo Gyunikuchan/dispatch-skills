@@ -102,7 +102,7 @@
   "scripts/providers/native.ts": "64981924847c5c7d3d1e9f71c8ee004cbe1f747b52682ce8544541606c8ace8a",
   "scripts/providers/node-process.ts": "50370a4240f85a0032dcd09307af00c1ee5a2ecf71116850b835d5b831c873c5",
   "scripts/providers/opencode-runtime.ts": "0d7d069d79cf9380ebced5ed02ebe929e36777c3d2d5669b799b1725a93c4e06",
-  "scripts/providers/opencode.ts": "bdeb407f4dc681d19ef9fb9fdad8a6e52cd87eeacc070651500dd813b82eca26",
+  "scripts/providers/opencode.ts": "527fee5c25e29eb330343f71be6bc0d1b35536887c59ec25cc4cb87a4e0d0d22",
   "scripts/providers/runner.ts": "0ebbedfd4d8cca0036009a033981b42bf5d1d6a9f10246003d4c6c4b158a4081",
   "scripts/providers/types.ts": "01120f6fd4a4a4f2f2ea469e2dbfe929fdc7be22eb2bff0adf7a9400b29858b2"
 }

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { Effect, Event, RunStartedEvent, Verb } from '../../../skills/dispatch/scripts/core/types.ts';
 import { inferKind, rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { play } from '../../helpers/play.ts';
-import { approvalState, FP, HASH, PLAN } from './implement-recovery.test.ts';
+import { approvalState, FP, HASH, PLAN } from './fixtures/implement-recovery.ts';
 
 const CONFIG = {
   'read-delegates': { codex: { targets: [{ low: { model: 'gpt-5' } }] } },

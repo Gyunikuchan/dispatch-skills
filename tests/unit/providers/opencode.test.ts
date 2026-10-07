@@ -46,6 +46,12 @@ test('`Variant unavailable` retries once without effort', async () => {
   assert.equal(twice.outcome.status, 'fail');
 });
 
+test('`Variant unavailable` with effort classifies as config, not model-not-found', () => {
+  const outcome = opencode.parse(result('', 1, 'Error: Variant unavailable for model'), launchReq());
+  assert.equal(outcome.status === 'fail' && outcome.cls, 'config');
+  assert.match(outcome.status === 'fail' ? outcome.detail : '', /effort variant "high" unavailable/);
+});
+
 test('local endpoint: /models preflight, GPU lock held for the launch, WAN proxy trap with the backend exempt', async () => {
   const events: string[] = [];
   const prepare = {

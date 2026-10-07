@@ -192,6 +192,22 @@ test('audit calibration rejects a root-cause match that names no fixed defect cl
   assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: s.matches, new: bad } }, usage: {} }), /invented/);
 });
 
+test('audit calibration accepts an opportunity claim as recovery only for an efficiency case', async () => {
+  const { mod, workDir, f } = await prepared();
+  const s = scenario(f, ids(defects(f)));
+  for (const c of defects(f)) s.cases[c.id] = [{ ...defectClaim(`${c.id}-1`), verdict: 'opportunity' }];
+  for (const arm of ARMS) {
+    writeClaims(workDir, arm, s.cases);
+    mod.fixClaims(workDir, arm);
+  }
+  const efficiency = defects(f).find((c: Json) => c['category'] === 'efficiency').id;
+  const other = defects(f).find((c: Json) => c['category'] !== 'efficiency').id;
+  const only = (id: string) => Object.fromEntries(Object.entries(s.matches).map(([k, v]) => [k, k === id ? v : { match: null, rationale: 'miss' }]));
+  const summary = mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: only(efficiency), new: only(efficiency) } }, usage: {} });
+  assert.deepEqual(summary.arms.new.recovered, [efficiency]);
+  assert.throws(() => mod.summarize({ fixture: f as never, workDir, adjudication: { arms: { old: only(other), new: only(other) } }, usage: {} }), /not a fixed defect claim/);
+});
+
 test('audit calibration flags an accepted defect claim without a static trace as unsupported', async () => {
   const { mod, workDir, f } = await prepared();
   const s = scenario(f, ids(defects(f)));

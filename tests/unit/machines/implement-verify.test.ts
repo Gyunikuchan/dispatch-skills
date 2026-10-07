@@ -4,8 +4,8 @@ import type { Effect, Event } from '../../../skills/dispatch/scripts/core/types.
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
 import { generatedCommands, commandMappings } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { initialImplement, stepImplement } from '../../../skills/dispatch/scripts/machines/implement.ts';
-import { approvalState, host } from './implement-recovery.test.ts';
-import { launch, start, submit } from './implement-tasks.test.ts';
+import { approvalState, host } from './fixtures/implement-recovery.ts';
+import { launch, start, submit } from './fixtures/implement-tasks.ts';
 
 for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(`rewrite SC1 ordinary evidence ${outcome || 'empty'} cannot falsely complete`, () => {
   const c = approvalState().c;

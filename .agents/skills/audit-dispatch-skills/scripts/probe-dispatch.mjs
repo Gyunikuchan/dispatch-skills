@@ -610,7 +610,8 @@ export function cleanupFixture(fixture, records) {
   if (!fixture) return 'complete';
   if (records.some((record) => record.liveness !== 'exited')) return 'blocked';
   try {
-    fs.rmSync(fixture.dir, { recursive: true, force: true });
+    // NOTE: on Windows an exited child's descendants can hold the fixture cwd briefly (EBUSY/EPERM), so retry.
+    fs.rmSync(fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
     return 'complete';
   } catch { return 'blocked'; }
 }

@@ -7,7 +7,7 @@ import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/
 import type { ScopeAdjustment, ScopeProposal } from '../../../skills/dispatch/scripts/core/types.ts';
 import { initialTasks, taskSignature } from '../../../skills/dispatch/scripts/machines/implement-tasks.ts';
 import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.ts';
-import { approvalState, PLAN, HASH, FP, host } from './implement-recovery.test.ts';
+import { approvalState, PLAN, HASH, FP, host } from './fixtures/implement-recovery.ts';
 
 const revision = { type: 'REVISE' as const, artifact: 'plan' as const, reason: 'blocked-by-plan', evidence: 'stalled check report' };
 function parsed(plan: Record<string, unknown> = PLAN, hash = `sha256:${'b'.repeat(64)}`) {

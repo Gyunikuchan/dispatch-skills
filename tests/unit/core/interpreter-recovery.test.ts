@@ -8,7 +8,7 @@ import { fakePorts, tempDir, type FakePorts } from '../../helpers/fake-ports.ts'
 import { awaitingMachine, fakeHandlers, RUN_STARTED, waveMachine } from './fixtures/machines.ts';
 import { rootMachine } from '../../../skills/dispatch/scripts/machines/root.ts';
 import type { Handlers } from '../../../skills/dispatch/scripts/core/types.ts';
-import { design, hash, run } from '../machines/design.test.ts';
+import { design, hash, run } from '../machines/fixtures/design.ts';
 
 async function startAwaiting(ports: FakePorts) {
   const runDir = path.join(tempDir(), 'runs', '001-ask');

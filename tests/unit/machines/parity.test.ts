@@ -8,10 +8,10 @@ import { reviewMachine } from '../../../skills/dispatch/scripts/machines/review.
 import { implementData, implementMachine, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
 import { beginRevision, stepRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
-import { approvalState } from './implement-recovery.test.ts';
-import { started } from './design-delivery.test.ts';
-import { integration } from './design-integration.test.ts';
-import { hash as designHash, design, run as designRun, approval as designApproval } from './design.test.ts';
+import { approvalState } from './fixtures/implement-recovery.ts';
+import { started } from './fixtures/design-delivery.ts';
+import { integration } from './fixtures/design-integration.ts';
+import { hash as designHash, design, run as designRun, approval as designApproval } from './fixtures/design.ts';
 import { beginDesign, stepDesign, transitions as designTransitions, type DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { beginDesignRevision, stepDesignRevision, transitions as designRevisionTransitions, type DesignRevisionState } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { beginReview, type ReviewState } from '../../../skills/dispatch/scripts/machines/review.ts';

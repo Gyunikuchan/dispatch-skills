@@ -24,7 +24,7 @@ Old-arm adaptation: give the old auditor every path in `briefs.old` from the bas
    ```
 
    Writes `calibration/packets/<arm>/<case>.json` and `calibration/manifest.json` under the work directory. Packets withhold kind, category, severity, answer key and fix commit. Use the same host, model and effort for every case in both arms.
-3. **Run each case once per arm** in a fresh native subagent context: give it the arm's brief, the packet path, and the scope overrides. It returns claims, each `{id, verdict: defect|opportunity|none, claim, evidence}`; `evidence` is the static trace (file:line steps) or deterministic check supporting a `defect`. Store raw output under `calibration/raw/<arm>/<case>.md` and record its usage (input/output tokens, tool calls, wall seconds) or `null` when the host does not expose a metric.
+3. **Run each case once per arm** in a fresh native subagent context: give it one bundled file holding the arm's brief, the packet path, and the scope overrides. Require it to read the bundle first and to start its reply with a `BRIEF:` line naming the brief checks it applied; rerun a case whose reply lacks that line, because auditors otherwise skip the brief and the arms stop differing in method. It returns claims, each `{id, verdict: defect|opportunity|none, claim, evidence}`; `evidence` is the static trace (file:line steps) or deterministic check supporting a `defect`. Store raw output under `calibration/raw/<arm>/<case>.md` and record its usage (input/output tokens, tool calls, wall seconds) or `null` when the host does not expose a metric.
 4. **Fix claims before reveal.** Packets carry opaque ids; map each back through `manifest.json` `packetIds`. Write `calibration/claims/<arm>.json` as `{arm, cases: {<case id>: Claim[]}}` with every case present, then:
 
    ```bash
@@ -32,7 +32,7 @@ Old-arm adaptation: give the old auditor every path in `briefs.old` from the bas
    ```
 
    Do not open `cases.json` answer keys until both arms are fixed. Editing claims afterwards makes summarize refuse.
-5. **Adjudicate by root cause.** Now read the answer keys. For each defect case and arm, set `match` to the claim id whose cause and consequence match `rootCause`, regardless of wording, with a one-line `rationale`; otherwise `match: null`. A claim that names the right file but a different cause is a miss. Write `{arms: {old: {...}, new: {...}}}` to `calibration/adjudication.json` and usage to `calibration/usage.json` as `{old: {...}, new: {...}}`.
+5. **Adjudicate by root cause.** Now read the answer keys. For each defect case and arm, set `match` to the claim id whose cause and consequence match `rootCause`, regardless of wording, with a one-line `rationale`; otherwise `match: null`. Match a `defect` claim, or for an `efficiency` case also an `opportunity` claim, since the briefs keep unmeasured repetition an opportunity. A claim that names the right file but a different cause is a miss. Write `{arms: {old: {...}, new: {...}}}` to `calibration/adjudication.json` and usage to `calibration/usage.json` as `{old: {...}, new: {...}}`.
 6. **Summarize.**
 
    ```bash
