@@ -90,6 +90,25 @@ test('snapshot journals digest references, deduplicates immutable bytes, streams
   assert.equal(fs.readFileSync(file, 'utf8'), 'caller edit');
 });
 
+test('snapshot skips ignored files that vanish before hashing', async () => {
+  const cwd = tempDir(), runDir = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir);
+  fs.writeFileSync(path.join(cwd, 'kept.bin'), 'kept');
+  const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], recoveryFiles: async () => ({ files: [], dirty: [], ignored: ['gone.lock', 'kept.bin'], stash: '', gitDir }) };
+  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, fakePorts(), { runDir, attempt: 1 }))[0]!;
+  assert.equal(result.type, 'SNAPSHOT'); if (result.type !== 'SNAPSHOT') return;
+  assert.deepEqual((result.fingerprint['recovery'] as RecoverySnapshot).ignored.map((row) => row.path), ['kept.bin']);
+});
+
+test('snapshot records a linked ignored directory once instead of files listed through it', async (t) => {
+  const cwd = tempDir(), runDir = tempDir(), outside = tempDir(), gitDir = path.join(cwd, '.git'); fs.mkdirSync(gitDir);
+  fs.mkdirSync(path.join(outside, '.bin')); fs.writeFileSync(path.join(outside, '.bin', 'tool'), 'x');
+  try { fs.symlinkSync(outside, path.join(cwd, 'node_modules'), 'junction'); } catch { t.skip('directory links unavailable'); return; }
+  const git = { toplevel: async () => cwd, indexEntries: async () => '', diffNames: async () => [], fingerprint: async () => ({ head: 'h', index: 'i', worktree: 'w' }), changedSince: async () => [], recoveryFiles: async () => ({ files: [], dirty: [], ignored: ['node_modules/.bin/tool', 'node_modules/other'], stash: '', gitDir }) };
+  const result = (await createSnapshot({ cwd, git })({ kind: 'snapshot', id: 'snapshot.1', since: null }, fakePorts(), { runDir, attempt: 1 }))[0]!;
+  assert.equal(result.type, 'SNAPSHOT'); if (result.type !== 'SNAPSHOT') return;
+  assert.deepEqual((result.fingerprint['recovery'] as RecoverySnapshot).ignored.map((row) => row.path), ['node_modules']);
+});
+
 test('binary deletion and creation report only their respective removed and added budget', () => {
   const binary = Buffer.from([0, 255]).toString('base64');
   assert.deepEqual(lineChanges(binary, null), { added: 0, removed: 1 });

@@ -24,6 +24,15 @@ function safeFile(cwd: string, file: string, ports: Ports): boolean {
   }
   return ports.fs.inspectPath(current)?.kind === 'file';
 }
+function linkedAncestor(cwd: string, file: string, ports: Ports): { path: string; hash: string } | null {
+  if (!safe(file)) return null;
+  const parts = file.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const rel = parts.slice(0, i).join('/'), info = ports.fs.inspectPath(path.join(cwd, rel));
+    if (info?.kind === 'symlink') return { path: rel, hash: hash(info.linkTarget ?? '') };
+  }
+  return null;
+}
 export function lineChanges(oldBase64: string | null, newBase64: string | null): { added: number; removed: number } {
   const decode = (value: string | null) => value === null ? [] : Buffer.from(value, 'base64').toString('utf8').split('\n').filter((line, index, all) => index < all.length - 1 || line !== '');
   if ([oldBase64, newBase64].some((value) => value !== null && Buffer.from(value, 'base64').includes(0))) return { added: newBase64 === null || oldBase64 === newBase64 ? 0 : 1, removed: oldBase64 === null || oldBase64 === newBase64 ? 0 : 1 };
@@ -105,7 +114,9 @@ async function capture(deps: SnapshotDeps, ports: Ports, since: unknown, fingerp
   return {
     repoRoot: await deps.git.toplevel(deps.cwd), contents, contentStore: 'recovery-contents', entries, changed, taskStartFiles: previous && Array.isArray(previous['taskStartFiles']) ? previous['taskStartFiles'] as string[] : metadata.files,
     callerDirty: previous && Array.isArray(previous['callerDirty']) ? previous['callerDirty'] as string[] : metadata.dirty,
-    ignored: metadata.ignored.map((file) => { const absolute = path.resolve(deps.cwd, file), info = ports.fs.inspectPath(absolute); if (info?.kind !== 'symlink' && !safeFile(deps.cwd, file, ports)) throw new Error(`Ignored snapshot path escape: ${file}`); return { path: file, hash: info?.kind === 'symlink' ? hash(info.linkTarget ?? '') : ports.fs.hashFile(absolute) }; }),
+    // NOTE: transient ignored files (daemon locks) can vanish between Git listing and hashing; skip them.
+    // Windows Git lists files through linked directories (worktree node_modules junctions); record the link once instead.
+    ignored: [...new Map(metadata.ignored.flatMap((file) => { const link = linkedAncestor(deps.cwd, file, ports); if (link) return [[link.path, link] as const]; const absolute = path.resolve(deps.cwd, file), info = ports.fs.inspectPath(absolute); if (!info) return []; if (info.kind !== 'symlink' && !safeFile(deps.cwd, file, ports)) throw new Error(`Ignored snapshot path escape: ${file}`); return [[file, { path: file, hash: info.kind === 'symlink' ? hash(info.linkTarget ?? '') : ports.fs.hashFile(absolute) }] as const]; })).values()],
     git: { head: fingerprint.head ?? '', index: fingerprint.index, stash: metadata.stash, gitDir },
     verifiedManifestDirs: verifiedManifests(deps.cwd, metadata.files, ports),
     hashManifestDirs: metadata.files.filter((file) => path.posix.basename(file) === 'skill-hashes.json').map((file) => path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file)),

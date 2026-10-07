@@ -259,14 +259,14 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
     const leaf = split === -1 ? '' : target.slice(split + 1).trim();
     const failureTests = (match[4] ?? '').split(';').map((part) => part.trim()).filter(Boolean);
     if (!isTestPath(file) || !leaf || !failureTests.length || failureTests.some((test) => !/^(?:test|error):\S/.test(test))) {
-      defects.push(`RED-MATRIX ${match[1]} must name an approved test file, leaf test and observed failure identifiers.`);
+      defects.push(`RED-MATRIX ${match[1]} must name an approved test file, one leaf test, and test:<exact failing test name> entries joined by '; '.`);
       continue;
     }
     rows.push({ id: match[1] as string, path: file, leaf, exit: Number(match[3]), tests: failureTests });
   }
   for (const criterion of criteria) {
     const matches = rows.filter((row) => row.id === criterion.id);
-    if (matches.length !== 1) defects.push(`Exactly one RED-MATRIX row required for ${criterion.id}.`);
+    if (matches.length !== 1) defects.push(`Exactly one RED-MATRIX row required for ${criterion.id}; list every failure in that row.`);
     else if (!criterion.changes.includes(matches[0]?.path ?? '')) defects.push(`${criterion.id} RED-MATRIX path is outside its declared Changes paths.`);
     else if (criterion.redException) defects.push(`${criterion.id} has a RED exception and cannot claim a failing-state matrix row.`);
   }

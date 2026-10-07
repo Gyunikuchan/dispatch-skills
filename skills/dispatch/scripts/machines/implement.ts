@@ -527,7 +527,7 @@ function taskBriefInput(c: Context, record: TaskRecord): Readonly<Record<string,
       scopeRequest: { requestId: '<stable id>', source: 'task', task: record.id, baseArtifactHash: c.planHash, writerRationale: '<why expansion is required>', delta: { paths: [], criteria: [], criterionDefinitions: [], obligations: [], commands: [], finalCommands: [], phaseDuties: [], increments: [] } },
       evidence: [
         'CRITERION <SC#> | <one path from that criterion Changes list> | <delivered behavior>',
-        ...(testPaths.length ? ['RED-MATRIX <SC#> | <approved-test-path>:<leaf test> | exit <nonzero> test:<observed failure identifier>'] : []),
+        ...(testPaths.length ? ['RED-MATRIX <SC#> | <approved-test-path>:<leaf test> | exit <nonzero> test:<exact failing test name>[; test:<exact failing test name>]'] : []),
       ],
       concerns: 'required non-empty string array only for DONE_WITH_CONCERNS',
       missingContext: 'required non-empty string array only for NEEDS_CONTEXT', blockers: 'required non-empty string array only for BLOCKED',
@@ -918,7 +918,7 @@ function actualRedDefects(c: Context, rows: readonly RedMatrixRow[], records: re
     if (!results.length) defects.push(`${row.id} has no RED verification result.`);
     if (results.some((record) => record.exit !== 0 && record.loadError)) defects.push(`${row.id} RED run contains a load, syntax, or missing-file error.`);
     const observed = new Set(results.flatMap((record) => record.failedTests));
-    if (!row.tests.every((identifier) => observed.has(identifier))) defects.push(`${row.id} expected failures were not observed: ${row.tests.filter((identifier) => !observed.has(identifier)).join(', ')}.`);
+    if (!row.tests.every((identifier) => observed.has(identifier))) defects.push(`${row.id} expected failures were not observed: ${row.tests.filter((identifier) => !observed.has(identifier)).join(', ')}. Observed: ${[...observed].join('; ') || 'none'}.`);
     if (!results.some((record) => record.exit !== 0 && record.failedTests.some((identifier) => identifier.startsWith('test:')))) defects.push(`${row.id} did not produce a discriminating asserted test failure.`);
     const baselineCommands = criterion?.verify.map((item) => item.command) ?? [];
     const baseline = c.baseline.filter((record) => baselineCommands.includes(record.command) && record.exit !== 0);
