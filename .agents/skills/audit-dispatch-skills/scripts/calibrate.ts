@@ -67,6 +67,11 @@ const writeJson = (file: string, value: unknown) => {
 // SECTION: Validation
 // ============================================================================
 
+// Only controls carry rationale comments, so their presence would reveal the answer; strip them from every packet alike.
+// The packet keeps the source sha256 so provenance stays checkable against the corpus.
+const RATIONALE_LINE = /^[ \t]*(?:\/\/|#|\*)\s*(?:NOTE|WHY|RATIONALE)\b.*(?:\r?\n|$)/gim;
+export const redactRationale = (text: string): string => text.replace(RATIONALE_LINE, '');
+
 /** Throws with every corpus defect: counts, categories, provenance, excerpt hashes and answer keys. */
 export function validateFixture(fixture: CalibrationFixture): void {
   const errors: string[] = [];
@@ -128,7 +133,7 @@ export function prepare(options: PrepareOptions): string[] {
       // NOTE: kind, category, severity, answer and the fix commit are withheld; parent-commit excerpts show pre-fix source.
       writeJson(file, {
         arm, caseId: c.id, scenario: c.scenario, brief: arms[arm],
-        excerpts: c.excerpts.map(({ path: p, commit, blob, lines, sha256: hash, text }) => ({ path: p, commit, blob, lines, sha256: hash, text })),
+        excerpts: c.excerpts.map(({ path: p, commit, blob, lines, sha256: hash, text }) => ({ path: p, commit, blob, lines, sha256: hash, text: redactRationale(text) })),
         constraints: { scope: 'calibration', probes: false, nestedDispatch: false },
         claimsPath: `calibration/claims/${arm}.json`,
       });

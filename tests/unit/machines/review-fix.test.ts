@@ -99,7 +99,7 @@ test('review-consider-opt-in: an answered needs-user CONSIDER finding is offered
   const findings = [finding('R1-F001'), finding('R1-F002', { severity: 'CONSIDER', locus: 'src/b.ts:L1' })];
   const fix = drive([started(), prepared(1), waveDone(1, findings),
     { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'needs-user' } } } as Event,
-    { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F002': 'maybe later' } }]).state;
+    { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F002': { ruling: 'accept', quote: 'maybe later' } } }]).state;
   assert.equal(fix.tag, 'fix');
   const offered = drive([applied(fix), verified(1), prepared(2), waveDone(2, [])], fix).state;
   assert.equal(offered.tag, 'decide-opt-in');

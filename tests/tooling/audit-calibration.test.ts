@@ -107,6 +107,7 @@ test('audit calibration packets withhold answer keys, labels and fix commits fro
       for (const key of ['answer', 'kind', 'category', 'severity']) assert.equal(key in packet, false, `${arm}/${c.id} leaks ${key}`);
       for (const secret of Object.values(c.answer as Record<string, string>)) assert.equal(text.includes(secret), false, `${arm}/${c.id} leaks the answer key`);
       if (c.kind === 'defect') assert.equal(text.includes(c.source.commit), false, `${arm}/${c.id} leaks the fix commit`);
+      for (const excerpt of packet.excerpts) assert.doesNotMatch(excerpt.text, /\/\/\s*NOTE\b/, `${arm}/${c.id} keeps a rationale comment that would reveal the answer`);
     }
   }
 });

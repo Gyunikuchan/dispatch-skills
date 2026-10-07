@@ -14,7 +14,17 @@ for (const outcome of ['pass', 'fail', 'blocked', 'unknown', ''] as const) test(
   assert.equal(result.state.tag, outcome === 'pass' ? 'complete' : 'evidence');
 });
 
-type Fingerprint = { head: string; index: string; worktree: string };
+test('user-waived evidence completes and reports the waiver as a limitation', () => {
+  const c = approvalState().c;
+  const state = { tag: 'evidence' as const, c, purpose: 'final' as const, ids: ['SC1'], verify: [] };
+  const waived = { type: 'EVIDENCE', criteria: { SC1: { outcome: 'waived', evidence: 'deferred to post-delivery smoke run' } } } as const;
+  assert.equal(host(state, waived).state.tag, 'evidence');
+  const result = host(state, { ...waived, waiver: { by: 'user', quote: 'waive SC1' } });
+  assert.equal(result.state.tag, 'complete');
+  assert.deepEqual(result.state.tag === 'complete' && result.state.c.evidence['SC1']?.['waiver'], { by: 'user', quote: 'waive SC1' });
+});
+
+type Fingerprint ={ head: string; index: string; worktree: string };
 type Point = { state: ReturnType<typeof initialImplement>; effect: Effect; fingerprint: Fingerprint };
 type ReviewPoint = Point & { effects: readonly Effect[] };
 const FP: Fingerprint = { head: 'head', index: 'index', worktree: 'tree' };

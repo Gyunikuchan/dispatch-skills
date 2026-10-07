@@ -7,6 +7,8 @@ import { currentPlatform } from '../../skills/dispatch/scripts/lib/platform.ts';
 import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-process.ts';
 import { nodePorts } from '../../skills/dispatch/scripts/core/ports.ts';
 import { DEFAULT_CONFIG_PATH, loadAuditConfig, reserveRun } from '../../.agents/skills/audit-dispatch-skills/scripts/run-state.ts';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 // The .mjs helper has no declarations, so it is loaded the same untyped way as the other audit scripts.
 const probe = await import(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url).href);
 
@@ -99,4 +101,27 @@ test('audit probe interruption preserves partial captures and the fixture', asyn
   assert.match(fs.readFileSync(path.join(out, live[0].capture), 'utf8'), /partial/);
   assert.equal(live[0].cleanup, 'blocked');
   assert.ok(fs.readdirSync(path.join(w.root, 'home')).some((name) => name.startsWith('.dispatch-audit-probe-')));
+});
+
+// A preloaded never-ending timer stands in for a stalled introspection child that keeps the event loop alive.
+function cliWithOpenHandle(args: readonly string[]) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-probe-cli-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  const preload = path.join(repo, 'hold-open.mjs');
+  fs.writeFileSync(preload, 'setInterval(() => {}, 1 << 30);\n');
+  const script = fileURLToPath(new URL('../../.agents/skills/audit-dispatch-skills/scripts/probe-dispatch.mjs', import.meta.url));
+  return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, script, ...args], { cwd: repo, encoding: 'utf8', timeout: 30_000 });
+}
+
+test('audit probe CLI exits after main resolves even while a handle keeps the event loop alive', () => {
+  const res = cliWithOpenHandle(['--run', '2026-01-01-0000', '--discover-only', '--only', 'claude']);
+  assert.equal(res.signal, null, 'CLI was killed by the test timeout instead of exiting');
+  assert.equal(res.status, 0, res.stderr);
+});
+
+test('audit probe CLI exits non-zero after main rejects even while a handle keeps the event loop alive', () => {
+  const res = cliWithOpenHandle(['--run', 'not-a-run-id', '--discover-only']);
+  assert.equal(res.signal, null, 'CLI was killed by the test timeout instead of exiting');
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /--run must be a run id/);
 });

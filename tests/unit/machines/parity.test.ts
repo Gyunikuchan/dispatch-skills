@@ -152,10 +152,10 @@ test('review transitions table matches step', () => {
     [run('review'), prepared, wave([])], [run('review'), ...regression, decide('escalation', 'stop')],
     [run('review'), prepared, wave([f(1)]), rule('reject'), prepared, wave([])],
     [run('review', { fix: false }), prepared, wave([f(1)]), rule('accept')],
-    [run('review', { fix: false }), prepared, wave([f(1)]), rule('needs-user'), decide('needs-user', { 'R1-F001': 'no' })],
+    [run('review', { fix: false }), prepared, wave([f(1)]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review'), prepared, wave([f(1, { category: 'intent' }), f(1, { id: 'R1-F002', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'accept' } } },
-      decide('needs-user', { 'R1-F001': 'keep' }), applied, verified(1), applied, failed],
+      decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'keep' } }), applied, verified(1), applied, failed],
     [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', ['R1-F001']), applied, verified()],
     [run('review'), prepared, wave([f(1, { scope: 'adjacent' })]), rule('accept'), decide('opt-in', [])],
     [run('review'), prepared, wave([f(1), f(1, { id: 'R1-F002', scope: 'adjacent', locus: 'b' })]),
@@ -168,8 +168,8 @@ test('review transitions table matches step', () => {
     [run('review', { ...plan }, 1), prepared, wave([f(1, { severity: 'SHOULD' }), f(1, { id: 'R1-F002', scope: 'adjacent', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } }, applied, parsed()],
     [run('review'), prepared, wave([f(1), f(1, { id: 'R1-F002', locus: 'b' })]),
-      { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject' } } }, decide('needs-user', { 'R1-F001': 'no' })],
-    [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': 'later' })],
+      { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
+    [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
   ]);
 });
 

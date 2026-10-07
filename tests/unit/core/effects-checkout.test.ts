@@ -91,3 +91,16 @@ test('level-journal: scope replacement refuses destination symlink ancestors bef
   assert.equal(writes, 0);
   assert.equal(fs.existsSync(path.join(cwd, 'outside', 'new.ts')), false);
 });
+
+test('task checkout with keep rewinds HEAD to the input without discarding the draft', async () => {
+  const cwd = tempDir(), runDir = path.join(cwd, 'run');
+  fs.mkdirSync(worktreePath(runDir, 'task-t1'), { recursive: true });
+  const ports = fakePorts();
+  const calls: string[] = [];
+  ports.git.run = async (argv) => { calls.push(argv.join(' ')); return argv[0] === 'rev-parse' ? 'input-rev\n' : ''; };
+  const handler = createCheckout({ cwd, links: { create: () => {}, remove: () => {} } });
+  const events = await handler({ kind: 'checkout', id: 'c1', op: 'task', input: { name: 'task-t1', revision: 'input-rev', keep: true, links: [], ignored: [] } }, ports, { runDir } as never) as ResultEvent[];
+  assert.equal(events[0]?.type, 'CHECKOUT_DONE');
+  assert.ok(calls.includes('reset -q --mixed input-rev'));
+  assert.ok(!calls.some((call) => call.startsWith('clean') || call.includes('--hard')));
+});

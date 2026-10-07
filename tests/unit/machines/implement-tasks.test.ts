@@ -283,6 +283,21 @@ test('tasks: failure retry re-pends the failed task with its admission defect an
   assert.match(validateImplement(result.state, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'again' } }) ?? '', /failure limit/);
 });
 
+test('tasks: failure retry keeps the prior draft and rewinds a rejected candidate without discarding files', () => {
+  const sim: Sim = { envelope: (id) => id === 'T1' ? { schemaVersion: 1, status: 'BLOCKED', stage: 'COMPLETE', summary: 'cannot proceed', evidence: [], blockers: ['missing API'] } : defaultEnvelope(id) };
+  let { result, trace } = start(1, sim);
+  result = submit(launch(result, sim, trace), 'T1', sim, trace);
+  result = submit(launch(result, sim, trace), 'T2', sim, trace);
+  assert.equal(result.state.tag, 'failure');
+  const failed = record(result, 'T1')!;
+  const c = (result.state as Extract<ImplementState, { tag: 'failure' }>).c;
+  const withCandidate = { ...c, integration: { ...c.integration!, head: failed.input! }, tasks: { ...c.tasks, T1: { ...failed, candidate: 'rejected-candidate' } } };
+  const before = trace.effects.length;
+  result = host({ state: { ...result.state, c: withCandidate } as ImplementState, effects: [] }, { type: 'DECISION', kind: 'failure', answer: { action: 'retry', rootCause: 'RED row fixed' } }, sim, trace);
+  const checkouts = trace.effects.slice(before).filter((effect) => effect.kind === 'checkout' && effect.op === 'task');
+  assert.deepEqual(checkouts.map((effect) => { const input = effect.kind === 'checkout' ? effect.input as Readonly<Record<string, unknown>> : {}; return [input['revision'], input['keep'], input['reset']]; }), [[failed.input, true, undefined]]);
+});
+
 test('tasks: failure cascade relaunches the next model in a reset worktree without a new attempt', () => {
   const sim: Sim = {};
   let { result, trace } = start(1, sim);
@@ -422,6 +437,11 @@ test('tasks: admission RED matrix requires one asserted failure row per active c
   assert.ok(parseRedMatrix(['RED-MATRIX SC1 | src/a.ts:rejects bad input | exit 1 test:rejects bad input'], criteria).defects.some((defect) => /approved test file/.test(defect)));
   assert.ok(parseRedMatrix([], criteria).defects.some((defect) => /Exactly one/.test(defect)));
   assert.ok(parseRedMatrix([RED_ROW, RED_ROW.replace('rejects bad input', 'other')], criteria).defects.some((defect) => /Exactly one/.test(defect)));
+});
+
+test('tasks: RED matrix names control-character corruption from JSON-escaped backslashes', () => {
+  const criteria = [PLAN.criteria[0]!];
+  assert.ok(parseRedMatrix([RED_ROW.replace('tests/sc1', 'tests\tsc1')], criteria).defects.some((defect) => /control character/.test(defect)));
 });
 
 test('tasks: admission narrows RED to the matrix test file while keeping runner options', () => {

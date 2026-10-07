@@ -12,7 +12,7 @@ import {
 } from '../policy/rounds.ts';
 import {
   answers, asFinding, asNativeCapture, asNativeSlot, asRuling, isAccepted, isRecord, isString, launchMismatch, never, nextId, stay,
-  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Step,
+  type CarriedRejection, type Counters, type Decide, type NativeSlot, type ReviewFinding, type ReviewMode, type ReviewSpec, type Ruling, type Step,
 } from './types.ts';
 
 export const DEFAULT_TIMEOUT_MS = 600_000;
@@ -457,14 +457,25 @@ export function selectedIds(answer: unknown): string[] | null {
   return Array.isArray(list) && list.every((entry) => typeof entry === 'string') ? list : null;
 }
 
+function userRuling(value: unknown): (Ruling & { quote: string }) | null {
+  const ruling = asRuling(value);
+  if (!ruling || ruling.ruling === 'needs-user' || !isRecord(value) || !isString(value['quote']) || !value['quote'].trim()) return null;
+  return { ...ruling, quote: value['quote'].trim() };
+}
+
 function onDecision(state: ReviewState, answer: unknown): S {
   switch (state.tag) {
     case 'decide-escalation': return answer === 'stop' ? stay({ tag: 'escalated', c: state.c, escalation: state.escalation }) : stay(state);
     case 'decide-needs-user': {
-      if (!isRecord(answer)) return stay(state);
+      if (!isRecord(answer) || state.ids.some((id) => !userRuling(answer[id]))) return stay(state);
+      // NOTE: the user's ruling settles the finding, so accepted ones join the fix batch and rejections are not disputed.
       const findings = state.c.findings.map((finding): ReviewFinding => {
-        const text = answer[finding.id];
-        return state.ids.includes(finding.id) && typeof text === 'string' ? { ...finding, resolution: `user: ${text}` } : finding;
+        const ruling = state.ids.includes(finding.id) ? userRuling(answer[finding.id]) : null;
+        if (!ruling) return finding;
+        const ruled = { ...finding, resolution: `user: ${ruling.quote}`, ...(ruling.fix ? { fix: ruling.fix } : {}) };
+        if (ruling.ruling === 'accept') return { ...ruled, status: 'accepted' };
+        if (ruling.ruling === 'downgrade') return { ...ruled, severity: ruling.severity ?? finding.severity, status: 'downgraded' };
+        return { ...ruled, status: 'rejected' };
       });
       return afterRulings({ ...state.c, findings });
     }
@@ -493,8 +504,8 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
       if (state.tag === 'decide-escalation' && event.answer !== 'stop') return 'event.answer: escalation accepts only "stop"';
       if (state.tag === 'decide-needs-user') {
         const answer = event.answer;
-        const missing = state.ids.find((id) => !isRecord(answer) || typeof answer[id] !== 'string');
-        if (missing) return `event.answer.${missing}: expected the user's ruling text`;
+        const missing = state.ids.find((id) => !isRecord(answer) || !userRuling(answer[id]));
+        if (missing) return `event.answer.${missing}: expected { ruling: accept|reject|downgrade, quote: <user's words>, fix? }`;
       }
       if (state.tag === 'decide-opt-in') {
         const selected = selectedIds(event.answer);
@@ -575,7 +586,7 @@ function decide(state: Extract<ReviewState, { tag: 'decide-escalation' | 'decide
     case 'decide-escalation':
       return { kind: 'escalation', question: `Review halted on ${state.escalation.kind} of ${state.escalation.ids.join(', ')}; inform the user and answer stop.`, options: ['stop'], items: state.escalation.ids };
     case 'decide-needs-user':
-      return { kind: 'needs-user', question: 'Ask the user to rule each listed finding; relay { <id>: <ruling text> }.', options: ['<ruling text per finding>'], items: byId(state.ids) };
+      return { kind: 'needs-user', question: 'Ask the user to rule each listed finding; relay { <id>: { ruling: accept|reject|downgrade, quote: <user words>, fix?: { affectedPaths, dependsOn, verification } } }. Accepted in-scope findings enter the fix batch.', options: ['accept', 'reject', 'downgrade'], items: byId(state.ids) };
     case 'decide-opt-in':
       return { kind: 'opt-in', question: 'Offer the user these adjacent and CONSIDER items once; relay the selected ids ([] for none).', options: ['<selected finding ids>'], items: byId(state.items) };
     default: return never(state, 'decide state');

@@ -249,3 +249,22 @@ test('audit probe times out OpenCode introspection that never settles past deadl
   assert.equal(launches.length, 0);
   assert.equal(introspections(), 1);
 });
+
+test('audit probe releases its own unlaunched reservation when the owner exits early', () => {
+  const startedAt = '2026-10-07T00:00:00.000Z';
+  const reserved = { lifecycle: 'running', startedAt, attempts: 0, handle: null, liveness: 'exited', exitConfirmed: false, cause: 'launch reserved' };
+  const probes: Record<string, Record<string, unknown>> = { mine: { ...reserved }, launched: { ...reserved, attempts: 1, liveness: 'alive' }, other: { ...reserved, startedAt: 'earlier' } };
+  for (const id of Object.keys(probes)) probe.releaseReservation(probes, id, startedAt);
+  assert.deepEqual([probes['mine']?.['lifecycle'], probes['mine']?.['liveness']], ['interrupted', 'exited']);
+  assert.equal(probe.priorDisposition(probes['mine']), 'launch');
+  assert.deepEqual([probes['launched']?.['lifecycle'], probes['launched']?.['liveness'], probe.priorDisposition(probes['launched'])], ['interrupted', 'unknown', 'blocked']);
+  assert.equal(probes['other']?.['lifecycle'], 'running', 'another owner\'s reservation is untouched');
+});
+
+test('audit probe interruption keeps carried and unresolved prior records instead of overwriting them', () => {
+  const target = (id: string) => ({ id, provider: 'claude', mode: 'cli', aliases: [] });
+  const carried = { id: 'carried', carried: true, lifecycle: 'complete', liveness: 'exited' };
+  const previous = { carried: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' }, prior: { lifecycle: 'complete', attempts: 1, exitConfirmed: true, liveness: 'exited' } };
+  const out = probe.interruptedRecords([target('carried'), target('prior'), target('fresh')], new Map([['carried', carried]]), previous);
+  assert.deepEqual(out.map((record: { id: string; lifecycle: string }) => [record.id, record.lifecycle]), [['carried', 'complete'], ['fresh', 'interrupted']]);
+});

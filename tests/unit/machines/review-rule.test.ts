@@ -38,9 +38,18 @@ test('review-intent-needs-user: needs-user → decide:needs-user, then the user 
   assert.equal(frame.data['kind'], 'needs-user');
   assert.equal(reviewMachine.awaitOf(state), 'decide');
   assert.match(reviewMachine.validate?.(state, { type: 'DECISION', kind: 'needs-user', answer: {} }) ?? '', /R1-F001/);
-  const done = drive([{ type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': 'keep the current API' } }], state);
+  const done = drive([{ type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'reject', quote: 'keep the current API' } } }], state);
   assert.equal(done.tag, 'settled');
   assert.equal('c' in done && done.c.findings[0]?.resolution, 'user: keep the current API');
+  assert.equal('c' in done && done.c.findings[0]?.status, 'rejected');
+});
+
+test('review-needs-user-accept: a user-accepted finding joins the fix batch', () => {
+  const state = drive([started(), prepared(1), waveDone(1, [finding('R1-F001', { category: 'intent' })]), rulings({ 'R1-F001': { ruling: 'needs-user' } })]);
+  assert.match(reviewMachine.validate?.(state, { type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': 'yes' } }) ?? '', /ruling: accept/);
+  const fix = drive([{ type: 'DECISION', kind: 'needs-user', answer: { 'R1-F001': { ruling: 'accept', quote: 'yes', fix: { affectedPaths: ['src/a.ts'], dependsOn: [], verification: [] } } } }], state);
+  assert.equal(fix.tag, 'fix');
+  assert.deepEqual(fix.tag === 'fix' && fix.clusters.flatMap((cluster) => cluster.findingIds), ['R1-F001']);
 });
 
 test('review-recorded-decision: a finding contradicting a recorded decision is host-ruled reject and recorded with its reason', () => {

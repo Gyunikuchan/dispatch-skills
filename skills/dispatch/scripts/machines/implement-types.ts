@@ -251,6 +251,8 @@ export function parseRedMatrix(evidence: readonly string[], criteria: readonly P
   const rows: RedMatrixRow[] = [];
   const defects: string[] = [];
   for (const line of source) {
+    // NOTE: a Windows path written into JSON as `tests\tooling` decodes `\t` to a tab; name the cause instead of a vague mismatch.
+    if (/[\u0000-\u001f]/.test(line)) { defects.push(`RED-MATRIX row contains a control character (a JSON-escaped backslash such as \\t?); use forward-slash paths: ${redactOneLine(line)}`); continue; }
     const match = /^RED-MATRIX\s+(SC[1-9]\d*)\s*\|\s*([^|]+?)\s*\|\s*exit\s+([1-9]\d*)\s+((?:test|error):.+)$/i.exec(line);
     if (!match) { defects.push(`Malformed RED-MATRIX row: ${line}`); continue; }
     const target = match[2]?.trim() ?? '';

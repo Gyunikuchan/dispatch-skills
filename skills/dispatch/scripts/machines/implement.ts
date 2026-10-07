@@ -463,6 +463,10 @@ function schedule(c: Context): S {
   if (next && activeTasks(c.tasks).length < writeConcurrency(c.run.config)) {
     const record = c.tasks[next.id] as TaskRecord;
     const integration = c.integration!;
+    // NOTE: a retried draft may sit on its rejected candidate commit; rewind HEAD to the input but keep the files.
+    if (record.preserveDraft && record.worktree && record.input === integration.head && record.candidate) {
+      return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false }), 'task', 'task', { name: taskWorktreeName(record), revision: record.input, keep: true, links: integration.links, ignored: integration.ignored }, next.id);
+    }
     if (record.preserveDraft && record.worktree) return record.input === integration.head ? captureTaskBaseline(c, next.id, true) : rebaseTaskDraft(c, next.id);
     return checkout(withTask(c, next.id, { attempt: record.attempt + 1, modelIndex: 0, handle: null, brief: null, candidate: null, integrated: null, redRows: [], preserveDraft: false }), 'task', 'task',
       { name: worktreeName('task', next.id), revision: integration.head, reset: true, links: integration.links, ignored: integration.ignored }, next.id);
@@ -860,7 +864,7 @@ function failVerify(state: Extract<ImplementState, { tag: 'task-verify' }>, reas
 function retryAfterFailure(c: Context): S {
   if (c.phase === 'delivered') return startGeneratedOrFinal(c);
   if (c.phase === 'setup') return !c.plan ? parsePlan(c, 'initial') : c.approval ? beginPostApproval(c) : beginBaseline(c);
-  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const, amendment: null } : record]));
+  const tasks = Object.fromEntries(Object.entries(c.tasks).map(([id, record]) => [id, record.status === 'failed' && record.failures < MAX_WRITE_ATTEMPTS ? { ...record, status: 'pending' as const, amendment: null, preserveDraft: record.worktree !== null } : record]));
   return beginTasks({ ...c, tasks });
 }
 
@@ -991,7 +995,7 @@ function finishEvidence(c: Context, verify: readonly VerifyRecord[]): S {
   const plan = effectivePlan(c);
   const stale = plan.criteria.filter((criterion) => {
     const item = c.evidence[criterion.id];
-    return !item || item['outcome'] !== 'pass' || item.planHash !== c.planHash || item.mutationEpoch < (c.criterionMutation[criterion.id] ?? 0);
+    return !item || !(item['outcome'] === 'pass' || item['outcome'] === 'waived' && isRecord(item['waiver']) && item['waiver']['by'] === 'user') || item.planHash !== c.planHash || item.mutationEpoch < (c.criterionMutation[criterion.id] ?? 0);
   });
   if (stale.length) return stay({ tag: 'evidence', c, purpose: 'final', ids: stale.map((criterion) => criterion.id), verify });
   const summary = `${plan.criteria.length}/${plan.criteria.length} criteria evidenced; ${Object.keys(c.records).filter((key) => !key.startsWith('__')).length} verification records current.`;
@@ -1188,7 +1192,7 @@ function applyImplement(state: ImplementState, event: Event): S {
     case 'tasks': case 'task-brief': case 'task-prewrite-snapshot': case 'task-envelope': case 'task-verify': case 'delivered-snapshot': return stepTasks(state, event);
     case 'evidence': {
       if (event.type !== 'EVIDENCE') return stay(state);
-      const c = recordEvidence(state.c, state.ids, event.criteria);
+      const c = recordEvidence(state.c, state.ids, event.criteria, event.waiver);
       if (!c) return stay(state);
       return finishEvidence(c, state.verify);
     }
@@ -1331,7 +1335,7 @@ function stepRecovery(state: Extract<ImplementState, { tag: 'checking-host-event
       const hotfixDecision = (state.parent.tag === 'baseline-decision' || state.parent.tag === 'failure') && state.parked.type === 'DECISION' && failureAnswer(state.parked.answer)?.action === 'hotfix';
       if (hotfixDecision) return applyParked(state.parent, state.c, state.parked);
       if (state.parent.tag === 'hotfix-write') return applyParked(state.parent, state.c, state.parked);
-      const classified = classifyDrift({ awaiting, ctx: { stagePaths: scopePaths(state.c), testPaths: redTestPaths(state.c), testsOnly: false, artifactPath: artifactRelative(event.fingerprint, state.c.planPath) }, changed, callerDirty: recoverySnapshot(state.c.startFingerprint)?.callerDirty ?? [], hashManifestDirs: metadata?.hashManifestDirs ?? [] });
+      const classified = classifyDrift({ awaiting, ctx: { stagePaths: scopePaths(state.c), testPaths: redTestPaths(state.c), testsOnly: false, artifactPath: artifactRelative(event.fingerprint, state.c.planPath), sessionDir: typeof state.c.run.overrides['sessionDir'] === 'string' ? artifactRelative(event.fingerprint, state.c.run.overrides['sessionDir']) : null }, changed, callerDirty: recoverySnapshot(state.c.startFingerprint)?.callerDirty ?? [], hashManifestDirs: metadata?.hashManifestDirs ?? [] });
       classified.drift.push(...classified.autoAdopt.filter((file) => !(metadata?.verifiedManifestDirs ?? []).includes(file.slice(0, -'skill-hashes.json'.length).replace(/\/$/, ''))));
       classified.autoAdopt = classified.autoAdopt.filter((file) => !classified.drift.includes(file));
       const adoptedPaths = [...new Set([...state.c.adoptedPaths, ...classified.autoAdopt])];
@@ -1475,6 +1479,7 @@ export function implementData(state: ImplementState): Readonly<Record<string, un
     }
     case 'evidence': return {
       purpose: state.purpose,
+      waiver: 'Only for a criterion the user explicitly waived: outcome "waived" plus top-level waiver { by: "user", quote: <user words> }.',
       summary: state.verify.map((row) => ({ command: row.command, exit: row.exit, logPath: row.logPath, diagnostic: row.diagnostic, status: row.status, failureId: row.failureId })),
       criteria: state.ids.map((id) => {
         const criterion = effectivePlan(state.c).criteria.find((entry) => entry.id === id);
@@ -1593,7 +1598,7 @@ export function validateImplement(state: ImplementState, event: HostEvent): stri
     if (state.c.phase === 'tasks' && answer.action === 'retry' && Object.values(state.c.tasks).some((task) => task.status === 'failed') && !Object.values(state.c.tasks).some((task) => task.status === 'failed' && task.failures < MAX_WRITE_ATTEMPTS)) return `event.answer: every failed task exhausted the ${MAX_WRITE_ATTEMPTS}-failure limit; revise or stop.`;
     if (answer.action === 'manual-complete' && !recordEvidence(state.c, effectivePlan(state.c).criteria.map((row) => row.id), answer.criteria, { by: 'user', quote: answer.quote })) return 'event.criteria: manual completion needs pass or user-waived evidence for every criterion.';
   }
-  if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}.`;
+  if (state.tag === 'evidence' && event.type === 'EVIDENCE' && !recordEvidence(state.c, state.ids, event.criteria, event.waiver)) return `event.criteria: provide one bound evidence item for each of ${state.ids.join(', ')}; outcome "waived" needs event.waiver { by: "user", quote }.`;
   return null;
 }
 

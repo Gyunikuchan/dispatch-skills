@@ -124,7 +124,12 @@ async function probe({ opts, repoRoot, workDir, rel, outDir, manifest, limits, p
     try {
       ({ live, fixture, interrupted } = await launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, limits, ports, signal, home }));
     } finally {
-      if (claim.owner) updateRun(workDir, (m) => { if (m.probeOwner?.token === claim.owner.token) m.probeOwner.finishedAt = new Date(ports.clock.now()).toISOString(); });
+      if (claim.owner) updateRun(workDir, (m) => {
+        if (m.probeOwner?.token !== claim.owner.token) return;
+        m.probeOwner.finishedAt = new Date(ports.clock.now()).toISOString();
+        // A throw before the final persist leaves this owner's reservations running; release them so budgets and finalize see an outcome.
+        for (const target of claim.targets) releaseReservation(m.probes, target.id, claim.owner.startedAt);
+      });
     }
   }
 
@@ -157,7 +162,7 @@ async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, 
   const first = await Promise.race([runs, aborted]);
   if (first === 'aborted') {
     interrupted = true;
-    live = targets.map((target) => interruptRecord(target, latest.get(target.id)));
+    live = interruptedRecords(targets, latest, previous);
   } else {
     const failed = first.find((s) => s.status === 'rejected');
     if (failed) throw failed.reason;
@@ -547,6 +552,24 @@ export async function checkDenylist(spec, target, req, runnerPorts, nonce) {
   const payloadExcluded = payloads.every((payload) => !payload.includes(nonce));
   const reached = payloads.length > 0;
   return { launches: 0, payloadExcluded, behaviour: !reached ? 'aborted' : payloadExcluded ? 'excluded' : 'not excluded', detail };
+}
+
+/** Marks a reservation this owner left `running`; a launched child without a confirmed exit stays blocked. */
+export function releaseReservation(probes, id, startedAt) {
+  const record = probes[id];
+  if (record?.lifecycle !== 'running' || record.startedAt !== startedAt) return;
+  const launched = (record.attempts ?? 0) > 0 || Boolean(record.handle) || record.liveness !== 'exited';
+  probes[id] = { ...record, lifecycle: 'interrupted', liveness: launched ? 'unknown' : 'exited', exitConfirmed: launched ? false : record.exitConfirmed, cause: [record.cause, 'probe exited before recording an outcome'].filter(Boolean).join('; ') };
+}
+
+/** Carried and not-yet-resolved prior records stay as recorded; only this run's targets become interrupted. */
+export function interruptedRecords(targets, latest, previous) {
+  return targets.flatMap((target) => {
+    const record = latest.get(target.id);
+    if (record?.carried) return [record];
+    if (!record && priorDisposition(previous[target.id]) !== 'launch') return [];
+    return [interruptRecord(target, record)];
+  });
 }
 
 function interruptRecord(target, latest) {

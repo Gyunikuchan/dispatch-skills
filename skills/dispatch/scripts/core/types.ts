@@ -207,7 +207,7 @@ export type HostEvent =
   | WriteEnvelopeEvent
   | WriteFailureEvent
   | WriteCancelledEvent
-  | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence> }
+  | { type: 'EVIDENCE'; criteria: Record<CriterionId, CriterionEvidence>; waiver?: { by: 'user'; quote: string } }
   | { type: 'DECISION'; kind: DecideKind; answer: DecisionAnswer }
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
 

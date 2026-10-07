@@ -154,7 +154,7 @@ export const HOST_EVENT_SHAPES: { readonly [K in HostEventType]: Validator<Recor
     obj({ type: lit('WRITE_FAILED'), model: str, kind: str, reason: str, task: str, attempt: positiveInt, signature: str, handle: str }),
   ),
   WRITE_CANCELLED: obj({ type: lit('WRITE_CANCELLED'), task: str, attempt: positiveInt, signature: str, handle: str, reason: str }),
-  EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload) }),
+  EVIDENCE: obj({ type: lit('EVIDENCE'), criteria: rec(payload), waiver: opt(obj({ by: lit('user'), quote: nonBlank })) }),
   DECISION: oneOf(
     obj({ type: lit('DECISION'), kind: lit('level-classification'), answer: obj({ evaluatedLevel: lit('low', 'medium', 'high'), rationale: boundedText(500), gateScope: levelGateScope }) }),
     obj({ type: lit('DECISION'), kind: lit('level-recommendation'), answer: obj({ choice: lit('adopt', 'retain'), quote: nonBlank }) }),

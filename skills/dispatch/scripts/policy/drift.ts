@@ -8,6 +8,8 @@ export type DriftContext = {
   testPaths: readonly string[];
   testsOnly: boolean;
   artifactPath: string | null;
+  /** Repo-relative session folder; driver-rendered walkthroughs there are never drift. */
+  sessionDir?: string | null;
 };
 
 const unreachable = (value: never): never => { throw new Error(`unhandled await: ${String(value)}`); };
@@ -38,6 +40,10 @@ export type DriftInput = {
 
 export type DriftClassification = { permitted: string[]; callerDirty: string[]; autoAdopt: string[]; drift: string[] };
 
+// NOTE: the driver re-renders walkthroughs after each send, so they change between host events without any host write.
+const driverOwned = (file: string, sessionDir: string | null | undefined): boolean =>
+  sessionDir != null && /\.walkthrough\.md$/.test(file) && within(file, slash(sessionDir).replace(/\/+$/, ''));
+
 const HASHES = 'skill-hashes.json';
 const within = (file: string, dir: string) => dir === '' || file.startsWith(`${dir}/`);
 
@@ -60,7 +66,7 @@ export function classifyDrift(input: DriftInput): DriftClassification {
   const out: DriftClassification = { permitted: [], callerDirty: [], autoAdopt: [], drift: [] };
   for (const raw of input.changed) {
     const file = slash(raw);
-    if (allowed.has(file)) out.permitted.push(file);
+    if (allowed.has(file) || driverOwned(file, input.ctx.sessionDir)) out.permitted.push(file);
     else if (dirty.has(file)) out.callerDirty.push(file);
     else if (hashes.has(file)) out.autoAdopt.push(file);
     else out.drift.push(file);

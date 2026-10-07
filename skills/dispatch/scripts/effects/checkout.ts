@@ -51,8 +51,9 @@ function unlink(deps: CheckoutDeps, ports: Ports, root: string, links: readonly 
 }
 
 /** Creates or reuses a detached worktree at `revision`; a reused tree is reset when requested. */
-async function worktree(deps: CheckoutDeps, ports: Ports, root: string, revision: string, reset: boolean): Promise<void> {
+async function worktree(deps: CheckoutDeps, ports: Ports, root: string, revision: string, reset: boolean, keep = false): Promise<void> {
   if (ports.fs.inspectPath(root)?.kind === 'directory') {
+    if (keep) { await ports.git.run(['reset', '-q', '--mixed', revision], root); return; }
     if (reset) { await ports.git.run(['reset', '-q', '--hard', revision], root); await ports.git.run(['clean', '-q', '-fd'], root); }
     return;
   }
@@ -303,7 +304,7 @@ export function createCheckout(deps: CheckoutDeps): Handler<CheckoutEffect> {
         case 'init': return done('init', await init(deps, ports, ctx.runDir));
         case 'task': {
           const root = worktreePath(ctx.runDir, text(input['name']));
-          await worktree(deps, ports, root, text(input['revision']), input['reset'] === true);
+          await worktree(deps, ports, root, text(input['revision']), input['reset'] === true, input['keep'] === true);
           prepare(deps, ports, root, input);
           return done('task', { path: root, revision: await head(ports, root) });
         }

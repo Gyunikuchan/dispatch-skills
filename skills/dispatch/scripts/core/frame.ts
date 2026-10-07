@@ -62,7 +62,7 @@ export function awaitEnvelopes(current: Await, data: Row): HostEvent[] {
       const kind = data['kind'] as Extract<HostEvent, { type: 'DECISION' }>['kind'];
       const items = Array.isArray(data['items']) ? data['items'] : [];
       const answer = kind === 'opt-in' ? [] : kind === 'drift' ? Object.fromEntries(items.map((item) => [String(item), 'stop']))
-        : kind === 'needs-user' ? typeof items[0] === 'string' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' } : Object.fromEntries(rows(items).map((item) => [String(item['id']), '<actual user ruling>']))
+        : kind === 'needs-user' ? typeof items[0] === 'string' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' } : Object.fromEntries(rows(items).map((item) => [String(item['id']), { ruling: 'accept', quote: '<actual user quote>' }]))
         : kind === 'concerns' ? { decision: 'stop', by: 'user', quote: '<actual user quote>' }
         : kind === 'level-classification' ? { evaluatedLevel: 'medium', rationale: '<concrete scope and risk evidence>', gateScope: data['gateScope'] }
         : kind === 'level-recommendation' ? { choice: 'adopt', quote: '<actual user quote>' }

@@ -40,3 +40,15 @@ test('drift: nothing is permitted while deciding', () => {
   const result = classifyDrift({ awaiting: 'decide', ctx, changed: ['skills/foo/lib.mjs'], callerDirty: [], hashManifestDirs: ['skills/foo'] });
   assert.deepEqual(result.drift, ['skills/foo/lib.mjs']);
 });
+
+test('drift: driver-rendered walkthroughs in the session folder are never drift', () => {
+  const result = classifyDrift({
+    awaiting: 'rule',
+    ctx: { ...ctx, sessionDir: '.scratch\\run' },
+    changed: ['.scratch/run/slug.walkthrough.md', '.scratch/run/notes.md', 'other/slug.walkthrough.md'],
+    callerDirty: [],
+    hashManifestDirs: [],
+  });
+  assert.deepEqual(result.permitted, ['.scratch/run/slug.walkthrough.md']);
+  assert.deepEqual(result.drift, ['.scratch/run/notes.md', 'other/slug.walkthrough.md']);
+});
