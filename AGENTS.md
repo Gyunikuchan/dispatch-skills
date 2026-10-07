@@ -17,7 +17,7 @@ The `dispatch` skill should support high-confidence development across native ag
 
 ## Communication
 
-Follow ASD-STE100 (Simplified Technical English) in agent communication. Be terse and high-signal; omit filler and hedging, and preserve exact terms, code, and units. Use complete prose for security warnings, destructive-action guidance, documentation, commits, and PRs. Link to artifacts or run logs rather than copying long traces.
+Follow ASD-STE100 (Simplified Technical English) in agent communication. Be terse and high-signal; omit filler and hedging, and preserve exact terms, code, and units. Link to artifacts or run logs rather than copying long traces.
 
 ## Clarify Material Ambiguity
 
