@@ -2,7 +2,7 @@
 // Pure reducer; rounds policy lives in policy/rounds.ts. Parents embed `ReviewState` and forward events via `stepReview`.
 
 import type { Effect, Event, FindingId, HostEvent, Level, Machine, RunStartedEvent } from '../core/types.ts';
-import { clusterFixes, type FixCluster } from '../domain/fix-clustering.ts';
+import { clusterFixes, orderFixClusters, splitFailedCluster, type FixCluster } from '../domain/fix-clustering.ts';
 import { findingId } from '../domain/report.ts';
 import type { Finding, ResolutionRound, ResolutionStatus, ReviewKind, ReviewerView, RosterSlot } from '../domain/types.ts';
 import { resolveRoster, type PhasePolicy, type Pins, type ReadDelegate } from '../policy/roster.ts';
@@ -144,6 +144,8 @@ export type ReviewCtx = {
   rows: readonly Row[];
   drafts: readonly Finding[];
   priorManifest?: string;
+  targetManifest?: string;
+  fixCandidate?: string;
   waveBinding?: { waveKey: string; attempt: number; roster: readonly Row[] };
 };
 
@@ -151,6 +153,7 @@ export type Pass = 'main' | 'opt-in';
 export type Escalation = { kind: 'regression' | 'deadlock'; ids: readonly FindingId[] };
 
 export type ReviewState =
+  | { tag: 'target-check'; c: ReviewCtx; before: Exclude<ReviewState, { tag: 'target-check' }>; pending: Event; effectId: string }
   | { tag: 'booting'; counters: Counters }
   | { tag: 'prepare'; c: ReviewCtx }
   | { tag: 'wave'; c: ReviewCtx; phase: 'cli' | 'native' }
@@ -158,7 +161,7 @@ export type ReviewState =
   | { tag: 'rule'; c: ReviewCtx }
   | { tag: 'decide-needs-user'; c: ReviewCtx; ids: readonly FindingId[] }
   | { tag: 'fix'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; defects: readonly string[] }
-  | { tag: 'fix-verify'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass }
+  | { tag: 'fix-verify'; c: ReviewCtx; clusters: readonly FixCluster[]; pass: Pass; pendingClusters?: readonly FixCluster[]; exhausted?: readonly FindingId[] }
   | { tag: 'decide-escalation'; c: ReviewCtx; escalation: Escalation }
   | { tag: 'decide-opt-in'; c: ReviewCtx; items: readonly FindingId[] }
   | { tag: 'settled'; c: ReviewCtx; exit: ExitSummary; followUps: readonly string[] }
@@ -302,6 +305,7 @@ export function validateRulings(c: ReviewCtx, rulings: Readonly<Record<string, u
     const ruling = asRuling(raw);
     if (!ruling) return `event.rulings.${finding.id}.ruling: expected accept|reject|downgrade|needs-user`;
     if (finding.category === 'intent' && ruling.ruling !== 'needs-user') return `event.rulings.${finding.id}: intent finding must be ruled needs-user, got ${ruling.ruling}`;
+    if ((ruling.ruling === 'reject' || ruling.ruling === 'downgrade') && !ruling.reason?.trim()) return `event.rulings.${finding.id}.reason: expected a nonblank reason for ${ruling.ruling}`;
   }
   return null;
 }
@@ -360,40 +364,64 @@ function enterFix(c: ReviewCtx, findings: readonly ReviewFinding[], pass: Pass):
 
 export function validateFixes(clusters: readonly FixCluster[], results: readonly unknown[]): string | null {
   const known = new Set(clusters.map((cluster) => cluster.clusterId));
+  const seen = new Set<string>();
   for (const [index, value] of results.entries()) {
     if (!isRecord(value) || !isString(value['clusterId'])) return `event.clusters[${index}].clusterId: expected a cluster id`;
     if (!known.has(value['clusterId'])) return `event.clusters[${index}].clusterId: unknown cluster ${value['clusterId']}`;
+    if (seen.has(value['clusterId'])) return `event.clusters[${index}].clusterId: duplicate cluster ${value['clusterId']}`;
+    seen.add(value['clusterId']);
+    if (value['status'] !== undefined && value['status'] !== 'applied' && value['status'] !== 'failed') return `event.clusters[${index}].status: expected applied|failed`;
   }
   const missing = clusters.find((cluster) => !results.some((value) => isRecord(value) && value['clusterId'] === cluster.clusterId));
-  return missing ? `event.clusters: missing result for ${missing.clusterId}` : null;
+  if (missing) return `event.clusters: missing result for ${missing.clusterId}`;
+  const failed = new Set(results.filter((value) => isRecord(value) && value['status'] === 'failed').map((value) => (value as Row)['clusterId']));
+  const blocked = new Set(failed);
+  for (const cluster of orderFixClusters(clusters)) if (cluster.dependsOnClusters.some((id) => blocked.has(id))) blocked.add(cluster.clusterId);
+  const invalid = clusters.find((cluster) => blocked.has(cluster.clusterId) && !failed.has(cluster.clusterId));
+  return invalid ? `event.clusters: ${invalid.clusterId} cannot be applied while a prerequisite failed` : null;
 }
 
 function onFixesApplied(state: Extract<ReviewState, { tag: 'fix' }>, results: readonly unknown[]): S {
   const failedIds = new Set(results.filter((value) => isRecord(value) && value['status'] === 'failed').map((value) => (value as Row)['clusterId']));
-  // NOTE: a failed cluster must not settle as fixed; stay in fix so the host retries every cluster (applies are idempotent).
-  if (failedIds.size) {
-    const defects = state.clusters.filter((cluster) => failedIds.has(cluster.clusterId)).map((cluster) => `cluster ${cluster.clusterId} failed to apply`);
-    return stay({ tag: 'fix', c: state.c, clusters: state.clusters, pass: state.pass, defects });
-  }
+  const failed = state.clusters.filter((cluster) => failedIds.has(cluster.clusterId));
+  const retry = retryFailed(state.c, failed);
+  const defects = failed.map((cluster) => `cluster ${cluster.clusterId} failed to apply`);
   const applied = state.clusters.filter((cluster) => !failedIds.has(cluster.clusterId));
-  const fixedIds = new Set(applied.flatMap((cluster) => cluster.findingIds));
+  if (!applied.length) return resumeFix(state.c, retry.clusters, retry.exhausted, state.pass, defects);
   const c0 = state.c;
-  const findings = c0.findings.map((finding): ReviewFinding => (fixedIds.has(finding.id) ? { ...finding, status: 'fixed' } : finding));
-  const fixes = [...c0.fixes.filter((fix) => !fixedIds.has(fix.id)), ...[...fixedIds].map((id) => ({ id, round: c0.round }))];
-  const base = { ...c0, findings, fixes };
+  const recovery = { clusters: applied, pass: state.pass, pendingClusters: retry.clusters, exhausted: retry.exhausted };
   if (c0.spec.kind === 'code') {
     const commands = [...new Set(applied.flatMap((cluster) => cluster.verification))].map((command) => ({ command }));
-    const { c, effect } = withEffect(base, 'verify', (id) => ({ kind: 'verify', id, purpose: 'fix-verify', commands }));
-    return { state: { tag: 'fix-verify', c, clusters: state.clusters, pass: state.pass }, effects: [effect] };
+    const { c, effect } = withEffect(c0, 'verify', (id) => ({ kind: 'verify', id, purpose: 'fix-verify', commands }));
+    return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
   }
   const artifact = c0.spec.kind;
-  const { c, effect } = withEffect(base, 'parse-artifact', (id) => ({ kind: 'parse-artifact', id, path: c0.spec.target, artifact }));
-  return { state: { tag: 'fix-verify', c, clusters: state.clusters, pass: state.pass }, effects: [effect] };
+  const { c, effect } = withEffect(c0, 'parse-artifact', (id) => ({ kind: 'parse-artifact', id, path: c0.spec.target, artifact }));
+  return { state: { tag: 'fix-verify', c, ...recovery }, effects: [effect] };
+}
+
+function retryFailed(c: ReviewCtx, clusters: readonly FixCluster[]) {
+  const retries = clusters.map((cluster) => ({ cluster, split: splitFailedCluster(cluster, { runId: c.path, failed: null, attemptsConsumed: 1 }) }));
+  return { clusters: retries.flatMap(({ split }) => split.clusters), exhausted: retries.filter(({ split }) => !split.canProceed).flatMap(({ cluster }) => cluster.findingIds) };
+}
+
+function resumeFix(c: ReviewCtx, clusters: readonly FixCluster[], exhausted: readonly FindingId[], pass: Pass, defects: readonly string[]): S {
+  if (exhausted.length) return stay({ tag: 'failed', c, detail: `fix-attempts-exhausted: ${exhausted.join(', ')}; pending: ${clusters.flatMap((cluster) => cluster.findingIds).join(', ') || 'none'}; verified fixes retained` });
+  if (clusters.length) return stay({ tag: 'fix', c, clusters: orderFixClusters(clusters), pass, defects });
+  return pass === 'opt-in' ? settle(c) : decideNext(c);
 }
 
 function afterFixVerify(state: Extract<ReviewState, { tag: 'fix-verify' }>, defects: readonly string[]): S {
-  if (defects.length) return stay({ tag: 'fix', c: state.c, clusters: state.clusters, pass: state.pass, defects });
-  return state.pass === 'opt-in' ? settle(state.c) : decideNext(state.c);
+  const pending = state.pendingClusters ?? [];
+  const exhausted = state.exhausted ?? [];
+  if (defects.length) {
+    const retry = retryFailed(state.c, state.clusters);
+    return resumeFix(state.c, [...pending, ...retry.clusters], [...exhausted, ...retry.exhausted], state.pass, defects);
+  }
+  const fixedIds = new Set(state.clusters.flatMap((cluster) => cluster.findingIds));
+  const c = { ...state.c, findings: state.c.findings.map((finding): ReviewFinding => fixedIds.has(finding.id) ? { ...finding, status: 'fixed' } : finding),
+    fixes: [...state.c.fixes.filter((fix) => !fixedIds.has(fix.id)), ...[...fixedIds].map((id) => ({ id, round: state.c.round }))] };
+  return resumeFix(c, pending, exhausted, state.pass, []);
 }
 
 // SECTION: Next round and exit
@@ -515,6 +543,7 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
       }
       return null;
     }
+    case 'target-check': return 'event: review target check is pending';
     case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty':
       return null;
     default: return never(state, 'review state');
@@ -524,6 +553,37 @@ export function validateReview(state: ReviewState, event: HostEvent): string | n
 // SECTION: Step
 
 export function stepReview(state: ReviewState, event: Event): S {
+  if (state.tag === 'target-check') {
+    if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'failed', c: state.c, detail: event.detail });
+    if (event.type !== 'REVIEW_TARGET_CHECKED' || !answers(event, state.effectId)) return stay(state);
+    const before = state.before;
+    if (!('c' in before)) return stay({ tag: 'failed', c: state.c, detail: 'target-changed: missing review context' });
+    const verifying = before.tag === 'fix-verify';
+    const verified = verifying && ((state.pending.type === 'VERIFY_DONE' && state.pending.results.every((row) => row['exit'] === 0))
+      || (state.pending.type === 'ARTIFACT_PARSED' && state.pending.defects.length === 0));
+    const candidate = state.pending.type === 'FIXES_APPLIED' || (verifying && !verified);
+    const c: ReviewCtx = { ...before.c, counters: state.c.counters,
+      ...(candidate ? { fixCandidate: event.manifestPath } : { targetManifest: event.manifestPath }) };
+    if (verified) delete c.fixCandidate;
+    return stepReviewUnchecked({ ...before, c }, state.pending);
+  }
+  const manifest = 'c' in state ? state.c.fixCandidate ?? state.c.targetManifest ?? state.c.priorManifest : undefined;
+  const consumes = (state.tag === 'native' && event.type === 'NATIVE_RESULTS' && validateNativeResults(event.slots, state.slots) === null)
+    || (state.tag === 'wave' && (event.type === 'WAVE_DONE' || (event.type === 'WAVE_STARTED' && 'completed' in event)) && answers(event, state.c.effectId))
+    || (state.tag === 'rule' && event.type === 'RULINGS' && validateRulings(state.c, event.rulings) === null)
+    || (state.tag === 'fix' && event.type === 'FIXES_APPLIED' && validateFixes(state.clusters, event.clusters) === null)
+    || (state.tag === 'fix-verify' && (event.type === 'VERIFY_DONE' || event.type === 'ARTIFACT_PARSED') && answers(event, state.c.effectId))
+    || ((state.tag === 'decide-needs-user' || state.tag === 'decide-opt-in') && event.type === 'DECISION' && event.kind === DECIDE_KIND[state.tag] && validateReview(state, event) === null);
+  if (manifest && consumes && 'c' in state) {
+    const next = nextId(state.c.counters, state.c.path, 'check-review-target');
+    const c = { ...state.c, counters: next.counters };
+    const allowedPaths = state.tag === 'fix' ? state.clusters.flatMap((cluster) => cluster.paths) : [];
+    return { state: { tag: 'target-check', c, before: state, pending: event, effectId: next.id }, effects: [{ kind: 'check-review-target', id: next.id, review: c.spec, manifestPath: manifest, allowedPaths }] };
+  }
+  return stepReviewUnchecked(state, event);
+}
+
+function stepReviewUnchecked(state: Exclude<ReviewState, { tag: 'target-check' }>, event: Event): S {
   if (event.type === 'EFFECT_FAILED' && 'c' in state && answers(event, state.c.effectId)
     && (state.tag === 'prepare' || state.tag === 'wave' || state.tag === 'fix-verify')) {
     return stay({ tag: 'failed', c: state.c, detail: `${event.cls}: ${event.detail}` });
@@ -533,7 +593,7 @@ export function stepReview(state: ReviewState, event: Event): S {
     case 'prepare':
       if (event.type !== 'REVIEW_PREPARED' || !answers(event, state.c.effectId)) return stay(state);
       if (event.scope['empty'] === true) return stay({ tag: 'empty', c: state.c });
-      return launchWave({ ...state.c, promptPaths: event.promptPaths, ...(typeof event.scope['manifestPath'] === 'string' ? { priorManifest: event.scope['manifestPath'] } : {}) }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
+      return launchWave({ ...state.c, promptPaths: event.promptPaths, ...(typeof event.scope['manifestPath'] === 'string' ? { priorManifest: event.scope['manifestPath'], targetManifest: String(event.scope['bindingPath'] ?? event.scope['manifestPath']) } : {}) }, waveRoster(state.c.spec.roster, state.c.spec.kind, event.promptPaths), 'cli');
     case 'wave':
       if (event.type === 'WAVE_STARTED' && answers(event, state.c.effectId)) {
         const completed = (event as typeof event & { completed?: Extract<Event, { type: 'WAVE_DONE' }> }).completed;
@@ -575,7 +635,7 @@ export function reviewAwait(state: ReviewState) {
     case 'fix': return 'fix' as const;
     case 'decide-escalation': case 'decide-needs-user': case 'decide-opt-in': return 'decide' as const;
     case 'settled': case 'escalated': case 'failed': case 'skipped': case 'empty': return 'done' as const;
-    case 'booting': case 'prepare': case 'wave': case 'fix-verify': return null;
+    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return null;
     default: return never(state, 'review state');
   }
 }
@@ -615,7 +675,7 @@ export function reviewData(state: ReviewState): Readonly<Record<string, unknown>
     case 'failed': return { outcome: 'failed', summary: state.detail };
     case 'skipped': return { outcome: 'skipped', summary: 'review skipped (rounds 0)' };
     case 'empty': return { outcome: 'no-reviewable-changes', summary: 'no reviewable changes' };
-    case 'booting': case 'prepare': case 'wave': case 'fix-verify': return { round: 'c' in state ? state.c.round : 0 };
+    case 'booting': case 'prepare': case 'wave': case 'fix-verify': case 'target-check': return { round: 'c' in state ? state.c.round : 0 };
     default: return never(state, 'review state');
   }
 }
@@ -655,6 +715,13 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
 // SECTION: Standalone machine
 
 export const reviewTransitions = [
+  ...[
+    ['native', 'NATIVE_RESULTS'], ['wave', 'WAVE_DONE'], ['wave', 'WAVE_STARTED'], ['rule', 'RULINGS'],
+    ['fix', 'FIXES_APPLIED'], ['fix-verify', 'VERIFY_DONE'], ['fix-verify', 'ARTIFACT_PARSED'],
+    ['decide-needs-user', 'DECISION'], ['decide-opt-in', 'DECISION'],
+  ].map(([from, on]) => ({ from: from!, on: on!, to: 'target-check' })),
+  ...['wave', 'rule', 'native', 'fix', 'fix-verify', 'prepare', 'settled', 'failed', 'decide-needs-user', 'decide-opt-in', 'decide-escalation'].map((to) => ({ from: 'target-check', on: 'REVIEW_TARGET_CHECKED', to })),
+  { from: 'target-check', on: 'EFFECT_FAILED', to: 'failed' },
   { from: 'booting', on: 'RUN_STARTED', to: 'prepare' },
   { from: 'booting', on: 'RUN_STARTED', to: 'skipped' },
   { from: 'booting', on: 'RUN_STARTED', to: 'failed' },
@@ -678,6 +745,9 @@ export const reviewTransitions = [
   { from: 'decide-needs-user', on: 'DECISION', to: 'prepare' },
   { from: 'decide-needs-user', on: 'DECISION', to: 'decide-opt-in' },
   { from: 'fix', on: 'FIXES_APPLIED', to: 'fix-verify' },
+  { from: 'fix', on: 'FIXES_APPLIED', to: 'failed' },
+  { from: 'fix-verify', on: 'ARTIFACT_PARSED', to: 'failed' },
+  { from: 'fix-verify', on: 'VERIFY_DONE', to: 'failed' },
   { from: 'fix-verify', on: 'ARTIFACT_PARSED', to: 'fix' },
   { from: 'fix-verify', on: 'ARTIFACT_PARSED', to: 'prepare' },
   { from: 'fix-verify', on: 'ARTIFACT_PARSED', to: 'settled' },

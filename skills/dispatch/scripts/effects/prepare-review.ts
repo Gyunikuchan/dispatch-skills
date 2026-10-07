@@ -12,9 +12,17 @@ import { safeSlot } from './wave.ts';
 import { writeRendered } from './artifacts.ts';
 import { runPaths } from '../lib/session.ts';
 import { isCommitHash, type Git, type ReviewSnapshot } from './git.ts';
+import { reviewArtifactText } from './check-review-target.ts';
 import type { IntegrationScope } from '../core/types.ts';
 
 const sha256 = (s: string): string => crypto.createHash('sha256').update(s).digest('hex');
+
+const scopedSnapshot = (snapshot: ReviewSnapshot, paths: readonly string[]): ReviewSnapshot => {
+  const { fullIndex: _fullIndex, ...base } = snapshot;
+  const allowed = new Set(paths);
+  const selected = <T>(entries: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(entries).filter(([file]) => allowed.has(file)));
+  return { ...base, governedPaths: [...allowed].sort(), index: selected(snapshot.index), working: selected(snapshot.working), untracked: selected(snapshot.untracked) };
+};
 
 export function parseArtifactSections(source: string): Map<string, string> {
   const sections = new Map<string, string>();
@@ -171,6 +179,8 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
     let manifestPath: string | undefined;
     let snapshot: ReviewSnapshot | undefined;
     let governedPaths: string[] | undefined;
+    let bindingSnapshot: ReviewSnapshot | undefined;
+    let bindingChanges: string[] | undefined;
     let integrationBound: IntegrationScope | null = null;
     let body: (slot: string) => string;
     try {
@@ -194,19 +204,24 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             changed = (await deps.git.baselineDiff(deps.cwd, bound.baseline)).filter((p) => owned.has(p));
             if (!changed.length) throw new Error('Integration has an empty intersection with journal-owned paths.');
           } else changed = await deps.git.diffNames(deps.cwd, text(spec['target']));
+          bindingChanges = integrationBound ? await deps.git.baselineDiff!(deps.cwd, integrationBound.baseline) : [...changed];
+          let prior: ReviewSnapshot | undefined;
           if (typeof scope['priorManifest'] === 'string') {
             const raw = ports.fs.readText(scope['priorManifest']);
             if (!raw || !deps.git.reviewDelta) throw new Error('review-round-binding-unavailable');
-            const prior = JSON.parse(raw) as ReviewSnapshot;
+            prior = JSON.parse(raw) as ReviewSnapshot;
             governedPaths = [...new Set([...(prior.governedPaths ?? changed), ...(Array.isArray(scope['affectedPaths']) ? scope['affectedPaths'].filter((p): p is string => typeof p === 'string') : [])])];
-            snapshot = await deps.git.reviewSnapshot?.(deps.cwd, text(spec['target']), governedPaths);
-            const delta = await deps.git.reviewDelta(deps.cwd, prior, snapshot);
+          }
+          bindingSnapshot = await deps.git.reviewSnapshot?.(deps.cwd, text(spec['target']), [...new Set([...bindingChanges, ...(governedPaths ?? changed)])], { fullIndex: true });
+          if (prior) {
+            snapshot = bindingSnapshot ? scopedSnapshot(bindingSnapshot, governedPaths!) : undefined;
+            const delta = await deps.git.reviewDelta!(deps.cwd, prior, snapshot);
             if (scope['scope'] === 'delta') { const owned = integrationBound ? new Set(Object.values(integrationBound.ownership).flat()) : null; changed = owned ? delta.paths.filter((p) => owned.has(p)) : delta.paths.filter((p) => governedPaths!.includes(p)); }
           }
           if (scope['scope'] === 'disputes-only') changed = [...new Set(carried.map((row) => row.locus.replace(/:L\d+.*$/, '')))];
           if (deps.git.reviewSnapshot) {
             manifestPath = runPaths(ctx.runDir).scope(effect.id);
-            snapshot ??= await deps.git.reviewSnapshot(deps.cwd, text(spec['target']), governedPaths ?? changed);
+            snapshot ??= scopedSnapshot(bindingSnapshot!, governedPaths ?? changed);
             ports.fs.writeAtomic(manifestPath, JSON.stringify({ ...snapshot, governedPaths: snapshot.governedPaths ?? governedPaths ?? changed }));
           }
           if (!changed.length) return [{ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: true, kind, paths: [] }, promptPaths: {} }];
@@ -236,7 +251,7 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
             }
           }
           manifestPath = runPaths(ctx.runDir).scope(effect.id);
-          ports.fs.writeAtomic(manifestPath, JSON.stringify({ kind, target, text: currentText, hash: sha256(currentText) }));
+          ports.fs.writeAtomic(manifestPath, JSON.stringify({ kind, target, text: currentText, hash: sha256(currentText), identityHash: sha256(reviewArtifactText(currentText)) }));
           const scopeKind = text(scope['scope'], 'full');
           if (effect.round === 1 && !changed.length) {
             scopeText = 'Full review';
@@ -269,7 +284,12 @@ export function createPrepareReview(deps: PrepareDeps): Handler<PrepareEffect> {
       }
       promptPaths[name] = file;
     }
-    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full'), ...(manifestPath ? { manifestPath } : {}) }, promptPaths });
+    let bindingPath: string | undefined;
+    if (kind === 'code' && bindingSnapshot) {
+      bindingPath = `${runPaths(ctx.runDir).scope(effect.id)}.binding.json`;
+      ports.fs.writeAtomic(bindingPath, JSON.stringify({ ...bindingSnapshot, changeSet: bindingChanges, ...(integrationBound ? { changeBaseline: integrationBound.baseline } : {}) }));
+    }
+    results.push({ type: 'REVIEW_PREPARED', effectId: effect.id, scope: { empty: false, kind, paths: changed, scope: text(scope['scope'], 'full'), ...(manifestPath ? { manifestPath } : {}), ...(bindingPath ? { bindingPath } : {}) }, promptPaths });
     return results;
   };
 }

@@ -208,7 +208,7 @@ function fromPlanReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `plan review failed: ${review.detail}`);
     case 'escalated': case 'empty': return beginFailure(c, `plan review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'plan-review', c, review }, effects: result.effects };
     default: return never(review, 'plan review state');
   }
 }
@@ -964,7 +964,7 @@ function fromCodeReview(c0: Context, result: Step<ReviewState>): S {
     case 'failed': return beginFailure(c, `code review failed: ${review.detail}`);
     case 'escalated': return beginFailure(c, `code review did not settle: ${review.tag}`);
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in': return { state: { tag: 'code-review', c, review }, effects: result.effects };
+    case 'decide-escalation': case 'decide-opt-in': case 'target-check': return { state: { tag: 'code-review', c, review }, effects: result.effects };
     default: return never(review, 'code review state');
   }
 }

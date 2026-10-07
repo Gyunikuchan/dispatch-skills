@@ -1,0 +1,105 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+import { createCheckReviewTarget, reviewArtifactText } from '../../../skills/dispatch/scripts/effects/check-review-target.ts';
+import type { Effect } from '../../../skills/dispatch/scripts/core/types.ts';
+import type { Git, ReviewSnapshot } from '../../../skills/dispatch/scripts/effects/git.ts';
+import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
+import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
+import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+
+function artifact() {
+  const cwd = tempDir(), ports = fakePorts(), target = path.join(cwd, 'target.plan.md'), manifestPath = path.join(cwd, 'prior.json');
+  const source = '# Target\n\n## Goal\nRequired behavior\n';
+  fs.writeFileSync(target, source); fs.writeFileSync(manifestPath, JSON.stringify({ target, text: source, hash: 'old raw hash' }));
+  const handler = createCheckReviewTarget({ cwd, git: {} as Git });
+  const effect: Extract<Effect, { kind: 'check-review-target' }> = { kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'plan', target }, manifestPath, allowedPaths: [] };
+  return { cwd, ports, target, manifestPath, source, effect, run: () => handler(effect, ports, { runDir: path.join(cwd, 'run'), attempt: 1 }) };
+}
+
+test('review-target artifact checks legacy raw-text evidence and ignores only managed sections', async () => {
+  const f = artifact();
+  fs.appendFileSync(f.target, '\n## Review Findings & Resolutions\nDriver result\n\n## Execution Status\nDriver state\n');
+  assert.equal((await f.run())[0]?.type, 'REVIEW_TARGET_CHECKED');
+  fs.appendFileSync(f.target, '\n## Acceptance\nNew requirement\n');
+  const result = (await f.run())[0]; assert.equal(result?.type, 'EFFECT_FAILED');
+  assert.match(result?.type === 'EFFECT_FAILED' ? result.detail : '', /target-changed/);
+});
+
+test('review-target preserves repeated headings and fenced managed-section text', () => {
+  const source = '# Target\n\n## Goal\nFirst\n\n## Goal\nSecond\n\n```md\n## Review Findings & Resolutions\nRequired text\n```\n';
+  assert.notEqual(reviewArtifactText(source), reviewArtifactText(source.replace('First', 'Changed')));
+  assert.match(reviewArtifactText(source), /Required text/);
+});
+
+test('review-target artifact captures an allowed fix then rejects edits during verification', async () => {
+  const f = artifact(); f.effect.allowedPaths = [f.target];
+  fs.writeFileSync(f.target, f.source.replace('Required', 'Repaired'));
+  const captured = (await f.run())[0]; assert.equal(captured?.type, 'REVIEW_TARGET_CHECKED');
+  if (captured?.type !== 'REVIEW_TARGET_CHECKED') return;
+  f.effect.manifestPath = captured.manifestPath; f.effect.allowedPaths = [];
+  assert.equal((await f.run())[0]?.type, 'REVIEW_TARGET_CHECKED');
+  fs.appendFileSync(f.target, '\nExternal edit\n'); assert.equal((await f.run())[0]?.type, 'EFFECT_FAILED');
+});
+
+for (const malformed of [null, '{}', '{bad']) test(`review-target fails closed on missing or malformed binding ${malformed}`, async () => {
+  const f = artifact(); if (malformed === null) fs.rmSync(f.manifestPath); else fs.writeFileSync(f.manifestPath, malformed);
+  const result = (await f.run())[0]; assert.equal(result?.type, 'EFFECT_FAILED');
+  assert.match(result?.type === 'EFFECT_FAILED' ? result.detail : '', /target-changed/);
+});
+
+test('review-target code permits fix paths but refuses outside index worktree and ref drift', async () => {
+  const cwd = tempDir(), ports = fakePorts(), manifestPath = path.join(cwd, 'prior.json');
+  const prior: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: { 'src/a.ts': 'index' }, working: { 'src/a.ts': 'before' }, untracked: {} };
+  fs.writeFileSync(manifestPath, JSON.stringify(prior));
+  let current = structuredClone(prior);
+  const git = { toplevel: async () => cwd, reviewSnapshot: async () => current, reviewDelta: async (_cwd: string, baseline: ReviewSnapshot) => {
+    if (baseline.head !== current.head || baseline.comparison !== current.comparison) throw new Error('review-round-binding-drift');
+    const paths = [...new Set([...Object.keys(baseline.working), ...Object.keys(current.working), ...Object.keys(baseline.index), ...Object.keys(current.index), ...Object.keys(current.untracked)])].filter((file) => baseline.working[file] !== current.working[file] || baseline.index[file] !== current.index[file] || baseline.untracked[file] !== current.untracked[file]);
+    return { staged: [], unstaged: [], untracked: [], deleted: [], paths };
+  } } as unknown as Git;
+  const handler = createCheckReviewTarget({ cwd, git });
+  const effect: Extract<Effect, { kind: 'check-review-target' }> = { kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '' }, manifestPath, allowedPaths: ['src/a.ts'] };
+  const run = () => handler(effect, ports, { runDir: path.join(cwd, 'run'), attempt: 1 });
+  current.working['src/a.ts'] = 'fix'; assert.equal((await run())[0]?.type, 'REVIEW_TARGET_CHECKED');
+  current.untracked['src/new.ts'] = 'external'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
+  current = structuredClone(prior); current.index['src/b.ts'] = 'staged external'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
+  current = structuredClone(prior); current.head = 'new head'; assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
+  current = structuredClone(prior); fs.writeFileSync(manifestPath, JSON.stringify({ ...prior, index: [] }));
+  assert.equal((await run())[0]?.type, 'EFFECT_FAILED');
+});
+
+test('review-target bounds content capture and detects new paths and clean-file index drift', async () => {
+  const cwd = tempDir(), ports = fakePorts(), runDir = path.join(cwd, 'run');
+  const reads: string[] = []; let names = ['src/a.ts'], indexBlob = 'b'.repeat(40);
+  const git = createGit({ run: async (args) => {
+    if (args[0] === 'rev-parse') return args[1] === '--show-toplevel' ? cwd : 'a'.repeat(40);
+    if (args[0] === 'diff') return args.includes('--diff-filter=D') ? '' : names.join('\n');
+    if (args[0] === 'ls-files') {
+      if (args.includes('--stage')) return `100644 ${'a'.repeat(40)} 0\tsrc/a.ts\0` + `100644 ${indexBlob} 0\tunrelated.bin\0`;
+      if (args.includes('--others')) return names.includes('src/new.ts') ? 'src/new.ts\0' : '';
+      return 'src/a.ts\0unrelated.bin\0';
+    }
+    return '';
+  }, fileContent: (file) => { reads.push(file); return file === 'unrelated.bin' ? 'x'.repeat(9 * 1024 * 1024) : 'source'; } });
+  const prepared = (await createPrepareReview({ cwd, git, skillRoot: path.resolve('skills/dispatch') })({ kind: 'prepare-review', id: 'review.prepare-review.1', review: { kind: 'code', target: '', roster: [{ slot: 'codex[0]' }] }, round: 1, scope: { scope: 'full' } }, ports, { runDir, attempt: 1 }))[0];
+  assert.equal(prepared?.type, 'REVIEW_PREPARED', JSON.stringify(prepared)); if (prepared?.type !== 'REVIEW_PREPARED') return;
+  assert.ok(!reads.includes('unrelated.bin'));
+  const effect: Extract<Effect, { kind: 'check-review-target' }> = { kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '' }, manifestPath: String(prepared.scope['bindingPath']), allowedPaths: [] };
+  const handler = createCheckReviewTarget({ cwd, git });
+  const check = () => handler(effect, ports, { runDir, attempt: 1 });
+  assert.equal((await check())[0]?.type, 'REVIEW_TARGET_CHECKED');
+  names = ['src/a.ts', 'src/new.ts']; assert.equal((await check())[0]?.type, 'EFFECT_FAILED');
+  names = ['src/a.ts']; indexBlob = 'c'.repeat(40);
+  const drift = (await check())[0]; assert.match(drift?.type === 'EFFECT_FAILED' ? drift.detail : '', /unrelated.bin/);
+});
+
+test('review-target accepts absolute fix paths when invoked in a repository subdirectory', async () => {
+  const root = tempDir(), cwd = path.join(root, 'sub'), ports = fakePorts(), manifestPath = path.join(root, 'prior.json');
+  const prior: ReviewSnapshot = { head: 'head', target: '', comparison: 'head', index: {}, working: { 'src/a.ts': 'before' }, untracked: {} };
+  fs.writeFileSync(manifestPath, JSON.stringify(prior));
+  const git = { toplevel: async () => root, reviewSnapshot: async () => ({ ...prior, working: { 'src/a.ts': 'fixed' } }), reviewDelta: async () => ({ paths: ['src/a.ts'], staged: [], unstaged: [], untracked: [], deleted: [] }) } as unknown as Git;
+  const result = (await createCheckReviewTarget({ cwd, git })({ kind: 'check-review-target', id: 'review.check-review-target.1', review: { kind: 'code', target: '' }, manifestPath, allowedPaths: [path.join(root, 'src/a.ts')] }, ports, { runDir: path.join(root, 'run'), attempt: 1 }))[0];
+  assert.equal(result?.type, 'REVIEW_TARGET_CHECKED', JSON.stringify(result));
+});

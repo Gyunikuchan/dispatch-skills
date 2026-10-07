@@ -4,7 +4,7 @@
 
 export type Await = 'author' | 'native' | 'rule' | 'fix' | 'write' | 'evidence' | 'decide' | 'done';
 
-export const JOURNAL_PROTOCOL_REVISION = 5 as const;
+export const JOURNAL_PROTOCOL_REVISION = 6 as const;
 
 export type DecideKind = 'approval' | 'baseline' | 'failure' | 'concerns' | 'escalation' | 'needs-user' | 'opt-in' | 'drift'
   | 'level-classification' | 'level-recommendation' | 'scope-deviation' | 'scope-deviation-user' | 'run-stop';
@@ -16,7 +16,7 @@ export type ExitCode = 0 | 1 | 2 | 3;
 
 export type EffectKind =
   | 'parse-artifact' | 'prepare-review' | 'wave' | 'wave-start' | 'wave-finish' | 'verify' | 'write-brief'
-  | 'check-envelope' | 'snapshot' | 'restore' | 'handoff' | 'checkout';
+  | 'check-envelope' | 'check-review-target' | 'snapshot' | 'restore' | 'handoff' | 'checkout';
 
 // Effect-handler failure classes.
 export type EffectFailureClass = 'io' | 'timeout' | 'crash' | 'invalid-output' | 'integrity' | 'config';
@@ -212,6 +212,7 @@ export type HostEvent =
   | { type: 'REVISE'; artifact: 'plan' | 'design'; reason: string; evidence: string };
 
 export type ResultEvent =
+  | { type: 'REVIEW_TARGET_CHECKED'; effectId: string; manifestPath: string }
   | { type: 'ARTIFACT_PARSED'; effectId: string; kind: 'plan' | 'design'; hash: string; parsed: ParsedPlan | ParsedDesign; defects: LintDefect[] }
   | { type: 'REVIEW_PREPARED'; effectId: string; scope: ReviewScope; promptPaths: Record<SlotId, string> }
   | { type: 'WAVE_STARTED'; effectId: string; waveKey: string; attempt: number; roster: RosterSlot[]; native: NativeSlotResult[]; early: NativeSlotResult[]; claimPath: string | null; inputPath: string }
@@ -234,6 +235,7 @@ export type ResultEventType = ResultEvent['type'];
 // SECTION: Effects
 
 export type Effect =
+  | { kind: 'check-review-target'; id: string; review: ReviewSpec; manifestPath: string; allowedPaths: readonly string[] }
   | { kind: 'parse-artifact'; id: string; path: string; artifact: 'plan' | 'design' }
   | { kind: 'prepare-review'; id: string; review: ReviewSpec; round: number; scope: ScopeRequest }
   | { kind: 'wave-start'; id: string; round: number; roster: RosterSlot[]; timeoutMs: number }

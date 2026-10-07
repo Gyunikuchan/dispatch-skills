@@ -9,6 +9,54 @@ import { nodeProcess } from '../../skills/dispatch/scripts/providers/node-proces
 import { createGit } from '../../skills/dispatch/scripts/effects/git.ts';
 import { test } from 'node:test';
 import { CLEAN, fixture, until } from '../helpers/e2e.ts';
+import { JOURNAL_PROTOCOL_REVISION } from '../../skills/dispatch/scripts/core/types.ts';
+
+test('review-target code drift at native boundary fails and retains the capture', async () => {
+  const f = fixture();
+  try {
+    fs.writeFileSync(path.join(f.skill, 'config.local.jsonc'), JSON.stringify({ ...f.config, 'read-delegates': { codex: { nativeSubagentsOnly: true, targets: [{ low: { model: 'native-stub', effort: 'low' } }] } } }));
+    const session = await f.initialize(); fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'prepared');
+    const frame = await f.begin('review', session, '', ['--kind', 'code']);
+    assert.equal(frame.await, 'native');
+    const event = structuredClone(frame.events!.find((row) => row.type === 'NATIVE_RESULTS')!);
+    if (event.type !== 'NATIVE_RESULTS') throw new Error('native receipt');
+    for (const slot of event.slots) fs.writeFileSync(String(slot['outputPath']), JSON.stringify(CLEAN));
+    fs.writeFileSync(path.join(f.repo, 'src/a.ts'), 'external edit');
+    const done = await f.reply(f.absoluteRun(frame.run), event);
+    assert.equal(done.data['outcome'], 'failed', JSON.stringify(done));
+    assert.match(String(done.data['summary']), /target-changed/);
+    for (const slot of event.slots) assert.ok(fs.existsSync(String(slot['outputPath'])));
+    const replay = await f.cli(['send', '--run', done.run]);
+    assert.equal(replay.data['outcome'], 'failed'); assert.match(String(replay.data['summary']), /target-changed/);
+  } finally { f.cleanup(); }
+});
+
+for (const kind of ['plan', 'design'] as const) test(`review-target ${kind} artifact drift at ruling boundary fails`, async () => {
+  const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
+  try {
+    const session = await f.initialize(), target = path.join(f.repo, `target.${kind}.md`);
+    fs.writeFileSync(target, '# Target\n\n## Goal\nOriginal condition\n');
+    const frame = await f.begin('review', session, target, ['--kind', kind]);
+    assert.equal(frame.await, 'rule', JSON.stringify(frame));
+    fs.writeFileSync(target, '# Target\n\n## Goal\nExternal condition\n');
+    const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+    assert.equal(done.data['outcome'], 'failed', JSON.stringify(done)); assert.match(String(done.data['summary']), /target-changed/);
+    assert.match(fs.readFileSync(path.join(done.run, 'events.jsonl'), 'utf8'), /Missing condition/);
+  } finally { f.cleanup(); }
+});
+
+test('review-target artifact managed resolution changes remain valid', async () => {
+  const f = fixture({ responses: [{ status: 'FINDINGS', findings: [{ severity: 'SHOULD', locus: '§ Goal', tag: 'correctness', defect: 'Missing condition', requiredChange: 'State condition' }] }] });
+  try {
+    const session = await f.initialize(), target = path.join(f.repo, 'target.plan.md');
+    fs.writeFileSync(target, '# Target\n\n## Goal\nOriginal condition\n');
+    const frame = await f.begin('review', session, target, ['--kind', 'plan']);
+    assert.equal(frame.await, 'rule');
+    fs.appendFileSync(target, '\n## Review Findings & Resolutions\nDriver evidence\n');
+    const done = await f.reply(f.absoluteRun(frame.run), { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' } } });
+    assert.equal(done.data['outcome'], 'complete', JSON.stringify(done));
+  } finally { f.cleanup(); }
+});
 test('review code --fix disputes an unsupported claim, carries rejection, then verifies accepted fix', async () => {
   const finding = { severity: 'MUST', locus: 'src/a.ts:L1', tag: 'correctness', defect: 'Value is incorrect', requiredChange: 'Set value to 3' };
   const f = fixture({ responses: [{ status: 'FINDINGS', findings: [finding] }, { status: 'FINDINGS', findings: [finding] }, CLEAN] });
@@ -57,7 +105,7 @@ test('rewrite SC3 production wave journals preparation and completion once', asy
     const frame = await f.begin('review', session, '', ['--kind', 'code']);
     assert.equal(frame.data['outcome'], 'complete', JSON.stringify(frame));
     const journal = fs.readFileSync(path.join(frame.run, 'events.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { type: string; data: Record<string, unknown> });
-    assert.equal(journal[0]?.data['protocolRevision'], 5);
+    assert.equal(journal[0]?.data['protocolRevision'], JOURNAL_PROTOCOL_REVISION);
     assert.equal(journal.filter((row) => row.type === 'WAVE_STARTED').length, 1); assert.equal(journal.filter((row) => row.type === 'WAVE_DONE').length, 1); assert.equal(f.launches().length, 1);
   } finally { f.cleanup(); }
 });

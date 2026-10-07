@@ -18,7 +18,7 @@ export function designDelta(before: ParsedDesign, after: ParsedDesign): { change
   return { changed, invalidated: [...invalidated].filter((id) => after.increments.some((row) => row.id === id)), removed };
 }
 export type DesignRevisionState =
-  | { tag: 'author'; c: DesignContext; workingPath: string; reason: string; evidence: string; error: string | null }
+  | { tag: 'author'; c: DesignContext; workingPath: string; reason: string; evidence: string; defects: readonly Readonly<Record<string, unknown>>[] }
   | { tag: 'parse'; c: DesignContext; workingPath: string; reason: string; evidence: string; effectId: string; afterReview: boolean }
   | { tag: 'review'; c: DesignContext; workingPath: string; reason: string; evidence: string; review: ReviewState }
   | { tag: 'scope-adjudication'; c: DesignContext; workingPath: string; reason: string; evidence: string; request: RevisionScopeProposal; design: ParsedDesign; hash: string; delta: ReturnType<typeof designDelta> }
@@ -30,7 +30,7 @@ type S = Step<DesignRevisionState>;
 export function beginDesignRevision(c: DesignContext, event: Extract<HostEvent, { type: 'REVISE' }>): S {
   const session = c.run.overrides['sessionDir'];
   if (typeof session !== 'string') throw new Error('Design revision requires the journal-owned session directory.');
-  return stay({ tag: 'author', c, workingPath: `${session}/revision-${c.revisions.length + 1}.design.md`, reason: event.reason, evidence: event.evidence, error: null });
+  return stay({ tag: 'author', c, workingPath: `${session}/revision-${c.revisions.length + 1}.design.md`, reason: event.reason, evidence: event.evidence, defects: [] });
 }
 
 function scopeDelta(before: ParsedDesign, after: ParsedDesign, delta: ReturnType<typeof designDelta>): ScopeDelta {
@@ -122,7 +122,8 @@ export function stepDesignRevision(state: DesignRevisionState, event: Event): S 
   if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ ...state, tag: 'refused', error: event.detail });
   if (event.type !== 'ARTIFACT_PARSED' || event.kind !== 'design' || !answers(event, state.effectId)) return stay(state);
   const design = asParsedDesign(event.parsed);
-  if (event.defects.length || !design || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ ...state, tag: 'author', error: 'Revision requires a valid design and governed hash.' });
+  if (event.defects.length || !design || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', c: state.c, workingPath: state.workingPath, reason: state.reason, evidence: state.evidence,
+    defects: event.defects.length ? event.defects : [{ message: 'Invalid design payload or governed hash.' }] });
   if (design.box['TL;DR'] !== state.c.design?.box['TL;DR']) return stay({ ...state, tag: 'refused', error: 'Design objective cannot change during revision.' });
   const delta = designDelta(state.c.design!, design);
   if (state.afterReview || event.hash === state.c.hash) return proposeScope(state.c, state.workingPath, state.reason, state.evidence, design, event.hash, delta);
@@ -145,6 +146,7 @@ export function designRevisionAwait(state: DesignRevisionState) {
   }
 }
 export const designRevisionData = (state: DesignRevisionState): Readonly<Record<string, unknown>> => {
+  if (state.tag === 'author') return { artifact: 'design', path: state.workingPath, reason: state.reason, template: 'references/templates/design.md', defects: state.defects };
   if (state.tag === 'review') return reviewData(state.review);
   if (state.tag === 'scope-adjudication') return { kind: 'scope-deviation', pendingProposal: state.request, choices: ['approve', 'disagree', 'stop'], stopAllowed: true };
   if (state.tag === 'scope-user-decision') return { kind: 'scope-deviation-user', pendingProposal: state.request, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };

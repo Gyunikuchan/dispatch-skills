@@ -18,6 +18,22 @@ const prepared = (n: number): Event => ({ type: 'REVIEW_PREPARED', effectId: `re
 const waveDone = (n: number, findings: unknown[]): Event => ({ type: 'WAVE_DONE', effectId: `review.wave.${n}`, round: n, slots: [{ slot: 'codex[0]', state: 'success' }], findings: findings as never });
 const rulings = (map: Record<string, unknown>): HostEvent => ({ type: 'RULINGS', rulings: map as never });
 
+test('ruling-reason: reject and downgrade require a nonblank string before consumption', () => {
+  const state = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001', { severity: 'CONSIDER' })])]);
+  for (const ruling of ['reject', 'downgrade']) {
+    for (const reason of [undefined, '', '  ', 42]) {
+      const event = rulings({ 'R1-F001': { ruling, reason } });
+      assert.match(reviewMachine.validate?.(state, event) ?? '', /reason.*nonblank/);
+      assert.deepEqual(reviewMachine.step(state, event).state, state);
+    }
+    const event = rulings({ 'R1-F001': { ruling, reason: 'Evidence in D2', severity: 'CONSIDER' } });
+    assert.equal(reviewMachine.validate?.(state, event), null);
+    const next = reviewMachine.step(state, event).state;
+    assert.equal('c' in next && next.c.findings[0]?.resolution, 'Evidence in D2');
+    assert.deepEqual(drive([event], state), next);
+  }
+});
+
 function drive(events: readonly Event[], from: ReviewState = reviewMachine.initial()): ReviewState {
   return events.reduce((state, event) => reviewMachine.step(state, event).state, from);
 }
@@ -79,7 +95,7 @@ test('regression → decide:escalation → escalated on stop', () => {
 });
 
 test('deadlock: a pending rejection re-raised twice escalates', () => {
-  const reject = (id: string) => rulings({ [id]: { ruling: 'reject' } });
+  const reject = (id: string) => rulings({ [id]: { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } });
   const config = { ...CONFIG, phases: { 'code-review': { rounds: { low: 4 }, targets: { low: 1 } } } };
   const state = drive([started({ config }), prepared(1), waveDone(1, [finding('R1-F001')]), reject('R1-F001'),
     prepared(2), waveDone(2, [finding('R2-F001')]), reject('R2-F001'), prepared(3), waveDone(3, [finding('R3-F001')])]);

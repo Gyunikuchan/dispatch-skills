@@ -37,10 +37,14 @@ const wave = (findings: unknown[], slots: unknown[] = [{ slot: 'codex[0]', state
 const nativeWave = wave([], [{ slot: 'codex[0]', state: 'native', descriptor: { sourceKey: 'codex[0]#fallback', substitutesFor: 'codex[0]', outputPath: 'o' } }]);
 const natives: Step = { type: 'NATIVE_RESULTS', slots: [{ slot: 'codex[0]', sourceKey: 'codex[0]#fallback', outputPath: 'o', mapping: { launcherModel: 'host-default' } }] };
 const failed: Step = (effect) => ({ type: 'EFFECT_FAILED', effectId: id(effect), cls: 'io', detail: 'x' });
-const rule = (ruling: string, n = 1): Step => ({ type: 'RULINGS', rulings: { [`R${n}-F001`]: { ruling } } });
+const rule = (ruling: string, n = 1): Step => ({ type: 'RULINGS', rulings: { [`R${n}-F001`]: { ruling, reason: 'intentional behavior; scenario evidence' } } });
 const applied: Step = (_effect, state) => {
   const found = JSON.stringify(state).match(/"clusterId":"([^"]+)"/);
   return { type: 'FIXES_APPLIED', clusters: [{ clusterId: found?.[1] ?? '' }] };
+};
+const applyFailed: Step = (_effect, state) => {
+  const found = JSON.stringify(state).match(/"clusterId":"([^"]+)"/);
+  return { type: 'FIXES_APPLIED', clusters: [{ clusterId: found?.[1] ?? '', status: 'failed' }] };
 };
 const verified = (exit = 0): Step => (effect) => ({ type: 'VERIFY_DONE', effectId: id(effect), purpose: 'fix-verify', results: [{ command: 'c', exit, logPath: 'l' }], fingerprint: {} });
 const parsed = (defects: unknown[] = []): Step => (effect) => ({ type: 'ARTIFACT_PARSED', effectId: id(effect), kind: 'plan', hash: 'h', parsed: {}, defects: defects as never });
@@ -104,13 +108,14 @@ function implementsToTerminal(withEvidence: boolean): Step[] {
 
 type Journal = { triples: Set<string>; ids: string[] };
 
-function replay<S>(machine: Machine<S>, steps: readonly Step[]): Journal {
+function replay<S>(machine: Machine<S>, steps: readonly Step[], bindReview = false): Journal {
   let state = machine.initial();
   const open: Effect[] = [];
   const triples = new Set<string>();
   const ids: string[] = [];
   for (const step of steps) {
-    const event = typeof step === 'function' ? step(open.at(-1), state) : step;
+    let event = typeof step === 'function' ? step(open.at(-1), state) : step;
+    if (bindReview && event.type === 'REVIEW_PREPARED') event = { ...event, scope: { ...event.scope, manifestPath: 'binding.json' } };
     const result = machine.step(state, event);
     const from = (state as Tagged).tag;
     const to = (result.state as Tagged).tag;
@@ -118,6 +123,12 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[]): Journal {
     state = result.state;
     open.push(...result.effects);
     ids.push(...result.effects.map((effect) => effect.id));
+    if ((state as Tagged).tag === 'target-check') {
+      const check = result.effects.find((effect) => effect.kind === 'check-review-target'); assert.ok(check);
+      const resumed = machine.step(state, { type: 'REVIEW_TARGET_CHECKED', effectId: check.id, manifestPath: 'checked.json' });
+      triples.add(`target-check --REVIEW_TARGET_CHECKED--> ${(resumed.state as Tagged).tag}`);
+      state = resumed.state; open.push(...resumed.effects); ids.push(...resumed.effects.map((effect) => effect.id));
+    }
     const pending = state as unknown as { tag: string; child?: { tag: string }; c?: { lastFingerprint?: Record<string, unknown> } };
     if (pending.tag === 'checking-host-event' || pending.child?.tag === 'checking-host-event') {
       const snapshot = result.effects.find((effect) => effect.kind === 'snapshot');
@@ -134,6 +145,7 @@ function replay<S>(machine: Machine<S>, steps: readonly Step[]): Journal {
 function parity<S>(machine: Machine<S>, scenarios: readonly (readonly Step[])[], direct: readonly (readonly [S, Event])[] = []): void {
   const observed = new Set<string>();
   for (const scenario of scenarios) for (const triple of replay(machine, scenario).triples) observed.add(triple);
+  if (machine === reviewMachine as unknown as Machine<S>) for (const scenario of scenarios) for (const triple of replay(machine, scenario, true).triples) observed.add(triple);
   for (const [state, event] of direct) {
     const next = machine.step(state, event).state;
     observed.add(`${(state as Tagged).tag} --${event.type}--> ${(next as Tagged).tag}`);
@@ -145,8 +157,15 @@ function parity<S>(machine: Machine<S>, scenarios: readonly (readonly Step[])[],
 
 // SECTION: Tests
 
-test('review transitions table matches step', () => {
+test('review-target transitions table matches step', () => {
+  const boot = reviewMachine.step(reviewMachine.initial(), run('review', {}, 1));
+  const launch = reviewMachine.step(boot.state, { type: 'REVIEW_PREPARED', effectId: boot.effects[0]!.id, scope: { manifestPath: 'binding.json' }, promptPaths: {} });
+  const completed: Event = { type: 'WAVE_STARTED', effectId: launch.effects[0]!.id, waveKey: 'wave', attempt: 0, roster: [], native: [], early: [], claimPath: null, inputPath: '', completed: { type: 'WAVE_DONE', effectId: launch.effects[0]!.id, round: 1, slots: [{ slot: 'codex[0]', state: 'success' }], findings: [] } } as Event;
+  const checking = reviewMachine.step(launch.state, completed);
   parity(reviewMachine, [
+    [run('review'), prepared, wave([f(1)]), rule('accept'), applyFailed, applyFailed, applyFailed],
+    [run('review'), prepared, wave([f(1)]), rule('accept'), applied, verified(1), applied, verified(1), applied, verified(1)],
+    [run('review', { ...plan }), prepared, wave([f(1)]), rule('accept'), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }]), applied, parsed([{ message: 'm' }])],
     [run('review', {}, 0)], [run('review', badPins)], [run('review'), failed], [run('review'), empty],
     [run('review'), prepared, failed], [run('review'), prepared, nativeWave, natives, wave([f(1)])],
     [run('review'), prepared, wave([])], [run('review'), ...regression, decide('escalation', 'stop')],
@@ -168,9 +187,9 @@ test('review transitions table matches step', () => {
     [run('review', { ...plan }, 1), prepared, wave([f(1, { severity: 'SHOULD' }), f(1, { id: 'R1-F002', scope: 'adjacent', locus: 'b' })]),
       { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept' }, 'R1-F002': { ruling: 'accept' } } }, applied, parsed()],
     [run('review'), prepared, wave([f(1), f(1, { id: 'R1-F002', locus: 'b' })]),
-      { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
+      { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'needs-user' }, 'R1-F002': { ruling: 'reject', reason: 'intentional behavior; retained scenario evidence' } } }, decide('needs-user', { 'R1-F001': { ruling: 'reject', quote: 'no' } })],
     [run('review', {}, 1), prepared, wave([f(1, { severity: 'CONSIDER' })]), rule('needs-user'), decide('needs-user', { 'R1-F001': { ruling: 'accept', quote: 'later' } })],
-  ]);
+  ], [[launch.state, completed], [checking.state, { type: 'EFFECT_FAILED', effectId: checking.effects[0]!.id, cls: 'integrity', detail: 'target-changed' }]]);
 });
 
 test('ask transitions table matches step', () => {

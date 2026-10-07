@@ -145,7 +145,7 @@
       "scope": "implement",
       "class": "recovery",
       "trigger": "A writer attempt is interrupted, or its verification fails.",
-      "expectedOutcome": "The driver records the attempt, repairs or relaunches once with admission defects, and never accepts unverified work.",
+      "expectedOutcome": "The driver retains write-brief admissionDefects when it repairs or relaunches an interrupted writer; after three failed attempts it rejects another retry with failure limit. Trace both the admissionDefects handoff and the exhausted-retry validation rejection; never accept unverified work.",
       "startingState": "task worktree with a failed or missing envelope",
       "entries": ["skills/dispatch/references/verbs/implement.md", "skills/dispatch/scripts/effects/check-envelope.ts", "skills/dispatch/scripts/effects/verify.ts"]
     },

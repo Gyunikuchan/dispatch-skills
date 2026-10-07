@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { clusterFixes, clusterId, splitFailedCluster } from '../../../skills/dispatch/scripts/domain/fix-clustering.ts';
+import { clusterFixes, clusterId, orderFixClusters, splitFailedCluster } from '../../../skills/dispatch/scripts/domain/fix-clustering.ts';
 
 const fixes = [
   { id: 'R1-F001', paths: ['src/a.ts'] },
@@ -9,6 +9,15 @@ const fixes = [
   { id: 'R1-F003', paths: ['src/c.ts'], dependencies: ['R1-F001'] },
   { id: 'R1-F004', paths: ['src/d.ts'] },
 ] as const;
+
+test('bounded-recovery: descendants retain dependency order and unequal remaining budgets', () => {
+  const parents = clusterFixes([{ id: 'a', paths: ['a'] }, { id: 'b', paths: ['b'], dependencies: ['a'] }], { runId: 'r' });
+  const children = parents.flatMap((parent, i) => splitFailedCluster(parent, { runId: 'r', attemptsConsumed: i + 1 }).clusters);
+  const ordered = orderFixClusters([...children].reverse());
+  assert.deepEqual(ordered.map((c) => [c.findingIds, c.attemptBudget]), [[['a'], 2], [['b'], 1]]);
+  assert.deepEqual(ordered[1]?.dependsOnClusters, [ordered[0]?.clusterId]);
+  assert.deepEqual(orderFixClusters([ordered[1]!])[0]?.dependsOnClusters, []);
+});
 
 test('review-fix-clustering: overlapping paths and dependencies separate clusters, ordered by dependency', () => {
   const clusters = clusterFixes(fixes, { runId: 'run-1' });

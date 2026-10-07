@@ -27,6 +27,92 @@ function drive(events: readonly Event[], from: ReviewState = reviewMachine.initi
 }
 const applied = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId })) : [] });
 
+const freshFix = (kind: 'code' | 'plan' = 'code') => drive([started({ argument: kind === 'plan' ? 'x.plan.md' : '', overrides: { kind } }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]).state;
+const failApply = (state: ReviewState): Event => ({ type: 'FIXES_APPLIED', clusters: state.tag === 'fix' ? state.clusters.map((cluster) => ({ clusterId: cluster.clusterId, status: 'failed' })) : [] });
+
+test('bounded-recovery: failed applies consume all three attempts and retain findings', () => {
+  let state = freshFix();
+  for (const budget of [3, 2, 1]) {
+    assert.equal(state.tag === 'fix' && state.clusters[0]?.attemptBudget, budget);
+    state = drive([failApply(state)], state).state;
+  }
+  assert.equal(state.tag, 'failed');
+  assert.match(String(reviewMachine.project(state).data['summary']), /fix-attempts-exhausted.*R1-F001/);
+  assert.equal('c' in state && state.c.findings[0]?.status, 'accepted');
+});
+
+test('bounded-recovery: code and artifact verification failures exhaust without claiming fixed', () => {
+  for (const kind of ['code', 'plan'] as const) {
+    let state = freshFix(kind);
+    for (let n = 1; n <= 3; n++) {
+      state = drive([applied(state)], state).state;
+      assert.equal('c' in state && state.c.findings[0]?.status, 'accepted');
+      state = drive([kind === 'code' ? verified(n, 1) : { type: 'ARTIFACT_PARSED', effectId: `review.parse-artifact.${n}`, kind: 'plan', hash: 'h', parsed: {}, defects: [{ code: 'x', message: 'bad' }] }], state).state;
+    }
+    assert.equal(state.tag, 'failed');
+    assert.equal('c' in state && state.c.fixes.length, 0);
+  }
+});
+
+test('bounded-recovery: mixed receipts verify successes once and retry only failed siblings', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002', { locus: 'src/R1-F001.ts:L4' })]), accept('R1-F001', 'R1-F002')]).state;
+  assert.equal(fix.tag, 'fix');
+  if (fix.tag !== 'fix') return;
+  const events: Event[] = [{ type: 'FIXES_APPLIED', clusters: fix.clusters.map((cluster, i) => ({ clusterId: cluster.clusterId, status: i ? 'failed' : 'applied' })) }, verified(1)];
+  let state = drive(events, fix).state;
+  assert.equal(state.tag, 'fix');
+  assert.deepEqual(state.tag === 'fix' && state.clusters.flatMap((c) => c.findingIds), ['R1-F002']);
+  assert.equal('c' in state && state.c.findings[0]?.status, 'fixed');
+  const history = [...events];
+  for (let n = 0; n < 2; n++) { const event = failApply(state); history.push(event); state = drive([event], state).state; }
+  assert.equal(state.tag, 'failed');
+  assert.equal('c' in state && state.c.findings[0]?.status, 'fixed');
+  assert.deepEqual(drive(history, fix).state, state);
+});
+
+test('bounded-recovery: duplicate and unknown-status receipts are rejected', () => {
+  const state = freshFix();
+  const receipt = applied(state) as Extract<Event, { type: 'FIXES_APPLIED' }>;
+  assert.match(reviewMachine.validate?.(state, { ...receipt, clusters: [...receipt.clusters, ...receipt.clusters] }) ?? '', /duplicate/);
+  assert.match(reviewMachine.validate?.(state, { ...receipt, clusters: receipt.clusters.map((c) => ({ ...c as object, status: 'maybe' })) }) ?? '', /status/);
+});
+
+test('bounded-recovery: verification charges applied clusters once and pending failures keep their budget', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002', { locus: 'src/R1-F001.ts:L4' })]), accept('R1-F001', 'R1-F002')]).state;
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const verify = drive([{ type: 'FIXES_APPLIED', clusters: fix.clusters.map((c, i) => ({ clusterId: c.clusterId, status: i ? 'failed' : 'applied' })) }], fix).state;
+  const retry = drive([verified(1, 1)], verify).state;
+  assert.equal(retry.tag, 'fix');
+  assert.deepEqual(retry.tag === 'fix' && retry.clusters.map((c) => c.attemptBudget), [2, 2]);
+});
+
+test('bounded-recovery: selected opt-in exhaustion fails and preserves main-pass fixes', () => {
+  const main = freshFix();
+  const offered = drive([applied(main), verified(1), prepared(2), waveDone(2, [finding('R2-F001', { scope: 'adjacent', severity: 'CONSIDER' })]), accept('R2-F001')], main).state;
+  assert.equal(offered.tag, 'decide-opt-in');
+  let state = drive([{ type: 'DECISION', kind: 'opt-in', answer: ['R2-F001'] }], offered).state;
+  for (let n = 0; n < 3; n++) state = drive([failApply(state)], state).state;
+  assert.equal(state.tag, 'failed');
+  assert.equal('c' in state && state.c.findings[0]?.status, 'fixed');
+});
+
+test('bounded-recovery: failed prerequisite cannot admit an applied dependent receipt', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002', { fix: { paths: ['b'], dependencies: ['R1-F001'], verification: [] } })]), accept('R1-F001', 'R1-F002')]).state;
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const event: Event = { type: 'FIXES_APPLIED', clusters: fix.clusters.map((c, i) => ({ clusterId: c.clusterId, status: i ? 'applied' : 'failed' })) };
+  assert.match(reviewMachine.validate?.(fix, event) ?? '', /prerequisite.*failed/);
+  assert.deepEqual(reviewMachine.step(fix, event).state, fix);
+});
+
+test('bounded-recovery: exhaustion names pending work as well as exhausted findings', () => {
+  const fix = drive([started(), prepared(1), waveDone(1, [finding('R1-F001'), finding('R1-F002', { locus: 'src/R1-F001.ts:L4' })]), accept('R1-F001', 'R1-F002')]).state;
+  if (fix.tag !== 'fix') return assert.fail('expected fix');
+  const unequal = { ...fix, clusters: fix.clusters.map((c, i) => ({ ...c, attemptBudget: i ? 3 : 1 })) };
+  const done = drive([failApply(unequal)], unequal).state;
+  assert.equal(done.tag, 'failed');
+  assert.match(String(reviewMachine.project(done).data['summary']), /exhausted.*R1-F001.*pending.*R1-F002/);
+});
+
 test('review-report-only-default: report mode records acceptance without fix', () => {
   const { state, effects } = drive([started({ fix: false }), prepared(1), waveDone(1, [finding('R1-F001')]), accept('R1-F001')]);
   assert.equal(state.tag, 'settled');

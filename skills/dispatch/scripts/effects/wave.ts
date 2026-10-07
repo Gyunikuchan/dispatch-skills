@@ -445,7 +445,10 @@ export async function finishWave(effect: WaveEffect, ctx: HandlerContext, start:
   const fromCapture = (slot: string, key: string, prior: string[]): SlotFinal | null => {
     const text = captures.get(key);
     if (text === undefined) return null;
-    if (deps.review === 'ask') return text.trim() ? { state: 'native', slot, sourceKey: key, ...(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)?.['outputPath'] ? { outputPath: String(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)!['outputPath']) } : {}), reason: 'native capture', records: prior, drafts: [], claim: sanitizeText(text) } : { state: 'failed', slot, cls: 'empty-output', reason: `empty native capture ${key}`, records: prior };
+    if (deps.review === 'ask') {
+      const claim = sanitizeText(text);
+      return claim.trim() ? { state: 'native', slot, sourceKey: key, ...(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)?.['outputPath'] ? { outputPath: String(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)!['outputPath']) } : {}), reason: 'native capture', records: prior, drafts: [], claim } : { state: 'failed', slot, cls: 'empty-output', reason: `empty native capture ${key}`, records: prior };
+    }
     const report = parseReport({ kind: deps.review, source: slot, text });
     return report.ok
       ? { state: 'native', slot, sourceKey: key, ...(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)?.['outputPath'] ? { outputPath: String(nativeResults.find((value) => (value['sourceKey'] ?? value['slot']) === key)!['outputPath']) } : {}), reason: 'native capture', records: prior, drafts: report.findings }

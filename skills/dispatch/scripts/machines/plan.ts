@@ -53,7 +53,7 @@ function fromReview(c0: PlanCtx, result: Step<ReviewState>): S {
     case 'failed': return stay({ tag: 'failed', c, detail: review.detail, review });
     case 'empty': return stay({ tag: 'failed', c, detail: 'plan review found no reviewable scope', review });
     case 'booting': case 'prepare': case 'wave': case 'native': case 'rule': case 'decide-needs-user': case 'fix': case 'fix-verify':
-    case 'decide-escalation': case 'decide-opt-in':
+    case 'decide-escalation': case 'decide-opt-in': case 'target-check':
       return { state: { tag: 'review', c, review }, effects: result.effects };
     default: return never(review, 'review state');
   }

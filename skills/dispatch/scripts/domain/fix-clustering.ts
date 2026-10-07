@@ -153,3 +153,20 @@ export function splitFailedCluster(cluster: FixCluster, options: {
   }
   return { completed, clusters, remainingBudget, canProceed: clusters.length > 0 };
 }
+
+/** Rebind retry edges after parent clusters split; verified owners are absent from the retry set. */
+export function orderFixClusters(clusters: readonly FixCluster[]): FixCluster[] {
+  const byId = new Map(clusters.flatMap((cluster) => cluster.members.map((member) => [member.id, member] as const)));
+  const owner = new Map(clusters.flatMap((cluster) => cluster.findingIds.map((id) => [id, cluster.clusterId] as const)));
+  const remaining = clusters.map((cluster) => ({ ...cluster, dependsOnClusters: unique(cluster.members.flatMap((member) =>
+    [...closure(member.id, byId)].flatMap((id) => { const dep = owner.get(id); return dep && dep !== cluster.clusterId ? [dep] : []; }))).sort() }));
+  const ordered: FixCluster[] = [];
+  const done = new Set<string>();
+  while (ordered.length < remaining.length) {
+    const next = remaining.find((cluster) => !done.has(cluster.clusterId) && cluster.dependsOnClusters.every((id) => done.has(id)));
+    if (!next) throw new Error('finding dependencies contain a cycle');
+    ordered.push(next);
+    done.add(next.clusterId);
+  }
+  return ordered;
+}

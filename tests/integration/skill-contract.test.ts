@@ -8,6 +8,14 @@ import { OVERLAY_ROOT, scanOverlay } from './scan.ts';
 const read = (file: string) => fs.readFileSync(path.join(OVERLAY_ROOT, file), 'utf8');
 const contractName = 'SKILL.md';
 const WORD_BUDGET = 657;
+
+test('walkthrough-reference: template links to findings rules without a removed anchor', () => {
+  const file = 'skills/dispatch/references/templates/walkthrough.md';
+  const reference = /\[[^\]]+\]\(([^)]+)\)/.exec(read(file));
+  assert.equal(reference?.[1], '../review-rules.md');
+  const target = path.resolve(OVERLAY_ROOT, path.dirname(file), reference![1]!);
+  assert.ok(fs.existsSync(target));
+});
 test('four contracts carry exact alias mappings and named dependency guards', () => {
   const contract = read(`skills/dispatch/${contractName}`);
   for (const awaitKind of ['author', 'native', 'rule', 'fix', 'write', 'evidence', 'decide', 'done']) assert.equal(contract.match(new RegExp(`^## Await ${awaitKind}$`, 'gm'))?.length, 1);

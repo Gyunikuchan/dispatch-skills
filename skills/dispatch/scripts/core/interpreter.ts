@@ -60,6 +60,7 @@ export async function previewReceipt(state: RootState, event: HostEvent, handler
 export const MAX_STEPS = 200;
 
 export const TERMINAL_RESULT: TerminalResultMap = {
+  'check-review-target': 'REVIEW_TARGET_CHECKED',
   'parse-artifact': 'ARTIFACT_PARSED',
   'prepare-review': 'REVIEW_PREPARED',
   wave: 'WAVE_DONE',

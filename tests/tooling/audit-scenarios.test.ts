@@ -31,6 +31,17 @@ const exists = () => true;
 type Selection = { scopes: { scope: string; scenarios: { id: string; class: string; reason: string; kind?: string }[] }[] };
 const scopeOf = (selection: Selection, scope: string) => selection.scopes.find((s) => s.scope === scope);
 
+test('recovery-contract: bundled writer recovery requires admission evidence and the three-failure boundary', async () => {
+  const { loadCatalog } = await load();
+  const scenario = loadCatalog().scenarios.find((entry) => entry.id === 'implement-recovery-interrupted-writer');
+  assert.ok(scenario);
+  assert.match(scenario.expectedOutcome, /three failed attempts/);
+  assert.match(scenario.expectedOutcome, /write-brief.*admissionDefects/);
+  assert.match(scenario.expectedOutcome, /failure limit/);
+  assert.match(scenario.expectedOutcome, /Trace both/);
+  assert.doesNotMatch(scenario.expectedOutcome, /relaunches once/);
+});
+
 test('audit scenarios default selection covers five verbs with three classes and the four shared boundaries', async () => {
   const { selectScenarios } = await load();
   const selection = selectScenarios({ catalog: catalog(), exists });

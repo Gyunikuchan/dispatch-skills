@@ -1,10 +1,85 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { test } from 'node:test';
-import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
+import { designDelta, beginDesignRevision, stepDesignRevision, validateDesignRevision, designRevisionData } from '../../../skills/dispatch/scripts/machines/design-revision.ts';
 import { stepDesign } from '../../../skills/dispatch/scripts/machines/design.ts';
 import { approval, approveDesignScope, design, hash } from './fixtures/design.ts';
 import { started } from './fixtures/design-delivery.ts';
 import type { DesignState } from '../../../skills/dispatch/scripts/machines/design.ts';
+import { createFolder, fold } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { rootMachine, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
+import type { Event, JournalLine } from '../../../skills/dispatch/scripts/core/types.ts';
+
+function revisionParsing() {
+  const author = beginDesignRevision(approval('implement').c, { type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'lint defect' }).state;
+  const parse = stepDesignRevision(author, { type: 'AUTHORED', path: author.workingPath });
+  return { author, parse, event: { type: 'ARTIFACT_PARSED' as const, kind: 'design' as const, effectId: parse.effects[0]!.id, hash, parsed: design, defects: [] as Record<string, unknown>[] } };
+}
+
+test('revision-handoff: initial author exposes the existing canonical design template', () => {
+  const { author } = revisionParsing();
+  const data = designRevisionData(author);
+  assert.equal(data['template'], 'references/templates/design.md');
+  assert.ok(fs.existsSync(new URL('../../../skills/dispatch/references/templates/design.md', import.meta.url)));
+  assert.deepEqual(Object.keys(data).sort(), ['artifact', 'defects', 'path', 'reason', 'template']);
+  assert.deepEqual(data['defects'], []);
+});
+
+test('revision-handoff: retry keeps parser code line and message', () => {
+  const { parse, event } = revisionParsing();
+  const defects = [{ code: 'missing-field', line: 12, message: 'Add rollback boundary.', severity: 'defect' }];
+  const retry = stepDesignRevision(parse.state, { ...event, defects }).state;
+  assert.equal(retry.tag, 'author');
+  assert.deepEqual(designRevisionData(retry)['defects'], defects);
+  assert.equal(designRevisionData(retry)['error'], undefined);
+});
+
+test('revision-handoff: absent diagnostics use the parent design fallback record', () => {
+  const { parse, event } = revisionParsing();
+  for (const invalid of [{ ...event, hash: 'bad' }, { ...event, parsed: {} }]) {
+    const retry = stepDesignRevision(parse.state, invalid).state;
+    assert.deepEqual(designRevisionData(retry)['defects'], [{ message: 'Invalid design payload or governed hash.' }]);
+  }
+});
+
+test('revision-handoff: replay reproduces the diagnostic author frame', () => {
+  const base = approval('implement');
+  const seed: RootState = { tag: 'design', run: { verb: 'implement', argument: base.c.path, slug: 'fixture' }, child: base };
+  const machine = { ...rootMachine, initial: () => seed };
+  const folder = createFolder(machine);
+  const events: Event[] = [];
+  const apply = (event: Event) => { events.push(event); folder.apply(event); };
+  apply({ type: 'REVISE', artifact: 'design', reason: 'repair', evidence: 'parser defect' });
+  const path = machine.project(folder.state).data['path'];
+  assert.equal(typeof path, 'string');
+  apply({ type: 'AUTHORED', path: String(path) });
+  const effect = folder.queue[0]!;
+  apply({ type: 'EFFECT_STARTED', effectId: effect.id, kind: effect.kind, attempt: 1 });
+  const defects = [{ code: 'missing', line: 5, message: 'Repair field.' }];
+  apply({ type: 'ARTIFACT_PARSED', effectId: effect.id, kind: 'design', hash, parsed: design, defects });
+  const lines: JournalLine[] = events.map(({ type, ...data }, i) => ({ seq: i + 1, v: 1, at: 'now', type, data }));
+  const replay = fold(machine, lines);
+  assert.deepEqual(replay.state, folder.state);
+  const data = machine.project(replay.state).data;
+  assert.equal(data['template'], 'references/templates/design.md');
+  assert.deepEqual(data['defects'], defects);
+});
+
+test('revision-handoff: successful repair clears prior author diagnostics', () => {
+  const { parse, event } = revisionParsing();
+  const retry = stepDesignRevision(parse.state, { ...event, defects: [{ message: 'Repair field.' }] }).state;
+  const next = stepDesignRevision(retry, { type: 'AUTHORED', path: retry.workingPath });
+  const resumed = stepDesignRevision(next.state, { ...event, effectId: next.effects[0]!.id }).state;
+  assert.equal(resumed.tag, 'resume');
+  assert.equal(designRevisionData(resumed)['defects'], undefined);
+});
+
+test('revision-handoff: non-author projections omit the author template', () => {
+  const { parse, event } = revisionParsing();
+  const resumed = stepDesignRevision(parse.state, event).state;
+  const refused = stepDesignRevision(parse.state, { ...event, parsed: { ...design, box: { 'TL;DR': 'Different goal' } } }).state;
+  for (const state of [parse.state, resumed, refused]) assert.equal(designRevisionData(state)['template'], undefined);
+});
 
 test('design-revision: completed changed acceptance and dependent increments invalidate', () => {
   const changed = { ...design, details: { ...design.details, I01: { Outcome: 'Changed behavior' } } };

@@ -1,6 +1,6 @@
 # Walkthrough template
 
-Strict rendering of the [minimum walkthrough contract](../review-rules.md#minimum-walkthrough-contract).
+The driver renders these walkthrough fields. See [review rules](../review-rules.md) for findings and resolution records.
 
 ````markdown
 # <task title>

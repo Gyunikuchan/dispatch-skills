@@ -4,6 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { fold, send, start } from '../../../skills/dispatch/scripts/core/interpreter.ts';
+import { LayoutUnsupported } from '../../../skills/dispatch/scripts/core/journal.ts';
 import type { Effect, Handler, RunStartedEvent } from '../../../skills/dispatch/scripts/core/types.ts';
 import { createPrepareReview } from '../../../skills/dispatch/scripts/effects/prepare-review.ts';
 import { createGit } from '../../../skills/dispatch/scripts/effects/git.ts';
@@ -89,7 +90,7 @@ test('rewrite SC2 later delta remains within manifest and accepted fix paths', a
   if (prepared?.type === 'REVIEW_PREPARED') assert.deepEqual(prepared.scope['paths'], ['src/a.ts', 'src/new.ts']);
 });
 
-test('review fix retried prepare refreshes its manifest and later round reuses one capture', async () => {
+test('review-target retried prepare refreshes its manifest and later round reuses one capture', async () => {
   const runDir = tempDir(), ports = fakePorts(); let head = 'first'; let names = ['src/a.ts']; const requests: (readonly string[] | undefined)[] = [];
   const git = { ...createGit({ run: async () => '' }), diffNames: async () => names,
     reviewSnapshot: async (_cwd: string, _target: string, paths?: readonly string[]) => { requests.push(paths); return { head, target: '', comparison: head, index: {}, working: {}, untracked: {} }; },
@@ -104,6 +105,12 @@ test('review fix retried prepare refreshes its manifest and later round reuses o
   const before = requests.length;
   const event = (await handler({ ...effect, id: 'round2', round: 2, scope: { scope: 'delta', priorManifest: manifestPath } }, ports, { runDir, attempt: 1 }))[0];
   assert.equal(event?.type, 'REVIEW_PREPARED'); assert.equal(requests.length - before, 1); assert.deepEqual(requests.at(-1), names);
+});
+
+test('review-target refuses protocol-5 journals before replay', () => {
+  const { runStarted } = setup(false);
+  const { type, ...data } = { ...runStarted, protocolRevision: 5 };
+  assert.throws(() => fold(rootMachine, [{ seq: 1, v: 1, at: 'now', type, data }]), LayoutUnsupported);
 });
 
 test('binds changed sections for artifact re-review', async () => {
@@ -230,6 +237,3 @@ test('flow-review-discovery: discovers unique session deliverables and respects 
   assert.match(prompt4, /- Plan: docs\/explicit\.plan\.md/);
   assert.match(prompt4, /- Walkthrough: docs\/explicit\.walkthrough\.md/);
 });
-
-
-

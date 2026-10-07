@@ -69,6 +69,18 @@ const done = (events: readonly ResultEvent[]) => {
 };
 const states = (events: readonly ResultEvent[]) => done(events).slots.map((row) => [row['slot'], row['state']]);
 
+test('ask-native-empty: sanitized-empty captures fail and usable neighbors survive', async () => {
+  for (const text of ['   ', '```\n```', '```ts\nconst answer = 1;\n```']) {
+    const w = setup({}, [slot('claude[0]', 'claude', { native: true }), slot('claude[1]', 'claude', { native: true })]);
+    const start = startWave(w.effect, { runDir: '/run', attempt: 1 }, w.deps);
+    const events = await finishWave(w.effect, { runDir: '/run', attempt: 1 }, start,
+      [{ sourceKey: 'claude[0]', text }, { sourceKey: 'claude[1]', text: 'Useful answer\n```ts\nhidden\n```' }], { ...w.deps, review: 'ask' });
+    const rows = done(events).slots;
+    assert.deepEqual([rows[0]?.['state'], rows[0]?.['cls']], ['failed', 'empty-output']);
+    assert.deepEqual([rows[1]?.['state'], rows[1]?.['claim']], ['native', 'Useful answer']);
+  }
+});
+
 test('delegates-slots-reconciled: direct success, model cascade, mode cascade, and named failure; progress then one WAVE_DONE', async () => {
   const roster = [
     slot('codex[0]', 'codex', { model: 'gpt-5' }),

@@ -9,11 +9,11 @@ import type { GitPort } from '../core/types.ts';
 export type TreeFingerprint = { head: string | null; index: string; worktree: string };
 export type PathDiff = { paths: string[] };
 
-export type ReviewSnapshot = { governedPaths?: string[]; head: string; target: string; comparison: string; index: Record<string, string>; working: Record<string, string | null>; untracked: Record<string, string | null> };
+export type ReviewSnapshot = { governedPaths?: string[]; fullIndex?: true; head: string; target: string; comparison: string; index: Record<string, string>; working: Record<string, string | null>; untracked: Record<string, string | null> };
 export type ReviewDelta = { staged: string[]; unstaged: string[]; untracked: string[]; deleted: string[]; paths: string[] };
 
 export type Git = {
-  reviewSnapshot?(cwd: string, target: string, paths?: readonly string[]): Promise<ReviewSnapshot>;
+  reviewSnapshot?(cwd: string, target: string, paths?: readonly string[], options?: { fullIndex: boolean }): Promise<ReviewSnapshot>;
   reviewDelta?(cwd: string, prior: ReviewSnapshot, current?: ReviewSnapshot): Promise<ReviewDelta>;
   ancestor?(cwd: string, baseline: string): Promise<boolean>;
   baselineDiff?(cwd: string, baseline: string): Promise<string[]>;
@@ -43,7 +43,7 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
   const indexCache = new Map<string, string>();
 
   const git: Git = {
-    async reviewSnapshot(cwd, target, paths) {
+    async reviewSnapshot(cwd, target, paths, options) {
       if (target.trim().startsWith('-')) throw new Error('review comparison must be a revision');
       const root = await git.toplevel(cwd);
       const listed = async (args: string[]) => (await port.run(args, root)).split('\0').filter(Boolean);
@@ -54,7 +54,7 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
       const index: Record<string, string> = {};
       for (const entry of await listed(['ls-files', '--stage', '-z'])) {
         const at = entry.indexOf('\t');
-        if (at >= 0 && owned(entry.slice(at + 1))) index[entry.slice(at + 1)] = entry.slice(0, at);
+        if (at >= 0 && (owned(entry.slice(at + 1)) || (options?.fullIndex && reviewOwned(entry.slice(at + 1))))) index[entry.slice(at + 1)] = entry.slice(0, at);
       }
       const tracked = await listed(['ls-files', '-z']);
       const other = await listed(['ls-files', '--others', '--exclude-standard', '-z']);
@@ -74,10 +74,10 @@ export function createGit(port: GitPort, readIndex: ReadIndex = () => null): Git
         for (const file of [...new Set(files)].filter(owned).sort()) out[file] = await hash(file);
         return out;
       };
-      return { ...(paths ? { governedPaths: [...new Set(paths)].filter(reviewOwned).sort() } : {}), head, target, comparison, index, working: await manifest(tracked), untracked: await manifest(other) };
+      return { ...(paths ? { governedPaths: [...new Set(paths)].filter(reviewOwned).sort() } : {}), ...(options?.fullIndex ? { fullIndex: true } : {}), head, target, comparison, index, working: await manifest(tracked), untracked: await manifest(other) };
     },
     async reviewDelta(cwd, prior, captured) {
-      const current = captured ?? await git.reviewSnapshot!(cwd, prior.target, prior.governedPaths);
+      const current = captured ?? await git.reviewSnapshot!(cwd, prior.target, prior.governedPaths, prior.fullIndex ? { fullIndex: true } : undefined);
       if (current.head !== prior.head || current.comparison !== prior.comparison) throw new Error('review-round-binding-drift: HEAD or comparison changed');
       const changed = (a: Record<string, unknown>, b: Record<string, unknown>) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((file) => a[file] !== b[file]).sort();
       const staged = changed(prior.index, current.index);

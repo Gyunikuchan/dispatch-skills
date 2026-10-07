@@ -13,6 +13,7 @@ import { createHandoff } from './handoff.ts';
 import { parseArtifact } from './parse-artifact.ts';
 import { runPaths } from '../lib/session.ts';
 import { createPrepareReview } from './prepare-review.ts';
+import { createCheckReviewTarget } from './check-review-target.ts';
 import { createSnapshot } from './snapshot.ts';
 import { createRestore } from './restore.ts';
 import { createVerify } from './verify.ts';
@@ -66,6 +67,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   return {
     'parse-artifact': parseArtifact,
     'prepare-review': createPrepareReview(deps),
+    'check-review-target': createCheckReviewTarget(deps),
     wave,
     'wave-start': typeof deps.wave === 'function'
       ? (effect, ports, ctx) => cli({ ...effect, kind: 'wave' }, ports, ctx).then((events) => events.map((event) => event.type === 'WAVE_DONE' ? { type: 'WAVE_STARTED' as const, effectId: effect.id, waveKey: effect.id, attempt: 0, roster: effect.roster, native: [], early: [], claimPath: null, inputPath: '', completed: event } : event))
