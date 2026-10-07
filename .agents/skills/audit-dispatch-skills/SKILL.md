@@ -110,6 +110,6 @@ Run it only after every scope and the probe have stopped. It compares content fi
 
 ## 8. Hand off
 
-Reply with the report path, complete/partial status, defect counts by severity, the top five fixes, opportunity count, and the probe table. Offer to act on findings through `audit-dispatch-skills-fix`; opportunities need the user's explicit selection as a separate task.
+Reply with the report path, complete/partial status, defect counts by severity, the top five fixes, opportunity count, and the probe table. Offer to triage defects and opportunities through `audit-dispatch-skills-fix`; opportunity implementation requires the user's explicit selection and can share a coherent batch with related defects.
 
 **Done when:** the reply is sent.

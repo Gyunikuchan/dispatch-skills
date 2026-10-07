@@ -1,6 +1,6 @@
 ---
 name: audit-dispatch-skills-fix
-description: Verify and fix the open findings of the latest audit-dispatch-skills report, batch by batch, through dispatch implement.
+description: Triage and explain audit defects and opportunities, then deliver coherent batches through Dispatch planning and review with direct implementation.
 disable-model-invocation: true
 metadata:
   internal: true
@@ -8,100 +8,73 @@ metadata:
 
 # Audit Dispatch Skills Fix
 
-Closes out an `audit-dispatch-skills` report. The report holds **claims** that were verified against the code at audit time; you re-verify each one against the code as it is **now**, drop the false positives, surface what needs the user's call, and fix the rest in batches through `dispatch ... implement:`.
+Turn an `audit-dispatch-skills` report into verified changes. Recheck each claim against current source and governing intent. Keep **A-items** as defect claims and **O-items** as improvement hypotheses; selection never proves a benefit.
 
-The report **is** the state of the run, not the conversation: each finding carries a `- **Status**: open | fixed | false-positive | decision | deferred` line that `<skill>/scripts/status.mjs` reads and rewrites in place. There is no second state file. A run that stops anywhere resumes from the report.
+The report owns remediation state: per-item `Status`, `Triage`, and `Execution` lines, retained execution history, and separate counts in sections 3 and 4. Supporting plans, reviews and test logs provide evidence. `<skill>` means the directory holding this file. Read [triage and state](references/triage-and-state.md) before recording metadata, handling a rejected command, or recovering an interrupted batch.
 
-Paths are relative to the repo root. Findings are cited by ID (`A-7`), never by pasted body. `<skill>` is this skill's own directory, which differs per host:
+Fix each batch through **Dispatch plan → Dispatch plan review → direct implementation → Dispatch code review**. Do not start Dispatch implement: a batch can modify that same implementation flow while it is active. Read the repository's `AGENTS.md` and the shipped `dispatch` contract and selected verb guides before using Dispatch. If Dispatch is unavailable, report the missing dependency and preserve the triage state.
 
-| Host | `<skill>` |
-|---|---|
-| Antigravity | `.agents/skills/audit-dispatch-skills-fix` |
-| Claude Code | `.claude/skills/audit-dispatch-skills-fix` |
-| Copilot | `.github/skills/audit-dispatch-skills-fix` |
-| OpenCode | `.opencode/skill/audit-dispatch-skills-fix` |
-| Codex | `.agents/skills/audit-dispatch-skills-fix` |
+## 1. Open and bound
 
-If this skill was installed somewhere else, `<skill>` is wherever this `SKILL.md` lives.
-
-## 1. Open the report
-
-```bash
-node <skill>/scripts/status.mjs init
+```text
+node <skill>/scripts/status.mjs init --run <run-or-report-path>
+node <skill>/scripts/status.mjs list --run <run-or-report-path> --full
 ```
 
-Targets the newest `.scratch/audits/<run>-audit.md` (`--run <yyyy-mm-dd-hhmm>` targets an older one), backfills `- **Status**: open` on any finding written without one, and refreshes the counts blockquote under `## 3. Findings`. Re-running it keeps every status and note already recorded, so use it to refresh after the report is edited by hand.
+Use the user's report; without one, `init` selects the newest `.scratch/audits/<run>-audit.md`. Keep that identity on **every command**. Init preserves statuses, notes and metadata; new defects default to `open`, opportunities to `decision`. A zero-defect report can still have opportunities.
 
-It reads the findings section in the shape the `audit-dispatch-skills` report format fixes, and errors out rather than writing a status line into a report that has drifted from it. On that error, repair the report's finding headings and meta lines first.
+Confirm the objective, selected item IDs, constraints and verification scope from the request. Triage all items unless the user narrows scope. Opportunity implementation requires explicit selection, which can come from the invocation or an earlier user instruction selecting named items or all opportunities; retain that quote instead of asking again. Unselected opportunities still receive an assessment and recommendation.
 
-A report whose findings section is the sentinel `No defect findings.` prints `0 findings`: skip to step 5 and hand off with zero counts. `O-<n>` opportunities in the report's opportunities section never enter this run; act on one only when the user selects it, as its own scoped `dispatch` task.
+**Done when:** the report identity and scope are known, counts match both sections, and existing batch records have been checked for resume.
 
-Confirm with the user which run you are working if the printed path is not the one they named.
+## 2. Triage and explain
 
-**Done when:** the printed total matches the report's `A-<n>` finding count (0 for the sentinel) and the counts line is in the report.
+For each in-scope item, inspect current cited source, producer/consumer paths, relevant tests, counterevidence, and the governing outcome. A prior `dispatched` note requires inspecting the current tree and retained artifacts before repeat work. Reproductions must be bounded and relevant.
 
-## 2. Triage the next batch
+- **Defect:** confirm the actual failure and impact; reject a contradicted claim with the source or commit evidence.
+- **Opportunity:** assess its hypothesis, benefit, cost, trade-offs and simplest useful change. Preserve `unmeasured` claims; define how the hypothesis will be checked. Use `decision` while selection or an intent choice remains unresolved; defer a declined or unsupported improvement with a reason.
+- **Both:** resolve overlapping root causes, identify prerequisites, and define scoped paths, acceptance checks, priority and a coherent group. A dependency is settled only by verified `fixed` status; document duplicates in the recommendation rather than implement the same change twice.
 
-```bash
-node <skill>/scripts/status.mjs batch
+Record the ruling and explanation with `triage <id> --from <json-file>` using the reference schema. Explain to the user, by ID, what is real, why it matters, what you recommend, and what evidence supports the ruling. Ask unresolved intent/trade-off questions together, with your recommendation; continue independent work while answers are pending. Update triage from actual answers.
+
+**Done when:** every in-scope item has a recorded ruling, evidence, impact and recommendation; accepted items also have selection where required, bounded paths, dependencies and verification.
+
+## 3. Form a coherent batch
+
+```text
+node <skill>/scripts/status.mjs batch --run <run-or-report-path>
 ```
 
-Prints the next open findings — highest severity first, grouped by the file they touch — with full Location / Claim / Evidence / Proposal. Sized dynamically based on the 5-batch target (`ceil(total / 5)`), lead finding severity, and lead-file cluster size (keeping same-file clusters intact up to 25; override with `--size <n>` or `--batches <n>`): the group sharing the highest-severity finding's file leads, and the rest of the open pool tops it up in rank order. For **each** finding in the batch, open the cited locations and decide:
+The command selects one triaged group, with prerequisites first. Defects rank by severity; selected opportunities follow by declared triage priority. Size is a ceiling (default 4, `--size` up to 25), not a target. Group items by shared behavior, dependencies, paths and risk; same-file proximity alone does not establish coherence. Combine a selected opportunity with a defect only when they share one change and compatible verification.
 
-| Verdict | Action |
-|---|---|
-| The code still matches the claim | leave `open` — it goes into step 3 |
-| The code contradicts the claim, or a later commit already fixed it | `set <id> false-positive --note "<the contradicting line or commit>"` |
-| The proposal is one of several defensible designs, changes a public interface, adds a dependency, or trades off against a pillar in `AGENTS.md` | `set <id> decision --note "<the question, and your recommendation>"` |
-| Real, but out of this run's scope (needs another OS, another repo, a CLI you cannot reach) | `set <id> deferred --note "<what would settle it>"` |
+Review the printed group against intent. Resolve cycles, oversized groups, missing prerequisites or inadequate scope by re-triaging before planning; report blocked items and proceed with independent ready groups. A `Resume` result sends you to the recorded phase, not a fresh batch.
 
-A finding whose note begins `dispatched` was handed to the implementation flow by an earlier run that did not get to record the result. Check the cited location against the tree before re-dispatching it — the fix may already be there.
+Explain the IDs, shared outcome, ordering, risk and completion checks. Choose Dispatch level from its current criteria; do not use a fixed severity-to-level table.
 
-```bash
-node <skill>/scripts/status.mjs set A-7 false-positive --note "SKILL.md:90 already reads `git status --short` (fixed in e2eafb6)"
-```
+**Done when:** the batch has one checkable outcome, complete dependencies and authorized scope, with no unresolved decision included.
 
-If the batch produced any `decision` findings, put them to the user as **one** question — never one per finding — and stop there. Their answers change what step 3 fixes, so step 3 waits; record each answer with `set <id> open` (proceed) or `set <id> deferred` (drop) before continuing.
+## 4. Plan and review
 
-**Done when:** every finding in the batch has been opened at its cited location and carries a ruling in its `Status` line, and either no `decision` findings remain or the user has answered the one question they were asked.
+Invoke `/dispatch <level> plan:` with the batch IDs and report path, triage rationale, selected opportunity quotes, scope, dependencies and acceptance checks. Follow Dispatch's run loop and retain the returned plan and run identity. Its plan flow includes plan review: inspect the completion evidence and final review resolutions; this satisfies the plan-review phase. If the plan lacks a completed review, run `/dispatch <level> review: <plan-path>` and settle it before edits.
 
-## 3. Fix the batch
+Record `planned`, then `plan-reviewed` checkpoints through `progress <ids> --from <json-file>`, linking the plan and its review evidence. Inspect review findings against source and user decisions. Revised scope must remain within authorization; material intent choices go to the user. An invalid batch can be abandoned with its evidence preserved, then re-triaged.
 
-If no finding in the batch is still `open` — all triaged to `false-positive`, `deferred` or `decision` — skip this step entirely and go to step 4; never invoke `dispatch ... implement:` with an empty list.
+**Done when:** the exact plan is settled and reviewed, findings are resolved or explicitly bounded, scope/criteria are concrete, and both checkpoints are in the report. Disclose `fixedUnreviewed` or missing provider coverage; require further review when it leaves acceptance uncertain.
 
-First mark every finding in the batch (`set` takes one ID; run it once per finding), so an interruption between here and step 4 is recoverable:
+## 5. Implement directly and review code
 
-```bash
-node <skill>/scripts/status.mjs set A-3 open --note "dispatched <run or batch label>"
-```
+Implement the settled plan yourself in the host's normal editing loop. Use its scoped paths and task order. Run its RED checks before behavior changes or record justified exceptions; run plan Verify commands and required repository gates after edits. Preserve unrelated work. Stop before an unresolved scope or intent change; revise and review the plan when its governing outcome changes.
 
-Without it the batch has no identity in the report between dispatch and step 4's `set … fixed`: a run interrupted in that window makes step 2's `batch` reprint the already-fixed findings byte-identically, and the work gets dispatched twice.
+Save criterion-by-criterion evidence and test results, then record `implemented`. Invoke `/dispatch <level> review:` on the exact batch changes with the settled plan, intent and deviations as context. Isolate the target from unrelated changes. Adjudicate claims against source; apply accepted in-scope fixes directly and rerun affected checks. Start another code review when material fixes or coverage gaps require it. Review completion alone does not prove tests passed.
 
-Then hand the still-`open` findings of this batch to `dispatch ... implement:`, citing the findings by ID and the report path (the implementer reads each finding there), plus the shared success criteria: the proposal's tests exist and fail before the fix, `npm test` passes after, and the invariants in `AGENTS.md` (dependency flow, structural least privilege, cross-platform, context hygiene) hold.
+**Done when:** every plan criterion has post-change evidence, required gates pass, code review is complete with findings settled, and `code-reviewed` links the review plus current verification evidence. Unresolved failures remain open.
 
-```
-/dispatch <level> implement: Fix audit findings A-3, A-12, A-14 from .scratch/audits/<run>-audit.md
-```
+## 6. Record, resume and hand off
 
-Pick `<level>` from the batch: `low` for a single mechanical edit, `medium` by default, `high` for a fix that crosses runners, skills or platforms, `xhigh` for a batch that changes a shared schema or the dispatch contract itself.
+Set each verified member to `fixed` with a concrete outcome and evidence note. The helper requires accepted triage and a `code-reviewed` checkpoint. `fixed` on an opportunity means the selected change and checks completed; report measured benefit separately.
 
-The report is state, not a work product: `dispatch ... implement:` fixes the repository and never edits the report — every status change goes through `status.mjs set`. A finding whose fix it refutes during its own plan review goes back to step 2's table as `false-positive`, with the reviewing agent's reason in the note.
+After interruption, read `Execution` and inspect its linked artifacts and current tree. Resume the same Dispatch plan/review run where active; after `implemented`, continue code review rather than repeat implementation. A write or test result lost before checkpointing must be inspected before retry. Abandon a stale batch with a reason before regrouping; retain its history and artifacts.
 
-**Done when:** `dispatch ... implement:` reports completion and `npm test` passes (`npm run hashes` first if it reports hash drift).
+Loop while ready work remains. Hand off with the report and plan/review links, separate status counts for defects and opportunities, delivered behavior, verification and review coverage, unresolved decisions with recommendations, deferred items with what would settle them, and contradicted claims with evidence. Include the repository's edit-task handoff fields when files changed.
 
-## 4. Record and loop
-
-```bash
-node <skill>/scripts/status.mjs set A-3 fixed --note "<commit or one-line summary>"
-node <skill>/scripts/status.mjs list --status open
-```
-
-Return to step 2 while any finding is `open`. Statuses land in the report per finding as each one is settled, so an interrupted run never loses the batch.
-
-**Done when:** `list --status open` prints `No open findings.` and no finding rows. (It always writes a `<n> of <total> findings listed.` tally to stderr, which most hosts merge into the same output — so "prints nothing" is never literally true.)
-
-## 5. Hand off
-
-Reply with the report path and, in this order: counts by status (the blockquote under `## 3. Findings`); the `decision` findings with your recommendation for each; the `deferred` findings with what would settle them; the `false-positive` findings with the contradicting evidence in one line each; and the test result.
-
-**Done when:** the reply carries all five, and every `decision` finding is either answered by the user (then fixed through step 3) or named as still awaiting their call.
+**Done when:** every in-scope item is fixed, rejected with evidence, deferred with a reason, or explicitly awaiting a named decision; no active batch or failed required gate is described as complete.

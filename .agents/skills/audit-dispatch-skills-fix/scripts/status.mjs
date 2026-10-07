@@ -1,482 +1,435 @@
 #!/usr/bin/env node
 // @ts-check
 
-/**
- * @file status.mjs
- * @description Reads and writes finding status directly in an audit report, so a fix run survives
- * context loss: the report, not the conversation, holds what is open. There is no second state file.
- *
- * Status lives on each finding's own `- **Status**: <status> — <note>` line inside
- * `## 3. Findings`; `init` backfills the line on reports written without one and refreshes the
- * counts blockquote under the section heading.
- *
- * Usage:
- *   node <skill>/scripts/status.mjs init [--run <yyyy-mm-dd-hhmm>]
- *   node <skill>/scripts/status.mjs list [--run <run>] [--status open] [--severity critical,high] [--full]
- *   node <skill>/scripts/status.mjs batch [--run <run>] [--batches 5] [--size <n>]
- *   node <skill>/scripts/status.mjs set A-3 fixed [--note "..."] [--run <run>]
- */
-
+// The report owns remediation state; Dispatch plans and reviews provide linked evidence.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-/** @typedef {'open' | 'fixed' | 'false-positive' | 'decision' | 'deferred'} FindingStatus */
-/** @typedef {'critical' | 'high' | 'medium' | 'low' | 'nit'} FindingSeverity */
-/** @typedef {{ file: string, lines: string[], start: number, end: number }} Report */
-/**
- * @typedef {object} Finding
- * @property {string} id
- * @property {string} title
- * @property {FindingSeverity} severity
- * @property {number | null} metaLine
- * @property {string} location
- * @property {FindingStatus} status
- * @property {string} note
- * @property {number | null} statusLine
- * @property {number} anchor
- * @property {string} body
- */
-
-// SECTION: User-tunable policy
-
-export const STATUSES = /** @type {const} */ (['open', 'fixed', 'false-positive', 'decision', 'deferred']);
-export const SEVERITIES = /** @type {const} */ (['critical', 'high', 'medium', 'low', 'nit']);
-export const DEFAULT_MAX_BATCHES = 5;
-export const SEVERITY_BATCH_TARGETS = Object.freeze({
-  critical: 6,
-  high: 8,
-  medium: 12,
-  low: 20,
-  nit: 25,
-});
+export const STATUSES = ['open', 'fixed', 'false-positive', 'decision', 'deferred'];
+export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit'];
+export const PHASES = ['planned', 'plan-reviewed', 'implemented', 'code-reviewed'];
+export const DEFAULT_BATCH_SIZE = 4;
 export const MAX_SAFE_BATCH_SIZE = 25;
-export const MIN_SAFE_BATCH_SIZE = 4;
-
-const AUDIT_DIR = '.scratch/audits';
 export const COUNTS_PREFIX = '> Fix status:';
-export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--full', '--size', '--batches', '--note'];
-const REPORT_NAME_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}-audit\.md$/;
-const RUN_ID_PATTERN = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
-const FINDING_HEADING_PATTERN = /^#### (A-\d+):\s*(.+)$/;
-const OPPORTUNITY_HEADING_PATTERN = /^#{3,4} (O-\d+):/;
+export const OPPORTUNITY_COUNTS_PREFIX = '> Opportunity status:';
 export const EMPTY_FINDINGS_SENTINEL = 'No defect findings.';
+export const KNOWN_FLAGS = ['--run', '--status', '--severity', '--kind', '--full', '--size', '--note', '--from'];
+const ITEM_ID = /^[AO]-[1-9]\d*$/;
+const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const PRIORITIES = ['high', 'medium', 'low'];
 
-// SECTION: CLI and report paths
+export const toPosix = (value) => value.split(path.sep).join('/');
+const nonblank = (value) => typeof value === 'string' && value.trim().length > 0;
+const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-/** Converts platform path separators to forward slashes. */
-export function toPosix(p) {
-  return p.split(path.sep).join('/');
-}
+// SECTION: CLI and paths
 
-// NOTE: Duplicates `resolveRepoRoot` in the sibling audit-dispatch-skills' `shared.mjs`, deliberately.
-// Importing it would reference another skill by path — which the repo guide forbids — and would make
-// this skill fail to load wherever that one is not installed alongside it.
 function repoRoot() {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error('Run from inside the dispatch-skills repository.');
   return path.resolve(result.stdout.trim());
 }
-
-/** Resolves `--run <yyyy-mm-dd-hhmm>` (or a report path), else the newest report. */
-function resolveReport(root, argv) {
-  const auditDir = path.resolve(root, AUDIT_DIR);
-  const requestedRun = flag(argv, '--run');
-  if (requestedRun) {
-    const reportFile = RUN_ID_PATTERN.test(requestedRun)
-      ? path.join(auditDir, `${requestedRun}-audit.md`)
-      : path.resolve(root, requestedRun);
-    if (!fs.existsSync(reportFile)) throw new Error(`No audit report at ${requestedRun}`);
-    return reportFile;
-  }
-
-  if (!fs.existsSync(auditDir)) throw new Error(`No ${AUDIT_DIR}/ — run audit-dispatch-skills first.`);
-  // Lexical order is chronological because report names begin with a fixed-width timestamp.
-  const reports = fs.readdirSync(auditDir).filter((name) => REPORT_NAME_PATTERN.test(name)).sort();
-  if (reports.length === 0) throw new Error(`No <run>-audit.md under ${AUDIT_DIR}/ — run audit-dispatch-skills first.`);
-  return path.join(auditDir, reports.at(-1));
-}
-
-/** Reads a named CLI flag while rejecting absent values and other known flags as values. */
 function flag(argv, name, fallback = null) {
   const index = argv.indexOf(name);
   if (index === -1) return fallback;
   const value = argv[index + 1];
-  if (!value || KNOWN_FLAGS.includes(value)) {
-    throw new Error(`Flag ${name} requires a value.`);
+  if (!value || value.startsWith('--')) throw new Error(`Flag ${name} requires a value.`);
+  return value;
+}
+export function positionals(argv) {
+  const result = [];
+  for (let i = 1; i < argv.length; i += 1) {
+    if (argv[i] === '--full') continue;
+    if (argv[i].startsWith('--')) i += 1;
+    else result.push(argv[i]);
+  }
+  return result;
+}
+function resolveReport(root, argv) {
+  const auditDir = path.join(root, '.scratch', 'audits');
+  const run = flag(argv, '--run');
+  if (run) {
+    const file = /^\d{4}-\d{2}-\d{2}-\d{4}$/.test(run)
+      ? path.join(auditDir, `${run}-audit.md`) : path.resolve(root, run);
+    if (!fs.existsSync(file)) throw new Error(`No audit report at ${run}`);
+    return file;
+  }
+  const names = fs.existsSync(auditDir) ? fs.readdirSync(auditDir)
+    .filter((name) => /^\d{4}-\d{2}-\d{2}-\d{4}-audit\.md$/.test(name)).sort() : [];
+  if (!names.length) throw new Error('No audit report under .scratch/audits/ — run audit-dispatch-skills first.');
+  return path.join(auditDir, names.at(-1));
+}
+function relativePath(value, label) {
+  if (!nonblank(value) || value.includes('\\') || path.posix.isAbsolute(value) || path.win32.isAbsolute(value)
+    || value.split('/').some((part) => part === '..' || part === '.' || part === '') || value.includes(':')) {
+    throw new Error(`${label}: require a forward-slash repository-relative path without traversal.`);
   }
   return value;
 }
-
-// SECTION: Report model
-
-/**
- * Loads report lines and the half-open range of `## 3. Findings`.
- * @param {string} file
- * @returns {Report}
- */
-export function loadReport(file) {
-  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-  const start = lines.findIndex((line) => /^## 3\. Findings\s*$/.test(line));
-  if (start === -1) throw new Error(`${file} has no "## 3. Findings" section.`);
-  // Ends at the next top-level heading (numbered or not), or at EOF when Findings is last.
-  const after = lines.findIndex((line, i) => i > start && /^## /.test(line));
-  return { file, lines, start, end: after === -1 ? lines.length : after };
+function evidenceFile(root, value, label) {
+  relativePath(value, label);
+  const target = path.resolve(root, value);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(`${label}: evidence file does not exist: ${value}`);
+  const relative = path.relative(fs.realpathSync(root), fs.realpathSync(target));
+  if (relative.startsWith(`..${path.sep}`) || relative === '..' || path.isAbsolute(relative)) {
+    throw new Error(`${label}: evidence path resolves outside the repository.`);
+  }
+}
+function inputJson(root, argv) {
+  const file = flag(argv, '--from');
+  if (!file) throw new Error('Require --from <json-file>.');
+  return JSON.parse(fs.readFileSync(path.resolve(root, file), 'utf8'));
 }
 
-/**
- * Extracts findings from the `## 3. Findings` section only, so the appendix's already refuted
- * claims never enter the fix run. The shape parsed here is the report contract fixed in
- * audit-dispatch-skills § "5. Write the report"; a report that drifts from it fails loudly.
- */
-export function parseFindings(report) {
-  const headings = [];
-  const opportunities = [];
+// SECTION: Report parsing
+
+function section(lines, heading, required = true) {
+  const starts = lines.flatMap((line, index) => line.trimEnd() === heading ? [index] : []);
+  if (starts.length !== 1) {
+    if (!required && starts.length === 0) return null;
+    throw new Error(`Expected one "${heading}" section.`);
+  }
+  const start = starts[0];
+  const next = lines.findIndex((line, index) => index > start && /^## /.test(line));
+  return { start, end: next === -1 ? lines.length : next };
+}
+export function loadReport(file) {
+  const text = fs.readFileSync(file, 'utf8');
+  const lines = text.split(/\r?\n/);
+  return { file, text, lines, ...section(lines, '## 3. Findings') };
+}
+function metadata(block, label, offset) {
+  const matches = block.flatMap((line, index) => line.startsWith(`- **${label}**:`) ? [{ line: offset + index, text: line.slice(`- **${label}**:`.length).trim() }] : []);
+  if (matches.length > 1) throw new Error(`Duplicate ${label} line at ${offset + 1}.`);
+  return matches[0] ?? null;
+}
+function readJson(meta, label) {
+  if (!meta) return null;
+  try { return JSON.parse(meta.text); } catch { throw new Error(`Malformed ${label} JSON at line ${meta.line + 1}.`); }
+}
+function strings(value, label) {
+  if (!Array.isArray(value) || !value.every(nonblank) || new Set(value).size !== value.length) {
+    throw new Error(`${label}: require an array of distinct nonblank strings.`);
+  }
+}
+function keys(value, allowed, label) {
+  if (!object(value) || Object.keys(value).some((key) => !allowed.includes(key))) throw new Error(`${label}: invalid fields.`);
+}
+function validateTriage(value, item) {
+  keys(value, ['ruling', 'evidence', 'impact', 'recommendation', 'group', 'priority', 'affectedPaths', 'dependsOn', 'verification', 'selection', 'legacyInspection'], `${item.id} Triage`);
+  if (!['accept', 'reject', 'decision', 'defer'].includes(value.ruling)) throw new Error(`${item.id} Triage ruling is invalid.`);
+  for (const key of ['evidence', 'impact', 'recommendation']) if (!nonblank(value[key])) throw new Error(`${item.id} Triage ${key} must be nonblank.`);
+  for (const key of ['affectedPaths', 'dependsOn', 'verification']) strings(value[key], `${item.id} ${key}`);
+  value.affectedPaths.forEach((p) => relativePath(p, `${item.id} affectedPaths`));
+  if (value.dependsOn.some((id) => !ITEM_ID.test(id) || id === item.id)) throw new Error(`${item.id} invalid dependency.`);
+  if (value.selection !== undefined) {
+    keys(value.selection, ['by', 'quote'], `${item.id} selection`);
+    if (value.selection.by !== 'user' || !nonblank(value.selection.quote)) throw new Error(`${item.id} selection requires actual user quote.`);
+  }
+  if (value.legacyInspection !== undefined && !nonblank(value.legacyInspection)) throw new Error(`${item.id} legacyInspection must be nonblank.`);
+  if (/^dispatched\b/.test(item.note) && !nonblank(value.legacyInspection)) throw new Error(`${item.id} requires legacyInspection before repeat work.`);
+  if (value.ruling === 'accept') {
+    if (!nonblank(value.group) || !SLUG.test(value.group)) throw new Error(`${item.id} accepted triage requires a group slug.`);
+    if (!PRIORITIES.includes(value.priority)) throw new Error(`${item.id} accepted triage requires priority high|medium|low.`);
+    if (!value.affectedPaths.length || !value.verification.length) throw new Error(`${item.id} accepted triage requires affectedPaths and verification.`);
+    if (item.kind === 'opportunity' && !value.selection) throw new Error(`${item.id} opportunity requires explicit user selection.`);
+  }
+}
+function validateExecution(value, label) {
+  keys(value, ['batchId', 'phase', 'members', 'plan', 'planReview', 'implementation', 'codeReview', 'evidence'], label);
+  if (!nonblank(value.batchId) || !SLUG.test(value.batchId)) throw new Error(`${label}: invalid batchId.`);
+  if (![...PHASES, 'abandoned'].includes(value.phase) || !nonblank(value.evidence)) throw new Error(`${label}: require phase and evidence.`);
+  strings(value.members, `${label} members`);
+  if (!value.members.length || value.members.some((id) => !ITEM_ID.test(id))) throw new Error(`${label}: invalid members.`);
+  relativePath(value.plan, `${label} plan`);
+  for (const key of ['planReview', 'implementation', 'codeReview']) if (value[key] !== undefined) relativePath(value[key], `${label} ${key}`);
+  const index = PHASES.indexOf(value.phase);
+  for (const [at, key] of [[1, 'planReview'], [2, 'implementation'], [3, 'codeReview']]) {
+    if (index >= at && !nonblank(value[key])) throw new Error(`${label}: ${key} is required.`);
+  }
+}
+function parseSection(report, range, kind) {
+  if (!range) return [];
+  const headings = [], prefix = kind === 'defect' ? 'A' : 'O';
   let sentinel = false;
-  for (let line = report.start; line < report.end; line += 1) {
+  for (let line = range.start + 1; line < range.end; line += 1) {
     const text = report.lines[line];
-    const match = FINDING_HEADING_PATTERN.exec(text);
-    if (match) headings.push({ id: match[1], title: match[2].trim(), line });
-    const opportunity = OPPORTUNITY_HEADING_PATTERN.exec(text);
-    if (opportunity) opportunities.push(opportunity[1]);
+    if (/^#{1,6} [AO]-/.test(text)) {
+      const match = /^#### ([AO]-[1-9]\d*):\s*(.+)$/.exec(text);
+      if (!match || !match[1].startsWith(prefix)) throw new Error(`${kind} section contains malformed or misplaced opportunity/finding heading at line ${line + 1}.`);
+      headings.push({ id: match[1], title: match[2], line });
+    }
     if (text.trim() === EMPTY_FINDINGS_SENTINEL) sentinel = true;
   }
-  if (opportunities.length > 0) {
-    // Opportunities are improvement hypotheses, never remediation targets; inside § 3 they would
-    // be silently folded into the preceding finding's body and dispatched with it.
-    throw new Error(
-      `${report.file} § "3. Findings" contains opportunity headings (${opportunities.join(', ')}). ` +
-        `Move them to the report's opportunities section.`,
-    );
+  if (kind === 'defect' && sentinel && headings.length) throw new Error('Findings section mixes sentinel with findings.');
+  if (!headings.length) {
+    const allowed = report.lines.slice(range.start + 1, range.end).filter((line) => line.trim()
+      && !(kind === 'defect' && line.trim() === EMPTY_FINDINGS_SENTINEL)
+      && !line.startsWith(kind === 'defect' ? COUNTS_PREFIX : OPPORTUNITY_COUNTS_PREFIX));
+    if (kind === 'defect' && (!sentinel || allowed.length)) throw new Error(`Findings yielded no findings — expected headings or only "${EMPTY_FINDINGS_SENTINEL}".`);
+    if (kind === 'opportunity' && allowed.some((line) => line.trim() !== 'None.')) throw new Error('Opportunities section has unreadable non-item content.');
+    return [];
   }
-  if (sentinel && headings.length > 0) {
-    throw new Error(
-      `${report.file} § "3. Findings" mixes "${EMPTY_FINDINGS_SENTINEL}" with findings ` +
-        `(${headings.map((h) => h.id).join(', ')}). Remove one of them.`,
-    );
-  }
-  if (sentinel) {
-    // Only the sentinel, the machine-owned counts line and blank lines make a canonical empty section.
-    const extra = report.lines
-      .slice(report.start + 1, report.end)
-      .filter((text) => text.trim() !== '' && text.trim() !== EMPTY_FINDINGS_SENTINEL && !text.startsWith(COUNTS_PREFIX));
-    if (extra.length === 0) return [];
-  }
-
-  const findings = headings.map((heading, index) => {
-    const blockEnd = headings[index + 1]?.line ?? report.end;
-    const block = report.lines.slice(heading.line, blockEnd);
-    // Severity group headings between findings belong to the next group, not the preceding body.
+  return headings.map((heading, index) => {
+    const end = headings[index + 1]?.line ?? range.end;
+    const block = report.lines.slice(heading.line, end);
     while (block.length > 1 && /^(#{1,3} |-{3,}\s*$|\s*$)/.test(block.at(-1))) block.pop();
-
-    const findLine = (pattern) => {
-      for (let offset = 0; offset < block.length; offset += 1) {
-        const match = pattern.exec(block[offset]);
-        if (match) return { match, line: heading.line + offset };
-      }
-      return null;
+    const meta = block.find((line) => /^- \*\*(\w+)\*\*\s*·/.test(line));
+    const severity = kind === 'defect' ? /^- \*\*(\w+)\*\*\s*·\s*[^·]+·\s*[^·]+·/.exec(meta ?? '')?.[1].toLowerCase() : null;
+    if (kind === 'defect' && !SEVERITIES.includes(severity)) throw new Error(`${heading.id}: unreadable severity line.`);
+    const fields = {};
+    for (const key of ['Status', 'Triage', 'Execution', 'Execution history']) fields[key] = metadata(block, key, heading.line);
+    const state = fields.Status ? /^([\w-]+)(?:\s*[—–-]\s*(.*))?$/.exec(fields.Status.text) : null;
+    if (fields.Status && (!state || !STATUSES.includes(state[1]))) throw new Error(`${heading.id}: Unknown status.`);
+    const item = {
+      id: heading.id, title: heading.title, kind, severity,
+      anchor: kind === 'defect' ? heading.line + block.indexOf(meta) : heading.line,
+      location: metadata(block, 'Location', heading.line)?.text ?? '',
+      status: state?.[1] ?? (kind === 'defect' ? 'open' : 'decision'), note: state?.[2]?.trim() ?? '',
+      fields, body: block.join('\n').trim(), triage: readJson(fields.Triage, 'Triage'),
+      execution: readJson(fields.Execution, 'Execution'), history: readJson(fields['Execution history'], 'Execution history') ?? [],
     };
-    const meta = findLine(/^-\s+\*\*(\w+)\*\*\s*·\s*([^·]+?)\s*·\s*([^·]+?)\s*·/);
-    const location = findLine(/^-\s+\*\*Location\*\*:\s*(.+)$/);
-    const status = findLine(/^-\s+\*\*Status\*\*:\s*([\w-]+)\s*(?:[—–-]\s*(.*))?$/);
-    return {
-      id: heading.id,
-      title: heading.title,
-      severity: meta?.match[1].toLowerCase() ?? null,
-      metaLine: meta?.line ?? null,
-      location: location?.match[1].trim() ?? '',
-      status: status?.match[1] ?? 'open',
-      note: (status?.match[2] ?? '').trim(),
-      statusLine: status?.line ?? null,
-      anchor: meta?.line ?? heading.line,
-      body: block.join('\n').trim(),
-    };
+    for (const key of kind === 'defect' ? ['Location', 'Claim', 'Evidence', 'Proposal'] : ['Hypothesis', 'Benefit', 'Cost']) {
+      if (!nonblank(metadata(block, key, heading.line)?.text)) throw new Error(`${heading.id}: missing ${key} field.`);
+    }
+    if (item.triage !== null) validateTriage(item.triage, item);
+    if (item.execution !== null) validateExecution(item.execution, `${item.id} Execution`);
+    if (!Array.isArray(item.history)) throw new Error(`${item.id}: Execution history must be an array.`);
+    item.history.forEach((entry) => validateExecution(entry, `${item.id} Execution history`));
+    return item;
   });
-  const malformed = findings.filter((f) => f.metaLine === null || !SEVERITIES.includes(f.severity));
-  if (findings.length > 0 && malformed.length > 0) {
-    // Silently defaulting the severity here would demote a critical finding on a stray delimiter.
-    throw new Error(
-      `Unreadable severity line in ${report.file}: ${malformed.map((f) => f.id).join(', ')}. ` +
-        `Each finding needs \`- **<${SEVERITIES.join('|')}>** · <axis> · <verification> · <sources>\` ` +
-        `directly under its heading, with \`·\` separators.`,
-    );
+}
+export const parseFindings = (report) => parseSection(report, report, 'defect');
+export function parseItems(report) {
+  const items = [...parseFindings(report), ...parseSection(report, section(report.lines, '## 4. Opportunities', false), 'opportunity')];
+  const ids = new Set();
+  for (const item of items) {
+    if (ids.has(item.id)) throw new Error(`Duplicate item ID ${item.id}.`);
+    ids.add(item.id);
   }
-  if (findings.length === 0) {
-    throw new Error(
-      `${report.file} § "3. Findings" yielded no findings — expected \`#### A-<n>: <title>\` headings ` +
-        `followed by a \`- **<severity>** · <axis> · <verification> · <sources>\` line, or only ` +
-        `"${EMPTY_FINDINGS_SENTINEL}" when there are none. Fix the report, then re-run init.`,
-    );
+  for (const item of items) {
+    if (item.triage?.dependsOn.some((id) => !ids.has(id))) throw new Error(`${item.id}: dependency names an unknown item.`);
+    if (item.execution && (!item.execution.members.includes(item.id) || item.execution.members.some((id) => !ids.has(id)))) throw new Error(`${item.id}: Execution members mismatch.`);
+    if (item.execution && item.execution.members.some((id) => !same(items.find((other) => other.id === id)?.execution, item.execution))) throw new Error(`${item.id}: Execution membership/phase mismatch.`);
   }
-  const unknown = findings.filter((f) => !STATUSES.includes(f.status));
-  if (unknown.length > 0) {
-    throw new Error(
-      `Unknown status in ${report.file}: ${unknown.map((f) => `${f.id} (${f.status})`).join(', ')}. ` +
-        `Valid: ${STATUSES.join(', ')}.`,
-    );
-  }
-  return findings;
+  return items;
+}
+export function primaryFile(location) { return /`([^`:]+)/.exec(location)?.[1] ?? '(unlocated)'; }
+export function severityRank(severity) { const rank = SEVERITIES.indexOf(severity); return rank < 0 ? SEVERITIES.length : rank; }
+export function ranked(items) {
+  const rank = (item) => item.kind === 'defect' ? severityRank(item.severity) : SEVERITIES.length + PRIORITIES.indexOf(item.triage?.priority ?? 'low');
+  return [...items].sort((a, b) => rank(a) - rank(b) || a.id.localeCompare(b.id, 'en', { numeric: true }));
 }
 
-/** First path in the `Location` field, used to batch findings that touch the same file. */
-export function primaryFile(location) {
-  const match = /`([^`:]+)/.exec(location);
-  return match ? match[1] : '(unlocated)';
-}
+// SECTION: Validated report mutation
 
-export function severityRank(severity) {
-  const index = SEVERITIES.indexOf(severity);
-  return index === -1 ? SEVERITIES.length : index;
-}
-
-/** Highest severity first, then stable by id, so a batch leads with what matters most. */
-export function ranked(findings) {
-  return [...findings].sort(
-    (a, b) => severityRank(a.severity) - severityRank(b.severity) || a.id.localeCompare(b.id, 'en', { numeric: true }),
-  );
-}
-
-// SECTION: Report mutation
-
-/** Formats the canonical status line stored in each finding. */
-export function statusLine(status, note) {
-  return note ? `- **Status**: ${status} — ${note}` : `- **Status**: ${status}`;
-}
-
-/**
- * Applies status edits and the counts blockquote to the report. Edits are keyed by absolute line
- * index and inserts are applied last, back to front, so earlier indices stay valid.
- */
-export function writeReport(report, { replace = new Map(), insertAfter = new Map() } = {}) {
-  const lines = [...report.lines];
-  for (const [index, text] of replace) lines[index] = text;
-  for (const [index, text] of [...insertAfter].sort((a, b) => b[0] - a[0])) lines.splice(index + 1, 0, text);
-  fs.writeFileSync(report.file, lines.join('\n'), 'utf8');
-}
-
-/** Rewrites (or inserts) the counts blockquote directly under the `## 3. Findings` heading. */
-export function refreshCounts(reportFile) {
-  const report = loadReport(reportFile);
-  const findings = parseFindings(report);
-  const counts = Object.fromEntries(STATUSES.map((status) => [status, 0]));
-  for (const finding of findings) counts[finding.status] += 1;
-  const summary = STATUSES.map((status) => `${status} ${counts[status]}`).join(', ');
-  const text = `${COUNTS_PREFIX} ${summary} (total ${findings.length}).`;
-
-  const lines = [...report.lines];
-  // Search the section preamble — heading to first `###`/`####` — not a fixed line window: prose
-  // added under the heading (a legend) pushes the blockquote out of a window, and a second one then
-  // gets inserted on every refresh. Stopping at the first heading keeps the search off finding
-  // bodies, where a Claim or Evidence line quoting this script's own banner would otherwise be
-  // matched and overwritten with the counts text.
-  let limit = report.end;
-  for (let i = report.start + 1; i < report.end; i += 1) {
-    if (/^#{1,4} /.test(lines[i])) {
-      limit = i;
-      break;
+export const statusLine = (state, note) => `- **Status**: ${state}${note ? ` — ${note}` : ''}`;
+function setFields(report, updates) {
+  const replace = new Map(), insertAfter = new Map();
+  for (const [item, fields] of updates) {
+    const inserts = [];
+    for (const [key, value] of Object.entries(fields)) {
+      const current = item.fields[key];
+      const text = value === null ? null : `- **${key}**: ${typeof value === 'string' ? value : JSON.stringify(value)}`;
+      if (current) replace.set(current.line, text);
+      else if (text !== null) inserts.push(text);
     }
+    if (inserts.length) insertAfter.set(item.anchor, inserts);
   }
-  const existing = [];
-  for (let i = report.start + 1; i < limit; i += 1) {
-    if (lines[i].startsWith(COUNTS_PREFIX)) existing.push(i);
+  return report.lines.flatMap((line, index) => [
+    ...(replace.has(index) ? (replace.get(index) === null ? [] : [replace.get(index)]) : [line]),
+    ...(insertAfter.get(index) ?? []),
+  ]);
+}
+function withCounts(report) {
+  const items = parseItems(report), lines = [...report.lines];
+  for (const [heading, kind, prefix] of [['## 4. Opportunities', 'opportunity', OPPORTUNITY_COUNTS_PREFIX], ['## 3. Findings', 'defect', COUNTS_PREFIX]]) {
+    const range = section(lines, heading, false);
+    if (!range) continue;
+    const counts = Object.fromEntries(STATUSES.map((state) => [state, items.filter((item) => item.kind === kind && item.status === state).length]));
+    const total = items.filter((item) => item.kind === kind).length;
+    const banner = `${prefix} ${STATUSES.map((state) => `${state} ${counts[state]}`).join(', ')} (total ${total}).`;
+    const limit = lines.findIndex((line, index) => index > range.start && index < range.end && /^#{1,4} /.test(line));
+    const existing = [];
+    for (let i = range.start + 1; i < (limit < 0 ? range.end : limit); i += 1) if (lines[i].startsWith(prefix)) existing.push(i);
+    if (existing.length) {
+      lines[existing[0]] = banner;
+      existing.slice(1).reverse().forEach((index) => lines.splice(index, 1));
+    } else lines.splice(range.start + 1, 0, '', banner);
   }
-  if (existing.length > 0) {
-    lines[existing[0]] = text;
-    // A report already carrying duplicates from the superseded fixed-window search converges back
-    // to one line here; rewriting only the first would leave the contradicting ones in place.
-    for (let i = existing.length - 1; i > 0; i -= 1) lines.splice(existing[i], 1);
-  } else {
-    lines.splice(report.start + 1, 0, '', text);
-  }
-  fs.writeFileSync(report.file, lines.join('\n'), 'utf8');
-  return { counts, total: findings.length };
+  return lines;
+}
+function commit(report, updates = []) {
+  const lines = setFields(report, updates);
+  const pending = { ...report, lines, ...section(lines, '## 3. Findings') };
+  const next = withCounts(pending).join(report.text.includes('\r\n') ? '\r\n' : '\n');
+  if (fs.readFileSync(report.file, 'utf8') !== report.text) throw new Error('Report changed concurrently; reload before retrying.');
+  const temporary = `${report.file}.${process.pid}.tmp`;
+  try { fs.writeFileSync(temporary, next, 'utf8'); fs.renameSync(temporary, report.file); }
+  finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
+}
+export function refreshCounts(file) {
+  const report = loadReport(file), items = parseItems(report);
+  commit(report);
+  return { counts: Object.fromEntries(STATUSES.map((state) => [state, items.filter((item) => item.kind === 'defect' && item.status === state).length])), total: items.filter((item) => item.kind === 'defect').length };
 }
 
-// SECTION: Command handlers
+// SECTION: Triage and dependency-safe batching
 
-/** Adds missing statuses and refreshes the report summary. */
-export function cmdInit(root, reportFile) {
-  const report = loadReport(reportFile);
-  const findings = parseFindings(report);
-  const insertAfter = new Map();
-  for (const finding of findings) {
-    if (finding.statusLine === null) insertAfter.set(finding.anchor, statusLine('open', ''));
-  }
-  writeReport(report, { insertAfter });
-  const { counts, total } = refreshCounts(reportFile);
-  console.log(`Report: ${toPosix(path.relative(root, report.file))}`);
-  console.log(`${total} findings (${insertAfter.size} newly marked open) — ${STATUSES.map((s) => `${s} ${counts[s]}`).join(', ')}`);
-}
-
-export function cmdList(root, reportFile, argv) {
-  const status = flag(argv, '--status');
-  const severities = flag(argv, '--severity')?.split(',').map((s) => s.trim());
-  const full = argv.includes('--full');
-  const all = ranked(parseFindings(loadReport(reportFile)));
-  const rows = all.filter(
-    (f) => (!status || f.status === status) && (!severities || severities.includes(f.severity)),
-  );
-  // Mirrors `cmdBatch`: an empty result says so on stdout, so a caller — or a SKILL.md completion
-  // check — can test for it. The stderr tally below is always printed and so cannot serve.
-  if (rows.length === 0) console.log(status === 'open' ? 'No open findings.' : 'No matching findings.');
-  for (const row of rows) {
-    if (full) console.log(`${row.body}\n`);
-    else console.log(`${row.id}\t${row.severity}\t${row.status}\t${primaryFile(row.location)}\t${row.title}`);
-  }
-  console.error(`${rows.length} of ${all.length} findings listed.`);
-}
-
-/**
- * Composes a batch of `size` open findings: the group sharing the highest-severity finding's file
- * leads, then the rest of the pool in rank order tops it up. `size` is a size, not a ceiling the
- * lead group may silently undercut — a two-finding lead group must not turn `--size 8` into two.
- */
-export function selectBatch(open, size) {
-  if (open.length === 0) return [];
-  const lead = primaryFile(open[0].location);
-  const sameFile = open.filter((f) => primaryFile(f.location) === lead);
-  // A lone finding in its file is not a group; fall back to plain rank order.
-  const batch = (sameFile.length >= 2 ? sameFile : open).slice(0, size);
-  if (batch.length < size) {
-    const taken = new Set(batch.map((f) => f.id));
-    for (const finding of open) {
-      if (batch.length >= size) break;
-      if (!taken.has(finding.id)) batch.push(finding);
+function ready(item) { return item.status === 'open' && item.triage?.ruling === 'accept'; }
+function rulingStatus(item, ruling) { return ruling === 'accept' ? 'open' : ruling === 'reject' ? (item.kind === 'defect' ? 'false-positive' : 'deferred') : ruling === 'defer' ? 'deferred' : 'decision'; }
+function groupBatch(items, group, size) {
+  const members = ranked(items.filter((item) => item.status === 'open' && item.triage?.group === group));
+  if (members.some((item) => !ready(item))) throw new Error(`${group}: untriaged or unresolved member.`);
+  if (members.length > size) throw new Error(`${group}: group exceeds batch ceiling ${size}.`);
+  const result = [], remaining = [...members];
+  while (remaining.length) {
+    const next = remaining.find((item) => item.triage.dependsOn.every((id) => items.find((other) => other.id === id)?.status === 'fixed' || result.some((other) => other.id === id)));
+    if (!next) {
+      const external = remaining.flatMap((item) => item.triage.dependsOn.filter((id) => !members.some((member) => member.id === id) && items.find((other) => other.id === id)?.status !== 'fixed').map((id) => `${item.id} depends on ${id}`));
+      throw new Error(`${group}: ${external.length ? external.join('; ') : 'dependency cycle'}.`);
     }
+    result.push(next); remaining.splice(remaining.indexOf(next), 1);
   }
-  return batch;
+  return result;
 }
-
-/**
- * Resolves batch size: explicit `--size` wins; otherwise sizes dynamically based on the 5-batch
- * target (`ceil(total / batches)`), the lead finding's severity, and the lead-file cluster size.
- *
- * If the lead file has a cluster of findings (>= 2), the batch size expands up to MAX_SAFE_BATCH_SIZE
- * to keep the cluster intact in a single dispatch rather than fragmenting same-file edits.
- */
-export function resolveBatchSize(allFindings, openFindings, argv = []) {
-  const requestedSize = positiveIntegerFlag(argv, '--size');
-  if (requestedSize !== null) return requestedSize;
-
-  const batches = positiveIntegerFlag(argv, '--batches') ?? DEFAULT_MAX_BATCHES;
-  const total = allFindings.length;
-  if (total === 0 || openFindings.length === 0) return 1;
-
-  // Total findings, rather than remaining findings, keeps the target stable across resumptions.
-  const lead = openFindings[0];
-  const dynamicTarget = Math.ceil(total / batches);
-  const severityTarget = SEVERITY_BATCH_TARGETS[lead.severity];
-  const minimumTarget = Math.min(MIN_SAFE_BATCH_SIZE, total);
-  let target = Math.max(minimumTarget, Math.min(dynamicTarget, severityTarget));
-
-  const leadFile = primaryFile(lead.location);
-  const leadClusterSize = openFindings.filter((finding) => primaryFile(finding.location) === leadFile).length;
-  if (leadClusterSize >= 2) target = Math.max(target, leadClusterSize);
-  return Math.min(target, MAX_SAFE_BATCH_SIZE);
+function batchSize(argv) {
+  const raw = flag(argv, '--size');
+  const size = raw === null ? DEFAULT_BATCH_SIZE : Number(raw);
+  if (!Number.isInteger(size) || size < 1 || size > MAX_SAFE_BATCH_SIZE) throw new Error(`--size requires an integer from 1 to ${MAX_SAFE_BATCH_SIZE}.`);
+  return size;
 }
-
-/** Parses a positive-integer flag without silently accepting numeric coercions. */
-function positiveIntegerFlag(argv, name) {
-  const value = flag(argv, name);
-  if (value === null) return null;
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`Invalid ${name} "${value}": expected a positive integer.`);
-  }
-  return parsed;
+export function cmdInit(root, file) {
+  const report = loadReport(file), items = parseItems(report);
+  commit(report, items.filter((item) => !item.fields.Status).map((item) => [item, { Status: item.status }]));
+  console.log(`Report: ${toPosix(path.relative(root, file))}`);
+  console.log(`${items.filter((item) => item.kind === 'defect').length} findings, ${items.filter((item) => item.kind === 'opportunity').length} opportunities; statuses preserved.`);
 }
-
-/**
- * Prints the next batch of open findings: highest severity first, then grouped by the file they
- * touch, so one batch lands in one area of the tree. Sized dynamically to finish the report in at
- * most 5 batches (or `--batches <n>`), unless overridden with `--size <n>`.
- */
-export function cmdBatch(root, reportFile, argv) {
-  const all = parseFindings(loadReport(reportFile));
-  const open = ranked(all).filter((f) => f.status === 'open');
-  if (open.length === 0) {
-    console.log('No open findings.');
+export function cmdList(root, file, argv) {
+  const items = ranked(parseItems(loadReport(file))), state = flag(argv, '--status'), kind = flag(argv, '--kind');
+  const severities = flag(argv, '--severity')?.split(',');
+  if (state && !STATUSES.includes(state)) throw new Error('Unknown --status.');
+  if (kind && !['defect', 'opportunity'].includes(kind)) throw new Error('Unknown --kind.');
+  if (severities?.some((value) => !SEVERITIES.includes(value))) throw new Error('Unknown --severity.');
+  const rows = items.filter((item) => (!state || item.status === state) && (!kind || item.kind === kind) && (!severities || severities.includes(item.severity)));
+  if (!rows.length) console.log(state === 'open' ? 'No open findings.' : 'No matching items.');
+  for (const item of rows) console.log(argv.includes('--full') ? `${item.body}\n`
+    : `${item.id}\t${item.kind}\t${item.severity ?? item.triage?.priority ?? 'unranked'}\t${item.status}\t${item.title}`);
+  console.error(`${rows.length} of ${items.length} items listed.`);
+}
+export function cmdTriage(root, file, argv) {
+  const report = loadReport(file), items = parseItems(report), [id] = positionals(argv), item = items.find((entry) => entry.id === id);
+  if (!item) throw new Error(`Unknown item ${id}.`);
+  if (item.status === 'fixed') throw new Error(`${id}: preserve fixed disposition; use a new audit item for new work.`);
+  if (item.execution) throw new Error(`${id}: active Execution must be abandoned before re-triage.`);
+  const value = inputJson(root, argv); validateTriage(value, item);
+  if (value.dependsOn.some((dependency) => !items.some((entry) => entry.id === dependency))) throw new Error(`${id}: unknown dependency.`);
+  commit(report, [[item, { Triage: value, Status: statusLine(rulingStatus(item, value.ruling), item.note).slice('- **Status**: '.length) }]]);
+  console.log(`${id} -> ${rulingStatus(item, value.ruling)}: ${value.recommendation}`);
+}
+export function cmdBatch(root, file, argv) {
+  const items = ranked(parseItems(loadReport(file))), size = batchSize(argv);
+  const active = items.find((item) => item.execution && item.execution.members.some((id) => items.find((other) => other.id === id)?.status !== 'fixed'));
+  if (active) {
+    const record = active.execution;
+    console.log(`Resume ${record.batchId}: ${record.members.join(', ')} — ${record.phase}; plan ${record.plan}`);
     return;
   }
-  const size = resolveBatchSize(all, open, argv);
-  const batch = selectBatch(open, size);
-  console.log(`# Batch: ${batch.map((f) => f.id).join(', ')} (${open.length} open, batch size ${size})\n`);
-  for (const row of batch) console.log(`${row.body}\n`);
-}
-
-/** Argv minus the command, every `--flag` and each flag's value — so `--run`/`--note` may sit anywhere. */
-export function positionals(argv) {
-  const out = [];
-  for (let i = 1; i < argv.length; i += 1) {
-    if (argv[i].startsWith('--')) i += 1;
-    else out.push(argv[i]);
+  const seen = new Set();
+  for (const item of items.filter(ready)) {
+    if (seen.has(item.triage.group)) continue;
+    seen.add(item.triage.group);
+    try {
+      const batch = groupBatch(items, item.triage.group, size);
+      console.log(`# Batch: ${batch.map((entry) => entry.id).join(', ')} (group ${item.triage.group}, ceiling ${size})\n`);
+      batch.forEach((entry) => console.log(`${entry.body}\n`));
+      return;
+    } catch (error) { console.log(`Blocked: ${error.message}`); }
   }
-  return out;
-}
-
-export function cmdSet(root, reportFile, argv) {
-  const [id, status] = positionals(argv);
-  if (!id || !STATUSES.includes(status)) {
-    throw new Error(`Usage: status.mjs set <A-n> <${STATUSES.join('|')}> [--note "..."]`);
+  const unsettled = items.filter((item) => item.status === 'open' || item.status === 'decision');
+  if (!unsettled.length) console.log('No actionable items.');
+  else {
+    console.log('No ready batch.');
+    const blocked = unsettled.filter(ready), pending = unsettled.filter((item) => !ready(item));
+    if (blocked.length) console.log(`Blocked accepted items: ${blocked.map((item) => item.id).join(', ')}.`);
+    if (pending.length) console.log(`Needs triage or decision: ${pending.map((item) => item.id).join(', ')}.`);
   }
-  const report = loadReport(reportFile);
-  const finding = parseFindings(report).find((f) => f.id === id);
-  if (!finding) throw new Error(`${id} is not in ${toPosix(path.relative(root, report.file))}.`);
-  // A note given now replaces the old one; omitting --note keeps whatever the line already carried.
-  const note = flag(argv, '--note') ?? finding.note;
-  const text = statusLine(status, note.replace(/\r?\n/g, ' ').trim());
-  if (finding.statusLine === null) writeReport(report, { insertAfter: new Map([[finding.anchor, text]]) });
-  else writeReport(report, { replace: new Map([[finding.statusLine, text]]) });
-  const { counts } = refreshCounts(reportFile);
-  console.log(`${id} -> ${status}. Remaining open: ${counts.open}.`);
 }
 
-// SECTION: Main flow
+// SECTION: Batch checkpoints and completion
 
-const COMMANDS = Object.freeze({
-  init: cmdInit,
-  list: cmdList,
-  batch: cmdBatch,
-  set: cmdSet,
-});
-
-function main() {
-  const root = repoRoot();
-  const argv = process.argv.slice(2);
-  const reportFile = resolveReport(root, argv);
-  const command = COMMANDS[argv[0]];
-  if (!command) throw new Error('Usage: status.mjs <init|list|batch|set> [...]');
-  command(root, reportFile, argv);
+export function cmdProgress(root, file, argv) {
+  const report = loadReport(file), items = parseItems(report), [rawIds] = positionals(argv);
+  const ids = rawIds?.split(',') ?? [];
+  if (!ids.length || new Set(ids).size !== ids.length) throw new Error('progress requires distinct comma-separated member IDs.');
+  const members = ids.map((id) => {
+    const item = items.find((entry) => entry.id === id);
+    if (!item) throw new Error(`Unknown member ${id}.`);
+    return item;
+  });
+  const input = inputJson(root, argv);
+  keys(input, ['batchId', 'phase', 'plan', 'planReview', 'implementation', 'codeReview', 'evidence'], 'progress');
+  const previous = members[0].execution;
+  if (members.some((item) => !same(item.execution, previous))) throw new Error('Execution membership/phase mismatch.');
+  if (previous && !same([...previous.members].sort(), [...ids].sort())) throw new Error('Batch members must remain identical.');
+  if (!previous) {
+    if (input.phase !== 'planned') throw new Error('First Execution phase must be planned.');
+    if (items.some((item) => item.execution?.members.some((id) => items.find((other) => other.id === id)?.status !== 'fixed'))) throw new Error('Resume or abandon the active batch before starting another.');
+    if (members.some((item) => !ready(item)) || new Set(members.map((item) => item.triage.group)).size !== 1) throw new Error('Batch members require accepted triage in one coherent group.');
+    const expected = groupBatch(items, members[0].triage.group, MAX_SAFE_BATCH_SIZE).map((item) => item.id).sort();
+    if (!same(expected, [...ids].sort())) throw new Error('Batch must include every open group member.');
+    if (items.some((item) => item.execution?.batchId === input.batchId || item.history.some((record) => record.batchId === input.batchId))) throw new Error('batchId already exists; use a new batch identity.');
+  } else {
+    if (input.batchId !== previous.batchId) throw new Error('batchId identity cannot change.');
+    for (const key of ['plan', 'planReview', 'implementation', 'codeReview']) if (previous[key] && input[key] && previous[key] !== input[key]) throw new Error(`${key}: preserve prior artifact identity; abandon to revise scope.`);
+    const before = PHASES.indexOf(previous.phase), after = PHASES.indexOf(input.phase);
+    if (input.phase !== 'abandoned' && after !== before && after !== before + 1) throw new Error('Illegal Execution phase transition.');
+    if (input.phase === 'abandoned' && members.every((item) => item.status === 'fixed')) throw new Error('Completed batch cannot be abandoned.');
+  }
+  const value = { ...previous, ...input, members: previous?.members ?? ids };
+  validateExecution(value, 'Execution');
+  for (const key of ['plan', 'planReview', 'implementation', 'codeReview']) if (value[key]) evidenceFile(root, value[key], key);
+  const fixedIds = members.filter((item) => item.status === 'fixed').map((item) => item.id);
+  const updates = members.map((item) => [item, input.phase === 'abandoned'
+    ? { Execution: item.status === 'fixed' ? { ...previous, members: fixedIds } : null,
+      'Execution history': [...item.history, previous, { ...previous, phase: 'abandoned', evidence: value.evidence }] }
+    : { Execution: value }]);
+  commit(report, updates);
+  console.log(`${value.batchId} -> ${value.phase}: ${value.evidence}`);
+}
+export function cmdSet(root, file, argv) {
+  const report = loadReport(file), items = parseItems(report), [id, state] = positionals(argv), item = items.find((entry) => entry.id === id);
+  if (!item || !STATUSES.includes(state)) throw new Error('Usage: set <A-n|O-n> <open|fixed|false-positive|decision|deferred> [--note text].');
+  if (item.status === 'fixed' && state !== 'fixed') throw new Error(`${id}: preserve fixed disposition; use a new audit item for new work.`);
+  if (state === 'open' && item.triage?.ruling !== 'accept') throw new Error(`${id}: accepted triage and opportunity selection required before open.`);
+  if (state === 'fixed') {
+    if (item.triage?.ruling !== 'accept' || item.execution?.phase !== 'code-reviewed') throw new Error(`${id}: accepted triage and code-reviewed Execution required before fixed.`);
+    for (const key of ['plan', 'planReview', 'implementation', 'codeReview']) evidenceFile(root, item.execution[key], key);
+  } else if (item.execution && state !== 'open') throw new Error(`${id}: abandon active Execution before changing its disposition.`);
+  if (item.kind === 'opportunity' && state === 'false-positive') throw new Error('Use deferred for a declined/refuted opportunity hypothesis.');
+  const note = (flag(argv, '--note') ?? item.note).replace(/\r?\n/g, ' ').trim();
+  commit(report, [[item, { Status: statusLine(state, note).slice('- **Status**: '.length) }]]);
+  console.log(`${id} -> ${state}.`);
 }
 
-/**
- * Reports whether this module is the process entry point.
- * Importing it for tests must not run the CLI.
- * Compares realpaths, not URLs: Node resolves symlinks when computing a module's URL, so a plain
- * `import.meta.url === pathToFileURL(process.argv[1]).href` goes false whenever the script is
- * reached through a symlinked skills directory — and the CLI would exit 0 having done nothing.
- *
- * NOTE: mirrors `isMainModule` in the shipped dispatch skill's `lib/platform.mjs` rather than importing
- * it, for the reason recorded above `repoRoot`.
- */
+// SECTION: Entrypoint
+
 export function isMain(importMetaUrl) {
   if (!process.argv[1] || !importMetaUrl) return false;
-  try {
-    const entry = path.resolve(process.argv[1]);
-    const self = path.resolve(fileURLToPath(importMetaUrl));
-    if (entry === self) return true;
-    return fs.realpathSync(entry) === fs.realpathSync(self);
-  } catch {
-    return false;
-  }
+  // NOTE: Realpaths keep CLI detection correct through host skill-directory symlinks.
+  try { return fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(fileURLToPath(importMetaUrl)); }
+  catch { return false; }
 }
-
+function main() {
+  const argv = process.argv.slice(2);
+  for (const value of argv.filter((arg) => arg.startsWith('--'))) if (!KNOWN_FLAGS.includes(value)) throw new Error(`Unknown flag ${value}.`);
+  const command = { init: cmdInit, list: cmdList, triage: cmdTriage, batch: cmdBatch, progress: cmdProgress, set: cmdSet }[argv[0]];
+  if (!command) throw new Error('Usage: status.mjs <init|list|triage|batch|progress|set> [...]');
+  const root = repoRoot(); command(root, resolveReport(root, argv), argv);
+}
 if (isMain(import.meta.url)) {
-  try {
-    main();
-  } catch (error) {
-    console.error(error.message);
-    process.exit(1);
-  }
+  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

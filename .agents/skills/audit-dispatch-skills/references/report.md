@@ -1,13 +1,13 @@
 # Report format
 
-`.scratch/audits/<run>-audit.md` is self-contained: it quotes what it needs from the work directory rather than linking there. `audit-dispatch-skills-fix` parses `## 3. Findings` with `status.mjs`, so that section's grammar is exact; people read the rest.
+`.scratch/audits/<run>-audit.md` is self-contained: it quotes what it needs from the work directory rather than linking there. `audit-dispatch-skills-fix` parses `## 3. Findings` and `## 4. Opportunities` with `status.mjs`, so their item headings and fields follow the grammar below. The audit emits claims; the later fix run adds remediation state and links to delivery evidence.
 
 ## Sections, in order
 
 1. `## 1. Summary`: defect counts by severity, top five fixes by impact, opportunity count, baseline test totals, one-line probe verdict, and every coverage gap by name.
 2. `## 2. Dispatch platforms`: discovery table, not-found list, probe table, and the cause of each failure or skip.
 3. `## 3. Findings`: verified defects only, in the grammar below.
-4. `## 4. Opportunities`: improvement hypotheses as `#### O-<n>: <title>` with **Hypothesis**, **Benefit** and **Cost** bullets. Opportunities live only here and carry no `Status` line; acting on one is a separate, explicitly selected task.
+4. `## 4. Opportunities`: improvement hypotheses as `#### O-<n>: <title>` with **Hypothesis**, **Benefit** and **Cost** bullets. Write `None.` when empty. Audit generation emits no opportunity `Status` line. The later fix run adds a status (default `decision`) and `> Opportunity status:` counts here, plus triage and execution metadata. Opportunity implementation requires explicit selection; it can share a coherent batch with related defects. Selection does not establish measured benefit.
 5. `## 5. Coverage and budget`: scenario × scope matrix (`✓` traced, `—` n/a with reason, `✗` gap) and each scope's counters against their budgets. Write a counter you could not read as `unavailable`, never an estimate.
 6. `## 6. Appendix`: `### Unverified claims`, then `### Refuted claims` (each claim with its contradicting evidence).
 
@@ -39,7 +39,7 @@ Group findings critical → nit under a `### <Severity>` heading per group; renu
 - **Proposal**: …
 ```
 
-Any legend above the findings names the meta line's third field **Verification**, not "Status", which belongs to the fix line alone. Headings stay `####` (severity groups `###`), and the meta line stays a single bullet in that order. `- **Status**: open` is the fix run's state slot: `audit-dispatch-skills-fix` rewrites that one line per finding and keeps a counts blockquote under the section heading; the report stays the only state file.
+Any legend above the findings names the meta line's third field **Verification**, not "Status", which belongs to the fix line alone. Headings stay `####` (severity groups `###`), and the meta line stays a single bullet in that order. `- **Status**: open` is the fix run's state slot. The fix workflow owns statuses, counts, structured triage, execution checkpoints and history per [triage and state](../../audit-dispatch-skills-fix/references/triage-and-state.md); remediation resumes preserve those records. The report stays the remediation state file.
 
 With zero verified defects, section 3 holds exactly one line, `No defect findings.`, plus the counts blockquote the fix run writes. The parser rejects that sentinel beside findings, an `O-<n>` heading inside section 3, and any other non-finding content.
 
