@@ -70,7 +70,7 @@ test('audit probe reports an unconfirmed exit and preserves the fixture when the
     assert.equal(record.liveness, 'unknown');
     assert.equal(record.exitConfirmed, false);
     assert.ok(record.handle);
-    assert.equal(probe.cleanupFixture(w.fixture, [record]), 'blocked');
+    assert.deepEqual(probe.cleanupFixture(w.fixture, [record]), { status: 'blocked', reason: { code: 'exit-unconfirmed' } });
     assert.ok(fs.existsSync(w.fixture.dir));
   } finally { killQuietly(record.handle); }
 });

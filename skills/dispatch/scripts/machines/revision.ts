@@ -13,7 +13,7 @@ export type RevisionContext = {
   parent: ImplementState; c: Context; original: ParsedPlan; originalHash: string; workingPath: string;
   reason: string; evidence: string; plan: ParsedPlan | null; hash: string | null; changed: readonly string[]; removed: readonly string[]; grew: boolean; scopeAdjudicated: boolean;
 };
-export type RevisionState = { tag: 'author'; r: RevisionContext; error: string | null }
+export type RevisionState = { tag: 'author'; r: RevisionContext; error: string | null; defects: readonly Readonly<Record<string, unknown>>[] }
   | { tag: 'checking-host-event'; r: RevisionContext; parent: RevisionState; parked: HostEvent; effectId: string }
   | { tag: 'drift'; r: RevisionContext; parent: RevisionState; parked: HostEvent; paths: readonly string[]; fingerprint: TreeFingerprint }
   | { tag: 'parse'; r: RevisionContext; effectId: string; afterReview: boolean }
@@ -90,7 +90,7 @@ export function beginRevision(parent: ImplementState, event: Extract<HostEvent, 
   const session = typeof c.run.overrides['sessionDir'] === 'string' ? c.run.overrides['sessionDir'] : null;
   if (!session) throw new Error('Revision requires the journal-bound sessionDir.');
   const workingPath = `${session.replace(/[\\/]+$/, '')}/revision-${c.revisions.length + 1}.plan.md`;
-  return stay({ tag: 'author', error: null, r: { parent, c, original: effectivePlan(c), originalHash: c.planHash!, workingPath, reason: event.reason, evidence: event.evidence, plan: null, hash: null, changed: [], removed: [], grew: false, scopeAdjudicated: false } });
+  return stay({ tag: 'author', error: null, defects: [], r: { parent, c, original: effectivePlan(c), originalHash: c.planHash!, workingPath, reason: event.reason, evidence: event.evidence, plan: null, hash: null, changed: [], removed: [], grew: false, scopeAdjudicated: false } });
 }
 
 function parse(r: RevisionContext, afterReview: boolean): S {
@@ -108,13 +108,13 @@ function applyRevision(state: RevisionState, event: Event): S {
   switch (state.tag) {
     case 'author': return event.type === 'AUTHORED' && event.path === state.r.workingPath ? parse(state.r, false) : stay(state);
     case 'parse': {
-      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'author', r: state.r, error: event.detail });
+      if (event.type === 'EFFECT_FAILED' && answers(event, state.effectId)) return stay({ tag: 'author', r: state.r, error: event.detail, defects: [] });
       if (event.type !== 'ARTIFACT_PARSED' || !answers(event, state.effectId) || event.kind !== 'plan') return stay(state);
       const plan = asParsedPlan(event.parsed);
-      if (!plan || event.defects.length || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', r: state.r, error: 'Revision parser rejected its concrete plan/hash.' });
+      if (!plan || event.defects.length || !/^sha256:[a-f0-9]{64}$/.test(event.hash)) return stay({ tag: 'author', r: state.r, error: 'Revision parser rejected its concrete plan/hash.', defects: event.defects });
       if (state.r.c.designBinding) {
         const defects = validateDesignTraceability(plan, state.r.c.designBinding);
-        if (defects.length) return stay({ tag: 'author', r: state.r, error: defects.join(' ') });
+        if (defects.length) return stay({ tag: 'author', r: state.r, error: defects.join(' '), defects: [] });
       }
       if (plan.box['TL;DR'] !== state.r.original.box['TL;DR']) return stay({ tag: 'refused', r: state.r, error: 'TL;DR objective cannot change during plan revision.' });
       const r = { ...state.r, plan, hash: event.hash, ...revisionDelta(state.r.original, plan) };
@@ -193,7 +193,7 @@ export function reboundRevision(state: Extract<RevisionState, { tag: 'resume' }>
 }
 export function revisionAwait(state: RevisionState): Await | null { return state.tag === 'author' ? 'author' : state.tag === 'review' ? reviewAwait(state.review) : state.tag === 'drift' || state.tag === 'scope-adjudication' || state.tag === 'scope-user-decision' ? 'decide' : state.tag === 'resume' || state.tag === 'stopped' || state.tag === 'refused' ? 'done' : null; }
 export function revisionData(state: RevisionState): Record<string, unknown> {
-  if (state.tag === 'author') return { artifact: 'plan', path: state.r.workingPath, originalPath: state.r.c.planPath, originalHash: state.r.originalHash, reason: state.r.reason, error: state.error };
+  if (state.tag === 'author') return { artifact: 'plan', path: state.r.workingPath, originalPath: state.r.c.planPath, originalHash: state.r.originalHash, reason: state.r.reason, error: state.error, defects: state.defects };
   if (state.tag === 'review') return { ...reviewData(state.review), delta: state.r.changed };
   if (state.tag === 'scope-adjudication') return { kind: 'scope-deviation', pendingProposal: state.request, choices: ['approve', 'disagree', 'stop'], stopAllowed: true };
   if (state.tag === 'scope-user-decision') return { kind: 'scope-deviation-user', pendingProposal: state.request, orchestratorRationale: state.orchestratorRationale, choices: ['accept', 'decline', 'stop'], stopAllowed: true };

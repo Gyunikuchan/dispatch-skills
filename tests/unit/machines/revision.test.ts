@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { beginRevision, stepRevision, revisionDelta, reboundRevision, validateRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
+import { beginRevision, stepRevision, revisionDelta, revisionData, reboundRevision, validateRevision, type RevisionState } from '../../../skills/dispatch/scripts/machines/revision.ts';
 import { effectivePlan, validateImplement, type ImplementState } from '../../../skills/dispatch/scripts/machines/implement.ts';
 import { asParsedPlan } from '../../../skills/dispatch/scripts/machines/implement-types.ts';
 import { rootMachine, stepRoot, type RootState } from '../../../skills/dispatch/scripts/machines/root.ts';
@@ -10,6 +10,51 @@ import type { ParsedPlan } from '../../../skills/dispatch/scripts/domain/types.t
 import { approvalState, PLAN, HASH, FP, host } from './fixtures/implement-recovery.ts';
 
 const revision = { type: 'REVISE' as const, artifact: 'plan' as const, reason: 'blocked-by-plan', evidence: 'stalled check report' };
+function parsingRevision() {
+  const begun = beginRevision(approvalState(), revision);
+  const authored = stepRevision(begun.state, { type: 'AUTHORED', path: begun.state.r.workingPath });
+  return stepRevision(authored.state, { type: 'SNAPSHOT', effectId: authored.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+}
+
+test('plan revision diagnostics: retry retains exact parser records and deterministic replay', () => {
+  const parsing = parsingRevision();
+  const defects = [{ code: 'task-prerequisite', severity: 'defect', line: 47, message: 'Task T2 names missing prerequisite T9.' }];
+  const event = { type: 'ARTIFACT_PARSED' as const, effectId: parsing.effects[0]!.id, kind: 'plan' as const, hash: HASH, parsed: PLAN, defects };
+  const retry = stepRevision(parsing.state, event);
+  assert.equal(retry.state.tag, 'author');
+  assert.deepEqual(revisionData(retry.state)['defects'], defects);
+  assert.equal(revisionData(retry.state)['error'], 'Revision parser rejected its concrete plan/hash.');
+  assert.deepEqual(revisionData(stepRevision(parsing.state, event).state), revisionData(retry.state));
+});
+
+test('plan revision diagnostics: absent diagnostics keep generic error', () => {
+  const parsing = parsingRevision();
+  const retry = stepRevision(parsing.state, { type: 'ARTIFACT_PARSED', effectId: parsing.effects[0]!.id, kind: 'plan', hash: '', parsed: {}, defects: [] });
+  assert.equal(retry.state.tag, 'author');
+  assert.deepEqual(revisionData(retry.state)['defects'], []);
+  assert.equal(revisionData(retry.state)['error'], 'Revision parser rejected its concrete plan/hash.');
+});
+
+test('plan revision diagnostics: initial and effect failure authors have empty diagnostics', () => {
+  assert.deepEqual(revisionData(beginRevision(approvalState(), revision).state)['defects'], []);
+  const parsing = parsingRevision();
+  const retry = stepRevision(parsing.state, { type: 'EFFECT_FAILED', effectId: parsing.effects[0]!.id, cls: 'io', detail: 'Plan file unavailable.' });
+  assert.deepEqual(revisionData(retry.state)['defects'], []);
+  assert.equal(revisionData(retry.state)['error'], 'Plan file unavailable.');
+});
+
+test('plan revision diagnostics: author repair clears stale defects', () => {
+  const parsing = parsingRevision();
+  const retry = stepRevision(parsing.state, { type: 'ARTIFACT_PARSED', effectId: parsing.effects[0]!.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [{ code: 'repair', line: 3, message: 'Repair prerequisite.' }] });
+  const authored = stepRevision(retry.state, { type: 'AUTHORED', path: retry.state.r.workingPath });
+  const reparse = stepRevision(authored.state, { type: 'SNAPSHOT', effectId: authored.effects[0]!.id, fingerprint: FP, diff: { paths: [] } });
+  assert.equal(reparse.state.tag, 'parse');
+  assert.equal(revisionData(reparse.state)['defects'], undefined);
+  const repaired = stepRevision(reparse.state, { type: 'ARTIFACT_PARSED', effectId: reparse.effects[0]!.id, kind: 'plan', hash: HASH, parsed: PLAN, defects: [] });
+  assert.equal(repaired.state.tag, 'resume');
+  assert.equal(revisionData(repaired.state)['defects'], undefined);
+});
+
 function parsed(plan: Record<string, unknown> = PLAN, hash = `sha256:${'b'.repeat(64)}`) {
   let r = beginRevision(approvalState(), revision);
   const path = r.state.r.workingPath;

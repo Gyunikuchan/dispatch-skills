@@ -66,6 +66,43 @@ function setup(script: (n: number) => Result, spec = fakeSpec(), clock = fakeClo
 const target = (extra: Record<string, unknown> = {}) => ({ id: 'claude', provider: 'claude', mode: 'cli', binary: 'fake-cli', model: null, effort: null, sandbox: true, aliases: ['cli'], skip: null, ...extra });
 const okReply = (fixture: { nonces: { attached: string; sibling: string } }) => `ATTACHED: ${fixture.nonces.attached}\nSIBLING: ${fixture.nonces.sibling}`;
 
+test('probe cleanup reason: unsafe liveness blocks removal', () => {
+  const fixture = { dir: path.join(tempDir(), 'fixture') };
+  let calls = 0;
+  const io = { rmSync: () => { calls++; } };
+  for (const liveness of ['alive', 'unknown']) {
+    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness }], io), { status: 'blocked', reason: { code: 'exit-unconfirmed' } });
+  }
+  assert.equal(calls, 0);
+});
+
+test('probe cleanup reason: filesystem failures retain their error code', () => {
+  const fixture = { dir: path.join(tempDir(), 'fixture') };
+  const io = { rmSync: () => { throw Object.assign(new Error('private path details'), { code: 'EBUSY' }); } };
+  assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: 'EBUSY' } });
+});
+
+test('probe cleanup reason: absent or arbitrary error codes become unknown', () => {
+  const fixture = { dir: path.join(tempDir(), 'fixture') };
+  for (const code of [undefined, 'x'.repeat(500), 'private\npath', null]) {
+    const io = { rmSync: () => { throw Object.assign(new Error('private path details'), { code }); } };
+    assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'blocked', reason: { code: 'filesystem-error', errorCode: 'unknown' } });
+  }
+});
+
+test('probe cleanup reason: success retains bounded removal options and no reason', () => {
+  const fixture = { dir: path.join(tempDir(), 'fixture') };
+  const calls: unknown[][] = [];
+  const io = { rmSync: (...args: unknown[]) => { calls.push(args); } };
+  assert.deepEqual(probe.cleanupFixture(fixture, [{ liveness: 'exited' }], io), { status: 'complete', reason: null });
+  assert.deepEqual(calls, [[fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }]]);
+});
+
+test('probe cleanup reason: no fixture needs no removal', () => {
+  const io = { rmSync: () => { assert.fail('no fixture to remove'); } };
+  assert.deepEqual(probe.cleanupFixture(null, [], io), { status: 'complete', reason: null });
+});
+
 // SECTION: Selection
 
 const rows = [

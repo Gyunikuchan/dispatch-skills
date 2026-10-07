@@ -171,13 +171,14 @@ async function launchTargets({ claim, manifest, repoRoot, workDir, rel, outDir, 
   }
   // Carried records describe earlier runs' children and fixtures, so they neither gate nor take this run's cleanup.
   const current = live.filter((record) => !record.carried);
-  const cleanup = cleanupFixture(fixture, current);
+  const cleanup = cleanupFixture(fixture, current, ports.cleanupFs);
   // A child with unconfirmed exit may still hold its capture open, so captures are copied and the stage kept.
-  const move = !interrupted && cleanup === 'complete';
+  const move = !interrupted && cleanup.status === 'complete';
   let preserveError = null;
   try { preserveCaptures(stageDir, outDir, { move }); } catch (err) { preserveError = err.message; }
   for (const record of current) {
-    record.cleanup = cleanup;
+    record.cleanup = cleanup.status;
+    record.cleanupReason = cleanup.reason;
     // The recorded capture points where the evidence is: the output dir once moved, else the kept stage.
     if (record.capture) record.capturePath = toPosix(path.join(move && !preserveError ? outDir : stageDir, record.capture));
     if (preserveError) record.gaps = [...(record.gaps ?? []), preserveError];
@@ -388,7 +389,7 @@ export async function runTarget(target, ctx) {
   const base = {
     id: target.id, provider: target.provider, mode: target.mode, aliases: target.aliases, lifecycle: 'pending',
     handle: null, liveness: 'exited', exitConfirmed: true, launches: 0, attempts: 0, startedAt: null, deadlineAt: null,
-    outcome: null, cause: null, checks: null, denylist: null, usage: null, gaps: [], capture: null, cleanup: 'pending',
+    outcome: null, cause: null, checks: null, denylist: null, usage: null, gaps: [], capture: null, cleanup: 'pending', cleanupReason: null,
     generationLimit: { requested: limits.probeGenerationTokens, applied: false, reason: GENERATION_GAP },
     selection: target.selection ?? null, fixturePath: fixture?.dir ?? null, capturePath: null,
   };
@@ -398,13 +399,13 @@ export async function runTarget(target, ctx) {
     const carried = {
       ...base, carried: true, handle: previous.handle ?? null, launches: previous.attempts ?? 0, startedAt: previous.startedAt ?? null,
       deadlineAt: previous.deadlineAt ?? null, capture: previous.capturePath ? path.basename(previous.capturePath) : null,
-      capturePath: previous.capturePath ?? null, fixturePath: previous.fixturePath ?? null, selection: previous.model ?? null,
+      capturePath: previous.capturePath ?? null, fixturePath: previous.fixturePath ?? null, selection: previous.model ?? null, cleanupReason: previous.cleanupReason ?? null,
     };
     // Handle absence never means exited: a recorded launch without a confirmed exit is never repeated.
     if (prior === 'blocked') {
       const lifecycle = ['running', 'pending'].includes(previous.lifecycle) ? 'interrupted' : previous.lifecycle;
       const cause = [previous.cause, 'recorded launch has no confirmed exit; not relaunched'].filter(Boolean).join('; ');
-      return { ...carried, lifecycle, liveness: 'unknown', exitConfirmed: false, outcome: previous.outcome ?? null, cause, cleanup: 'blocked' };
+      return { ...carried, lifecycle, liveness: 'unknown', exitConfirmed: false, outcome: previous.outcome ?? null, cause, cleanup: 'blocked', cleanupReason: { code: 'exit-unconfirmed' } };
     }
     return { ...carried, lifecycle: previous.lifecycle, liveness: 'exited', exitConfirmed: true, outcome: previous.outcome ?? null, cause: previous.cause ?? null, cleanup: previous.cleanup ?? 'complete', gaps: ['reused recorded evidence; not relaunched'] };
   }
@@ -586,7 +587,7 @@ function toProbeRecord(record, rel, stageDir) {
     lifecycle: record.lifecycle, host: os.hostname(), handle: record.handle, liveness: record.liveness === 'alive' ? 'alive' : record.liveness,
     startedAt: iso(record.startedAt), deadlineAt: iso(record.deadlineAt), attempts: record.launches ?? 0, exitConfirmed: record.exitConfirmed,
     capturePath: record.capturePath ?? (record.capture ? toPosix(path.join(stageDir, record.capture)) : null), fixturePath: record.fixturePath ?? null,
-    outcome: record.outcome ?? null, cause: record.cause ?? null, cleanup: record.cleanup ?? 'pending', model: record.selection ?? null,
+    outcome: record.outcome ?? null, cause: record.cause ?? null, cleanup: record.cleanup ?? 'pending', cleanupReason: record.cleanupReason ?? null, model: record.selection ?? null,
   };
 }
 
@@ -606,14 +607,17 @@ export function loadManifest(workDir, { live }) {
 // ============================================================================
 
 /** Removes the fixture only when every launched child has a confirmed exit. */
-export function cleanupFixture(fixture, records) {
-  if (!fixture) return 'complete';
-  if (records.some((record) => record.liveness !== 'exited')) return 'blocked';
+export function cleanupFixture(fixture, records, fsPort = fs) {
+  if (!fixture) return { status: 'complete', reason: null };
+  if (records.some((record) => record.liveness !== 'exited')) return { status: 'blocked', reason: { code: 'exit-unconfirmed' } };
   try {
     // NOTE: on Windows an exited child's descendants can hold the fixture cwd briefly (EBUSY/EPERM), so retry.
-    fs.rmSync(fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
-    return 'complete';
-  } catch { return 'blocked'; }
+    fsPort.rmSync(fixture.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    return { status: 'complete', reason: null };
+  } catch (error) {
+    const errorCode = typeof error?.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(error.code) ? error.code : 'unknown';
+    return { status: 'blocked', reason: { code: 'filesystem-error', errorCode } };
+  }
 }
 
 /** Moves (or, while a child may hold a file, copies) staged captures into the run's output directory. */
@@ -700,10 +704,12 @@ export function renderSummary({ rows, live, fixture, config, configError = null,
 
   lines.push('', `## Live probe (${opts.modes ? 'per binary' : 'per provider'}, ${PROBE_LEVEL} level${interrupted ? ', INTERRUPTED' : ''})`, '');
   lines.push(`Outside-repo fixture: \`${fixture.dir}\``, '');
-  lines.push('| Target | Modes covered | Lifecycle | Launches | -f outside repo | Delegate file read | Denylist | Liveness | Cleanup | Cause |', '|---|---|---|---|---|---|---|---|---|---|');
+  lines.push('| Target | Modes covered | Lifecycle | Launches | -f outside repo | Delegate file read | Denylist | Liveness | Cleanup | Cleanup reason | Cause |', '|---|---|---|---|---|---|---|---|---|---|---|');
   for (const r of live) {
     const checks = r.checks ?? {};
-    lines.push(`| ${r.id} | ${(r.aliases ?? []).join(', ')} | ${r.lifecycle} | ${r.launches ?? 0} | ${mark(checks.attached)} | ${mark(checks.sibling)} | ${r.denylist?.behaviour ?? '—'} | ${r.liveness} | ${r.cleanup ?? '—'} | ${cell(r.cause ?? '—')} |`);
+    const reason = r.cleanupReason;
+    const cleanupNote = reason?.code === 'filesystem-error' ? `${reason.code}: ${reason.errorCode}` : reason?.code ?? '—';
+    lines.push(`| ${r.id} | ${(r.aliases ?? []).join(', ')} | ${r.lifecycle} | ${r.launches ?? 0} | ${mark(checks.attached)} | ${mark(checks.sibling)} | ${r.denylist?.behaviour ?? '—'} | ${r.liveness} | ${r.cleanup ?? '—'} | ${cell(cleanupNote)} | ${cell(r.cause ?? '—')} |`);
   }
   lines.push('', 'Gaps:', ...live.map((r) => `- ${r.id}: ${[...(r.gaps ?? []), r.generationLimit ? `generation limit ${r.generationLimit.requested} not applied (${r.generationLimit.reason})` : null, modelNote(r.selection)].filter(Boolean).join('; ') || 'none'} · capture: ${r.capturePath ?? r.capture ?? 'none'}`));
   return `${lines.join('\n')}\n`;

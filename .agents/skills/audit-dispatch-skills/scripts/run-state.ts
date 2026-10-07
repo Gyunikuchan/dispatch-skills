@@ -26,6 +26,7 @@ export type ProbeRecord = {
   lifecycle: ProbeLifecycle; host: string; handle: string | null; liveness: 'alive' | 'exited' | 'unknown';
   startedAt: string | null; deadlineAt: string | null; attempts: number; exitConfirmed: boolean;
   capturePath: string | null; fixturePath: string | null; outcome: string | null; cause: string | null; cleanup: string | null;
+  cleanupReason?: { code: 'exit-unconfirmed' } | { code: 'filesystem-error'; errorCode: string } | null;
   /** Configured versus applied model and effort when the closest configured fallback was launched. */
   model?: ProbeModel | null;
 };
