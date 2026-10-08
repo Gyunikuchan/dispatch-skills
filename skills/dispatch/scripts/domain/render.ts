@@ -33,7 +33,20 @@ const line = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').tr
 // SECTION: Resolution section
 
 /** The trailing `## Review Findings & Resolutions` section, heading included. */
-export function renderResolutionSection(rounds: readonly ResolutionRound[]): string {
+export type ResolutionOptions = { mode?: 'full' | 'excerpt'; reportRef?: string };
+
+export const findingAnchor = (id: string): string => id.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+/** Only unambiguous prose sentence boundaries permit excerpts. */
+function findingExcerpt(text: string): string {
+  const boundary = /[.!?](?=\s+[A-Z])/.exec(text);
+  if (!boundary) return text;
+  const sentence = text.slice(0, boundary.index + 1);
+  if (/[`\[\]<>]|:\/\/|\b(?:e\.g|i\.e|Mr|Mrs|Dr|vs)\./i.test(sentence)) return text;
+  return sentence;
+}
+
+export function renderResolutionSection(rounds: readonly ResolutionRound[], options: ResolutionOptions = {}): string {
   const out = [RESOLUTION_HEADING, ''];
   if (!rounds.length) return [...out, '*No reviews conducted yet.*', ''].join('\n');
   for (const round of rounds) {
@@ -46,10 +59,15 @@ export function renderResolutionSection(rounds: readonly ResolutionRound[]): str
     if (round.failed.length) out.push(`- Failed: ${round.failed.map((target) => `${target.slot} (${sanitizeText(target.reason)})`).join(', ')}`);
     if (!round.entries.length) out.push('- No findings.');
     for (const entry of round.entries) {
-      const head = `- **[${statusLabel(entry.status)}]** [${entry.id}] [${entry.severity}] [sources=${entry.sources.join(', ')}]`;
-      if (entry.dupOf) { out.push(`${head} [dup=${entry.dupOf}] ${line(entry.locus)} → see ${entry.dupOf}`); continue; }
-      const resolution = entry.resolution ? ` → ${sanitizeText(entry.resolution)}` : '';
-      out.push(`${head} ${line(entry.locus)} — ${line(entry.category)}: ${sanitizeText(entry.defect)}${resolution}`);
+      out.push('', `#### ${entry.id}`, '',
+        `- Status: **[${statusLabel(entry.status)}]**`, `- Severity: ${entry.severity}`,
+        `- Sources: ${entry.sources.join(', ')}`, `- Location: ${line(entry.locus)}`, `- Category: ${line(entry.category)}`);
+      const defect = sanitizeText(entry.defect);
+      out.push(`- ${options.mode === 'excerpt' ? 'Finding excerpt' : 'Finding'}: ${options.mode === 'excerpt' ? sanitizeText(findingExcerpt(entry.defect)) : defect}`);
+      if (entry.requiredChange && options.mode !== 'excerpt') out.push(`- Required change: ${sanitizeText(entry.requiredChange)}`);
+      if (entry.dupOf) out.push(`- Duplicate: ${options.reportRef ? `[${entry.dupOf}](${options.reportRef}#${findingAnchor(entry.dupOf)})` : entry.dupOf} [dup=${entry.dupOf}]`);
+      if (entry.resolution) out.push('- Ruling:', ...entry.resolution.split(/\r?\n/).map((text) => `  ${sanitizeText(text)}  `));
+      if (options.reportRef) out.push(`- Full report: [${entry.id}](${options.reportRef}#${findingAnchor(entry.id)})`);
     }
     out.push('');
   }
@@ -89,7 +107,7 @@ export function replaceResolutionSection(doc: string, rendered: string, reviewKe
     const heading = `### Review ${line(reviewKey)}`;
     const current = lines.slice(start + 1, end).join('\n').trim();
     const history = start === -1 || /^\*?No reviews conducted yet\.\*?$/.test(current) ? '' : current;
-    const block = `${heading}\n\n${body.replace(/^## Review Findings & Resolutions\s*\n/, '').replace(/^### Round /gm, '#### Round ')}`;
+    const block = `${heading}\n\n${body.replace(/^## Review Findings & Resolutions\s*\n/, '').replace(/^(#{3,4}) /gm, '$1# ')}`;
     const blocks = history.split(/(?=^### Review )/m);
     const index = blocks.findIndex((entry) => entry.split('\n')[0] === heading);
     if (index === -1) blocks.push(block);

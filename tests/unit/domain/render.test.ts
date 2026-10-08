@@ -43,7 +43,7 @@ test('walkthrough-minimum-contract: resolution and report sections render rounds
   assert.ok(section.includes('### Round 1'));
   assert.ok(section.includes('- Reviewers: codex[0] gpt-5 (high)'));
   assert.ok(section.includes('- Failed: agy[0] (quota'));
-  assert.ok(section.includes('**[Fixed]** [R1-F001] [MUST]'));
+  assert.match(section, /#### R1-F001\n\n- Status: \*\*\[Fixed\]\*\*\n- Severity: MUST/);
   assert.ok(section.includes('[dup=R1-F001]'));
   assert.ok(!section.includes('<!--'));
   assert.ok(renderResolutionSection([]).includes('*No reviews conducted yet.*'));
@@ -93,4 +93,50 @@ test('review history retains existing ungrouped rounds', () => {
   const original = replaceResolutionSection('# Plan\n', renderResolutionSection(rounds));
   const updated = replaceResolutionSection(original, renderResolutionSection([]), 'new-run');
   assert.match(updated, /### Round 1[\s\S]*R1-F001[\s\S]*### Review new-run/);
+});
+
+test('readable review rendering: excerpts link full findings and preserve exact multiline rulings', () => {
+  const input = [{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, defect: 'The loop spins forever. The second sentence explains the cause.', requiredChange: 'Bound the loop.', resolution: 'Keep the interface.\nAdd the counter.' }] }];
+  const excerpt = renderResolutionSection(input, { mode: 'excerpt', reportRef: '../full%20report.md' });
+  assert.match(excerpt, /- Finding excerpt: The loop spins forever.\n/);
+  assert.ok(!excerpt.includes('second sentence'));
+  assert.match(excerpt, /- Ruling:\n  Keep the interface.  \n  Add the counter.  \n/);
+  assert.match(excerpt, /\[R1-F001\]\(\.\.\/full%20report.md#r1-f001\)/);
+  const full = renderReport({ title: 'Review', target: 'plan.md', kind: 'plan', summary: 'Recorded', rounds: input });
+  assert.match(full, /#### R1-F001/);
+  assert.match(full, /The second sentence explains the cause./);
+  assert.match(full, /Required change: Bound the loop./);
+  const owned = replaceResolutionSection('# Plan\n', excerpt, 'run');
+  assert.match(owned, /### Review run\n\n#### Round 1[\s\S]*##### R1-F001/);
+  assert.equal(replaceResolutionSection(owned, excerpt, 'run'), owned);
+});
+
+test('readable review rendering: ambiguous sentence boundaries retain the complete finding', () => {
+  for (const defect of ['No terminator or safe boundary', 'Use e.g. This example.', 'Call `helper.ts`. This fails.', 'The URL is https://a.example/path. This fails.', 'Use Dr. Smith. More detail.']) {
+    const { resolution: _resolution, ...entry } = rounds[0]!.entries[0]!;
+    const output = renderResolutionSection([{ ...rounds[0]!, entries: [{ ...entry, defect }] }], { mode: 'excerpt' });
+    // Existing sanitization removes code delimiters before rendering.
+    assert.ok(output.includes(defect.replace(/`/g, '')));
+    assert.ok(!output.includes('- Ruling:'));
+  }
+});
+
+test('readable review rendering: all dispositions, duplicate relations, failed and empty rounds survive', () => {
+  const statuses = ['accepted', 'fixed', 'rejected', 'pending-rejection', 'downgraded', 'needs-user', 'closed-by-reviewer', 'closed-by-orchestrator', 'duplicate', 'deferred'] as const;
+  const output = renderResolutionSection([{ ...rounds[0]!, entries: statuses.map(status => ({ ...rounds[0]!.entries[0]!, status })) }, { round: 2, reviewers: [], failed: [], entries: [] }]);
+  for (const label of ['Accepted', 'Fixed', 'Rejected', 'Rejected — Pending Confirmation', 'Downgraded', 'Needs User', 'Rejected — Closed by Reviewer', 'Rejected — Closed by Orchestrator', 'Duplicate', 'Deferred']) assert.ok(output.includes(`**[${label}]**`));
+  assert.match(output, /- Sources: codex\[0\]\n- Location: src\/a.ts:L3\n- Category: correctness/);
+  assert.match(output, /### Round 2\n\n- Reviewers: none\n- No findings./);
+  assert.match(renderResolutionSection(rounds), /Duplicate: R1-F001 \[dup=R1-F001\]/);
+  assert.match(renderResolutionSection(rounds, { mode: 'excerpt', reportRef: 'review.report.md' }), /Duplicate: \[R1-F001\]\(review.report.md#r1-f001\)/);
+  assert.ok(!output.includes('<!--'));
+});
+
+test('readable review rendering: retained duplicate IDs do not link to another review run', () => {
+  const section = renderResolutionSection(rounds);
+  const first = replaceResolutionSection('# Plan\n', section, 'run-1');
+  const history = replaceResolutionSection(first, section, 'run-2');
+  assert.equal((history.match(/Duplicate: R1-F001 \[dup=R1-F001\]/g) ?? []).length, 2);
+  assert.ok(!history.includes('](#r1-f001)'));
+  assert.equal(replaceResolutionSection(history, section, 'run-2'), history);
 });

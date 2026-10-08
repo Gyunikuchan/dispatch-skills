@@ -6,6 +6,14 @@ import { beginReview, stepReview } from '../../../skills/dispatch/scripts/machin
 import { approvalState } from '../machines/fixtures/implement-recovery.ts';
 import { started } from '../machines/fixtures/design-delivery.ts';
 import { fakePorts, tempDir } from '../../helpers/fake-ports.ts';
+import { renderReport, renderWalkthrough } from '../../../skills/dispatch/scripts/domain/render.ts';
+
+test('readable review rendering: non-plan consumers retain full findings', () => {
+  const rounds = [{ round: 1, reviewers: ['reader'].map(slot => ({ slot })), failed: [], entries: [{ id: 'R1-F001', severity: 'SHOULD' as const, status: 'accepted' as const, sources: ['reader'], locus: 'src/a.ts:L1', category: 'correctness', defect: 'Missing check. Full detail remains here.', requiredChange: 'Add check.' }] }];
+  const report = renderReport({ title: 'Design', kind: 'design', target: 'design.md', summary: 'Reviewed', rounds });
+  const walkthrough = renderWalkthrough({ title: 'Done', delivered: 'Check', parent: 'plan.md', status: '1/1 SC passing', changes: [], verification: [], finalGate: 'passed', deviations: [], followUps: [], revisions: [], rounds });
+  for (const text of [report, walkthrough]) { assert.match(text, /Finding: Missing check. Full detail remains here./); assert.match(text, /Required change: Add check./); assert.ok(!text.includes('Finding excerpt:')); }
+});
 
 test('standalone, active and completed design children share idempotent plan resolution rendering', () => {
   const ports = fakePorts(), session = tempDir(), planPath = path.join(session, 'increment.plan.md');

@@ -58,6 +58,97 @@ const defects = (source: string) => {
   return result.ok ? [] : result.defects.map((item) => item.code);
 };
 
+const readable = (source = PLAN) => source.replace(/^#### /gm, '- #### ').replace(/^(- (?:Changes|Purpose|Command|Inputs):.*)$/gm, '  $1');
+const parsed = (source: string) => { const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result)); return result.plan; };
+
+test('readable plan syntax: nested and mixed entries preserve executable contracts and source lines', () => {
+  const plain = parsed(PLAN), nested = parsed(readable());
+  assert.deepEqual(nested.changes, plain.changes);
+  assert.deepEqual(nested.tasks, plain.tasks);
+  assert.deepEqual(nested.criteria, plain.criteria);
+  assert.deepEqual(nested.finalCommands, plain.finalCommands);
+  assert.equal(nested.governedText, governedPlanText(readable()));
+  assert.deepEqual(parsed(readable().replace('- #### [NEW]', '#### [NEW]').replace('  - Purpose:', '- Purpose:')).changes, plain.changes);
+  assert.deepEqual(parsed(readable().replace('- #### [NEW]', '- #### [DELETE]')).changes.map(c => c.action), ['MODIFY', 'DELETE', 'GENERATED']);
+  const consecutive = readable().replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.\n', '');
+  const generated = parsed(consecutive.replace('src/fetch.ts, tests/fetch.test.ts', 'src/fetch.ts'));
+  assert.equal(generated.changes[0]?.command, null);
+  assert.equal(generated.changes[0]?.note, 'add a retry counter to fetchWithRetry.');
+  assert.equal(generated.changes[1]?.command, 'npm run docs');
+  assert.deepEqual(generated.tasks[0]?.generated, [{ path: 'docs/api.md', inputs: ['src/fetch.ts'] }]);
+});
+
+test('readable plan syntax: owned briefs carry Outcome, Constraints and every labelled invariant once', () => {
+  const source = readable().replace('Fetch stops retrying after three attempts so callers fail fast.', '- Outcome: Fetch stops retrying.\n- Constraints: Keep the public API.')
+    .replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve retry ordering.\n    - Exception: zero retries still calls once.\n      Keep the callback.\n  - Invariants: Preserve errors.\n  - Notes: optional context only.')
+    .replace('### T1 —', '### T1 —')
+    .replace('- Criteria: SC1, SC2', '- Criteria: SC1')
+    .replace('- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.', '- #### [NEW] tests/fetch.test.ts\n  - Purpose: pins the retry cap.')
+    .replace('## Verification Plan', '### T2 — Check the companion\n- Outcome: Check the companion.\n- Prerequisites: T1\n- Criteria: SC2\n- #### [MODIFY] src/companion.ts\n  - Changes: Check companion output.\n  - Invariants: Preserve companion shape.\n\n## Verification Plan');
+  const plan = parsed(source);
+  const first = selectTaskBrief(plan, 'T1'), second = selectTaskBrief(plan, 'T2');
+  assert.ok(first); assert.ok(second);
+  assert.equal(first.task.summary, 'Fetch stops retrying. Constraints: Keep the public API.');
+  const note = first.changes.find(c => c.path === 'src/fetch.ts')!.note;
+  for (const text of ['Invariants: Preserve retry ordering.', 'Exception: zero retries still calls once.', 'Keep the callback.', 'Invariants: Preserve errors.']) assert.equal(note.split(text).length - 1, 1);
+  assert.ok(!JSON.stringify(first).includes('optional context only'));
+  assert.ok(!JSON.stringify(first).includes('Preserve companion shape'));
+  assert.ok(!JSON.stringify(second).includes('Preserve retry ordering'));
+  assert.match(plan.governedText, /Notes: optional context only/);
+});
+
+test('readable plan syntax: unsafe paths, malformed nesting, aliases and fake authority stay rejected', () => {
+  for (const [source, code] of [
+    [readable().replace('src/fetch.ts\n  - Changes:', '../outside.ts\n  - Changes:'), 'invalid-change-path'],
+    [readable().replace('- #### [NEW] tests/fetch.test.ts', '- #### [NEW] SRC/fetch.ts'), 'duplicate-change-path'],
+    [readable().replace('- #### [MODIFY]', '  - #### [MODIFY]'), 'change-heading'],
+    [readable().replace('  - Inputs: src/fetch.ts', ''), 'generated-inputs'],
+  ]) assert.ok(defects(source!).includes(code as never), String(code));
+  for (const wrap of [(s: string) => `> ${s}`, (s: string) => `<!--\n${s}\n-->`, (s: string) => `\`\`\`md\n${s}\n\`\`\``]) {
+    const source = readable().replace('- #### [NEW]', `${wrap('- #### [MODIFY] src/fake.ts')}\n- #### [NEW]`);
+    assert.ok(!parsed(source).changes.some(c => c.path === 'src/fake.ts'));
+  }
+  const source = readable().replace('- #### [NEW]', '    #### [MODIFY] src/fake.ts\n- #### [NEW]');
+  assert.ok(!parsed(source).changes.some(c => c.path === 'src/fake.ts'));
+  assert.ok(!parsed(readable().replace('- #### [NEW]', '  #### [MODIFY] src/fake.ts\n- #### [NEW]')).changes.some(c => c.path === 'src/fake.ts'));
+  assert.ok(defects(readable(TASKS).replace('src/writer.ts, README.md', 'src/writer.ts, src/reader.ts')).includes('generated-inputs'));
+});
+
+test('readable plan syntax: invariant-only notes stay single and unlabeled details retain all continuations', () => {
+  const source = readable().replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Notes: Optional background.\n  - Invariants: Keep API.\n    - Exception: Keep flag.');
+  assert.equal(parsed(source).changes[0]?.note, 'Invariants: Keep API.\n  - Exception: Keep flag.');
+  const continued = readable().replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes:\n    - Add the counter.\n      Preserve callback order.\n    - Bound the attempts.');
+  assert.equal(parsed(continued).changes[0]?.note, '  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.');
+});
+
+test('readable plan revision: additions preserve nested constraints, generated inputs and summary hard breaks', () => {
+  const source = readable().replace('> **Scope:** src/fetch.ts', '> **Scope:** src/fetch.ts  ').replace('  - Changes: add a retry counter to fetchWithRetry.', '  - Changes: add a retry counter to fetchWithRetry.\n  - Invariants: Preserve errors.');
+  const base = parsed(source);
+  const effective = { ...base, criteria: [...base.criteria, { ...base.criteria[1]!, id: 'SC3', title: 'Check extra output', changes: ['src/extra.ts'], verify: [{ command: 'npm run extra', final: false }] }], changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note: 'Check extra.\nInvariants: Preserve shape.\n  - Keep order.', command: null, line: 0 }], tasks: base.tasks.map(t => ({ ...t, paths: [...t.paths, 'src/extra.ts'], criteria: [...t.criteria, 'SC3'] })) };
+  const seed = materializePlanRevisionSeed(source, base, effective);
+  const revised = parsed(seed);
+  assert.match(seed, /> \*\*Scope:\*\* src\/fetch.ts, src\/extra.ts  \n/);
+  assert.match(seed, /- #### \[MODIFY\] src\/extra.ts\n  - Changes: Check extra.\n  - Invariants: Preserve shape.\n    - Keep order./);
+  assert.deepEqual(revised.tasks[0]?.generated, base.tasks[0]?.generated);
+  assert.equal(revised.changes[0]?.note, base.changes[0]?.note);
+  assert.deepEqual(revised.criteria[2]?.changes, ['src/extra.ts']);
+  assert.ok(revised.tasks[0]?.criteria.includes('SC3'));
+  assert.equal(revised.changes.filter(c => c.path === 'src/extra.ts').length, 1);
+  assert.equal(materializePlanRevisionSeed(seed, base, effective), seed);
+  assert.equal(governedPlanText(seed), governedPlanText(seed.replace('*No reviews conducted yet.*', 'Changed driver review.')));
+});
+
+for (const note of ['  - Add the counter.\n    Preserve callback order.\n  - Bound the attempts.', 'Invariants: Keep API.\n  - Keep flag.']) {
+  test(`readable plan revision: accepted ${note.startsWith('Invariants:') ? 'invariant-only' : 'continuation-only'} notes keep their labels and indentation`, () => {
+    const source = readable(), base = parsed(source);
+    const effective = { ...base, changes: [...base.changes, { action: 'MODIFY' as const, path: 'src/extra.ts', note, command: null, line: 0 }], tasks: base.tasks.map(t => ({ ...t, paths: [...t.paths, 'src/extra.ts'] })) };
+    const seed = materializePlanRevisionSeed(source, base, effective);
+    assert.equal(parsed(seed).changes.find(c => c.path === 'src/extra.ts')?.note, note);
+    assert.match(seed, note.startsWith('Invariants:') ? /- #### \[MODIFY\] src\/extra.ts\n  - Invariants: Keep API./ : /- #### \[MODIFY\] src\/extra.ts\n  - Changes:\n    - Add the counter./);
+    assert.equal(materializePlanRevisionSeed(seed, base, effective), seed);
+  });
+}
+
 test('implement-plan-lint: parsePlan extracts box, criteria, changes, verification, FINAL, traceability', () => {
   const result = parsePlan(PLAN);
   assert.ok(result.ok, JSON.stringify(result));

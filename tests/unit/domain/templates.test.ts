@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/domain/plan.ts';
 
 const root = new URL('../../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
@@ -8,6 +9,31 @@ const KEPT = [
   'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md',
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
+
+test('readable plan template: hierarchy, hard breaks and conditional contracts stay executable', () => {
+  const template = readFileSync(new URL('plan.md', root), 'utf8');
+  const order = ['> **TL;DR:**', '## Key Decisions & Context', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
+  for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
+  assert.equal((template.match(/^> \*\*.* {2}$/gm) ?? []).length, 5);
+  assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
+  for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:']) assert.ok(template.includes(label));
+  let source = template.split('````markdown\n')[1]!.split('````')[0]!;
+  source = source.replace(/## Background[\s\S]*?(?=## Proposed Changes)/, '## Key Decisions & Context\n- Keep API (user)\n\n');
+  source = source.replace(/## Success Criteria[\s\S]*?(?=## Verification Plan)/, '## Success Criteria\n- [SC1] Output stays usable\n  - Changes: src/new.ts, src/edit.ts, src/delete.ts, src/generated.ts\n  - Verify: `npm test` [FINAL]\n  - Evidence: verify\n  - Test rationale: Checks the output.\n\n');
+  source = source.replace(/## Verification Plan[\s\S]*?(?=## Review Findings)/, '## Verification Plan\n### Automated Tests\n- `npm run lint`\n\n');
+  const replacements: Record<string, string> = { '<Goal Description>': 'Check output', '<problem and outcome>': 'Keep output usable', '<`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>': 'user request', '<reader decision, or none>': 'none', '<low|med|high>': 'low', '<reason>': 'isolated change', '<paths or components>': 'src', 'T<n>': 'T1', '<Task outcome>': 'Keep output usable', '<Plain-language outcome and rationale; why each non-obvious prerequisite is needed.>': 'Keep output usable.', '<optional shared task constraints>': 'Keep API.', '<none | T<n>[, T<n>...]>': 'none', '<SC#[, SC#...]>': 'SC1', '<file-specific exception>': 'keep deprecated flag', '<generator command>': 'npm run generate' };
+  // Replace composite placeholders before their embedded task-ID token.
+  source = source.replace('<none | T<n>[, T<n>...]>', 'none');
+  for (const [key, value] of Object.entries(replacements)) source = source.replaceAll(key, value);
+  const paths = ['src/new.ts', 'src/edit.ts', 'src/delete.ts', 'src/generated.ts'];
+  for (const file of paths) source = source.replace('<relative-path>', file);
+  source = source.replace('<relative-path>[, <relative-path>...]', 'src/edit.ts');
+  const result = parsePlan(source); assert.ok(result.ok, JSON.stringify(result));
+  const brief = selectTaskBrief(result.plan, 'T1')!;
+  assert.equal(brief.task.summary, 'Keep output usable. Constraints: Keep API.');
+  assert.match(brief.changes[1]!.note, /Invariants:.*exception: keep deprecated flag/);
+  assert.deepEqual(brief.task.generated, [{ path: 'src/generated.ts', inputs: ['src/edit.ts'] }]);
+});
 
 test('templates: every kept template exists and none are extra', () => {
   const files = [...readdirSync(root).filter((name) => name !== 'schemas'), ...readdirSync(new URL('schemas/', root)).map((name) => `schemas/${name}`)];

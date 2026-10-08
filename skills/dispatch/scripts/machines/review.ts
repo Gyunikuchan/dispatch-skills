@@ -706,6 +706,7 @@ export function resolutionRounds(c: ReviewCtx): ResolutionRound[] {
     entries: c.findings.filter((finding) => finding.round === record.round).map((finding) => ({
       id: finding.id, severity: finding.severity, status: statusOf(finding), sources: finding.sources, locus: finding.locus,
       category: finding.category, defect: finding.defect,
+      ...(finding.requiredChange === undefined ? {} : { requiredChange: finding.requiredChange }),
       ...(finding.resolution === undefined ? {} : { resolution: finding.resolution }),
       ...(finding.dupOf === undefined ? {} : { dupOf: finding.dupOf }),
     })),

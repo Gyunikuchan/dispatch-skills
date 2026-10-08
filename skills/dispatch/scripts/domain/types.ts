@@ -144,6 +144,7 @@ export type ResolutionEntry = {
   category: string;
   defect: string;
   resolution?: string;
+  requiredChange?: string;
   dupOf?: FindingId;
 };
 

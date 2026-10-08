@@ -307,7 +307,7 @@ export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan
     if (index >= 0) {
       const current = lines[index] ?? '';
       const suffix = addedPaths.filter((file) => !current.includes(file));
-      if (suffix.length) lines[index] = `${current.replace(/\s*$/, '')}, ${suffix.join(', ')}`;
+      if (suffix.length) lines[index] = `${current.replace(/\s*$/, '')}, ${suffix.join(', ')}${current.endsWith('  ') ? '  ' : ''}`;
     }
   }
   const replaceSection = (heading: string, update: (body: string[]) => string[]) => {
@@ -326,7 +326,8 @@ export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan
       const start = headings.find((index) => new RegExp(`^###\\s+${task.id}\\s+[—–-]\\s+`).test(result[index] ?? ''));
       if (start === undefined) continue;
       const end = headings.find((index) => index > start) ?? result.length;
-      let action = result.findIndex((line, index) => index > start && index < end && /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+/.test(line));
+      const view = taskStructuralView(structuralLines(result.join('\n')));
+      let action = result.findIndex((_line, index) => index > start && index < end && /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+/.test(view[index]?.text ?? ''));
       if (action < 0) action = end;
       const criteriaIndex = result.findIndex((line, index) => index > start && index < action && /^[-*+]\s+Criteria:/i.test(line));
       const criteriaLine = `- Criteria: ${task.criteria.length ? task.criteria.join(', ') : 'none'}`;
@@ -335,13 +336,21 @@ export function materializePlanRevisionSeed(source: string, baseline: ParsedPlan
       else { result.splice(action, 0, criteriaLine); action++; headerAdded = true; }
 
       const taskEnd = (headings.find((index) => index > start) ?? result.length) + (headerAdded ? 1 : 0);
-      const existing = new Set(result.slice(start + 1, taskEnd).flatMap((line) => {
-        const match = /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/.exec(line);
-        return match?.[1] ? [match[1]] : [];
+      const existing = new Set(taskStructuralView(structuralLines(result.join('\n'))).slice(start + 1, taskEnd).flatMap(({ text }) => {
+        const match = /^####\s+\[(?:NEW|MODIFY|DELETE|GENERATED)\]\s+(.+?)\s*$/.exec(text);
+        return match?.[1] ? [normalizePlanPath(match[1]).path] : [];
       }));
+      const nested = result.slice(start + 1, taskEnd).some((line) => /^- ####\s/.test(line));
       const additions = task.paths.filter((path) => !existing.has(path)).flatMap((path) => {
-        const note = effective.changes.find((change) => change.path === path)?.note || 'Accepted implementation scope adjustment.';
-        return ['', `#### [MODIFY] ${path}`, `- Changes: ${note}`];
+        const change = effective.changes.find((change) => change.path === path);
+        const note = change?.note || 'Accepted implementation scope adjustment.';
+        const indent = nested ? '  ' : '';
+        const noteLines = note.split('\n');
+        const continuationOnly = /^\s+\S/.test(noteLines[0] ?? '');
+        return ['', `${nested ? '- ' : ''}#### [${change?.action ?? 'MODIFY'}] ${path}`,
+          ...(continuationOnly ? [`${indent}- Changes:`] : []),
+          ...noteLines.map((line, index) => `${indent}${/^Invariants:/.test(line) ? '- ' : index === 0 && !continuationOnly ? '- Changes: ' : ''}${line}`),
+          ...(change?.command ? [`${indent}- Command: \`${change.command}\``, `${indent}- Inputs: ${task.generated.find((item) => item.path === path)?.inputs.join(', ') ?? ''}`] : [])];
       });
       if (additions.length) result.splice(taskEnd, 0, ...additions);
     }
@@ -491,6 +500,21 @@ function keyValues(lines: readonly StructuralLine[], heading: string): Record<st
 
 type DraftTask = PlanTask & { prerequisitesLine: number | null; criteriaLine: number | null; summaryLine: number };
 
+/** Normalize only task-owned file entries and their detail indentation. */
+function taskStructuralView(lines: readonly StructuralLine[]): StructuralLine[] {
+  let task = false;
+  let nested = false;
+  return lines.map((entry) => {
+    let text = entry.text;
+    if (/^##\s/.test(text)) { task = false; nested = false; }
+    if (/^###\s/.test(text)) { task = TASK_HEADING.test(text); nested = false; }
+    if (task && /^- ####\s+\[/.test(text)) { text = text.slice(2); nested = true; }
+    else if (/^####\s/.test(text)) nested = false;
+    else if (nested && (/^ {2}[-*+]\s/.test(text) || /^ {4,}\S/.test(text))) text = text.slice(2);
+    return { ...entry, text };
+  });
+}
+
 function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { changes: PlanChange[]; tasks: DraftTask[] } {
   const ranges = sectionRanges(lines, '## Proposed Changes');
   const range = ranges[0];
@@ -501,7 +525,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
   const changes: PlanChange[] = [];
   const tasks: DraftTask[] = [];
   const seen = new Map<string, string>();
-  const body = lines.slice(range.start + 1, range.end);
+  const body = taskStructuralView(lines).slice(range.start + 1, range.end);
   // `task` is null before the first H3 or under a malformed one; `inHeader` spans a task H3 up to its first H4.
   let task: DraftTask | null = null;
   let malformed = false;
@@ -525,6 +549,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
     const current = task as DraftTask | null;
     const match = ACTION_HEADING.exec(entry.text);
     if (!match) {
+      if (/^\s*[-*+]\s+####\s+\[/.test(entry.text)) out.push(lint('change-heading', entry.line, 'Nested file entries require "- #### [ACTION] path" at task level.'));
       const marker = MARKER_HEADING.exec(entry.text)?.[1];
       if (marker) out.push(lint('unknown-change-marker', entry.line, `Unknown change marker [${marker}]; use [NEW], [MODIFY], [DELETE], or [GENERATED].`));
       if (inHeader && current) readTaskHeader(current, entry, summary, out);
@@ -546,7 +571,7 @@ function parseChanges(lines: readonly StructuralLine[], out: LintDefect[]): { ch
       if (/^#{2,4}\s+/.test(next.text)) break;
       block.push(next.text);
     }
-    const bullet = (name: string) => block.map((text) => text.trim()).find((text) => text.match(/^[-*+]\s+(\w+):/)?.[1] === name);
+    const bullet = (name: string) => block.find((text) => text.match(/^[-*+]\s+(\w+):/)?.[1] === name);
     const command = action === 'GENERATED' ? /^[-*+]\s+Command:\s*`([^`]+)`\s*$/.exec(bullet('Command') ?? '')?.[1]?.trim() ?? null : null;
     if (action === 'GENERATED' && !command) out.push(lint('generated-command', entry.line, 'A [GENERATED] path requires a "- Command: `<generator>`" bullet.'));
     if (current) {
@@ -577,7 +602,7 @@ function readTaskHeader(task: DraftTask, entry: StructuralLine, summary: string[
     }
     return;
   }
-  const text = entry.text.trim();
+  const text = entry.text.trim().replace(/^[-*+]\s+Outcome:\s*/i, '').replace(/^[-*+]\s+(Constraints:)/i, '$1');
   if (!text) return;
   if (!summary.length) task.summaryLine = entry.line;
   summary.push(text);
@@ -595,15 +620,24 @@ function generatedInputs(raw: string | undefined, line: number, out: LintDefect[
   });
 }
 
-/** The `Changes:`/`Purpose:` bullet (or its first sub-bullet), else the first bullet. */
+/** Keep primary change detail and explicitly labelled file invariants in the owned brief. */
 function changeNote(block: readonly string[]): string {
   const labelled = block.findIndex((text) => /^[-*+]\s+(?:Changes|Purpose):/.test(text));
-  let note = '';
-  if (labelled !== -1) {
-    note = (block[labelled] ?? '').replace(/^[-*+]\s+(?:Changes|Purpose):\s*/, '').trim();
-    if (!note) note = (block.slice(labelled + 1).find((text) => /^\s+[-*+]\s+\S/.test(text)) ?? '').replace(/^\s+[-*+]\s+/, '').trim();
-  } else note = (block.find((text) => /^[-*+]\s+\S/.test(text)) ?? '').replace(/^[-*+]\s+/, '').trim();
-  return note.replace(/;$/, '');
+  const continuations = (index: number) => {
+    const result: string[] = [];
+    for (const text of block.slice(index + 1)) {
+      if (/^[-*+]\s/.test(text) || /^\S/.test(text)) break;
+      if (text.trim()) result.push(text);
+    }
+    return result;
+  };
+  const detail = labelled >= 0 ? (block[labelled] ?? '').replace(/^[-*+]\s+(?:Changes|Purpose):\s*/, '').trim().replace(/;$/, '') : '';
+  const fallback = block.find((text) => /^[-*+]\s+\S/.test(text) && !/^[-*+]\s+\w+:/.test(text));
+  const primary = labelled >= 0 ? [detail, ...continuations(labelled)].filter(Boolean).join('\n')
+    : (fallback ?? '').replace(/^[-*+]\s+/, '').trim().replace(/;$/, '');
+  const invariants = block.flatMap((text, index) => /^[-*+]\s+Invariants:/.test(text)
+    ? [text.replace(/^[-*+]\s+/, ''), ...continuations(index)] : []);
+  return [primary, ...invariants].filter(Boolean).join('\n');
 }
 
 function excluded(line: number, value: string): LintDefect {
@@ -881,7 +915,7 @@ function lintAutomatedDuplicates(automated: readonly string[], criteria: readonl
 function lintNotes(lines: readonly StructuralLine[], out: LintDefect[]): void {
   const range = sectionRanges(lines, '## Proposed Changes')[0];
   if (!range) return;
-  const notes = lines.slice(range.start + 1, range.end).flatMap((entry) => {
+  const notes = taskStructuralView(lines).slice(range.start + 1, range.end).flatMap((entry) => {
     const note = /^[-*+]\s+(?:Changes|Purpose):[ \t]*(.*)$/.exec(entry.text)?.[1]?.trim();
     return note ? [{ note, line: entry.line }] : [];
   });

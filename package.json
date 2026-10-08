@@ -39,7 +39,7 @@
     "diagrams": "node scripts/diagram.ts",
     "check:diagrams": "node scripts/diagram.ts --check",
     "typecheck": "tsc -p .",
-    "test": "npm run typecheck && npm run check:diagrams && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node --test --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts \"tests/**/*.test.ts\"",
+    "test": "npm run typecheck && npm run check:diagrams && node scripts/generate-hashes.ts --check && node scripts/check-terms.ts && node scripts/validate-configs.ts && node --test --test-concurrency=8 --import=./tests/helpers/isolated-temp.ts --import=./tests/helpers/block-spawn.ts --test-reporter=./scripts/test-reporter.ts \"tests/**/*.test.ts\"",
     "validate:configs": "node scripts/validate-configs.ts"
   },
   "devDependencies": {
