@@ -29,6 +29,9 @@ code has been written yet.
 
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
+Read complete inline history in the governing artifacts. Consult raw provider output or journals
+when missing evidence, disputed adjudication or recovery requires it; follow
+`references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 
 ## tags
 

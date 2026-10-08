@@ -33,6 +33,9 @@ Obey an explicit Git range in Scope. Otherwise inspect unstaged, staged, and unt
 source/text files, excluding `.scratch/`, generated, vendored, and binary paths. When those are
 empty, use only the caller-supplied merge-base-to-`HEAD` range. Never substitute `HEAD~1`.
 Inspect changed hunks plus adjacent call sites, interfaces, and tests needed to verify a claim.
+Read complete inline history in the governing artifacts. Consult raw provider output or journals
+when missing evidence, disputed adjudication or recovery requires it; follow
+`references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 
 ## tags
 

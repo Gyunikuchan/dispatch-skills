@@ -15,11 +15,11 @@ test('readable review rendering: non-plan consumers retain full findings', () =>
   for (const text of [report, walkthrough]) { assert.match(text, /Finding: Missing check. Full detail remains here./); assert.match(text, /Required change: Add check./); assert.ok(!text.includes('Finding excerpt:')); }
 });
 
-test('standalone, active and completed design children share idempotent plan resolution rendering', () => {
+test('readable artifact ownership: standalone, active and completed design children share idempotent plan resolution rendering', () => {
   const ports = fakePorts(), session = tempDir(), planPath = path.join(session, 'increment.plan.md');
   const begun = beginReview({ kind: 'plan', mode: 'report', target: planPath, cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'plan.review', {}).state;
   if (!('c' in begun)) throw new Error('review');
-  const planReview = stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Added check' } } }).state;
+  const planReview = stepReview({ tag: 'rule', c: { ...begun.c, round: 1, rounds: [{ round: 1, scope: 'full', reviewers: ['reader'], failed: [] }], findings: [{ id: 'R1-F001', round: 1, status: 'open', severity: 'SHOULD', category: 'correctness', locus: 'src/a.ts:L1', defect: 'Missing check. Complete explanation.', requiredChange: 'Add check', sources: ['reader'], scope: 'in' }] } }, { type: 'RULINGS', rulings: { 'R1-F001': { ruling: 'accept', reason: 'Added check\nKeep API' } } }).state;
   const implementation = { ...approvalState(), c: { ...approvalState().c, planPath, planReview } };
   const active = started();
   if (active.tag !== 'increment') throw new Error('design');
@@ -33,6 +33,11 @@ test('standalone, active and completed design children share idempotent plan res
     ports.fs.writeAtomic(planPath, '# Increment\n');
     rootMachine.render!(state, ports, session);
     const rendered = ports.fs.readText(planPath);
+    assert.match(rendered, /Finding: Missing check. Complete explanation./);
+    assert.match(rendered, /Required change: Add check/);
+    assert.match(rendered, /Added check  \n  Keep API/);
+    assert.ok(!rendered.includes('Full report:'));
+    assert.equal(ports.fs.exists(path.join(session, 'plan-review-' + path.basename(session) + '-plan.review.report.md')), false);
     assert.match(rendered, /## Review Findings & Resolutions[\s\S]*R1-F001[\s\S]*Added check/);
     let writes = 0;
     const original = ports.fs.writeAtomic;
@@ -66,7 +71,7 @@ test('standalone artifact reviews record inline history in report mode and prese
 });
 
 
-test('code review records findings in its governing walkthrough', () => {
+test('readable artifact ownership: code review records findings in its governing walkthrough', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
   ports.fs.writeAtomic(target, '# Delivered\n');
   const begun = beginReview({ kind: 'code', mode: 'report', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000, governing: { planPath: 'feature.plan.md', walkthroughPath: target, criteria: [] } }, 'review', {}).state;
@@ -78,7 +83,7 @@ test('code review records findings in its governing walkthrough', () => {
 });
 
 
-test('walkthrough regeneration retains later standalone review history without duplicating implementation rounds', () => {
+test('readable artifact ownership: walkthrough regeneration retains later standalone review history without duplicating implementation rounds', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.walkthrough.md');
   const implementation = { tag: 'complete' as const, c: approvalState().c, summary: 'Done' };
   const state: RootState = { tag: 'implement', run: { verb: 'implement', argument: 'feature.plan.md', slug: 'feature' }, child: implementation };
@@ -94,7 +99,7 @@ test('walkthrough regeneration retains later standalone review history without d
 });
 
 
-test('design integration records review history in the owning design', () => {
+test('readable artifact ownership: design integration records review history in the owning design', () => {
   const ports = fakePorts(), session = tempDir(), target = path.join(session, 'feature.design.md');
   ports.fs.writeAtomic(target, '# Design\n');
   const begun = beginReview({ kind: 'code', mode: 'report', target: 'HEAD', cap: 1, breadth: 1, context: '', roster: [], timeoutMs: 1000 }, 'design.integration', {}).state;

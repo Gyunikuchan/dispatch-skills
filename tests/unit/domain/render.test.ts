@@ -48,7 +48,7 @@ test('walkthrough-minimum-contract: resolution and report sections render rounds
   assert.ok(!section.includes('<!--'));
   assert.ok(renderResolutionSection([]).includes('*No reviews conducted yet.*'));
   const report = renderReport({ title: 'Code review', kind: 'code', target: 'HEAD~1..HEAD', summary: '1 fixed', rounds });
-  assert.ok(report.startsWith('# Code review\n\n> **Kind:** code review'));
+  assert.ok(report.startsWith('# Code review\n\n> **Summary:** 1 fixed'));
   assert.ok(!report.includes('<!--'));
 });
 
@@ -66,8 +66,8 @@ test('walkthrough-minimum-contract: comment markers in change paths are neutrali
   assert.ok(!out.includes('<!--'));
 });
 
-test('walkthrough-minimum-contract: change lines use a spaced em-dash', () => {
-  assert.ok(renderWalkthrough(view).includes('- **[MODIFY]** `src/a.ts` — adds the counter'));
+test('readable artifact rendering: change details sit beneath their file', () => {
+  assert.ok(renderWalkthrough(view).includes('- #### [MODIFY] `src/a.ts`\n  - Changes: adds the counter'));
 });
 
 test('walkthrough-minimum-contract: an info-string fence line does not close an open fence', () => {
@@ -95,26 +95,22 @@ test('review history retains existing ungrouped rounds', () => {
   assert.match(updated, /### Round 1[\s\S]*R1-F001[\s\S]*### Review new-run/);
 });
 
-test('readable review rendering: excerpts link full findings and preserve exact multiline rulings', () => {
+test('readable artifact rendering: complete findings and exact rulings remain inline', () => {
   const input = [{ ...rounds[0]!, entries: [{ ...rounds[0]!.entries[0]!, defect: 'The loop spins forever. The second sentence explains the cause.', requiredChange: 'Bound the loop.', resolution: 'Keep the interface.\nAdd the counter.' }] }];
-  const excerpt = renderResolutionSection(input, { mode: 'excerpt', reportRef: '../full%20report.md' });
-  assert.match(excerpt, /- Finding excerpt: The loop spins forever.\n/);
-  assert.ok(!excerpt.includes('second sentence'));
-  assert.match(excerpt, /- Ruling:\n  Keep the interface.  \n  Add the counter.  \n/);
-  assert.match(excerpt, /\[R1-F001\]\(\.\.\/full%20report.md#r1-f001\)/);
-  const full = renderReport({ title: 'Review', target: 'plan.md', kind: 'plan', summary: 'Recorded', rounds: input });
-  assert.match(full, /#### R1-F001/);
-  assert.match(full, /The second sentence explains the cause./);
-  assert.match(full, /Required change: Bound the loop./);
-  const owned = replaceResolutionSection('# Plan\n', excerpt, 'run');
+  const section = renderResolutionSection(input);
+  assert.match(section, /Finding: The loop spins forever. The second sentence explains the cause./);
+  assert.match(section, /Required change: Bound the loop./);
+  assert.match(section, /- Ruling:\n  Keep the interface.  \n  Add the counter.  \n/);
+  assert.ok(!section.includes('Full report:'));
+  const owned = replaceResolutionSection('# Plan\n', section, 'run');
   assert.match(owned, /### Review run\n\n#### Round 1[\s\S]*##### R1-F001/);
-  assert.equal(replaceResolutionSection(owned, excerpt, 'run'), owned);
+  assert.equal(replaceResolutionSection(owned, section, 'run'), owned);
 });
 
-test('readable review rendering: ambiguous sentence boundaries retain the complete finding', () => {
+test('readable artifact rendering: complete findings retain sanitized technical text without invented rulings', () => {
   for (const defect of ['No terminator or safe boundary', 'Use e.g. This example.', 'Call `helper.ts`. This fails.', 'The URL is https://a.example/path. This fails.', 'Use Dr. Smith. More detail.']) {
     const { resolution: _resolution, ...entry } = rounds[0]!.entries[0]!;
-    const output = renderResolutionSection([{ ...rounds[0]!, entries: [{ ...entry, defect }] }], { mode: 'excerpt' });
+    const output = renderResolutionSection([{ ...rounds[0]!, entries: [{ ...entry, defect }] }]);
     // Existing sanitization removes code delimiters before rendering.
     assert.ok(output.includes(defect.replace(/`/g, '')));
     assert.ok(!output.includes('- Ruling:'));
@@ -128,7 +124,6 @@ test('readable review rendering: all dispositions, duplicate relations, failed a
   assert.match(output, /- Sources: codex\[0\]\n- Location: src\/a.ts:L3\n- Category: correctness/);
   assert.match(output, /### Round 2\n\n- Reviewers: none\n- No findings./);
   assert.match(renderResolutionSection(rounds), /Duplicate: R1-F001 \[dup=R1-F001\]/);
-  assert.match(renderResolutionSection(rounds, { mode: 'excerpt', reportRef: 'review.report.md' }), /Duplicate: \[R1-F001\]\(review.report.md#r1-f001\)/);
   assert.ok(!output.includes('<!--'));
 });
 
@@ -139,4 +134,35 @@ test('readable review rendering: retained duplicate IDs do not link to another r
   assert.equal((history.match(/Duplicate: R1-F001 \[dup=R1-F001\]/g) ?? []).length, 2);
   assert.ok(!history.includes('](#r1-f001)'));
   assert.equal(replaceResolutionSection(history, section, 'run-2'), history);
+});
+
+test('readable artifact rendering: summary lines and nested notes preserve verification', () => {
+  const output = renderWalkthrough({ ...view, changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Add counter.\nKeep API.' }] });
+  assert.equal((output.match(/^> .* {2}$/gm) ?? []).length, 4);
+  assert.match(output, /- #### \[MODIFY\] `src\/a.ts`\n  - Changes: Add counter.  \n    Keep API./);
+  assert.ok(output.includes('Final gate: `npm test` exit 0'));
+  assert.ok(output.includes('stops \\| at three'));
+  assert.ok(!output.includes('\n\n\n## Verification'));
+});
+
+test('readable artifact rendering: continuation markers remain note text', () => {
+  const output = renderWalkthrough({ ...view, changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Changed.\n# heading\n```md\n- list\n| table\n1. ordered\n===\n___\n<div>\n<!-- comment -->' }] });
+  for (const marker of ['\\# heading', '\\```md', '\\- list', '\\| table', '1\\. ordered', '\\===', '\\___', '\\<div>']) assert.ok(output.includes(`    ${marker}  \n`));
+  assert.ok(!output.includes('<!--'));
+});
+
+test('readable artifact rendering: report leads with recorded summary and unresolved actions', () => {
+  const report = renderReport({ title: 'Review', kind: 'code', target: 'HEAD', summary: 'Recorded state', rounds });
+  assert.ok(report.startsWith('# Review\n\n> **Summary:** Recorded state  \n'));
+  assert.match(report, /Required action:.*failed reviewer coverage/);
+  for (const status of ['accepted', 'pending-rejection', 'needs-user', 'deferred'] as const) {
+    const output = renderReport({ title: 'Review', kind: 'plan', target: 'plan', summary: 'Recorded', rounds: [{ ...rounds[0]!, failed: [], entries: [{ ...rounds[0]!.entries[0]!, status }] }] });
+    assert.match(output, /Required action:.*R1-F001/);
+    if (status === 'accepted') assert.match(output, /apply or verify accepted change/);
+  }
+  for (const status of ['fixed', 'rejected', 'downgraded', 'closed-by-reviewer', 'closed-by-orchestrator', 'duplicate'] as const) {
+    const output = renderReport({ title: 'Review', kind: 'plan', target: 'plan', summary: 'Recorded', rounds: [{ ...rounds[0]!, failed: [], entries: [{ ...rounds[0]!.entries[0]!, status }] }] });
+    assert.match(output, /Required action: No action recorded/);
+  }
+  assert.match(renderReport({ title: 'Review', kind: 'code', target: 'HEAD', summary: 'Not reviewed', rounds: [] }), /No action recorded/);
 });

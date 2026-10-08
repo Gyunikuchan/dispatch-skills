@@ -29,24 +29,14 @@ export function statusLabel(status: ResolutionStatus): string {
 /** Table cells: one line, backslashes then pipes escaped, comments neutralised. */
 const cell = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim());
 const line = (text: string) => neutralizeComments(text.replace(/\r?\n/g, ' ').trim());
+const noteLine = (text: string) => neutralizeComments(text)
+  .replace(/^(\s*)([#>|`~*+=_<-])/, '$1\\$2')
+  .replace(/^(\s*\d+)([.)])(?=\s|$)/, '$1\\$2');
 
 // SECTION: Resolution section
 
 /** The trailing `## Review Findings & Resolutions` section, heading included. */
-export type ResolutionOptions = { mode?: 'full' | 'excerpt'; reportRef?: string };
-
-export const findingAnchor = (id: string): string => id.toLowerCase().replace(/[^a-z0-9-]/g, '-');
-
-/** Only unambiguous prose sentence boundaries permit excerpts. */
-function findingExcerpt(text: string): string {
-  const boundary = /[.!?](?=\s+[A-Z])/.exec(text);
-  if (!boundary) return text;
-  const sentence = text.slice(0, boundary.index + 1);
-  if (/[`\[\]<>]|:\/\/|\b(?:e\.g|i\.e|Mr|Mrs|Dr|vs)\./i.test(sentence)) return text;
-  return sentence;
-}
-
-export function renderResolutionSection(rounds: readonly ResolutionRound[], options: ResolutionOptions = {}): string {
+export function renderResolutionSection(rounds: readonly ResolutionRound[]): string {
   const out = [RESOLUTION_HEADING, ''];
   if (!rounds.length) return [...out, '*No reviews conducted yet.*', ''].join('\n');
   for (const round of rounds) {
@@ -63,11 +53,10 @@ export function renderResolutionSection(rounds: readonly ResolutionRound[], opti
         `- Status: **[${statusLabel(entry.status)}]**`, `- Severity: ${entry.severity}`,
         `- Sources: ${entry.sources.join(', ')}`, `- Location: ${line(entry.locus)}`, `- Category: ${line(entry.category)}`);
       const defect = sanitizeText(entry.defect);
-      out.push(`- ${options.mode === 'excerpt' ? 'Finding excerpt' : 'Finding'}: ${options.mode === 'excerpt' ? sanitizeText(findingExcerpt(entry.defect)) : defect}`);
-      if (entry.requiredChange && options.mode !== 'excerpt') out.push(`- Required change: ${sanitizeText(entry.requiredChange)}`);
-      if (entry.dupOf) out.push(`- Duplicate: ${options.reportRef ? `[${entry.dupOf}](${options.reportRef}#${findingAnchor(entry.dupOf)})` : entry.dupOf} [dup=${entry.dupOf}]`);
+      out.push(`- Finding: ${defect}`);
+      if (entry.requiredChange) out.push(`- Required change: ${sanitizeText(entry.requiredChange)}`);
+      if (entry.dupOf) out.push(`- Duplicate: ${entry.dupOf} [dup=${entry.dupOf}]`);
       if (entry.resolution) out.push('- Ruling:', ...entry.resolution.split(/\r?\n/).map((text) => `  ${sanitizeText(text)}  `));
-      if (options.reportRef) out.push(`- Full report: [${entry.id}](${options.reportRef}#${findingAnchor(entry.id)})`);
     }
     out.push('');
   }
@@ -129,10 +118,10 @@ export function renderWalkthrough(view: WalkthroughView): string {
   const out = [
     `# ${line(view.title)}`,
     '',
-    `> **Delivered:** ${line(view.delivered)}`,
-    `> **Parent:** ${line(view.parent)}`,
-    `> **Status:** ${line(view.status)}`,
-    `> **Deviations:** ${view.deviations.length ? line(view.deviations.join('; ')) : 'none'}`,
+    `> **Delivered:** ${line(view.delivered)}  `,
+    `> **Parent:** ${line(view.parent)}  `,
+    `> **Status:** ${line(view.status)}  `,
+    `> **Deviations:** ${view.deviations.length ? line(view.deviations.join('; ')) : 'none'}  `,
     '',
   ];
   if (userRequest && view.context) {
@@ -146,8 +135,14 @@ export function renderWalkthrough(view: WalkthroughView): string {
   }
   out.push('## Changes Made', '');
   if (!view.changes.length) out.push('None.');
-  for (const change of view.changes) out.push(`- **[${change.action}]** \`${line(change.path)}\` — ${line(change.note)}`);
-  out.push('', '## Verification', '');
+  for (const change of view.changes) {
+    const notes = neutralizeComments(change.note).split(/\r?\n/);
+    out.push(`- #### [${change.action}] \`${line(change.path)}\``,
+      `  - Changes: ${notes[0] ?? ''}${notes.length > 1 ? '  ' : ''}`,
+      ...notes.slice(1).map((note) => `    ${noteLine(note)}  `), '');
+  }
+  if (!view.changes.length) out.push('');
+  out.push('## Verification', '');
   if (view.verification.length) {
     out.push('| SC | Outcome | Evidence |', '| --- | --- | --- |');
     for (const row of view.verification) out.push(`| ${cell(row.sc)} | ${cell(row.outcome)} | ${cell(row.evidence)} |`);
@@ -167,13 +162,34 @@ export function renderWalkthrough(view: WalkthroughView): string {
 
 // SECTION: Standalone report
 
+function requiredAction(rounds: readonly ResolutionRound[]): string {
+  const actions: string[] = [];
+  for (const round of rounds) {
+    for (const entry of round.entries) {
+      switch (entry.status) {
+        case 'accepted': actions.push(`round ${round.round} ${entry.id}: apply or verify accepted change`); break;
+        case 'pending-rejection': actions.push(`round ${round.round} ${entry.id}: confirm rejection`); break;
+        case 'needs-user': actions.push(`round ${round.round} ${entry.id}: user decision required`); break;
+        case 'deferred': actions.push(`round ${round.round} ${entry.id}: deferred follow-up`); break;
+        case 'fixed': case 'rejected': case 'downgraded': case 'closed-by-reviewer':
+        case 'closed-by-orchestrator': case 'duplicate': break;
+        default: unreachable(entry.status);
+      }
+    }
+    if (round.failed.length) actions.push(`round ${round.round}: inspect failed reviewer coverage (${round.failed.map((target) => target.slot).join(', ')})`);
+  }
+  return actions.length ? actions.join('; ') : 'No action recorded; this is not an approval or coverage claim.';
+}
+
 export function renderReport(view: ReportView): string {
   const out = [
     `# ${line(view.title)}`,
     '',
-    `> **Kind:** ${view.kind} review`,
-    `> **Target:** ${line(view.target)}`,
-    `> **Summary:** ${line(view.summary)}`,
+    `> **Summary:** ${line(view.summary)}  `,
+    `> **Kind:** ${view.kind} review  `,
+    `> **Target:** ${line(view.target)}  `,
+    '',
+    `- Required action: ${requiredAction(view.rounds)}`,
     '',
     renderResolutionSection(view.rounds),
   ];

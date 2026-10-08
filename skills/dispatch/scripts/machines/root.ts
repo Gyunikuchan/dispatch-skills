@@ -2,7 +2,6 @@
 // validation, and driver-owned Markdown rendering (resolution sections and the standalone report; not an effect).
 
 import type { Await, Event, HostEvent, Machine, Ports, RunStartedEvent, Verb } from '../core/types.ts';
-import path from 'node:path';
 import { renderReport, renderResolutionSection, replaceResolutionSection, resolutionSectionOf, walkthroughPathOf } from '../domain/render.ts';
 import { materializePlanRevisionSeed } from '../domain/plan.ts';
 import type { ReviewKind } from '../domain/types.ts';
@@ -271,16 +270,7 @@ function reviewKeyOf(runDir: string, machinePath: string): string {
 function writeSection(ports: Ports, file: string, review: ReviewState, runDir: string): void {
   if (!('c' in review) || !review.c.rounds.length || !ports.fs.exists(file)) return;
   const rounds = resolutionRounds(review.c);
-  let reportRef: string | undefined;
-  if (review.c.spec.kind === 'plan') {
-    const run = runDir.replace(/\\/g, '/').split('/').at(-1)!;
-    const slug = `plan-review-${encodeURIComponent(run)}-${encodeURIComponent(review.c.path)}`;
-    const report = reportPathOf(runDir, slug);
-    writeIfChanged(ports, report, renderReport({ title: 'Plan review', kind: 'plan', target: file, summary: 'Recorded review findings and rulings', rounds }));
-    reportRef = path.relative(path.dirname(file), report).replace(/\\/g, '/').split('/').map((segment) =>
-      encodeURIComponent(segment).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
-  }
-  writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(rounds, reportRef ? { mode: 'excerpt', reportRef } : {}), reviewKeyOf(runDir, review.c.path)));
+  writeIfChanged(ports, file, replaceResolutionSection(ports.fs.readText(file), renderResolutionSection(rounds), reviewKeyOf(runDir, review.c.path)));
 }
 
 function renderImplementation(ports: Ports, implementation: ImplementState, walkthroughPath: string, runDir: string): void {

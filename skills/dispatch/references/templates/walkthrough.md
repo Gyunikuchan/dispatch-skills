@@ -5,10 +5,10 @@ The driver renders these walkthrough fields. See [review rules](../review-rules.
 ````markdown
 # <task title>
 
-> **Delivered:** <what changed, in one sentence>
-> **Parent:** <plan path, or user request>
-> **Status:** 0/1 SC passing
-> **Deviations:** none
+> **Delivered:** <what changed, in one sentence>  
+> **Parent:** <plan path, or user request>  
+> **Status:** 0/1 SC passing  
+> **Deviations:** none  
 
 ## Context
 - Ask: <original request>
@@ -18,7 +18,8 @@ The driver renders these walkthrough fields. See [review rules](../review-rules.
 - Focus: <review focus>
 
 ## Changes Made
-- **[MODIFY]** `<relative-path>` — <what changed in this file>
+- #### [MODIFY] `<relative-path>`
+  - Changes: <what changed in this file>
 
 ## Verification
 | SC | Outcome | Evidence |
@@ -43,3 +44,6 @@ None.
 - Review Findings & Resolutions: driver-rendered and machine-managed.
 - Status: passing rows (Evidence not `Pending`, `Deferred to final gate`, or missing validated) over criteria.
 - Deviations & Follow-ups: `- Deviation: …` and `- Follow-up: …` bullets (unapplied SHOULD / CONSIDER, reasoned), or `None.`. The Deviations box is a one-line summary exactly when a `- Deviation:` bullet exists.
+
+- Lead with delivered behavior and verification status. Keep file detail beneath its file entry; preserve existing multiline notes with indented continuations.
+- Retain the Verification table, exact commands and recorded evidence; link evidence only when a recorded artifact exists. Omit optional empty prose within required sections. Use no fixed word limit or second authored summary.

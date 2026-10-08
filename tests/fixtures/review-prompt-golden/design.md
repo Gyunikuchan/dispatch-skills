@@ -23,6 +23,9 @@ Adhere to this project's conventions: read `AGENTS.md` / `CLAUDE.md`, including 
 reviewed paths, and flag violations as `standards`.
 Read the design and the direct repository contracts needed to verify a claim; verify feasibility
 without demanding implementation detail.
+Read complete inline history in the governing artifacts. Consult raw provider output or journals
+when missing evidence, disputed adjudication or recovery requires it; follow
+`references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 On re-review, verify the resolutions logged under `## Review Findings & Resolutions` and treat
 earlier settled findings as closed. Decisions recorded in the governing design or plan are settled:
 contest one only by naming it and citing evidence its rationale did not weigh. When Scope names changed sections or paths, raise new in-scope

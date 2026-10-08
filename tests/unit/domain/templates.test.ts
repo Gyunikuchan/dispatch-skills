@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { parsePlan, selectTaskBrief } from '../../../skills/dispatch/scripts/domain/plan.ts';
+import { parseDesign } from '../../../skills/dispatch/scripts/domain/design.ts';
 
 const root = new URL('../../../skills/dispatch/references/templates/', import.meta.url);
 const KEPT = [
@@ -9,6 +10,32 @@ const KEPT = [
   'write-brief.md', 'write-brief-task.md', 'write-brief-hotfix.md',
   'schemas/report-code.json', 'schemas/report-design.json', 'schemas/report-plan.json',
 ];
+
+test('readable artifact templates: populated design preserves executable fields and exclusions', () => {
+  const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal((template.match(/^> .* {2}$/gm) ?? []).length, 5);
+  assert.ok(template.indexOf('## Alternatives & Decisions') < template.indexOf('## Goals & Requirements'));
+  let source = template.split('````markdown\n')[1]!.split('````')[0]!;
+  source = source.replace('<`<spec path>` · sha256:<hex> | user request>', 'user request')
+    .replace('<low|med|high>', 'low').replace('<count>', '1')
+    .replace(/\| I02 .*\n/, '').replace(/Next Action: .*\n/, 'Next Action: complete\n');
+  source = source.replace(/<[^>]+>/g, 'Concrete behavior');
+  const parsed = parseDesign(source);
+  assert.ok(parsed.ok, JSON.stringify(parsed));
+  assert.equal(parsed.design.increments[0]!.id, 'I01');
+  assert.equal(parsed.design.details['I01']!['Outcome'], 'Concrete behavior');
+  assert.ok(!parsed.design.governedText.includes('## Execution Status'));
+  assert.ok(!parsed.design.governedText.includes('## Review Findings & Resolutions'));
+});
+
+test('readable artifact templates: walkthrough hierarchy and ownership match renderer contracts', () => {
+  const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal((template.match(/^> .* {2}$/gm) ?? []).length, 4);
+  assert.match(template, /- #### \[MODIFY\].*\n  - Changes:/);
+  assert.match(template, /\| SC \| Outcome \| Evidence \|/);
+  assert.match(template, /Final gate:/);
+  assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
+});
 
 test('readable plan template: hierarchy, hard breaks and conditional contracts stay executable', () => {
   const template = readFileSync(new URL('plan.md', root), 'utf8');

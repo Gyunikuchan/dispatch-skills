@@ -35,9 +35,9 @@ executing the plan as written delivers the requirement.
 
 Read the plan, named files, and adjacent interfaces or tests needed to verify a claim.
 Check task-level shared constraints, nested file ownership and each criterion's specific checks.
-Use the authoritative plan and concise prior-review entries for routine review. Load a specific
-linked full report or finding when missing evidence, an adjudication dispute or recovery requires it;
-follow `references/review-rules.md` for history and ruling semantics.
+Use the authoritative plan and complete inline review history. Consult raw provider output or journals
+when missing evidence, an adjudication dispute or recovery requires it; follow
+`references/review-rules.md` for ownership and ruling semantics. History does not replace source inspection.
 
 ## tags
 

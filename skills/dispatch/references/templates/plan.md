@@ -88,7 +88,7 @@ The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skil
 - Omit optional empty prose sections. Retain required machine sections and conditional fields when applicable.
 - Put human decisions and current context first, then task outcomes and execution detail. Keep interfaces, ownership, prerequisites, failure behavior, compatibility, exact commands and criterion-to-check traceability. Use no fixed word limit or second human plan.
 - State shared constraints once at plan or task level. Put all mandatory file constraints and exceptions under Invariants:; these labels and their continuation bullets enter owned writer briefs. Other notes remain in full-plan context.
-- Review history: follow [review rules](../review-rules.md) for excerpts, exact rulings and conditional full-report disclosure.
+- Review history: follow [review rules](../review-rules.md) for complete inline findings, exact rulings and conditional supporting-evidence disclosure.
 
 - Technical-Design Traceability: increment plans only.
 - Verify: only this criterion's tests (e.g. `--test-name-pattern` matching literal titles), failing on zero selected tests; red never runs the aggregate suite; `[FINAL]` (optional, after the closing backtick, never inside it) marks a broad run for required gates only.
