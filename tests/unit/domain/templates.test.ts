@@ -13,7 +13,8 @@ const KEPT = [
 
 test('readable artifact templates: populated design preserves executable fields and exclusions', () => {
   const template = readFileSync(new URL('design.md', root), 'utf8').replace(/\r\n/g, '\n');
-  assert.equal((template.match(/^> .* {2}$/gm) ?? []).length, 5);
+  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
+  assert.equal((template.match(/^>$/gm) ?? []).length, 4);
   assert.ok(template.indexOf('## Alternatives & Decisions') < template.indexOf('## Goals & Requirements'));
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;
   source = source.replace('<`<spec path>` · sha256:<hex> | user request>', 'user request')
@@ -30,18 +31,20 @@ test('readable artifact templates: populated design preserves executable fields 
 
 test('readable artifact templates: walkthrough hierarchy and ownership match renderer contracts', () => {
   const template = readFileSync(new URL('walkthrough.md', root), 'utf8').replace(/\r\n/g, '\n');
-  assert.equal((template.match(/^> .* {2}$/gm) ?? []).length, 4);
+  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 4);
+  assert.equal((template.match(/^>$/gm) ?? []).length, 3);
   assert.match(template, /- #### \[MODIFY\].*\n  - Changes:/);
   assert.match(template, /\| SC \| Outcome \| Evidence \|/);
   assert.match(template, /Final gate:/);
   assert.match(template, /\[review rules\]\(\.\.\/review-rules.md\)/);
 });
 
-test('readable plan template: hierarchy, hard breaks and conditional contracts stay executable', () => {
+test('readable plan template: hierarchy, quote paragraphs and conditional contracts stay executable', () => {
   const template = readFileSync(new URL('plan.md', root), 'utf8');
   const order = ['> **TL;DR:**', '## Key Decisions & Context', '## Technical-Design Traceability', '## Proposed Changes', '## Success Criteria', '## Verification Plan', '## Rollback & Blast Radius', '## Review Findings & Resolutions'];
   for (let i = 1; i < order.length; i++) assert.ok(template.indexOf(order[i]!) > template.indexOf(order[i - 1]!));
-  assert.equal((template.match(/^> \*\*.* {2}$/gm) ?? []).length, 5);
+  assert.equal((template.match(/^> \*\*.*$/gm) ?? []).length, 5);
+  assert.equal((template.match(/^>$/gm) ?? []).length, 4);
   assert.match(template, /- #### \[MODIFY\].*\n  - Changes:.*\n  - Invariants:/);
   for (const label of ['Omit optional empty prose sections', 'conditional fields', 'Pre-existing:', 'RED exception:', 'Enforcement infeasibility:', 'Integration:']) assert.ok(template.includes(label));
   let source = template.split('````markdown\n')[1]!.split('````')[0]!;

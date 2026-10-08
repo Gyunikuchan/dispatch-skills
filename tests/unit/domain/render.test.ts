@@ -138,7 +138,8 @@ test('readable review rendering: retained duplicate IDs do not link to another r
 
 test('readable artifact rendering: summary lines and nested notes preserve verification', () => {
   const output = renderWalkthrough({ ...view, changes: [{ action: 'MODIFY', path: 'src/a.ts', note: 'Add counter.\nKeep API.' }] });
-  assert.equal((output.match(/^> .* {2}$/gm) ?? []).length, 4);
+  assert.equal((output.match(/^> \*\*.*$/gm) ?? []).length, 4);
+  assert.equal((output.match(/^>$/gm) ?? []).length, 4);
   assert.match(output, /- #### \[MODIFY\] `src\/a.ts`\n  - Changes: Add counter.  \n    Keep API./);
   assert.ok(output.includes('Final gate: `npm test` exit 0'));
   assert.ok(output.includes('stops \\| at three'));
@@ -153,7 +154,8 @@ test('readable artifact rendering: continuation markers remain note text', () =>
 
 test('readable artifact rendering: report leads with recorded summary and unresolved actions', () => {
   const report = renderReport({ title: 'Review', kind: 'code', target: 'HEAD', summary: 'Recorded state', rounds });
-  assert.ok(report.startsWith('# Review\n\n> **Summary:** Recorded state  \n'));
+  assert.match(report, /> \*\*Summary:\*\* Recorded state\n>\n> \*\*Kind:/);
+  assert.ok(report.startsWith('# Review\n\n> **Summary:** Recorded state\n>\n'));
   assert.match(report, /Required action:.*failed reviewer coverage/);
   for (const status of ['accepted', 'pending-rejection', 'needs-user', 'deferred'] as const) {
     const output = renderReport({ title: 'Review', kind: 'plan', target: 'plan', summary: 'Recorded', rounds: [{ ...rounds[0]!, failed: [], entries: [{ ...rounds[0]!.entries[0]!, status }] }] });

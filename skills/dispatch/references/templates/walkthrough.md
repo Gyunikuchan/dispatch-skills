@@ -5,10 +5,13 @@ The driver renders these walkthrough fields. See [review rules](../review-rules.
 ````markdown
 # <task title>
 
-> **Delivered:** <what changed, in one sentence>  
-> **Parent:** <plan path, or user request>  
-> **Status:** 0/1 SC passing  
-> **Deviations:** none  
+> **Delivered:** <what changed, in one sentence>
+>
+> **Parent:** <plan path, or user request>
+>
+> **Status:** 0/1 SC passing
+>
+> **Deviations:** none
 
 ## Context
 - Ask: <original request>

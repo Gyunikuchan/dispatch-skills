@@ -4,14 +4,20 @@ External delegates read the plan file with no other context.
 
 The driver keeps each chat's deliverables at the root of `.scratch/dispatch-skills/<folder>/` and generated run files under that folder's `.state/runs/NNN-<kind>/`, retaining the session in the workspace.
 
+Separate summary fields with blank `>` lines so each field renders as its own paragraph.
+
 ````markdown
 # <Goal Description>
 
-> **TL;DR:** <problem and outcome>  
-> **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>  
-> **Decide:** <reader decision, or none>  
-> **Risk:** <low|med|high> — <reason>  
-> **Scope:** <paths or components>  
+> **TL;DR:** <problem and outcome>
+>
+> **Parent:** <`<design path>` · I<nn> | `<spec path>` · sha256:<hex> | user request>
+>
+> **Decide:** <reader decision, or none>
+>
+> **Risk:** <low|med|high> — <reason>
+>
+> **Scope:** <paths or components>
 
 ## Background
 *Optional: current behaviour a fresh reader needs, with `file:line` pointers.*

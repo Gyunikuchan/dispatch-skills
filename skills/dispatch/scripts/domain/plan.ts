@@ -147,7 +147,7 @@ export function documentTitle(source: string): string | null {
   return line && /^#\s+\S/.test(line) ? line.replace(/^#\s+/, '').trim() : null;
 }
 
-/** H1, one blank line, contiguous `> **Label:** value` lines, then the first `##`; null when absent. */
+/** H1, one blank line, `> **Label:** value` lines with optional blank quote separators, then the first `##`; null when absent. */
 export function parseSummaryBox(source: string): { entries: BoxEntry[]; trailing: string | null } | null {
   const { lines, offset } = bodyLines(source);
   let index = lines.findIndex((line) => line.trim());
@@ -158,6 +158,7 @@ export function parseSummaryBox(source: string): { entries: BoxEntry[]; trailing
   const entries: BoxEntry[] = [];
   for (; index < lines.length && (lines[index] ?? '').startsWith('>'); index += 1) {
     const raw = (lines[index] ?? '').trimEnd();
+    if (/^>\s*$/.test(raw)) continue;
     const match = BOX_LINE.exec(raw);
     entries.push({ label: match?.[1] ?? null, value: match?.[2]?.trim() ?? '', line: index + 1 + offset, raw });
   }

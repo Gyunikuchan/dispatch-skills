@@ -1,13 +1,19 @@
 # Design template
 
+Separate summary fields with blank `>` lines so each field renders as its own paragraph.
+
 ````markdown
 # <Technical design>
 
-> **TL;DR:** <outcome>  
-> **Parent:** <`<spec path>` · sha256:<hex> | user request>  
-> **Decide:** <reader decision, or none>  
-> **Risk:** <low|med|high> — <reason>  
-> **Increments:** <count>  
+> **TL;DR:** <outcome>
+>
+> **Parent:** <`<spec path>` · sha256:<hex> | user request>
+>
+> **Decide:** <reader decision, or none>
+>
+> **Risk:** <low|med|high> — <reason>
+>
+> **Increments:** <count>
 
 ## Context & Intent
 *Problem, context, and clarified intent.*
